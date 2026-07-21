@@ -372,6 +372,32 @@ def test_import_preflights_every_row_before_writing_valid_rows(
     ).fetchone()[0] == 0
 
 
+def test_import_merge_rolls_back_all_rows_on_constraint_failure(tmp_path, monkeypatch):
+    """#275: a later SQLite failure cannot partially commit an earlier row."""
+    _setup_env(tmp_path, monkeypatch)
+    archive = _build_bundle_with_tables(
+        tmp_path,
+        {
+            "ps_lessons": [
+                _import_lesson_row("atomic-valid"),
+                {"lesson_id": "atomic-missing-required-columns"},
+            ]
+        },
+    )
+
+    from aletheia.storage.sqlite import get_db
+    from aletheia.sync.importer import ImportService
+
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert any("no rows committed" in error.lower() for error in result.errors)
+    assert result.new_rows == {}
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM ps_lessons "
+        "WHERE lesson_id IN ('atomic-valid', 'atomic-missing-required-columns')"
+    ).fetchone()[0] == 0
+
+
 def test_import_merge_accepts_a_valid_checksummed_bundle(tmp_path, monkeypatch):
     """#271: the fail-closed gate preserves normal imports."""
     _setup_env(tmp_path, monkeypatch)

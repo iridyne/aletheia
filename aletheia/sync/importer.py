@@ -3,11 +3,13 @@
 import json
 import re
 import shutil
+import sqlite3
 import tarfile
 from pathlib import Path
 
 from aletheia.config.loader import get_data_dir
 from aletheia.storage.hashing import sha256_file
+from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
 
 
@@ -116,10 +118,10 @@ class ImportService:
             # Import DB tables
             db_dir = bundle_dir / "db"
             if db_dir.exists():
-                self._validate_db_payloads(db_dir, result)
+                db_payloads = self._validate_db_payloads(db_dir, result)
                 if result.errors:
                     return result
-                self._import_db_tables(db_dir, result, commit)
+                self._import_db_tables(db_payloads, result, commit)
 
             # Import artifacts
             artifacts_dir = bundle_dir / "artifacts"
@@ -210,9 +212,12 @@ class ImportService:
                 f"Payload file is not listed in checksums.txt: {unlisted_path}"
             )
 
-    def _validate_db_payloads(self, db_dir: Path, result: ImportResult) -> None:
-        """Authorize every JSONL table and column before the first database write."""
+    def _validate_db_payloads(
+        self, db_dir: Path, result: ImportResult
+    ) -> dict[str, list[dict]]:
+        """Load and authorize every JSONL row before the first database write."""
         db = get_db()
+        payloads: dict[str, list[dict]] = {}
 
         for jsonl_file in sorted(db_dir.glob("*.jsonl")):
             table_name = jsonl_file.stem
@@ -229,6 +234,7 @@ class ImportService:
                 result.errors.append(f"Import table is unavailable locally: {table_name}")
                 continue
 
+            rows: list[dict] = []
             with open(jsonl_file, "r", encoding="utf-8") as handle:
                 for line_number, line in enumerate(handle, start=1):
                     line = line.strip()
@@ -254,80 +260,97 @@ class ImportService:
                             f"Unsupported columns in {table_name} line {line_number}: "
                             f"{', '.join(unknown_columns)}"
                         )
+                        continue
+                    rows.append(row)
 
-    def _import_db_tables(self, db_dir: Path, result: ImportResult, commit: bool) -> None:
-        """Import JSONL table data with deduplication."""
+            payloads[table_name] = rows
+
+        return payloads
+
+    def _import_db_tables(
+        self,
+        rows_by_table: dict[str, list[dict]],
+        result: ImportResult,
+        commit: bool,
+    ) -> None:
+        """Import preloaded rows atomically, or inspect them for a dry-run."""
+        try:
+            if commit:
+                with transaction():
+                    self._merge_db_rows(rows_by_table, result, commit=True)
+            else:
+                self._merge_db_rows(rows_by_table, result, commit=False)
+        except sqlite3.Error as exc:
+            result.new_rows.clear()
+            result.errors.append(f"Database import failed; no rows committed: {exc}")
+
+    def _merge_db_rows(
+        self,
+        rows_by_table: dict[str, list[dict]],
+        result: ImportResult,
+        *,
+        commit: bool,
+    ) -> None:
         db = get_db()
 
-        for jsonl_file in sorted(db_dir.glob("*.jsonl")):
-            table_name = jsonl_file.stem
+        for table_name in sorted(rows_by_table):
             quoted_table = self._quote_identifier(table_name)
             new_count = 0
 
-            with open(jsonl_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    row = json.loads(line)
-
-                    # Check for duplicate by primary key (assume 'id' column).
-                    # #64 fix: an existing PK with DIFFERENT column values used to
-                    # be counted as `skipped_duplicates` — a diverged row silently
-                    # ignored so the operator never learned the bundle was already
-                    # out of sync. The `ImportConflict` class existed but was
-                    # never instantiated. Now we distinguish:
-                    #   PK exists, payload identical  → `skipped_duplicates`
-                    #   PK exists, payload different  → `conflicts` entry
-                    #   PK missing                    → inserted (as before)
-                    pk_col = self._find_pk(table_name, row)
-                    if pk_col and pk_col in row:
-                        quoted_pk = self._quote_identifier(pk_col)
-                        existing = db.execute(
-                            f"SELECT * FROM {quoted_table} WHERE {quoted_pk} = ?",
-                            (row[pk_col],),
-                        ).fetchone()
-                        if existing:
-                            local = dict(existing)
-                            diff_cols = [
-                                col for col, val in row.items()
-                                if col in local and local[col] != val
-                            ]
-                            if diff_cols:
-                                result.conflicts.append(ImportConflict(
+            for row in rows_by_table[table_name]:
+                # Check for duplicate by primary key (assume 'id' column).
+                # #64 fix: an existing PK with DIFFERENT column values used to
+                # be counted as `skipped_duplicates` — a diverged row silently
+                # ignored so the operator never learned the bundle was already
+                # out of sync. The `ImportConflict` class existed but was
+                # never instantiated. Now we distinguish:
+                #   PK exists, payload identical  → `skipped_duplicates`
+                #   PK exists, payload different  → `conflicts` entry
+                #   PK missing                    → inserted (as before)
+                pk_col = self._find_pk(table_name, row)
+                if pk_col and pk_col in row:
+                    quoted_pk = self._quote_identifier(pk_col)
+                    existing = db.execute(
+                        f"SELECT * FROM {quoted_table} WHERE {quoted_pk} = ?",
+                        (row[pk_col],),
+                    ).fetchone()
+                    if existing:
+                        local = dict(existing)
+                        diff_cols = [
+                            col
+                            for col, val in row.items()
+                            if col in local and local[col] != val
+                        ]
+                        if diff_cols:
+                            result.conflicts.append(
+                                ImportConflict(
                                     object_type=table_name,
                                     object_id=str(row[pk_col]),
                                     local_hash=self._row_fingerprint(local),
                                     remote_hash=self._row_fingerprint(row),
                                     message=(
                                         f"{table_name} row {row[pk_col]!r} diverges "
-                                        f"from local on columns: {', '.join(sorted(diff_cols))}"
+                                        "from local on columns: "
+                                        f"{', '.join(sorted(diff_cols))}"
                                     ),
-                                ))
-                            else:
-                                result.skipped_duplicates += 1
-                            continue
-
-                    if commit:
-                        cols = ", ".join(self._quote_identifier(col) for col in row)
-                        placeholders = ", ".join(["?"] * len(row))
-                        try:
-                            db.execute(
-                                f"INSERT OR IGNORE INTO {quoted_table} "
-                                f"({cols}) VALUES ({placeholders})",
-                                list(row.values()),
+                                )
                             )
-                        except Exception as e:
-                            result.errors.append(f"Insert into {table_name} failed: {e}")
-                            continue
+                        else:
+                            result.skipped_duplicates += 1
+                        continue
 
-                    new_count += 1
+                if commit:
+                    cols = ", ".join(self._quote_identifier(col) for col in row)
+                    placeholders = ", ".join(["?"] * len(row))
+                    db.execute(
+                        f"INSERT INTO {quoted_table} ({cols}) VALUES ({placeholders})",
+                        list(row.values()),
+                    )
+
+                new_count += 1
 
             if new_count > 0:
                 result.new_rows[table_name] = new_count
-
-        if commit:
-            db.commit()
 
     def _import_artifacts(self, artifacts_dir: Path) -> None:
         """Copy artifacts into local store."""

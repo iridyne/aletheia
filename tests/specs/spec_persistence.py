@@ -148,6 +148,24 @@ def test_import_table_authority_is_explicit_and_precedes_mutation():
     assert "return result" in src[gate_pos:mutation_pos]
 
 
+@spec_claim(
+    SpecClaim(
+        "PR-S07", "persistence_recovery_contract", "§5 import transaction", "L2b",
+        "JSONL rows are preloaded before the process-wide SQLite transaction and merge "
+        "uses one fail-closed write boundary without INSERT OR IGNORE",
+    ),
+)
+def test_import_merge_uses_one_authoritative_transaction_boundary():
+    src = (_ROOT / "aletheia" / "sync" / "importer.py").read_text(encoding="utf-8")
+    preload_pos = src.index("db_payloads = self._validate_db_payloads")
+    import_pos = src.index("self._import_db_tables(db_payloads", preload_pos)
+    transaction_pos = src.index("with transaction():", import_pos)
+
+    assert preload_pos < import_pos < transaction_pos
+    assert "INSERT OR IGNORE" not in src
+    assert "db.commit()" not in src
+
+
 # ---------------------------------------------------------------------------
 # L2c — Honesty tripwire: recovery FSM is NOT wired into startup (documented gap)
 # ---------------------------------------------------------------------------

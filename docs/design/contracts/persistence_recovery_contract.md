@@ -61,6 +61,7 @@ SAFE_FREEZE → RECOVERY_MODE          (只能经再对账退出冻结)
 - Export/Import Bundle(`sync/exporter.py`+`importer.py`+`conflicts.py`)、Backup/Restore(`backup/service.py`+`verify.py`+`restore.py`)：代码完整(ROADMAP Persistence track 表)，集成/实战验证待补。
 - Import 完整性是写入前硬门：必须存在 `checksums.txt`，每个条目必须格式合法、路径安全、唯一且哈希匹配；除 exporter 后写入的 `manifest.yaml` 外，bundle 内载荷必须全部被 checksum 声明。任一错误都会在数据库或 artifact 处理前终止，不能只记录错误后继续 merge。
 - JSONL merge 只授权 importer 中显式声明、且由 exporter 支持的 research/proposal/runtime 表。所有表名、JSON row shape 与本地列集合必须在首条写入前完成 preflight；未授权表、畸形 row 或未知列使整个 bundle 零写入。Full-backup 的 `app.db` 不经此 merge 路径。
+- JSONL 文件在写事务前完整读取；实际 merge 的全部 SQLite 行写入必须位于共享 `transaction()` 边界内，不能在锁内做文件 I/O。任一约束/SQLite 错误回滚全部 bundle 行，且 `new_rows` 不得包含已回滚行。
 - 红线：**绝不同步密钥或脏运行态**(计划 §0.3)；live gateway 不可双设备无锁写(§2 leader lock)。
 
 ## §6 AS-BUILT 差距清单（= 接 live 前的待接通项，触信任边界须 owner 授权）
@@ -76,5 +77,5 @@ SAFE_FREEZE → RECOVERY_MODE          (只能经再对账退出冻结)
 
 ## §7 Spec 锚点
 
-`spec_persistence.py`(结构 claim：event/artifact store callable、client_order_id 确定性、Import checksum/表授权写前硬门、FSM 转换表 + SAFE_FREEZE 强制存在、recovery 未接 runtime 的诚实 tripwire)。注册于 conformance(非 REQUIRED——本域部分实现，行为 claim 随接通补)。
+`spec_persistence.py`(结构 claim：event/artifact store callable、client_order_id 确定性、Import checksum/表授权写前硬门与事务原子性、FSM 转换表 + SAFE_FREEZE 强制存在、recovery 未接 runtime 的诚实 tripwire)。注册于 conformance(非 REQUIRED——本域部分实现，行为 claim 随接通补)。
 </content>
