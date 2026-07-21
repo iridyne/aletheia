@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
@@ -114,8 +114,9 @@ def persist_policy_epoch(epoch: PolicyEpoch) -> str:
             ),
             None,
         )
-        now = datetime.now(timezone.utc).isoformat()
+        now_dt = datetime.now(timezone.utc)
         if matching is not None:
+            now = now_dt.isoformat()
             db.execute(
                 "UPDATE learning_policy_epochs SET ended_at=? "
                 "WHERE epoch_kind=? AND ended_at IS NULL AND epoch_id!=?",
@@ -123,6 +124,25 @@ def persist_policy_epoch(epoch: PolicyEpoch) -> str:
             )
             return str(matching["epoch_id"])
 
+        latest = db.execute(
+            "SELECT started_at FROM learning_policy_epochs "
+            "WHERE epoch_kind=? "
+            "ORDER BY datetime(started_at) DESC, rowid DESC LIMIT 1",
+            (epoch.epoch_kind,),
+        ).fetchone()
+        if latest is not None:
+            latest_dt = datetime.fromisoformat(
+                str(latest["started_at"]).replace("Z", "+00:00")
+            )
+            if latest_dt.tzinfo is None:
+                latest_dt = latest_dt.replace(tzinfo=timezone.utc)
+            else:
+                latest_dt = latest_dt.astimezone(timezone.utc)
+            # The uniqueness key includes started_at, while Windows may return the
+            # same wall-clock tick for a rapid A -> B -> A rotation.
+            if latest_dt >= now_dt:
+                now_dt = latest_dt + timedelta(microseconds=1)
+        now = now_dt.isoformat()
         db.execute(
             "UPDATE learning_policy_epochs SET ended_at=? "
             "WHERE epoch_kind=? AND ended_at IS NULL",
