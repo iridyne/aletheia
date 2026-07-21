@@ -204,19 +204,19 @@ def test_causal_integrity_fk_scan(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# PL-EC-03  L2b  atomicity: fill error → Order stays 'error', no Fill/Position leak
+# PL-EC-03  L2b  atomicity: fill error rolls back Order/Fill/Position
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
         "PL-EC-03", "pipeline_execution_chain", "§5 atomicity", "L2b",
-        "When fill simulation raises mid-execution, the Order remains in 'error' "
-        "status (NOT silently 'pending') AND no Fill/Position rows leak",
+        "When fill simulation raises mid-execution, the atomic local Order/Fill/Position "
+        "transaction rolls back completely and no causal-chain rows leak",
     ),
 )
 def test_execution_chain_atomicity_on_fill_error(tmp_path, monkeypatch):
-    """Force insert_fill to raise and verify Order is marked 'error', no Fill leaked."""
+    """A failed Fill rolls back the complete local execution chain."""
     _setup_db(tmp_path, monkeypatch)
 
     from aletheia.execution import paper_broker
@@ -236,18 +236,6 @@ def test_execution_chain_atomicity_on_fill_error(tmp_path, monkeypatch):
         execution_mode="paper_internal",
     )
 
-    # Spy on insert_order to capture the created order id
-    captured_order_id = {}
-    original_insert_order = repo.insert_order
-
-    def _spy_insert_order(order):
-        captured_order_id["id"] = order.id
-        original_insert_order(order)
-
-    monkeypatch.setattr(paper_broker, "insert_order", _spy_insert_order)
-    monkeypatch.setattr(repo, "insert_order", _spy_insert_order)
-
-    # Force insert_fill to raise to simulate mid-execution failure
     def _raise_fill(fill):
         raise RuntimeError("fill_simulation_failed: disk full")
 
@@ -268,28 +256,15 @@ def test_execution_chain_atomicity_on_fill_error(tmp_path, monkeypatch):
         )
 
     db = get_db()
-
-    # Order row must exist — paper_broker inserts BEFORE fill
-    assert "id" in captured_order_id, "insert_order was never called"
-    order_id = captured_order_id["id"]
-
-    order_row = db.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
-    assert order_row is not None, "Order row must persist even after fill failure"
-
-    # No Fill rows for this order must have leaked
-    fills = db.execute("SELECT id FROM fills WHERE order_id=?", (order_id,)).fetchall()
-    assert len(fills) == 0, (
-        f"Fill rows leaked after mid-execution failure: {[dict(f) for f in fills]}"
-    )
-
-    # No Position rows for this proposal must have leaked
-    positions = db.execute(
-        "SELECT id FROM positions WHERE proposal_id=?", ("prop-pl-ec-03",)
-    ).fetchall()
-    assert len(positions) == 0, (
-        f"Position rows leaked after mid-execution failure: {[dict(p) for p in positions]}"
-    )
-
+    assert db.execute(
+        "SELECT COUNT(*) FROM orders WHERE proposal_id=?",
+        ("prop-pl-ec-03",),
+    ).fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 0
+    assert db.execute(
+        "SELECT COUNT(*) FROM positions WHERE proposal_id=?",
+        ("prop-pl-ec-03",),
+    ).fetchone()[0] == 0
 
 # ---------------------------------------------------------------------------
 # PL-EC-04  L2b  idempotency: re-submitting same proposal is rejected

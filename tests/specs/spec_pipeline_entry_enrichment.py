@@ -97,6 +97,7 @@ def test_broker_open_stamps_entry_metadata(
         quantity=0.01,
         price=59950.0,
         execution_mode=exec_mode,
+        leverage=2,
         agent_rationale="direct enrichment rationale",
         attribution_snapshot=json.dumps({
             "btc_entry_price": 60000.0,
@@ -115,6 +116,7 @@ def test_broker_open_stamps_entry_metadata(
         quantity=0.01,
         price=59950.0,
         execution_mode=exec_mode,
+        leverage=2,
     )
 
     position_id = _materialize_exchange_result(result)
@@ -175,6 +177,7 @@ def test_gateway_persists_decision_reasoning(tmp_path, monkeypatch):
         price=1551.57,
         stop_price=round(1551.57 * 0.98, 8),
         execution_mode="okx_demo",
+        leverage=2,
         agent_rationale=rationale,
     )
     if result.get("status") != "materialization_missing":
@@ -246,12 +249,14 @@ def test_close_routes_through_exchange(
         quantity=0.01,
         price=100.0,
         execution_mode=exec_mode,
+        leverage=2,
     )
     opened = broker.execute_live_order(
         proposal_id=proposal_id, risk_decision_id=risk_decision_id,
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         order_type="market", quantity=0.01, price=100.0,
         execution_mode=exec_mode,
+        leverage=2,
     )
     position_id = _materialize_exchange_result(opened)
 
@@ -318,12 +323,14 @@ def test_router_refuses_autonomous_live_close(tmp_path, monkeypatch):
         quantity=0.01,
         price=100.0,
         execution_mode="okx_live_limited",
+        leverage=2,
     )
     opened = execute_live_order(
         proposal_id="p-live-guard", risk_decision_id="rd-live-guard",
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         order_type="market", quantity=0.01, price=100.0,
         execution_mode="okx_live_limited",
+        leverage=2,
     )
     position_id = _materialize_exchange_result(opened)
 
