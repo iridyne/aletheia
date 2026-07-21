@@ -138,6 +138,11 @@ def _patch_filled_place_order(monkeypatch, client_module_path, fill_price):
 
     monkeypatch.setattr(client_cls, "place_order", fake_place_order)
     monkeypatch.setattr(client_cls, "close", fake_close, raising=False)
+    if hasattr(client_cls, "transfer"):
+        async def fake_transfer(self, amount, coin="USDT"):
+            return None
+
+        monkeypatch.setattr(client_cls, "transfer", fake_transfer)
 
 
 def _private_fill_row(
@@ -287,6 +292,7 @@ def test_broker_open_persists_stop_and_tp(
         quantity=0.01,
         price=60000.0,
         execution_mode=exec_mode,
+        leverage=2,
         stop_price=61200.0,
         take_profit=57600.0,
     )
@@ -300,6 +306,7 @@ def test_broker_open_persists_stop_and_tp(
         quantity=0.01,
         price=60000.0,
         execution_mode=exec_mode,
+        leverage=2,
         stop_price=61200.0,           # short → stop above entry
         take_profit_price=57600.0,    # short → TP below entry
     )
@@ -357,13 +364,14 @@ def test_broker_average_in_tightens_stop(
         quantity=0.01,
         price=60000.0,
         execution_mode=exec_mode,
+        leverage=2,
         stop_price=61500.0,
     )
     r1 = broker.execute_live_order(
         proposal_id=first_proposal_id, risk_decision_id=first_risk_decision_id,
         symbol="BTC/USDT", market_type="usdt_futures", direction="short",
         order_type="market", quantity=0.01, price=60000.0,
-        execution_mode=exec_mode, stop_price=61500.0,
+        execution_mode=exec_mode, leverage=2, stop_price=61500.0,
     )
     position_id = _materialize_exchange_result(r1)
     # Second fill into the same position with a tighter (lower) short stop at 60800.
@@ -379,13 +387,14 @@ def test_broker_average_in_tightens_stop(
         quantity=0.01,
         price=60000.0,
         execution_mode=exec_mode,
+        leverage=2,
         stop_price=60800.0,
     )
     r2 = broker.execute_live_order(
         proposal_id=second_proposal_id, risk_decision_id=second_risk_decision_id,
         symbol="BTC/USDT", market_type="usdt_futures", direction="short",
         order_type="market", quantity=0.01, price=60000.0,
-        execution_mode=exec_mode, stop_price=60800.0,
+        execution_mode=exec_mode, leverage=2, stop_price=60800.0,
     )
     _materialize_exchange_result(r2)
 
@@ -445,6 +454,7 @@ def test_gateway_demo_proposal_propagates_stop(tmp_path, monkeypatch):
         stop_price=stop,
         take_profit=take_profit,
         execution_mode="okx_demo",
+        leverage=2,
     )
 
     if result.get("status") != "materialization_missing":
