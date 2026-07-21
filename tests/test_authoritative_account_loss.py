@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 
@@ -316,3 +317,30 @@ def test_orphaned_ledger_entry_is_inline_reconciled_and_does_not_block():
     assert snapshot.available is True, f"Expected available, got: {snapshot.reason}"
     assert snapshot.source == "paper_account_ledger"
     assert abs(snapshot.realized_pnl_usdt - (-5.0)) < 1e-6
+
+
+def test_funding_settler_repairs_orphan_when_no_unsettled_rows_exist():
+    from aletheia.portfolio.paper_account import (
+        ensure_paper_account,
+        settle_unsettled_paper_closes,
+    )
+    from aletheia.storage import repositories as repo
+
+    ensure_paper_account()
+    _orphaned_paper_close("orphan-only", -4.0)
+
+    result = asyncio.run(settle_unsettled_paper_closes())
+
+    event = repo.get_db().execute(
+        "SELECT amount_usdt FROM paper_account_events "
+        "WHERE action='position_closed' AND position_id=?",
+        ("orphan-only",),
+    ).fetchone()
+    assert event is not None
+    assert float(event["amount_usdt"]) == -4.0
+    assert result == {
+        "settled": 1,
+        "still_pending": 0,
+        "gave_up": 0,
+        "errors": [],
+    }
