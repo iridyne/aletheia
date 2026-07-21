@@ -33,11 +33,16 @@ def compute_scorecard() -> dict:
     else:
         traffic_light = "green"
 
+    performance_gate = _check_positive_net_pnl()
     blockers = [c["detail"] for c in criteria if c["status"] == "fail"]
+    if performance_gate["status"] == "fail":
+        traffic_light = "red"
+        blockers.append(performance_gate["detail"])
 
     return {
         "composite_score": round(composite, 1),
         "traffic_light": traffic_light,
+        "performance_gate": performance_gate,
         "criteria": criteria,
         "blockers": blockers,
         "computed_at": datetime.now(timezone.utc).isoformat(),
@@ -55,6 +60,31 @@ def _genuine_closed_pnls(order_by_closed_at: bool = False) -> list[float]:
     if not order_by_closed_at:
         rows = list(reversed(rows))
     return [float(row["realized_pnl"]) for row in rows]
+
+
+def _check_positive_net_pnl() -> dict:
+    """Return the non-weighted profitability gate for live readiness."""
+    pnls = _genuine_closed_pnls()
+    if not pnls:
+        return {
+            "status": "not_available",
+            "eligible_trade_count": 0,
+            "net_realized_pnl": None,
+            "detail": "Eligible net realized PnL is not available",
+        }
+
+    net_pnl = round(sum(pnls), 8)
+    passed = net_pnl > 0
+    return {
+        "status": "pass" if passed else "fail",
+        "eligible_trade_count": len(pnls),
+        "net_realized_pnl": net_pnl,
+        "detail": (
+            f"Eligible net realized PnL {net_pnl:.2f} USDT is positive"
+            if passed
+            else f"Eligible net realized PnL {net_pnl:.2f} USDT must be > 0"
+        ),
+    }
 
 
 def _criterion(key: str, label: str, score: float, weight: float, detail: str) -> dict:
@@ -231,7 +261,11 @@ def _check_max_drawdown() -> dict:
             dd = peak - cum
             if dd > max_dd:
                 max_dd = dd
-        dd_pct = (max_dd / peak * 100) if peak > 0 else 0.0
+        dd_pct = (
+            max_dd / peak * 100
+            if peak > 0
+            else (100.0 if max_dd > 0 else 0.0)
+        )
         target = 10.0
         score = 100.0 if dd_pct <= target else max(0, (1 - (dd_pct - target) / target) * 100)
         return _criterion("max_drawdown", "Max Drawdown (<10%)", score, 0.135,

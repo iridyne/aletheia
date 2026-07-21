@@ -502,7 +502,7 @@ reconciled.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/settings/live-unlock` | Unlock live trading (requires `confirm=true`; first unlock also requires `acknowledge_first_unlock=true`) |
+| POST | `/settings/live-unlock` | Unlock live trading (requires `confirm=true`; first unlock also requires `acknowledge_first_unlock=true`; go-live scorecard must be >=70, green, and have no blockers) |
 | POST | `/settings/live-lock` | Lock live trading back to `live_disabled` |
 
 ---
