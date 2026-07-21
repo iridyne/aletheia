@@ -230,6 +230,24 @@ def test_backup_identity_is_not_timestamp_only():
     assert nonce_pos < staging_pos
 
 
+@spec_claim(
+    SpecClaim(
+        "PR-S12", "persistence_recovery_contract", "§5 restore snapshot identity", "L2b",
+        "Restore verifies and extracts one private per-call archive snapshot instead of "
+        "reopening the mutable source path after verification",
+    ),
+)
+def test_restore_verifies_and_extracts_the_same_snapshot():
+    src = (_ROOT / "aletheia" / "backup" / "restore.py").read_text(encoding="utf-8")
+    snapshot_pos = src.index("shutil.copy2(archive_path, snapshot_path)")
+    verify_pos = src.index("verify_backup(snapshot_path)", snapshot_pos)
+
+    assert snapshot_pos < verify_pos
+    assert "tarfile.open(snapshot_path" in src
+    assert "verify_backup(archive_path)" not in src
+    assert "tarfile.open(archive_path" not in src
+
+
 # ---------------------------------------------------------------------------
 # L2c — Honesty tripwire: recovery FSM is NOT wired into startup (documented gap)
 # ---------------------------------------------------------------------------

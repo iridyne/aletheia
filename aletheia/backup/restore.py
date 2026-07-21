@@ -2,6 +2,7 @@
 
 import shutil
 import tarfile
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -30,24 +31,43 @@ class RestoreResult:
 class RestoreService:
     """Restores workspace from a backup archive."""
 
+    @staticmethod
+    def _verified_snapshot(
+        archive_path: Path, workspace: Path, result: RestoreResult
+    ) -> Path | None:
+        """Copy once, then verify the immutable per-call archive snapshot."""
+        snapshot_path = workspace / "source-backup.tar.gz"
+        try:
+            shutil.copy2(archive_path, snapshot_path)
+        except OSError as exc:
+            result.errors.append(f"Failed to snapshot backup archive: {exc}")
+            return None
+
+        verify = verify_backup(snapshot_path)
+        if not verify.valid:
+            result.errors = [
+                f"Verification failed: {error}"
+                for error in verify.errors + verify.mismatches
+            ]
+            return None
+        return snapshot_path
+
     def dry_run(self, archive_path: Path, target_dir: Path) -> RestoreResult:
         """Preview restore without making changes."""
         result = RestoreResult()
         result.target_dir = str(target_dir)
 
-        # Verify first
-        verify = verify_backup(archive_path)
-        if not verify.valid:
-            result.errors = [f"Verification failed: {e}" for e in verify.errors + verify.mismatches]
-            return result
-
-        # Count what would be restored
-        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            with tarfile.open(archive_path, "r:gz") as tar:
-                tar.extractall(tmp_path, filter="data")
-            subdirs = [d for d in tmp_path.iterdir() if d.is_dir()]
+            snapshot_path = self._verified_snapshot(archive_path, tmp_path, result)
+            if snapshot_path is None:
+                return result
+
+            extract_dir = tmp_path / "extracted"
+            extract_dir.mkdir()
+            with tarfile.open(snapshot_path, "r:gz") as tar:
+                tar.extractall(extract_dir, filter="data")
+            subdirs = [d for d in extract_dir.iterdir() if d.is_dir()]
             if subdirs:
                 bundle_dir = subdirs[0]
                 for f in bundle_dir.rglob("*"):
@@ -62,20 +82,18 @@ class RestoreService:
         result = RestoreResult()
         result.target_dir = str(target_dir)
 
-        # Verify first
-        verify = verify_backup(archive_path)
-        if not verify.valid:
-            result.errors = [f"Verification failed: {e}" for e in verify.errors + verify.mismatches]
-            return result
-
-        # Extract
-        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            with tarfile.open(archive_path, "r:gz") as tar:
-                tar.extractall(tmp_path, filter="data")
+            snapshot_path = self._verified_snapshot(archive_path, tmp_path, result)
+            if snapshot_path is None:
+                return result
 
-            subdirs = [d for d in tmp_path.iterdir() if d.is_dir()]
+            extract_dir = tmp_path / "extracted"
+            extract_dir.mkdir()
+            with tarfile.open(snapshot_path, "r:gz") as tar:
+                tar.extractall(extract_dir, filter="data")
+
+            subdirs = [d for d in extract_dir.iterdir() if d.is_dir()]
             if not subdirs:
                 result.errors.append("Empty archive")
                 return result
