@@ -5,7 +5,8 @@ from pathlib import Path
 import yaml
 
 
-_WORKFLOW_PATH = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+_WORKFLOW_DIR = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+_WORKFLOW_PATH = _WORKFLOW_DIR / "ci.yml"
 _REQUIRED_GATE_NEEDS = {
     "secrets-scan",
     "backend",
@@ -18,10 +19,14 @@ _REQUIRED_GATE_NEEDS = {
 }
 
 
-def _workflow() -> dict:
+def _load_workflow(path: Path) -> dict:
     # BaseLoader preserves the literal YAML key `on` instead of applying YAML 1.1
     # boolean coercion. GitHub Actions uses `on` as a string key.
-    return yaml.load(_WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    return yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+
+def _workflow() -> dict:
+    return _load_workflow(_WORKFLOW_PATH)
 
 
 def _run_commands(job: dict) -> str:
@@ -30,6 +35,50 @@ def _run_commands(job: dict) -> str:
         for step in job.get("steps", [])
         if isinstance(step, dict)
     )
+
+
+def _runner_targets(job: dict) -> list[object]:
+    runs_on = job.get("runs-on")
+    if isinstance(runs_on, list):
+        return [runs_on]
+    if not isinstance(runs_on, str):
+        return []
+    if "matrix.runner" not in runs_on:
+        return [runs_on]
+
+    matrix = job.get("strategy", {}).get("matrix", {})
+    include = matrix.get("include", []) if isinstance(matrix, dict) else []
+    return [
+        entry["runner"]
+        for entry in include
+        if isinstance(entry, dict) and "runner" in entry
+    ]
+
+
+def test_all_workflow_jobs_target_self_hosted_runners() -> None:
+    failures: list[str] = []
+    workflow_paths = sorted((*_WORKFLOW_DIR.glob("*.yml"), *_WORKFLOW_DIR.glob("*.yaml")))
+
+    assert workflow_paths, "No GitHub Actions workflows were found."
+
+    for path in workflow_paths:
+        jobs = _load_workflow(path).get("jobs", {})
+        for job_name, job in jobs.items():
+            if not isinstance(job, dict):
+                failures.append(f"{path.name}:{job_name} is not a job mapping")
+                continue
+            targets = _runner_targets(job)
+            if not targets:
+                failures.append(f"{path.name}:{job_name} has no verifiable runs-on target")
+                continue
+            for target in targets:
+                rendered = " ".join(target) if isinstance(target, list) else str(target)
+                if "self-hosted" not in rendered:
+                    failures.append(
+                        f"{path.name}:{job_name} targets GitHub-hosted or unknown runner {rendered!r}"
+                    )
+
+    assert not failures, "All workflow jobs must use repository self-hosted runners:\n" + "\n".join(failures)
 
 
 def test_ci_triggers_pull_requests_master_pushes_and_manual_regression() -> None:
@@ -62,7 +111,7 @@ def test_operator_shell_has_an_independent_test_and_build_gate() -> None:
     job = _workflow()["jobs"]["operator-shell"]
     commands = _run_commands(job)
 
-    assert job["runs-on"] == "ubuntu-24.04"
+    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
     assert "working-directory" in str(job)
     assert "operator-shell" in str(job)
     assert "npm ci" in commands
@@ -86,7 +135,7 @@ def test_windows_runtime_smoke_runs_platform_specific_contracts() -> None:
     job = _workflow()["jobs"]["windows-runtime-smoke"]
     commands = _run_commands(job)
 
-    assert job["runs-on"] == "windows-latest"
+    assert job["runs-on"] == ["self-hosted", "Windows", "X64"]
     assert "test_event_loop_policy.py" in commands
     assert "test_pidfile.py" in commands
     assert "continue-on-error" not in str(job)
