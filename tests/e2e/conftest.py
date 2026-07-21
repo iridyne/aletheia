@@ -65,7 +65,11 @@ def e2e_db(_e2e_db_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def _mock_llm(monkeypatch):
     """Block real LLM calls — e2e tests verify data flow, not LLM quality."""
-    pass
+
+    def blocked_get_provider(*_args, **_kwargs):
+        raise AssertionError("real LLM provider resolution is forbidden in E2E tests")
+
+    monkeypatch.setattr("aletheia.agents.helpers.get_provider", blocked_get_provider)
 
 
 @pytest.fixture(autouse=True)
