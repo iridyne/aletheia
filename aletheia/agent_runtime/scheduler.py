@@ -3104,16 +3104,36 @@ _DC_DEADLINE_S = 50.0
 _DC_CONTEXT_DEADLINE_S = 55.0
 
 
+def _consume_detached_task(task: asyncio.Task) -> None:
+    """Retrieve delayed cancellation outcomes so the event loop stays quiet."""
+    try:
+        task.result()
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
+async def _wait_without_cancel_drain(
+    awaitable: Awaitable[object],
+    *,
+    timeout: float,
+) -> object:
+    """Time-box work without waiting for cancellation-resistant cleanup."""
+    task = asyncio.ensure_future(awaitable)
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        task.add_done_callback(_consume_detached_task)
+        task.cancel()
+        raise
+
 async def _bounded(coro, label: str, cap: float, deadline: float):
-    """Await `coro` under min(cap, time-left-to-deadline). On timeout/skip/error
-    return None and keep the job moving — never let one collector hang the tick.
+    """Await the coroutine under the smaller collector or lane deadline.
 
     Python 3.12 changed asyncio.wait_for: on timeout it cancels the inner task
-    and then *awaits the cancellation* before raising TimeoutError.  CCXT coroutines
-    (load_markets / fetch_tickers) can take tens of seconds to respond to
-    CancelledError, causing the lane to stall well past the cap.  Fix: wrap the
-    real coro in a Task and shield it so wait_for cancels the shield (instant),
-    then fire-and-forget task.cancel() without awaiting it.
+    and then awaits cancellation before raising TimeoutError. CCXT coroutines
+    can take tens of seconds to respond to CancelledError, causing the lane to
+    stall well past the cap. The shared timeout helper shields the real task,
+    cancels it without waiting, and consumes its eventual outcome.
     """
     import time as _time
     started = _time.monotonic()
@@ -3125,9 +3145,11 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
         _record_collector_health(label, "skipped_budget", duration_ms=0)
         return None
 
-    task = asyncio.ensure_future(coro)
     try:
-        result = await asyncio.wait_for(asyncio.shield(task), timeout=min(cap, remaining))
+        result = await _wait_without_cancel_drain(
+            coro,
+            timeout=min(cap, remaining),
+        )
         from aletheia.data.collector_health import classify_collector_result
 
         if label not in _PERSISTENCE_GATED_COLLECTOR_HEALTH:
@@ -3141,7 +3163,6 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
         elapsed_ms = int((_time.monotonic() - started) * 1000)
         logger.warning("data_collectors: %s timed out (%.0fs cap) — skipped this tick",
                        label, min(cap, remaining))
-        task.cancel()  # fire-and-forget: don't await, avoids 3.12 cancellation hang
         _record_collector_health(
             label,
             "timed_out",
@@ -3152,7 +3173,6 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
     except Exception as e:
         elapsed_ms = int((_time.monotonic() - started) * 1000)
         logger.debug("data_collectors: %s failed: %s", label, e)
-        task.cancel()
         _record_collector_health(
             label,
             "failed",
@@ -3160,7 +3180,6 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
             error_code=type(e).__name__,
         )
         return None
-
 
 async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
     import time as _time
@@ -3475,7 +3494,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
             from aletheia.data.collectors.derivatives import DerivativesCollector
 
             try:
-                history_result = await asyncio.wait_for(
+                history_result = await _wait_without_cancel_drain(
                     DerivativesCollector().collect_history(symbols),
                     timeout=min(12.0, remaining),
                 )

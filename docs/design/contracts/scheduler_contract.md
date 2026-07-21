@@ -198,13 +198,14 @@ daemon worker。两条 lane 的 outstanding 容量都固定为 16，不再为每
 - `data_collectors` 只承担主交易所实时 orderbook/Funding/OI；`data_collector_context` 有独立的 55 秒时间盒，
   负责较慢的跨源上下文。两个 job 共享单线程 `io` executor，因此主交易所 CCXT 仍串行；context job 内仅独立
   公共 HTTP 请求可并发等待。LSR 和稀疏 derivatives history 都不得占用实时 Funding/OI 的时间盒。
-- `_bounded()` 辅助函数对所有 collector 强制执行 `min(cap, 时间盒剩余)` 时间上界。Python 3.12 起
-  `asyncio.wait_for` 在超时后会等待内部 task 响应取消再抛出 TimeoutError，CCXT 的
-  `load_markets`/`fetch_tickers` 对取消信号响应很慢（实测最多延迟 30+ 秒）。`_bounded()` 已改用
-  `asyncio.shield(task)` + `task.cancel()` 不等待模式：超时后立即返回 `None`，后台 task 异步取消，
-  lane 不再被挂起。各 collector 当前 cap：`microstructure` 18s、`derivatives` 25s（核心 lane，
-  串行，deadline 50s）；`volume_scanner` 20s、`hyperliquid`/`defillama` 12s、`coingecko_top` 15s、
-  `macro` 25s（context lane，wave 并发，deadline 55s）。
+- _wait_without_cancel_drain() 是 collector 的统一非阻塞取消入口，_bounded() 和稀疏
+  derivatives history 都必须使用它。Python 3.12 起 asyncio.wait_for 在超时后会等待内部
+  task 响应取消再抛出 TimeoutError，CCXT 的 load_markets/fetch_tickers 对取消信号响应很慢
+  （实测最多延迟 30+ 秒）。该 helper 使用 asyncio.shield(task) + task.cancel() 不等待模式，
+  并消费 task 的延迟结束结果：超时后 caller 立即恢复，lane 不再被取消清理挂起。各 collector
+  当前 cap：microstructure 18s、derivatives 25s（核心 lane，串行，deadline 50s）；
+  volume_scanner 20s、hyperliquid/defillama 12s、coingecko_top 15s、macro 25s，
+  稀疏 derivatives history 12s（context lane，deadline 55s）。
 - `market_data` 与 `price_feed` 即使保留了同轮成功抓取，只要返回 `errors` 非空，就分别以
   `market_data_reported_errors` / `price_feed_reported_errors` 登记任务失败；空观察列表且 `errors=[]` 仍是合法成功。
 - `exchange_sync.sync_all_exchanges()` 的公开契约规定 `None` 是所有账户视图均失败，scheduler 以

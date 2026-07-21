@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -214,6 +215,39 @@ def test_shadow_context_lane_does_not_inherit_exhausted_core_budget(monkeypatch)
     assert ("hyperliquid", "skipped_budget") not in health
     assert ("defillama", "skipped_budget") not in health
 
+
+def test_nonblocking_timeout_does_not_wait_for_cancel_cleanup():
+    from aletheia.agent_runtime import scheduler
+
+    async def scenario():
+        release_cleanup = asyncio.Event()
+        cancellation_seen = asyncio.Event()
+
+        async def cancellation_resistant():
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                cancellation_seen.set()
+                await release_cleanup.wait()
+
+        loop = asyncio.get_running_loop()
+        safety_release = loop.call_later(0.3, release_cleanup.set)
+        started = time.perf_counter()
+        try:
+            with pytest.raises(asyncio.TimeoutError):
+                await scheduler._wait_without_cancel_drain(
+                    cancellation_resistant(),
+                    timeout=0.01,
+                )
+            elapsed = time.perf_counter() - started
+            await asyncio.wait_for(cancellation_seen.wait(), timeout=0.1)
+            assert elapsed < 0.15
+        finally:
+            release_cleanup.set()
+            safety_release.cancel()
+            await asyncio.sleep(0)
+
+    asyncio.run(scenario())
 
 def test_async_timeout_worker_reuses_one_thread(monkeypatch):
     """Repeated cooperative timeouts do not allocate disposable worker threads."""
