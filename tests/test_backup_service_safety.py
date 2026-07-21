@@ -109,3 +109,24 @@ def test_corrupt_database_aborts_backup_without_publishing_archive(tmp_path: Pat
 
     assert list((data_dir / "backups").glob("*.tar.gz")) == []
     assert list((data_dir / "backups").glob("*_staging")) == []
+
+
+def test_tar_failure_never_publishes_or_lists_a_partial_archive(
+    tmp_path: Path, monkeypatch
+):
+    """#291: the public backup filename appears only after tar construction closes."""
+    data_dir = tmp_path / "runtime"
+    service = BackupService(data_dir=data_dir)
+
+    def fail_archive_add(self, *args, **kwargs):
+        raise OSError("injected tar write failure")
+
+    monkeypatch.setattr(backup_service_module.tarfile.TarFile, "add", fail_archive_add)
+
+    with pytest.raises(OSError, match="injected tar write failure"):
+        service.create_backup(label="failed")
+
+    backup_dir = data_dir / "backups"
+    assert list(backup_dir.glob("backup_*.tar.gz")) == []
+    assert list(backup_dir.glob("*.partial")) == []
+    assert service.list_backups() == []

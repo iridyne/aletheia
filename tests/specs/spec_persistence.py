@@ -285,6 +285,23 @@ def test_restore_has_an_explicit_process_failure_rollback_path():
     assert "Restore rollback incomplete" in src
 
 
+@spec_claim(
+    SpecClaim(
+        "PR-S15", "persistence_recovery_contract", "§5 backup archive publication", "L2b",
+        "Backup tar construction uses a non-public partial path and atomically publishes "
+        "the final archive only after the tar closes successfully",
+    ),
+)
+def test_backup_archive_is_published_only_after_successful_construction():
+    src = (_ROOT / "aletheia" / "backup" / "service.py").read_text(encoding="utf-8")
+    partial_open_pos = src.index('tarfile.open(partial_archive_path, "w:gz")')
+    publish_pos = src.index("partial_archive_path.replace(archive_path)", partial_open_pos)
+    cleanup_pos = src.index("if partial_archive_path.exists()", publish_pos)
+
+    assert ".tar.gz.partial" in src
+    assert partial_open_pos < publish_pos < cleanup_pos
+
+
 # ---------------------------------------------------------------------------
 # L2c — Honesty tripwire: recovery FSM is NOT wired into startup (documented gap)
 # ---------------------------------------------------------------------------

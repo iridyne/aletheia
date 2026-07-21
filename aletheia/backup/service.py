@@ -121,6 +121,7 @@ class BackupService:
 
         staging = self._contained_backup_path(f"_{backup_id}_staging")
         archive_path = self._contained_backup_path(f"{backup_id}.tar.gz")
+        partial_archive_path = self._contained_backup_path(f".{backup_id}.tar.gz.partial")
         staging.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -217,8 +218,9 @@ class BackupService:
             )
 
             # Create tar.gz
-            with tarfile.open(archive_path, "w:gz") as tar:
+            with tarfile.open(partial_archive_path, "w:gz") as tar:
                 tar.add(staging, arcname=backup_id)
+            partial_archive_path.replace(archive_path)
 
             # Rotate older archives — every write path funnels through here,
             # so keeping the count bounded per-write means the standalone
@@ -232,6 +234,8 @@ class BackupService:
             return archive_path
 
         finally:
+            if partial_archive_path.exists():
+                partial_archive_path.unlink()
             if staging.exists():
                 shutil.rmtree(staging)
 
