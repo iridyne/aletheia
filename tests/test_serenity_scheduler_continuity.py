@@ -133,7 +133,17 @@ def test_gateway_startup_recovers_all_interrupted_runs():
     assert repo.get_serenity_research_run(running.id)["status"] == "failed"
 
 
-def test_doctor_does_not_treat_recent_failure_as_fresh():
+def test_doctor_does_not_treat_recent_failure_as_fresh(monkeypatch):
+    import aletheia.config.loader as _loader
+    _orig = _loader.load_config
+
+    def _enabled():
+        from aletheia.config.schema import SerenityConfig
+        cfg = _orig()
+        return cfg.model_copy(update={"serenity": SerenityConfig(enabled=True)})
+
+    monkeypatch.setattr(_loader, "load_config", _enabled)
+
     from aletheia.diagnostics.doctor import Report, _probe_serenity_pipeline
 
     repo.insert_serenity_research_run(SerenityResearchRun(
