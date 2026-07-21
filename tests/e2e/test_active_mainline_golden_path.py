@@ -33,7 +33,12 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     """
     from aletheia.config.loader import load_config, save_config
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import MarketSnapshot, Opportunity
+    from aletheia.storage.models import (
+        MarketSnapshot,
+        Opportunity,
+        UniverseAsset,
+        UniverseFeatureSnapshot,
+    )
 
     from aletheia.agent_runtime import runtime_session as rs
 
@@ -140,6 +145,26 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     assert pending["symbol"] == opportunity.symbol
     assert pending["direction"] == opportunity.direction_bias
     assert pending["market_type"] == opportunity.market
+
+    # Operator judgment requires technical-feature authority distinct from the
+    # execution-price snapshot above. Preserve the frozen causal path while
+    # supplying the exact fresh candidate evidence required in production.
+    repo.upsert_universe_asset(UniverseAsset(
+        id="golden-asset",
+        venue="fixture",
+        market_type="spot",
+        symbol="BTC/USDT",
+    ))
+    repo.insert_universe_feature_snapshots_batch([UniverseFeatureSnapshot(
+        id="golden-feature",
+        asset_id="golden-asset",
+        ts=datetime.now(timezone.utc).isoformat(),
+        rsi_14=68.0,
+        return_1h=3.2,
+        return_4h=4.0,
+        return_24h=6.0,
+        data_freshness_sec=0,
+    )])
 
     async def deterministic_structured(*args, **kwargs):
         return ({
