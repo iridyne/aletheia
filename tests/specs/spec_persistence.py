@@ -196,6 +196,23 @@ def test_backup_verification_requires_manifest_completeness():
     assert "actual_paths - declared_paths" in src
 
 
+@spec_claim(
+    SpecClaim(
+        "PR-S10", "persistence_recovery_contract", "§5 backup path containment", "L2b",
+        "Backup labels are validated as one bounded filename component and resolved output "
+        "paths remain direct children of the runtime backup directory",
+    ),
+)
+def test_backup_label_and_output_path_are_bounded():
+    src = (_ROOT / "aletheia" / "backup" / "service.py").read_text(encoding="utf-8")
+    validation_pos = src.index("label = self._validate_label(label)")
+    staging_pos = src.index("staging.mkdir", validation_pos)
+
+    assert "_BACKUP_LABEL_RE.fullmatch" in src
+    assert "candidate.parent != backup_root" in src
+    assert validation_pos < staging_pos
+
+
 # ---------------------------------------------------------------------------
 # L2c — Honesty tripwire: recovery FSM is NOT wired into startup (documented gap)
 # ---------------------------------------------------------------------------

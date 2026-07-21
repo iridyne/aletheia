@@ -1,6 +1,7 @@
 """Backup service — creates and manages workspace backups."""
 
 import logging
+import re
 import shutil
 import tarfile
 from datetime import datetime, timezone
@@ -17,6 +18,7 @@ logger = logging.getLogger("aletheia.backup.service")
 # is removed after each new backup write and can also be reaped standalone by
 # the scheduler.
 DEFAULT_KEEP_RECENT = 7
+_BACKUP_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9_-])?$")
 
 
 def _utcnow() -> str:
@@ -64,6 +66,24 @@ class BackupService:
         self._backup_dir.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
+    def _validate_label(label: str | None) -> str | None:
+        if label is None:
+            return None
+        if not _BACKUP_LABEL_RE.fullmatch(label):
+            raise ValueError(
+                "Backup label must be 1-64 ASCII letters, digits, dots, underscores, "
+                "or hyphens; it must start with a letter or digit and cannot end in a dot"
+            )
+        return label
+
+    def _contained_backup_path(self, name: str) -> Path:
+        backup_root = self._backup_dir.resolve()
+        candidate = (backup_root / name).resolve()
+        if candidate.parent != backup_root:
+            raise ValueError("Backup path must remain directly under the backup directory")
+        return candidate
+
+    @staticmethod
     def _snapshot_sqlite_db(src: Path, dst: Path) -> None:
         """Copy a SQLite database using Connection.backup() so WAL-mode commits
         that haven't been checkpointed yet still make it into the archive.
@@ -91,12 +111,14 @@ class BackupService:
 
     def create_backup(self, label: str | None = None) -> Path:
         """Create a full backup of the workspace. Returns archive path."""
+        label = self._validate_label(label)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         backup_id = f"backup_{timestamp}"
-        if label:
+        if label is not None:
             backup_id = f"backup_{label}_{timestamp}"
 
-        staging = self._backup_dir / f"_{backup_id}_staging"
+        staging = self._contained_backup_path(f"_{backup_id}_staging")
+        archive_path = self._contained_backup_path(f"{backup_id}.tar.gz")
         staging.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -193,7 +215,6 @@ class BackupService:
             )
 
             # Create tar.gz
-            archive_path = self._backup_dir / f"{backup_id}.tar.gz"
             with tarfile.open(archive_path, "w:gz") as tar:
                 tar.add(staging, arcname=backup_id)
 
