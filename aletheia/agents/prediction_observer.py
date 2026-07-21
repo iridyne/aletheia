@@ -18,6 +18,7 @@ Design choices:
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -37,6 +38,8 @@ from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 
 _VALID_DIRECTIONS = {"long", "short", "neutral"}
 _VALID_CONFIDENCE = {"high", "medium", "speculative"}
+_OPPORTUNITY_SCANNER_FAMILY = "prediction_market"
+_OPPORTUNITY_TTL = timedelta(minutes=30)
 
 logger = logging.getLogger("aletheia.agents.prediction_observer")
 
@@ -277,7 +280,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
 
     direction = "neutral"
     confidence = "speculative"
-    confidence_score: int | None = None
+    confidence_score = 0
     rationale = ""
     observations: list[str] = []
 
@@ -312,6 +315,9 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
     # Create one Opportunity per fetched market — capture all signals.
     # The LLM read applies to the top market; others get a heuristic bias.
     opps_created = 0
+    opportunity_valid_until = (
+        datetime.now(timezone.utc) + _OPPORTUNITY_TTL
+    ).isoformat()
     for i, market in enumerate(markets):
         q = market.question
         symbol_slug = (q[:77] + "...") if len(q) > 80 else q
@@ -358,6 +364,8 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
             confidence_score=m_score,
             source_agent="prediction_observer",
             linked_strategy_id=linked_strategy_id,
+            scanner_family=_OPPORTUNITY_SCANNER_FAMILY,
+            valid_until=opportunity_valid_until,
             asset_class="prediction",
             execution_eligible=False,
             metadata=_build_market_metadata(market, markets_scanned=len(markets)),

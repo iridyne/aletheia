@@ -162,7 +162,8 @@ def test_stock_observer_not_registered_in_scheduler():
     SpecClaim(
         "OBS-S03", "agent_contracts", "§4 prediction_observer opportunity invariant", "L2c",
         "Every Opportunity constructed in prediction_observer has "
-        "execution_eligible=False and asset_class='prediction'",
+        "execution_eligible=False, asset_class='prediction', and complete writer-owned "
+        "scanner/expiry/confidence fields",
     ),
 )
 def test_prediction_observer_opportunity_kwargs():
@@ -200,12 +201,17 @@ def test_prediction_observer_opportunity_kwargs():
             f"Opportunity() at line {call.lineno}: asset_class={ast.unparse(ac)!r}, "
             "expected 'prediction'"
         )
+        for field in ("scanner_family", "valid_until", "confidence_score"):
+            assert field in kwargs, (
+                f"Opportunity() at line {call.lineno} is missing {field} kwarg"
+            )
 
 
 @spec_claim(
     SpecClaim(
         "OBS-S04", "agent_contracts", "§4 equity_observer opportunity invariant", "L2c",
-        "Every Opportunity constructed in equity_observer has execution_eligible=False",
+        "Every Opportunity constructed in equity_observer has execution_eligible=False "
+        "and complete writer-owned scanner/expiry/confidence fields",
     ),
 )
 def test_equity_observer_opportunity_execution_eligible():
@@ -232,6 +238,10 @@ def test_equity_observer_opportunity_execution_eligible():
             f"Opportunity() at line {call.lineno}: execution_eligible={ast.unparse(val)!r}, "
             "expected False"
         )
+        for field in ("scanner_family", "valid_until", "confidence_score"):
+            assert field in kwargs, (
+                f"Opportunity() at line {call.lineno} is missing {field} kwarg"
+            )
 
 
 # ---------------------------------------------------------------------------

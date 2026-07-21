@@ -8,6 +8,7 @@ xStocks (AAPLON/USDT etc.) are Bitget tokenized equity tokens:
 
 import asyncio
 import sqlite3
+from datetime import datetime, timezone
 
 import pytest
 
@@ -70,7 +71,10 @@ def test_xstocks_instruments_empty_when_not_configured(tmp_path, monkeypatch):
 
 # --- equity_observer integration ---
 
-def test_equity_observer_creates_equity_opportunity(tmp_path, monkeypatch):
+@pytest.mark.parametrize("llm_available", [True, False])
+def test_equity_observer_creates_equity_opportunity(
+    tmp_path, monkeypatch, llm_available
+):
     """equity_observer writes asset_class=equity, execution_eligible=False for equity tickers."""
     _setup(tmp_path, monkeypatch)
 
@@ -94,6 +98,8 @@ def test_equity_observer_creates_equity_opportunity(tmp_path, monkeypatch):
 
     # Stub LLM.
     async def fake_llm(*a, **kw):
+        if not llm_available:
+            return None, "provider_unavailable"
         return ({"direction_bias": "long", "confidence": "medium",
                  "confidence_score": 65, "rationale": "equity test",
                  "key_observations": ["price above SMA50"]}, None)
@@ -110,6 +116,9 @@ def test_equity_observer_creates_equity_opportunity(tmp_path, monkeypatch):
     assert opp["asset_subclass"] == "equity_daily"
     assert opp["execution_eligible"] == 0, "equity opportunities must not be execution-eligible"
     assert opp["symbol"] == "AAPL/USDT"
+    assert opp["scanner_family"] == "equity_daily"
+    assert datetime.fromisoformat(opp["valid_until"]) > datetime.now(timezone.utc)
+    assert opp["confidence_score"] == (65 if llm_available else 0)
 
     from aletheia.agents.helpers import _release_run_counter
     _release_run_counter("run-eq-1")

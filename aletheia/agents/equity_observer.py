@@ -27,6 +27,7 @@ Design notes:
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -48,6 +49,8 @@ _VALID_CONFIDENCE = {"high", "medium", "speculative"}
 _DAILY_BARS = 90
 _XSTOCK_DEVIATION_ALERT_PCT = 2.0
 _XSTOCK_DEVIATION_ANOMALY_PCT = 5.0
+_OPPORTUNITY_SCANNER_FAMILY = "equity_daily"
+_OPPORTUNITY_TTL = timedelta(hours=24)
 
 
 class EquityRead(BaseModel):
@@ -349,7 +352,7 @@ async def _analyze_equity(
 
     direction = "neutral"
     confidence = "speculative"
-    confidence_score: int | None = None
+    confidence_score = 0
     rationale = ""
     observations: list[str] = []
     llm_error: str | None = None
@@ -429,6 +432,8 @@ async def _analyze_equity(
         confidence_score=confidence_score,
         source_agent="equity_observer",
         linked_strategy_id=linked_strategy_id,
+        scanner_family=_OPPORTUNITY_SCANNER_FAMILY,
+        valid_until=(datetime.now(timezone.utc) + _OPPORTUNITY_TTL).isoformat(),
         asset_class="equity",
         asset_subclass="equity_daily",
         canonical_ticker=ticker,
