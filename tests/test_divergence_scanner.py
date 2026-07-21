@@ -1,5 +1,6 @@
 """Tests for divergence_scanner — Polymarket/crypto price divergence detection."""
 
+import asyncio
 import json
 import pytest
 from datetime import datetime, timezone, timedelta
@@ -226,6 +227,42 @@ async def test_divergence_scanner_creates_opportunity(tmp_path, monkeypatch):
         "prediction_polarity_version"
     ] == "polarity-v1"
     mock_provider.get_ticker.assert_awaited_once_with("BTC/USDT")
+    assert mock_provider.close.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_divergence_scanner_closes_provider_when_cancelled(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+
+    now = datetime.now(timezone.utc).isoformat()
+    repo._insert("prediction_markets", {
+        "id": "pm_cancelled",
+        "event_id": "ev_cancelled",
+        "source": "polymarket",
+        "external_market_id": "ext_cancelled",
+        "question": "Will Bitcoin reach $150k by end of 2026?",
+        "yes_probability": 0.72,
+        "no_probability": 0.28,
+        "probability_change_24h": 0.15,
+        "volume_24h": 120_000.0,
+        "liquidity": 80_000.0,
+        "status": "active",
+        "updated_at": now,
+    })
+
+    mock_provider = AsyncMock()
+    mock_provider.get_ticker.side_effect = asyncio.CancelledError
+
+    with patch(
+        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        return_value=mock_provider,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await run_divergence_scanner(permission_mode="Paper")
+
+    mock_provider.close.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
