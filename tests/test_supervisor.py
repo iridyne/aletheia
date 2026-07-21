@@ -108,13 +108,18 @@ def test_run_supervised_default_uses_frontdoor_and_internal_backend_port(tmp_pat
         return FakeFrontdoor()
 
     monkeypatch.setattr(runner, "_ensure_frontdoor_running", fake_ensure_frontdoor)
+    monkeypatch.setattr(runner, "_spawn_collector_process", lambda _cfg: None)
     monkeypatch.setattr(runner, "_stop_vite_watch", lambda proc: None)
     monkeypatch.setattr(runner, "kill_pid_tree", lambda pid: captured.setdefault("killed_frontdoor", pid))
 
-    def fake_spawn_server(cfg, *, port=None, frontdoor_holder=None):
+    def fake_spawn_server(
+        cfg, *, port=None, frontdoor_holder=None, collector_holder=None,
+    ):
         captured["backend_port"] = port
         captured["frontdoor_holder"] = frontdoor_holder
         captured["frontdoor_proc"] = frontdoor_holder[0] if frontdoor_holder else None
+        captured["collector_holder"] = collector_holder
+        captured["collector_proc"] = collector_holder[0] if collector_holder else None
         return 0
 
     monkeypatch.setattr(runner, "_spawn_server", fake_spawn_server)
@@ -128,6 +133,7 @@ def test_run_supervised_default_uses_frontdoor_and_internal_backend_port(tmp_pat
     assert captured["backend_port"] == expected_backend_port
     # _spawn_server receives the live frontdoor via the mutable holder.
     assert isinstance(captured["frontdoor_proc"], FakeFrontdoor)
+    assert isinstance(captured["collector_holder"], list)
     assert captured["killed_frontdoor"] == 1234
 
 
