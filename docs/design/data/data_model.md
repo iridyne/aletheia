@@ -603,3 +603,8 @@ state，不得进入 telemetry prune allowlist。`OI-B01` 已接入 reconciler�
 行；重复探测只更新同一行并清零干净观察计数。恢复至少需要两次相隔五分钟的干净观察，再由明确
 actor/reason 执行 resolution。进程重启、一次干净轮询或配置中 Learning 为 enabled 均不能绕过该行。
 该表和两张 disappearance evidence 表一样属于不可裁剪的可信状态。
+When local-paper funding recovery becomes economically complete,
+positions.realized_pnl and the matching paper_account_events.position_closed
+row commit in one SQLite transaction. The periodic settler also scans orphaned
+rows even when no NULL-PnL close remains.
+

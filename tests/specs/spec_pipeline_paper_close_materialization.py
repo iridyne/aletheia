@@ -1506,3 +1506,61 @@ def test_overview_hero_unblocks_when_all_unsettled_closes_are_terminal(
 
     portfolio_after = compute_portfolio(execution_mode="paper_internal")
     assert portfolio_after["total_value_usdt"] is None
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PCM-18",
+        "pipeline_paper_close_materialization",
+        "atomic paper funding settlement",
+        "L2c",
+        "A recovered paper_internal funding result commits positions.realized_pnl "
+        "and exactly one paper_account_events.position_closed row atomically; a "
+        "cash-ledger write failure leaves the Position economics unsettled.",
+        status="implemented",
+    )
+)
+def test_recovered_funding_economics_roll_back_when_cash_ledger_write_fails(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from aletheia.portfolio import paper_account as pa
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    pa.ensure_paper_account()
+    _seed_stuck_paper_close(
+        position_id="pos-atomic-funding",
+        symbol="BTC/USDT",
+        closed_at=datetime.now(timezone.utc),
+    )
+    original_insert = repo.insert_paper_account_event
+
+    def fail_close_event(event):
+        if event.action == "position_closed":
+            raise RuntimeError("cash ledger unavailable")
+        return original_insert(event)
+
+    monkeypatch.setattr(repo, "insert_paper_account_event", fail_close_event)
+
+    with pytest.raises(RuntimeError, match="cash ledger unavailable"):
+        pa._settle_position_economics(
+            "pos-atomic-funding",
+            realized_pnl=0.25,
+            funding_cost=0.05,
+            outcome_eligible=True,
+            outcome_exclusion_reason="",
+        )
+
+    stored = repo._select_one("positions", "pos-atomic-funding")
+    assert stored["realized_pnl"] is None
+    assert stored["funding_cost"] is None
+    assert stored["funding_source"] == "unavailable"
+    ledger_count = get_db().execute(
+        "SELECT COUNT(*) FROM paper_account_events "
+        "WHERE action='position_closed' AND position_id=?",
+        ("pos-atomic-funding",),
+    ).fetchone()[0]
+    assert ledger_count == 0
