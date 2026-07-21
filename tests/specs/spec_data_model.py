@@ -575,7 +575,9 @@ def test_pi_decision_carries_opportunity_id(tmp_path, monkeypatch):
 
     rows = repo.list_pi_decisions(limit=5)
     assert rows, "pi_decisions must have at least one row after record_decision()"
-    latest = rows[0]
+    final_rows = [row for row in rows if row.get("action") == "trade"]
+    assert len(final_rows) == 1, "record_decision() must persist one final trade row"
+    latest = final_rows[0]
     assert latest.get("opportunity_id") == test_opp_id, (
         f"opportunity_id mismatch: expected {test_opp_id!r}, got {latest.get('opportunity_id')!r}. "
         "A13 fix: commands.py and reflection.py must wire opportunity_id through."
