@@ -166,6 +166,21 @@ def test_import_merge_uses_one_authoritative_transaction_boundary():
     assert "db.commit()" not in src
 
 
+@spec_claim(
+    SpecClaim(
+        "PR-S08", "persistence_recovery_contract", "§5 import staging isolation", "L2b",
+        "Every import allocates a unique staging directory under the runtime data root "
+        "and removes it in the existing finally cleanup",
+    ),
+)
+def test_import_staging_is_unique_per_invocation():
+    src = (_ROOT / "aletheia" / "sync" / "importer.py").read_text(encoding="utf-8")
+    assert "tempfile.mkdtemp" in src
+    assert 'prefix="import-"' in src
+    assert 'self._data_dir / "tmp"' in src
+    assert '"import_staging"' not in src
+
+
 # ---------------------------------------------------------------------------
 # L2c — Honesty tripwire: recovery FSM is NOT wired into startup (documented gap)
 # ---------------------------------------------------------------------------

@@ -426,6 +426,43 @@ def test_import_merge_accepts_a_valid_checksummed_bundle(tmp_path, monkeypatch):
     assert imported == 1
 
 
+def test_import_uses_a_unique_cleaned_staging_directory_per_invocation(
+    tmp_path, monkeypatch
+):
+    """#277: overlapping imports must never extract into a shared directory."""
+    _setup_env(tmp_path, monkeypatch)
+    first_root = tmp_path / "first_bundle"
+    second_root = tmp_path / "second_bundle"
+    first_root.mkdir()
+    second_root.mkdir()
+    first_archive = _build_bundle_with_row(
+        first_root, "ps_lessons", _import_lesson_row("staging-first")
+    )
+    second_archive = _build_bundle_with_row(
+        second_root, "ps_lessons", _import_lesson_row("staging-second")
+    )
+
+    destinations: list[Path] = []
+    original_extractall = tarfile.TarFile.extractall
+
+    def record_extract_destination(self, path, *args, **kwargs):
+        destinations.append(Path(path))
+        return original_extractall(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(tarfile.TarFile, "extractall", record_extract_destination)
+
+    from aletheia.sync.importer import ImportService
+
+    service = ImportService(data_dir=tmp_path)
+    assert service.dry_run(first_archive).errors == []
+    assert service.dry_run(second_archive).errors == []
+
+    assert len(destinations) == 2
+    assert destinations[0] != destinations[1]
+    assert all(path.parent == tmp_path / "tmp" for path in destinations)
+    assert all(not path.exists() for path in destinations)
+
+
 def test_import_diverged_row_recorded_as_conflict_not_skipped_duplicate(tmp_path, monkeypatch):
     """#64: a bundle row whose PK already exists locally BUT with different
     column values must land in `conflicts`, not `skipped_duplicates`.

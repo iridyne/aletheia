@@ -5,6 +5,7 @@ import re
 import shutil
 import sqlite3
 import tarfile
+import tempfile
 from pathlib import Path
 
 from aletheia.config.loader import get_data_dir
@@ -89,10 +90,9 @@ class ImportService:
         result = ImportResult()
 
         # Extract to temp dir
-        extract_dir = self._data_dir / "tmp" / "import_staging"
-        if extract_dir.exists():
-            shutil.rmtree(extract_dir)
-        extract_dir.mkdir(parents=True)
+        staging_root = self._data_dir / "tmp"
+        staging_root.mkdir(parents=True, exist_ok=True)
+        extract_dir = Path(tempfile.mkdtemp(prefix="import-", dir=staging_root))
 
         try:
             with tarfile.open(archive_path, "r:gz") as tar:
