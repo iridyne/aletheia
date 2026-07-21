@@ -159,6 +159,54 @@ async def test_reviewer_reviews_each_eligible_position_window_once(monkeypatch):
     ]
     [review] = repo.list_knowledge_items(item_type="post_trade_review")
     assert f"position:{position_id}" in review["tags"]
+    assert "policy_epoch:" in review["tags"]
+
+
+@pytest.mark.anyio
+async def test_archived_review_does_not_block_replacement(monkeypatch):
+    from aletheia.agents import post_trade_reviewer
+    from aletheia.storage.models import KnowledgeItem
+
+    position_id = _seed_position("eligible")
+    window_key = post_trade_reviewer._fills_window_key(
+        "strategy-review", [{"id": f"position:{position_id}"}]
+    )
+    repo.insert_knowledge_item(
+        KnowledgeItem(
+            id="archived-review",
+            item_type="post_trade_review",
+            title="Invalid archived review",
+            strategy_id="strategy-review",
+            status="archived",
+            tags=json.dumps(
+                [f"window:{window_key}", f"position:{position_id}"]
+            ),
+        )
+    )
+    calls = []
+
+    async def fake_llm(*args, **kwargs):
+        calls.append((args, kwargs))
+        return (
+            "Replacement review based on the eligible Position after the prior "
+            "review was explicitly archived by the owner.",
+            None,
+        )
+
+    monkeypatch.setattr(post_trade_reviewer, "is_tool_permitted", lambda *_: True)
+    monkeypatch.setattr(post_trade_reviewer, "llm_complete", fake_llm)
+    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], []))
+
+    result = await post_trade_reviewer.run_post_trade_reviewer(
+        permission_mode="Observe"
+    )
+
+    assert len(calls) == 1
+    assert result["errors"] == []
+    [active_review] = repo.list_knowledge_items(item_type="post_trade_review")
+    assert active_review["status"] == "active"
+    assert f"position:{position_id}" in active_review["tags"]
+    assert len(repo.list_knowledge_items(item_type="post_trade_review", status="all")) == 2
 
 
 @pytest.mark.anyio

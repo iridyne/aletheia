@@ -517,6 +517,47 @@ async def test_operator_recommendations_include_shell_specialist_work_from_backe
 
 
 @pytest.mark.anyio
+async def test_operator_review_due_requires_active_exact_position_coverage(client):
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import KnowledgeItem
+
+    position_id = "review-coverage-position"
+    strategy_id = "review-coverage-strategy"
+    _insert_eligible_closed_position(
+        position_id=position_id,
+        strategy_id=strategy_id,
+    )
+    repo.insert_knowledge_item(
+        KnowledgeItem(
+            id="archived-review-coverage",
+            item_type="post_trade_review",
+            title="Archived review",
+            strategy_id=strategy_id,
+            status="archived",
+            tags=f'["position:{position_id}"]',
+        )
+    )
+
+    missing = await client.get("/api/operator/recommendations")
+    assert missing.status_code == 200
+    assert "review_due" in {item["kind"] for item in missing.json()}
+
+    repo.insert_knowledge_item(
+        KnowledgeItem(
+            id="active-review-coverage",
+            item_type="post_trade_review",
+            title="Active review",
+            strategy_id=strategy_id,
+            tags=f'["position:{position_id}"]',
+        )
+    )
+
+    covered = await client.get("/api/operator/recommendations")
+    assert covered.status_code == 200
+    assert "review_due" not in {item["kind"] for item in covered.json()}
+
+
+@pytest.mark.anyio
 async def test_operator_recommendations_include_prompt_change_proposal_due_for_repeated_agent_failures(client):
     from aletheia.storage.models import AgentRun
     from aletheia.storage.repositories import insert_agent_run

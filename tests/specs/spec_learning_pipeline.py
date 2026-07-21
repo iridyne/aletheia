@@ -1423,3 +1423,81 @@ def test_dreaming_summary_separates_active_and_deprecated_knowledge():
     deprecated_ids = {item["id"] for item in summary["deprecated_memories"]}
     assert inactive_ids <= deprecated_ids
     assert deprecated_ids.isdisjoint(active_ids)
+
+
+@spec_claim(
+    SpecClaim(
+        "LP-S13",
+        "learning_pipeline",
+        "experiment_protocol §post-trade review coverage epoch",
+        "L2b",
+        "post-trade review coverage v2 has one durable policy epoch",
+        status="implemented",
+    ),
+)
+def test_post_trade_review_coverage_epoch_is_durable_and_idempotent():
+    from aletheia.learning.post_trade_review_policy import (
+        POLICY_EPOCH_LABEL,
+        ensure_post_trade_review_policy_epoch,
+        post_trade_review_policy_context,
+    )
+
+    first = ensure_post_trade_review_policy_epoch()
+    second = ensure_post_trade_review_policy_epoch()
+
+    assert POLICY_EPOCH_LABEL == "post_trade_review_coverage/v2"
+    assert first == second
+    assert post_trade_review_policy_context() == {
+        "version": "v2",
+        "outcome_cohort": "eligible_strategy_outcomes",
+        "coverage_identity": "strategy_id_and_position_id_tag",
+        "review_lifecycle": "active_only",
+        "api_operator_truth": "shared_coverage_read_model",
+        "epoch_activation": "post_trade_reviewer_entry",
+    }
+
+
+@spec_claim(
+    SpecClaim(
+        "LP-S14",
+        "learning_pipeline",
+        "agent_contracts §post_trade_reviewer",
+        "L2b",
+        "review coverage requires active exact Position identity under the matching strategy",
+        status="implemented",
+    ),
+)
+def test_review_coverage_requires_active_exact_position_identity():
+    from aletheia.knowledge.review_coverage import missing_review_strategy_ids
+
+    positions = [
+        {"id": "position-covered", "strategy_id": "strategy-a"},
+        {"id": "position-missing", "strategy_id": "strategy-a"},
+    ]
+    reviews = [
+        {
+            "strategy_id": "strategy-a",
+            "status": "active",
+            "tags": '["position:position-covered"]',
+        },
+        {
+            "strategy_id": "strategy-a",
+            "status": "archived",
+            "tags": '["position:position-missing"]',
+        },
+        {
+            "strategy_id": "strategy-b",
+            "status": "active",
+            "tags": '["position:position-missing"]',
+        },
+    ]
+
+    assert missing_review_strategy_ids(positions, reviews) == ["strategy-a"]
+    reviews.append(
+        {
+            "strategy_id": "strategy-a",
+            "status": "active",
+            "tags": '["position:position-missing"]',
+        }
+    )
+    assert missing_review_strategy_ids(positions, reviews) == []

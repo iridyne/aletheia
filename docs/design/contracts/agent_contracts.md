@@ -289,13 +289,16 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 #### post_trade_reviewer
 
 - **Trigger**: scheduler every 4h; disabled when `agent.autonomous_learning=false`
-- **Inputs**: Recently closed positions (no existing review), market context at entry/exit
+- **Inputs**: Reviewer-eligible recently closed Positions lacking an active review with the exact matching `position:{id}` tag; archived/deprecated reviews do not provide coverage
 - **LLM**: Yes (analysis of trade quality)
 - **Outputs**: knowledge_items (item_type=post_trade_review)
 - **Side effects**: Writes reviews (the review→strategy_designer event chain was removed with the rules engine, Position C)
 - **Input budget**: consumes complete proposal-linked decision records only. It may
   reduce the number of whole Positions to stay within the total prompt budget and
   reports the omitted count; it never truncates a selected Position's rationale.
+- **Policy epoch**: `post_trade_review_coverage/v2`; reviews created under this
+  behavior carry the durable epoch id in their tags, and observations must not be
+  pooled with the earlier strategy-recency coverage window.
 
 #### risk_critic
 

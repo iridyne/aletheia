@@ -11,6 +11,15 @@
 > Round 2. Position X remains observation-only; its owner-aggregate cohort must
 > collect at least 14 days before a human review and has no decision influence.
 
+> **2026-07-21 Post-trade review coverage epoch**:
+> `post_trade_review_coverage/v2` replaces strategy-level 24-hour recency with
+> exact active `position:{id}` evidence over the centrally eligible outcome cohort.
+> Archived/deprecated reviews no longer suppress replacement, and API/operator
+> backlog truth now shares the same cohort as the reviewer. This B-class repair can
+> regenerate previously suppressed Learning input; do not pool downstream review,
+> retrieval, or decision observations with the pre-v2 window. Review prompts,
+> eligibility semantics, Risk, Execution, Exchange, and Live remain unchanged.
+
 > **2026-07-18 Opportunity funnel integrity repair epoch**:
 > `opportunity_funnel_integrity/v1` adds a five-carrier admission bound ahead of
 > `signal_pending` and expands snapshot change detection to direction, eligibility,

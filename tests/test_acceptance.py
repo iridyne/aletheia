@@ -189,23 +189,40 @@ async def test_ac08_knowledge_base(client, monkeypatch):
 async def test_review_summary_reports_missing_post_trade_review_coverage(client):
     c, tmp_path = client
     from aletheia.knowledge.manager import create_post_trade_review
-    from aletheia.storage.models import Position
+    from aletheia.storage.models import KnowledgeItem, Position
+    from tests.test_operator_events import _insert_eligible_closed_position
 
     for path in ("knowledge/post_trade_reviews", "knowledge/daily_reviews", "knowledge/dreaming_logs"):
         (tmp_path / path).mkdir(parents=True, exist_ok=True)
 
+    position_id = "review-summary-position"
+    _insert_eligible_closed_position(
+        position_id=position_id,
+        strategy_id="strat-1",
+    )
     repo.insert_position(
         Position(
+            id="ineligible-review-summary-position",
             symbol="BTCUSDT",
             market_type="spot",
             direction="long",
             quantity=0.1,
             entry_price=60000,
             execution_mode="paper_internal",
-            strategy_id="strat-1",
+            strategy_id="ineligible-strategy",
             status="closed",
             opened_at=datetime.now(timezone.utc).isoformat(),
             closed_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
+    repo.insert_knowledge_item(
+        KnowledgeItem(
+            id="archived-review-summary",
+            item_type="post_trade_review",
+            title="Archived review",
+            strategy_id="strat-1",
+            status="archived",
+            tags=f'["position:{position_id}"]',
         )
     )
 
@@ -213,6 +230,7 @@ async def test_review_summary_reports_missing_post_trade_review_coverage(client)
     assert first.status_code == 200
     first_data = first.json()
     assert len(first_data["recent_closed_positions"]) == 1
+    assert first_data["recent_post_trade_reviews"] == []
     assert first_data["missing_review_strategy_ids"] == ["strat-1"]
 
     create_post_trade_review(
@@ -220,6 +238,7 @@ async def test_review_summary_reports_missing_post_trade_review_coverage(client)
         "Reviewed the BTC paper position closed at a loss. Entry momentum confirmed but exit was premature. "
         "Recommend tighter stop placement and trailing stop on profitable positions.",
         strategy_id="strat-1",
+        tags=[f"position:{position_id}"],
     )
 
     second = await c.get("/api/reviews/summary")

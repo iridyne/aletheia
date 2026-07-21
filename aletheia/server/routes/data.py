@@ -1498,24 +1498,16 @@ def get_reviews_summary():
     cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     cutoff_15m = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
 
-    recent_closed_positions = repo._select_all(
-        "positions",
-        where="status = ? AND closed_at IS NOT NULL AND closed_at > ?",
-        params=("closed", cutoff_24h),
-        order="closed_at DESC",
-        limit=20,
-    )
+    from aletheia.knowledge.review_coverage import build_post_trade_review_coverage
+
+    coverage = build_post_trade_review_coverage(closed_after=cutoff_24h)
+    recent_closed_positions = coverage["recent_closed_positions"]
     from aletheia.portfolio.pnl import position_realized_pnl_view
 
     recent_closed_positions = [
         position_realized_pnl_view(row) for row in recent_closed_positions
     ]
-    recent_post_trade_reviews = repo._select_all(
-        "knowledge_items",
-        where="item_type = ? AND created_at > ?",
-        params=("post_trade_review", cutoff_24h),
-        limit=20,
-    )
+    recent_post_trade_reviews = coverage["recent_post_trade_reviews"]
     recent_reviewer_runs = repo._select_all(
         "agent_runs",
         where="agent_name = ? AND started_at > ?",
@@ -1523,18 +1515,7 @@ def get_reviews_summary():
         limit=5,
     )
 
-    reviewed_strategy_ids = {
-        str(item.get("strategy_id"))
-        for item in recent_post_trade_reviews
-        if item.get("strategy_id")
-    }
-    missing_review_strategy_ids = sorted(
-        {
-            str(position.get("strategy_id"))
-            for position in recent_closed_positions
-            if position.get("strategy_id") and str(position.get("strategy_id")) not in reviewed_strategy_ids
-        }
-    )
+    missing_review_strategy_ids = coverage["missing_review_strategy_ids"]
 
     return {
         "recent_closed_positions": recent_closed_positions,

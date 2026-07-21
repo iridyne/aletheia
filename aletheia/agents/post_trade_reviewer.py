@@ -13,6 +13,13 @@ from aletheia.agents.helpers import llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.knowledge.manager import create_post_trade_review
+from aletheia.knowledge.review_coverage import (
+    list_active_post_trade_reviews_for_strategy,
+    reviewed_position_ids_for_strategy,
+)
+from aletheia.learning.post_trade_review_policy import (
+    ensure_post_trade_review_policy_epoch,
+)
 
 logger = logging.getLogger("aletheia.agents.post_trade_reviewer")
 
@@ -45,6 +52,7 @@ def _review_already_written(strategy_id: str | None, window_key: str) -> bool:
         "SELECT id FROM knowledge_items "
         "WHERE item_type = 'post_trade_review' "
         "  AND strategy_id IS ? "
+        "  AND (status = 'active' OR status IS NULL) "
         "  AND tags LIKE ? "
         "LIMIT 1",
         (strategy_id, f"%{tag_fragment}%"),
@@ -54,27 +62,8 @@ def _review_already_written(strategy_id: str | None, window_key: str) -> bool:
 
 def _reviewed_position_ids(strategy_id: str | None) -> set[str]:
     """Return only Position identities actually included in prior reviews."""
-    from aletheia.storage.sqlite import get_db
-
-    rows = get_db().execute(
-        "SELECT tags FROM knowledge_items "
-        "WHERE item_type='post_trade_review' AND strategy_id IS ?",
-        (strategy_id,),
-    ).fetchall()
-    reviewed: set[str] = set()
-    for row in rows:
-        try:
-            tags = json.loads(row["tags"] or "[]")
-        except (TypeError, ValueError, json.JSONDecodeError):
-            continue
-        if not isinstance(tags, list):
-            continue
-        reviewed.update(
-            str(tag).split(":", 1)[1]
-            for tag in tags
-            if str(tag).startswith("position:")
-        )
-    return reviewed
+    reviews = list_active_post_trade_reviews_for_strategy(strategy_id)
+    return reviewed_position_ids_for_strategy(reviews, strategy_id)
 
 
 def _closed_strategy_page(
@@ -165,6 +154,8 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
     if not is_tool_permitted("create_post_trade_review", permission_mode):
         errors.append("create_post_trade_review not permitted in current mode")
         return {"outputs": outputs, "errors": errors}
+
+    policy_epoch_id = ensure_post_trade_review_policy_epoch()
 
     from aletheia.agents.round_robin import DurableRoundRobin
 
@@ -336,6 +327,7 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
                 strategy_id=strategy_id,
                 confidence="medium_confidence",
                 tags=[
+                    f"policy_epoch:{policy_epoch_id}",
                     f"window:{window_key}",
                     *[
                         f"position:{position['id']}"
