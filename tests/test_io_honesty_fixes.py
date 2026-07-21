@@ -177,6 +177,82 @@ def test_import_dry_run_flags_missing_files_from_checksums(tmp_path, monkeypatch
     )
 
 
+def _build_integrity_failure_bundle(tmp_path: Path, failure: str) -> Path:
+    """Build a bundle that old merge code would import despite an integrity error."""
+    from aletheia.storage.hashing import sha256_file
+
+    staging = tmp_path / f"staging_integrity_{failure}"
+    staging.mkdir()
+    db_dir = staging / "db"
+    db_dir.mkdir()
+    row_path = db_dir / "ps_lessons.jsonl"
+    row_path.write_text(
+        json.dumps(
+            {
+                "lesson_id": f"integrity-{failure}",
+                "source_type": "test",
+                "source_id": "issue-271",
+                "category": "persistence",
+                "severity": "high",
+                "status": "accepted",
+                "summary": "must not be imported",
+                "evidence_json": "{}",
+                "created_at": "2026-07-21T00:00:00Z",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    artifact_dir = staging / "artifacts" / "proofs"
+    artifact_dir.mkdir(parents=True)
+    artifact_path = artifact_dir / "must-not-copy.txt"
+    artifact_path.write_text("untrusted", encoding="utf-8")
+
+    if failure == "checksum_mismatch":
+        (staging / "checksums.txt").write_text(
+            "0" * 64
+            + "  db/ps_lessons.jsonl\n"
+            + f"{sha256_file(artifact_path)}  artifacts/proofs/must-not-copy.txt\n",
+            encoding="utf-8",
+        )
+    elif failure == "unlisted_payload":
+        (staging / "checksums.txt").write_text(
+            f"{sha256_file(artifact_path)}  artifacts/proofs/must-not-copy.txt\n",
+            encoding="utf-8",
+        )
+    elif failure != "missing_manifest":
+        raise ValueError(f"unsupported integrity failure: {failure}")
+
+    archive = tmp_path / f"bundle_integrity_{failure}.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname="bundle_integrity")
+    return archive
+
+
+@pytest.mark.parametrize(
+    "failure", ["missing_manifest", "checksum_mismatch", "unlisted_payload"]
+)
+def test_import_merge_fails_closed_before_database_or_artifact_writes(
+    tmp_path, monkeypatch, failure
+):
+    """#271: integrity errors are authoritative, not advisory diagnostics."""
+    _setup_env(tmp_path, monkeypatch)
+    archive = _build_integrity_failure_bundle(tmp_path, failure)
+
+    from aletheia.storage.sqlite import get_db
+    from aletheia.sync.importer import ImportService
+
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert result.errors
+    imported = get_db().execute(
+        "SELECT COUNT(*) FROM ps_lessons WHERE lesson_id = ?",
+        (f"integrity-{failure}",),
+    ).fetchone()[0]
+    assert imported == 0
+    assert not (tmp_path / "artifacts" / "proofs" / "must-not-copy.txt").exists()
+
+
 # ---------------------------------------------------------------------------
 # #64 — import: diverged rows now become conflicts, not silent duplicates
 # ---------------------------------------------------------------------------
@@ -201,6 +277,34 @@ def _build_bundle_with_row(tmp_path: Path, table: str, row: dict) -> Path:
     with tarfile.open(archive, "w:gz") as tar:
         tar.add(staging, arcname="bundle_row")
     return archive
+
+
+def test_import_merge_accepts_a_valid_checksummed_bundle(tmp_path, monkeypatch):
+    """#271: the fail-closed gate preserves normal imports."""
+    _setup_env(tmp_path, monkeypatch)
+    row = {
+        "lesson_id": "integrity-valid",
+        "source_type": "test",
+        "source_id": "issue-271",
+        "category": "persistence",
+        "severity": "medium",
+        "status": "accepted",
+        "summary": "valid bundle",
+        "evidence_json": "{}",
+        "created_at": "2026-07-21T00:00:00Z",
+    }
+    archive = _build_bundle_with_row(tmp_path, "ps_lessons", row)
+
+    from aletheia.storage.sqlite import get_db
+    from aletheia.sync.importer import ImportService
+
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert result.errors == []
+    imported = get_db().execute(
+        "SELECT COUNT(*) FROM ps_lessons WHERE lesson_id = 'integrity-valid'"
+    ).fetchone()[0]
+    assert imported == 1
 
 
 def test_import_diverged_row_recorded_as_conflict_not_skipped_duplicate(tmp_path, monkeypatch):

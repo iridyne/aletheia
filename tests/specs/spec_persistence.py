@@ -91,6 +91,25 @@ def test_bitget_broker_uses_client_oid():
     )
 
 
+@spec_claim(
+    SpecClaim(
+        "PR-S05", "persistence_recovery_contract", "§5 import integrity", "L2b",
+        "Import checksum verification is an authoritative pre-write gate: any reported "
+        "integrity error returns before database or artifact processing",
+    ),
+)
+def test_import_checksum_gate_precedes_all_mutation_paths():
+    src = (_ROOT / "aletheia" / "sync" / "importer.py").read_text(encoding="utf-8")
+    verify_pos = src.index("self._verify_checksums")
+    gate_pos = src.index("if result.errors:", verify_pos)
+    db_pos = src.index("self._import_db_tables", verify_pos)
+    artifact_pos = src.index("self._import_artifacts", verify_pos)
+    gate_block = src[gate_pos:db_pos]
+
+    assert verify_pos < gate_pos < db_pos < artifact_pos
+    assert "return result" in gate_block
+
+
 # ---------------------------------------------------------------------------
 # L2c — Honesty tripwire: recovery FSM is NOT wired into startup (documented gap)
 # ---------------------------------------------------------------------------

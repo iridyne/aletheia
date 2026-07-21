@@ -1,6 +1,7 @@
 """Import service — merges exported bundles into the local workspace."""
 
 import json
+import re
 import shutil
 import tarfile
 from pathlib import Path
@@ -8,6 +9,9 @@ from pathlib import Path
 from aletheia.config.loader import get_data_dir
 from aletheia.storage.hashing import sha256_file
 from aletheia.storage.sqlite import get_db
+
+
+_SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 class ImportConflict:
@@ -84,8 +88,13 @@ class ImportService:
 
             # Verify checksums
             checksums_file = bundle_dir / "checksums.txt"
-            if checksums_file.exists():
-                self._verify_checksums(bundle_dir, checksums_file, result)
+            if not checksums_file.is_file():
+                result.errors.append("Missing checksums.txt; import aborted")
+                return result
+
+            self._verify_checksums(bundle_dir, checksums_file, result)
+            if result.errors:
+                return result
 
             # Import DB tables
             db_dir = bundle_dir / "db"
@@ -112,20 +121,74 @@ class ImportService:
         error — a bundle can't be safely imported when the manifest lists files
         that were never delivered.
         """
-        for line in checksums_file.read_text(encoding="utf-8").splitlines():
+        declared_paths: set[str] = set()
+        bundle_root = bundle_dir.resolve()
+
+        for line_number, line in enumerate(
+            checksums_file.read_text(encoding="utf-8").splitlines(), start=1
+        ):
             if not line.strip():
                 continue
             parts = line.split("  ", 1)
             if len(parts) != 2:
+                result.errors.append(
+                    f"Malformed checksum entry on line {line_number}: "
+                    "expected '<sha256>  <path>'"
+                )
                 continue
-            expected_hash, rel_path = parts
-            file_path = bundle_dir / rel_path
-            if not file_path.exists():
-                result.errors.append(f"Checksum manifest lists missing file: {rel_path}")
+
+            expected_hash, raw_path = parts
+            normalized_path = raw_path.replace("\\", "/")
+            path_parts = normalized_path.split("/")
+            if not _SHA256_RE.fullmatch(expected_hash):
+                result.errors.append(f"Malformed SHA-256 on checksum line {line_number}")
+                continue
+            if (
+                normalized_path.startswith("/")
+                or not normalized_path
+                or any(part in {"", ".", ".."} for part in path_parts)
+                or ":" in path_parts[0]
+            ):
+                result.errors.append(
+                    f"Unsafe checksum path on line {line_number}: {raw_path}"
+                )
+                continue
+
+            canonical_path = "/".join(path_parts)
+            if canonical_path in declared_paths:
+                result.errors.append(f"Duplicate checksum path: {canonical_path}")
+                continue
+            declared_paths.add(canonical_path)
+
+            file_path = bundle_dir.joinpath(*path_parts)
+            try:
+                file_path.resolve().relative_to(bundle_root)
+            except ValueError:
+                result.errors.append(
+                    f"Unsafe checksum path on line {line_number}: {raw_path}"
+                )
+                continue
+
+            if not file_path.is_file() or file_path.is_symlink():
+                result.errors.append(
+                    f"Checksum manifest lists missing file: {canonical_path}"
+                )
                 continue
             actual = sha256_file(file_path)
-            if actual != expected_hash:
-                result.errors.append(f"Checksum mismatch: {rel_path}")
+            if actual.lower() != expected_hash.lower():
+                result.errors.append(f"Checksum mismatch: {canonical_path}")
+
+        actual_paths = {
+            path.relative_to(bundle_dir).as_posix()
+            for path in bundle_dir.rglob("*")
+            if path.is_file()
+            and path.relative_to(bundle_dir).as_posix()
+            not in {"checksums.txt", "manifest.yaml"}
+        }
+        for unlisted_path in sorted(actual_paths - declared_paths):
+            result.errors.append(
+                f"Payload file is not listed in checksums.txt: {unlisted_path}"
+            )
 
     def _import_db_tables(self, db_dir: Path, result: ImportResult, commit: bool) -> None:
         """Import JSONL table data with deduplication."""
