@@ -11,7 +11,7 @@ from aletheia.config.loader import load_config, save_config, bootstrap, ensure_d
 def test_default_config_has_correct_values():
     cfg = AletheiaConfig()
     assert cfg.app.dashboard_port == 8787
-    assert cfg.exchange.mode == "demo"
+    assert cfg.exchange.mode == "paper"
     assert cfg.live.state == "live_disabled"
     assert cfg.agent.permission_mode == "Paper"
     assert cfg.risk.max_daily_loss_pct == 1.0
@@ -67,7 +67,7 @@ def test_risk_defaults_conservative():
     assert cfg.risk.max_live_position_notional_usdt == 50.0
     assert cfg.risk.max_live_limited_cap_usdt == 100.0
     assert cfg.risk.max_futures_leverage_live == 2
-    assert cfg.risk.allowed_exchange == "bitget"
+    assert cfg.risk.allowed_exchange == "paper_internal"
 
 
 # ---------------------------------------------------------------------------

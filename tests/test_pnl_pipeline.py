@@ -206,6 +206,14 @@ class TestSnapshotConsistency:
             execution_mode="okx_demo",
             closed_at=(now - timedelta(seconds=1)).isoformat(),
         )
+        # compute_portfolio() only enters the exchange-account path when
+        # paper_execution_mode != "paper_internal" (uses_external_exchange=True).
+        # The new config default is "paper_internal", so we must override it
+        # to "okx_demo" to make get_cached_state() be called and Row 2 written.
+        import aletheia.config.loader as loader
+        config = loader.load_config()
+        config.exchange.paper_execution_mode = "okx_demo"
+        monkeypatch.setattr(loader, "load_config", lambda: config)
         # Inject fake exchange cache so Row 2 is written
         import aletheia.portfolio.exchange_sync as es
         fake_state = {

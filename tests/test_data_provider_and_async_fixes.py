@@ -114,19 +114,21 @@ class _AsyncNone:
 
 @pytest.mark.asyncio
 async def test_macro_collector_runs_yfinance_off_loop(monkeypatch):
-    """#92: _fetch_tradfi() is synchronous and can take multi-second HTTP round
-    trips per ticker. The old code called it directly from the async collect()
-    — every other async task on the scheduler loop stalled for the duration.
-    Now the fetch runs via asyncio.to_thread. Assert this by making
-    _fetch_tradfi block for a bit and running a competing async task in
-    parallel — if the loop is stalled, the competing task can't tick."""
+    """#92: yfinance ticker fetches are synchronous and can take multi-second HTTP
+    round trips each. The old code called _fetch_tradfi() (which ran all tickers
+    sequentially) directly from async collect() — every other async task on the
+    scheduler loop stalled for the duration.
+    Now each ticker runs via asyncio.to_thread(_fetch_one_tradfi_ticker, sym)
+    so the blocking work is off-loop and all four tickers are concurrent.
+    Assert this by making _fetch_one_tradfi_ticker block for a bit and running a
+    competing async task in parallel — if the loop is stalled, the task can't tick."""
     from aletheia.data.collectors import macro as _macro
 
     STALL_SEC = 0.5
 
-    def fake_fetch():
-        time.sleep(STALL_SEC)  # deliberately blocking
-        return 1.0, 2.0, 3.0, 4.0
+    def fake_one_ticker(sym):
+        time.sleep(STALL_SEC)  # deliberately blocking, runs in asyncio.to_thread
+        return 1.0
 
     async def fake_fred(_key):
         return None, None, None, None  # forces yfinance fallback path
@@ -137,7 +139,9 @@ async def test_macro_collector_runs_yfinance_off_loop(monkeypatch):
     async def fake_coingecko():
         return None, None, None
 
-    monkeypatch.setattr(_macro, "_fetch_tradfi", fake_fetch)
+    # Patch _fetch_one_tradfi_ticker — the function collect() dispatches per ticker
+    # via asyncio.to_thread. (_fetch_tradfi is legacy/unused by collect().)
+    monkeypatch.setattr(_macro, "_fetch_one_tradfi_ticker", fake_one_ticker)
     monkeypatch.setattr(_macro, "_fetch_fred", fake_fred)
     monkeypatch.setattr(_macro, "_fetch_fng", fake_fng)
     monkeypatch.setattr(_macro, "_fetch_coingecko", fake_coingecko)

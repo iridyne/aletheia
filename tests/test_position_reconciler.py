@@ -17,11 +17,17 @@ from aletheia.storage import repositories as repo
 
 
 def setup_env(tmp_path, monkeypatch):
+    import yaml
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.yaml").write_text(
+        yaml.safe_dump({"exchange": {"mode": "demo", "paper_execution_mode": "bitget_demo"}}),
+        encoding="utf-8",
+    )
+    loader._cached_config = None
     reset_db()
     sq._db_conn = None
     conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
@@ -331,15 +337,12 @@ def test_run_reconcile_demo_adopts_and_records_disappearance(tmp_path, monkeypat
     """Demo may adopt externals, but one missing view only creates evidence."""
     setup_env(tmp_path, monkeypatch)
 
-    # Write a config file so load_config works
     import yaml
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(yaml.dump({
-        "exchange": {"mode": "demo"},
+    import aletheia.config.loader as loader
+    loader.CONFIG_PATH.write_text(yaml.safe_dump({
+        "exchange": {"mode": "demo", "paper_execution_mode": "bitget_demo"},
         "trading": {"auto_adopt_enabled": True},
     }), encoding="utf-8")
-    import aletheia.config.loader as loader
-    monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
     loader._cached_config = None
 
     # Local orphan: open locally, gone from exchange
@@ -376,13 +379,11 @@ def test_run_reconcile_live_never_adopts(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
     import yaml
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(yaml.dump({
-        "exchange": {"mode": "live"},
+    import aletheia.config.loader as loader
+    loader.CONFIG_PATH.write_text(yaml.safe_dump({
+        "exchange": {"mode": "live", "name": "bitget"},
         "trading": {"auto_adopt_enabled": True},
     }), encoding="utf-8")
-    import aletheia.config.loader as loader
-    monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
     loader._cached_config = None
 
     # Local orphan
@@ -409,13 +410,11 @@ def test_run_reconcile_respects_auto_adopt_disabled(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
     import yaml
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(yaml.dump({
-        "exchange": {"mode": "demo"},
+    import aletheia.config.loader as loader
+    loader.CONFIG_PATH.write_text(yaml.safe_dump({
+        "exchange": {"mode": "demo", "paper_execution_mode": "bitget_demo"},
         "trading": {"auto_adopt_enabled": False},
     }), encoding="utf-8")
-    import aletheia.config.loader as loader
-    monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
     loader._cached_config = None
 
     _stub_cache(monkeypatch, [_ex("BTCUSDT", "short", 0.001, 62000.0)])

@@ -107,7 +107,7 @@ def test_xdist_is_available_but_not_default_parallel():
 
 
 def test_core_project_rules_are_mapped_to_executable_tests():
-    guide = Path("docs/operations/PYTEST_OPTIMIZATION_GUIDE.md").read_text(encoding="utf-8")
+    guide = Path("docs/operations/development/PYTEST_OPTIMIZATION_GUIDE.md").read_text(encoding="utf-8")
     for expected in [
         "tests/specs/spec_execution.py",
         "tests/specs/spec_live_unlock.py",

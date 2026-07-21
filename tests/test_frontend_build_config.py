@@ -29,9 +29,9 @@ def test_preview_docs_distinguish_stable_gateway_from_worktree_hmr():
     docs = [
         Path("AGENTS.md"),
         Path("README.md"),
-        Path("docs/operations/RUNBOOK.md"),
-        Path("docs/_ai/PROJECT_CONTEXT.md"),
-        Path("docs/operations/DEVELOPMENT_PREVIEW.md"),
+        Path("docs/operations/runbooks/RUNBOOK.md"),
+        Path("docs/_ai/workflow/PROJECT_CONTEXT.md"),
+        Path("docs/operations/development/DEVELOPMENT_PREVIEW.md"),
     ]
     for path in docs:
         text = path.read_text(encoding="utf-8")
