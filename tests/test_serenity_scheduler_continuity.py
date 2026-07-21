@@ -134,6 +134,10 @@ def test_gateway_startup_recovers_all_interrupted_runs():
 
 
 def test_doctor_does_not_treat_recent_failure_as_fresh():
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.serenity.enabled = True
+    save_config(cfg)
     from aletheia.diagnostics.doctor import Report, _probe_serenity_pipeline
 
     repo.insert_serenity_research_run(SerenityResearchRun(
