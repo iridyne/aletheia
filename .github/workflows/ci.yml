@@ -403,7 +403,8 @@ jobs:
               "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
               | tar xz -C "$DEST"
           fi
-          "$DEST/gitleaks" detect --source . --exit-code 2 --log-level warn
+          # Match gitleaks-action v2 behaviour: scan only the latest commit, not the full history.
+          "$DEST/gitleaks" detect --source . --exit-code 2 --log-level warn --log-opts="HEAD^..HEAD"
 
   # ── Gate ──────────────────────────────────────────────────────────────────
   ci-gate:
