@@ -12,6 +12,23 @@ from aletheia.storage.sqlite import get_db
 
 
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+_IMPORTABLE_TABLES = frozenset(
+    {
+        "ps_execution_intents",
+        "ps_fills",
+        "ps_gateway_sessions",
+        "ps_lessons",
+        "ps_order_intents",
+        "ps_orders",
+        "ps_positions",
+        "ps_skills",
+        "serenity_claims",
+        "serenity_evidence",
+        "serenity_opportunities",
+        "serenity_themes",
+        "trade_proposals",
+    }
+)
 
 
 class ImportConflict:
@@ -99,6 +116,9 @@ class ImportService:
             # Import DB tables
             db_dir = bundle_dir / "db"
             if db_dir.exists():
+                self._validate_db_payloads(db_dir, result)
+                if result.errors:
+                    return result
                 self._import_db_tables(db_dir, result, commit)
 
             # Import artifacts
@@ -190,12 +210,58 @@ class ImportService:
                 f"Payload file is not listed in checksums.txt: {unlisted_path}"
             )
 
+    def _validate_db_payloads(self, db_dir: Path, result: ImportResult) -> None:
+        """Authorize every JSONL table and column before the first database write."""
+        db = get_db()
+
+        for jsonl_file in sorted(db_dir.glob("*.jsonl")):
+            table_name = jsonl_file.stem
+            if table_name not in _IMPORTABLE_TABLES:
+                result.errors.append(f"Unsupported import table: {table_name}")
+                continue
+
+            quoted_table = self._quote_identifier(table_name)
+            table_columns = {
+                str(row["name"])
+                for row in db.execute(f"PRAGMA table_info({quoted_table})").fetchall()
+            }
+            if not table_columns:
+                result.errors.append(f"Import table is unavailable locally: {table_name}")
+                continue
+
+            with open(jsonl_file, "r", encoding="utf-8") as handle:
+                for line_number, line in enumerate(handle, start=1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        result.errors.append(
+                            f"Invalid JSON in {table_name} line {line_number}: {exc.msg}"
+                        )
+                        continue
+                    if not isinstance(row, dict) or not row:
+                        result.errors.append(
+                            f"Import row must be a non-empty JSON object: "
+                            f"{table_name} line {line_number}"
+                        )
+                        continue
+
+                    unknown_columns = sorted(set(row) - table_columns)
+                    if unknown_columns:
+                        result.errors.append(
+                            f"Unsupported columns in {table_name} line {line_number}: "
+                            f"{', '.join(unknown_columns)}"
+                        )
+
     def _import_db_tables(self, db_dir: Path, result: ImportResult, commit: bool) -> None:
         """Import JSONL table data with deduplication."""
         db = get_db()
 
         for jsonl_file in sorted(db_dir.glob("*.jsonl")):
             table_name = jsonl_file.stem
+            quoted_table = self._quote_identifier(table_name)
             new_count = 0
 
             with open(jsonl_file, "r", encoding="utf-8") as f:
@@ -216,8 +282,9 @@ class ImportService:
                     #   PK missing                    → inserted (as before)
                     pk_col = self._find_pk(table_name, row)
                     if pk_col and pk_col in row:
+                        quoted_pk = self._quote_identifier(pk_col)
                         existing = db.execute(
-                            f"SELECT * FROM {table_name} WHERE {pk_col} = ?",
+                            f"SELECT * FROM {quoted_table} WHERE {quoted_pk} = ?",
                             (row[pk_col],),
                         ).fetchone()
                         if existing:
@@ -242,11 +309,12 @@ class ImportService:
                             continue
 
                     if commit:
-                        cols = ", ".join(row.keys())
+                        cols = ", ".join(self._quote_identifier(col) for col in row)
                         placeholders = ", ".join(["?"] * len(row))
                         try:
                             db.execute(
-                                f"INSERT OR IGNORE INTO {table_name} ({cols}) VALUES ({placeholders})",
+                                f"INSERT OR IGNORE INTO {quoted_table} "
+                                f"({cols}) VALUES ({placeholders})",
                                 list(row.values()),
                             )
                         except Exception as e:
@@ -269,6 +337,11 @@ class ImportService:
             if category.is_dir():
                 dst = local_artifacts / category.name
                 shutil.copytree(category, dst, dirs_exist_ok=True)
+
+    @staticmethod
+    def _quote_identifier(identifier: str) -> str:
+        """Quote a validated SQLite identifier defensively."""
+        return '"' + identifier.replace('"', '""') + '"'
 
     @staticmethod
     def _row_fingerprint(row: dict) -> str:

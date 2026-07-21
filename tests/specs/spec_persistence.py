@@ -110,6 +110,44 @@ def test_import_checksum_gate_precedes_all_mutation_paths():
     assert "return result" in gate_block
 
 
+@spec_claim(
+    SpecClaim(
+        "PR-S06", "persistence_recovery_contract", "§5 import table authority", "L2b",
+        "JSONL import is limited to the explicit exporter table surface and preflights "
+        "the whole bundle before database mutation",
+    ),
+)
+def test_import_table_authority_is_explicit_and_precedes_mutation():
+    from aletheia.sync.importer import _IMPORTABLE_TABLES
+
+    expected = {
+        "ps_execution_intents",
+        "ps_fills",
+        "ps_gateway_sessions",
+        "ps_lessons",
+        "ps_order_intents",
+        "ps_orders",
+        "ps_positions",
+        "ps_skills",
+        "serenity_claims",
+        "serenity_evidence",
+        "serenity_opportunities",
+        "serenity_themes",
+        "trade_proposals",
+    }
+    assert _IMPORTABLE_TABLES == expected
+    assert {"settings", "risk_decisions", "knowledge_items", "audit_events"}.isdisjoint(
+        _IMPORTABLE_TABLES
+    )
+
+    src = (_ROOT / "aletheia" / "sync" / "importer.py").read_text(encoding="utf-8")
+    validation_pos = src.index("self._validate_db_payloads")
+    gate_pos = src.index("if result.errors:", validation_pos)
+    mutation_pos = src.index("self._import_db_tables", validation_pos)
+    assert validation_pos < gate_pos < mutation_pos
+    assert "return result" in src[gate_pos:mutation_pos]
+
+
 # ---------------------------------------------------------------------------
 # L2c — Honesty tripwire: recovery FSM is NOT wired into startup (documented gap)
 # ---------------------------------------------------------------------------

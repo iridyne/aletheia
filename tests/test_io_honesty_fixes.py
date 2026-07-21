@@ -279,6 +279,99 @@ def _build_bundle_with_row(tmp_path: Path, table: str, row: dict) -> Path:
     return archive
 
 
+def _build_bundle_with_tables(tmp_path: Path, rows_by_table: dict[str, list[object]]) -> Path:
+    """Build one checksum-valid bundle containing multiple JSONL tables."""
+    from aletheia.storage.hashing import sha256_file
+
+    staging = tmp_path / "staging_bundle_tables"
+    staging.mkdir()
+    db_dir = staging / "db"
+    db_dir.mkdir()
+    checksum_lines = []
+    for table, rows in rows_by_table.items():
+        jsonl_path = db_dir / f"{table}.jsonl"
+        jsonl_path.write_text(
+            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+        )
+        checksum_lines.append(f"{sha256_file(jsonl_path)}  db/{table}.jsonl\n")
+
+    (staging / "checksums.txt").write_text("".join(checksum_lines), encoding="utf-8")
+    archive = tmp_path / "bundle_tables.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname="bundle_tables")
+    return archive
+
+
+def _import_lesson_row(lesson_id: str) -> dict:
+    return {
+        "lesson_id": lesson_id,
+        "source_type": "test",
+        "source_id": "issue-273",
+        "category": "persistence",
+        "severity": "high",
+        "status": "accepted",
+        "summary": "authorization preflight",
+        "evidence_json": "{}",
+        "created_at": "2026-07-21T00:00:00Z",
+    }
+
+
+def test_import_rejects_unauthorized_table_before_any_bundle_row_is_written(
+    tmp_path, monkeypatch
+):
+    """#273: a valid table cannot be partially imported beside `settings`."""
+    _setup_env(tmp_path, monkeypatch)
+    archive = _build_bundle_with_tables(
+        tmp_path,
+        {
+            "ps_lessons": [_import_lesson_row("authority-valid")],
+            "settings": [{"key": "imported-setting", "value": "untrusted"}],
+        },
+    )
+
+    from aletheia.storage.sqlite import get_db
+    from aletheia.sync.importer import ImportService
+
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert any("unsupported import table: settings" in error.lower() for error in result.errors)
+    db = get_db()
+    assert db.execute(
+        "SELECT COUNT(*) FROM ps_lessons WHERE lesson_id = 'authority-valid'"
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT COUNT(*) FROM settings WHERE key = 'imported-setting'"
+    ).fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    ("bad_row", "error_fragment"),
+    [
+        (_import_lesson_row("authority-invalid") | {"not_a_column": "x"}, "unsupported columns"),
+        (["not", "an", "object"], "non-empty json object"),
+    ],
+)
+def test_import_preflights_every_row_before_writing_valid_rows(
+    tmp_path, monkeypatch, bad_row, error_fragment
+):
+    """#273: later row-shape errors cannot leave an earlier row committed."""
+    _setup_env(tmp_path, monkeypatch)
+    archive = _build_bundle_with_tables(
+        tmp_path,
+        {"ps_lessons": [_import_lesson_row("authority-first"), bad_row]},
+    )
+
+    from aletheia.storage.sqlite import get_db
+    from aletheia.sync.importer import ImportService
+
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert any(error_fragment in error.lower() for error in result.errors)
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM ps_lessons WHERE lesson_id = 'authority-first'"
+    ).fetchone()[0] == 0
+
+
 def test_import_merge_accepts_a_valid_checksummed_bundle(tmp_path, monkeypatch):
     """#271: the fail-closed gate preserves normal imports."""
     _setup_env(tmp_path, monkeypatch)
