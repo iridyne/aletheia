@@ -556,6 +556,8 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
     )
 
     proposal = TradeProposal(
+        strategy_id=recovered_strategy_id,
+        opportunity_id=recovered_opp_id,
         symbol=symbol,
         market_type=market_type,
         direction=direction,
@@ -626,6 +628,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         # SH-S05: ALL FOUR brokers + reconciler must propagate trade_school).
         trade_school="short_term",
     )
+    order.position_id = position.id
 
     with transaction():
         insert_trade_proposal(proposal)

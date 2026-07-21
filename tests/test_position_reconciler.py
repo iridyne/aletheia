@@ -12,7 +12,7 @@ import sqlite3
 
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
-from aletheia.storage.models import Position
+from aletheia.storage.models import Opportunity, Position
 from aletheia.storage import repositories as repo
 
 
@@ -325,6 +325,45 @@ def test_legacy_fallback_orphan_close_is_removed():
     source = inspect.getsource(position_reconciler)
     assert "def reconcile_close_orphan" not in source
     assert "def _try_get_tpsl_fill_price" not in source
+
+
+def test_adopt_position_preserves_recovered_causal_chain(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    repo.insert_opportunity(Opportunity(
+        id="opportunity-recovered",
+        symbol="BTC/USDT",
+        market="usdt_futures",
+        direction_bias="long",
+        source_agent="market_observer",
+        scanner_family="momentum",
+        linked_strategy_id="strategy-recovered",
+    ))
+
+    from aletheia.analytics.outcome_integrity import attribution_chain_complete
+    from aletheia.execution import stops
+    from aletheia.portfolio import position_reconciler as reconciler
+
+    monkeypatch.setattr(
+        reconciler,
+        "_recover_strategy_link",
+        lambda *_args: ("strategy-recovered", "opportunity-recovered"),
+    )
+    monkeypatch.setattr(stops, "place_exchange_protective_orders", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("aletheia.notifications.notify_operator", lambda *_args, **_kwargs: None)
+
+    created = reconciler.adopt_position(
+        _ex("BTCUSDT", "long", 0.01, 60_000.0),
+        "demo",
+    )
+
+    proposal = repo.get_trade_proposal(created["proposal_id"])
+    order = repo.get_order(created["order_id"])
+    position = repo._select_one("positions", created["position_id"])
+    assert proposal["strategy_id"] == "strategy-recovered"
+    assert proposal["opportunity_id"] == "opportunity-recovered"
+    assert order["position_id"] == position["id"]
+    assert attribution_chain_complete(position) is True
 
 
 def test_run_reconcile_demo_adopts_and_records_disappearance(tmp_path, monkeypatch):
