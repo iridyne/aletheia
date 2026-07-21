@@ -71,4 +71,10 @@ def _mock_llm(monkeypatch):
 @pytest.fixture(autouse=True)
 def _mock_exchange(monkeypatch):
     """Block real exchange calls in e2e tests."""
-    pass
+
+    def blocked_make_ccxt(*_args, **_kwargs):
+        raise AssertionError(
+            "real CCXT construction is forbidden in E2E tests"
+        )
+
+    monkeypatch.setattr("aletheia.net.make_ccxt", blocked_make_ccxt)
