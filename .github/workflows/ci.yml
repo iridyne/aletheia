@@ -394,9 +394,16 @@ jobs:
           fetch-depth: 0
 
       - name: Scan for leaked secrets
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=8.24.3
+          DEST="$RUNNER_TEMP/gitleaks-${VERSION}"
+          if [ ! -x "$DEST/gitleaks" ]; then
+            mkdir -p "$DEST"
+            curl -sSfL \
+              "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+              | tar xz -C "$DEST"
+          fi
+          "$DEST/gitleaks" detect --source . --exit-code 2 --log-level warn
 
   # ── Gate ──────────────────────────────────────────────────────────────────
   ci-gate:

@@ -79,7 +79,7 @@ def test_auto_tightened_confidence_recovers_when_ranker_starves_pi(tmp_path):
             "AND ended_at IS NULL"
         ).fetchone()
         assert epoch is not None
-        assert '"version": "b1.1"' in epoch[0]
+        assert '"version": "b1.5"' in epoch[0]
         assert_invariants(harness)
 
 
