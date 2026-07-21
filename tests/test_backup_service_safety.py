@@ -1,5 +1,6 @@
 """Focused BackupService path and naming safety regressions."""
 
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -94,3 +95,17 @@ def test_same_timestamp_and_label_get_unique_staging_and_archive_paths(
     assert verify_backup(second).valid is True
     assert len(cleaned_staging_paths) == 2
     assert cleaned_staging_paths[0] != cleaned_staging_paths[1]
+
+
+def test_corrupt_database_aborts_backup_without_publishing_archive(tmp_path: Path):
+    """#287: checksums cannot turn rejected SQLite bytes into a valid recovery point."""
+    data_dir = tmp_path / "runtime"
+    data_dir.mkdir()
+    (data_dir / "app.db").write_bytes(b"not a sqlite database")
+    service = BackupService(data_dir=data_dir)
+
+    with pytest.raises(sqlite3.DatabaseError):
+        service.create_backup(label="corrupt")
+
+    assert list((data_dir / "backups").glob("*.tar.gz")) == []
+    assert list((data_dir / "backups").glob("*_staging")) == []

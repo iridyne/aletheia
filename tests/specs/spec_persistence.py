@@ -248,6 +248,25 @@ def test_restore_verifies_and_extracts_the_same_snapshot():
     assert "tarfile.open(archive_path" not in src
 
 
+@spec_claim(
+    SpecClaim(
+        "PR-S13", "persistence_recovery_contract", "§5 backup SQLite truth", "L2b",
+        "A backup database is produced only by SQLite Connection.backup; rejected source "
+        "bytes fail the backup instead of being raw-copied into a checksum-valid archive",
+    ),
+)
+def test_backup_never_raw_copies_a_rejected_sqlite_database():
+    src = (_ROOT / "aletheia" / "backup" / "service.py").read_text(encoding="utf-8")
+    snapshot_start = src.index("def _snapshot_sqlite_db")
+    snapshot_end = src.index("def create_backup", snapshot_start)
+    snapshot_src = src[snapshot_start:snapshot_end]
+
+    assert "src_conn.backup(dst_conn)" in snapshot_src
+    assert "shutil.copy2(src, dst)" not in snapshot_src
+    assert "except sqlite3.DatabaseError" in snapshot_src
+    assert "raise" in snapshot_src
+
+
 # ---------------------------------------------------------------------------
 # L2c — Honesty tripwire: recovery FSM is NOT wired into startup (documented gap)
 # ---------------------------------------------------------------------------

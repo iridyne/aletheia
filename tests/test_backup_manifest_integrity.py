@@ -1,5 +1,6 @@
 """Focused backup checksum-manifest integrity regressions."""
 
+import sqlite3
 import tarfile
 from pathlib import Path
 
@@ -82,16 +83,27 @@ def test_backup_service_output_still_verifies_and_restores(tmp_path):
     """#279: strict completeness preserves the canonical backup format."""
     data_dir = tmp_path / "runtime"
     data_dir.mkdir()
-    (data_dir / "app.db").write_bytes(b"not sqlite, copied by fallback")
+    source_db = sqlite3.connect(data_dir / "app.db")
+    source_db.execute("PRAGMA journal_mode=WAL")
+    source_db.execute("CREATE TABLE proof (value TEXT NOT NULL)")
+    source_db.execute("INSERT INTO proof (value) VALUES ('committed through WAL')")
+    source_db.commit()
     (data_dir / "config.yaml").write_text("mode: paper\n", encoding="utf-8")
 
-    archive = BackupService(data_dir=data_dir).create_backup(label="valid")
-    verify = verify_backup(archive)
-    target = tmp_path / "valid_restore"
-    restored = RestoreService().restore(archive, target)
+    try:
+        archive = BackupService(data_dir=data_dir).create_backup(label="valid")
+        verify = verify_backup(archive)
+        target = tmp_path / "valid_restore"
+        restored = RestoreService().restore(archive, target)
+    finally:
+        source_db.close()
 
     assert verify.valid is True
     assert verify.checked_count == verify.file_count == 2
     assert restored.success is True
-    assert (target / "app.db").read_bytes() == b"not sqlite, copied by fallback"
+    restored_db = sqlite3.connect(target / "app.db")
+    try:
+        assert restored_db.execute("SELECT value FROM proof").fetchone()[0] == "committed through WAL"
+    finally:
+        restored_db.close()
     assert (target / "config.yaml").read_text(encoding="utf-8") == "mode: paper\n"

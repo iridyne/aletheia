@@ -1,6 +1,7 @@
 """Focused restore archive-snapshot integrity regressions."""
 
 import shutil
+import sqlite3
 from pathlib import Path
 
 import aletheia.backup.restore as restore_module
@@ -8,19 +9,33 @@ from aletheia.backup.restore import RestoreService
 from aletheia.backup.service import BackupService
 
 
-def _create_backup(tmp_path: Path, name: str, payload: bytes) -> Path:
+def _create_backup(tmp_path: Path, name: str, payload: str) -> Path:
     data_dir = tmp_path / name
     data_dir.mkdir()
-    (data_dir / "app.db").write_bytes(payload)
+    db = sqlite3.connect(data_dir / "app.db")
+    try:
+        db.execute("CREATE TABLE marker (value TEXT NOT NULL)")
+        db.execute("INSERT INTO marker (value) VALUES (?)", (payload,))
+        db.commit()
+    finally:
+        db.close()
     return BackupService(data_dir=data_dir).create_backup(label=name)
+
+
+def _read_marker(db_path: Path) -> str:
+    db = sqlite3.connect(db_path)
+    try:
+        return str(db.execute("SELECT value FROM marker").fetchone()[0])
+    finally:
+        db.close()
 
 
 def test_restore_consumes_the_same_private_snapshot_that_was_verified(
     tmp_path: Path, monkeypatch
 ):
     """#285: replacing the source after verify cannot replace restored bytes."""
-    trusted_archive = _create_backup(tmp_path, "trusted", b"trusted database")
-    replacement_archive = _create_backup(tmp_path, "replacement", b"replacement database")
+    trusted_archive = _create_backup(tmp_path, "trusted", "trusted database")
+    replacement_archive = _create_backup(tmp_path, "replacement", "replacement database")
     target = tmp_path / "restore_target"
     observed_verify_paths: list[Path] = []
     real_verify = restore_module.verify_backup
@@ -36,7 +51,7 @@ def test_restore_consumes_the_same_private_snapshot_that_was_verified(
     result = RestoreService().restore(trusted_archive, target)
 
     assert result.success is True
-    assert (target / "app.db").read_bytes() == b"trusted database"
+    assert _read_marker(target / "app.db") == "trusted database"
     assert len(observed_verify_paths) == 1
     assert observed_verify_paths[0] != trusted_archive
     assert observed_verify_paths[0].name == "source-backup.tar.gz"

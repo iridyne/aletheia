@@ -91,9 +91,8 @@ class BackupService:
 
         `sqlite3.Connection.backup(target)` is the officially-safe way to snapshot
         a live database — it holds a read lock, walks pages including the WAL,
-        and produces a consistent .db without a -wal/-shm sidecar. Falling back
-        to shutil.copy2 keeps the old best-effort behaviour when the file isn't
-        actually SQLite (e.g. empty placeholder or a stripped test fixture)."""
+        and produces a consistent .db without a -wal/-shm sidecar. A rejected
+        source is not a recovery point and must fail backup creation."""
         import sqlite3
 
         try:
@@ -107,8 +106,9 @@ class BackupService:
             finally:
                 src_conn.close()
         except sqlite3.DatabaseError:
-            # Not a SQLite file (or corrupt beyond backup()) — best-effort raw copy.
-            shutil.copy2(src, dst)
+            if dst.exists():
+                dst.unlink()
+            raise
 
     def create_backup(self, label: str | None = None) -> Path:
         """Create a full backup of the workspace. Returns archive path."""
