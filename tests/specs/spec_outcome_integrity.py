@@ -350,7 +350,9 @@ def test_behavior_changing_consumers_use_one_eligible_read_model():
         "OI-C03", "outcome_integrity", "§10 authoritative account loss", "L2c",
         "Risk daily-loss protection reads an authoritative account-loss source that excludes "
         "unverified exit economics, while strategy-performance PnL is a separate query; missing "
-        "account truth is unavailable/fail-closed rather than falsely healthy.",
+        "account truth is unavailable/fail-closed rather than falsely healthy. Paper close "
+        "events belong to the UTC day of the linked Position close, not the later ledger "
+        "append time.",
         status="implemented",
     )
 )
@@ -363,6 +365,9 @@ def test_risk_does_not_use_strategy_or_unverified_realized_pnl():
     assert "eligible_strategy_outcomes" not in account_source
     assert "paper_account_events" in account_source
     assert "assess_position_closure" in account_source
+    assert "JOIN positions p" in account_source
+    assert "datetime(p.closed_at)" in account_source
+    assert "_new_phantom_query" in account_source
 
 
 @spec_claim(

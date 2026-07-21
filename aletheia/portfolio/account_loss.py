@@ -329,14 +329,29 @@ def _paper_ledger_snapshot(rows: list[dict], today_start: str) -> AccountLossSna
 
     db = get_db()
     _ledger_query = (
-        "SELECT position_id, amount_usdt FROM paper_account_events "
-        "WHERE action = 'position_closed' "
-        "AND datetime(created_at) >= datetime(?) "
-        "ORDER BY datetime(created_at) ASC, rowid ASC"
+        "SELECT pae.position_id, pae.amount_usdt FROM paper_account_events pae "
+        "JOIN positions p ON p.id = pae.position_id "
+        "WHERE pae.action = 'position_closed' "
+        "AND p.status = 'closed' AND p.execution_mode = 'paper_internal' "
+        "AND datetime(p.closed_at) >= datetime(?) "
+        "ORDER BY datetime(p.closed_at) ASC, pae.rowid ASC"
+    )
+    _new_phantom_query = (
+        "SELECT 1 FROM paper_account_events pae "
+        "WHERE pae.action = 'position_closed' "
+        "AND datetime(pae.created_at) >= datetime(?) "
+        "AND NOT EXISTS ("
+        "SELECT 1 FROM positions p WHERE p.id = pae.position_id "
+        "AND p.status = 'closed' AND p.execution_mode = 'paper_internal' "
+        "AND p.closed_at IS NOT NULL AND datetime(p.closed_at) IS NOT NULL"
+        ") LIMIT 1"
     )
 
     def _read_ledger():
         return db.execute(_ledger_query, (today_start,)).fetchall()
+
+    def _has_new_phantom() -> bool:
+        return db.execute(_new_phantom_query, (today_start,)).fetchone() is not None
 
     def _build_actual(lrows):
         result: dict[str, list[float]] = {}
@@ -347,11 +362,15 @@ def _paper_ledger_snapshot(rows: list[dict], today_start: str) -> AccountLossSna
 
     try:
         ledger_rows = _read_ledger()
+        has_new_phantom = _has_new_phantom()
     except Exception:
         return _unavailable("paper_ledger_read_failed", event_count=len(rows))
 
     expected = {str(row["id"]): float(row["realized_pnl"]) for row in rows}
     actual = _build_actual(ledger_rows)
+
+    if has_new_phantom:
+        return _unavailable("paper_ledger_mismatch", event_count=len(rows))
 
     if set(actual) != set(expected):
         orphaned = set(expected) - set(actual)  # realized_pnl set, ledger entry missing
