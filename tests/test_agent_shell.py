@@ -657,15 +657,22 @@ async def test_trading_decision_records_debate_trace(tmp_path, monkeypatch):
         )),
     )
 
-    decision = await td.evaluate_trading_opportunity({"layer1": {"opportunities": []}})
+    from aletheia.agent_shell.trading_decision import DecisionUnavailable
 
-    assert decision.action == "skip"
-    assert decision.conviction == 48
-    assert decision.debate_ran is True
-    assert decision.debate_initial_conviction == 60
-    assert decision.debate_bull_confidence == 40
-    assert decision.debate_bear_confidence == 80
-    assert decision.debate_adjustment == -12
+    with pytest.raises(DecisionUnavailable) as exc_info:
+        await td.evaluate_trading_opportunity({"layer1": {"opportunities": []}})
+
+    exc = exc_info.value
+    assert exc.reason == "debate_not_confirmed"
+    assert exc.stage == "operator_debate_gate"
+    debate_entry = next(
+        e for e in exc.filter_trace if e.get("filter_name") == "debate_downgrade"
+    )
+    assert debate_entry["inputs"]["initial_conviction"] == 60
+    assert debate_entry["inputs"]["final_conviction"] == 48
+    assert debate_entry["inputs"]["bull_confidence"] == 40
+    assert debate_entry["inputs"]["bear_confidence"] == 80
+    assert debate_entry["reason_code"] == "debate_not_confirmed"
 
 
 @pytest.mark.asyncio

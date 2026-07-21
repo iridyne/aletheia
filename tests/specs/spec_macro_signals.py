@@ -390,10 +390,15 @@ def test_coingecko_top_bulk_uses_begin_commit():
     assert idx > 0, "insert_coingecko_top_rows not found"
     next_def = src.find("\ndef ", idx + 1)
     body = src[idx : next_def if next_def > 0 else len(src)]
-    # Must contain an explicit BEGIN; otherwise it's a per-row commit storm under autocommit.
-    assert 'db.execute("BEGIN")' in body or "db.execute('BEGIN')" in body, (
-        "insert_coingecko_top_rows must use explicit db.execute(\"BEGIN\") for bulk "
-        "atomicity. Per-row _insert() under isolation_level=None is an N-commit storm."
+    # Must use a bulk transaction — either explicit BEGIN or the transaction() context
+    # manager (which issues BEGIN internally). Per-row _insert() under isolation_level=None
+    # is an N-commit storm.
+    has_explicit_begin = 'db.execute("BEGIN")' in body or "db.execute('BEGIN')" in body
+    has_transaction_ctx = "with transaction()" in body
+    assert has_explicit_begin or has_transaction_ctx, (
+        "insert_coingecko_top_rows must wrap bulk inserts in a single transaction "
+        "(db.execute(\"BEGIN\") or with transaction()). "
+        "Per-row _insert() under isolation_level=None is an N-commit storm."
     )
 
 

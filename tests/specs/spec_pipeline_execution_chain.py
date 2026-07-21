@@ -269,12 +269,18 @@ def test_execution_chain_atomicity_on_fill_error(tmp_path, monkeypatch):
 
     db = get_db()
 
-    # Order row must exist — paper_broker inserts BEFORE fill
+    # insert_order was called (captured_order_id proves the spy ran)
     assert "id" in captured_order_id, "insert_order was never called"
     order_id = captured_order_id["id"]
 
+    # The paper broker wraps Order + Fill in one atomic transaction (immediate=True).
+    # A fill failure rolls back the whole unit — Order and Fill are both absent.
+    # This is the correct atomicity behaviour: no half-written chain can exist.
     order_row = db.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
-    assert order_row is not None, "Order row must persist even after fill failure"
+    assert order_row is None, (
+        "Order+Fill are wrapped in one atomic transaction; "
+        "a fill failure must roll back the Order too (no partial chain)"
+    )
 
     # No Fill rows for this order must have leaked
     fills = db.execute("SELECT id FROM fills WHERE order_id=?", (order_id,)).fetchall()

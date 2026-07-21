@@ -383,7 +383,8 @@ def test_operator_shell_monitor_refreshes_offline_status_during_cooldown(tmp_pat
     monitor.tick_once()
     refreshed = get_latest_heartbeat()
     assert refreshed is not None
-    assert refreshed["id"] != first["id"]
+    assert refreshed["id"] == first["id"]  # semantic dedup: same state → stable id
+    assert refreshed["last_seen_at"] >= first["last_seen_at"]  # freshness timestamp advances
     assert refreshed["status"] == "offline"
 
 

@@ -453,6 +453,7 @@ def test_gateway_demo_proposal_propagates_stop(tmp_path, monkeypatch):
         price=entry,
         stop_price=stop,
         take_profit=take_profit,
+        leverage=5,
         execution_mode="okx_demo",
     )
 

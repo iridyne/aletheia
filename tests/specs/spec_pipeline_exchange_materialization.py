@@ -970,6 +970,7 @@ def _seed_pending_close(
         requested_price=100.0,
         order_status="filled",
         proposal_status="executed",
+        trade_school=trade_school,
     )
     repo.insert_fill(
         Fill(
