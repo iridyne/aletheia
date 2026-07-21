@@ -52,6 +52,98 @@ class RestoreService:
             return None
         return snapshot_path
 
+    @staticmethod
+    def _install_bundle(
+        bundle_dir: Path,
+        target_dir: Path,
+        workspace: Path,
+        result: RestoreResult,
+    ) -> bool:
+        """Install verified files with process-failure rollback for the target."""
+        source_files = [
+            item
+            for item in bundle_dir.rglob("*")
+            if item.is_file() and item.name not in ("checksums.txt", "manifest.yaml")
+        ]
+        target_existed = target_dir.exists()
+        if target_dir.is_symlink() or (target_existed and not target_dir.is_dir()):
+            result.errors.append("Restore target must be a real directory")
+            return False
+
+        existing_dirs = {target_dir} if target_existed else set()
+        if target_existed:
+            existing_dirs.update(path for path in target_dir.rglob("*") if path.is_dir())
+
+        rollback_dir = workspace / "rollback"
+        rollback_dir.mkdir()
+        rollback_files: dict[Path, Path] = {}
+        try:
+            for source in source_files:
+                rel = source.relative_to(bundle_dir)
+                destination = target_dir / rel
+                if destination.is_symlink():
+                    raise OSError(f"restore destination is a symlink: {rel}")
+                if destination.exists():
+                    if not destination.is_file():
+                        raise OSError(f"restore destination is not a file: {rel}")
+                    rollback_copy = rollback_dir / rel
+                    rollback_copy.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(destination, rollback_copy)
+                    rollback_files[destination] = rollback_copy
+        except OSError as exc:
+            result.errors.append(f"Failed to prepare restore rollback: {exc}")
+            return False
+
+        new_files: list[Path] = []
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            for source in source_files:
+                rel = source.relative_to(bundle_dir)
+                destination = target_dir / rel
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if destination not in rollback_files:
+                    new_files.append(destination)
+                shutil.copy2(source, destination)
+        except OSError as exc:
+            rollback_errors: list[str] = []
+            for destination in reversed(new_files):
+                try:
+                    if destination.exists() or destination.is_symlink():
+                        destination.unlink()
+                except OSError as rollback_exc:
+                    rollback_errors.append(f"remove {destination}: {rollback_exc}")
+            for destination, rollback_copy in rollback_files.items():
+                try:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(rollback_copy, destination)
+                except OSError as rollback_exc:
+                    rollback_errors.append(f"restore {destination}: {rollback_exc}")
+
+            if target_dir.exists():
+                new_dirs = [
+                    path
+                    for path in target_dir.rglob("*")
+                    if path.is_dir() and path not in existing_dirs
+                ]
+                for directory in sorted(new_dirs, key=lambda path: len(path.parts), reverse=True):
+                    try:
+                        directory.rmdir()
+                    except OSError:
+                        pass
+                if not target_existed:
+                    try:
+                        target_dir.rmdir()
+                    except OSError:
+                        pass
+
+            result.errors.append(f"Restore copy failed; target rolled back: {exc}")
+            if rollback_errors:
+                result.errors.append("Restore rollback incomplete: " + "; ".join(rollback_errors))
+            return False
+
+        result.restored_files = len(source_files)
+        return True
+
     def dry_run(self, archive_path: Path, target_dir: Path) -> RestoreResult:
         """Preview restore without making changes."""
         result = RestoreResult()
@@ -99,18 +191,8 @@ class RestoreService:
                 return result
             bundle_dir = subdirs[0]
 
-            # Restore to target
-            target_dir.mkdir(parents=True, exist_ok=True)
-            count = 0
-            for item in bundle_dir.rglob("*"):
-                if item.is_file() and item.name not in ("checksums.txt", "manifest.yaml"):
-                    rel = item.relative_to(bundle_dir)
-                    dst = target_dir / rel
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(item, dst)
-                    count += 1
-
-            result.restored_files = count
+            if not self._install_bundle(bundle_dir, target_dir, tmp_path, result):
+                return result
             result.success = True
 
         return result

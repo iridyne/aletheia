@@ -68,6 +68,7 @@ SAFE_FREEZE → RECOVERY_MODE          (只能经再对账退出冻结)
 - 每次 Backup 调用的 ID 必须包含独立 nonce；时间戳和 label 仅用于可读性，不能作为唯一性依据。同一时刻、同 label 的调用必须使用不同 staging 与 archive 路径。
 - Restore dry-run/执行必须先把来源 archive 复制为每次调用私有快照，并对同一个 snapshot 完成 verify 与 extract；校验后不得重新打开可变的原路径。快照失败或 invalid 时 target 零写入。
 - `app.db` 只能由 SQLite `Connection.backup()` 生成 WAL-safe snapshot；SQLite 拒绝源库时整个 Backup 必须失败并清理 partial staging，禁止 raw-copy 损坏字节后生成“checksum valid”的假恢复点。
+- Restore 安装前必须为所有将覆盖的目标文件准备 rollback copy，并跟踪新增文件/目录；进程内 copy 失败时恢复旧文件、移除新增项并返回失败结果，不得留下混合 target。此保证不宣称断电级 filesystem transaction。
 - 红线：**绝不同步密钥或脏运行态**(计划 §0.3)；live gateway 不可双设备无锁写(§2 leader lock)。
 
 ## §6 AS-BUILT 差距清单（= 接 live 前的待接通项，触信任边界须 owner 授权）
@@ -83,5 +84,5 @@ SAFE_FREEZE → RECOVERY_MODE          (只能经再对账退出冻结)
 
 ## §7 Spec 锚点
 
-`spec_persistence.py`(结构 claim：event/artifact store callable、client_order_id 确定性、Import checksum/表授权写前硬门、事务原子性与 staging 隔离、Backup manifest 完整性、路径包含、调用身份与 WAL snapshot 真实性、Restore 快照同一性、FSM 转换表 + SAFE_FREEZE 强制存在、recovery 未接 runtime 的诚实 tripwire)。注册于 conformance(非 REQUIRED——本域部分实现，行为 claim 随接通补)。
+`spec_persistence.py`(结构 claim：event/artifact store callable、client_order_id 确定性、Import checksum/表授权写前硬门、事务原子性与 staging 隔离、Backup manifest 完整性、路径包含、调用身份与 WAL snapshot 真实性、Restore 快照同一性与失败回滚、FSM 转换表 + SAFE_FREEZE 强制存在、recovery 未接 runtime 的诚实 tripwire)。注册于 conformance(非 REQUIRED——本域部分实现，行为 claim 随接通补)。
 </content>

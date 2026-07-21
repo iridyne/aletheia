@@ -19,6 +19,7 @@ def _create_backup(tmp_path: Path, name: str, payload: str) -> Path:
         db.commit()
     finally:
         db.close()
+    (data_dir / "config.yaml").write_text(f"name: {name}\n", encoding="utf-8")
     return BackupService(data_dir=data_dir).create_backup(label=name)
 
 
@@ -66,3 +67,50 @@ def test_restore_snapshot_copy_failure_leaves_target_untouched(tmp_path: Path):
     assert result.success is False
     assert any("failed to snapshot" in error.lower() for error in result.errors)
     assert not target.exists()
+
+
+def test_restore_copy_failure_removes_all_new_target_files(tmp_path: Path, monkeypatch):
+    """#289: failure after the first install copy leaves no partial new target."""
+    archive = _create_backup(tmp_path, "new-target", "new database")
+    target = tmp_path / "restore_target"
+    original_copy2 = restore_module.shutil.copy2
+
+    def fail_config_install(source, destination, *args, **kwargs):
+        destination = Path(destination)
+        if destination == target / "config.yaml":
+            raise OSError("injected target copy failure")
+        return original_copy2(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(restore_module.shutil, "copy2", fail_config_install)
+
+    result = RestoreService().restore(archive, target)
+
+    assert result.success is False
+    assert any("target rolled back" in error.lower() for error in result.errors)
+    assert not target.exists()
+
+
+def test_restore_copy_failure_restores_overwritten_files(tmp_path: Path, monkeypatch):
+    """#289: an existing target is restored byte-for-byte after install failure."""
+    archive = _create_backup(tmp_path, "existing-target", "new database")
+    target = tmp_path / "restore_target"
+    target.mkdir()
+    old_database = b"original database bytes"
+    (target / "app.db").write_bytes(old_database)
+    (target / "keep.txt").write_text("unchanged\n", encoding="utf-8")
+    original_copy2 = restore_module.shutil.copy2
+
+    def fail_config_install(source, destination, *args, **kwargs):
+        destination = Path(destination)
+        if destination == target / "config.yaml":
+            raise OSError("injected target copy failure")
+        return original_copy2(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(restore_module.shutil, "copy2", fail_config_install)
+
+    result = RestoreService().restore(archive, target)
+
+    assert result.success is False
+    assert (target / "app.db").read_bytes() == old_database
+    assert (target / "keep.txt").read_text(encoding="utf-8") == "unchanged\n"
+    assert not (target / "config.yaml").exists()

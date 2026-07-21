@@ -267,6 +267,24 @@ def test_backup_never_raw_copies_a_rejected_sqlite_database():
     assert "raise" in snapshot_src
 
 
+@spec_claim(
+    SpecClaim(
+        "PR-S14", "persistence_recovery_contract", "§5 restore failure rollback", "L2b",
+        "Restore prepares rollback copies before target mutation and reverses new or "
+        "overwritten files when an in-process install copy fails",
+    ),
+)
+def test_restore_has_an_explicit_process_failure_rollback_path():
+    src = (_ROOT / "aletheia" / "backup" / "restore.py").read_text(encoding="utf-8")
+    rollback_copy_pos = src.index("shutil.copy2(destination, rollback_copy)")
+    target_create_pos = src.index("target_dir.mkdir", rollback_copy_pos)
+
+    assert rollback_copy_pos < target_create_pos
+    assert "new_files" in src
+    assert "target rolled back" in src
+    assert "Restore rollback incomplete" in src
+
+
 # ---------------------------------------------------------------------------
 # L2c — Honesty tripwire: recovery FSM is NOT wired into startup (documented gap)
 # ---------------------------------------------------------------------------
