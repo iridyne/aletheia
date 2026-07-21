@@ -47,6 +47,13 @@ BEHAVIOR_CHANGING_CLOSED_POSITION_CONSUMERS = (
     "aletheia/agent_shell/operator_recommendations.py",
 )
 
+ELIGIBLE_OUTCOME_ONE_HOP_DELEGATIONS = {
+    "aletheia/agent_shell/operator_recommendations.py": (
+        "build_post_trade_review_coverage",
+        "aletheia/knowledge/review_coverage.py",
+    ),
+}
+
 ATTRIBUTION_DERIVED_OUTCOME_CONSUMERS = (
     "aletheia/analytics/factor_feedback.py",
     "aletheia/analytics/guard_promotion.py",
@@ -326,7 +333,13 @@ def test_learning_control_consumes_reconcile_integrity_incident():
 def test_behavior_changing_consumers_use_one_eligible_read_model():
     for path in BEHAVIOR_CHANGING_CLOSED_POSITION_CONSUMERS:
         source = _source(path)
-        assert "eligible_strategy_outcomes" in source, path
+        delegation = ELIGIBLE_OUTCOME_ONE_HOP_DELEGATIONS.get(path)
+        if delegation is None:
+            assert "eligible_strategy_outcomes(" in source, path
+        else:
+            helper_name, helper_path = delegation
+            assert f"{helper_name}(" in source, path
+            assert "eligible_strategy_outcomes(" in _source(helper_path), helper_path
         assert "SYNTHETIC_CLOSE_REASONS" not in source, path
         assert "is_synthetic_close" not in source, path
     for artifact_consumer in (
