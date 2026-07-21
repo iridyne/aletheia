@@ -7,8 +7,39 @@ and a valid opportunity can actually flow through to become a position.
 import pytest
 from datetime import datetime, timezone
 
-from aletheia.storage.models import Opportunity, Position, TradeProposal, RiskDecision, Order
+from aletheia.storage.models import (
+    MarketSnapshot,
+    Opportunity,
+    Position,
+    TradeProposal,
+    RiskDecision,
+    Order,
+)
 from aletheia.storage import repositories as repo
+
+
+def _seed_risk_prerequisites(symbol: str, price: float) -> Opportunity:
+    from aletheia.config.loader import load_config
+
+    opportunity = Opportunity(
+        symbol=symbol,
+        market="spot",
+        direction_bias="long",
+        confidence="high",
+        confidence_score=80,
+        source_agent="market_observer",
+        scanner_family="momentum",
+    )
+    repo.insert_opportunity(opportunity)
+    repo.insert_market_snapshot(MarketSnapshot(
+        id=f"risk-seam-{opportunity.id}",
+        symbol=symbol,
+        market_type="spot",
+        exchange=load_config().market_data.ccxt_exchange,
+        price=price,
+        snapshot_at=datetime.now(timezone.utc).isoformat(),
+    ))
+    return opportunity
 
 
 class TestOpportunityToRankerSeam:
@@ -75,6 +106,7 @@ class TestRiskEngineSeam:
 
     def test_proposal_approved_by_risk_engine(self, e2e_db, monkeypatch):
         """A well-formed proposal passes the risk engine."""
+        opportunity = _seed_risk_prerequisites("ETH/USDT", 1740.0)
         proposal = TradeProposal(
             symbol="ETH/USDT",
             market_type="spot",
@@ -84,6 +116,9 @@ class TestRiskEngineSeam:
             price=1740.0,
             execution_mode="paper_internal",
             stop_price=1740 * 0.98,
+            take_profit=1740 * 1.04,
+            risk_reward=2.0,
+            opportunity_id=opportunity.id,
         )
         repo.insert_trade_proposal(proposal)
 
@@ -97,6 +132,7 @@ class TestRiskEngineSeam:
         cfg = load_config()
         monkeypatch.setattr(cfg.risk, "max_demo_position_notional_usdt", 10.0)
 
+        opportunity = _seed_risk_prerequisites("ETH/USDT", 1740.0)
         proposal = TradeProposal(
             symbol="ETH/USDT",
             market_type="spot",
@@ -106,6 +142,9 @@ class TestRiskEngineSeam:
             price=1740.0,
             execution_mode="paper_internal",
             stop_price=1740 * 0.98,
+            take_profit=1740 * 1.04,
+            risk_reward=2.0,
+            opportunity_id=opportunity.id,
         )
         repo.insert_trade_proposal(proposal)
 
