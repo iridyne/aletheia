@@ -258,6 +258,64 @@ def test_live_unlock_blocked_when_scorecard_fails(tmp_path, monkeypatch):
     )
 
 
+@spec_claim(
+    SpecClaim(
+        "D8-B02A",
+        "kill_conditions_contract",
+        "§K3 positive eligible net PnL gate",
+        "L2b",
+        "A scorecard with eligible trades and non-positive net realized PnL is red "
+        "and blocked regardless of its weighted composite score.",
+        status="implemented",
+    )
+)
+def test_scorecard_blocks_negative_eligible_net_pnl(monkeypatch):
+    import aletheia.analytics.go_live_scorecard as scorecard_mod
+
+    pnls = [-100.0] + [2.0] * 49
+    monkeypatch.setattr(
+        scorecard_mod,
+        "_genuine_closed_pnls",
+        lambda order_by_closed_at=False: pnls,
+    )
+
+    result = scorecard_mod.compute_scorecard()
+
+    assert sum(pnls) < 0
+    assert result["traffic_light"] == "red"
+    assert result["performance_gate"]["status"] == "fail"
+    assert result["performance_gate"]["eligible_trade_count"] == 50
+    assert result["performance_gate"]["net_realized_pnl"] == pytest.approx(-2.0)
+    assert any("net realized PnL" in blocker for blocker in result["blockers"])
+
+
+@spec_claim(
+    SpecClaim(
+        "D8-B02B",
+        "kill_conditions_contract",
+        "§K3 loss-first drawdown",
+        "L2b",
+        "A realized-PnL curve that never rises above zero cannot report zero "
+        "drawdown or pass the drawdown criterion.",
+        status="implemented",
+    )
+)
+def test_loss_first_curve_does_not_report_zero_drawdown(monkeypatch):
+    import aletheia.analytics.go_live_scorecard as scorecard_mod
+
+    monkeypatch.setattr(
+        scorecard_mod,
+        "_genuine_closed_pnls",
+        lambda order_by_closed_at=False: [-100.0] + [2.0] * 49,
+    )
+
+    result = scorecard_mod._check_max_drawdown()
+
+    assert result["status"] == "fail"
+    assert result["score"] == 0
+    assert result["detail"].startswith("100.0% drawdown")
+
+
 @pytest.mark.xfail(
     strict=True,
     reason="NOT YET IMPLEMENTED — D8 defer: personal_stop_loss not in RiskConfig",

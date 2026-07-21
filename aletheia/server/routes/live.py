@@ -31,7 +31,11 @@ async def live_unlock(req: LiveUnlockRequest):
     # Ensures demo performance meets the minimum readiness threshold (product §8 K3).
     from aletheia.analytics.go_live_scorecard import compute_scorecard
     scorecard = compute_scorecard()
-    if scorecard["composite_score"] < 70:
+    if (
+        scorecard["composite_score"] < 70
+        or scorecard.get("traffic_light") != "green"
+        or bool(scorecard.get("blockers"))
+    ):
         raise HTTPException(
             403,
             detail={
