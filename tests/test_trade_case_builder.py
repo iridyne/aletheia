@@ -196,6 +196,14 @@ class TestDetectGuardCandidates:
         result = detect_guard_candidates(min_losses=3)
         assert len(result) >= 1
         assert result[0]["guard_candidate_id"] == "gc-1"
+        metadata = mock_create.call_args.kwargs["metadata"]
+        assert metadata["guard_id"].startswith("auto_factor_loss_v2_")
+        assert metadata["applies_to"] == {
+            "asset_class": ["crypto"],
+            "symbol": ["BTC/USDT"],
+            "scanner_family": ["momentum"],
+            "direction": ["long"],
+        }
 
     @patch("aletheia.analytics.trade_case_builder._get_existing_guard_ids")
     @patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
@@ -208,7 +216,7 @@ class TestDetectGuardCandidates:
         # Pre-register the guard ID that would be generated
         from aletheia.analytics.trade_attribution import factor_key
         fk = factor_key(rows[0])
-        guard_id = f"auto_factor_loss_{fk.replace(':', '_').replace('/', '_')}"
+        guard_id = f"auto_factor_loss_v2_{fk.replace(':', '_').replace('/', '_')}"
         mock_guards.return_value = {guard_id}
 
         result = detect_guard_candidates(min_losses=3)

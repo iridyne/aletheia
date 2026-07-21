@@ -170,7 +170,10 @@ def detect_guard_candidates(min_losses: int | None = None) -> list[dict]:
         if loss_rate < _MIN_LOSS_RATE_FOR_GUARD:
             continue
 
-        guard_id = f"auto_factor_loss_{fk.replace(':', '_').replace('/', '_')}"
+        # v2 starts a fresh observation identity after narrowing the runtime scope
+        # to the source symbol/family/direction.  Do not let an existing broad v1
+        # candidate suppress creation of the corrected candidate.
+        guard_id = f"auto_factor_loss_v2_{fk.replace(':', '_').replace('/', '_')}"
         if guard_id in existing_guards:
             continue
 
@@ -301,7 +304,7 @@ def _create_factor_guard_candidate(
     scanner, symbol, direction, conf_bucket, late_bucket = parts[:5]
     avg_loss = sum(float(r.get("realized_pnl_pct", 0)) for r in losses) / len(losses) if losses else 0
 
-    guard_id = f"auto_factor_loss_{fk.replace(':', '_').replace('/', '_')}"
+    guard_id = f"auto_factor_loss_v2_{fk.replace(':', '_').replace('/', '_')}"
     title = f"Auto: Repeated loss on {scanner}:{symbol}:{direction}"
 
     predicates = []
@@ -329,7 +332,12 @@ def _create_factor_guard_candidate(
         # block; enforcement is suppressed until an experiment grants authority.
         "auto_generated": True,
         "shadow_only": True,
-        "applies_to": {"asset_class": ["crypto"]},
+        "applies_to": {
+            "asset_class": ["crypto"],
+            "symbol": [symbol],
+            "scanner_family": [scanner],
+            "direction": [direction],
+        },
         "predicates": predicates,
         "evidence_refs": [r.get("position_id") for r in losses[:5] if r.get("position_id")],
         "tags": ["auto-generated", "factor-pattern", "shadow-only", scanner],
