@@ -2161,9 +2161,7 @@ def test_tia_like_neutral_facts_cannot_be_relabelled_as_adverse(monkeypatch):
         **neutral,
         "reasoning": "low rank, missing OI, one recent loss and small equity argue against entry",
         "skip_kind": "adverse_candidate_evidence",
-        "adverse_reason_codes": [
-            "negative_same_cohort_outcomes", "regime_mismatch",
-        ],
+        "adverse_reason_codes": ["negative_same_cohort_outcomes"],
         "adverse_evidence": [
             "B2 has only 25/39 settled rows", "regime is balanced 50/50",
         ],
@@ -2382,7 +2380,6 @@ def test_neutral_skip_defers_but_adjacent_qualified_negative_becomes_terminal(
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
-    _bypass_candidate_technical_preflight(monkeypatch)
     from aletheia.agent_shell import b2_evidence_policy, commands, trading_decision
     from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
     from aletheia.storage.repositories import (
@@ -2485,7 +2482,11 @@ def test_neutral_skip_defers_but_adjacent_qualified_negative_becomes_terminal(
                 "policy_epoch_id": policy_epoch_id,
             }
         )
+        ctx["layer2"]["executable_candidates"][0]["b2_evidence"] = dict(
+            ctx["layer2"]["pending_signals"][0]["b2_evidence"]
+        )
 
+    _bypass_candidate_technical_preflight(monkeypatch)
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
         lambda **_kwargs: context,
@@ -2496,6 +2497,15 @@ def test_neutral_skip_defers_but_adjacent_qualified_negative_becomes_terminal(
 
     first = asyncio.run(commands.evaluate_trading_opportunity({}))
     second = asyncio.run(commands.evaluate_trading_opportunity({}))
+    from aletheia.storage import repositories as repo
+
+    with repo.transaction():
+        get_db().execute(
+            "UPDATE operator_evaluation_events "
+            "SET queue_snapshot_json=json_set(queue_snapshot_json, '$.defer_until', ?) "
+            "WHERE id=?",
+            ("2000-01-01T00:00:00+00:00", first["operator_evaluation_event_id"]),
+        )
     evidence_state["qualified"] = True
     third = asyncio.run(commands.evaluate_trading_opportunity({}))
 
