@@ -180,15 +180,15 @@ async def test_universe_settings_are_visible_and_persisted(client):
 
     resp = await client.post(
         "/api/settings/universe",
-        json={"enabled": True, "max_candidates": 20, "explore_ratio": 0.15},
+        json={"enabled": False, "max_candidates": 20, "explore_ratio": 0.15},
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["universe"]["enabled"] is True
+    assert body["universe"]["enabled"] is False
     assert body["universe"]["max_candidates"] == 20
 
     resp = await client.get("/api/settings")
-    assert resp.json()["universe"]["enabled"] is True
+    assert resp.json()["universe"]["enabled"] is False
     assert resp.json()["universe"]["max_candidates"] == 20
 
 
