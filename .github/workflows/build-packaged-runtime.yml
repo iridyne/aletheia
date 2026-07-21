@@ -43,14 +43,14 @@ concurrency:
 jobs:
   contracts:
     name: Packaged runtime contracts
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && fromJSON('["self-hosted","macOS","ARM64","aletheia-release"]') || fromJSON('["self-hosted","Linux","X64","ubuntu-24.04"]') }}
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-          enable-cache: ${{ github.event_name != 'workflow_dispatch' || !inputs.publish }}
+          enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --locked --all-groups
       - name: Run focused package, bootstrap, update, and app-layout contracts
@@ -69,7 +69,7 @@ jobs:
 
   macos-package:
     name: macOS arm64 self-contained CLI and tray app
-    runs-on: ${{ fromJSON('["self-hosted","macOS","ARM64","aletheia-release"]') }}
+    runs-on: [self-hosted, macOS, ARM64, aletheia-release]
     timeout-minutes: 60
     steps:
       - name: Check out exact source
@@ -88,7 +88,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-          enable-cache: ${{ github.event_name != 'workflow_dispatch' || !inputs.publish }}
+          enable-cache: true
           cache-dependency-glob: uv.lock
 
       - name: Synchronize locked development dependencies
@@ -429,7 +429,7 @@ jobs:
     name: Publish signed runtime feed
     if: github.event_name == 'workflow_dispatch' && inputs.publish
     needs: [contracts, macos-package]
-    runs-on: [self-hosted, macOS, ARM64, aletheia-release]
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     permissions:
       contents: read
       pages: write
