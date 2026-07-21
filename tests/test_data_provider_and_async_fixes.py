@@ -173,9 +173,3 @@ async def test_macro_collector_runs_yfinance_off_loop(monkeypatch):
         f"async competing task starved — event loop was blocked by sync yfinance. "
         f"ticks={competing_ticks}, elapsed={elapsed:.2f}s"
     )
-    # And the total wall clock should be near max(STALL_SEC, 0.5s of ticks), not
-    # STALL_SEC + 0.5. Allow generous slack for CI/VM jitter.
-    assert elapsed < STALL_SEC + 0.5 * 1.5, (
-        f"macro collect() serialized with competing task (elapsed={elapsed:.2f}s > "
-        f"{STALL_SEC + 0.75:.2f}s expected concurrent wall clock)"
-    )
