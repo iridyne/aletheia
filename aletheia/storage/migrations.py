@@ -2427,6 +2427,20 @@ def _ensure_filter_evidence_indexes(db) -> None:
         "CREATE INDEX IF NOT EXISTS idx_alpha_control_outcome "
         "ON alpha_control_observations(outcome_candidate_key)"
     )
+    # Learning cohort builder queries filter_candidate_outcomes by outcome_candidate_key.
+    # Without this index the IN(...) lookup was a full-table scan on 300k+ rows (#332).
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_filter_candidate_outcomes_key "
+        "ON filter_candidate_outcomes(outcome_candidate_key)"
+    )
+    # Portfolio-guard detection in get_operator_decisions joins filter_decisions by
+    # candidate_key + filter_name + decision (#330). The existing idx_filter_decisions_candidate
+    # covers (candidate_key, sequence_no) but not the filter_name/decision predicates,
+    # so add a covering index for the most common guard lookup pattern.
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_filter_decisions_guard_lookup "
+        "ON filter_decisions(candidate_key, filter_name, decision)"
+    )
 
 
 def fts5_available(db) -> bool:
