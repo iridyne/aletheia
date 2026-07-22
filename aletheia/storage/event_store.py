@@ -34,31 +34,60 @@ class EventStore:
     """Append-only event store backed by SQLite + JSONL files."""
 
     def append(self, event: PSEvent) -> PSEvent:
-        """Append a single event. Returns the event (with computed fields filled)."""
+        """Append a single event. Returns the persisted event.
+
+        On idempotency_key conflict returns the previously persisted event
+        (same event_id); no duplicate JSONL line is written.
+        """
         event = self._prepare(event)
-        self._write_db(event)
-        self._write_jsonl(event)
-        return event
+        persisted, inserted = self._write_db(event)
+        if inserted:
+            self._write_jsonl(persisted)
+        return persisted
 
     def append_many(self, events: list[PSEvent]) -> list[PSEvent]:
-        """Append multiple events atomically to DB, then JSONL."""
+        """Append multiple events atomically to DB, then JSONL.
+
+        Events with an idempotency_key that already exists are returned as-is
+        from the DB (same semantics as append); no duplicate JSONL lines are
+        written for them.
+        """
         prepared = [self._prepare(e) for e in events]
         db = get_db()
         was_in_tx = db.in_transaction
         if not was_in_tx:
             db.execute("BEGIN")
+        results: list[tuple[PSEvent, bool]] = []
         try:
             for ev in prepared:
-                self._insert_row(db, ev)
+                if ev.idempotency_key:
+                    row = db.execute(
+                        "SELECT * FROM ps_event_log WHERE idempotency_key = ?",
+                        (ev.idempotency_key,),
+                    ).fetchone()
+                    if row:
+                        results.append((self._row_to_event(row), False))
+                        continue
+                inserted = self._insert_row(db, ev)
+                if not inserted:
+                    # TOCTOU race on idempotency_key — fetch the winner
+                    row = db.execute(
+                        "SELECT * FROM ps_event_log WHERE idempotency_key = ?",
+                        (ev.idempotency_key,),
+                    ).fetchone()
+                    results.append((self._row_to_event(row) if row else ev, False))
+                else:
+                    results.append((ev, True))
             if not was_in_tx:
                 db.commit()
         except Exception:
             if not was_in_tx:
                 db.rollback()
             raise
-        for ev in prepared:
-            self._write_jsonl(ev)
-        return prepared
+        for ev, was_inserted in results:
+            if was_inserted:
+                self._write_jsonl(ev)
+        return [ev for ev, _ in results]
 
     def get(self, event_id: str) -> PSEvent | None:
         """Retrieve a single event by ID."""
@@ -127,23 +156,42 @@ class EventStore:
         event.payload_hash = sha256_bytes(event.payload_json.encode("utf-8"))
         return event
 
-    def _write_db(self, event: PSEvent) -> None:
-        """Insert event into SQLite (idempotent on idempotency_key)."""
+    def _write_db(self, event: PSEvent) -> tuple[PSEvent, bool]:
+        """Insert event into SQLite. Returns (persisted_event, was_newly_inserted).
+
+        On idempotency_key conflict returns the previously persisted event with
+        was_newly_inserted=False. The caller should skip JSONL in that case.
+        """
         db = get_db()
         was_in_tx = db.in_transaction
         if event.idempotency_key:
-            existing = db.execute(
-                "SELECT event_id FROM ps_event_log WHERE idempotency_key = ?",
+            row = db.execute(
+                "SELECT * FROM ps_event_log WHERE idempotency_key = ?",
                 (event.idempotency_key,),
             ).fetchone()
-            if existing:
-                return
-        self._insert_row(db, event)
+            if row:
+                return self._row_to_event(row), False
+        inserted = self._insert_row(db, event)
         if not was_in_tx:
             db.commit()
+        if not inserted:
+            # TOCTOU race: another writer committed the same idempotency_key
+            # between our SELECT and INSERT. Fetch the winner.
+            row = db.execute(
+                "SELECT * FROM ps_event_log WHERE idempotency_key = ?",
+                (event.idempotency_key,),
+            ).fetchone()
+            return (self._row_to_event(row) if row else event), False
+        return event, True
 
-    def _insert_row(self, db, event: PSEvent) -> None:
-        """Raw INSERT (caller manages transaction)."""
+    def _insert_row(self, db, event: PSEvent) -> bool:
+        """Raw INSERT (caller manages transaction).
+
+        Returns True if the row was inserted.
+        Returns False only when idempotency_key is set and a concurrent writer
+        already committed the same key (TOCTOU race).
+        Re-raises IntegrityError for any other constraint violation.
+        """
         import sqlite3
         try:
             db.execute(
@@ -163,8 +211,11 @@ class EventStore:
                     event.created_at, event.machine_id, event.schema_version,
                 ),
             )
+            return True
         except sqlite3.IntegrityError:
-            pass  # idempotency_key conflict — silently deduplicate
+            if event.idempotency_key:
+                return False  # TOCTOU race on idempotency_key — caller fetches existing
+            raise
 
     def _write_jsonl(self, event: PSEvent) -> None:
         """Append event as one JSON line to the monthly JSONL file."""
