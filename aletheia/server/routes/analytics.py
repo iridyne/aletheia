@@ -1398,6 +1398,7 @@ def get_operator_decisions(
             "_sort_instant": float(r["sort_instant"] or 0),
         })
 
+
     rejected_proposals = {item["proposal_id"] for item in reject_items if item["proposal_id"]}
     rejected_opportunities = {
         item["opportunity_id"] for item in reject_items if item["opportunity_id"]

@@ -1628,7 +1628,7 @@ def decisions(
     outcome: str = typer.Option(
         "",
         "--outcome",
-        help="Filter by outcome: trade, operator_skip, operator_watch, user_reject, auto_reject, portfolio_guard_reject (comma-separated)",
+        help="Filter by outcome: trade, operator_skip, operator_watch, user_reject, auto_reject, portfolio_guard_reject, conviction_gate_defer (comma-separated)",
     ),
     symbol: str = typer.Option("", "--symbol", "-s", help="Filter to a single symbol"),
     summary: bool = typer.Option(False, "--summary", help="Show counts + top reasons instead of rows"),
@@ -1680,8 +1680,9 @@ def decisions(
             "auto_reject": "Auto Reject",
             "reject_unknown": "Reject (?)",
             "portfolio_guard_reject": "Guard Reject",
+            "conviction_gate_defer": "Conv Defer",
         }
-        for oc in ("trade", "operator_skip", "portfolio_guard_reject", "operator_watch", "auto_reject", "user_reject", "reject_unknown"):
+        for oc in ("trade", "operator_skip", "portfolio_guard_reject", "operator_watch", "auto_reject", "user_reject", "reject_unknown", "conviction_gate_defer"):
             n = counts.get(oc, 0)
             if n == 0:
                 continue
@@ -1691,6 +1692,7 @@ def decisions(
             ("auto_reject", "auto_reject top reasons"),
             ("operator_skip", "operator_skip top reasons"),
             ("portfolio_guard_reject", "portfolio_guard_reject top reasons"),
+            ("conviction_gate_defer", "conviction_gate_defer top reasons"),
         ]:
             bucket_items = [it for it in items if it.get("outcome") == bucket]
             if not bucket_items:

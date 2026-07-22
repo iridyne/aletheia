@@ -1087,6 +1087,59 @@ def test_operator_decisions_classifies_unknown_uses_rejection_time_and_counts_fu
     assert data["counts"]["user_reject"] == 1  # old proposal, recent rejection audit
 
 
+def test_operator_decisions_surfaces_conviction_deferred_outcome(tmp_path, monkeypatch):
+    import json as _json
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    recent = (now - timedelta(minutes=10)).isoformat()
+    old = (now - timedelta(days=2)).isoformat()
+    _insert_opportunity(conn, "defer-opp", status="open", created_at=recent)
+    conn.execute(
+        "INSERT INTO operator_evaluation_events "
+        "(id,dedup_key,event_kind,trigger,pending_unresolved_total,"
+        "pending_visible_count,queue_snapshot_json,data_health_json,created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            "defer-evt-1", "dk-1",
+            "operator_decision_deferred_low_conviction",
+            "scheduled", 1, 1,
+            _json.dumps({"opportunity_id": "defer-opp", "defer_reason": "operator_low_conviction"}),
+            "{}",
+            recent,
+        ),
+    )
+    # Old event outside window — should NOT appear
+    _insert_opportunity(conn, "old-defer-opp", status="open", created_at=old)
+    conn.execute(
+        "INSERT INTO operator_evaluation_events "
+        "(id,dedup_key,event_kind,trigger,pending_unresolved_total,"
+        "pending_visible_count,queue_snapshot_json,data_health_json,created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            "defer-evt-2", "dk-2",
+            "operator_decision_deferred_low_conviction",
+            "scheduled", 1, 1,
+            _json.dumps({"opportunity_id": "old-defer-opp", "defer_reason": "operator_low_conviction"}),
+            "{}",
+            old,
+        ),
+    )
+    conn.commit()
+
+    from aletheia.server.routes.analytics import get_operator_decisions
+
+    data = get_operator_decisions(hours=24, limit=50)
+    assert data["counts"]["conviction_deferred"] == 1
+    defer_items = [it for it in data["items"] if it["outcome"] == "conviction_deferred"]
+    assert len(defer_items) == 1
+    it = defer_items[0]
+    assert it["decision_id"] == "defer-evt-1"
+    assert it["opportunity_id"] == "defer-opp"
+    assert it["one_line_reason"] == "operator_low_conviction"
+    assert it["conviction"] is None
+    assert it["proposal_id"] is None
+
+
 def test_operator_decisions_preserve_history_with_policy_and_runtime_attribution(
     tmp_path, monkeypatch
 ):
