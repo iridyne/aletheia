@@ -1439,15 +1439,18 @@ def get_dreaming_summary():
     cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
 
+    # #267: include only active items in recent_* collections so archived/
+    # deprecated items do not also appear as fresh knowledge production.
+    _active = "(status = 'active' OR status IS NULL)"
     recent_research = repo._select_all(
         "knowledge_items",
-        where="item_type = ? AND created_at > ?",
+        where=f"item_type = ? AND created_at > ? AND {_active}",
         params=("research_note", cutoff_24h),
         limit=20,
     )
     recent_hypotheses = repo._select_all(
         "knowledge_items",
-        where="item_type = ? AND created_at > ?",
+        where=f"item_type = ? AND created_at > ? AND {_active}",
         params=("strategy_memory", cutoff_24h),
         limit=20,
     )
@@ -1459,13 +1462,13 @@ def get_dreaming_summary():
     )
     recent_dreaming_logs = repo._select_all(
         "knowledge_items",
-        where="item_type = ? AND created_at > ?",
+        where=f"item_type = ? AND created_at > ? AND {_active}",
         params=("dreaming_log", cutoff_24h),
         limit=10,
     )
     recent_daily_reviews = repo._select_all(
         "knowledge_items",
-        where="item_type = ? AND created_at > ?",
+        where=f"item_type = ? AND created_at > ? AND {_active}",
         params=("daily_review", cutoff_24h),
         limit=10,
     )
