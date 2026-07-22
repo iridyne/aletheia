@@ -2556,3 +2556,108 @@ def test_re_b17_check14_is_family_evidence_gate():
     assert "_LIVE_ELIGIBLE_STATES" not in src, (
         "the strategy-FSM eligible-states set must be removed with the rules engine"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "RE-B30",
+        "risk_engine_contract",
+        "§2 paper equity not zeroed by unsettled funding",
+        "L2b",
+        "A paper_internal proposal submitted within the funding-settler window "
+        "(economics_complete=False) must not be rejected with account_equity_unavailable "
+        "or exceeds_demo_position_notional:X>0.0 when the account has sufficient cash (#316).",
+        status="implemented",
+    ),
+)
+def test_paper_internal_proposal_not_rejected_during_funding_settler_window(
+    tmp_path, monkeypatch
+):
+    """Regression: unsettled funding economics must not zero available_balance_usdt."""
+    _setup_db(tmp_path, monkeypatch)
+
+    import math
+
+    from aletheia.portfolio.paper_account import (
+        ensure_paper_account,
+        record_position_opened,
+    )
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position, TradeProposal
+    from aletheia.storage.sqlite import get_db
+
+    ensure_paper_account()
+
+    # Insert a closed futures position with unsettled funding (mimics post-close window).
+    closed_at = "2026-07-22T10:00:00+00:00"
+    pos = Position(
+        id="unsettled-close-pos",
+        symbol="ETH/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.1,
+        entry_price=3000.0,
+        current_price=3010.0,
+        unrealized_pnl=0.0,
+        realized_pnl=None,
+        execution_mode="paper_internal",
+        status="closed",
+        close_reason="take_profit",
+        close_category="strategy",
+        entry_price_source="local_fill",
+        entry_fill_verified=True,
+        exit_price_source="local_fill",
+        exit_fill_verified=True,
+        outcome_eligible=False,
+        outcome_exclusion_reason="incomplete_funding_economics",
+        entry_fee=0.0,
+        exit_fee=0.0,
+        funding_cost=None,
+        funding_source="unavailable",
+        opened_at="2026-07-22T09:00:00+00:00",
+        closed_at=closed_at,
+    )
+    repo.insert_position(pos)
+    record_position_opened(pos.id)
+    # Do NOT call settle_position_closed — simulating the settler window
+
+    from aletheia.portfolio.paper_account import get_paper_account
+    account = get_paper_account(event_limit=0)
+    assert account["economics_complete"] is False, "test setup: economics must be incomplete"
+    assert account["available_balance_usdt"] > 0, (
+        "available_balance_usdt must reflect actual cash, not zero (#316)"
+    )
+
+    from aletheia.storage.models import Opportunity
+    opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",
+                      thesis="test", source_agent="market_observer", scanner_family="test")
+    repo.insert_opportunity(opp)
+
+    proposal = TradeProposal(
+        opportunity_id=opp.id,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        order_type="market",
+        quantity=0.001,
+        price=100.0,
+        leverage=1,
+        status="approved",
+    )
+    repo.insert_trade_proposal(proposal)
+
+    result = evaluate_proposal(proposal)
+
+    violation_strings = " ".join(result.violations)
+    assert "account_equity_unavailable" not in violation_strings, (
+        f"account_equity_unavailable must not fire during settler window; "
+        f"violations: {result.violations}"
+    )
+    assert "exceeds_demo_position_notional" not in violation_strings or (
+        ">0.0" not in violation_strings
+    ), (
+        f"effective_cap must not collapse to 0.0 during settler window; "
+        f"violations: {result.violations}"
+    )

@@ -134,17 +134,14 @@ def get_paper_account(event_limit: int = 20) -> dict:
     return {
         "cash_balance_usdt": round(cash, 8),
         "reserved_margin_usdt": reserved,
-        # A missing close result makes the spendable account value unknown.
-        # Return zero availability so Risk fails closed until the economics are
-        # reconciled; keep the ledger cash visible but label its completeness.
-        "available_balance_usdt": (
-            round(max(0.0, cash - reserved), 8)
-            if economics_complete
-            else 0.0
-        ),
-        "equity_usdt": (
-            round(cash + unrealized, 8) if economics_complete else None
-        ),
+        # The current cash balance is authoritative even when a futures close has
+        # unsettled funding economics.  Only the *future* funding-cost delta is
+        # unknown; the ledger cash reflects what is actually in the account today.
+        # economics_complete=False is a monitoring signal — it must not zero out
+        # the spendable balance and trigger false account_equity_unavailable rejects
+        # in the Risk engine (#316).
+        "available_balance_usdt": round(max(0.0, cash - reserved), 8),
+        "equity_usdt": round(cash + unrealized, 8),
         "economics_complete": economics_complete,
         "unsettled_closed_positions_count": len(unsettled),
         "open_positions_count": len(positions),

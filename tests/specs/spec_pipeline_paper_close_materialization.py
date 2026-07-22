@@ -935,18 +935,18 @@ def test_unknown_paper_perp_funding_closes_without_zero_equivalent_cash_settleme
     assert assessment.reason == "incomplete_funding_economics"
     assert repo.list_outcome_hook_jobs(position_id=stored["id"]) == []
 
-    # The read models must preserve the same unavailability.  Converting this
-    # NULL back to zero would still show a fabricated account result and could
-    # authorize another local-paper order against an economically incomplete
-    # balance.
+    # economics_complete=False signals the unsettled funding leg for monitoring;
+    # it must NOT zero out available_balance_usdt — the known cash is spendable
+    # even while the funding delta is still in flight (#316).
     from aletheia.portfolio.paper_account import get_paper_account
     from aletheia.portfolio.pnl import compute_portfolio
 
     account = get_paper_account(event_limit=100)
     assert account["economics_complete"] is False
     assert account["unsettled_closed_positions_count"] == 1
-    assert account["available_balance_usdt"] == 0.0
-    assert account["equity_usdt"] is None
+    # Actual cash is returned regardless of economics_complete (#316 fix).
+    assert account["available_balance_usdt"] == account["cash_balance_usdt"]
+    assert account["equity_usdt"] == pytest.approx(account["cash_balance_usdt"])
 
     portfolio = compute_portfolio(execution_mode="paper_internal")
     # Method B: partial sums shown with complete=False; no complete closes → 0.0
@@ -1034,8 +1034,9 @@ def test_legacy_numeric_paper_perp_close_with_unknown_funding_stays_unavailable(
     account = get_paper_account(event_limit=100)
     assert account["economics_complete"] is False
     assert account["unsettled_closed_positions_count"] == 1
-    assert account["available_balance_usdt"] == 0.0
-    assert account["equity_usdt"] is None
+    # Actual cash is returned regardless of economics_complete (#316 fix).
+    assert account["available_balance_usdt"] == pytest.approx(account["cash_balance_usdt"])
+    assert account["equity_usdt"] == pytest.approx(account["cash_balance_usdt"])
 
     portfolio = compute_portfolio(execution_mode="paper_internal")
     # Method B: partial sums shown; no complete closes → 0.0
@@ -1105,8 +1106,9 @@ def test_old_incomplete_close_beyond_ten_thousand_rows_still_freezes_account(
     account = get_paper_account(event_limit=0)
     assert account["economics_complete"] is False
     assert account["unsettled_closed_positions_count"] == 1
-    assert account["available_balance_usdt"] == 0.0
-    assert account["equity_usdt"] is None
+    # Actual cash is returned regardless of economics_complete (#316 fix).
+    assert account["available_balance_usdt"] == pytest.approx(account["cash_balance_usdt"])
+    assert account["equity_usdt"] == pytest.approx(account["cash_balance_usdt"])
 
     portfolio = compute_portfolio(execution_mode="paper_internal")
     # Method B: 10,000 complete closes (0.0 each) + 1 unavailable → partial sum = 0.0
@@ -1502,7 +1504,8 @@ def test_overview_hero_unblocks_when_all_unsettled_closes_are_terminal(
     account_after = get_paper_account(event_limit=0)
     assert account_after["economics_complete"] is False
     assert account_after["unsettled_closed_positions_count"] == 1
-    assert account_after["equity_usdt"] is None
+    # equity_usdt reflects actual cash even when economics_complete=False (#316 fix)
+    assert account_after["equity_usdt"] == pytest.approx(account_after["cash_balance_usdt"])
 
     portfolio_after = compute_portfolio(execution_mode="paper_internal")
     assert portfolio_after["total_value_usdt"] is None
