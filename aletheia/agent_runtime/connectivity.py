@@ -10,6 +10,7 @@ This module is NOT frozen — it monitors infrastructure, not AI decisions.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import logging
 import time
 
@@ -18,6 +19,9 @@ logger = logging.getLogger("aletheia.connectivity")
 _consecutive_failures: int = 0
 _consecutive_successes: int = 0
 _last_probe_result: dict | None = None
+_last_external_probe_result: dict | None = None
+_external_outage_started_at: float | None = None
+_external_last_recovery_at: float | None = None
 _active_resume_task = None  # asyncio.Task | concurrent.futures.Future | None
 _uvicorn_loop: asyncio.AbstractEventLoop | None = None  # persistent loop, captured at startup (#145)
 
@@ -26,6 +30,11 @@ _EXCHANGE_ENDPOINTS: dict[str, str] = {
     "bitget": "https://api.bitget.com/api/v2/public/time",
     "binance": "https://api.binance.com/api/v3/ping",
 }
+_EXTERNAL_PROBE_ENDPOINTS = (
+    "https://api.coingecko.com/api/v3/ping",
+    "https://www.cloudflare.com/cdn-cgi/trace",
+)
+_EXTERNAL_RECOVERY_GRACE_SEC = 20 * 60
 
 
 def set_uvicorn_loop(loop) -> None:
@@ -112,6 +121,57 @@ async def probe_exchange(cfg=None) -> dict:
         }
 
 
+async def probe_external_network() -> dict:
+    """Probe internet/proxy egress independently from any configured exchange.
+
+    Any non-5xx HTTP response proves that DNS, TCP/TLS, and the configured egress
+    path work. The second endpoint is tried only when the first cannot establish
+    that fact, keeping the normal probe to one lightweight request.
+    """
+    from aletheia.net import httpx_client
+
+    started = time.monotonic()
+    last_error_code: str | None = None
+    try:
+        async with asyncio.timeout(5):
+            async with httpx_client(timeout=5, retry=0) as client:
+                for url in _EXTERNAL_PROBE_ENDPOINTS:
+                    try:
+                        response = await client.get(url)
+                        if response.status_code < 500:
+                            return {
+                                "reachable": True,
+                                "latency_ms": round((time.monotonic() - started) * 1000, 1),
+                                "error_code": None,
+                            }
+                        last_error_code = f"HTTP_{response.status_code}"
+                    except Exception as exc:  # noqa: BLE001 - record only the safe type name
+                        last_error_code = type(exc).__name__
+    except Exception as exc:  # noqa: BLE001 - status uses type only, never raw URL/error
+        last_error_code = type(exc).__name__
+    return {
+        "reachable": False,
+        "latency_ms": None,
+        "error_code": last_error_code or "external_probe_failed",
+    }
+
+
+async def _probe_exchange_and_external(cfg) -> tuple[dict, dict]:
+    exchange_result, external_result = await asyncio.gather(
+        probe_exchange(cfg),
+        probe_external_network(),
+    )
+    # A successful exchange response itself proves external egress even if a
+    # neutral probe endpoint happens to be unavailable.
+    if exchange_result["reachable"] and not external_result["reachable"]:
+        external_result = {
+            "reachable": True,
+            "latency_ms": exchange_result.get("latency_ms"),
+            "error_code": None,
+        }
+    return exchange_result, external_result
+
+
 def probe_exchange_sync(cfg=None) -> dict:
     """Synchronous wrapper for use in compute_health() (called from scheduler thread)."""
     import asyncio as _asyncio
@@ -126,12 +186,138 @@ def probe_exchange_sync(cfg=None) -> dict:
         return pool.submit(_asyncio.run, coro).result(timeout=12)
 
 
+def _record_probe_result(result: dict, *, observed_at: float | None = None) -> dict:
+    """Record the exchange probe without changing its pause/resume semantics."""
+    global _consecutive_failures, _consecutive_successes, _last_probe_result
+
+    observed_at = time.time() if observed_at is None else observed_at
+    _last_probe_result = {**result, "ts": observed_at}
+    if result["reachable"]:
+        _consecutive_failures = 0
+        _consecutive_successes += 1
+    else:
+        _consecutive_successes = 0
+        _consecutive_failures += 1
+    return _last_probe_result
+
+
+def _record_external_probe_result(
+    result: dict,
+    *,
+    observed_at: float | None = None,
+) -> dict:
+    """Record independent internet egress and emit only root-cause transitions."""
+    global _last_external_probe_result
+    global _external_outage_started_at, _external_last_recovery_at
+
+    observed_at = time.time() if observed_at is None else observed_at
+    previous_reachable = (
+        _last_external_probe_result.get("reachable")
+        if _last_external_probe_result is not None
+        else None
+    )
+    _last_external_probe_result = {**result, "ts": observed_at}
+    if result["reachable"]:
+        if previous_reachable is False:
+            _external_last_recovery_at = observed_at
+            from aletheia.infra.events import emit_infra_event
+
+            emit_infra_event(
+                severity="info",
+                source="connectivity_monitor",
+                code="external_connectivity_restored",
+                message="External connectivity is restored; dependent jobs will retry automatically.",
+                action="No restart is required; wait for the next scheduled data refresh.",
+                entity_id="external_network",
+                dedupe_sec=300,
+            )
+    else:
+        if previous_reachable is not False:
+            _external_outage_started_at = observed_at
+            from aletheia.infra.events import emit_infra_event
+
+            emit_infra_event(
+                severity="warning",
+                source="connectivity_monitor",
+                code="external_connectivity_unavailable",
+                message="External network or the configured proxy is unavailable.",
+                action="Check the network connection and local proxy process first.",
+                entity_id="external_network",
+                dedupe_sec=300,
+            )
+    return _last_external_probe_result
+
+
+def _external_connectivity_status(*, now: float, stale_after_sec: int) -> dict:
+    probe = _last_external_probe_result
+    common = {
+        "outage_started_at": _external_outage_started_at,
+        "last_recovery_at": _external_last_recovery_at,
+        "stale_after_sec": stale_after_sec,
+    }
+    if probe is None or now - float(probe.get("ts") or 0) > stale_after_sec:
+        return {
+            **common,
+            "state": "unknown",
+            "severity": "info",
+            "priority": 3,
+            "message": "External connectivity has not been checked recently.",
+            "action": "Wait for the next connectivity probe.",
+            "observed_at": None,
+        }
+
+    observed_at = datetime.fromtimestamp(float(probe["ts"]), tz=timezone.utc).isoformat()
+    if not probe["reachable"]:
+        return {
+            **common,
+            "state": "unavailable",
+            "severity": "warning",
+            "priority": 1,
+            "message": "External network or the configured proxy is unavailable.",
+            "action": "Check the network connection and local proxy process first.",
+            "observed_at": observed_at,
+        }
+    if (
+        _external_last_recovery_at is not None
+        and now - _external_last_recovery_at <= _EXTERNAL_RECOVERY_GRACE_SEC
+    ):
+        return {
+            **common,
+            "state": "recovering",
+            "severity": "info",
+            "priority": 2,
+            "message": "External connectivity is restored; dependent jobs are retrying.",
+            "action": "No restart is required; wait for the next scheduled data refresh.",
+            "observed_at": observed_at,
+        }
+    return {
+        **common,
+        "state": "reachable",
+        "severity": "ok",
+        "priority": 4,
+        "message": "External connectivity is available.",
+        "action": None,
+        "observed_at": observed_at,
+    }
+
+
 def get_status() -> dict:
     """Return current connectivity state for API consumers."""
+    try:
+        from aletheia.config.loader import load_config
+
+        interval_sec = int(load_config().health.exchange_probe_interval_sec)
+    except Exception:
+        interval_sec = 60
+    stale_after_sec = max(30, interval_sec * 3)
     return {
         "consecutive_failures": _consecutive_failures,
         "consecutive_successes": _consecutive_successes,
         "last_probe": _last_probe_result,
+        "external_connectivity": _external_connectivity_status(
+            now=time.time(),
+            stale_after_sec=stale_after_sec,
+        ),
         "resume_task_active": _active_resume_task is not None and not _active_resume_task.done(),
     }
 
@@ -141,21 +327,16 @@ async def run_connectivity_check() -> dict:
 
     Returns the probe result augmented with action taken.
     """
-    global _consecutive_failures, _consecutive_successes, _last_probe_result
-
     from aletheia.config.loader import load_config
     cfg = load_config()
 
-    result = await probe_exchange(cfg)
-    _last_probe_result = {**result, "ts": time.time()}
+    result, external_result = await _probe_exchange_and_external(cfg)
+    _record_probe_result(result)
+    _record_external_probe_result(external_result)
 
     if result["reachable"]:
-        _consecutive_failures = 0
-        _consecutive_successes += 1
         return {**result, "action": None}
 
-    _consecutive_successes = 0
-    _consecutive_failures += 1
     logger.warning(
         "exchange probe failed (%d consecutive): %s",
         _consecutive_failures, result.get("error", "unknown"),
@@ -257,10 +438,10 @@ async def _exchange_auto_resume_loop(interval_sec: int = 60) -> None:
         successes_needed = cfg.health.exchange_auto_resume_success_threshold
         stall_threshold = cfg.health.exchange_stall_threshold
 
-        result = await probe_exchange(cfg)
+        result, external_result = await _probe_exchange_and_external(cfg)
+        _record_probe_result(result)
+        _record_external_probe_result(external_result)
         if result["reachable"]:
-            _consecutive_successes += 1
-            _consecutive_failures = 0
             loop_failures = 0
             logger.info(
                 "exchange_auto_resume: probe OK (%d/%d)",
@@ -270,8 +451,6 @@ async def _exchange_auto_resume_loop(interval_sec: int = 60) -> None:
                 await _resume_from_network(cfg)
                 return
         else:
-            _consecutive_successes = 0
-            _consecutive_failures += 1
             loop_failures += 1
 
             if loop_failures >= stall_threshold and (
@@ -388,15 +567,16 @@ async def startup_exchange_gate(cfg=None) -> None:
         from aletheia.config.loader import load_config
         cfg = load_config()
 
-    global _last_probe_result, _consecutive_failures, _consecutive_successes
-    result = await probe_exchange(cfg)
-    _last_probe_result = {**result, "ts": time.time()}
+    result, external_result = await _probe_exchange_and_external(cfg)
+    _record_probe_result(result)
+    _record_external_probe_result(external_result)
     if result["reachable"]:
-        _consecutive_failures = 0
-        _consecutive_successes += 1
         logger.info("startup exchange gate: %s reachable (%.0fms)", cfg.exchange.name, result.get("latency_ms", 0))
         return
 
     logger.warning("startup exchange gate: %s unreachable — will pause", cfg.exchange.name)
+    # Startup is an immediate gate, so preserve the historical threshold value
+    # used by pause/audit messaging even though only one probe has run.
+    global _consecutive_failures
     _consecutive_failures = cfg.health.exchange_probe_failure_threshold
     await _pause_for_network(cfg, result)

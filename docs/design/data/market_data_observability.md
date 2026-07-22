@@ -12,6 +12,14 @@ an `empty` completed call. `/api/market/data-coverage` answers the second questi
 with exact retained row count, distinct symbol count, source/exchange counts, newest
 observation, age, and freshness state.
 
+Collector health also separates a source failure from a confirmed shared
+infrastructure cause. An independent neutral-endpoint probe establishes external
+connectivity without treating one exchange outage as a global network failure.
+Collector failures observed around a confirmed outage retain their raw status but
+are presented as informational dependent consequences under one connectivity
+incident. A bounded recovery state remains visible while those collectors wait for
+their next scheduled retry.
+
 The Overview System card shows both rows. Collector failure is operational
 degradation; data coverage is yellow when a decision-critical persisted domain is
 empty, malformed, or stale. Liquidations are an event stream, so no recent event is

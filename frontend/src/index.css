@@ -2113,6 +2113,27 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.1em;
   text-transform: uppercase; color: var(--muted); margin-bottom: var(--space-2);
 }
+.chd-incident {
+  padding: var(--space-2);
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.chd-incident-red { border-left-color: var(--red); }
+.chd-incident-yellow { border-left-color: var(--yellow); }
+.chd-incident-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--fs-sm); font-weight: 600; color: var(--text);
+}
+.chd-incident-message {
+  margin-top: var(--space-1); font-size: var(--fs-sm); line-height: 1.4; color: var(--text);
+}
+.chd-incident-meta {
+  display: flex; flex-direction: column; gap: 2px;
+  margin-top: var(--space-1); font-size: var(--fs-2xs); line-height: 1.4; color: var(--muted);
+}
 .chd-domain {
   padding: var(--space-1) 0;
   border-bottom: 1px solid var(--border);

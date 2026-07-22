@@ -92,6 +92,11 @@ export default function Overview() {
 
   // System state
   const liveState = String(s.live_state || 'live_disabled')
+  const connectivityState = String(s.external_connectivity?.state || 'unknown')
+  const connectivityLight = connectivityState === 'reachable' ? 'green'
+    : connectivityState === 'unavailable' ? 'red'
+    : connectivityState === 'recovering' ? 'yellow'
+    : 'muted'
   const defaultProvider = String(modelConfig?.default_provider || '')
   const dph = (modelHealth as any[]).find(h => h.provider === defaultProvider)
 
@@ -182,6 +187,12 @@ export default function Overview() {
                   return <StatusRow label="Scheduler" light={light} value={state} />
                 })()}
                 <StatusRow
+                  label="Connectivity"
+                  light={connectivityLight}
+                  value={connectivityState}
+                  title={String(s.external_connectivity?.message || '') || undefined}
+                />
+                <StatusRow
                   label="Exchange"
                   light={
                     !usesExternalExchange ? 'muted' :
@@ -211,12 +222,19 @@ export default function Overview() {
                   label="Collectors"
                   light={
                     !collectorHealth ? 'yellow' :
+                    collectorHealth.infrastructure_incident?.status === 'active' ? 'yellow' :
+                    collectorHealth.infrastructure_incident?.status === 'recovering' ? 'yellow' :
                     collectorHealth.status === 'healthy' ? 'green' :
                     collectorHealth.status === 'initializing' ? 'muted' :
                     collectorHealth.status === 'degraded' ? 'red' : 'yellow'
                   }
                   value={
                     !collectorHealth ? 'loading' :
+                    collectorHealth.infrastructure_incident?.status === 'active'
+                      ? `${collectorHealth.infrastructure_incident.affected_domains.length} dependent on connectivity`
+                      : collectorHealth.infrastructure_incident?.status === 'recovering'
+                        ? `${collectorHealth.infrastructure_incident.affected_domains.length} retrying after recovery`
+                        :
                     collectorHealth.status === 'initializing' ? 'initializing' :
                     collectorHealth.status === 'degraded'
                       ? `${collectorHealth.degraded_count} degraded · ${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`

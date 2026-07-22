@@ -2,7 +2,7 @@
 
 > Complete endpoint index for Aletheia Trading OS backend (FastAPI on :8788, proxied via :8787).
 > All endpoints prefixed with `/api/` unless noted. Auth: none (local-only by design).
-> Last updated: 2026-07-20 (HTTP and SQLite latency observability)
+> Last updated: 2026-07-22 (external-connectivity attribution)
 
 ---
 
@@ -52,14 +52,18 @@ These endpoints cross a [trust boundary](../../governance/policies/trust_and_cha
 |--------|------|-------------|
 | GET | `/health` | Liveness check (returns `{"status":"ok"}`) |
 | GET | `/ready` | Readiness check (DB, scheduler, exchange) |
-| GET | `/status` | Full system status (gateway, scheduler, exchange, live state, permission) |
+| GET | `/status` | Full system status (gateway, scheduler, independent external connectivity, exchange, live state, permission) |
 
-`GET /status` exposes `execution_exchange`, `market_data_exchange`,
+`GET /status` exposes `external_connectivity` as a normalized
+`reachable|unavailable|recovering|unknown` state with severity, priority, message,
+action, and observation time. This probe is independent from the configured
+exchange, so a venue-only failure is not reported as a global outage. The route
+also exposes `execution_exchange`, `market_data_exchange`,
 `exchange_alignment` (`local_paper|aligned|diverged`), and `exchange_diverged` so
 operators do not infer the real order target from the retained exchange preference.
 | GET | `/version` | Build version info |
 | GET | `/stability` | Uptime and restart history |
-| GET | `/infra/events` | Infrastructure event log (config changes, restarts, errors) |
+| GET | `/infra/events` | Infrastructure event log (config changes, restarts, errors); connectivity loss is one root-cause warning, recovery and dependent Collector effects are informational. |
 | POST | `/gateway/pause` | Pause scheduler (requires permission >= Operator) |
 | POST | `/gateway/resume` | Resume scheduler |
 
@@ -233,7 +237,7 @@ or insufficient genuine data is not serialized as a zero return, zero win rate, 
 | GET | `/market/snapshots` | Recent market snapshots (price, volume) |
 | GET | `/market/ohlcv` | OHLCV candlestick data |
 | GET | `/market/macro` | Macro economic indicators |
-| GET | `/market/collector-health` | Bounded per-domain collector status, cadence, timeout/budget-skip counters, and overdue state |
+| GET | `/market/collector-health` | Bounded per-domain collector status, cadence, timeout/budget-skip counters, overdue state, and attribution against the normalized external-connectivity state. Raw status remains available while `display_status`, `display_severity`, and `attributed_cause` distinguish dependent consequences from independent Collector warnings. |
 | GET | `/market/data-coverage` | Cached persisted row/symbol/source coverage and freshness, separate from collector execution health. `Server-Timing` distinguishes cache wait/hit, each domain scan, total route work, and global app wall time. |
 
 `GET /market/ohlcv` preserves its historical candle-array body. The response header

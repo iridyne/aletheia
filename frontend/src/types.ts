@@ -385,6 +385,7 @@ export interface SystemStatus {
   scheduler_state: string
   scheduler_job_count: number
   model_provider: string
+  external_connectivity: ExternalConnectivityStatus
   health_status: string
   health_issues: string[]
   infra_events?: InfraEvent[]
@@ -394,6 +395,17 @@ export interface SystemStatus {
   pid: number
   uptime_sec: number
   version: string
+}
+
+export interface ExternalConnectivityStatus {
+  state: 'reachable' | 'unavailable' | 'recovering' | 'unknown'
+  severity: 'ok' | 'warning' | 'info'
+  priority: 1 | 2 | 3 | 4
+  message: string
+  action: string | null
+  observed_at: string | null
+  outage_started_at?: number | null
+  last_recovery_at?: number | null
 }
 
 export interface InfraEvent {
@@ -411,11 +423,26 @@ export interface CollectorHealthDomain {
   domain: string
   cadence_sec: number
   last_status: string
+  display_status: string
+  attributed_cause: string | null
+  display_severity: 'warning' | 'info' | 'muted' | 'ok'
   age_sec: number | null
   overdue: boolean
   degraded: boolean
   consecutive_problems?: number
   last_error_code?: string | null
+}
+
+export interface CollectorInfrastructureIncident {
+  code: 'external_connectivity_unavailable' | 'external_connectivity_recovering'
+  status: 'active' | 'recovering'
+  severity: 'warning' | 'info'
+  priority: number
+  message: string
+  action: string
+  detected_at: string | null
+  observed_at: string | null
+  affected_domains: string[]
 }
 
 export interface CollectorHealthReport {
@@ -425,6 +452,7 @@ export interface CollectorHealthReport {
   completed_count: number
   degraded_count: number
   transient_problem_count: number
+  infrastructure_incident: CollectorInfrastructureIncident | null
   domains: CollectorHealthDomain[]
 }
 

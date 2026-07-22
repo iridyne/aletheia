@@ -26,6 +26,7 @@ _COMPLETED_STATUSES = {"success", "partial", "empty"}
 _ATTEMPTED_STATUSES = _COMPLETED_STATUSES | {"failed", "timed_out", "not_configured"}
 _VALID_STATUSES = _ATTEMPTED_STATUSES | {"skipped_budget", "disabled"}
 _ALERT_THRESHOLD = 3
+_RECOVERY_GRACE_SEC = max(COLLECTOR_CADENCE_SEC.values()) * 2
 
 
 def _now_iso() -> str:
@@ -104,14 +105,42 @@ def record_collector_status(
     repo.upsert_collector_health_state(state)
 
     if problem_count >= _ALERT_THRESHOLD:
+        connectivity_state = "unknown"
+        try:
+            from aletheia.agent_runtime.connectivity import get_status
+
+            connectivity_state = str(
+                (get_status().get("external_connectivity") or {}).get("state")
+                or "unknown"
+            )
+        except Exception:
+            pass
+        dependent = connectivity_state in {"unavailable", "recovering"}
         emit_infra_event(
-            severity="warning",
+            severity="info" if dependent else "warning",
             source="data_collectors",
-            code="collector_consecutive_problem",
+            code=(
+                "collector_problem_dependent_connectivity"
+                if dependent
+                else "collector_consecutive_problem"
+            ),
             entity_id=domain,
-            message=f"{domain} had {problem_count} consecutive collector problems; latest={status}",
-            action="Inspect collector health and gateway errors; do not increase the shared budget blindly.",
-            metadata={"status": status, "consecutive_problems": problem_count},
+            message=(
+                f"{domain} is affected by the external connectivity incident; "
+                f"latest={status}"
+                if dependent
+                else f"{domain} had {problem_count} consecutive collector problems; latest={status}"
+            ),
+            action=(
+                "Resolve the connectivity incident first; this collector retries automatically."
+                if dependent
+                else "Inspect collector health and gateway errors; do not increase the shared budget blindly."
+            ),
+            metadata={
+                "status": status,
+                "consecutive_problems": problem_count,
+                "dependent_on": "external_connectivity" if dependent else None,
+            },
             dedupe_sec=1800,
         )
     return state
@@ -127,7 +156,126 @@ def _parse_time(value: str | None) -> datetime | None:
         return None
 
 
-def get_collector_health_report(*, now: datetime | None = None) -> dict:
+def _epoch_iso(value: float | int | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def _as_epoch(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    parsed = _parse_time(str(value)) if value else None
+    return parsed.timestamp() if parsed else None
+
+
+def _infrastructure_incident(
+    domains: list[dict[str, Any]],
+    connectivity_status: dict[str, Any],
+    *,
+    now: datetime,
+) -> dict[str, Any] | None:
+    connectivity_state = str(connectivity_status.get("state") or "unknown")
+    if connectivity_state not in {"unavailable", "recovering"}:
+        return None
+    observed_at = connectivity_status.get("observed_at")
+    observed_epoch = _as_epoch(observed_at)
+    stale_after_sec = max(1, int(connectivity_status.get("stale_after_sec") or 180))
+
+    outage_started_at = connectivity_status.get("outage_started_at")
+    try:
+        outage_epoch = float(outage_started_at)
+    except (TypeError, ValueError):
+        outage_epoch = None
+
+    problem_rows = [row for row in domains if row["last_status"] in _PROBLEM_STATUSES]
+    affected: list[dict[str, Any]]
+    code: str
+    status: str
+    severity: str
+    message: str
+    action: str
+    detected_at: str | None
+    if connectivity_state == "unavailable":
+        affected = [
+            row
+            for row in problem_rows
+            if outage_epoch is None
+            or (
+                (attempted := _parse_time(row.get("last_attempt_at"))) is not None
+                and attempted.timestamp() >= outage_epoch - stale_after_sec
+            )
+        ]
+        code = "external_connectivity_unavailable"
+        status = "active"
+        severity = "warning"
+        message = (
+            "External network or the configured proxy is unavailable. "
+            "Collector failures are grouped under this infrastructure incident."
+        )
+        action = "Check the network and proxy process; collectors retry automatically."
+        detected_at = _epoch_iso(connectivity_status.get("outage_started_at") or observed_epoch)
+        display_status = "blocked_by_connectivity"
+    else:
+        recovery_at = connectivity_status.get("last_recovery_at")
+        try:
+            recovery_epoch = float(recovery_at)
+        except (TypeError, ValueError):
+            return None
+        if now.timestamp() - recovery_epoch > _RECOVERY_GRACE_SEC:
+            return None
+        affected = [
+            row
+            for row in problem_rows
+            if (
+                (attempted := _parse_time(row.get("last_attempt_at"))) is not None
+                and (outage_epoch is None or attempted.timestamp() >= outage_epoch - stale_after_sec)
+                and attempted.timestamp() <= recovery_epoch
+            )
+        ]
+        if not affected:
+            return None
+        code = "external_connectivity_recovering"
+        status = "recovering"
+        severity = "info"
+        message = (
+            "External connectivity is restored. Affected collectors are waiting "
+            "for their next scheduled retry."
+        )
+        action = "No manual restart is required; collector status will clear after a successful run."
+        detected_at = _epoch_iso(recovery_epoch)
+        display_status = "waiting_for_retry"
+
+    affected_domains = [row["domain"] for row in affected]
+    for row in affected:
+        row["display_status"] = display_status
+        row["attributed_cause"] = code
+        row["display_severity"] = "info"
+    return {
+        "code": code,
+        "status": status,
+        "severity": severity,
+        "priority": int(connectivity_status.get("priority") or (1 if status == "active" else 2)),
+        "message": message,
+        "action": action,
+        "detected_at": detected_at,
+        "observed_at": (
+            str(observed_at)
+            if isinstance(observed_at, str)
+            else _epoch_iso(observed_epoch)
+        ),
+        "affected_domains": affected_domains,
+    }
+
+
+def get_collector_health_report(
+    *,
+    now: datetime | None = None,
+    connectivity_status: dict[str, Any] | None = None,
+) -> dict:
     """Build an operator-facing summary from bounded durable state."""
     now = now or datetime.now(timezone.utc)
     stored = {row["domain"]: row for row in repo.list_collector_health_states()}
@@ -158,6 +306,15 @@ def get_collector_health_report(*, now: datetime | None = None) -> dict:
             "domain": domain,
             "cadence_sec": cadence_sec,
             "last_status": status,
+            "display_status": status,
+            "attributed_cause": None,
+            "display_severity": (
+                "warning"
+                if is_degraded or status in _PROBLEM_STATUSES
+                else "info" if status == "skipped_budget"
+                else "muted" if status in {"disabled", "not_configured", "never_run"}
+                else "ok"
+            ),
             "age_sec": age_sec,
             "overdue": overdue,
             "degraded": is_degraded,
@@ -171,6 +328,18 @@ def get_collector_health_report(*, now: datetime | None = None) -> dict:
         else "healthy" if recorded
         else "initializing"
     )
+    if connectivity_status is None:
+        try:
+            from aletheia.agent_runtime.connectivity import get_status
+
+            connectivity_status = get_status().get("external_connectivity") or {}
+        except Exception:
+            connectivity_status = {}
+    infrastructure_incident = _infrastructure_incident(
+        domains,
+        connectivity_status,
+        now=now,
+    )
     return {
         "status": overall,
         "domain_count": len(COLLECTOR_CADENCE_SEC),
@@ -178,5 +347,6 @@ def get_collector_health_report(*, now: datetime | None = None) -> dict:
         "completed_count": completed,
         "degraded_count": degraded,
         "transient_problem_count": transient,
+        "infrastructure_incident": infrastructure_incident,
         "domains": domains,
     }
