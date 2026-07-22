@@ -251,6 +251,9 @@ _DECISION_SCHEMA = {
         # stop and take-profit price at decision time. When omitted, the proposal
         # builder derives them from config defaults so the four-element entry
         # (entry/stop/tp/reward:risk) is always complete before the limit order.
+        # Geometry: long → stop < entry, tp > entry; short → stop > entry, tp < entry.
+        # Inverted values (LLM applying long-first intuition to a short) are silently
+        # replaced by config defaults before the risk engine sees the proposal.
         "stop_price": {"type": "number"},
         "take_profit": {"type": "number"},
         # M2: Operator's intended holding horizon in hours (drives the time-stop /
@@ -823,6 +826,16 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
     trade_school = "serenity" if getattr(decision, "signal_source", None) == "serenity" else "short_term"
 
     stop_price = _valid_protective_price(decision.stop_price)
+    # Discard geometrically-inverted stop (long: stop must be below entry;
+    # short: stop must be above entry). Falls through to config-default below.
+    _stop_from_operator = stop_price is not None
+    if stop_price is not None:
+        if decision.direction == "long" and stop_price >= price:
+            stop_price = None
+            _stop_from_operator = False
+        elif decision.direction == "short" and stop_price <= price:
+            stop_price = None
+            _stop_from_operator = False
     if stop_price is None:
         stop_pct = (
             cfg.serenity.stop_loss_pct
@@ -840,6 +853,13 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
     # from the committed entry/stop/tp. The risk engine rejects every native local
     # paper entry (and native exchange limit entry) missing any of the four.
     take_profit = _valid_protective_price(decision.take_profit)
+    # Discard geometrically-inverted tp (long: tp must be above entry;
+    # short: tp must be below entry). Falls through to config-default below.
+    if take_profit is not None:
+        if decision.direction == "long" and take_profit <= price:
+            take_profit = None
+        elif decision.direction == "short" and take_profit >= price:
+            take_profit = None
     if take_profit is None:
         tp_pct = cfg.trading.default_take_profit_pct
         if decision.direction == "long":
@@ -932,7 +952,7 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         # provenance to the position at open. stop_source='operator' iff the AI
         # authored the stop (else config default filled it in above).
         expected_horizon_hours=decision.expected_horizon_hours,
-        stop_source="operator" if _valid_protective_price(decision.stop_price) is not None else "default",
+        stop_source="operator" if _stop_from_operator else "default",
     )
     return {"status": "prepared", "proposal_id": proposal.id, "proposal": proposal}
 

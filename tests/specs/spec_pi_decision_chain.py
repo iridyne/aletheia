@@ -560,3 +560,88 @@ def test_daemon_heartbeat_health_is_separate_from_evaluation(monkeypatch):
 
     if hasattr(scheduler._JOB_RUN_STATE, "failure_recorded"):
         del scheduler._JOB_RUN_STATE.failure_recorded
+
+
+@spec_claim(
+    SpecClaim(
+        "PI-S08",
+        "agent_contracts",
+        "§entry plan geometry correction",
+        "L2b",
+        "Geometrically-inverted stop/tp values from the LLM (e.g. short with tp > entry, "
+        "or long with stop > entry) are silently replaced by config-derived defaults before "
+        "the proposal reaches the Risk Engine. The risk engine's geometry backstop is not "
+        "triggered for these proposals. stop_source reflects 'default' for corrected stops.",
+        status="implemented",
+    ),
+)
+def test_inverted_stop_tp_replaced_by_config_defaults(tmp_path, monkeypatch):
+    """Short with tp=110 and stop=80 at price=100 (both inverted) must be corrected
+    to config-default values before the Risk Engine, and stop_source must be 'default'."""
+    import sqlite3
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.sqlite import reset_db
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    for sub in ("logs",):
+        (tmp_path / sub).mkdir(parents=True, exist_ok=True)
+    reset_db()
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    sq._db_conn = conn
+    run_migrations()
+    init_tool_registry()
+
+    from aletheia.agent_shell.trading_decision import TradingDecision, prepare_decision_as_proposal
+    import aletheia.agent_shell.trading_decision as td_module
+    import aletheia.trust.guard_chain as gc
+
+    # Patch price lookup to return 100.0 (known entry price)
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda symbol, market_type, *, venue: 100.0,
+    )
+    monkeypatch.setattr(
+        td_module, "_latest_exact_entry_snapshot", lambda *a: None
+    )
+    # Guard chain advisory — bypass
+    monkeypatch.setattr(gc, "run_guards", lambda ctx: [])
+    monkeypatch.setattr(gc, "summarize", lambda verdicts: {"blocks": [], "details": ""})
+
+    # Inverted short: tp=110 (> entry=100) and stop=80 (< entry=100)
+    # Correct short geometry: tp < entry, stop > entry
+    decision = TradingDecision(
+        action="trade",
+        symbol="BTC/USDT",
+        direction="short",
+        conviction=70,
+        reasoning="test",
+        bear_case="test bear",
+        stop_price=80.0,    # inverted: should be > entry for short
+        take_profit=110.0,  # inverted: should be < entry for short
+        parameter_rationale={
+            "entry_price": "test", "stop_loss": "test",
+            "take_profit": "test", "notional_usdt": "test", "leverage": "test",
+        },
+    )
+
+    import asyncio
+    result = asyncio.new_event_loop().run_until_complete(
+        prepare_decision_as_proposal(decision, "paper_internal")
+    )
+
+    proposal = result["proposal"]
+    assert proposal.stop_price > 100.0, (
+        f"short stop must be > entry after correction, got stop={proposal.stop_price}"
+    )
+    assert proposal.take_profit < 100.0, (
+        f"short tp must be < entry after correction, got tp={proposal.take_profit}"
+    )
+    assert proposal.stop_source == "default", (
+        f"stop_source must be 'default' when LLM stop was discarded, got {proposal.stop_source!r}"
+    )
