@@ -285,8 +285,8 @@ def test_risk_decision_roles_snapshot_and_authoritative_idempotency(tmp_path, mo
         "pipeline_risk_execution_integrity",
         "§2 authoritative risk rejection",
         "L2c",
-        "An authoritative rejected RiskDecision and its Proposal rejected state commit in "
-        "the same writer transaction, including recovery of a legacy pending Proposal.",
+        "An authoritative rejected RiskDecision and a pending or approved Proposal rejection "
+        "commit in one writer transaction without overwriting execution-progress states.",
         status="implemented",
     )
 )
@@ -334,6 +334,29 @@ def test_authoritative_risk_rejection_terminalizes_proposal_atomically(
     original_update(proposal.id, status="pending")
     retry = engine.evaluate_proposal(proposal, decision_role="authoritative")
     recovered_status = repo.get_trade_proposal(proposal.id)["status"]
+
+    original_update(proposal.id, status="approved")
+    approved_retry = engine.evaluate_proposal(proposal, decision_role="authoritative")
+    approved_status = repo.get_trade_proposal(proposal.id)["status"]
+
+    protected_statuses = (
+        "executing",
+        "submitted",
+        "partially_filled",
+        "submission_unknown",
+        "materialization_missing",
+        "error",
+        "executed",
+    )
+    preserved = {}
+    for status in protected_statuses:
+        original_update(proposal.id, status=status)
+        protected_retry = engine.evaluate_proposal(
+            proposal, decision_role="authoritative"
+        )
+        assert protected_retry.decision_id == rejected.decision_id
+        preserved[status] = repo.get_trade_proposal(proposal.id)["status"]
+
     authoritative_count = db.execute(
         "SELECT COUNT(*) FROM risk_decisions "
         "WHERE proposal_id=? AND decision_role='authoritative'",
@@ -342,9 +365,11 @@ def test_authoritative_risk_rejection_terminalizes_proposal_atomically(
 
     assert not rejected.approved
     assert retry.decision_id == rejected.decision_id
-    assert first_status == recovered_status == "rejected"
+    assert approved_retry.decision_id == rejected.decision_id
+    assert first_status == recovered_status == approved_status == "rejected"
+    assert preserved == {status: status for status in protected_statuses}
     assert authoritative_count == 1
-    assert update_transaction_states == [True, True]
+    assert update_transaction_states == [True, True, True]
 
 
 @spec_claim(

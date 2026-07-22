@@ -615,12 +615,13 @@ def evaluate_proposal(
                     if (
                         stored is not None
                         and str(stored.get("status") or "")
-                        not in {"rejected", "error", "executed"}
+                        in {"pending", "approved"}
                     ):
                         # The authoritative verdict and terminal Proposal state
-                        # must commit together. Gateway emits the post-commit
-                        # audit, but a worker crash before that handoff must not
-                        # leave rejected authority attached to pending intent.
+                        # must commit together, but only from states whose
+                        # transition matrix permits rejection. Gateway emits the
+                        # post-commit audit; execution-progress states must never
+                        # be rewritten by an idempotent Risk retry.
                         update_trade_proposal(proposal.id, status="rejected")
                 if result.approved:
                     stored = get_trade_proposal(proposal.id)
