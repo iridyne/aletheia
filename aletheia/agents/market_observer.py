@@ -1357,7 +1357,6 @@ async def _analyze_symbol(
     if member_expires_at is not None:
         valid_until = member_expires_at
     else:
-        from datetime import datetime, timezone, timedelta
         from aletheia.universe.allocator import _FAMILY_TTL
         ttl_sec = _FAMILY_TTL.get(effective_scanner_family or "", 3600)
         valid_until = (datetime.now(timezone.utc) + timedelta(seconds=ttl_sec)).isoformat()
