@@ -1010,6 +1010,40 @@ def test_signal_batch_plan_priority_replacement_no_eviction_when_equal_or_lower(
 
 @spec_claim(
     SpecClaim(
+        "PL-PT-23",
+        "pipeline_paper_trade",
+        "§2 opposing direction dedup",
+        "L2b",
+        "When a long candidate is already in the queue for a symbol, a short candidate "
+        "for the same symbol is rejected with opposing_direction_queued, preventing both "
+        "sides from consuming evaluation slots simultaneously.",
+        status="implemented",
+    ),
+)
+def test_signal_batch_plan_opposing_direction_rejected_when_same_symbol_queued():
+    from aletheia.agents.paper_trader import _plan_signal_batch
+
+    short_candidate = {
+        "opportunity_id": "opp-short",
+        "symbol": "BTC/USDT",
+        "direction": "short",
+        "scanner_family": "momentum",
+        "trade_score": 75,
+    }
+    # Long is already in the active queue for the same symbol
+    plan = _plan_signal_batch(
+        [short_candidate],
+        open_symbols=set(),
+        recent_signal_pairs=set(),
+        active_signal_setups={("BTC/USDT", "long", "momentum")},
+    )
+
+    assert plan.selected == []
+    assert plan.decisions["opp-short"] == ("opposing_direction_queued", "rejected")
+
+
+@spec_claim(
+    SpecClaim(
         "PL-PT-12",
         "pipeline_paper_trade",
         "§4 approved take-profit identity",

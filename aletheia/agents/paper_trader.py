@@ -284,6 +284,10 @@ def _plan_signal_batch(
     seen_symbols: set[str] = set()
     evaluated_ids = operator_evaluated_opportunity_ids or set()
     active_setups = active_signal_setups or set()
+    # Symbol-level index used to catch opposing-direction carriers: if LONG is
+    # already in the queue, SHORT for the same symbol is rejected too, and vice
+    # versa.  Extracted once here rather than scanning the full set per candidate.
+    active_symbols: set[str] = {s for (s, _, _) in active_setups}
     # Mutable view of current queue for priority-replacement bookkeeping.
     # Sorted ascending by conviction so index 0 is always the weakest occupant.
     queue_occupants: list[dict] = sorted(current_queue or [], key=lambda x: x["conviction"])
@@ -303,12 +307,12 @@ def _plan_signal_batch(
         if symbol in open_symbols:
             decisions[opp_id] = ("open_position_duplicate", "rejected")
             continue
-        if (
-            symbol,
-            direction,
-            str(candidate.get("scanner_family") or ""),
-        ) in active_setups:
-            decisions[opp_id] = ("active_operator_carrier", "rejected")
+        if symbol in active_symbols:
+            scanner_family_str = str(candidate.get("scanner_family") or "")
+            if (symbol, direction, scanner_family_str) in active_setups:
+                decisions[opp_id] = ("active_operator_carrier", "rejected")
+            else:
+                decisions[opp_id] = ("opposing_direction_queued", "rejected")
             continue
         if (symbol, direction) in recent_signal_pairs:
             decisions[opp_id] = ("signal_cooldown", "rejected")
