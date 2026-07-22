@@ -561,3 +561,109 @@ def test_import_rejects_row_with_unknown_column(tmp_path, monkeypatch):
     assert _count_lessons(tmp_path, "lesson-badcol") == 0, (
         "no rows must be inserted when an unknown column is present"
     )
+
+
+# ---------------------------------------------------------------------------
+# #275 — import merge uses atomic transaction; partial failure rolls back all
+# ---------------------------------------------------------------------------
+
+
+def test_import_transaction_rolls_back_on_constraint_failure(tmp_path, monkeypatch):
+    """#275: a bundle with one valid row followed by a PK-duplicate row (different
+    content, no idempotency) must leave neither row committed.
+
+    We seed a row in ps_lessons, then import a bundle where the first row
+    has a fresh ID (would insert fine) but the second has the SAME ID as the
+    seeded row BUT different content — causing a conflict classification.
+    After the conflict path the first row should NOT be persisted because the
+    entire import runs inside a single transaction.
+
+    NOTE: The conflict detection path skips the INSERT for conflicting rows,
+    so we force a raw constraint failure: we insert a bundle whose SECOND row
+    has the same lesson_id as the first (intra-bundle PK clash not detected by
+    PK pre-check). That forces INSERT to fail mid-transaction.
+    """
+    from aletheia.storage.hashing import sha256_file
+
+    _setup_env(tmp_path, monkeypatch)
+
+    staging = tmp_path / "staging_tx_rollback"
+    staging.mkdir()
+    db_dir = staging / "db"
+    db_dir.mkdir()
+
+    base_row = {
+        "lesson_id": "tx-lesson-A",
+        "source_type": "test", "source_id": "s1",
+        "category": "risk", "severity": "medium", "status": "accepted",
+        "summary": "first", "evidence_json": "{}", "created_at": "2026-01-01T00:00:00Z",
+    }
+    dup_row = dict(base_row, summary="duplicate PK — will fail constraint")
+
+    jsonl_path = db_dir / "ps_lessons.jsonl"
+    jsonl_path.write_text(
+        json.dumps(base_row) + "\n" + json.dumps(dup_row) + "\n",
+        encoding="utf-8",
+    )
+    (staging / "checksums.txt").write_text(
+        f"{sha256_file(jsonl_path)}  db/ps_lessons.jsonl\n", encoding="utf-8"
+    )
+    archive = tmp_path / "tx_rollback.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname="tx_rollback")
+
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert result.errors, (
+        "duplicate intra-bundle PK must produce an error (transaction rolled back)"
+    )
+    assert _count_lessons(tmp_path, "tx-lesson-A") == 0, (
+        "the first row must not be committed when the transaction was rolled back"
+    )
+    assert not result.new_rows, (
+        "new_rows must be empty after a rolled-back transaction"
+    )
+
+
+def test_import_valid_bundle_commits_all_rows(tmp_path, monkeypatch):
+    """#275: a fully valid bundle must still commit all rows and report new_rows."""
+    _setup_env(tmp_path, monkeypatch)
+
+    rows = [
+        {
+            "lesson_id": f"lesson-tx-{i}",
+            "source_type": "test", "source_id": f"s{i}",
+            "category": "risk", "severity": "medium", "status": "accepted",
+            "summary": f"row {i}", "evidence_json": "{}", "created_at": "2026-01-01T00:00:00Z",
+        }
+        for i in range(3)
+    ]
+    from aletheia.storage.hashing import sha256_file
+
+    staging = tmp_path / "staging_valid_commit"
+    staging.mkdir()
+    db_dir = staging / "db"
+    db_dir.mkdir()
+    jsonl_path = db_dir / "ps_lessons.jsonl"
+    jsonl_path.write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+    (staging / "checksums.txt").write_text(
+        f"{sha256_file(jsonl_path)}  db/ps_lessons.jsonl\n", encoding="utf-8"
+    )
+    archive = tmp_path / "valid_commit.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname="valid_commit")
+
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert not result.errors, f"valid bundle must not error; got {result.errors}"
+    assert result.new_rows.get("ps_lessons") == 3, (
+        f"expected 3 new ps_lessons rows; got {result.new_rows}"
+    )
+    for row in rows:
+        assert _count_lessons(tmp_path, row["lesson_id"]) == 1, (
+            f"row {row['lesson_id']} must be committed"
+        )

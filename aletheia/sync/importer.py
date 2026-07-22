@@ -8,6 +8,7 @@ from pathlib import Path
 from aletheia.config.loader import get_data_dir
 from aletheia.storage.hashing import sha256_file
 from aletheia.storage.sqlite import get_db
+from aletheia.storage.repositories import transaction as _db_transaction
 
 # Tables the importer is allowed to write — exactly the set emitted by the
 # supported exporter modes (research-pack, proposal-pack, runtime-snapshot).
@@ -194,7 +195,7 @@ class ImportService:
                     result.errors.append(f"Unlisted payload file not in checksum manifest: {rel}")
 
     def _import_db_tables(self, db_dir: Path, result: ImportResult, commit: bool) -> None:
-        """Import JSONL table data with deduplication (#273: allowlist + preflight).
+        """Import JSONL table data (#271/#273/#275: allowlist, preflight, atomic tx).
 
         Preflight phase (no DB writes):
         - Reject tables not in _IMPORT_ALLOWED_TABLES.
@@ -202,9 +203,16 @@ class ImportService:
         - Reject rows containing columns absent from the local schema.
         Any preflight failure aborts the entire import before any DB mutation.
 
-        Commit phase (only reached when preflight passes):
-        - All identifiers are quoted to prevent injection.
-        - Conflicts / duplicates are classified as before (#64).
+        Classification phase (read-only):
+        - Detect conflicts (#64) and duplicates via explicit PK lookup.
+        - Build a queue of rows to insert.
+
+        Commit phase (#275, only when commit=True):
+        - Executes all INSERTs inside a single repository transaction()
+          (acquires the process-wide write lock).
+        - Uses plain INSERT — no OR IGNORE; constraint violations propagate.
+        - Rolls back the entire import on first failure; result.new_rows is
+          cleared so callers see zero committed rows.
         """
         db = get_db()
 
@@ -217,7 +225,7 @@ class ImportService:
                 return frozenset()
 
         # ── Preflight pass ────────────────────────────────────────────────────
-        preflight_tables: list[tuple[str, Path, list[dict]]] = []
+        preflight_tables: list[tuple[str, list[dict]]] = []
         for jsonl_file in sorted(db_dir.glob("*.jsonl")):
             table_name = jsonl_file.stem
             if table_name not in _IMPORT_ALLOWED_TABLES:
@@ -253,17 +261,18 @@ class ImportService:
                         )
                         return
                     rows_for_table.append(row)
-            preflight_tables.append((table_name, jsonl_file, rows_for_table))
+            preflight_tables.append((table_name, rows_for_table))
 
-        # ── Import phase ──────────────────────────────────────────────────────
-        for table_name, _jsonl_file, rows in preflight_tables:
-            new_count = 0
-            pk_col = None  # resolved lazily from first row
+        # ── Classification pass (read-only) ───────────────────────────────────
+        # Fills result.conflicts / result.skipped_duplicates; builds insert queue.
+        insert_queue: list[tuple[str, list[dict]]] = []
+        for table_name, rows in preflight_tables:
+            pk_col = None
+            to_insert: list[dict] = []
             for row in rows:
                 if pk_col is None:
                     pk_col = self._find_pk(table_name, row)
-
-                # Conflict / duplicate detection (#64)
+                # #64: explicit PK lookup — classify before any write
                 if pk_col and pk_col in row:
                     existing = db.execute(
                         f'SELECT * FROM "{table_name}" WHERE "{pk_col}" = ?',
@@ -289,27 +298,34 @@ class ImportService:
                         else:
                             result.skipped_duplicates += 1
                         continue
+                to_insert.append(row)
 
-                if commit:
-                    quoted_cols = ", ".join(f'"{c}"' for c in row.keys())
-                    placeholders = ", ".join(["?"] * len(row))
-                    try:
+            if to_insert:
+                insert_queue.append((table_name, to_insert))
+            # Report would-be new rows for dry-run and as optimistic count for commit.
+            if to_insert:
+                result.new_rows[table_name] = len(to_insert)
+
+        # ── Commit phase ──────────────────────────────────────────────────────
+        if not commit:
+            return
+
+        result.new_rows = {}  # clear optimistic counts; reset only after success
+        try:
+            with _db_transaction():
+                for table_name, rows in insert_queue:
+                    quoted_cols = ", ".join(f'"{c}"' for c in rows[0].keys())
+                    placeholders = ", ".join(["?"] * len(rows[0]))
+                    for row in rows:
                         db.execute(
-                            f'INSERT OR IGNORE INTO "{table_name}" ({quoted_cols}) '
+                            f'INSERT INTO "{table_name}" ({quoted_cols}) '
                             f"VALUES ({placeholders})",
                             list(row.values()),
                         )
-                    except Exception as exc:
-                        result.errors.append(f"Insert into {table_name} failed: {exc}")
-                        continue
-
-                new_count += 1
-
-            if new_count > 0:
-                result.new_rows[table_name] = new_count
-
-        if commit:
-            db.commit()
+                    result.new_rows[table_name] = len(rows)
+        except Exception as exc:
+            result.errors.append(f"Import transaction failed and was rolled back: {exc}")
+            result.new_rows = {}
 
     def _import_artifacts(self, artifacts_dir: Path) -> None:
         """Copy artifacts into local store."""
