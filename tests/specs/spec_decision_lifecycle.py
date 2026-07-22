@@ -1071,19 +1071,32 @@ def test_serenity_pending_signal_is_not_hidden_by_market_queue_ttl(tmp_path, mon
 
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_shell.trading_context import _build_pending_signal_queue
-    from aletheia.storage.models import PiDecision
-    from aletheia.storage.repositories import insert_pi_decision
+    from aletheia.storage.models import PiDecision, SerenityOpportunity, SerenityTheme
+    from aletheia.storage.repositories import (
+        insert_pi_decision,
+        insert_serenity_opportunity,
+        insert_serenity_theme,
+    )
 
+    # A Serenity carrier must survive the 30-minute market TTL as long as
+    # its source opportunity and parent theme are active and unexpired.
+    theme = SerenityTheme(name="Long-horizon theme", status="active")
+    insert_serenity_theme(theme)
+    opp = SerenityOpportunity(
+        theme_id=theme.id, symbol="NVDA", direction="long",
+        market_type="spot", status="active",
+    )
+    insert_serenity_opportunity(opp)
     insert_pi_decision(PiDecision(
         symbol="NVDA", direction="long", market_type="spot",
-        action="signal_pending", opportunity_id="serenity-long-horizon",
+        action="signal_pending", opportunity_id=opp.id,
         signal_source="serenity",
         created_at=(datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat(),
     ))
 
     signals, queue = _build_pending_signal_queue(limit=5, max_age_minutes=30)
 
-    assert [row["opportunity_id"] for row in signals] == ["serenity-long-horizon"]
+    assert [row["opportunity_id"] for row in signals] == [opp.id]
     assert queue["unresolved_total"] == 1
     assert queue["expired_unconsumed_rows"] == 0
 
@@ -4896,3 +4909,166 @@ def test_defer_ttl_guard_emits_warning_when_extend_is_noop(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == 1, "Expected one filter_decision with reason_code=defer_exceeds_opportunity_ttl"
     assert rows[0]["filter_name"] == "defer_ttl_guard"
+
+
+# ---------------------------------------------------------------------------
+# Serenity source-lifecycle queue gate (§2.3 Serenity source lifecycle)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S52", "decision_lifecycle_contract",
+        "§2.3 Serenity source lifecycle queue gate", "L2b",
+        "A Serenity signal_pending carrier is unresolved only while its "
+        "source serenity_opportunity is active and its parent serenity_theme "
+        "is neither dismissed/expired nor past its expires_at deadline. "
+        "A carrier with a dead source is excluded from the visible queue "
+        "and counted in expired_unconsumed_rows.",
+        status="implemented",
+    ),
+)
+def test_serenity_expired_source_excluded_from_queue(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.trading_context import _build_pending_signal_queue
+    from aletheia.storage.models import PiDecision, SerenityOpportunity, SerenityTheme
+    from aletheia.storage.repositories import (
+        insert_pi_decision,
+        insert_serenity_opportunity,
+        insert_serenity_theme,
+    )
+
+    now = datetime.now(timezone.utc)
+
+    # --- Active theme / active opp → carrier must appear in queue ---
+    theme_active = SerenityTheme(name="Active theme", status="active")
+    insert_serenity_theme(theme_active)
+    opp_active = SerenityOpportunity(
+        theme_id=theme_active.id, symbol="BTC/USDT", direction="long",
+        market_type="usdt_futures", status="active",
+    )
+    insert_serenity_opportunity(opp_active)
+    insert_pi_decision(PiDecision(
+        symbol="BTC/USDT", direction="long", market_type="usdt_futures",
+        action="signal_pending", reasoning="active serenity signal",
+        opportunity_id=opp_active.id, signal_source="serenity",
+        created_at=(now - timedelta(minutes=10)).isoformat(),
+    ))
+
+    # --- Theme past its expires_at → carrier must be excluded from queue ---
+    expired_at = (now - timedelta(hours=1)).isoformat()
+    theme_expired = SerenityTheme(name="Expired theme", status="active", expires_at=expired_at)
+    insert_serenity_theme(theme_expired)
+    opp_for_expired = SerenityOpportunity(
+        theme_id=theme_expired.id, symbol="ETH/USDT", direction="long",
+        market_type="usdt_futures", status="active",
+    )
+    insert_serenity_opportunity(opp_for_expired)
+    insert_pi_decision(PiDecision(
+        symbol="ETH/USDT", direction="long", market_type="usdt_futures",
+        action="signal_pending", reasoning="expired theme serenity signal",
+        opportunity_id=opp_for_expired.id, signal_source="serenity",
+        created_at=(now - timedelta(minutes=9)).isoformat(),
+    ))
+
+    # --- Dismissed opp → carrier must be excluded from queue ---
+    theme_ok = SerenityTheme(name="OK theme", status="active")
+    insert_serenity_theme(theme_ok)
+    opp_dismissed = SerenityOpportunity(
+        theme_id=theme_ok.id, symbol="SOL/USDT", direction="short",
+        market_type="usdt_futures", status="dismissed",
+    )
+    insert_serenity_opportunity(opp_dismissed)
+    insert_pi_decision(PiDecision(
+        symbol="SOL/USDT", direction="short", market_type="usdt_futures",
+        action="signal_pending", reasoning="dismissed opp serenity signal",
+        opportunity_id=opp_dismissed.id, signal_source="serenity",
+        created_at=(now - timedelta(minutes=8)).isoformat(),
+    ))
+
+    signals, queue = _build_pending_signal_queue(limit=20, max_age_minutes=60)
+
+    visible_ids = [s["opportunity_id"] for s in signals]
+    assert opp_active.id in visible_ids, "Active Serenity carrier must be visible"
+    assert opp_for_expired.id not in visible_ids, "Carrier with expired-deadline theme must be hidden"
+    assert opp_dismissed.id not in visible_ids, "Carrier with dismissed opp must be hidden"
+    # The two dead-source rows must be counted as expired
+    assert queue["expired_unconsumed_rows"] >= 2, (
+        f"Expected ≥2 expired Serenity rows, got {queue['expired_unconsumed_rows']}"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S53", "decision_lifecycle_contract",
+        "§2.3 Serenity theme maintenance expiry cascade", "L2b",
+        "expire_stale_serenity_themes() transitions themes past their "
+        "expires_at to status='expired' and cascades to active child "
+        "serenity_opportunities, mirroring the manual route. Returns count "
+        "of themes transitioned.",
+        status="implemented",
+    ),
+)
+def test_expire_stale_serenity_themes_cascades(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.models import SerenityOpportunity, SerenityTheme
+    from aletheia.storage.repositories import (
+        expire_stale_serenity_themes,
+        get_serenity_opportunity,
+        get_serenity_theme,
+        insert_serenity_opportunity,
+        insert_serenity_theme,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc)
+
+    # Theme with deadline already passed
+    past = (now - timedelta(hours=2)).isoformat()
+    stale = SerenityTheme(name="Stale theme", status="active", expires_at=past)
+    insert_serenity_theme(stale)
+    opp1 = SerenityOpportunity(theme_id=stale.id, symbol="BTC/USDT", direction="long", status="active")
+    insert_serenity_opportunity(opp1)
+    opp2 = SerenityOpportunity(theme_id=stale.id, symbol="ETH/USDT", direction="short", status="active")
+    insert_serenity_opportunity(opp2)
+
+    # Theme with deadline in future → must NOT be expired
+    future = (now + timedelta(hours=48)).isoformat()
+    fresh = SerenityTheme(name="Fresh theme", status="active", expires_at=future)
+    insert_serenity_theme(fresh)
+    opp3 = SerenityOpportunity(theme_id=fresh.id, symbol="SOL/USDT", direction="long", status="active")
+    insert_serenity_opportunity(opp3)
+
+    # Theme with no expires_at → never auto-expired
+    no_deadline = SerenityTheme(name="No deadline", status="active")
+    insert_serenity_theme(no_deadline)
+    opp4 = SerenityOpportunity(theme_id=no_deadline.id, symbol="ADA/USDT", direction="long", status="active")
+    insert_serenity_opportunity(opp4)
+
+    # Already-dismissed theme → must not be touched
+    already = SerenityTheme(name="Already dismissed", status="dismissed")
+    insert_serenity_theme(already)
+    already_opp = SerenityOpportunity(theme_id=already.id, symbol="XRP/USDT", direction="long", status="active")
+    insert_serenity_opportunity(already_opp)
+
+    count = expire_stale_serenity_themes()
+
+    assert count == 1, f"Expected 1 theme expired, got {count}"
+    assert get_serenity_theme(stale.id)["status"] == "expired"
+    assert get_serenity_opportunity(opp1.id)["status"] == "expired"
+    assert get_serenity_opportunity(opp2.id)["status"] == "expired"
+    # Fresh / no-deadline / already-dismissed themes and their opps are untouched
+    assert get_serenity_theme(fresh.id)["status"] == "active"
+    assert get_serenity_opportunity(opp3.id)["status"] == "active"
+    assert get_serenity_theme(no_deadline.id)["status"] == "active"
+    assert get_serenity_opportunity(opp4.id)["status"] == "active"
+    assert get_serenity_theme(already.id)["status"] == "dismissed"
+    assert get_serenity_opportunity(already_opp.id)["status"] == "active"

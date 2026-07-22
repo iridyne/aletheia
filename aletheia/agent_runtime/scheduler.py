@@ -2343,6 +2343,7 @@ def _run_cleanup():
             # of app.db so it needs its own DELETE cycle.
             "agent_task_claims": _prune_agent_task_claims_tasks_db(),
             "opportunities_expired": repo.expire_stale_opportunities(r.opportunity_ttl_hours),
+            "serenity_themes_expired": repo.expire_stale_serenity_themes(),
             "news_items": _prune_news(cfg),
             # Cancel abandoned unresolved Orders reconciliation can never resolve
             # (no credentials / venue dropped them) so they stop failing every

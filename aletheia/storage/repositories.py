@@ -6393,6 +6393,40 @@ def expire_stale_opportunities(ttl_hours: int = 48) -> int:
         )
 
 
+def expire_stale_serenity_themes() -> int:
+    """Soft-expire serenity_themes whose expires_at deadline has passed.
+
+    Cascades the expiry to active child serenity_opportunities, mirroring the
+    manual theme-status route, so the pending queue sees fresh lifecycle state
+    on the next scheduler pass. Returns the number of themes transitioned.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    with transaction(immediate=True):
+        rows = (
+            get_db()
+            .execute(
+                "SELECT id FROM serenity_themes "
+                "WHERE status NOT IN ('dismissed', 'expired') "
+                "AND expires_at IS NOT NULL "
+                "AND datetime(expires_at) <= datetime(?)",
+                (now,),
+            )
+            .fetchall()
+        )
+        for row in rows:
+            execute_write(
+                "UPDATE serenity_themes SET status='expired', updated_at=? "
+                "WHERE id=? AND status NOT IN ('dismissed', 'expired')",
+                (now, row["id"]),
+            )
+            execute_write(
+                "UPDATE serenity_opportunities SET status='expired', updated_at=? "
+                "WHERE theme_id=? AND status='active'",
+                (now, row["id"]),
+            )
+    return len(rows)
+
+
 # ── Edge Lab: Shadow Trades ──────────────────────────────────────────────────
 
 

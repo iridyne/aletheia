@@ -373,9 +373,24 @@ def _build_pending_signal_queue(
         "  AND COALESCE(f.proposal_status, '') != 'submitting' "
         f"  AND {unique_entry_final}"
     )
+    # A Serenity carrier is unresolved only while its source opportunity and
+    # parent theme are still active and the theme deadline has not passed.
+    # Rows whose source is missing, terminal, dismissed, or expired fall
+    # through to the market_observer expiry branch (not unresolved at all).
+    serenity_source_alive = (
+        "SELECT 1 FROM serenity_opportunities so "
+        "JOIN serenity_themes st ON st.id = so.theme_id "
+        "WHERE so.id = p.opportunity_id "
+        "AND so.status = 'active' "
+        "AND st.status NOT IN ('dismissed', 'expired') "
+        "AND (st.expires_at IS NULL "
+        "     OR datetime(st.expires_at) > datetime('now'))"
+    )
     unresolved = (
         "p.action = 'signal_pending' "
-        "AND (COALESCE(p.signal_source, 'market_observer') = 'serenity' "
+        "AND ((COALESCE(p.signal_source, 'market_observer') = 'serenity' "
+        f"      AND p.opportunity_id IS NOT NULL "
+        f"      AND EXISTS ({serenity_source_alive})) "
         f"     OR EXISTS ({submitting_final}) "
         "     OR (COALESCE(p.signal_source, 'market_observer') = 'market_observer' "
         "         AND ((o.status IN ('queued', 'reviewed') "
@@ -463,23 +478,32 @@ def _build_pending_signal_queue(
     visible_limit = max(int(limit), 0)
     visible = unique[:visible_limit]
     expired = db.execute(
-        "SELECT COUNT(*) AS n, MIN(p.created_at) AS oldest_at "
-        "FROM pi_decisions p LEFT JOIN opportunities o ON o.id=p.opportunity_id "
-        "WHERE p.action = 'signal_pending' "
-        "AND COALESCE(p.signal_source, 'market_observer') = 'market_observer' "
-        "AND NOT EXISTS ("
-        + submitting_final
-        + ") "
-        "AND (p.opportunity_id IS NULL OR NOT EXISTS ("
-        + terminal_final
-        + ")) AND ("
-        " (o.id IS NULL AND datetime(p.created_at)<datetime(?)) "
-        " OR (o.status='queued' AND ("
-        "      (datetime(o.valid_until) IS NOT NULL "
-        "       AND datetime(o.valid_until)<=datetime('now')) "
-        "      OR (datetime(o.valid_until) IS NULL "
-        "          AND datetime(p.created_at)<datetime(?))"
-        " )) OR (o.id IS NOT NULL AND o.status!='queued')"
+        "SELECT SUM(n) AS n, MIN(oldest_at) AS oldest_at FROM ("
+        # market_observer expired rows (existing logic)
+        "  SELECT COUNT(*) AS n, MIN(p.created_at) AS oldest_at "
+        "  FROM pi_decisions p LEFT JOIN opportunities o ON o.id=p.opportunity_id "
+        "  WHERE p.action = 'signal_pending' "
+        "  AND COALESCE(p.signal_source, 'market_observer') = 'market_observer' "
+        "  AND NOT EXISTS (" + submitting_final + ") "
+        "  AND (p.opportunity_id IS NULL OR NOT EXISTS (" + terminal_final + ")) "
+        "  AND ("
+        "    (o.id IS NULL AND datetime(p.created_at)<datetime(?)) "
+        "    OR (o.status='queued' AND ("
+        "         (datetime(o.valid_until) IS NOT NULL "
+        "          AND datetime(o.valid_until)<=datetime('now')) "
+        "         OR (datetime(o.valid_until) IS NULL "
+        "             AND datetime(p.created_at)<datetime(?))"
+        "    )) OR (o.id IS NOT NULL AND o.status!='queued')"
+        "  )"
+        "  UNION ALL"
+        # serenity rows whose source opportunity or parent theme is no longer alive
+        "  SELECT COUNT(*) AS n, MIN(p.created_at) AS oldest_at "
+        "  FROM pi_decisions p "
+        "  WHERE p.action = 'signal_pending' "
+        "  AND COALESCE(p.signal_source, 'market_observer') = 'serenity' "
+        "  AND NOT EXISTS (" + submitting_final + ") "
+        "  AND (p.opportunity_id IS NULL OR NOT EXISTS (" + terminal_final + ")) "
+        "  AND (p.opportunity_id IS NULL OR NOT EXISTS (" + serenity_source_alive + "))"
         ")",
         (cutoff, cutoff),
     ).fetchone()
