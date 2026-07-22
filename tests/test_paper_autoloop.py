@@ -94,7 +94,12 @@ def test_observe_mode_scheduler_gate(tmp_path, monkeypatch):
     _set_mode("Observe")
     _seed()
 
+    import aletheia.config.loader as loader
     import aletheia.agent_runtime.scheduler as sched
+
+    # Other scheduler tests replace this module-local alias with partial configs.
+    # Bind this integration-style test to the isolated config it writes above.
+    monkeypatch.setattr(sched, "load_config", loader.load_config)
     sched._run_paper_trader()  # scheduler gate must short-circuit
 
     assert len(repo.list_trade_proposals()) == 0
