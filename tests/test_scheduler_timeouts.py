@@ -585,3 +585,66 @@ def test_protective_essential_jobs_run_and_report_failure_while_paused(
     scheduler._run_job_guarded(job_id, getattr(scheduler, f"_run_{job_id}"))
 
     assert scheduler._consecutive_failures[job_id] == 1
+
+
+def test_derivatives_history_uses_bounded(monkeypatch):
+    """derivatives_history backfill routes through _bounded(), not bare asyncio.wait_for."""
+    from aletheia.agent_runtime import scheduler
+
+    bounded_labels = []
+
+    async def fake_bounded(coro, label, cap, deadline):
+        bounded_labels.append(label)
+        coro.close()
+        return None
+
+    monkeypatch.setattr(scheduler, "_bounded", fake_bounded)
+    monkeypatch.setattr(
+        scheduler,
+        "_get_observed_instruments",
+        lambda _cfg: [SimpleNamespace(symbol="BTC/USDT")],
+    )
+    monkeypatch.setattr(scheduler, "_record_collector_health", lambda *a, **kw: None)
+
+    cfg = SimpleNamespace(
+        market_data=SimpleNamespace(
+            enable_coingecko_top=False,
+            enable_hyperliquid=False,
+            enable_defillama=False,
+            enable_coinalyze=False,
+            derivatives_history_hours=1,
+        )
+    )
+
+    asyncio.run(scheduler._async_data_collector_context(cfg, tick=1))
+
+    assert "derivatives_history" in bounded_labels
+
+
+def test_bounded_slow_cancel_does_not_stall_caller(monkeypatch):
+    """A coroutine that delays CancelledError cleanup cannot stall _bounded() past its cap."""
+    import time
+    from aletheia.agent_runtime import scheduler
+
+    monkeypatch.setattr(scheduler, "_record_collector_health", lambda *a, **kw: None)
+
+    async def slow_to_cancel():
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            await asyncio.sleep(2)  # simulate CCXT cleanup delay
+            raise
+
+    async def _run():
+        import time as _t
+
+        return await scheduler._bounded(
+            slow_to_cancel(), "test_slow_ccxt", 0.05, _t.monotonic() + 60.0
+        )
+
+    start = time.monotonic()
+    result = asyncio.run(_run())
+    elapsed = time.monotonic() - start
+
+    assert result is None
+    assert elapsed < 0.5, f"_bounded stalled {elapsed:.2f}s; slow-cancel must not block caller"

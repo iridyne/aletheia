@@ -3142,6 +3142,7 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
         logger.warning("data_collectors: %s timed out (%.0fs cap) — skipped this tick",
                        label, min(cap, remaining))
         task.cancel()  # fire-and-forget: don't await, avoids 3.12 cancellation hang
+        task.add_done_callback(lambda _: None)  # consume completion; suppress GC noise
         _record_collector_health(
             label,
             "timed_out",
@@ -3470,21 +3471,16 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     # live Funding/OI budget.  It runs last in the context lane and is dropped
     # honestly when that lane has no safe time left.
     if symbols and getattr(cfg.market_data, "derivatives_history_hours", 0) > 0:
-        remaining = deadline - _time.monotonic()
-        if remaining > 2.0:
-            from aletheia.data.collectors.derivatives import DerivativesCollector
+        from aletheia.data.collectors.derivatives import DerivativesCollector
 
-            try:
-                history_result = await asyncio.wait_for(
-                    DerivativesCollector().collect_history(symbols),
-                    timeout=min(12.0, remaining),
-                )
-                if history_result.get("errors"):
-                    logger.debug("derivatives history backfill errors: %s", history_result["errors"])
-            except asyncio.TimeoutError:
-                logger.debug("derivatives history backfill timed out in context lane")
-            except Exception as exc:
-                logger.debug("derivatives history backfill failed: %s", exc)
+        history_result = await _bounded(
+            DerivativesCollector().collect_history(symbols),
+            "derivatives_history",
+            12.0,
+            deadline,
+        )
+        if history_result and history_result.get("errors"):
+            logger.debug("derivatives history backfill errors: %s", history_result["errors"])
 
     unique_errors = list(dict.fromkeys(context_error_codes))
     return {
