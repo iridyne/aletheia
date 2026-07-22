@@ -369,9 +369,9 @@ def test_learning_contribution_verdict_db_error_surfaces_error_not_zero(tmp_path
 
 
 def test_conviction_defer_appears_in_operator_decisions(tmp_path, monkeypatch):
-    """#327: operator_evaluation_events with event_kind='operator_decision_deferred_low_conviction'
-    must appear as outcome='conviction_defer' in get_operator_decisions — previously
-    invisible because the API only queried pi_decisions (which has no row for these)."""
+    """#327: conviction gate deferrals must appear as outcome='conviction_gate_defer'
+    in get_operator_decisions. Sourced from paired filter_decisions rows:
+    operator_action_assessment=passed + operator_conviction_gate=rejected."""
     import json
     from datetime import datetime, timezone
 
@@ -380,43 +380,39 @@ def test_conviction_defer_appears_in_operator_decisions(tmp_path, monkeypatch):
 
     conn = sq._db_conn
     now = datetime.now(timezone.utc).isoformat()
-
-    # Insert the opportunity so the JOIN resolves symbol/direction/market_type.
-    conn.execute(
-        "INSERT INTO opportunities "
-        "(id, symbol, market, direction_bias, confidence, created_at, status) "
-        "VALUES (?, 'ETH/USDT', 'usdt_futures', 'long', 'medium_confidence', ?, 'reviewed')",
-        ("opp-conviction-327", now),
-    )
-    snap = json.dumps({
-        "opportunity_id": "opp-conviction-327",
-        "defer_reason": "operator_low_conviction",
-        "defer_until": now,
-        "context_fingerprint": "fp-327",
-    })
-    conn.execute(
-        "INSERT INTO operator_evaluation_events "
-        "(id, dedup_key, event_kind, trigger, pending_unresolved_total, "
-        "pending_visible_count, queue_snapshot_json, data_health_json, created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        ("oee-327", "dk-327", "operator_decision_deferred_low_conviction",
-         "material_change", 1, 1, snap, "{}", now),
-    )
+    opp_id = "opp-conviction-327"
+    candidate_key = f"opportunity:{opp_id}"
+    # Paired filter_decisions rows for the same evaluation batch.
+    for row_id, fname, decision, reason in (
+        ("fd-action-327", "operator_action_assessment", "passed", "action_approved"),
+        ("fd-gate-327", "operator_conviction_gate", "rejected", "conviction_below_minimum"),
+    ):
+        conn.execute(
+            "INSERT INTO filter_decisions "
+            "(id, dedup_key, candidate_key, candidate_kind, opportunity_id, "
+            "symbol, market_type, direction, filter_name, stage, sequence_no, "
+            "decision, reason_code, input_snapshot, parameter_snapshot, "
+            "filter_version, evaluated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (row_id, row_id, candidate_key, "opportunity", opp_id,
+             "ETH/USDT", "usdt_futures", "long", fname, "paper_trader_selection", 0,
+             decision, reason, json.dumps({"conviction": 42}), "{}",
+             "1.0", now),
+        )
     conn.commit()
 
     from aletheia.server.routes.analytics import get_operator_decisions
 
     result = get_operator_decisions(hours=24, limit=50)
 
-    assert result["counts"]["conviction_defer"] == 1
-    defer_items = [it for it in result["items"] if it["outcome"] == "conviction_defer"]
+    assert result["counts"]["conviction_gate_defer"] == 1
+    defer_items = [it for it in result["items"] if it["outcome"] == "conviction_gate_defer"]
     assert len(defer_items) == 1
     item = defer_items[0]
-    assert item["opportunity_id"] == "opp-conviction-327"
+    assert item["opportunity_id"] == opp_id
     assert item["symbol"] == "ETH/USDT"
     assert item["direction"] == "long"
     assert item["market_type"] == "usdt_futures"
-    assert item["defer_reason"] == "operator_low_conviction"
 
 
 # ---------------------------------------------------------------------------

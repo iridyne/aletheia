@@ -353,3 +353,150 @@ def test_low_conviction_event_kind_has_distinct_dedup(tmp_path, monkeypatch):
         "dedup key must vary with event_kind so INSERT OR IGNORE cannot silently drop "
         "a low-conviction defer that shares a fingerprint with an unchanged-context one"
     )
+
+
+# ---------------------------------------------------------------------------
+# DL-S65 — /operator-decisions API surfaces conviction gate deferrals
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S65", "decision_lifecycle_contract",
+        "§4 conviction gate defer visible in operator-decisions API",
+        "L2b",
+        "GET /analytics/operator-decisions must return conviction_gate_defer items "
+        "when the LLM said 'trade' (operator_action_assessment=passed) but conviction "
+        "was below the minimum (operator_conviction_gate=rejected). Fixes #327: these "
+        "46 evaluations were invisible — no pi_decisions row is written (DL-S47 "
+        "non-terminal), but filter_decisions records both gate outcomes. The API now "
+        "joins these to surface conviction_gate_defer as a queryable outcome.",
+        status="implemented",
+    ),
+)
+def test_conviction_gate_defer_is_visible_in_operator_decisions_api():
+    """DL-S65: conviction gate deferrals appear in GET /analytics/operator-decisions.
+
+    Calls the route directly with a mocked DB that has paired filter_decision rows:
+    operator_action_assessment=passed + operator_conviction_gate=rejected, same
+    candidate_key and evaluated_at (one evaluation batch). No pi_decisions row
+    is present (consistent with DL-S47 non-terminal defer).
+    """
+    import json
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    from unittest.mock import patch
+    import aletheia.storage.sqlite as sqlite_mod
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+
+    # filter_decisions: the conviction gate evaluation batch
+    conn.execute(
+        "CREATE TABLE filter_decisions ("
+        "  id TEXT PRIMARY KEY, dedup_key TEXT NOT NULL UNIQUE, "
+        "  candidate_key TEXT NOT NULL, candidate_kind TEXT NOT NULL, "
+        "  parent_candidate_key TEXT, run_id TEXT, opportunity_id TEXT, "
+        "  universe_snapshot_id TEXT, universe_member_id TEXT, proposal_id TEXT, "
+        "  venue TEXT, symbol TEXT NOT NULL, market_type TEXT NOT NULL DEFAULT 'spot', "
+        "  direction TEXT, scanner_family TEXT, regime_tag TEXT, "
+        "  filter_name TEXT NOT NULL, stage TEXT NOT NULL, "
+        "  sequence_no INTEGER NOT NULL DEFAULT 0, decision TEXT NOT NULL, "
+        "  reason_code TEXT NOT NULL, reason_detail TEXT, "
+        "  input_snapshot TEXT NOT NULL DEFAULT '{}', "
+        "  parameter_snapshot TEXT NOT NULL DEFAULT '{}', "
+        "  filter_version TEXT NOT NULL, code_commit TEXT, "
+        "  outcome_candidate_key TEXT, evaluated_at TEXT NOT NULL)"
+    )
+    evaluated_at = (
+        datetime.now(timezone.utc) - timedelta(hours=1)
+    ).isoformat()
+    opp_id = "opp-conviction-gate-test"
+    candidate_key = f"opportunity:{opp_id}"
+    _COLS = (
+        "id, dedup_key, candidate_key, candidate_kind, opportunity_id, "
+        "symbol, market_type, direction, filter_name, stage, sequence_no, "
+        "decision, reason_code, input_snapshot, parameter_snapshot, "
+        "filter_version, evaluated_at"
+    )
+    _PH = ",".join(["?"] * 17)
+    # Row 1: action assessment passed (LLM said trade)
+    conn.execute(
+        f"INSERT INTO filter_decisions ({_COLS}) VALUES ({_PH})",
+        ("fd-aa", "dedup-aa", candidate_key, "opportunity", opp_id,
+         "SOL/USDT", "usdt_futures", "long",
+         "operator_action_assessment", "system_operator", 1,
+         "passed", "operator_model_trade", "{}", "{}", "v1", evaluated_at),
+    )
+    # Row 2: conviction gate rejected (conviction was 35, below min 55)
+    input_json = json.dumps({"conviction": 35})
+    param_json = json.dumps({"minimum_conviction": 55})
+    conn.execute(
+        f"INSERT INTO filter_decisions ({_COLS}) VALUES ({_PH})",
+        ("fd-cg", "dedup-cg", candidate_key, "opportunity", opp_id,
+         "SOL/USDT", "usdt_futures", "long",
+         "operator_conviction_gate", "system_operator", 3,
+         "rejected", "operator_low_conviction", input_json, param_json,
+         "v1", evaluated_at),
+    )
+    conn.commit()
+
+    # Stub tables required by the route (empty — no terminal decisions)
+    conn.execute(
+        "CREATE TABLE pi_decisions ("
+        "  id TEXT PRIMARY KEY, created_at TEXT, symbol TEXT, direction TEXT, "
+        "  market_type TEXT, action TEXT, conviction INTEGER, reasoning TEXT, "
+        "  opportunity_id TEXT, proposal_id TEXT, evidence_manifest_json TEXT, "
+        "  runtime_session_id TEXT, producer_commit TEXT, signal_source TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE trade_proposals ("
+        "  id TEXT PRIMARY KEY, opportunity_id TEXT, created_at TEXT, "
+        "  symbol TEXT, direction TEXT, market_type TEXT, status TEXT, "
+        "  runtime_session_id TEXT, producer_commit TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE audit_events ("
+        "  rowid INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT, "
+        "  event_type TEXT, actor TEXT, source TEXT, message TEXT, timestamp TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE runtime_sessions ("
+        "  session_id TEXT PRIMARY KEY, boot_commit TEXT, runtime_id TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE learning_policy_epochs ("
+        "  epoch_id TEXT, epoch_kind TEXT, started_at TEXT, ended_at TEXT)"
+    )
+    conn.commit()
+
+    with patch.object(sqlite_mod, "get_db", return_value=conn):
+        from aletheia.server.routes.analytics import get_operator_decisions
+        result = get_operator_decisions(hours=24)
+
+    counts = result.get("counts", {})
+    assert counts.get("conviction_gate_defer", 0) == 1, (
+        f"Expected counts.conviction_gate_defer=1, got {counts} — "
+        "conviction gate deferrals must be visible as a distinct outcome "
+        "(fixes #327: 46 evaluations were invisible to the operator-decisions API)"
+    )
+
+    items = result.get("items", [])
+    matching = [it for it in items if it.get("outcome") == "conviction_gate_defer"]
+    assert len(matching) == 1, (
+        f"Expected 1 conviction_gate_defer item, got {len(matching)} in {items}"
+    )
+    item = matching[0]
+    assert item["opportunity_id"] == opp_id, (
+        f"Expected opportunity_id={opp_id!r}, got {item['opportunity_id']!r}"
+    )
+    assert item["symbol"] == "SOL/USDT", (
+        f"Expected symbol='SOL/USDT', got {item['symbol']!r}"
+    )
+    assert item["conviction"] == 35, (
+        f"Expected conviction=35 extracted from input_snapshot, got {item['conviction']!r}"
+    )
+    from aletheia.server.routes.analytics import _VALID_OUTCOMES
+    assert "conviction_gate_defer" in _VALID_OUTCOMES, (
+        "'conviction_gate_defer' must be in _VALID_OUTCOMES so the outcome= filter works"
+    )
