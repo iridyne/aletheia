@@ -1159,6 +1159,7 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
 _VALID_OUTCOMES: frozenset[str] = frozenset({
     "trade", "operator_skip", "operator_watch",
     "user_reject", "auto_reject", "reject_unknown",
+    "conviction_deferred",
 })
 
 
@@ -1179,6 +1180,10 @@ def get_operator_decisions(
       executable candidate and decided not to trade (reason in `reasoning`).
     - `trade`: pi_decisions.action IN ('trade','flip','scale_in') — operator
       chose to trade; a proposal typically follows.
+    - `conviction_deferred`: operator_evaluation_events.event_kind =
+      'operator_decision_deferred_low_conviction' — the LLM approved a trade action
+      but initial conviction was below the gate threshold; the candidate stays queued
+      for re-evaluation on the next material context change (#327 visibility fix).
     - `user_reject`: trade_proposals.status='rejected' with matching
       audit_events row actor='human', source='dashboard' — a human pressed
       Reject in the dashboard before execution began.
@@ -1366,6 +1371,50 @@ def get_operator_decisions(
             "_sort_instant": float(r["sort_instant"] or 0),
         })
 
+    # operator_evaluation_events — conviction gate deferrals (#327: make these visible)
+    deferred_items: list[dict] = []
+    rows = list(db.execute(
+        "SELECT oee.id, oee.created_at, oee.policy_epoch_id, "
+        "json_extract(oee.queue_snapshot_json, '$.opportunity_id') AS opportunity_id, "
+        "json_extract(oee.queue_snapshot_json, '$.defer_reason') AS defer_reason, "
+        "o.symbol, o.direction_bias AS direction, o.market AS market_type, "
+        "julianday(oee.created_at) AS sort_instant "
+        "FROM operator_evaluation_events oee "
+        "LEFT JOIN opportunities o "
+        "    ON o.id = json_extract(oee.queue_snapshot_json, '$.opportunity_id') "
+        "WHERE oee.event_kind = 'operator_decision_deferred_low_conviction' "
+        "AND julianday(oee.created_at)>=julianday(?) "
+        "AND julianday(oee.created_at)<=julianday(?) "
+        "AND (o.symbol IS NOT NULL AND o.symbol != '') "
+        "ORDER BY julianday(oee.created_at) DESC, oee.rowid DESC",
+        (window_start, window_end),
+    ))
+    for r in rows:
+        deferred_items.append({
+            "opportunity_id": r["opportunity_id"],
+            "proposal_id": None,
+            "decision_id": r["id"],
+            "symbol": r["symbol"],
+            "direction": r["direction"],
+            "market_type": r["market_type"],
+            "decided_at": r["created_at"],
+            "outcome": "conviction_deferred",
+            "action": "conviction_gate_defer",
+            "conviction": None,
+            "one_line_reason": str(r["defer_reason"] or "operator_low_conviction"),
+            "attribution": _decision_attribution(
+                decided_at=r["created_at"],
+                evidence_manifest_json=None,
+                runtime_session_id=None,
+                runtime_id=None,
+                producer_commit=None,
+                current_policy_id=current_policy_id,
+                epochs=policy_epochs,
+                current_runtime_session_id=current_runtime_session_id,
+            ),
+            "_sort_instant": float(r["sort_instant"] or 0),
+        })
+
     rejected_proposals = {item["proposal_id"] for item in reject_items if item["proposal_id"]}
     rejected_opportunities = {
         item["opportunity_id"] for item in reject_items if item["opportunity_id"]
@@ -1386,11 +1435,12 @@ def get_operator_decisions(
             )
         )
     ]
-    all_items = pi_items + reject_items
+    all_items = pi_items + reject_items + deferred_items
     all_items.sort(key=lambda x: float(x.get("_sort_instant") or 0), reverse=True)
 
     counts = {"trade": 0, "operator_skip": 0, "operator_watch": 0,
-              "user_reject": 0, "auto_reject": 0, "reject_unknown": 0}
+              "user_reject": 0, "auto_reject": 0, "reject_unknown": 0,
+              "conviction_deferred": 0}
     for it in all_items:
         oc = it.get("outcome")
         if oc in counts:
