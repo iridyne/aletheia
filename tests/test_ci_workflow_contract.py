@@ -193,6 +193,39 @@ def test_full_regression_is_a_separate_manual_job_with_realistic_timeout() -> No
     assert "uv run pytest tests/" in _run_commands(full)
 
 
+def test_python_test_jobs_set_scoped_data_dir() -> None:
+    """Python CI jobs must isolate runtime state via ALETHEIA_DATA_DIR (#205).
+
+    Each job gets a unique path under runner.temp so no test can read or write
+    ~/.aletheia on the CI host, even at module import time (DATA_DIR is set
+    before any aletheia import occurs because the env var is injected at the
+    job level, not in a run step).
+    """
+    jobs = _workflow()["jobs"]
+    python_test_jobs = {"e2e", "unit", "integration", "simulation", "specs", "full-regression"}
+    failures: list[str] = []
+    for job_name in python_test_jobs:
+        job = jobs.get(job_name)
+        if job is None:
+            failures.append(f"{job_name}: job missing from workflow")
+            continue
+        job_env = job.get("env") or {}
+        if not isinstance(job_env, dict):
+            failures.append(f"{job_name}: env block is not a mapping")
+            continue
+        value = job_env.get("ALETHEIA_DATA_DIR", "")
+        if not value:
+            failures.append(f"{job_name}: missing ALETHEIA_DATA_DIR in job-level env")
+        elif "runner.temp" not in str(value):
+            failures.append(
+                f"{job_name}: ALETHEIA_DATA_DIR must use runner.temp for per-job isolation, got {value!r}"
+            )
+    assert not failures, (
+        "Python test jobs must isolate runtime state via ALETHEIA_DATA_DIR:\n"
+        + "\n".join(failures)
+    )
+
+
 def test_repository_task_subsystem_is_absent_from_ci() -> None:
     workflow_text = _WORKFLOW_PATH.read_text(encoding="utf-8")
 

@@ -71,6 +71,8 @@ jobs:
     name: End-to-end pipeline
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 25
+    env:
+      ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.job }}
 
     steps:
       - name: Check out source
@@ -109,6 +111,8 @@ jobs:
     name: Unit tests
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 30
+    env:
+      ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.job }}
 
     steps:
       - name: Check out source
@@ -153,6 +157,8 @@ jobs:
     name: Integration tests
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 20
+    env:
+      ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.job }}
 
     steps:
       - name: Check out source
@@ -192,6 +198,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 15
     env:
+      ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.job }}
       DCLS_MAX_EXAMPLES: 8
       DCLS_STATEFUL_STEPS: 8
       DCLS_SEED: 20260713
@@ -232,6 +239,8 @@ jobs:
     name: Executable specifications
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 15
+    env:
+      ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.job }}
 
     steps:
       - name: Check out source
@@ -449,6 +458,8 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_regression }}
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 45
+    env:
+      ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.job }}
 
     steps:
       - name: Check out source
