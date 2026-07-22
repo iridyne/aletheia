@@ -384,7 +384,7 @@ def test_conviction_gate_defer_is_visible_in_operator_decisions_api():
     """
     import json
     import sqlite3
-    from datetime import datetime, timezone, timedelta
+    from datetime import timedelta
     from unittest.mock import patch
     import aletheia.storage.sqlite as sqlite_mod
 

@@ -1079,7 +1079,7 @@ def test_operator_decisions_classifies_unknown_uses_rejection_time_and_counts_fu
         "user_reject": 1,
         "auto_reject": 1,
         "reject_unknown": 1,
-        "conviction_defer": 0,
+        "conviction_gate_defer": 0,
     }
     assert len(data["items"]) == 2
     assert data["total_count"] == 5
