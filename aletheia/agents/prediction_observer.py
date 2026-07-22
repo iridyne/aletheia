@@ -18,6 +18,7 @@ Design choices:
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -312,6 +313,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
     # Create one Opportunity per fetched market — capture all signals.
     # The LLM read applies to the top market; others get a heuristic bias.
     opps_created = 0
+    pred_valid_until = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
     for i, market in enumerate(markets):
         q = market.question
         symbol_slug = (q[:77] + "...") if len(q) > 80 else q
@@ -320,7 +322,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
             # Top market gets the LLM-derived signal
             m_direction = direction
             m_confidence = confidence
-            m_score = confidence_score
+            m_score = confidence_score if confidence_score is not None else 0
             thesis_parts = []
             if rationale:
                 thesis_parts.append(rationale)
@@ -360,6 +362,8 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
             linked_strategy_id=linked_strategy_id,
             asset_class="prediction",
             execution_eligible=False,
+            scanner_family="prediction_market",
+            valid_until=pred_valid_until,
             metadata=_build_market_metadata(market, markets_scanned=len(markets)),
         )
         insert_opportunity(opp)
