@@ -329,14 +329,32 @@ def _paper_ledger_snapshot(rows: list[dict], today_start: str) -> AccountLossSna
 
     db = get_db()
     _ledger_query = (
-        "SELECT position_id, amount_usdt FROM paper_account_events "
-        "WHERE action = 'position_closed' "
-        "AND datetime(created_at) >= datetime(?) "
-        "ORDER BY datetime(created_at) ASC, rowid ASC"
+        "SELECT pae.position_id, pae.amount_usdt FROM paper_account_events pae "
+        "JOIN positions p ON p.id = pae.position_id "
+        "WHERE pae.action = 'position_closed' "
+        "AND p.status = 'closed' AND p.execution_mode = 'paper_internal' "
+        "AND datetime(p.closed_at) >= datetime(?) "
+        "ORDER BY datetime(p.closed_at) ASC, pae.rowid ASC"
+    )
+    _new_invalid_event_query = (
+        "SELECT 1 FROM paper_account_events pae "
+        "LEFT JOIN positions p ON p.id = pae.position_id "
+        "WHERE pae.action = 'position_closed' "
+        "AND datetime(pae.created_at) >= datetime(?) "
+        "AND (p.id IS NULL "
+        "OR COALESCE(p.status, '') != 'closed' "
+        "OR COALESCE(p.execution_mode, '') != 'paper_internal' "
+        "OR p.closed_at IS NULL OR datetime(p.closed_at) IS NULL "
+        "OR p.realized_pnl IS NULL "
+        "OR ABS(pae.amount_usdt - p.realized_pnl) > 1e-8"
+        ") LIMIT 1"
     )
 
     def _read_ledger():
         return db.execute(_ledger_query, (today_start,)).fetchall()
+
+    def _has_new_invalid_event() -> bool:
+        return db.execute(_new_invalid_event_query, (today_start,)).fetchone() is not None
 
     def _build_actual(lrows):
         result: dict[str, list[float]] = {}
@@ -347,11 +365,15 @@ def _paper_ledger_snapshot(rows: list[dict], today_start: str) -> AccountLossSna
 
     try:
         ledger_rows = _read_ledger()
+        has_new_invalid_event = _has_new_invalid_event()
     except Exception:
         return _unavailable("paper_ledger_read_failed", event_count=len(rows))
 
     expected = {str(row["id"]): float(row["realized_pnl"]) for row in rows}
     actual = _build_actual(ledger_rows)
+
+    if has_new_invalid_event:
+        return _unavailable("paper_ledger_mismatch", event_count=len(rows))
 
     if set(actual) != set(expected):
         orphaned = set(expected) - set(actual)  # realized_pnl set, ledger entry missing
