@@ -1,8 +1,10 @@
 """Backup service — creates and manages workspace backups."""
 
 import logging
+import re
 import shutil
 import tarfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -17,6 +19,11 @@ logger = logging.getLogger("aletheia.backup.service")
 # is removed after each new backup write and can also be reaped standalone by
 # the scheduler.
 DEFAULT_KEEP_RECENT = 7
+
+# Label must start with a letter/digit, then contain only letters, digits,
+# dots, underscores, and hyphens — no path separators, spaces, or control
+# chars. Max 63 chars so the full backup_id stays well under filesystem limits.
+_SAFE_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 
 
 def _utcnow() -> str:
@@ -65,54 +72,71 @@ class BackupService:
 
     @staticmethod
     def _snapshot_sqlite_db(src: Path, dst: Path) -> None:
-        """Copy a SQLite database using Connection.backup() so WAL-mode commits
-        that haven't been checkpointed yet still make it into the archive.
+        """Copy a SQLite database using Connection.backup() for a WAL-safe snapshot.
 
-        `sqlite3.Connection.backup(target)` is the officially-safe way to snapshot
-        a live database — it holds a read lock, walks pages including the WAL,
-        and produces a consistent .db without a -wal/-shm sidecar. Falling back
-        to shutil.copy2 keeps the old best-effort behaviour when the file isn't
-        actually SQLite (e.g. empty placeholder or a stripped test fixture)."""
+        sqlite3.Connection.backup() holds a read lock, walks pages including the
+        WAL, and produces a consistent .db without a -wal/-shm sidecar. A
+        DatabaseError means the source is corrupt or not a SQLite file — the
+        error propagates so backup creation fails rather than archiving corrupt
+        bytes (#287)."""
         import sqlite3
 
+        src_conn = sqlite3.connect(str(src))
         try:
-            src_conn = sqlite3.connect(str(src))
+            dst_conn = sqlite3.connect(str(dst))
             try:
-                dst_conn = sqlite3.connect(str(dst))
-                try:
-                    src_conn.backup(dst_conn)
-                finally:
-                    dst_conn.close()
+                src_conn.backup(dst_conn)
             finally:
-                src_conn.close()
-        except sqlite3.DatabaseError:
-            # Not a SQLite file (or corrupt beyond backup()) — best-effort raw copy.
-            shutil.copy2(src, dst)
+                dst_conn.close()
+        finally:
+            src_conn.close()
 
     def create_backup(self, label: str | None = None) -> Path:
-        """Create a full backup of the workspace. Returns archive path."""
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        backup_id = f"backup_{timestamp}"
-        if label:
-            backup_id = f"backup_{label}_{timestamp}"
+        """Create a full backup of the workspace. Returns archive path.
 
+        #281: label is validated against _SAFE_LABEL_RE before use.
+        #283: backup_id includes a UUID suffix for per-invocation uniqueness.
+        #287: SQLite snapshot failure propagates — no raw-copy fallback.
+        #291: archive is written to a partial file and renamed atomically.
+        """
+        # #281: validate label before constructing any paths
+        if label is not None:
+            if not _SAFE_LABEL_RE.match(label):
+                raise ValueError(
+                    f"Backup label {label!r} is invalid. Labels must start with a letter "
+                    "or digit and contain only letters, digits, dots, underscores, and "
+                    "hyphens (max 63 characters)."
+                )
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        uuid_suffix = uuid.uuid4().hex[:8]  # #283: per-invocation uniqueness
+        if label:
+            backup_id = f"backup_{label}_{timestamp}_{uuid_suffix}"
+        else:
+            backup_id = f"backup_{timestamp}_{uuid_suffix}"
+
+        # #281: containment invariant — staging and archive must stay inside _backup_dir
         staging = self._backup_dir / f"_{backup_id}_staging"
+        archive_path = self._backup_dir / f"{backup_id}.tar.gz"
+        partial_path = self._backup_dir / f"_{backup_id}.tar.gz.part"  # #291
+        _bd = self._backup_dir.resolve()
+        for p, name in (
+            (staging, "staging"),
+            (archive_path, "archive"),
+            (partial_path, "partial"),
+        ):
+            if not p.resolve().is_relative_to(_bd):
+                raise ValueError(
+                    f"Backup {name} path escaped backup directory: {p}"
+                )
+
         staging.mkdir(parents=True, exist_ok=True)
 
         try:
             file_count = 0
             total_bytes = 0
 
-            # Copy app.db.
-            # #59 fix: SQLite runs in WAL journal mode; a bare shutil.copy2 of the
-            # .db file races the writer — committed rows still in the -wal sidecar
-            # get missed, and the copied .db can even be internally inconsistent
-            # (page torn between the copy and a mid-flight WAL checkpoint). Use
-            # sqlite3.Connection.backup() which is the API designed for exactly
-            # this: a live consistent snapshot even under concurrent writes, no
-            # checkpoint hazard, no partial WAL. Fall back to the raw copy if the
-            # source isn't a readable SQLite file (empty init or non-sqlite path)
-            # so the backup still packages what's on disk rather than exploding.
+            # Copy app.db via WAL-safe SQLite snapshot (#59, #287).
             db_path = self._data_dir / "app.db"
             if db_path.exists():
                 dst = staging / "app.db"
@@ -137,12 +161,7 @@ class BackupService:
                         file_count += 1
                         total_bytes += f.stat().st_size
 
-            # #58 fix: copy runtime-home logs/ (contains audit.jsonl, the hash-chained
-            # append-only audit log). Backup previously only captured app.db +
-            # config + events + artifacts — restoring from that omitted the entire
-            # audit chain, so a fresh restore couldn't verify the audit-integrity
-            # invariant (files/jsonl.verify_audit_chain). Recovering audit trust
-            # requires the file itself. Secrets are excluded via _should_exclude.
+            # #58 fix: copy runtime-home logs/ (contains audit.jsonl).
             logs_dir = self._data_dir / "logs"
             if logs_dir.exists():
                 dst_logs = staging / "logs"
@@ -192,15 +211,18 @@ class BackupService:
                 encoding="utf-8",
             )
 
-            # Create tar.gz
-            archive_path = self._backup_dir / f"{backup_id}.tar.gz"
-            with tarfile.open(archive_path, "w:gz") as tar:
-                tar.add(staging, arcname=backup_id)
+            # #291: write to partial then rename atomically so list_backups / retention
+            # never see a mid-construction archive.
+            try:
+                with tarfile.open(partial_path, "w:gz") as tar:
+                    tar.add(staging, arcname=backup_id)
+                partial_path.rename(archive_path)
+            except Exception:
+                if partial_path.exists():
+                    partial_path.unlink(missing_ok=True)
+                raise
 
-            # Rotate older archives — every write path funnels through here,
-            # so keeping the count bounded per-write means the standalone
-            # scheduler sweep only has to catch the edge cases (crashed
-            # writes, manual copies).
+            # Rotate older archives
             try:
                 self.retain_recent(DEFAULT_KEEP_RECENT)
             except Exception as exc:  # pragma: no cover - best effort

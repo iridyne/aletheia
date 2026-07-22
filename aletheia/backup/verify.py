@@ -1,10 +1,16 @@
 """Backup verification — checks integrity of backup archives."""
 
+import re
 import tarfile
 import tempfile
 from pathlib import Path
 
 from aletheia.storage.hashing import sha256_file
+
+_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+# Files exempt from the "unlisted payload" check — the exporter writes manifest.yaml
+# after checksums.txt, so it cannot include itself in the manifest.
+_EXEMPT_NAMES = frozenset({"checksums.txt", "manifest.yaml"})
 
 
 class VerifyResult:
@@ -28,7 +34,15 @@ class VerifyResult:
 
 
 def verify_backup(archive_path: Path) -> VerifyResult:
-    """Verify a backup archive's integrity by checking all checksums."""
+    """Verify a backup archive's integrity by checking all checksums.
+
+    Strict manifest verification (#279):
+    - Rejects malformed checksum lines, non-hex hashes, and unsafe paths.
+    - Rejects duplicate path declarations within the manifest.
+    - Errors if any listed file is missing or its SHA-256 does not match.
+    - Errors if any payload file under the bundle is absent from the manifest
+      (checksums.txt and manifest.yaml are exempt).
+    """
     result = VerifyResult()
 
     if not archive_path.exists():
@@ -61,20 +75,49 @@ def verify_backup(archive_path: Path) -> VerifyResult:
             result.errors.append("Missing checksums.txt")
             return result
 
-        # Count files
+        # Count payload files (excludes exempt names)
         for f in bundle_dir.rglob("*"):
-            if f.is_file() and f.name not in ("checksums.txt", "manifest.yaml"):
+            if f.is_file() and f.name not in _EXEMPT_NAMES:
                 result.file_count += 1
 
-        # Verify each checksum
-        for line in checksums_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
+        # ── Strict manifest parsing (#279) ────────────────────────────────────
+        declared: dict[str, str] = {}  # rel_path → expected_hash
+        for lineno, raw_line in enumerate(
+            checksums_file.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            line = raw_line.strip()
             if not line:
                 continue
             parts = line.split("  ", 1)
             if len(parts) != 2:
+                result.errors.append(
+                    f"checksums.txt line {lineno}: malformed (expected '<hash>  <path>')"
+                )
+                result.valid = False
                 continue
             expected_hash, rel_path = parts
+            if not _HEX_RE.match(expected_hash):
+                result.errors.append(
+                    f"checksums.txt line {lineno}: non-hex SHA-256 hash for {rel_path!r}"
+                )
+                result.valid = False
+                continue
+            if rel_path.startswith("/") or ".." in rel_path.split("/"):
+                result.errors.append(
+                    f"checksums.txt line {lineno}: unsafe path {rel_path!r}"
+                )
+                result.valid = False
+                continue
+            if rel_path in declared:
+                result.errors.append(
+                    f"checksums.txt line {lineno}: duplicate path {rel_path!r}"
+                )
+                result.valid = False
+                continue
+            declared[rel_path] = expected_hash
+
+        # ── Verify each declared file ─────────────────────────────────────────
+        for rel_path, expected_hash in declared.items():
             file_path = bundle_dir / rel_path
             if not file_path.exists():
                 result.mismatches.append(f"Missing: {rel_path}")
@@ -84,6 +127,22 @@ def verify_backup(archive_path: Path) -> VerifyResult:
             result.checked_count += 1
             if actual != expected_hash:
                 result.mismatches.append(f"Mismatch: {rel_path}")
+                result.valid = False
+
+        # ── Reject payload files not declared in the manifest (#279) ─────────
+        for f in bundle_dir.rglob("*"):
+            if not f.is_file():
+                continue
+            if f.name in _EXEMPT_NAMES:
+                continue
+            try:
+                rel = f.relative_to(bundle_dir).as_posix()
+            except ValueError:
+                rel = str(f)
+            if rel not in declared:
+                result.errors.append(
+                    f"Unlisted payload file not in checksum manifest: {rel}"
+                )
                 result.valid = False
 
     return result
