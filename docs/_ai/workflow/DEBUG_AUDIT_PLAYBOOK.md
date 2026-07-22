@@ -107,3 +107,23 @@
 **真实案例（2026-06-28）**：`trading_decision` 的 guard 链看似"硬拦截安全门"，但读 `guard_chain` docstring 发现它自我定义是 **pre-risk observability 层**（不该拦），真正的安全门是下游 Risk Engine。所以"改成建议性"是回归设计本意、不降安全。
 
 **SOP**：动 `risk/`/`execution/`/guard 等信任边界附近代码前，**先读该模块自己的 docstring/契约**确认它的真实职责（observability vs 安全门）。别凭名字假设。改动只碰消费方式、不动 trust 模块本身时风险更低。
+
+---
+
+## SOP-9 ｜ codegraph index 滞后：诊断 bug 前必须用 Read 交叉验证
+
+**陷阱**：codegraph index 有文件监听延迟（正常改动 ~1s），但经历大范围重构后可能出现严重滞后——返回已删除的文件、不存在的函数名、错误的行数。如果直接把 codegraph 数据当"代码真相"做 bug 诊断，会产生**幽灵 bug**：子弹打不到任何真实目标。
+
+**真实案例（2026-07-22）**：
+- codegraph 报告 `aletheia/server/routes/live.py` 是 210 行，包含 `_readiness_scorecard`、`_check_credentials` 等函数；`readiness.py` 包含读进程内存的 `_market_data_row()` 和 `build_scorecard()`。
+- 基于这批幻象数据，诊断出"split-process 部署下 `market_data` 探针永远假红、`execution_gateway`/`operator` 永远假绿"，并建立了 GitHub Issue #315，花费整个调试 session。
+- 用 `Read` 直接读后发现：真实 `live.py` 是 104 行，`readiness.py` 根本不存在，`live_unlock` 用的是 `go_live_scorecard.py`（纯 SQLite 计算）。`/api/health` 返回 `{"status": "healthy"}`，`live_unlock` 被拦是因为真实的 drawdown/PnL 问题。Issue #315 立即关闭。
+
+**SOP**：
+1. **codegraph 作为"导航地图"，不作为"代码真相"**——用它找到文件/函数位置，再用 `Read` 拿实际内容。
+2. 出现以下信号时**立即用 Read 核实**，不要继续基于 codegraph 构建结论：
+   - 函数名听起来不熟悉，或和你印象中的架构对不上
+   - 行数/文件大小和预期出入明显（如报 210 行但直觉约 100 行）
+   - `codegraph_explore` 返回的结构自洽但和近期改动记忆不符
+3. **提 GitHub Issue 前必须亲自 Read 对应文件**，确认 bug 路径在当前代码里真实存在。
+4. 调用 `/api/health`、`/api/status` 等终端 endpoint 是验证"系统真实状态"最快的方法，一次 `curl` 可以推翻整个基于静态代码分析的诊断链。
