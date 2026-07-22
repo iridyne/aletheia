@@ -6456,6 +6456,39 @@ def prune_market_ohlcv(
     return total
 
 
+def expire_stale_serenity_themes() -> int:
+    """Soft-expire Serenity themes whose deadline has elapsed and cascade to children.
+
+    Finds active/watching SerenityTheme rows where expires_at is in the past,
+    transitions them to 'expired', and cascades the same status to their active
+    SerenityOpportunity children so the pending-signal queue treats them as stale
+    (#199). Writes are atomic; the transaction is not held across I/O.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with transaction(immediate=True):
+        db = get_db()
+        expired_themes = db.execute(
+            "SELECT id FROM serenity_themes "
+            "WHERE expires_at IS NOT NULL "
+            "AND datetime(expires_at) <= datetime('now') "
+            "AND status NOT IN ('dismissed', 'expired')",
+        ).fetchall()
+        if not expired_themes:
+            return 0
+        theme_ids = [row["id"] for row in expired_themes]
+        for theme_id in theme_ids:
+            db.execute(
+                "UPDATE serenity_themes SET status='expired', updated_at=? WHERE id=?",
+                (now_iso, theme_id),
+            )
+            db.execute(
+                "UPDATE serenity_opportunities SET status='expired', updated_at=? "
+                "WHERE theme_id=? AND status='active'",
+                (now_iso, theme_id),
+            )
+        return len(theme_ids)
+
+
 def expire_stale_opportunities(ttl_hours: int = 48) -> int:
     """Apply the global retention ceiling to still-open Opportunities.
 

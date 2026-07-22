@@ -1071,9 +1071,23 @@ def test_serenity_pending_signal_is_not_hidden_by_market_queue_ttl(tmp_path, mon
 
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_shell.trading_context import _build_pending_signal_queue
-    from aletheia.storage.models import PiDecision
-    from aletheia.storage.repositories import insert_pi_decision
+    from aletheia.storage.models import PiDecision, SerenityOpportunity, SerenityTheme
+    from aletheia.storage.repositories import (
+        insert_pi_decision, insert_serenity_opportunity, insert_serenity_theme,
+    )
 
+    # An active SerenityTheme + SerenityOpportunity are required for the signal to
+    # remain visible beyond the short-term market TTL (#199).
+    theme = SerenityTheme(name="Long-horizon NVDA bull thesis", status="active")
+    insert_serenity_theme(theme)
+    opp = SerenityOpportunity(
+        id="serenity-long-horizon",
+        theme_id=theme.id,
+        symbol="NVDA",
+        direction="long",
+        status="active",
+    )
+    insert_serenity_opportunity(opp)
     insert_pi_decision(PiDecision(
         symbol="NVDA", direction="long", market_type="spot",
         action="signal_pending", opportunity_id="serenity-long-horizon",
@@ -1086,6 +1100,102 @@ def test_serenity_pending_signal_is_not_hidden_by_market_queue_ttl(tmp_path, mon
     assert [row["opportunity_id"] for row in signals] == ["serenity-long-horizon"]
     assert queue["unresolved_total"] == 1
     assert queue["expired_unconsumed_rows"] == 0
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S19", "decision_lifecycle_contract", "§2.3 serenity expired-source cleanup", "L2b",
+        "A Serenity pending carrier whose source SerenityOpportunity is missing, "
+        "terminal, or whose parent SerenityTheme is dismissed/expired is not "
+        "actionable and is counted in expired_unconsumed_rows (#199).",
+        status="implemented",
+    ),
+)
+def test_serenity_pending_signal_is_invisible_after_source_expires(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.trading_context import _build_pending_signal_queue
+    from aletheia.storage.models import PiDecision, SerenityOpportunity, SerenityTheme
+    from aletheia.storage.repositories import (
+        insert_pi_decision, insert_serenity_opportunity, insert_serenity_theme,
+        update_serenity_theme,
+    )
+
+    theme = SerenityTheme(name="Expired NVDA thesis", status="active")
+    insert_serenity_theme(theme)
+    opp = SerenityOpportunity(
+        id="serenity-expired-source",
+        theme_id=theme.id,
+        symbol="NVDA",
+        direction="long",
+        status="active",
+    )
+    insert_serenity_opportunity(opp)
+    insert_pi_decision(PiDecision(
+        symbol="NVDA", direction="long", market_type="spot",
+        action="signal_pending", opportunity_id="serenity-expired-source",
+        signal_source="serenity",
+        created_at=(datetime.now(timezone.utc) - timedelta(minutes=90)).isoformat(),
+    ))
+
+    # While source is active the signal must appear as unresolved.
+    signals_before, queue_before = _build_pending_signal_queue(limit=5, max_age_minutes=30)
+    assert any(r["opportunity_id"] == "serenity-expired-source" for r in signals_before)
+    assert queue_before["expired_unconsumed_rows"] == 0
+
+    # Dismiss the parent theme (cascades to opportunity in the real route; here
+    # we simulate the maintenance outcome directly on the theme status).
+    update_serenity_theme(theme.id, status="dismissed")
+
+    signals_after, queue_after = _build_pending_signal_queue(limit=5, max_age_minutes=30)
+    assert not any(r["opportunity_id"] == "serenity-expired-source" for r in signals_after), (
+        "Signal with dismissed theme must not appear as actionable"
+    )
+    assert queue_after["expired_unconsumed_rows"] >= 1, (
+        "Dismissed-source Serenity rows must be counted in expired_unconsumed_rows"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S20", "decision_lifecycle_contract", "§2.3 serenity maintenance expiry", "L2b",
+        "expire_stale_serenity_themes() transitions themes past their expires_at "
+        "deadline to 'expired' and cascades to active child opportunities so the "
+        "pending-signal queue treats them as stale (#199).",
+        status="implemented",
+    ),
+)
+def test_expire_stale_serenity_themes_cascades_to_children(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.models import SerenityOpportunity, SerenityTheme
+    from aletheia.storage.repositories import (
+        expire_stale_serenity_themes,
+        get_serenity_opportunity,
+        get_serenity_theme,
+        insert_serenity_opportunity,
+        insert_serenity_theme,
+        update_serenity_theme,
+    )
+
+    past = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    theme = SerenityTheme(name="Deadline-elapsed thesis", status="active")
+    insert_serenity_theme(theme)
+    update_serenity_theme(theme.id, expires_at=past)
+    opp = SerenityOpportunity(theme_id=theme.id, symbol="ETH", direction="long", status="active")
+    insert_serenity_opportunity(opp)
+
+    count = expire_stale_serenity_themes()
+
+    assert count >= 1
+    assert get_serenity_theme(theme.id)["status"] == "expired"
+    assert get_serenity_opportunity(opp.id)["status"] == "expired"
 
 
 @spec_claim(

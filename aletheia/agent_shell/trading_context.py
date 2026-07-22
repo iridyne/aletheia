@@ -373,10 +373,21 @@ def _build_pending_signal_queue(
         "  AND COALESCE(f.proposal_status, '') != 'submitting' "
         f"  AND {unique_entry_final}"
     )
+    # A Serenity signal is actionable only while its source SerenityOpportunity is
+    # active AND the parent SerenityTheme is active and not past its deadline (#199).
+    serenity_source_active = (
+        "SELECT 1 FROM serenity_opportunities so "
+        "JOIN serenity_themes st ON st.id=so.theme_id "
+        "WHERE so.id=p.opportunity_id "
+        "AND so.status='active' "
+        "AND st.status NOT IN ('dismissed', 'expired') "
+        "AND (st.expires_at IS NULL OR datetime(st.expires_at)>datetime('now'))"
+    )
     unresolved = (
         "p.action = 'signal_pending' "
-        "AND (COALESCE(p.signal_source, 'market_observer') = 'serenity' "
-        f"     OR EXISTS ({submitting_final}) "
+        f"AND (EXISTS ({submitting_final}) "
+        "     OR (COALESCE(p.signal_source, 'market_observer') = 'serenity' "
+        f"         AND EXISTS ({serenity_source_active})) "
         "     OR (COALESCE(p.signal_source, 'market_observer') = 'market_observer' "
         "         AND ((o.status IN ('queued', 'reviewed') "
         "               AND datetime(o.valid_until) IS NOT NULL "
@@ -466,20 +477,27 @@ def _build_pending_signal_queue(
         "SELECT COUNT(*) AS n, MIN(p.created_at) AS oldest_at "
         "FROM pi_decisions p LEFT JOIN opportunities o ON o.id=p.opportunity_id "
         "WHERE p.action = 'signal_pending' "
-        "AND COALESCE(p.signal_source, 'market_observer') = 'market_observer' "
         "AND NOT EXISTS ("
         + submitting_final
         + ") "
         "AND (p.opportunity_id IS NULL OR NOT EXISTS ("
         + terminal_final
         + ")) AND ("
-        " (o.id IS NULL AND datetime(p.created_at)<datetime(?)) "
-        " OR (o.status='queued' AND ("
-        "      (datetime(o.valid_until) IS NOT NULL "
-        "       AND datetime(o.valid_until)<=datetime('now')) "
-        "      OR (datetime(o.valid_until) IS NULL "
-        "          AND datetime(p.created_at)<datetime(?))"
-        " )) OR (o.id IS NOT NULL AND o.status!='queued')"
+        # Market-observer rows past their window
+        " (COALESCE(p.signal_source,'market_observer')='market_observer' AND ("
+        "   (o.id IS NULL AND datetime(p.created_at)<datetime(?)) "
+        "   OR (o.status='queued' AND ("
+        "        (datetime(o.valid_until) IS NOT NULL "
+        "         AND datetime(o.valid_until)<=datetime('now')) "
+        "        OR (datetime(o.valid_until) IS NULL "
+        "            AND datetime(p.created_at)<datetime(?))"
+        "   )) OR (o.id IS NOT NULL AND o.status!='queued')"
+        " ))"
+        # Serenity rows whose source opportunity/theme is missing, terminal, or expired
+        " OR (COALESCE(p.signal_source,'market_observer')='serenity' "
+        "     AND NOT EXISTS ("
+        + serenity_source_active
+        + "))"
         ")",
         (cutoff, cutoff),
     ).fetchone()
