@@ -935,18 +935,17 @@ def test_unknown_paper_perp_funding_closes_without_zero_equivalent_cash_settleme
     assert assessment.reason == "incomplete_funding_economics"
     assert repo.list_outcome_hook_jobs(position_id=stored["id"]) == []
 
-    # The read models must preserve the same unavailability.  Converting this
-    # NULL back to zero would still show a fabricated account result and could
-    # authorize another local-paper order against an economically incomplete
-    # balance.
+    # The read models must surface economics_complete=False even though the
+    # ledger cash is known.  After issue #316 the available/equity values are
+    # the best current estimate (real cash), not zero/None.
     from aletheia.portfolio.paper_account import get_paper_account
     from aletheia.portfolio.pnl import compute_portfolio
 
     account = get_paper_account(event_limit=100)
     assert account["economics_complete"] is False
     assert account["unsettled_closed_positions_count"] == 1
-    assert account["available_balance_usdt"] == 0.0
-    assert account["equity_usdt"] is None
+    assert account["available_balance_usdt"] == pytest.approx(cash_before)
+    assert account["equity_usdt"] == pytest.approx(cash_before)
 
     portfolio = compute_portfolio(execution_mode="paper_internal")
     # Method B: partial sums shown with complete=False; no complete closes → 0.0
@@ -1034,8 +1033,9 @@ def test_legacy_numeric_paper_perp_close_with_unknown_funding_stays_unavailable(
     account = get_paper_account(event_limit=100)
     assert account["economics_complete"] is False
     assert account["unsettled_closed_positions_count"] == 1
-    assert account["available_balance_usdt"] == 0.0
-    assert account["equity_usdt"] is None
+    # After issue #316: ledger cash is always returned even with unsettled closes.
+    assert account["available_balance_usdt"] == pytest.approx(account["cash_balance_usdt"])
+    assert account["equity_usdt"] == pytest.approx(account["cash_balance_usdt"])
 
     portfolio = compute_portfolio(execution_mode="paper_internal")
     # Method B: partial sums shown; no complete closes → 0.0
@@ -1105,8 +1105,9 @@ def test_old_incomplete_close_beyond_ten_thousand_rows_still_freezes_account(
     account = get_paper_account(event_limit=0)
     assert account["economics_complete"] is False
     assert account["unsettled_closed_positions_count"] == 1
-    assert account["available_balance_usdt"] == 0.0
-    assert account["equity_usdt"] is None
+    # After issue #316: ledger cash is always returned even with unsettled closes.
+    assert account["available_balance_usdt"] == pytest.approx(200.0)
+    assert account["equity_usdt"] == pytest.approx(200.0)
 
     portfolio = compute_portfolio(execution_mode="paper_internal")
     # Method B: 10,000 complete closes (0.0 each) + 1 unavailable → partial sum = 0.0
@@ -1491,10 +1492,11 @@ def test_overview_hero_unblocks_when_all_unsettled_closes_are_terminal(
     assert portfolio["all_realized_pnl_unavailable_count"] == 3
     assert portfolio["all_realized_pnl_complete"] is False
 
-    # Negative case: swap ONE terminal row back to the in-flight retry
-    # state. `economics_complete` must return False and the hero must
-    # re-freeze. This pins the direction of the fix — if the guard were
-    # inverted, the negative case would also unblock and mask the bug.
+    # Negative case: swap ONE terminal row back to the in-flight retry state.
+    # After issue #316 the hero no longer freezes — it returns the best
+    # available estimate (ledger cash) even when economics_complete is False.
+    # What MUST still hold: economics_complete is False and unsettled count
+    # reflects the in-flight row, so monitoring/UI can surface the warning.
     repo.update_position(
         "pos-terminal-1",
         outcome_exclusion_reason="incomplete_funding_economics",
@@ -1502,10 +1504,12 @@ def test_overview_hero_unblocks_when_all_unsettled_closes_are_terminal(
     account_after = get_paper_account(event_limit=0)
     assert account_after["economics_complete"] is False
     assert account_after["unsettled_closed_positions_count"] == 1
-    assert account_after["equity_usdt"] is None
+    assert isinstance(account_after["equity_usdt"], float)
+    assert account_after["equity_usdt"] > 0.0
 
     portfolio_after = compute_portfolio(execution_mode="paper_internal")
-    assert portfolio_after["total_value_usdt"] is None
+    assert portfolio_after["total_value_usdt"] is not None
+    assert portfolio_after["total_value_usdt"] > 0.0
 
 
 @spec_claim(
