@@ -518,3 +518,250 @@ def test_prune_deprecates_learned_candidates_only(tmp_path, monkeypatch):
 
     # Idempotent: nothing left to prune.
     assert prune_learned_guard_candidates(dry_run=True)["would_deprecate"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #195 — Learned guard TTL lifecycle
+# ---------------------------------------------------------------------------
+
+@spec_claim(SpecClaim(
+    "GA-S09", "guard_authority", "§TTL stamping at creation", "L2a",
+    "Every auto-generated guard candidate is stamped with created_at and expires_at "
+    "(now + LEARNED_GUARD_TTL_DAYS) at creation (#195). Manual candidates are never stamped."))
+def test_auto_candidate_gets_ttl_stamps():
+    from aletheia.knowledge.manager import _force_shadow_only_if_auto
+    from aletheia.knowledge.guards import LEARNED_GUARD_TTL_DAYS
+    from datetime import datetime, timedelta, timezone
+
+    before = datetime.now(timezone.utc)
+    meta = _force_shadow_only_if_auto({"guard_id": "auto_momentum_btc", "auto_generated": True})
+    after = datetime.now(timezone.utc)
+
+    assert meta.get("created_at") is not None, "created_at must be stamped"
+    assert meta.get("expires_at") is not None, "expires_at must be stamped"
+
+    created = datetime.fromisoformat(str(meta["created_at"]).replace("Z", "+00:00"))
+    expires = datetime.fromisoformat(str(meta["expires_at"]).replace("Z", "+00:00"))
+    assert before <= created <= after
+
+    expected_delta = timedelta(days=LEARNED_GUARD_TTL_DAYS)
+    assert abs((expires - created) - expected_delta).total_seconds() < 2
+
+    # Manual candidates: no stamps added.
+    manual = _force_shadow_only_if_auto({"guard_id": "manual-btc-guard"})
+    assert manual.get("created_at") is None
+    assert manual.get("expires_at") is None
+
+
+@spec_claim(SpecClaim(
+    "GA-S10", "guard_authority", "§loader excludes expired learned guards", "L2a",
+    "load_trading_guards silently skips learned guards past their expires_at at load time (#195). "
+    "Non-expired and seed/manual guards are always visible."))
+def test_loader_excludes_expired_learned_guards(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from datetime import datetime, timedelta, timezone
+    from aletheia.knowledge.frontmatter import render_frontmatter
+    from aletheia.knowledge.guards import load_trading_guards
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    guards_dir = tmp_path / "knowledge" / "guards"
+    guards_dir.mkdir(parents=True)
+
+    now = datetime.now(timezone.utc)
+
+    expired_meta = {
+        "type": "Trading Guard", "guard_id": "auto_expired",
+        "title": "Expired learned", "status": "active", "scope": "paper_entry",
+        "enforcement": "advisory", "block_candidate": False, "score_penalty": 0,
+        "applies_to": {}, "predicates": [],
+        "auto_generated": True, "tags": ["auto-generated", "shadow-only"],
+        "created_at": (now - timedelta(days=45)).isoformat(),
+        "expires_at": (now - timedelta(days=15)).isoformat(),  # in the past
+    }
+    (guards_dir / "expired.md").write_text(render_frontmatter(expired_meta, ""), encoding="utf-8")
+
+    fresh_meta = {
+        "type": "Trading Guard", "guard_id": "auto_fresh",
+        "title": "Fresh learned", "status": "active", "scope": "paper_entry",
+        "enforcement": "advisory", "block_candidate": False, "score_penalty": 0,
+        "applies_to": {}, "predicates": [],
+        "auto_generated": True, "tags": ["auto-generated", "shadow-only"],
+        "created_at": now.isoformat(),
+        "expires_at": (now + timedelta(days=30)).isoformat(),  # future
+    }
+    (guards_dir / "fresh.md").write_text(render_frontmatter(fresh_meta, ""), encoding="utf-8")
+
+    seed_meta = {
+        "type": "Trading Guard", "guard_id": "repeated_losing_factor_v1",
+        "title": "Seed guard", "status": "active", "scope": "paper_entry",
+        "enforcement": "blocking", "block_candidate": True, "score_penalty": 0,
+        "applies_to": {}, "predicates": [], "tags": [],
+    }
+    (guards_dir / "seed.md").write_text(render_frontmatter(seed_meta, ""), encoding="utf-8")
+
+    loaded_ids = {g.guard_id for g in load_trading_guards(status="active")}
+    assert "auto_expired" not in loaded_ids, "expired learned guard must be excluded"
+    assert "auto_fresh" in loaded_ids, "non-expired learned guard must be visible"
+    assert "repeated_losing_factor_v1" in loaded_ids, "seed guard must always be visible"
+
+
+@spec_claim(SpecClaim(
+    "GA-S11", "guard_authority", "§legacy migration deadline", "L2a",
+    "Learned guards without created_at or expires_at receive the bounded migration deadline "
+    "LEARNED_GUARD_MIGRATION_DEADLINE_ISO rather than living forever (#195)."))
+def test_effective_expires_at_precedence():
+    from aletheia.knowledge.guards import (
+        LEARNED_GUARD_MIGRATION_DEADLINE_ISO,
+        LEARNED_GUARD_TTL_DAYS,
+        _effective_learned_expires_at,
+    )
+    from datetime import datetime, timedelta, timezone
+
+    # Explicit expires_at wins.
+    explicit = "2027-01-01T00:00:00+00:00"
+    assert _effective_learned_expires_at({"expires_at": explicit}) == explicit
+
+    # created_at fallback: result is created_at + TTL days.
+    created = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    result = _effective_learned_expires_at({"created_at": created.isoformat()})
+    expected = (created + timedelta(days=LEARNED_GUARD_TTL_DAYS)).isoformat()
+    assert result == expected
+
+    # No dates: migration deadline.
+    assert _effective_learned_expires_at({}) == LEARNED_GUARD_MIGRATION_DEADLINE_ISO
+    assert _effective_learned_expires_at({"guard_id": "auto_old"}) == LEARNED_GUARD_MIGRATION_DEADLINE_ISO
+
+
+@spec_claim(SpecClaim(
+    "GA-B05", "guard_authority", "§daily soft-deprecation pass", "L2b",
+    "_deprecate_expired_learned_guards marks expired learned guards deprecated in their markdown "
+    "files. Manual and seed guards are never touched. Returns the count deprecated (#195)."))
+def test_deprecate_expired_learned_guards(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from datetime import datetime, timedelta, timezone
+    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+    from aletheia.analytics.guard_promotion import _deprecate_expired_learned_guards
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    guards_dir = tmp_path / "knowledge" / "guards"
+    candidates_dir = tmp_path / "knowledge" / "guard_candidates"
+    guards_dir.mkdir(parents=True)
+    candidates_dir.mkdir(parents=True)
+
+    now = datetime.now(timezone.utc)
+
+    # Expired learned active guard.
+    exp_active = {
+        "type": "Trading Guard", "guard_id": "auto_expired_active",
+        "status": "active", "scope": "paper_entry", "auto_generated": True,
+        "tags": ["auto-generated", "shadow-only"], "predicates": [],
+        "created_at": (now - timedelta(days=45)).isoformat(),
+        "expires_at": (now - timedelta(days=15)).isoformat(),
+    }
+    (guards_dir / "expired_active.md").write_text(render_frontmatter(exp_active, ""), encoding="utf-8")
+
+    # Expired learned candidate.
+    exp_cand = {
+        "type": "Trading Guard", "guard_id": "auto_expired_cand",
+        "status": "candidate", "scope": "paper_entry", "auto_generated": True,
+        "tags": ["auto-generated", "shadow-only"], "predicates": [],
+        "created_at": (now - timedelta(days=40)).isoformat(),
+        "expires_at": (now - timedelta(days=10)).isoformat(),
+    }
+    (candidates_dir / "expired_cand.md").write_text(render_frontmatter(exp_cand, ""), encoding="utf-8")
+
+    # Non-expired learned guard (should NOT be touched).
+    fresh = {
+        "type": "Trading Guard", "guard_id": "auto_fresh",
+        "status": "active", "scope": "paper_entry", "auto_generated": True,
+        "tags": ["auto-generated", "shadow-only"], "predicates": [],
+        "created_at": now.isoformat(),
+        "expires_at": (now + timedelta(days=30)).isoformat(),
+    }
+    (guards_dir / "fresh.md").write_text(render_frontmatter(fresh, ""), encoding="utf-8")
+
+    # Manual active guard (must never be touched by the expiry pass).
+    manual = {
+        "type": "Trading Guard", "guard_id": "manual-old",
+        "status": "active", "scope": "paper_entry", "predicates": [], "tags": [],
+    }
+    (guards_dir / "manual.md").write_text(render_frontmatter(manual, ""), encoding="utf-8")
+
+    count = _deprecate_expired_learned_guards()
+    assert count == 2
+
+    assert parse_frontmatter(guards_dir / "expired_active.md")[0]["status"] == "deprecated"
+    assert parse_frontmatter(guards_dir / "expired_active.md")[0]["deprecated_reason"] == "ttl_expired"
+    assert parse_frontmatter(candidates_dir / "expired_cand.md")[0]["status"] == "deprecated"
+    assert parse_frontmatter(guards_dir / "fresh.md")[0]["status"] == "active"  # not touched
+    assert parse_frontmatter(guards_dir / "manual.md")[0]["status"] == "active"  # not touched
+
+    # Idempotent: already-deprecated guards skipped.
+    assert _deprecate_expired_learned_guards() == 0
+
+
+@spec_claim(SpecClaim(
+    "GA-B06", "guard_authority", "§promotion refusal of expired candidates", "L2b",
+    "promote_guard_candidate_to_active refuses to promote a learned candidate whose "
+    "effective expires_at is in the past and returns False (#195)."))
+def test_promote_refuses_expired_learned_candidate(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from datetime import datetime, timedelta, timezone
+    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+    from aletheia.analytics.guard_promotion import promote_guard_candidate_to_active
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    candidates_dir = tmp_path / "knowledge" / "guard_candidates"
+    candidates_dir.mkdir(parents=True)
+
+    now = datetime.now(timezone.utc)
+
+    expired_cand = {
+        "type": "Trading Guard", "guard_id": "auto_expired_prom",
+        "title": "Expired candidate", "status": "candidate", "scope": "paper_entry",
+        "auto_generated": True, "tags": ["auto-generated", "shadow-only"], "predicates": [],
+        "created_at": (now - timedelta(days=45)).isoformat(),
+        "expires_at": (now - timedelta(days=15)).isoformat(),
+    }
+    (candidates_dir / "expired_prom.md").write_text(render_frontmatter(expired_cand, ""), encoding="utf-8")
+
+    result = promote_guard_candidate_to_active("auto_expired_prom")
+    assert result is False, "Promotion of an expired learned candidate must return False"
+
+    # File must remain untouched (candidate, not deprecated by promotion refusal).
+    meta, _ = parse_frontmatter(candidates_dir / "expired_prom.md")
+    assert meta["status"] == "candidate"
+
+
+@spec_claim(SpecClaim(
+    "GA-B07", "guard_authority", "§expiry deprecation runs even when auto-promote is disabled", "L2b",
+    "run_promotion_check still runs _deprecate_expired_learned_guards when auto_promote_enabled=False "
+    "and returns expired_deprecated in the skipped result (#195)."))
+def test_expiry_deprecation_runs_when_auto_promote_disabled(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from datetime import datetime, timedelta, timezone
+    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+    from aletheia.analytics import guard_promotion as gp
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    guards_dir = tmp_path / "knowledge" / "guards"
+    guards_dir.mkdir(parents=True)
+
+    now = datetime.now(timezone.utc)
+    exp = {
+        "type": "Trading Guard", "guard_id": "auto_should_deprecate",
+        "status": "active", "scope": "paper_entry", "auto_generated": True,
+        "tags": ["auto-generated", "shadow-only"], "predicates": [],
+        "created_at": (now - timedelta(days=45)).isoformat(),
+        "expires_at": (now - timedelta(days=1)).isoformat(),
+    }
+    (guards_dir / "should_deprecate.md").write_text(render_frontmatter(exp, ""), encoding="utf-8")
+
+    with patch.object(gp, "load_config", return_value=MagicMock(
+        guard=MagicMock(auto_promote_enabled=False)
+    )):
+        result = gp.run_promotion_check()
+
+    assert result.get("skipped") is True
+    assert result.get("expired_deprecated") == 1
+    assert parse_frontmatter(guards_dir / "should_deprecate.md")[0]["status"] == "deprecated"
