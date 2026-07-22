@@ -817,6 +817,72 @@ def count_unresolved_signal_pending(max_age_minutes: int = 30) -> int:
     return int(row[0] or 0)
 
 
+def list_pending_signal_queue(max_age_minutes: int = 30) -> list[dict]:
+    """Return current queue occupants with their conviction score for priority comparison.
+
+    Each dict contains opportunity_id, symbol, conviction.  Same eligibility
+    criteria as count_unresolved_signal_pending — only rows that consume an
+    admission slot are returned.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
+    rows = (
+        get_db()
+        .execute(
+            "SELECT pending.opportunity_id, pending.symbol, pending.conviction "
+            "FROM pi_decisions pending "
+            "JOIN opportunities source ON source.id=pending.opportunity_id "
+            "WHERE pending.action='signal_pending' "
+            "AND COALESCE(pending.signal_source, 'market_observer')='market_observer' "
+            "AND source.status='queued' "
+            "AND ((datetime(source.valid_until) IS NOT NULL "
+            "      AND datetime(source.valid_until)>datetime('now')) "
+            " OR (datetime(source.valid_until) IS NULL "
+            "      AND datetime(pending.created_at)>=datetime(?))) "
+            "AND NOT EXISTS ("
+            " SELECT 1 FROM pi_decisions final "
+            " WHERE final.opportunity_id=pending.opportunity_id "
+            " AND COALESCE(final.signal_source, 'market_observer')="
+            "     COALESCE(pending.signal_source, 'market_observer') "
+            " AND final.action!='signal_pending' "
+            " AND COALESCE(final.proposal_status, '')!='submitting'"
+            ") "
+            "AND NOT EXISTS ("
+            " SELECT 1 FROM operator_evaluation_events e "
+            " WHERE json_extract(e.queue_snapshot_json,'$.opportunity_id')"
+            "       = pending.opportunity_id "
+            " AND e.event_kind LIKE 'operator_decision_deferred_%' "
+            " AND datetime(json_extract(e.queue_snapshot_json,'$.defer_until'))"
+            "     > datetime('now')"
+            ") "
+            "GROUP BY pending.opportunity_id",
+            (cutoff,),
+        )
+        .fetchall()
+    )
+    return [
+        {
+            "opportunity_id": str(row["opportunity_id"]),
+            "symbol": str(row["symbol"] or ""),
+            "conviction": int(row["conviction"] or 0),
+        }
+        for row in rows
+    ]
+
+
+def transition_queued_opportunity_to_open(oid: str) -> bool:
+    """Return a queued Opportunity to open so it can be re-admitted in a later run.
+
+    Used by priority-replacement eviction: a lower-scored incumbent is released
+    back to open status and its signal_pending carrier becomes superseded by the
+    subsequent eviction pi_decision written by the caller.
+    """
+    cur = execute_write(
+        "UPDATE opportunities SET status='open' WHERE id=? AND status='queued'",
+        (oid,),
+    )
+    return cur.rowcount == 1
+
+
 def active_defer_opportunity_ids(now_iso: str | None = None) -> set[str]:
     """opportunity_id set whose most recent Operator observation is an active defer.
 

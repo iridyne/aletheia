@@ -933,6 +933,83 @@ def test_signal_batch_plan_applies_queue_capacity_without_selecting_candidate():
 
 @spec_claim(
     SpecClaim(
+        "PL-PT-21",
+        "pipeline_paper_trade",
+        "§2 priority replacement evicts lower-score occupant",
+        "L2b",
+        "When the queue is full and a new candidate scores strictly higher than the "
+        "weakest current occupant, the new candidate is admitted and the occupant's "
+        "opportunity_id is returned in plan.evictions instead of rejecting the new arrival.",
+        status="implemented",
+    ),
+)
+def test_signal_batch_plan_priority_replacement_evicts_lower_score_occupant():
+    from aletheia.agents.paper_trader import _plan_signal_batch
+
+    high_score_candidate = {
+        "opportunity_id": "opp-high",
+        "symbol": "ETH/USDT",
+        "direction": "long",
+        "trade_score": 80,
+    }
+    weak_occupant = {"opportunity_id": "opp-weak", "symbol": "SOL/USDT", "conviction": 50}
+
+    plan = _plan_signal_batch(
+        [high_score_candidate],
+        open_symbols=set(),
+        recent_signal_pairs=set(),
+        operator_evaluated_opportunity_ids=set(),
+        limit=5,
+        available_queue_slots=0,
+        current_queue=[weak_occupant],
+    )
+
+    assert plan.selected == [high_score_candidate]
+    assert plan.decisions["opp-high"] == ("signal_batch_limit", "passed")
+    assert "opp-weak" in plan.evictions
+    assert plan.decisions["opp-weak"] == ("signal_queue_evicted", "evicted")
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-22",
+        "pipeline_paper_trade",
+        "§2 priority replacement skips equal or lower score",
+        "L2b",
+        "When the queue is full and a new candidate scores equal to or lower than the "
+        "weakest occupant, no eviction happens and the new candidate is rejected with "
+        "signal_queue_capacity.",
+        status="implemented",
+    ),
+)
+def test_signal_batch_plan_priority_replacement_no_eviction_when_equal_or_lower():
+    from aletheia.agents.paper_trader import _plan_signal_batch
+
+    equal_score_candidate = {
+        "opportunity_id": "opp-equal",
+        "symbol": "ETH/USDT",
+        "direction": "long",
+        "trade_score": 50,
+    }
+    strong_occupant = {"opportunity_id": "opp-strong", "symbol": "BTC/USDT", "conviction": 50}
+
+    plan = _plan_signal_batch(
+        [equal_score_candidate],
+        open_symbols=set(),
+        recent_signal_pairs=set(),
+        operator_evaluated_opportunity_ids=set(),
+        limit=5,
+        available_queue_slots=0,
+        current_queue=[strong_occupant],
+    )
+
+    assert plan.selected == []
+    assert plan.decisions["opp-equal"] == ("signal_queue_capacity", "rejected")
+    assert plan.evictions == []
+
+
+@spec_claim(
+    SpecClaim(
         "PL-PT-12",
         "pipeline_paper_trade",
         "§4 approved take-profit identity",
