@@ -310,7 +310,8 @@ def _windows_program_and_arguments(*, no_browser: bool) -> tuple[str, str]:
     exe = Path(sys.executable)
     path_type = PureWindowsPath if "\\" in str(exe) or (len(str(exe)) > 1 and str(exe)[1] == ":") else Path
     venv_dir = path_type(str(exe)).parent.parent
-    if (venv_dir / "pyvenv.cfg").exists() and str(path_type(_windows_python())) != str(path_type(str(exe))):
+    venv_cfg = Path(str(venv_dir / "pyvenv.cfg"))
+    if venv_cfg.exists() and str(path_type(_windows_python())) != str(path_type(str(exe))):
         source = (
             "import os,runpy,site,sys;"
             f"site.addsitedir({str(venv_dir / 'Lib' / 'site-packages')!r});"
