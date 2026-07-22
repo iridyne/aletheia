@@ -6477,11 +6477,8 @@ def expire_stale_serenity_themes() -> int:
             return 0
         theme_ids = [row["id"] for row in expired_themes]
         for theme_id in theme_ids:
-            db.execute(
-                "UPDATE serenity_themes SET status='expired', updated_at=? WHERE id=?",
-                (now_iso, theme_id),
-            )
-            db.execute(
+            update_serenity_theme(theme_id, status="expired", updated_at=now_iso)
+            execute_write(
                 "UPDATE serenity_opportunities SET status='expired', updated_at=? "
                 "WHERE theme_id=? AND status='active'",
                 (now_iso, theme_id),
