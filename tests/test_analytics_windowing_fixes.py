@@ -361,3 +361,59 @@ def test_learning_contribution_verdict_db_error_surfaces_error_not_zero(tmp_path
     assert result["verdicts"]["total"] == 0
     assert "error" in result["verdicts"]
     assert result["verdicts"]["error"]  # non-empty error string
+
+
+# ---------------------------------------------------------------------------
+# #327 — conviction_defer decisions visible in operator-decisions API
+# ---------------------------------------------------------------------------
+
+
+def test_conviction_defer_appears_in_operator_decisions(tmp_path, monkeypatch):
+    """#327: operator_evaluation_events with event_kind='operator_decision_deferred_low_conviction'
+    must appear as outcome='conviction_defer' in get_operator_decisions — previously
+    invisible because the API only queried pi_decisions (which has no row for these)."""
+    import json
+    from datetime import datetime, timezone
+
+    _setup_env(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sq
+
+    conn = sq._db_conn
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Insert the opportunity so the JOIN resolves symbol/direction/market_type.
+    conn.execute(
+        "INSERT INTO opportunities "
+        "(id, symbol, market, direction_bias, confidence, created_at, status) "
+        "VALUES (?, 'ETH/USDT', 'usdt_futures', 'long', 'medium_confidence', ?, 'reviewed')",
+        ("opp-conviction-327", now),
+    )
+    snap = json.dumps({
+        "opportunity_id": "opp-conviction-327",
+        "defer_reason": "operator_low_conviction",
+        "defer_until": now,
+        "context_fingerprint": "fp-327",
+    })
+    conn.execute(
+        "INSERT INTO operator_evaluation_events "
+        "(id, dedup_key, event_kind, trigger, pending_unresolved_total, "
+        "pending_visible_count, queue_snapshot_json, data_health_json, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        ("oee-327", "dk-327", "operator_decision_deferred_low_conviction",
+         "material_change", 1, 1, snap, "{}", now),
+    )
+    conn.commit()
+
+    from aletheia.server.routes.analytics import get_operator_decisions
+
+    result = get_operator_decisions(hours=24, limit=50)
+
+    assert result["counts"]["conviction_defer"] == 1
+    defer_items = [it for it in result["items"] if it["outcome"] == "conviction_defer"]
+    assert len(defer_items) == 1
+    item = defer_items[0]
+    assert item["opportunity_id"] == "opp-conviction-327"
+    assert item["symbol"] == "ETH/USDT"
+    assert item["direction"] == "long"
+    assert item["market_type"] == "usdt_futures"
+    assert item["defer_reason"] == "operator_low_conviction"
