@@ -84,12 +84,18 @@ def _reserved_margin_usdt(positions: list[dict]) -> float:
 
 def _write_event(*, action: str, amount_usdt: float, actor: str, source: str,
                  position_id: str | None = None, note: str = "") -> PaperAccountEvent:
+    if not math.isfinite(amount_usdt):
+        raise ValueError("paper account event amount must be finite")
     # SQLite is the single serialization authority for the ledger.  This helper
     # may be called from an existing Risk/entry/close transaction; transaction()
     # joins that writer instead of taking a process lock in the opposite order.
     with repo.transaction(immediate=True):
         before = repo.get_paper_account_cash_balance()
+        if not math.isfinite(before):
+            raise RuntimeError("paper account cash balance is not finite")
         after = round(before + amount_usdt, 8)
+        if not math.isfinite(after):
+            raise ValueError("paper account event balance must remain finite")
         if after < -1e-8:
             raise ValueError("paper account cash balance cannot be negative")
         event = PaperAccountEvent(
@@ -148,6 +154,8 @@ def get_paper_account(event_limit: int = 20) -> dict:
 
 def adjust_cash(amount_usdt: float, *, note: str = "", actor: str = "human",
                 source: str = "dashboard") -> dict:
+    if not math.isfinite(amount_usdt):
+        raise ValueError("paper account adjustment must be finite")
     if amount_usdt == 0:
         raise ValueError("paper account adjustment must be non-zero")
     ensure_paper_account()
@@ -161,6 +169,8 @@ def adjust_cash(amount_usdt: float, *, note: str = "", actor: str = "human",
 
 def set_cash_balance(amount_usdt: float, *, note: str = "", actor: str = "human",
                      source: str = "dashboard") -> dict:
+    if not math.isfinite(amount_usdt):
+        raise ValueError("paper account cash balance must be finite")
     if amount_usdt < 0:
         raise ValueError("paper account cash balance must be non-negative")
     ensure_paper_account()
