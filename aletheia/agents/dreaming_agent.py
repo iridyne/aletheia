@@ -145,6 +145,60 @@ def _build_learning_ledger() -> str:
     )
 
 
+def _build_trading_performance_block() -> str:
+    """Deterministic 24h trading-performance block from outcome-eligible closed positions.
+
+    Returns PROFIT_DAY, LOSS_DAY, FLAT_DAY, or NOT_AVAILABLE.
+    Missing evidence is reported explicitly — never coerced to zero or FLAT.
+    """
+    from datetime import datetime, timezone, timedelta
+    from aletheia.storage.sqlite import get_db
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    try:
+        db = get_db()
+        rows = db.execute(
+            "SELECT realized_pnl, direction, symbol "
+            "FROM positions "
+            "WHERE status='closed' AND outcome_eligible=1 "
+            "AND closed_at >= ? "
+            "ORDER BY closed_at DESC",
+            (cutoff,),
+        ).fetchall()
+    except Exception as e:
+        return (
+            "\n\n## Trading Performance (24h)\n"
+            "- Status: NOT_AVAILABLE\n"
+            f"- Reason: query_failed:{e}\n"
+        )
+
+    if not rows:
+        return (
+            "\n\n## Trading Performance (24h)\n"
+            "- Status: NOT_AVAILABLE\n"
+            "- Reason: no_eligible_closed_trades\n"
+        )
+
+    net_pnl = sum(float(r["realized_pnl"] or 0) for r in rows)
+    wins = [r for r in rows if float(r["realized_pnl"] or 0) > 0]
+    losses = [r for r in rows if float(r["realized_pnl"] or 0) < 0]
+
+    if net_pnl > 0:
+        verdict = "PROFIT_DAY"
+    elif net_pnl < 0:
+        verdict = "LOSS_DAY"
+    else:
+        verdict = "FLAT_DAY"
+
+    return (
+        "\n\n## Trading Performance (24h) [authoritative — not LLM narrative]\n"
+        f"- Verdict: {verdict}\n"
+        f"- Net P&L: {net_pnl:+.4f} "
+        "(sum of realized_pnl from outcome-eligible closed positions)\n"
+        f"- Trades: {len(rows)} total ({len(wins)} wins / {len(losses)} losses)\n"
+    )
+
+
 async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[str]) -> None:
     """Extract structured lessons from recent trade_case_study items into ps_lessons.
 
@@ -367,11 +421,25 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
     except Exception:
         pass
 
+    # Deterministic trading performance block — computed before LLM so it can be
+    # injected into the prompt and prepended to both written documents.
+    try:
+        trading_block = _build_trading_performance_block()
+        log_tool(run_id, "build_trading_performance_block", "observe", True)
+    except Exception as e:
+        trading_block = (
+            "\n\n## Trading Performance (24h)\n"
+            "- Status: NOT_AVAILABLE\n"
+            f"- Reason: internal_error:{e}\n"
+        )
+        errors.append(f"trading_performance_block_failed: {e}")
+
     content, err = await llm_complete(
         system="You are the system's nightly consolidation process. Given recent agent activity, "
                "produce a short markdown 'dreaming log': (1) what happened, (2) one insight or pattern, "
-               "(3) one suggested focus for tomorrow. Keep it brief.",
-        user=f"Recent agent activity:\n{activity}{post_mortem_ctx}\n\nWrite the dreaming log.",
+               "(3) one suggested focus for tomorrow. Keep it brief. "
+               "Your output is non-authoritative operational narrative.",
+        user=f"Authoritative trading performance:{trading_block}\n\nRecent agent activity:\n{activity}{post_mortem_ctx}\n\nWrite the dreaming log.",
         max_tokens=700,
         provider=get_provider_for_tier("deep"),
     )
@@ -381,14 +449,15 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
         errors.append(err)
         logger.info("dreaming_agent: LLM unavailable, skipping dreaming_log write")
     else:
+        doc_body = trading_block + "\n\n" + content
         # Append a real learning-progress snapshot. Never let it break the run.
         try:
-            content += _build_learning_ledger()
+            doc_body += _build_learning_ledger()
             log_tool(run_id, "build_learning_ledger", "observe", True)
         except Exception as e:
             errors.append(f"learning_ledger_failed: {e}")
 
-        item = create_dreaming_log("Daily Consolidation", content)
+        item = create_dreaming_log("Daily Consolidation", doc_body)
         if item:
             log_tool(run_id, "write_dreaming_log", "observe", True, output=item.id)
             outputs.append(f"dreaming_log:{item.id}")
@@ -407,7 +476,7 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
             if r.get("created_at", "") >= today_start.isoformat()
         ]
         if not existing_reviews:
-            review_body = content or ""
+            review_body = trading_block + "\n\n" + (content or "")
             try:
                 review_body += _build_learning_ledger()
             except Exception as e:

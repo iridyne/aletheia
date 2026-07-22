@@ -138,3 +138,122 @@ async def test_dreaming_git_snapshot_failure_does_not_break_run(tmp_path, monkey
         o.startswith("dreaming_log:") or o.startswith("daily_review:")
         for o in result["outputs"]
     )
+
+
+# ---------------------------------------------------------------------------
+# Trading performance block (#201)
+# ---------------------------------------------------------------------------
+
+def _seed_closed_position(realized_pnl: float, outcome_eligible: bool = True) -> None:
+    from datetime import datetime, timezone, timedelta
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import insert_position, update_position
+
+    p = Position(
+        symbol="BTC/USDT",
+        market_type="futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=60000.0,
+        execution_mode="paper_internal",
+        status="closed",
+        realized_pnl=realized_pnl,
+        outcome_eligible=outcome_eligible,
+        outcome_exclusion_reason="none" if outcome_eligible else "unclassified",
+        closed_at=(datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+    )
+    insert_position(p)
+    update_position(p.id, status="closed")
+
+
+async def test_dreaming_review_loss_day_verdict(tmp_path, monkeypatch):
+    """A single outcome-eligible closed position with negative pnl → LOSS_DAY in review."""
+    setup_env(tmp_path, monkeypatch)
+    _mock_llm_unavailable(monkeypatch)
+    _seed_closed_position(realized_pnl=-25.0)
+
+    captured = {}
+    from aletheia.agents import dreaming_agent
+    orig = dreaming_agent.create_daily_review
+
+    def _capture(title, content):
+        captured["content"] = content
+        return orig(title, content)
+    monkeypatch.setattr(dreaming_agent, "create_daily_review", _capture)
+
+    result = await dreaming_agent.run_dreaming_agent(permission_mode="Observe")
+    assert any(o.startswith("daily_review:") for o in result["outputs"]), result
+    assert "LOSS_DAY" in captured["content"], captured["content"]
+
+
+async def test_dreaming_review_not_available_when_no_trades(tmp_path, monkeypatch):
+    """No eligible closed trades → NOT_AVAILABLE in review (never coerced to FLAT)."""
+    setup_env(tmp_path, monkeypatch)
+    _mock_llm_unavailable(monkeypatch)
+    # No positions seeded — table is empty
+
+    captured = {}
+    from aletheia.agents import dreaming_agent
+    orig = dreaming_agent.create_daily_review
+
+    def _capture(title, content):
+        captured["content"] = content
+        return orig(title, content)
+    monkeypatch.setattr(dreaming_agent, "create_daily_review", _capture)
+
+    result = await dreaming_agent.run_dreaming_agent(permission_mode="Observe")
+    assert any(o.startswith("daily_review:") for o in result["outputs"]), result
+    assert "NOT_AVAILABLE" in captured["content"], captured["content"]
+
+
+async def test_dreaming_review_profit_day_verdict(tmp_path, monkeypatch):
+    """Net positive realized_pnl → PROFIT_DAY in review."""
+    setup_env(tmp_path, monkeypatch)
+    _mock_llm_unavailable(monkeypatch)
+    _seed_closed_position(realized_pnl=10.0)
+    _seed_closed_position(realized_pnl=5.0)
+    _seed_closed_position(realized_pnl=-2.0)  # net still positive
+
+    captured = {}
+    from aletheia.agents import dreaming_agent
+    orig = dreaming_agent.create_daily_review
+
+    def _capture(title, content):
+        captured["content"] = content
+        return orig(title, content)
+    monkeypatch.setattr(dreaming_agent, "create_daily_review", _capture)
+
+    result = await dreaming_agent.run_dreaming_agent(permission_mode="Observe")
+    assert any(o.startswith("daily_review:") for o in result["outputs"]), result
+    assert "PROFIT_DAY" in captured["content"], captured["content"]
+
+
+async def test_dreaming_performance_block_precedes_llm_narrative(tmp_path, monkeypatch):
+    """Trading performance block must appear before the LLM narrative in the document."""
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.agents import dreaming_agent
+
+    async def _fake_llm(*a, **kw):
+        return "## Narrative\nToday was uneventful.", None
+    monkeypatch.setattr(dreaming_agent, "llm_complete", _fake_llm)
+    _seed_closed_position(realized_pnl=-5.0)
+
+    captured = {}
+    orig = dreaming_agent.create_dreaming_log
+
+    def _capture(title, content):
+        captured["content"] = content
+        return orig(title, content)
+    monkeypatch.setattr(dreaming_agent, "create_dreaming_log", _capture)
+
+    await dreaming_agent.run_dreaming_agent(permission_mode="Observe")
+
+    content = captured.get("content", "")
+    assert "Trading Performance" in content, "performance block missing from dreaming_log"
+    assert "## Narrative" in content, "LLM narrative missing from dreaming_log"
+    perf_pos = content.index("Trading Performance")
+    narrative_pos = content.index("## Narrative")
+    assert perf_pos < narrative_pos, (
+        f"Trading Performance block (at {perf_pos}) must precede LLM narrative (at {narrative_pos})"
+    )
