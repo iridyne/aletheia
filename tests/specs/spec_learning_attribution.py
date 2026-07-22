@@ -145,9 +145,15 @@ def test_operator_prompt_bundle_manifest_is_one_durable_unit(monkeypatch):
         "proposal_id": "proposal-1",
         "learning_manifest": manifest,
     })
+    # Select the finalized decision (action='skip') for this exact opportunity.
+    # A signal_pending carrier with proposal_id=NULL may be present for the same
+    # opportunity; querying only by created_at order is non-deterministic (#212).
     row = get_db().execute(
         "SELECT opportunity_id, proposal_id, learning_manifest_json "
-        "FROM pi_decisions ORDER BY created_at DESC LIMIT 1"
+        "FROM pi_decisions "
+        "WHERE opportunity_id=? AND action='skip' "
+        "ORDER BY created_at DESC LIMIT 1",
+        (opportunity_id,),
     ).fetchone()
     stored = json.loads(row["learning_manifest_json"])
     assert row["opportunity_id"] == opportunity_id
