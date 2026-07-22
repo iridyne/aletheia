@@ -190,7 +190,7 @@ def settle_position_closed(position_id: str, realized_pnl: float) -> None:
                          note="Local paper position realized PnL")
 
 
-def _update_position_economics(
+def _settle_position_economics(
     position_id: str,
     realized_pnl: float,
     funding_cost: float,
@@ -207,6 +207,7 @@ def _update_position_economics(
             (realized_pnl, funding_cost, int(outcome_eligible),
              outcome_exclusion_reason, position_id),
         )
+        settle_position_closed(position_id, realized_pnl)
 
 
 async def _backfill_historical_funding_for_position(row: dict) -> int:
@@ -293,8 +294,6 @@ async def settle_unsettled_paper_closes() -> dict:
             (FUNDING_PERMANENTLY_UNRECOVERABLE,),
         ).fetchall()
     ]
-    if not rows:
-        return {"settled": 0, "still_pending": 0, "errors": []}
 
     settled = 0
     still_pending = 0
@@ -395,9 +394,8 @@ async def settle_unsettled_paper_closes() -> dict:
             outcome_eligible, outcome_reason = outcome_write_eligibility(
                 check_row, exit_fill_verified=True,
             )
-            _update_position_economics(position_id, realized_pnl, funding_cost,
+            _settle_position_economics(position_id, realized_pnl, funding_cost,
                                        outcome_eligible, outcome_reason)
-            settle_position_closed(position_id, realized_pnl)
             write_audit({
                 "actor": "system",
                 "source": "paper_funding_settler",
