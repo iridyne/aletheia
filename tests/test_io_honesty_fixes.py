@@ -667,3 +667,67 @@ def test_import_valid_bundle_commits_all_rows(tmp_path, monkeypatch):
         assert _count_lessons(tmp_path, row["lesson_id"]) == 1, (
             f"row {row['lesson_id']} must be committed"
         )
+
+
+# ---------------------------------------------------------------------------
+# #277 — concurrent imports use distinct staging directories
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_imports_use_distinct_staging_dirs(tmp_path, monkeypatch):
+    """#277: two ImportService calls must use distinct staging directories."""
+    import threading
+
+    _setup_env(tmp_path, monkeypatch)
+
+    archive = _build_bundle_with_db_row_and_checksums(tmp_path, "dist277")
+
+    from aletheia.sync.importer import ImportService
+    staging_dirs: list[Path] = []
+    original_open = tarfile.open
+
+    import contextlib
+
+    @contextlib.contextmanager
+    def patched_open(path, mode):
+        nonlocal staging_dirs
+        # Capture the extract_dir by monkeypatching tarfile.extractall
+        with original_open(path, mode) as tar:
+            orig_extractall = tar.extractall
+
+            def capture_extractall(dest, filter=None):
+                staging_dirs.append(Path(dest))
+                return orig_extractall(dest, filter=filter)
+
+            tar.extractall = capture_extractall
+            yield tar
+
+    monkeypatch.setattr(tarfile, "open", patched_open)
+
+    results = []
+    errors = []
+
+    def run_import():
+        try:
+            svc = ImportService(data_dir=tmp_path)
+            results.append(svc.dry_run(archive))
+        except Exception as exc:
+            errors.append(exc)
+
+    t1 = threading.Thread(target=run_import)
+    t2 = threading.Thread(target=run_import)
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+
+    assert not errors, f"import threads raised: {errors}"
+    assert len(staging_dirs) == 2, f"expected 2 staging dirs captured, got {staging_dirs}"
+    assert staging_dirs[0] != staging_dirs[1], (
+        f"concurrent imports must use different staging directories; "
+        f"both used {staging_dirs[0]}"
+    )
+    # Both must be under <data_dir>/tmp
+    tmp_base = tmp_path / "tmp"
+    for d in staging_dirs:
+        assert d.parent.resolve() == tmp_base.resolve(), (
+            f"staging dir {d} is not directly under <data_dir>/tmp"
+        )

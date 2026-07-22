@@ -5,6 +5,8 @@ import shutil
 import tarfile
 from pathlib import Path
 
+import uuid
+
 from aletheia.config.loader import get_data_dir
 from aletheia.storage.hashing import sha256_file
 from aletheia.storage.sqlite import get_db
@@ -88,10 +90,8 @@ class ImportService:
     def _process(self, archive_path: Path, commit: bool) -> ImportResult:
         result = ImportResult()
 
-        # Extract to temp dir
-        extract_dir = self._data_dir / "tmp" / "import_staging"
-        if extract_dir.exists():
-            shutil.rmtree(extract_dir)
+        # Each invocation gets an isolated staging directory (#277).
+        extract_dir = self._data_dir / "tmp" / f"import_staging_{uuid.uuid4().hex}"
         extract_dir.mkdir(parents=True)
 
         try:
