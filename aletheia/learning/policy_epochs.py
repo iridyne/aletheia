@@ -128,6 +128,27 @@ def persist_policy_epoch(epoch: PolicyEpoch) -> str:
             "WHERE epoch_kind=? AND ended_at IS NULL",
             (now, epoch.epoch_kind),
         )
+        # Guarantee strict monotonicity: if wall-clock is not ahead of the
+        # latest persisted started_at for this kind (possible on fast hosts or
+        # when the OS clock resolution is coarser than the rotation cadence),
+        # bump by one microsecond so the UNIQUE(epoch_kind, effective_values_hash,
+        # started_at) constraint never fires on a legitimate rapid A→B→A rotation.
+        from datetime import timedelta
+        latest_row = db.execute(
+            "SELECT MAX(started_at) AS latest FROM learning_policy_epochs WHERE epoch_kind=?",
+            (epoch.epoch_kind,),
+        ).fetchone()
+        latest_ts = latest_row["latest"] if latest_row else None
+        if latest_ts is not None:
+            try:
+                latest_dt = datetime.fromisoformat(latest_ts)
+                if latest_dt.tzinfo is None:
+                    latest_dt = latest_dt.replace(tzinfo=timezone.utc)
+                bumped = (latest_dt + timedelta(microseconds=1)).isoformat()
+                if bumped > now:
+                    now = bumped
+            except (ValueError, TypeError):
+                pass
         record = LearningPolicyEpoch(
             epoch_kind=epoch.epoch_kind,
             effective_values_hash=epoch.epoch_hash,
