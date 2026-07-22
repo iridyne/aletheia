@@ -560,3 +560,105 @@ def test_daemon_heartbeat_health_is_separate_from_evaluation(monkeypatch):
 
     if hasattr(scheduler._JOB_RUN_STATE, "failure_recorded"):
         del scheduler._JOB_RUN_STATE.failure_recorded
+
+
+@spec_claim(
+    SpecClaim(
+        "PI-S08",
+        "agent_contracts",
+        "§PI three-layer context injection",
+        "L2b",
+        "evaluate_trading_opportunity feeds all three context layers into the LLM prompt "
+        "before the model call; Layer 1 (environment snapshot), Layer 2 (short-term memory), "
+        "and Layer 3 (long-term wisdom) headers and their payloads must appear in the captured "
+        "user message sent to llm_structured.",
+        status="implemented",
+    ),
+)
+async def test_three_layer_context_injected_into_llm_prompt(monkeypatch):
+    """PI §B: _assess_opportunity must forward all three layer section headers to llm_structured."""
+    import aletheia.agents.helpers as helpers
+    import aletheia.model_provider.router as router
+    from aletheia.agent_shell.trading_decision import _assess_opportunity
+
+    captured: list[str] = []
+
+    async def _fake_llm(system, user, *, schema, provider=None, **_kw):
+        captured.append(user)
+        return {
+            "action": "skip",
+            "symbol": None,
+            "direction": None,
+            "conviction": 0,
+            "reasoning": "fixture skip",
+            "skip_kind": "no_pending_signal",
+            "risk_factors": [],
+            "supporting_signals": [],
+            "opposing_signals": [],
+            "bear_case": "",
+            "key_assumptions": [],
+            "parameter_rationale": {},
+        }, None
+
+    monkeypatch.setattr(helpers, "llm_structured", _fake_llm)
+    monkeypatch.setattr(router, "get_provider_for_tier", lambda _tier: "mock_provider")
+
+    ctx = {
+        "layer1": {
+            "positions": [],
+            "balance": {"equity_usdt": 1000.0, "available_usdt": 950.0},
+            "today_pnl": 0.0,
+            "regime": {
+                "state": "neutral",
+                "confidence": 0.6,
+                "long_bias": 0.5,
+                "short_bias": 0.5,
+            },
+            "features": [],
+            "risk": {
+                "kill_switch": False,
+                "max_daily_loss_pct": 5,
+                "max_open_positions": 3,
+            },
+            "data_health": {},
+            "opportunities": [],
+        },
+        "layer2": {
+            "reflection": None,
+            "outcome_stats": None,
+            "per_symbol": [],
+            "strategies": [],
+            "pending_signals": [],
+            "pending_queue": {"unresolved_total": 1, "overflow_count": 0},
+        },
+        "layer3": {
+            "lessons": [
+                {
+                    "type": "general",
+                    "symbol": None,
+                    "content": "L3_SENTINEL_WISDOM: follow the trend",
+                }
+            ],
+            "guard_candidates": [],
+            "serenity_opportunities": [],
+        },
+        "skip_policy": {"unchanged_context_defer_window_minutes": 120},
+    }
+
+    result = await _assess_opportunity(ctx)
+
+    assert captured, "_assess_opportunity never called llm_structured"
+    user_msg = captured[0]
+
+    assert "# Layer 1: Environment Snapshot" in user_msg, (
+        "Layer 1 header missing from LLM prompt — three-layer context injection broken"
+    )
+    assert "# Layer 2: Short-term Memory" in user_msg, (
+        "Layer 2 header missing from LLM prompt — three-layer context injection broken"
+    )
+    assert "# Layer 3: Long-term Wisdom" in user_msg, (
+        "Layer 3 header missing from LLM prompt — three-layer context injection broken"
+    )
+    assert "L3_SENTINEL_WISDOM" in user_msg, (
+        "Layer 3 payload missing from LLM prompt — lesson content not rendered into prompt"
+    )
