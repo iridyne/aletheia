@@ -40,6 +40,9 @@ def setup_env(tmp_path, monkeypatch):
     # These lifecycle tests do not register a real OS service or tunnel.
     from aletheia.gateway import lifecycle
     monkeypatch.setattr(lifecycle, "_auto_start_tunnel", lambda cfg: None)
+    # Default: port-holder discovery returns empty — no real lsof/netstat (#233).
+    # Tests that exercise the holder kill path override this in their own body.
+    monkeypatch.setattr(lifecycle, "find_port_holders", lambda port: [])
     from aletheia.gateway import managed_service
     monkeypatch.setattr(managed_service, "start", lambda **_kwargs: {"ok": True})
     monkeypatch.setattr(managed_service, "stop", lambda: {"ok": True})
