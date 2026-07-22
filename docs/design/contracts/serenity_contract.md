@@ -141,6 +141,9 @@ Serenity pick 必须可追溯到来源,防止 opportunity_id 静默 None(历史�
 - `PiDecision.signal_source` 默认 `'market_observer'`,additive 迁移保证旧库有列 (SA-S01/S03)。
 - `_attach_opportunity_context` 回填规则: 仅匹配 Serenity → `opportunity_id=serenity_id` + `signal_source='serenity'`(无 silent None,SA-I01);**同时匹配 market_observer 与 Serenity 时 market_observer 优先**(SA-I02)。
 - pending_signal 按 symbol+direction 直配优先于可能被 limit=5 截断的 layer3(SA-I03/S05);`record_decision` 持久化 `signal_source` 到 `pi_decisions`(SA-C01)。
+- Serenity pending carrier 不使用 30 分钟 market TTL；其可执行生命周期由 exact
+  `serenity_opportunity.status` 与 parent theme `status/expires_at` 控制。现有 maintenance
+  周期软过期到期 child；pending 审计行保留但退出 actionable queue，并计入 stale backlog。
 - exact Serenity pending carrier 必须按 `opportunity_id` 独立 hydrate thesis、score、
   assessed tier、researchability 与 evidence IDs；全局 active top-five 只是展示窗口，
   不能决定待判断候选是否拥有研究事实。证据身份进入 material fingerprint，补证后
