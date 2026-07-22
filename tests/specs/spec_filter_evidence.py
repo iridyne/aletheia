@@ -1182,3 +1182,147 @@ def test_opportunity_progress_read_model_does_not_import_ranker_preview():
     assert "build_paper_candidates" not in source
     assert "filter_decisions" in source
     assert "FROM agent_runs" in source
+
+
+@spec_claim(
+    SpecClaim(
+        "FE-S21", _CONTRACT, "§2 allocation_selected upsert", "L2b",
+        "A filter_candidate_outcomes row first written with allocation_selected=NULL "
+        "by the filter-evidence path is updated to the authoritative True/False when "
+        "the experiment path re-inserts the same row with a definitive value. A second "
+        "insert with NULL never overwrites a resolved value.",
+        status="implemented",
+    )
+)
+def test_fco_allocation_selected_upsert_updates_null_row(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.analytics.filter_evidence import build_candidate_outcomes
+    from aletheia.storage.repositories import insert_filter_candidate_outcomes_batch
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc).isoformat()
+    key = "spec-fco-upsert-test"
+
+    # Step 1: filter-evidence path writes rows with allocation_selected=None (NULL).
+    null_outcomes = build_candidate_outcomes(
+        outcome_candidate_key=key,
+        venue="okx",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        scanner_family="momentum",
+        regime_tag=None,
+        entry_price_usd=60000.0,
+        entry_spread_bps=None,
+        funding_rate_at_entry=None,
+        entry_ts=now,
+        allocation_selected=None,
+    )
+    insert_filter_candidate_outcomes_batch(null_outcomes)
+
+    db = get_db()
+    rows = db.execute(
+        "SELECT allocation_selected FROM filter_candidate_outcomes WHERE outcome_candidate_key = ?",
+        (key,),
+    ).fetchall()
+    assert rows, "Expected outcome rows to be written"
+    assert all(r["allocation_selected"] is None for r in rows), (
+        "Initial insert should write NULL allocation_selected"
+    )
+
+    # Step 2: experiment path re-inserts with allocation_selected=False (not selected).
+    false_outcomes = build_candidate_outcomes(
+        outcome_candidate_key=key,
+        venue="okx",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        scanner_family="momentum",
+        regime_tag=None,
+        entry_price_usd=60000.0,
+        entry_spread_bps=None,
+        funding_rate_at_entry=None,
+        entry_ts=now,
+        allocation_selected=False,
+    )
+    insert_filter_candidate_outcomes_batch(false_outcomes)
+
+    rows = db.execute(
+        "SELECT allocation_selected FROM filter_candidate_outcomes WHERE outcome_candidate_key = ?",
+        (key,),
+    ).fetchall()
+    assert all(r["allocation_selected"] == 0 for r in rows), (
+        "Upsert must update NULL → False=0 when experiment path provides definitive value"
+    )
+
+    # Step 3: a redundant re-insert with NULL must NOT overwrite the resolved 0.
+    insert_filter_candidate_outcomes_batch(null_outcomes)
+    rows = db.execute(
+        "SELECT allocation_selected FROM filter_candidate_outcomes WHERE outcome_candidate_key = ?",
+        (key,),
+    ).fetchall()
+    assert all(r["allocation_selected"] == 0 for r in rows), (
+        "Inserting NULL again must not overwrite a resolved allocation_selected=0"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "FE-S22", _CONTRACT, "§2 allocation_selected backfill", "L2b",
+        "The run_migrations() backfill sets allocation_selected=0 for settled and "
+        "failed filter_candidate_outcomes rows whose allocation_selected is NULL. "
+        "Pending rows and rows with explicit True/False are left untouched.",
+        status="implemented",
+    )
+)
+def test_fco_backfill_sets_zero_for_settled_failed_null_rows(tmp_path, monkeypatch):
+    import sqlite3
+
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.migrations import _backfill_fco_allocation_selected, run_migrations
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    sq._db_conn = conn
+    run_migrations()
+
+    db = sq.get_db()
+    # Insert raw rows directly (bypassing model layer) to simulate legacy NULL state.
+    for row_id, status, alloc in [
+        ("settled-null", "settled", None),
+        ("failed-null",  "failed",  None),
+        ("pending-null", "pending", None),
+        ("settled-true", "settled", 1),
+        ("settled-false","settled", 0),
+    ]:
+        db.execute(
+            "INSERT OR IGNORE INTO filter_candidate_outcomes "
+            "(id, outcome_candidate_key, venue, symbol, market_type, direction, "
+            " horizon, entry_price_usd, entry_ts, due_at, status, allocation_selected) "
+            "VALUES (?, ?, 'okx', 'BTC/USDT', 'spot', 'long', '1h', 60000.0, "
+            " '2024-01-01T00:00:00+00:00', '2024-01-01T01:00:00+00:00', ?, ?)",
+            (row_id, f"key-{row_id}", status, alloc),
+        )
+    db.commit()
+
+    _backfill_fco_allocation_selected(db)
+
+    def _alloc(row_id):
+        return db.execute(
+            "SELECT allocation_selected FROM filter_candidate_outcomes WHERE id = ?",
+            (row_id,),
+        ).fetchone()["allocation_selected"]
+
+    assert _alloc("settled-null") == 0, "settled+NULL must be backfilled to 0"
+    assert _alloc("failed-null") == 0, "failed+NULL must be backfilled to 0"
+    assert _alloc("pending-null") is None, "pending+NULL must remain NULL"
+    assert _alloc("settled-true") == 1, "settled+1 must be preserved"
+    assert _alloc("settled-false") == 0, "settled+0 must be preserved (was already 0)"
