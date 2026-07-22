@@ -283,6 +283,7 @@ def test_risk_engine_does_not_read_operator_permission_mode(tmp_path, monkeypatc
             direction="long",
             quantity=0.001,
             price=1.0,
+            leverage=1,
             execution_mode=execution_mode,
             market_type="usdt_futures",
         )

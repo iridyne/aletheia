@@ -43,7 +43,8 @@ def test_live_gate_fails_closed_on_non_unlocked_state(tmp_path, monkeypatch):
 
     def _mk():
         p = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
-                          execution_mode="okx_live_limited", quantity=0.001, price=60000)
+                          execution_mode="okx_live_limited", quantity=0.001, price=60000,
+                          leverage=1)
         repo.insert_trade_proposal(p)
         return p
 
@@ -85,7 +86,7 @@ def test_entry_plan_geometry_rejects_inverted_sides(tmp_path, monkeypatch):
     # Inverted long: stop ABOVE entry, TP BELOW entry.
     bad = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
                         execution_mode="paper_internal", quantity=0.001, price=100.0,
-                        order_type="limit", source="native",
+                        order_type="limit", source="native", leverage=1,
                         stop_price=110.0, take_profit=90.0, risk_reward=2.0)
     repo.insert_trade_proposal(bad)
     assert any("entry_plan_geometry" in v for v in evaluate_proposal(bad).violations)
@@ -93,7 +94,7 @@ def test_entry_plan_geometry_rejects_inverted_sides(tmp_path, monkeypatch):
     # Correct long geometry: stop below, TP above → no geometry violation.
     good = TradeProposal(symbol="ETH/USDT", market_type="usdt_futures", direction="long",
                          execution_mode="paper_internal", quantity=0.01, price=100.0,
-                         order_type="limit", source="native",
+                         order_type="limit", source="native", leverage=1,
                          stop_price=90.0, take_profit=120.0, risk_reward=2.0)
     repo.insert_trade_proposal(good)
     assert not any("entry_plan_geometry" in v for v in evaluate_proposal(good).violations)
@@ -101,7 +102,7 @@ def test_entry_plan_geometry_rejects_inverted_sides(tmp_path, monkeypatch):
     # Correct short geometry: TP below, stop above → no geometry violation.
     short_ok = TradeProposal(symbol="SOL/USDT", market_type="usdt_futures", direction="short",
                              execution_mode="paper_internal", quantity=0.1, price=100.0,
-                             order_type="limit", source="native",
+                             order_type="limit", source="native", leverage=1,
                              stop_price=110.0, take_profit=80.0, risk_reward=2.0)
     repo.insert_trade_proposal(short_ok)
     assert not any("entry_plan_geometry" in v for v in evaluate_proposal(short_ok).violations)
@@ -134,7 +135,8 @@ def test_lesson_hard_block_requires_risk_category(tmp_path, monkeypatch):
 
     def _eval_btc():
         p = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
-                          execution_mode="paper_internal", quantity=0.001, price=60000)
+                          execution_mode="paper_internal", quantity=0.001, price=60000,
+                          leverage=1)
         repo.insert_trade_proposal(p)
         return evaluate_proposal(p).violations
 
