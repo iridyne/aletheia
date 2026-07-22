@@ -1441,14 +1441,14 @@ def get_dreaming_summary():
 
     recent_research = repo._select_all(
         "knowledge_items",
-        where="item_type = ? AND created_at > ?",
-        params=("research_note", cutoff_24h),
+        where="item_type = ? AND (status = ? OR status IS NULL) AND created_at > ?",
+        params=("research_note", "active", cutoff_24h),
         limit=20,
     )
     recent_hypotheses = repo._select_all(
         "knowledge_items",
-        where="item_type = ? AND created_at > ?",
-        params=("strategy_memory", cutoff_24h),
+        where="item_type = ? AND (status = ? OR status IS NULL) AND created_at > ?",
+        params=("strategy_memory", "active", cutoff_24h),
         limit=20,
     )
     deprecated_memories = repo._select_all(
@@ -1459,14 +1459,14 @@ def get_dreaming_summary():
     )
     recent_dreaming_logs = repo._select_all(
         "knowledge_items",
-        where="item_type = ? AND created_at > ?",
-        params=("dreaming_log", cutoff_24h),
+        where="item_type = ? AND (status = ? OR status IS NULL) AND created_at > ?",
+        params=("dreaming_log", "active", cutoff_24h),
         limit=10,
     )
     recent_daily_reviews = repo._select_all(
         "knowledge_items",
-        where="item_type = ? AND created_at > ?",
-        params=("daily_review", cutoff_24h),
+        where="item_type = ? AND (status = ? OR status IS NULL) AND created_at > ?",
+        params=("daily_review", "active", cutoff_24h),
         limit=10,
     )
     recent_runs = repo._select_all(
