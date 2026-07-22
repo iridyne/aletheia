@@ -1363,3 +1363,108 @@ def test_skill_store_producer_is_draft_only():
     assert "activate(" not in reviewer_src
     for forbidden in ("risk_limits", "execution_gateway", "credentials", "live_mode", "order_submission"):
         assert forbidden not in reviewer_src
+
+
+# ---------------------------------------------------------------------------
+# LP-S18 — dreaming_agent must have a deterministic 24h trading-performance block
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "LP-S18", "learning_pipeline", "§24h trading-performance block exists", "L2a",
+        "_build_daily_trading_performance must exist in dreaming_agent.py and be wired "
+        "into run_dreaming_agent so every daily_review begins with an authoritative P&L block. "
+        "Closes the gap identified in issue #201: dreaming log omitted realised P&L entirely.",
+        status="implemented",
+    ),
+)
+def test_dreaming_agent_has_trading_performance_block():
+    """LP-S18: static probe that the function and wiring exist."""
+    import pathlib
+    root = pathlib.Path(_project_root())
+    src = (root / "aletheia" / "agents" / "dreaming_agent.py").read_text(encoding="utf-8")
+
+    assert "_build_daily_trading_performance" in src, (
+        "_build_daily_trading_performance not found in dreaming_agent.py — "
+        "the 24h P&L block is missing"
+    )
+    assert "trading_block" in src, (
+        "'trading_block' variable not found in dreaming_agent.py — "
+        "_build_daily_trading_performance is defined but not wired into run_dreaming_agent"
+    )
+    # The block must be prepended to review_body (not just appended)
+    assert "trading_block + " in src or "trading_block +" in src, (
+        "trading_block is not prepended to review_body — "
+        "the daily review must begin with the deterministic P&L block"
+    )
+
+
+# ---------------------------------------------------------------------------
+# LP-S19 — LOSS_DAY label is emitted for a negative eligible close
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "LP-S19", "learning_pipeline", "§LOSS_DAY label on negative eligible close", "L2b",
+        "When outcome_eligible closed positions sum to a negative realized_pnl, "
+        "_build_daily_trading_performance must return 'LOSS_DAY'. "
+        "NULL realized_pnl must not be coerced to zero — any NULL → NOT_AVAILABLE.",
+        status="implemented",
+    ),
+)
+def test_dreaming_agent_loss_day_label():
+    """LP-S19: negative eligible close → LOSS_DAY; non-eligible close excluded."""
+    import aletheia.storage.repositories as repos_mod
+    from unittest.mock import patch
+    from aletheia.agents import dreaming_agent as da
+
+    eligible_loss = {"outcome_eligible": 1, "realized_pnl": -42.5, "closed_at": "2026-01-01T01:00:00+00:00"}
+    non_eligible = {"outcome_eligible": 0, "realized_pnl": 999.0, "closed_at": "2026-01-01T01:00:00+00:00"}
+
+    with patch.object(repos_mod, "list_closed_positions", return_value=[eligible_loss, non_eligible]):
+        result = da._build_daily_trading_performance("2026-01-01T00:00:00+00:00")
+
+    assert "LOSS_DAY" in result, (
+        f"Expected LOSS_DAY for net pnl=-42.5, got: {result!r}"
+    )
+    assert "NOT_AVAILABLE" not in result, (
+        "LOSS_DAY must not include NOT_AVAILABLE language when pnl is known"
+    )
+
+
+# ---------------------------------------------------------------------------
+# LP-S20 — NULL realized_pnl yields NOT_AVAILABLE (no silent coercion to zero)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "LP-S20", "learning_pipeline", "§NULL realized_pnl → NOT_AVAILABLE", "L2b",
+        "If any outcome_eligible close has realized_pnl=NULL the block must report "
+        "NOT_AVAILABLE rather than coercing NULL to zero. Prevents the daily review "
+        "from presenting a misleading P&L figure when outcome-integrity is incomplete.",
+        status="implemented",
+    ),
+)
+def test_dreaming_agent_null_pnl_is_not_available():
+    """LP-S20: one NULL realized_pnl among eligible closes → NOT_AVAILABLE."""
+    import aletheia.storage.repositories as repos_mod
+    from unittest.mock import patch
+    from aletheia.agents import dreaming_agent as da
+
+    eligible_with_pnl = {"outcome_eligible": 1, "realized_pnl": 10.0, "closed_at": "2026-01-01T01:00:00+00:00"}
+    eligible_null_pnl = {"outcome_eligible": 1, "realized_pnl": None, "closed_at": "2026-01-01T01:30:00+00:00"}
+
+    with patch.object(repos_mod, "list_closed_positions",
+                      return_value=[eligible_with_pnl, eligible_null_pnl]):
+        result = da._build_daily_trading_performance("2026-01-01T00:00:00+00:00")
+
+    assert "NOT_AVAILABLE" in result, (
+        f"Expected NOT_AVAILABLE when realized_pnl is NULL on eligible close, got: {result!r}"
+    )
+    for label in ("PROFIT_DAY", "LOSS_DAY", "FLAT_DAY"):
+        assert label not in result, (
+            f"Must not assign {label} when any eligible close has NULL realized_pnl"
+        )

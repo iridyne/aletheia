@@ -22,6 +22,55 @@ _LEDGER_STATES = [
 _LEDGER_KNOWLEDGE = ["research_note", "strategy_memory", "post_trade_review", "dreaming_log"]
 
 
+def _build_daily_trading_performance(cutoff_iso: str) -> str:
+    """Deterministic 24h closed-trade P&L block.
+
+    Only outcome_eligible=True closes count. NULL realized_pnl is never
+    coerced to zero; if any eligible close is missing it, the block reports
+    NOT_AVAILABLE so the daily review remains honest.
+    """
+    from aletheia.storage.repositories import list_closed_positions
+
+    try:
+        all_closes = list_closed_positions(since_iso=cutoff_iso)
+    except Exception:
+        return (
+            "\n\n## 24h Trading Performance\n"
+            "**Label: NOT_AVAILABLE** — closed-positions query failed.\n"
+        )
+
+    eligible = [p for p in all_closes if p.get("outcome_eligible")]
+
+    if not eligible:
+        return (
+            "\n\n## 24h Trading Performance\n"
+            "**Label: NOT_AVAILABLE** — no outcome_eligible closed positions in the last 24h.\n"
+        )
+
+    if any(p.get("realized_pnl") is None for p in eligible):
+        n = len(eligible)
+        return (
+            "\n\n## 24h Trading Performance\n"
+            f"**Label: NOT_AVAILABLE** — {n} eligible close(s) but "
+            "one or more have NULL realized_pnl (outcome-integrity incomplete).\n"
+        )
+
+    total_pnl = sum(float(p["realized_pnl"]) for p in eligible)
+    n = len(eligible)
+    if total_pnl > 0:
+        label = "PROFIT_DAY"
+    elif total_pnl < 0:
+        label = "LOSS_DAY"
+    else:
+        label = "FLAT_DAY"
+
+    return (
+        "\n\n## 24h Trading Performance\n"
+        f"**Label: {label}** — {n} eligible close(s), net realized P&L: {total_pnl:+.4f} USDT\n"
+        "*Source: outcome_eligible closed positions only.*\n"
+    )
+
+
 def _build_learning_ledger() -> str:
     """A real snapshot of where the self-evolution pipeline stands.
 
@@ -421,25 +470,18 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
     except Exception:
         pass
 
-    # Deterministic trading performance block — computed before LLM so it can be
-    # injected into the prompt and prepended to both written documents.
+    trading_block = ""
     try:
-        trading_block = _build_trading_performance_block()
-        log_tool(run_id, "build_trading_performance_block", "observe", True)
+        trading_block = _build_daily_trading_performance(cutoff)
+        log_tool(run_id, "build_trading_performance", "observe", True)
     except Exception as e:
-        trading_block = (
-            "\n\n## Trading Performance (24h)\n"
-            "- Status: NOT_AVAILABLE\n"
-            f"- Reason: internal_error:{e}\n"
-        )
-        errors.append(f"trading_performance_block_failed: {e}")
+        errors.append(f"trading_performance_failed: {e}")
 
     content, err = await llm_complete(
         system="You are the system's nightly consolidation process. Given recent agent activity, "
                "produce a short markdown 'dreaming log': (1) what happened, (2) one insight or pattern, "
-               "(3) one suggested focus for tomorrow. Keep it brief. "
-               "Your output is non-authoritative operational narrative.",
-        user=f"Authoritative trading performance:{trading_block}\n\nRecent agent activity:\n{activity}{post_mortem_ctx}\n\nWrite the dreaming log.",
+               "(3) one suggested focus for tomorrow. Keep it brief.",
+        user=f"Recent agent activity:\n{activity}{post_mortem_ctx}{trading_block}\n\nWrite the dreaming log.",
         max_tokens=700,
         provider=get_provider_for_tier("deep"),
     )
@@ -476,7 +518,7 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
             if r.get("created_at", "") >= today_start.isoformat()
         ]
         if not existing_reviews:
-            review_body = trading_block + "\n\n" + (content or "")
+            review_body = trading_block + (content or "")
             try:
                 review_body += _build_learning_ledger()
             except Exception as e:
