@@ -308,6 +308,13 @@ def _force_shadow_only_if_auto(metadata: dict | None) -> dict | None:
     if "shadow-only" not in tags:
         tags.append("shadow-only")
     meta["tags"] = tags
+    # Stamp creation time and TTL deadline so the expiry filter in load_trading_guards
+    # can exclude stale candidates without waiting for the scheduled deprecation pass.
+    if not meta.get("created_at"):
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        meta["created_at"] = now.isoformat()
+        meta["expires_at"] = (now + timedelta(days=90)).isoformat()
     return meta
 
 

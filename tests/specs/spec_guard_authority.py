@@ -518,3 +518,182 @@ def test_prune_deprecates_learned_candidates_only(tmp_path, monkeypatch):
 
     # Idempotent: nothing left to prune.
     assert prune_learned_guard_candidates(dry_run=True)["would_deprecate"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Guard TTL / expiry — issue #195
+# ---------------------------------------------------------------------------
+
+@spec_claim(SpecClaim(
+    "GA-S09", "guard_authority", "§default TTL", "L2b",
+    "Auto-generated guard candidates receive a created_at and expires_at stamp "
+    "at creation; seed/manual guards are left without an expires_at.",
+    status="implemented",
+))
+def test_auto_candidate_stamped_with_created_and_expires_at(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.knowledge.frontmatter import parse_frontmatter
+    from aletheia.knowledge.manager import create_guard_candidate
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    (tmp_path / "knowledge" / "guard_candidates").mkdir(parents=True)
+
+    item = create_guard_candidate(
+        title="TTL test",
+        content="## body\n\ncontent",
+        metadata={
+            "type": "Trading Guard",
+            "guard_id": "auto_ttl_test",
+            "status": "candidate",
+            "auto_generated": True,
+            "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}],
+        },
+    )
+
+    from pathlib import Path
+    meta, _ = parse_frontmatter(Path(item.file_path))
+    assert "created_at" in meta, "auto guard must carry created_at"
+    assert "expires_at" in meta, "auto guard must carry expires_at"
+
+    # Sanity: expires_at is ~90 days after created_at
+    from datetime import datetime, timezone, timedelta
+    created = datetime.fromisoformat(meta["created_at"].replace("Z", "+00:00"))
+    expires = datetime.fromisoformat(meta["expires_at"].replace("Z", "+00:00"))
+    assert timedelta(days=80) < (expires - created) < timedelta(days=100)
+
+
+@spec_claim(SpecClaim(
+    "GA-S10", "guard_authority", "§load-time expiry exclusion", "L2b",
+    "Expired learned guards are silently excluded by load_trading_guards even "
+    "before the scheduled deprecation pass runs; seed/manual guards are unaffected.",
+    status="implemented",
+))
+def test_expired_learned_guard_excluded_at_load_time(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.knowledge.frontmatter import render_frontmatter
+    from aletheia.knowledge.guards import load_trading_guards
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    cand_dir = tmp_path / "knowledge" / "guard_candidates"
+    cand_dir.mkdir(parents=True)
+
+    # Expired auto guard: expires_at well in the past
+    expired = {
+        "type": "Trading Guard", "guard_id": "auto_expired",
+        "status": "candidate", "scope": "paper_entry",
+        "auto_generated": True,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "expires_at": "2026-04-01T00:00:00+00:00",  # past
+        "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}],
+    }
+    (cand_dir / "expired.md").write_text(render_frontmatter(expired, "body"), encoding="utf-8")
+
+    # Fresh auto guard: expires_at in the future
+    fresh = {
+        "type": "Trading Guard", "guard_id": "auto_fresh",
+        "status": "candidate", "scope": "paper_entry",
+        "auto_generated": True,
+        "created_at": "2026-07-23T00:00:00+00:00",
+        "expires_at": "2026-10-21T00:00:00+00:00",  # future
+        "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}],
+    }
+    (cand_dir / "fresh.md").write_text(render_frontmatter(fresh, "body"), encoding="utf-8")
+
+    # Manual guard: no auto_generated, no expires_at — must never expire
+    manual = {
+        "type": "Trading Guard", "guard_id": "manual-guard",
+        "status": "candidate", "scope": "paper_entry",
+        "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}],
+    }
+    (cand_dir / "manual.md").write_text(render_frontmatter(manual, "body"), encoding="utf-8")
+
+    guards = load_trading_guards(status="candidate")
+    guard_ids = {g.guard_id for g in guards}
+
+    assert "auto_expired" not in guard_ids, "expired guard must be excluded at load time"
+    assert "auto_fresh" in guard_ids, "fresh guard must be included"
+    assert "manual-guard" in guard_ids, "manual guard must never be expired at load time"
+
+
+@spec_claim(SpecClaim(
+    "GA-S11", "guard_authority", "§promotion refuses expired", "L2b",
+    "promote_guard_candidate_to_active refuses a candidate whose TTL has passed.",
+    status="implemented",
+))
+def test_promotion_refuses_expired_candidate(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.knowledge.frontmatter import render_frontmatter
+    from aletheia.analytics.guard_promotion import promote_guard_candidate_to_active
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    cand_dir = tmp_path / "knowledge" / "guard_candidates"
+    cand_dir.mkdir(parents=True)
+    (tmp_path / "knowledge" / "guards").mkdir(parents=True)
+
+    expired = {
+        "type": "Trading Guard", "guard_id": "auto_expired_promote",
+        "status": "candidate", "scope": "paper_entry",
+        "auto_generated": True,
+        "shadow_only": False,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "expires_at": "2026-04-01T00:00:00+00:00",  # past
+        "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}],
+    }
+    (cand_dir / "expired.md").write_text(render_frontmatter(expired, "body"), encoding="utf-8")
+
+    result = promote_guard_candidate_to_active("auto_expired_promote")
+    assert result is False, "expired candidate must not be promoted"
+
+    # File stays unchanged
+    from aletheia.knowledge.frontmatter import parse_frontmatter
+    meta, _ = parse_frontmatter(cand_dir / "expired.md")
+    assert meta["status"] == "candidate"
+
+
+@spec_claim(SpecClaim(
+    "GA-S12", "guard_authority", "§daily expiry deprecation pass", "L2b",
+    "run_promotion_check soft-deprecates learned guards whose TTL has passed and "
+    "reports expirations in its result dict.",
+    status="implemented",
+))
+def test_run_promotion_check_expires_ttl_passed_guards(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.knowledge.frontmatter import render_frontmatter, parse_frontmatter
+    from aletheia.analytics import guard_promotion
+    from aletheia.learning import control
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    cand_dir = tmp_path / "knowledge" / "guard_candidates"
+    cand_dir.mkdir(parents=True)
+    (tmp_path / "knowledge" / "guards").mkdir(parents=True)
+
+    expired = {
+        "type": "Trading Guard", "guard_id": "auto_ttl_expired_pass",
+        "status": "candidate", "scope": "paper_entry",
+        "auto_generated": True,
+        "shadow_only": True,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "expires_at": "2026-04-01T00:00:00+00:00",
+        "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}],
+    }
+    (cand_dir / "expired.md").write_text(render_frontmatter(expired, "body"), encoding="utf-8")
+
+    monkeypatch.setattr(
+        guard_promotion, "load_config",
+        lambda: __import__("types", fromlist=[]).SimpleNamespace(
+            guard=__import__("types", fromlist=[]).SimpleNamespace(
+                auto_promote_enabled=True, min_matching_trades=5,
+            )
+        ),
+    )
+    monkeypatch.setattr(control, "promotion_refreeze_reason", lambda: None)
+    monkeypatch.setattr(
+        "aletheia.analytics.trade_attribution.build_trade_attribution_rows",
+        lambda limit=500: [],
+    )
+
+    result = guard_promotion.run_promotion_check()
+    assert result.get("expirations", 0) >= 1, "expired guard must be counted in expirations"
+
+    meta, _ = parse_frontmatter(cand_dir / "expired.md")
+    assert meta["status"] == "deprecated", "expired guard must be soft-deprecated"

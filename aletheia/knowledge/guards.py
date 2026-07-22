@@ -6,6 +6,7 @@ No LLM, no arbitrary code execution, no live/risk modification.
 """
 
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -67,6 +68,8 @@ class TradingGuard(BaseModel):
     predicates: list[GuardPredicate] = Field(default_factory=list)
     evidence_refs: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+    created_at: str | None = None
+    expires_at: str | None = None
 
 
 class GuardHit(BaseModel):
@@ -109,6 +112,42 @@ ALLOWED_GUARD_FIELDS = {
     "paper_expectancy",
     "backtest_expectancy",
 }
+
+
+# 90-day default TTL for auto-generated guards; legacy items without created_at
+# expire on this fixed migration deadline (approximately 90 days from 2026-07-23).
+_LEARNED_GUARD_TTL_DAYS = 90
+_LEGACY_MIGRATION_DEADLINE = datetime(2026, 10, 22, tzinfo=timezone.utc)
+
+
+def _is_learned_guard_expired(meta: dict) -> bool:
+    """True if this auto-generated guard's lifetime has passed.
+
+    Seed and manual guards are never expired at load time.
+    """
+    auto = bool(meta.get("auto_generated")) or str(meta.get("guard_id") or "").startswith("auto_")
+    if not auto:
+        return False
+
+    expires_at = meta.get("expires_at")
+    if expires_at:
+        try:
+            exp = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            return datetime.now(timezone.utc) > exp
+        except (ValueError, TypeError):
+            pass
+        return False
+
+    created_at = meta.get("created_at")
+    if created_at:
+        try:
+            created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            return datetime.now(timezone.utc) > created + timedelta(days=_LEARNED_GUARD_TTL_DAYS)
+        except (ValueError, TypeError):
+            pass
+
+    # Legacy item with no date metadata: apply migration deadline
+    return datetime.now(timezone.utc) > _LEGACY_MIGRATION_DEADLINE
 
 
 def _guards_dir() -> Path:
@@ -169,6 +208,11 @@ def load_trading_guards(
                 if scope and meta.get("scope") != scope:
                     continue
 
+                # Expired learned guards are silently excluded even before the
+                # scheduled deprecation pass runs (fail-safe load-time filter).
+                if _is_learned_guard_expired(meta):
+                    continue
+
                 applies_to = _applies_to_from_meta(meta)
                 predicates_raw = meta.get("predicates") or []
                 predicates = [GuardPredicate(**p) for p in predicates_raw if isinstance(p, dict)]
@@ -204,6 +248,8 @@ def load_trading_guards(
                     predicates=predicates,
                     evidence_refs=meta.get("evidence_refs") or [],
                     tags=meta.get("tags") or [],
+                    created_at=meta.get("created_at"),
+                    expires_at=meta.get("expires_at"),
                 )
                 guards.append(guard)
             except Exception as e:

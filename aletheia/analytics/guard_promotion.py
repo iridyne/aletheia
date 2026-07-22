@@ -39,10 +39,40 @@ def run_promotion_check() -> dict:
     if not guard_cfg or not guard_cfg.auto_promote_enabled:
         return {"skipped": True, "reason": "auto_promote_enabled is False"}
 
+    # Expiry pass always runs first — expired learned guards must be soft-deprecated
+    # regardless of whether the promotion loop has candidates to process. Scans files
+    # directly because load_trading_guards already excludes expired items at read time;
+    # the file must still be stamped "deprecated" so status queries show it correctly.
+    from aletheia.knowledge.guards import _guards_dir, _guard_candidates_dir, _is_learned_guard_expired
+    expirations = 0
+    for _scan_dir in (_guards_dir(), _guard_candidates_dir()):
+        if not _scan_dir.exists():
+            continue
+        for _path in sorted(_scan_dir.glob("*.md")):
+            try:
+                _meta, _ = parse_frontmatter(_path)
+                if not _meta or _meta.get("status") not in ("candidate", "active"):
+                    continue
+                _auto = bool(_meta.get("auto_generated")) or str(_meta.get("guard_id") or "").startswith("auto_")
+                if not _auto:
+                    continue
+                if not _is_learned_guard_expired(_meta):
+                    continue
+                _gid = str(_meta.get("guard_id") or _path.stem)
+                if _update_guard_status(_gid, "deprecated"):
+                    _record_guard_candidate_deprecated_event(
+                        _gid, str(_path), reason="ttl_expired", actor_id="guard_ttl_expiry",
+                    )
+                    expirations += 1
+                    logger.info("Expired learned guard %s (path=%s, expires_at=%s)",
+                                _gid, _path.name, _meta.get("expires_at"))
+            except Exception as _exc:
+                logger.debug("guard_promotion: expiry scan error at %s: %s", _path, _exc)
+
     min_trades = guard_cfg.min_matching_trades
     candidates = load_trading_guards(status="candidate")
     if not candidates:
-        return {"promotions": 0, "deprecations": 0, "candidates_checked": 0}
+        return {"promotions": 0, "deprecations": 0, "expirations": expirations, "candidates_checked": 0}
 
     # Automatic promotion is fail-closed when the shared Learning reviewer has
     # stopped or accumulated a stale/oversized backlog. Existing active guards
@@ -50,7 +80,7 @@ def run_promotion_check() -> dict:
     from aletheia.learning.control import promotion_refreeze_reason
     refreeze_reason = promotion_refreeze_reason()
     if refreeze_reason is not None:
-        return {"skipped": True, "refrozen": True, "reason": refreeze_reason}
+        return {"skipped": True, "refrozen": True, "reason": refreeze_reason, "expirations": expirations}
 
     from aletheia.analytics.guard_effectiveness import _rows_matching_guard, _clean_rows
     from aletheia.analytics.trade_attribution import build_trade_attribution_rows
@@ -110,6 +140,7 @@ def run_promotion_check() -> dict:
     return {
         "promotions": promotions,
         "deprecations": deprecations,
+        "expirations": expirations,
         "candidates_checked": len(candidates),
         "skipped_non_learned": skipped_non_learned,
         "skipped_unauthorized": skipped_unauthorized,
@@ -141,6 +172,16 @@ def promote_guard_candidate_to_active(
                 meta, body = parse_frontmatter(path)
                 if not meta or meta.get("guard_id") != guard_id:
                     continue
+
+                # Refuse to promote an expired learned guard — stale evidence
+                # should not gain new authority via the promotion route.
+                from aletheia.knowledge.guards import _is_learned_guard_expired
+                if _is_learned_guard_expired(meta):
+                    logger.info(
+                        "promote_guard_candidate_to_active: refusing expired guard %s "
+                        "(expires_at=%s)", guard_id, meta.get("expires_at"),
+                    )
+                    return False
 
                 source_meta = dict(meta)
                 active_meta = dict(meta)
@@ -394,7 +435,13 @@ def downgrade_learned_guards_to_shadow(*, dry_run: bool = True) -> dict:
     }
 
 
-def _record_guard_candidate_deprecated_event(guard_id: str, path: str) -> None:
+def _record_guard_candidate_deprecated_event(
+    guard_id: str,
+    path: str = "",
+    *,
+    reason: str = "stale_shadow_candidate_cleanup",
+    actor_id: str = "guard_prune_candidates",
+) -> None:
     try:
         from aletheia.storage.event_store import get_event_store
         from aletheia.storage.models import PSEvent
@@ -403,10 +450,10 @@ def _record_guard_candidate_deprecated_event(guard_id: str, path: str) -> None:
             event_type="GUARD_CANDIDATE_DEPRECATED",
             aggregate_type="trading_guard",
             aggregate_id=guard_id,
-            actor_type="human",
-            actor_id="guard_prune_candidates",
+            actor_type="system",
+            actor_id=actor_id,
             payload_json=json.dumps(
-                {"guard_id": guard_id, "path": path, "reason": "stale_shadow_candidate_cleanup"},
+                {"guard_id": guard_id, "path": path, "reason": reason},
                 sort_keys=True,
             ),
         ))
