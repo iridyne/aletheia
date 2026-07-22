@@ -70,5 +70,20 @@ def _mock_llm(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _mock_exchange(monkeypatch):
-    """Block real exchange calls in e2e tests."""
-    pass
+    """Block real CCXT client construction in e2e tests.
+
+    make_ccxt() (aletheia/net.py) is the ONLY sanctioned seam for building a
+    CCXT exchange client. Blocking it here ensures no test can accidentally open
+    aiohttp connections to a real exchange. Tests that intentionally exercise
+    market-data flow inject their own provider/class at a higher level and are
+    not affected because their patches take precedence over this fixture.
+    """
+    import aletheia.net as _net
+
+    def _blocked_make_ccxt(name: str, **options):
+        raise RuntimeError(
+            f"E2E guard: real CCXT client construction blocked (exchange={name!r}). "
+            "Inject a fake MarketDataProvider instead of reaching the network."
+        )
+
+    monkeypatch.setattr(_net, "make_ccxt", _blocked_make_ccxt)
