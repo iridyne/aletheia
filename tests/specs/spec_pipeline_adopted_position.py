@@ -1303,3 +1303,75 @@ def test_drawdown_scale_skips_on_incomplete_view(tmp_path, monkeypatch):
         "complete view must compute the real drawdown from the snapshots (proves the "
         "1.0 in the incomplete case came from the guard, not a default)"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-25", "pipeline_adopted_position",
+        "§25 recovered_attribution_threaded_to_proposal_and_order", "L2b",
+        "adopt_position with a recovered strategy/opportunity must thread both IDs into "
+        "the synthetic TradeProposal and set position_id on the synthetic Order so that "
+        "attribution_chain_complete() returns True (#189).",
+    ),
+)
+def test_recovered_attribution_threads_to_proposal_and_order(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_notifications(monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+
+    from datetime import datetime, timezone
+    from aletheia.storage.models import Opportunity, Position
+    from aletheia.storage import repositories as repo
+    from aletheia.portfolio.position_reconciler import adopt_position
+    from aletheia.analytics.outcome_integrity import attribution_chain_complete
+
+    now = datetime.now(timezone.utc).isoformat()
+    # The Opportunity must exist so attribution_chain_complete()'s EXISTS check passes.
+    repo.insert_opportunity(Opportunity(
+        id="opp-eth-recovered", symbol="ETH/USDT", market="usdt_futures",
+        direction_bias="long", status="queued",
+    ))
+    # A strategy position that was just thrash-closed (reconciled_gone) seconds ago.
+    repo.insert_position(Position(
+        symbol="ETH/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.5, entry_price=3200.0, execution_mode="bitget_demo",
+        status="closed", close_reason="reconciled_gone", closed_at=now,
+        strategy_id="strat-eth-recovered", opportunity_id="opp-eth-recovered",
+    ))
+
+    ids = adopt_position(
+        _make_exchange_pos(symbol="ETH/USDT", side="long",
+                           quantity=0.5, entry_price=3200.0),
+        account_mode="demo",
+    )
+    position_id = ids["position_id"]
+
+    # Verify TradeProposal carries the recovered IDs.
+    proposal_row = conn.execute(
+        "SELECT strategy_id, opportunity_id FROM trade_proposals WHERE id=?",
+        (ids["proposal_id"],),
+    ).fetchone()
+    assert proposal_row["strategy_id"] == "strat-eth-recovered", (
+        "recovered strategy_id must be threaded into the synthetic TradeProposal (#189)"
+    )
+    assert proposal_row["opportunity_id"] == "opp-eth-recovered", (
+        "recovered opportunity_id must be threaded into the synthetic TradeProposal (#189)"
+    )
+
+    # Verify Order carries position_id backlink.
+    order_row = conn.execute(
+        "SELECT position_id FROM orders WHERE id=?",
+        (ids["order_id"],),
+    ).fetchone()
+    assert order_row["position_id"] == position_id, (
+        "synthetic Order must have position_id backlink after position is constructed (#189)"
+    )
+
+    # Verify the full attribution chain satisfies attribution_chain_complete().
+    position_row = dict(conn.execute(
+        "SELECT * FROM positions WHERE id=?", (position_id,)
+    ).fetchone())
+    assert attribution_chain_complete(position_row), (
+        "recovered adopted position chain must satisfy attribution_chain_complete() "
+        "so the learning signal is not dropped as missing_attribution (#189)"
+    )

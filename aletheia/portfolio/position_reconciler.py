@@ -568,6 +568,10 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         agent_rationale=rationale,
         status="executed",
         source="adopted",
+        # Recovered attribution: keeps the learning signal alive through a
+        # transient orphan→re-adopt cycle (#189). None for genuinely-new external.
+        strategy_id=recovered_strategy_id,
+        opportunity_id=recovered_opp_id,
     )
     order = Order(
         proposal_id=proposal.id,
@@ -581,6 +585,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         status="filled",
         source="adopted",
         filled_at=now,
+        # position_id backfilled below after Position is constructed (#189).
     )
     # Compute default protective stop and take-profit at adoption time so the
     # position row is never left with NULL stop/tp. The values are derived from
@@ -628,6 +633,8 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         # SH-S05: ALL FOUR brokers + reconciler must propagate trade_school).
         trade_school="short_term",
     )
+    # Backfill position_id on the order now that position.id is known (#189).
+    order.position_id = position.id
 
     with transaction():
         insert_trade_proposal(proposal)
