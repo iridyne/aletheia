@@ -42,6 +42,7 @@ def execute_paper_order(
     opportunity_id: str | None = None,
     trade_school: str = "short_term",
     attribution_snapshot: dict[str, Any] | str | None = None,
+    source: str = "native",
 ) -> dict:
     """Execute a paper order: create order, fill, and position.
 
@@ -72,6 +73,7 @@ def execute_paper_order(
         execution_mode=execution_mode,
         status="filled",
         filled_at=filled_at,
+        source=source,
     )
     fill = Fill(
         order_id=order.id,

@@ -1300,6 +1300,7 @@ def _execute_proposal(
                     opportunity_id=execution_proposal.opportunity_id,
                     trade_school=execution_proposal.trade_school,
                     attribution_snapshot=attribution_snapshot,
+                    source=execution_proposal.source,
                 )
                 _stamp_exit_intent(result, proposal)
                 update_trade_proposal(proposal.id, status="executed")
