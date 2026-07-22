@@ -1159,6 +1159,7 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
 _VALID_OUTCOMES: frozenset[str] = frozenset({
     "trade", "operator_skip", "operator_watch",
     "user_reject", "auto_reject", "reject_unknown",
+    "conviction_gate_defer",
 })
 
 
@@ -1386,11 +1387,68 @@ def get_operator_decisions(
             )
         )
     ]
-    all_items = pi_items + reject_items
+    # conviction gate deferrals — LLM said trade but conviction was below minimum.
+    # These never produce a pi_decisions row (DL-S47 non-terminal defer), so the
+    # operator-decisions API was previously blind to them. Fixes #327: source from
+    # filter_decisions where the conviction gate rejected AFTER the action assessment
+    # passed, identified by matching candidate_key + evaluated_at across both rows.
+    import json as _json
+    conv_rows = list(db.execute(
+        "SELECT fd.opportunity_id, fd.symbol, fd.direction, fd.market_type, "
+        "fd.evaluated_at, fd.reason_code, fd.input_snapshot, "
+        "julianday(fd.evaluated_at) AS sort_instant "
+        "FROM filter_decisions fd "
+        "JOIN filter_decisions fd2 ON fd2.candidate_key = fd.candidate_key "
+        "  AND fd2.evaluated_at = fd.evaluated_at "
+        "  AND fd2.filter_name = 'operator_action_assessment' "
+        "  AND fd2.decision = 'passed' "
+        "WHERE fd.filter_name = 'operator_conviction_gate' "
+        "AND fd.decision = 'rejected' "
+        "AND julianday(fd.evaluated_at) >= julianday(?) "
+        "AND julianday(fd.evaluated_at) <= julianday(?) "
+        "ORDER BY julianday(fd.evaluated_at) DESC, fd.rowid DESC",
+        (window_start, window_end),
+    ))
+    terminal_opportunity_ids = {
+        item["opportunity_id"] for item in pi_items + reject_items
+        if item["opportunity_id"]
+    }
+    conv_items: list[dict] = []
+    for r in conv_rows:
+        opp_id = r["opportunity_id"]
+        # Suppress if the opportunity already has a terminal decision in this window.
+        if opp_id and opp_id in terminal_opportunity_ids:
+            continue
+        try:
+            inputs = _json.loads(r["input_snapshot"] or "{}")
+            conviction_val = inputs.get("conviction")
+        except Exception:
+            conviction_val = None
+        conv_items.append({
+            "opportunity_id": opp_id,
+            "proposal_id": None,
+            "decision_id": None,
+            "symbol": r["symbol"],
+            "direction": r["direction"],
+            "market_type": r["market_type"],
+            "decided_at": r["evaluated_at"],
+            "outcome": "conviction_gate_defer",
+            "action": "conviction_gate_defer",
+            "conviction": conviction_val,
+            "one_line_reason": (
+                f"conviction_below_minimum (conviction: {conviction_val})"
+                if conviction_val is not None
+                else "conviction_below_minimum"
+            ),
+            "_sort_instant": float(r["sort_instant"] or 0),
+        })
+
+    all_items = pi_items + reject_items + conv_items
     all_items.sort(key=lambda x: float(x.get("_sort_instant") or 0), reverse=True)
 
     counts = {"trade": 0, "operator_skip": 0, "operator_watch": 0,
-              "user_reject": 0, "auto_reject": 0, "reject_unknown": 0}
+              "user_reject": 0, "auto_reject": 0, "reject_unknown": 0,
+              "conviction_gate_defer": 0}
     for it in all_items:
         oc = it.get("outcome")
         if oc in counts:
