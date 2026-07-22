@@ -272,3 +272,87 @@ def test_scorecard_excludes_synthetic_closes():
     assert "PF 4.00" in pf["detail"] or "PF 4.0" in pf["detail"], (
         f"profit factor must exclude synthetic losses (expected PF 4.0), got: {pf['detail']!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# AN-S05 — dreaming summary lifecycle separation
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("AN-S05", "analytics_contract", "§dreaming summary lifecycle", "L2b",
+              "GET /dreaming/summary must separate active and archived/deprecated knowledge: "
+              "recent_* collections contain only active items; deprecated_memories contains only "
+              "archived or deprecated items. An item recently archived must not appear in any "
+              "recent_* collection.",
+              status="implemented"),
+)
+def test_dreaming_summary_excludes_archived_from_recent(tmp_path, monkeypatch):
+    """Archived/deprecated items created in the last 24h must not appear in
+    recent_* collections.  Active items must not appear in deprecated_memories.
+    """
+    import sqlite3
+    from datetime import datetime, timezone
+
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.migrations import run_migrations
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    sq._db_conn = conn
+    run_migrations()
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO knowledge_items (id, item_type, status, created_at, updated_at, title, content) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("active-research", "research_note", "active", now, now, "Active note", ""),
+    )
+    conn.execute(
+        "INSERT INTO knowledge_items (id, item_type, status, created_at, updated_at, title, content) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("archived-research", "research_note", "archived", now, now, "Archived note", ""),
+    )
+    conn.execute(
+        "INSERT INTO knowledge_items (id, item_type, status, created_at, updated_at, title, content) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("depr-strategy", "strategy_memory", "deprecated", now, now, "Deprecated hypothesis", ""),
+    )
+    conn.execute(
+        "INSERT INTO knowledge_items (id, item_type, status, created_at, updated_at, title, content) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("active-strategy", "strategy_memory", "active", now, now, "Active hypothesis", ""),
+    )
+    conn.commit()
+
+    from aletheia.server.routes.data import get_dreaming_summary
+
+    result = get_dreaming_summary()
+
+    recent_research_ids = {row["id"] for row in result["recent_research_notes"]}
+    recent_hypothesis_ids = {row["id"] for row in result["recent_strategy_hypotheses"]}
+    deprecated_ids = {row["id"] for row in result["deprecated_memories"]}
+
+    # Active items appear in their respective recent collections
+    assert "active-research" in recent_research_ids
+    assert "active-strategy" in recent_hypothesis_ids
+
+    # Archived/deprecated items do NOT appear in recent collections
+    assert "archived-research" not in recent_research_ids, (
+        "archived item appeared in recent_research_notes — active filter is missing"
+    )
+    assert "depr-strategy" not in recent_hypothesis_ids, (
+        "deprecated item appeared in recent_strategy_hypotheses — active filter is missing"
+    )
+
+    # Archived/deprecated items appear in deprecated_memories
+    assert "archived-research" in deprecated_ids
+    assert "depr-strategy" in deprecated_ids
+
+    # Active items do NOT appear in deprecated_memories
+    assert "active-research" not in deprecated_ids
+    assert "active-strategy" not in deprecated_ids
