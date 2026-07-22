@@ -341,11 +341,16 @@ def test_lesson_constraint_category_gate_is_risk_only():
     from aletheia.learning.guard_routing import route_automatic_block_recommendation
     from unittest.mock import patch
 
+    # Evidence must include scanner_families scope so the guard is not global (#197).
+    scoped_evidence = {
+        "scanner_families": ["momentum"],
+        "factor_keys": ["momentum:BTCUSDT:long:medium_confidence:not_late"],
+    }
     with patch("aletheia.learning.guard_routing.create_guard_candidate") as mock_create:
         mock_create.return_value = type("Item", (), {"id": "g-1"})()
         result = route_automatic_block_recommendation(
             {"action": "block_symbol", "symbol": "BTC/USDT"},
-            evidence={}, source_id="test-src",
+            evidence=scoped_evidence, source_id="test-src",
         )
     assert result is not None and result.get("action") == "guard_shadow_candidate", (
         "block_symbol routed by dreaming_agent must become guard_shadow_candidate, not block_symbol"
