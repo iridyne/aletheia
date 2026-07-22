@@ -1720,10 +1720,10 @@ def get_learning_contribution():
     except Exception:
         pass
 
-    # Verdict distribution
+    # Verdict distribution — keyed by the actual `verdict` column (not `classification`).
     verdicts_by_verdict: list[dict] = []
     total_verdicts = 0
-    verdicts_error: str | None = None
+    verdicts_query_error: str | None = None
     try:
         for r in db.execute(
             "SELECT verdict, COUNT(*) n, MAX(created_at) latest_at "
@@ -1736,8 +1736,8 @@ def get_learning_contribution():
                 "latest_at": r["latest_at"],
             })
             total_verdicts += int(r["n"])
-    except Exception as _verdict_exc:
-        verdicts_error = type(_verdict_exc).__name__
+    except Exception as e:
+        verdicts_query_error = str(e)
 
     # Experiment stage distribution
     experiments_by_stage: list[dict] = []
@@ -1795,9 +1795,9 @@ def get_learning_contribution():
     return {
         "exposures_by_path": exposures_by_path,
         "verdicts": {
-            "total": total_verdicts,
+            "total": total_verdicts if not verdicts_query_error else None,
             "by_verdict": verdicts_by_verdict,
-            **({"error": verdicts_error} if verdicts_error else {}),
+            **({"query_error": verdicts_query_error} if verdicts_query_error else {}),
         },
         "experiments_by_stage": experiments_by_stage,
         "lifecycle_event_n": lifecycle_event_n,
