@@ -320,10 +320,14 @@ def test_scorecard_gate_blocks_unlock_when_low(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("traffic_light", "blockers"),
+    ("traffic_light", "blockers", "expected_reason"),
     [
-        ("red", []),
-        ("green", ["Eligible net realized PnL -2.00 USDT must be > 0"]),
+        ("red", [], "traffic_light=red is not green"),
+        (
+            "green",
+            ["Eligible net realized PnL -2.00 USDT must be > 0"],
+            "1 readiness blocker(s) remain",
+        ),
     ],
 )
 def test_scorecard_gate_blocks_high_score_without_clear_green_readiness(
@@ -331,6 +335,7 @@ def test_scorecard_gate_blocks_high_score_without_clear_green_readiness(
     monkeypatch,
     traffic_light,
     blockers,
+    expected_reason,
 ):
     _setup_config(tmp_path, monkeypatch, state="live_disabled", first_done=True)
     monkeypatch.setattr(
@@ -352,5 +357,8 @@ def test_scorecard_gate_blocks_high_score_without_clear_green_readiness(
     )
 
     assert resp.status_code == 403
-    assert resp.json()["detail"]["error"] == "scorecard_gate_failed"
+    detail = resp.json()["detail"]
+    assert detail["error"] == "scorecard_gate_failed"
+    assert expected_reason in detail["message"]
+    assert "91.2 < 70" not in detail["message"]
     assert load_config().live.state == "live_disabled"

@@ -31,20 +31,27 @@ async def live_unlock(req: LiveUnlockRequest):
     # Ensures demo performance meets the minimum readiness threshold (product §8 K3).
     from aletheia.analytics.go_live_scorecard import compute_scorecard
     scorecard = compute_scorecard()
-    if (
-        scorecard["composite_score"] < 70
-        or scorecard.get("traffic_light") != "green"
-        or bool(scorecard.get("blockers"))
-    ):
+    composite_score = scorecard["composite_score"]
+    traffic_light = scorecard.get("traffic_light")
+    blockers = scorecard.get("blockers") or []
+    gate_failures = []
+    if composite_score < 70:
+        gate_failures.append(f"composite_score={composite_score:.1f} is below 70")
+    if traffic_light != "green":
+        gate_failures.append(f"traffic_light={traffic_light or 'not available'} is not green")
+    if blockers:
+        gate_failures.append(f"{len(blockers)} readiness blocker(s) remain")
+    if gate_failures:
         raise HTTPException(
             403,
             detail={
                 "error": "scorecard_gate_failed",
-                "message": f"Go-live scorecard composite_score={scorecard['composite_score']:.1f} < 70. "
-                           "Reach ≥70 in demo before unlocking live trading.",
-                "composite_score": scorecard["composite_score"],
-                "traffic_light": scorecard["traffic_light"],
-                "blockers": scorecard["blockers"],
+                "message": "Go-live scorecard gate failed: "
+                + "; ".join(gate_failures)
+                + ".",
+                "composite_score": composite_score,
+                "traffic_light": traffic_light,
+                "blockers": blockers,
             },
         )
 
