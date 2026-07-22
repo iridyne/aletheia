@@ -608,3 +608,7 @@ positions.realized_pnl and the matching paper_account_events.position_closed
 row commit in one SQLite transaction. The periodic settler also scans orphaned
 rows even when no NULL-PnL close remains.
 
+Every paper cash delta and resulting cash balance must be finite. The HTTP
+schema and central ledger writer reject NaN, both infinities, and finite-input
+arithmetic overflow before any append or audit event.
+

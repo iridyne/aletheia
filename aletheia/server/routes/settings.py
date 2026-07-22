@@ -4,7 +4,7 @@ import asyncio
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, FiniteFloat, field_validator
 
 from aletheia.config.loader import load_config, save_config
 
@@ -171,12 +171,12 @@ def get_settings():
 # ---------------------------------------------------------------------------
 
 class PaperAccountAdjustmentRequest(SettingsRequest):
-    amount_usdt: float
+    amount_usdt: FiniteFloat
     note: str = ""
 
 
 class PaperAccountSetBalanceRequest(SettingsRequest):
-    cash_balance_usdt: float
+    cash_balance_usdt: FiniteFloat
     note: str = ""
 
 
@@ -212,7 +212,10 @@ async def credit_paper_account(req: PaperAccountAdjustmentRequest):
         _require_local_paper_mode()
         from aletheia.portfolio.paper_account import adjust_cash, get_paper_account as _get
         before = _get(event_limit=0)
-        after = adjust_cash(req.amount_usdt, note=req.note)
+        try:
+            after = adjust_cash(req.amount_usdt, note=req.note)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         _audit_paper_account_change("credit", before, after, req.note)
         return after
     return await asyncio.to_thread(_credit)
