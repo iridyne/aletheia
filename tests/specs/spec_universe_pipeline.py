@@ -891,13 +891,13 @@ def test_volume_ranking_rows_preserve_instrument_identity():
 
 
 # ---------------------------------------------------------------------------
-# UP-24 — learning_candidate_key persists through universe_members round-trip
+# UP-27 — learning_candidate_key persists through universe_members round-trip
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
-        "UP-24", "universe_pipeline", "§observer-learning outcome identity persistence", "L2b",
+        "UP-27", "universe_pipeline", "§observer-learning outcome identity persistence", "L2b",
         "learning_candidate_key written during universe refresh must survive the "
         "insert→read-back cycle so market observer can carry the 4h outcome key "
         "into learning exposures after a process restart (#323).",
