@@ -581,3 +581,74 @@ async def test_divergence_evidence_failure_cannot_report_success(tmp_path, monke
     assert repo.list_opportunities(limit=10) == [], (
         "Opportunity creation and its terminal producer evidence must be atomic"
     )
+
+
+@pytest.mark.asyncio
+async def test_divergence_scanner_closes_provider_on_success(tmp_path, monkeypatch):
+    """Provider must be closed exactly once after a successful scan. (#255)"""
+    _setup_db(tmp_path, monkeypatch)
+
+    now = datetime.now(timezone.utc).isoformat()
+    from aletheia.storage.repositories import _insert
+    _insert("prediction_markets", {
+        "id": "pm_close_test",
+        "event_id": "ev_close",
+        "source": "polymarket",
+        "external_market_id": "ext_close",
+        "question": "Will Bitcoin reach $150k by end of 2026?",
+        "yes_probability": 0.72,
+        "no_probability": 0.28,
+        "probability_change_24h": 0.15,
+        "volume_24h": 120000.0,
+        "liquidity": 80000.0,
+        "status": "active",
+        "updated_at": now,
+    })
+    mock_provider = AsyncMock()
+    mock_provider.get_ticker = AsyncMock(return_value=Ticker(
+        symbol="BTC/USDT",
+        last_price=95000.0,
+        volume_24h=5_000_000_000.0,
+        change_pct_24h=1.0,
+    ))
+    with patch(
+        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        return_value=mock_provider,
+    ):
+        await run_divergence_scanner(permission_mode="Paper")
+
+    mock_provider.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_divergence_scanner_closes_provider_on_ticker_failure(tmp_path, monkeypatch):
+    """Provider must be closed even when an exception occurs mid-scan. (#255)"""
+    _setup_db(tmp_path, monkeypatch)
+
+    now = datetime.now(timezone.utc).isoformat()
+    from aletheia.storage.repositories import _insert
+    _insert("prediction_markets", {
+        "id": "pm_fail_test",
+        "event_id": "ev_fail",
+        "source": "polymarket",
+        "external_market_id": "ext_fail",
+        "question": "Will Bitcoin reach $150k by end of 2026?",
+        "yes_probability": 0.72,
+        "no_probability": 0.28,
+        "probability_change_24h": 0.15,
+        "volume_24h": 120000.0,
+        "liquidity": 80000.0,
+        "status": "active",
+        "updated_at": now,
+    })
+    mock_provider = AsyncMock()
+    mock_provider.get_ticker = AsyncMock(side_effect=RuntimeError("network failure"))
+    with patch(
+        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        return_value=mock_provider,
+    ):
+        result = await run_divergence_scanner(permission_mode="Paper")
+
+    mock_provider.close.assert_awaited_once()
+    assert any("ticker_fetch_failed" in e or "divergence_ticker_failed" in e
+               for e in result["errors"])

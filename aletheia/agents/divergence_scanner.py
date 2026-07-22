@@ -305,393 +305,399 @@ async def run_divergence_scanner(
     provider = get_market_data_provider()
     opps_created = 0
 
-    for row in rows:
-        question = row.get("question", "")
-        symbol = _map_question_to_symbol(question)
-        try:
-            prob_change = float(row.get("probability_change_24h"))
-            volume = float(row.get("volume_24h"))
-            liquidity = float(row.get("liquidity"))
-            yes_prob = float(row.get("yes_probability"))
-        except (TypeError, ValueError):
-            prob_change = volume = liquidity = yes_prob = math.nan
-        if not all(math.isfinite(value) for value in (
-            prob_change, volume, liquidity, yes_prob,
-        )):
-            reason = "invalid_numeric_evidence"
-            evidence_error = _record_divergence_decision(
-                row=row,
-                run_id=run_id,
-                symbol=symbol,
-                market_type=MARKET_SPOT,
-                direction=None,
-                decision="rejected",
-                reason_code=reason,
-            )
-            if evidence_error:
-                errors.append(evidence_error)
-            else:
-                outputs.append(f"skip:{symbol or '[unmapped]'}:{reason}")
-            continue
-
-        # Map to tradeable symbol
-        polarity = _prediction_polarity(question)
-        direction = None
-        if polarity is not None:
-            direction = "long" if prob_change * polarity > 0 else "short"
-        if not symbol:
-            evidence_error = _record_divergence_decision(
-                row=row,
-                run_id=run_id,
-                symbol=None,
-                market_type=MARKET_SPOT,
-                direction=direction,
-                decision="rejected",
-                reason_code="symbol_unmapped",
-            )
-            if evidence_error:
-                errors.append(evidence_error)
-            else:
-                outputs.append(
-                    f"skip:{_prediction_candidate_key(row)}:symbol_unmapped"
+    try:
+        for row in rows:
+            question = row.get("question", "")
+            symbol = _map_question_to_symbol(question)
+            try:
+                prob_change = float(row.get("probability_change_24h"))
+                volume = float(row.get("volume_24h"))
+                liquidity = float(row.get("liquidity"))
+                yes_prob = float(row.get("yes_probability"))
+            except (TypeError, ValueError):
+                prob_change = volume = liquidity = yes_prob = math.nan
+            if not all(math.isfinite(value) for value in (
+                prob_change, volume, liquidity, yes_prob,
+            )):
+                reason = "invalid_numeric_evidence"
+                evidence_error = _record_divergence_decision(
+                    row=row,
+                    run_id=run_id,
+                    symbol=symbol,
+                    market_type=MARKET_SPOT,
+                    direction=None,
+                    decision="rejected",
+                    reason_code=reason,
                 )
-            continue
+                if evidence_error:
+                    errors.append(evidence_error)
+                else:
+                    outputs.append(f"skip:{symbol or '[unmapped]'}:{reason}")
+                continue
 
-        if polarity is None:
-            reason = "prediction_polarity_ambiguous"
-            evidence_error = _record_divergence_decision(
-                row=row,
-                run_id=run_id,
-                symbol=symbol,
-                market_type=MARKET_SPOT,
-                direction=None,
-                decision="rejected",
-                reason_code=reason,
-            )
-            if evidence_error:
-                errors.append(evidence_error)
-            else:
-                outputs.append(f"skip:{symbol}:{reason}")
-            continue
-
-        # Direction comes from the prediction fact. The current producer fetches
-        # a bare-symbol ticker, whose provider contract resolves to spot. A bearish
-        # view therefore has no proven shortable instrument and must not be guessed
-        # into a futures market downstream.
-        if direction == "short":
-            reason = "short_requires_perp_instrument"
-            evidence_error = _record_divergence_decision(
-                row=row,
-                run_id=run_id,
-                symbol=symbol,
-                market_type=MARKET_SPOT,
-                direction=direction,
-                decision="rejected",
-                reason_code=reason,
-            )
-            if evidence_error:
-                errors.append(evidence_error)
-            else:
-                outputs.append(f"skip:{symbol}:{reason}")
-                record_step(
-                    run_id,
-                    f"divergence_skip:{row.get('id') or symbol}",
-                    input_data=f"symbol={symbol} direction={direction}",
-                    output_data=reason,
+            # Map to tradeable symbol
+            polarity = _prediction_polarity(question)
+            direction = None
+            if polarity is not None:
+                direction = "long" if prob_change * polarity > 0 else "short"
+            if not symbol:
+                evidence_error = _record_divergence_decision(
+                    row=row,
+                    run_id=run_id,
+                    symbol=None,
+                    market_type=MARKET_SPOT,
+                    direction=direction,
+                    decision="rejected",
+                    reason_code="symbol_unmapped",
                 )
-            continue
-
-        instrument_market = MARKET_SPOT
-        db_market = instrument_market_to_db_market(instrument_market)
-        source_version = _source_version(row, symbol, db_market)
-        existing = find_divergence_opportunity_by_source_version(source_version)
-        if existing:
-            evidence_error = _record_divergence_decision(
-                row=row,
-                run_id=run_id,
-                symbol=symbol,
-                market_type=db_market,
-                direction=direction,
-                decision="passed",
-                reason_code="existing_opportunity_reused",
-                opportunity_id=existing.get("id"),
-            )
-            if evidence_error:
-                errors.append(evidence_error)
-            else:
-                outputs.append(f"skip_duplicate_source_version:{source_version}")
-            continue
-
-        valid_until = _source_valid_until(row.get("updated_at"))
-        if valid_until is None:
-            reason = "invalid_source_updated_at"
-            evidence_error = _record_divergence_decision(
-                row=row,
-                run_id=run_id,
-                symbol=symbol,
-                market_type=db_market,
-                direction=direction,
-                decision="rejected",
-                reason_code=reason,
-            )
-            if evidence_error:
-                errors.append(evidence_error)
-            else:
-                outputs.append(f"skip:{symbol}:{reason}")
-            continue
-
-        # A bare canonical symbol is explicitly a spot ticker in CCXTProvider.
-        try:
-            ticker = await provider.get_ticker(symbol)
-        except Exception as e:
-            reason = "ticker_fetch_failed"
-            evidence_error = _record_divergence_decision(
-                row=row,
-                run_id=run_id,
-                symbol=symbol,
-                market_type=db_market,
-                direction=direction,
-                decision="error",
-                reason_code=reason,
-            )
-            if evidence_error:
-                errors.append(evidence_error)
-            else:
-                errors.append(
-                    f"divergence_ticker_failed:{_prediction_candidate_key(row)}:"
-                    f"{type(e).__name__}"
-                )
-            logger.warning("ticker fetch failed for %s: %s", symbol, type(e).__name__)
-            continue
-
-        try:
-            last_price = float(ticker.last_price)
-            ticker_volume = float(ticker.volume_24h)
-            ticker_change_pct = float(ticker.change_pct_24h)
-        except (TypeError, ValueError):
-            last_price = ticker_volume = ticker_change_pct = math.nan
-        if not all(math.isfinite(value) for value in (
-            last_price, ticker_volume, ticker_change_pct,
-        )) or last_price <= 0 or ticker_volume < 0:
-            reason = "invalid_numeric_evidence"
-            evidence_error = _record_divergence_decision(
-                row=row,
-                run_id=run_id,
-                symbol=symbol,
-                market_type=db_market,
-                direction=direction,
-                decision="rejected",
-                reason_code=reason,
-            )
-            if evidence_error:
-                errors.append(evidence_error)
-            else:
-                outputs.append(f"skip:{symbol}:{reason}")
-            continue
-
-        price_change_pct = abs(ticker_change_pct)
-
-        # Divergence check: probability moved significantly but price didn't follow
-        if price_change_pct > _MAX_PRICE_MOVE:
-            reason = "price_already_moved"
-            evidence_error = _record_divergence_decision(
-                row=row,
-                run_id=run_id,
-                symbol=symbol,
-                market_type=db_market,
-                direction=direction,
-                decision="rejected",
-                reason_code=reason,
-                price_change_pct=ticker_change_pct,
-            )
-            if evidence_error:
-                errors.append(evidence_error)
-            else:
-                outputs.append(f"skip:{symbol}:{reason}")
-            continue
-
-        score = _compute_divergence_score(
-            prob_change, ticker_change_pct, volume, liquidity,
-        )
-
-        confidence = "medium" if score >= 55 else "speculative"
-
-        thesis = (
-            f"Polymarket divergence: '{question[:80]}' YES prob "
-            f"{yes_prob*100:.0f}% (Δ24h {prob_change*100:+.1f}pp, vol ${volume:,.0f}) "
-            f"but {symbol} only moved {ticker_change_pct:+.1f}% — market hasn't priced in."
-        )
-
-        if not is_tool_permitted("create_opportunity", permission_mode):
-            reason = "create_opportunity_not_permitted"
-            evidence_error = _record_divergence_decision(
-                row=row,
-                run_id=run_id,
-                symbol=symbol,
-                market_type=db_market,
-                direction=direction,
-                decision="error",
-                reason_code=reason,
-                price_change_pct=ticker_change_pct,
-            )
-            if evidence_error:
-                errors.append(evidence_error)
-            else:
-                errors.append(
-                    f"{reason}:{_prediction_candidate_key(row)}"
-                )
-            continue
-
-        opp = Opportunity(
-            symbol=symbol,
-            market=db_market,
-            direction_bias=direction,
-            thesis=thesis,
-            confidence=confidence,
-            confidence_score=score,
-            source_agent="divergence_scanner",
-            scanner_family="reversion",
-            linked_strategy_id=linked_strategy_id,
-            asset_class="crypto",
-            execution_eligible=True,
-            valid_until=valid_until,
-            metadata=json.dumps({
-                "trigger": "prediction_divergence",
-                "source_version": source_version,
-                "prediction_market_id": row.get("id"),
-                "prediction_external_market_id": row.get("external_market_id"),
-                "prediction_updated_at": row.get("updated_at"),
-                "prediction_polarity": polarity,
-                "prediction_polarity_version": _PREDICTION_POLARITY_VERSION,
-                "instrument_market": instrument_market,
-                "prediction_question": question[:120],
-                "yes_probability": yes_prob,
-                "prob_change_24h": prob_change,
-                "prediction_volume_usd": volume,
-                "prediction_liquidity": liquidity,
-                "crypto_price_change_pct": ticker_change_pct,
-                "crypto_last_price": last_price,
-                "evidence_manifest": {
-                    "version": "opportunity-information-integrity-v1",
-                    "policy_epoch": POLICY_EPOCH_LABEL,
-                    "t0": {
-                        "status": "available",
-                        "trigger_type": "prediction_divergence",
-                        "run_id": run_id,
-                        "source_version": source_version,
-                        "prediction_market_id": row.get("id"),
-                        "prediction_external_market_id": row.get("external_market_id"),
-                        "prediction_updated_at": row.get("updated_at"),
-                        "prediction_polarity": polarity,
-                        "prediction_polarity_version": _PREDICTION_POLARITY_VERSION,
-                        "prediction_question": question[:160],
-                        "symbol": symbol,
-                        "market_type": instrument_market,
-                        "direction": direction,
-                        "yes_probability": yes_prob,
-                        "probability_change_24h": prob_change,
-                        "crypto_last_price": last_price,
-                        "crypto_price_change_24h_pct": ticker_change_pct,
-                    },
-                    "t1": {"status": "unavailable"},
-                },
-            }),
-        )
-        try:
-            # A created Opportunity and the producer's terminal fact are one
-            # causal write.  An outer transaction makes the repository helper's
-            # nested transaction join this unit, so an evidence outage leaves the
-            # prediction observation retryable instead of releasing an unexplained
-            # Opportunity downstream.
-            with transaction(immediate=True):
-                # ``transaction`` intentionally joins an existing caller
-                # transaction.  A SAVEPOINT still gives this adjacent producer
-                # boundary its own rollback unit in that case.
-                from aletheia.storage.sqlite import get_db
-
-                db = get_db()
-                db.execute("SAVEPOINT divergence_opportunity_evidence")
-                try:
-                    owner, owner_created = insert_divergence_opportunity_once(
-                        opp, source_version=source_version
+                if evidence_error:
+                    errors.append(evidence_error)
+                else:
+                    outputs.append(
+                        f"skip:{_prediction_candidate_key(row)}:symbol_unmapped"
                     )
-                    if owner_created:
-                        evidence_error = _record_divergence_decision(
-                            row=row,
-                            run_id=run_id,
-                            symbol=symbol,
-                            market_type=db_market,
-                            direction=direction,
-                            decision="passed",
-                            reason_code="opportunity_emitted",
-                            opportunity_id=opp.id,
-                            price_change_pct=ticker_change_pct,
-                        )
-                        if evidence_error:
-                            raise _DivergenceEvidenceError(evidence_error)
-                    db.execute("RELEASE SAVEPOINT divergence_opportunity_evidence")
-                except Exception:
-                    db.execute("ROLLBACK TO SAVEPOINT divergence_opportunity_evidence")
-                    db.execute("RELEASE SAVEPOINT divergence_opportunity_evidence")
-                    raise
-        except _DivergenceEvidenceError as exc:
-            errors.append(str(exc))
-            continue
-        except Exception as exc:
-            evidence_error = _record_divergence_decision(
-                row=row,
-                run_id=run_id,
-                symbol=symbol,
-                market_type=db_market,
-                direction=direction,
-                decision="error",
-                reason_code="opportunity_insert_failed",
-                opportunity_id=opp.id,
-                price_change_pct=ticker_change_pct,
-            )
-            if evidence_error:
-                errors.append(evidence_error)
-            else:
-                errors.append(
-                    f"divergence_opportunity_insert_failed:"
-                    f"{_prediction_candidate_key(row)}:{type(exc).__name__}"
+                continue
+
+            if polarity is None:
+                reason = "prediction_polarity_ambiguous"
+                evidence_error = _record_divergence_decision(
+                    row=row,
+                    run_id=run_id,
+                    symbol=symbol,
+                    market_type=MARKET_SPOT,
+                    direction=None,
+                    decision="rejected",
+                    reason_code=reason,
                 )
-            continue
-        if not owner_created:
-            evidence_error = _record_divergence_decision(
-                row=row,
-                run_id=run_id,
+                if evidence_error:
+                    errors.append(evidence_error)
+                else:
+                    outputs.append(f"skip:{symbol}:{reason}")
+                continue
+
+            # Direction comes from the prediction fact. The current producer fetches
+            # a bare-symbol ticker, whose provider contract resolves to spot. A bearish
+            # view therefore has no proven shortable instrument and must not be guessed
+            # into a futures market downstream.
+            if direction == "short":
+                reason = "short_requires_perp_instrument"
+                evidence_error = _record_divergence_decision(
+                    row=row,
+                    run_id=run_id,
+                    symbol=symbol,
+                    market_type=MARKET_SPOT,
+                    direction=direction,
+                    decision="rejected",
+                    reason_code=reason,
+                )
+                if evidence_error:
+                    errors.append(evidence_error)
+                else:
+                    outputs.append(f"skip:{symbol}:{reason}")
+                    record_step(
+                        run_id,
+                        f"divergence_skip:{row.get('id') or symbol}",
+                        input_data=f"symbol={symbol} direction={direction}",
+                        output_data=reason,
+                    )
+                continue
+
+            instrument_market = MARKET_SPOT
+            db_market = instrument_market_to_db_market(instrument_market)
+            source_version = _source_version(row, symbol, db_market)
+            existing = find_divergence_opportunity_by_source_version(source_version)
+            if existing:
+                evidence_error = _record_divergence_decision(
+                    row=row,
+                    run_id=run_id,
+                    symbol=symbol,
+                    market_type=db_market,
+                    direction=direction,
+                    decision="passed",
+                    reason_code="existing_opportunity_reused",
+                    opportunity_id=existing.get("id"),
+                )
+                if evidence_error:
+                    errors.append(evidence_error)
+                else:
+                    outputs.append(f"skip_duplicate_source_version:{source_version}")
+                continue
+
+            valid_until = _source_valid_until(row.get("updated_at"))
+            if valid_until is None:
+                reason = "invalid_source_updated_at"
+                evidence_error = _record_divergence_decision(
+                    row=row,
+                    run_id=run_id,
+                    symbol=symbol,
+                    market_type=db_market,
+                    direction=direction,
+                    decision="rejected",
+                    reason_code=reason,
+                )
+                if evidence_error:
+                    errors.append(evidence_error)
+                else:
+                    outputs.append(f"skip:{symbol}:{reason}")
+                continue
+
+            # A bare canonical symbol is explicitly a spot ticker in CCXTProvider.
+            try:
+                ticker = await provider.get_ticker(symbol)
+            except Exception as e:
+                reason = "ticker_fetch_failed"
+                evidence_error = _record_divergence_decision(
+                    row=row,
+                    run_id=run_id,
+                    symbol=symbol,
+                    market_type=db_market,
+                    direction=direction,
+                    decision="error",
+                    reason_code=reason,
+                )
+                if evidence_error:
+                    errors.append(evidence_error)
+                else:
+                    errors.append(
+                        f"divergence_ticker_failed:{_prediction_candidate_key(row)}:"
+                        f"{type(e).__name__}"
+                    )
+                logger.warning("ticker fetch failed for %s: %s", symbol, type(e).__name__)
+                continue
+
+            try:
+                last_price = float(ticker.last_price)
+                ticker_volume = float(ticker.volume_24h)
+                ticker_change_pct = float(ticker.change_pct_24h)
+            except (TypeError, ValueError):
+                last_price = ticker_volume = ticker_change_pct = math.nan
+            if not all(math.isfinite(value) for value in (
+                last_price, ticker_volume, ticker_change_pct,
+            )) or last_price <= 0 or ticker_volume < 0:
+                reason = "invalid_numeric_evidence"
+                evidence_error = _record_divergence_decision(
+                    row=row,
+                    run_id=run_id,
+                    symbol=symbol,
+                    market_type=db_market,
+                    direction=direction,
+                    decision="rejected",
+                    reason_code=reason,
+                )
+                if evidence_error:
+                    errors.append(evidence_error)
+                else:
+                    outputs.append(f"skip:{symbol}:{reason}")
+                continue
+
+            price_change_pct = abs(ticker_change_pct)
+
+            # Divergence check: probability moved significantly but price didn't follow
+            if price_change_pct > _MAX_PRICE_MOVE:
+                reason = "price_already_moved"
+                evidence_error = _record_divergence_decision(
+                    row=row,
+                    run_id=run_id,
+                    symbol=symbol,
+                    market_type=db_market,
+                    direction=direction,
+                    decision="rejected",
+                    reason_code=reason,
+                    price_change_pct=ticker_change_pct,
+                )
+                if evidence_error:
+                    errors.append(evidence_error)
+                else:
+                    outputs.append(f"skip:{symbol}:{reason}")
+                continue
+
+            score = _compute_divergence_score(
+                prob_change, ticker_change_pct, volume, liquidity,
+            )
+
+            confidence = "medium" if score >= 55 else "speculative"
+
+            thesis = (
+                f"Polymarket divergence: '{question[:80]}' YES prob "
+                f"{yes_prob*100:.0f}% (Δ24h {prob_change*100:+.1f}pp, vol ${volume:,.0f}) "
+                f"but {symbol} only moved {ticker_change_pct:+.1f}% — market hasn't priced in."
+            )
+
+            if not is_tool_permitted("create_opportunity", permission_mode):
+                reason = "create_opportunity_not_permitted"
+                evidence_error = _record_divergence_decision(
+                    row=row,
+                    run_id=run_id,
+                    symbol=symbol,
+                    market_type=db_market,
+                    direction=direction,
+                    decision="error",
+                    reason_code=reason,
+                    price_change_pct=ticker_change_pct,
+                )
+                if evidence_error:
+                    errors.append(evidence_error)
+                else:
+                    errors.append(
+                        f"{reason}:{_prediction_candidate_key(row)}"
+                    )
+                continue
+
+            opp = Opportunity(
                 symbol=symbol,
-                market_type=db_market,
-                direction=direction,
-                decision="passed",
-                reason_code="existing_opportunity_reused",
-                opportunity_id=owner.get("id"),
-                price_change_pct=ticker_change_pct,
+                market=db_market,
+                direction_bias=direction,
+                thesis=thesis,
+                confidence=confidence,
+                confidence_score=score,
+                source_agent="divergence_scanner",
+                scanner_family="reversion",
+                linked_strategy_id=linked_strategy_id,
+                asset_class="crypto",
+                execution_eligible=True,
+                valid_until=valid_until,
+                metadata=json.dumps({
+                    "trigger": "prediction_divergence",
+                    "source_version": source_version,
+                    "prediction_market_id": row.get("id"),
+                    "prediction_external_market_id": row.get("external_market_id"),
+                    "prediction_updated_at": row.get("updated_at"),
+                    "prediction_polarity": polarity,
+                    "prediction_polarity_version": _PREDICTION_POLARITY_VERSION,
+                    "instrument_market": instrument_market,
+                    "prediction_question": question[:120],
+                    "yes_probability": yes_prob,
+                    "prob_change_24h": prob_change,
+                    "prediction_volume_usd": volume,
+                    "prediction_liquidity": liquidity,
+                    "crypto_price_change_pct": ticker_change_pct,
+                    "crypto_last_price": last_price,
+                    "evidence_manifest": {
+                        "version": "opportunity-information-integrity-v1",
+                        "policy_epoch": POLICY_EPOCH_LABEL,
+                        "t0": {
+                            "status": "available",
+                            "trigger_type": "prediction_divergence",
+                            "run_id": run_id,
+                            "source_version": source_version,
+                            "prediction_market_id": row.get("id"),
+                            "prediction_external_market_id": row.get("external_market_id"),
+                            "prediction_updated_at": row.get("updated_at"),
+                            "prediction_polarity": polarity,
+                            "prediction_polarity_version": _PREDICTION_POLARITY_VERSION,
+                            "prediction_question": question[:160],
+                            "symbol": symbol,
+                            "market_type": instrument_market,
+                            "direction": direction,
+                            "yes_probability": yes_prob,
+                            "probability_change_24h": prob_change,
+                            "crypto_last_price": last_price,
+                            "crypto_price_change_24h_pct": ticker_change_pct,
+                        },
+                        "t1": {"status": "unavailable"},
+                    },
+                }),
             )
-            if evidence_error:
-                errors.append(evidence_error)
-            else:
-                outputs.append(f"skip_duplicate_source_version:{source_version}")
-            continue
+            try:
+                # A created Opportunity and the producer's terminal fact are one
+                # causal write.  An outer transaction makes the repository helper's
+                # nested transaction join this unit, so an evidence outage leaves the
+                # prediction observation retryable instead of releasing an unexplained
+                # Opportunity downstream.
+                with transaction(immediate=True):
+                    # ``transaction`` intentionally joins an existing caller
+                    # transaction.  A SAVEPOINT still gives this adjacent producer
+                    # boundary its own rollback unit in that case.
+                    from aletheia.storage.sqlite import get_db
+
+                    db = get_db()
+                    db.execute("SAVEPOINT divergence_opportunity_evidence")
+                    try:
+                        owner, owner_created = insert_divergence_opportunity_once(
+                            opp, source_version=source_version
+                        )
+                        if owner_created:
+                            evidence_error = _record_divergence_decision(
+                                row=row,
+                                run_id=run_id,
+                                symbol=symbol,
+                                market_type=db_market,
+                                direction=direction,
+                                decision="passed",
+                                reason_code="opportunity_emitted",
+                                opportunity_id=opp.id,
+                                price_change_pct=ticker_change_pct,
+                            )
+                            if evidence_error:
+                                raise _DivergenceEvidenceError(evidence_error)
+                        db.execute("RELEASE SAVEPOINT divergence_opportunity_evidence")
+                    except Exception:
+                        db.execute("ROLLBACK TO SAVEPOINT divergence_opportunity_evidence")
+                        db.execute("RELEASE SAVEPOINT divergence_opportunity_evidence")
+                        raise
+            except _DivergenceEvidenceError as exc:
+                errors.append(str(exc))
+                continue
+            except Exception as exc:
+                evidence_error = _record_divergence_decision(
+                    row=row,
+                    run_id=run_id,
+                    symbol=symbol,
+                    market_type=db_market,
+                    direction=direction,
+                    decision="error",
+                    reason_code="opportunity_insert_failed",
+                    opportunity_id=opp.id,
+                    price_change_pct=ticker_change_pct,
+                )
+                if evidence_error:
+                    errors.append(evidence_error)
+                else:
+                    errors.append(
+                        f"divergence_opportunity_insert_failed:"
+                        f"{_prediction_candidate_key(row)}:{type(exc).__name__}"
+                    )
+                continue
+            if not owner_created:
+                evidence_error = _record_divergence_decision(
+                    row=row,
+                    run_id=run_id,
+                    symbol=symbol,
+                    market_type=db_market,
+                    direction=direction,
+                    decision="passed",
+                    reason_code="existing_opportunity_reused",
+                    opportunity_id=owner.get("id"),
+                    price_change_pct=ticker_change_pct,
+                )
+                if evidence_error:
+                    errors.append(evidence_error)
+                else:
+                    outputs.append(f"skip_duplicate_source_version:{source_version}")
+                continue
+            try:
+                from aletheia.agent_runtime.scheduler import notify_paper_trader
+
+                notify_paper_trader(source="divergence_scanner_opportunity")
+            except Exception:
+                logger.debug(
+                    "Failed to notify Ranker after divergence Opportunity commit",
+                    exc_info=True,
+                )
+            log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
+            outputs.append(f"opportunity:{opp.id}")
+            opps_created += 1
+            logger.info(
+                "divergence signal: %s %s (score=%d) from '%s'",
+                direction, symbol, score, question[:60],
+            )
+
+        record_step(run_id, "divergence_scan_output",
+                    input_data=None, output_data=f"opps_created={opps_created}")
+
+        return {"outputs": outputs, "errors": errors}
+    finally:
         try:
-            from aletheia.agent_runtime.scheduler import notify_paper_trader
-
-            notify_paper_trader(source="divergence_scanner_opportunity")
+            await provider.close()
         except Exception:
-            logger.debug(
-                "Failed to notify Ranker after divergence Opportunity commit",
-                exc_info=True,
-            )
-        log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
-        outputs.append(f"opportunity:{opp.id}")
-        opps_created += 1
-        logger.info(
-            "divergence signal: %s %s (score=%d) from '%s'",
-            direction, symbol, score, question[:60],
-        )
-
-    record_step(run_id, "divergence_scan_output",
-                input_data=None, output_data=f"opps_created={opps_created}")
-
-    return {"outputs": outputs, "errors": errors}
+            logger.debug("Failed to close market data provider", exc_info=True)
