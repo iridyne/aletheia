@@ -487,6 +487,36 @@ def find_open_opportunity_by_symbol_snapshot(symbol: str, snapshot_id: str, mark
     return dict(row) if row else None
 
 
+def find_live_opportunity_by_symbol_direction(
+    symbol: str,
+    direction: str,
+    market: str | None = None,
+) -> dict | None:
+    """Return the most-recent live (open or queued, non-expired) opportunity for
+    a given symbol+direction+market combination.
+
+    Used by the signal emitter to suppress duplicate emissions when a live candidate
+    for the same symbol+direction already occupies the evaluation queue (#326).
+    ``valid_until IS NULL`` rows are treated as never-expiring and always considered
+    live (paranoid fail-safe: better to suppress one extra signal than to flood the
+    queue).
+    """
+    db = get_db()
+    sql = (
+        "SELECT * FROM opportunities "
+        "WHERE symbol = ? AND direction_bias = ? "
+        "AND status IN ('open','queued') "
+        "AND (valid_until IS NULL OR datetime(valid_until) > datetime('now'))"
+    )
+    params: list = [symbol, direction]
+    if market:
+        sql += " AND market = ?"
+        params.append(market)
+    sql += " ORDER BY created_at DESC, rowid DESC LIMIT 1"
+    row = db.execute(sql, params).fetchone()
+    return dict(row) if row else None
+
+
 def find_opportunity_by_symbol_snapshot(
     symbol: str,
     snapshot_id: str,

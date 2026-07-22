@@ -956,3 +956,119 @@ def test_learning_candidate_key_persists_round_trip(tmp_path, monkeypatch):
     assert row["learning_candidate_key"] == candidate_key, (
         f"learning_candidate_key not round-tripped: got {row['learning_candidate_key']!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# UP-26 — live-duplicate suppression prevents scanner flooding (#326)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "UP-26", "universe_pipeline", "§signal emission live-duplicate guard (#326)", "L2b",
+        "emit_deterministic_opportunities must suppress a new signal for symbol+direction "
+        "when a live (open/queued, non-expired) opportunity for the same symbol+direction+market "
+        "already exists in the evaluation queue. Without this, fast-signalling symbols emit "
+        "a new slot-stealing candidate every 10 min while prior ones are still pending (#326).",
+        status="implemented",
+    ),
+)
+def test_live_duplicate_suppressed_when_active_opportunity_exists(tmp_path, monkeypatch):
+    """#326: a second emission for the same symbol+direction must be suppressed.
+
+    Two calls to emit_deterministic_opportunities with identical symbol+direction:
+    - First call: no live opportunity exists → emits 1 opportunity.
+    - Second call (different snapshot_id): live opportunity still open → suppressed.
+    """
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sq
+    import aletheia.storage.repositories as repo
+    from aletheia.storage.migrations import run_migrations
+
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "live_dup_test.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    sq._db_conn = conn
+    run_migrations()
+
+    from aletheia.universe.signal_emitter import emit_deterministic_opportunities
+    from aletheia.storage.models import UniverseSnapshot, UniverseMember
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
+    cfg.universe.enabled = True
+    cfg.regime.enabled = False
+    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
+    cfg.market_data.ccxt_exchange = "binance"
+
+    now = datetime.now(timezone.utc)
+    expires_at = (now + timedelta(minutes=60)).isoformat()
+
+    def _make_member(snapshot_id: str) -> tuple[dict, dict]:
+        snap = UniverseSnapshot(
+            id=snapshot_id, exchange="binance", market_type="spot",
+            universe_size=1, created_at=now.isoformat(),
+        )
+        repo.insert_universe_snapshot(snap)
+        member = UniverseMember(
+            snapshot_id=snapshot_id, asset_id=f"asset-{snapshot_id}",
+            symbol="SNDK/USDT", rank=1, total_score=75.0,
+            scanner_family="momentum", expires_at=expires_at,
+        )
+        repo.insert_universe_member(member)
+        feat = {
+            "asset_id": f"asset-{snapshot_id}",
+            "symbol": "SNDK/USDT",
+            "venue": "binance",
+            "market_type": "spot",
+            "last_price": 50.0,
+            "quote_volume_24h": 100_000_000.0,
+            "spread_bps": 5.0,
+            "execution_eligible": True,
+            "scanner_family": "momentum",
+            "scanner_direction": "short",
+            "reasons": ["RS24h -6.0% vs BTC"],
+            "total_score": 75.0,
+            "return_4h": -4.0,
+            "relative_strength_24h": -6.0,
+        }
+        return [member.model_dump()], [feat]
+
+    monkeypatch.setattr(
+        "aletheia.universe.signal_emitter.lookup_factor_signal", lambda _: {}
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.signal_emitter.has_fresh_market_snapshot", lambda *a, **kw: True
+    )
+
+    members1, feats1 = _make_member("snap-flood-1")
+    created1 = emit_deterministic_opportunities(
+        members1, "snap-flood-1", feats1
+    )
+    assert created1 == 1, f"first emission should create 1 opportunity, got {created1}"
+
+    members2, feats2 = _make_member("snap-flood-2")
+    created2 = emit_deterministic_opportunities(
+        members2, "snap-flood-2", feats2
+    )
+    assert created2 == 0, (
+        f"second emission must be suppressed (live_duplicate_suppressed) — got {created2}; "
+        "the live-duplicate guard at signal_emitter.py is missing or bypassed"
+    )
+
+    # Confirm the suppression reason is recorded in filter_decisions.
+    rows = conn.execute(
+        "SELECT reason_code FROM filter_decisions "
+        "WHERE symbol='SNDK/USDT' AND filter_name='opportunity_emission' "
+        "AND decision='rejected' ORDER BY evaluated_at DESC LIMIT 5"
+    ).fetchall()
+    reason_codes = {r["reason_code"] for r in rows}
+    assert "live_duplicate_suppressed" in reason_codes, (
+        f"expected live_duplicate_suppressed in filter_decisions; got {reason_codes}"
+    )

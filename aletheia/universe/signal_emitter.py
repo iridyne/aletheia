@@ -20,6 +20,7 @@ import logging
 
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
+    find_live_opportunity_by_symbol_direction,
     find_opportunity_by_symbol_snapshot,
     insert_opportunity_once_by_snapshot,
 )
@@ -351,6 +352,36 @@ def emit_deterministic_opportunities(
                     "direction_bias": (
                         regime.short_bias if direction == "short" else regime.long_bias
                     ),
+                },
+            )
+            continue
+
+        # Cross-snapshot live-duplicate guard (#326): suppress emission when a live
+        # (open/queued, non-expired) opportunity for the same symbol+direction already
+        # exists. The per-snapshot dedup below only covers the current refresh cycle;
+        # without this check, a fast-signalling symbol emits a new slot-stealing
+        # candidate every 10 min even while prior ones are still pending evaluation.
+        live_dup = find_live_opportunity_by_symbol_direction(
+            symbol, direction,
+            market=instrument_market_to_db_market(market_type),
+        )
+        if live_dup:
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=total_score,
+                short_enabled=short_enabled,
+                decision="rejected",
+                reason_code="live_duplicate_suppressed",
+                direction=direction,
+                regime_tag=regime.state if regime else None,
+                inputs={
+                    "live_opportunity_id": live_dup.get("id"),
+                    "live_opportunity_status": live_dup.get("status"),
+                    "live_valid_until": live_dup.get("valid_until"),
                 },
             )
             continue
