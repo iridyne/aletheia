@@ -1366,13 +1366,13 @@ def test_skill_store_producer_is_draft_only():
 
 
 # ---------------------------------------------------------------------------
-# LP-S12 — Dreaming summary separates current knowledge from deprecated memory
+# LP-S18 — Dreaming summary separates current knowledge from deprecated memory
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
-        "LP-S12",
+        "LP-S18",
         "learning_pipeline",
         "api_reference §Knowledge & Learning",
         "L2b",
