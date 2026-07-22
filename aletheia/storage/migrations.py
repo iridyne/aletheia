@@ -2150,6 +2150,11 @@ _ADDITIVE_COLUMNS = [
     # at open (stamped by the execution gateway). NULL on legacy proposals.
     ("expected_horizon_hours", "trade_proposals", "REAL"),
     ("stop_source", "trade_proposals", "TEXT"),
+    # Observer Learning outcome identity (#323, 2026-07-22): persist the 4h
+    # outcome key on the universe_member row so market observer can carry it
+    # into learning exposures after a DB reload. NULL on legacy rows → observer
+    # skips outcome tracking for those members (fail-safe, not fail-open).
+    ("learning_candidate_key", "universe_members", "TEXT"),
 ]
 
 

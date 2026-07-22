@@ -888,3 +888,71 @@ def test_volume_ranking_rows_preserve_instrument_identity():
     block = source[source.index("# Inject volume-ranking symbols"):source.index("features_list =")]
     assert "assets.sort" in block
     assert "upsert_universe_asset" not in block
+
+
+# ---------------------------------------------------------------------------
+# UP-24 — learning_candidate_key persists through universe_members round-trip
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "UP-24", "universe_pipeline", "§observer-learning outcome identity persistence", "L2b",
+        "learning_candidate_key written during universe refresh must survive the "
+        "insert→read-back cycle so market observer can carry the 4h outcome key "
+        "into learning exposures after a process restart (#323).",
+        status="implemented",
+    ),
+)
+def test_learning_candidate_key_persists_round_trip(tmp_path, monkeypatch):
+    """#323: universe_members.learning_candidate_key must be persisted.
+
+    Three-layer check (mirrors test_all_scores_persists_round_trip):
+      1. UniverseMember.model_fields contains learning_candidate_key
+      2. _ADDITIVE_COLUMNS registers (learning_candidate_key, universe_members)
+      3. insert → read-back: the key value survives the DB round-trip
+    """
+    import sqlite3
+
+    from aletheia.storage.models import UniverseMember
+    assert "learning_candidate_key" in UniverseMember.model_fields, (
+        "UniverseMember missing learning_candidate_key field"
+    )
+
+    from aletheia.storage.migrations import _ADDITIVE_COLUMNS
+    cols = {(c, t) for c, t, _ in _ADDITIVE_COLUMNS}
+    assert ("learning_candidate_key", "universe_members") in cols, (
+        "_ADDITIVE_COLUMNS does not register universe_members.learning_candidate_key "
+        "— column won't exist after migration, model_dump write will fail silently"
+    )
+
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    sq._db_conn = conn
+    run_migrations()
+
+    candidate_key = "BTC/USDT:spot:4h:2026-07-22T12:00:00+00:00"
+    member = UniverseMember(
+        snapshot_id="snap-323", asset_id="asset-btc", symbol="BTC/USDT",
+        rank=1, total_score=75.0, scanner_family="momentum",
+        learning_candidate_key=candidate_key,
+    )
+    repo.insert_universe_member(member)
+
+    row = conn.execute(
+        "SELECT learning_candidate_key FROM universe_members WHERE id=?", (member.id,)
+    ).fetchone()
+    assert row is not None, "member not persisted"
+    assert row["learning_candidate_key"] == candidate_key, (
+        f"learning_candidate_key not round-tripped: got {row['learning_candidate_key']!r}"
+    )
