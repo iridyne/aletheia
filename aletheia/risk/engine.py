@@ -32,6 +32,7 @@ from aletheia.storage.repositories import (
     list_all_open_positions,
     list_unresolved_native_entry_orders_for_risk,
     transaction,
+    update_trade_proposal,
 )
 
 logger = logging.getLogger("aletheia.risk.engine")
@@ -609,6 +610,19 @@ def evaluate_proposal(
                     # Preserve the historical one-argument private call for the
                     # default role; lock-focused tests instrument this boundary.
                     result = _evaluate_proposal_locked(proposal)
+                if not result.approved:
+                    stored = get_trade_proposal(proposal.id)
+                    if (
+                        stored is not None
+                        and str(stored.get("status") or "")
+                        in {"pending", "approved"}
+                    ):
+                        # The authoritative verdict and terminal Proposal state
+                        # must commit together, but only from states whose
+                        # transition matrix permits rejection. Gateway emits the
+                        # post-commit audit; execution-progress states must never
+                        # be rewritten by an idempotent Risk retry.
+                        update_trade_proposal(proposal.id, status="rejected")
                 if result.approved:
                     stored = get_trade_proposal(proposal.id)
                     if (
