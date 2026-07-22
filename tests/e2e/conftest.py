@@ -64,8 +64,28 @@ def e2e_db(_e2e_db_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _mock_llm(monkeypatch):
-    """Block real LLM calls — e2e tests verify data flow, not LLM quality."""
-    pass
+    """Block real LLM provider resolution in e2e tests.
+
+    get_provider() (aletheia/model_provider/router.py) is the shared seam that
+    llm_complete() and llm_structured() call before dispatching to any provider.
+    Blocking it here ensures no E2E test can silently fall through to a configured
+    local/remote model. llm_complete/llm_structured both catch the exception and
+    return (None, "llm_unavailable: ...") so tests can assert data-flow behavior
+    without needing a real provider.
+
+    E2E tests that inject deterministic responses (e.g. patching llm_complete
+    directly, or test_guard_blocks_real_llm below) override above this seam and
+    are unaffected.
+    """
+    import aletheia.agents.helpers as _helpers
+
+    def _blocked_get_provider(name=None):
+        raise RuntimeError(
+            "E2E guard: LLM provider resolution blocked "
+            f"(requested={name!r}). Inject a deterministic response instead."
+        )
+
+    monkeypatch.setattr(_helpers, "get_provider", _blocked_get_provider)
 
 
 @pytest.fixture(autouse=True)
