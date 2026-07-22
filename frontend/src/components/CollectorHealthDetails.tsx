@@ -19,6 +19,8 @@ function fmtDomain(name: string): string {
 }
 
 function domainLight(d: CollectorHealthDomain): 'red' | 'yellow' | 'green' | 'muted' {
+  if (d.display_severity === 'info') return 'yellow'
+  if (d.display_severity === 'muted') return 'muted'
   if (d.degraded) return 'red'
   if (PROBLEM_STATUSES.has(d.last_status)) return 'yellow'
   if (d.last_status === 'not_configured' || d.last_status === 'disabled') return 'muted'
@@ -35,12 +37,36 @@ function FullDetails({ health }: { health: CollectorHealthReport }) {
     return rank(a) - rank(b)
   })
   const problems = sorted.filter(isProblem)
+  const incident = health.infrastructure_incident
+  const attributed = new Set(incident?.affected_domains ?? [])
+  const independentProblems = problems.filter(d => !attributed.has(d.domain))
   const healthyCount = sorted.length - problems.length
+  const incidentTone = 'yellow'
 
   return (
     <div className="chd-panel">
       <div className="chd-title">Collector diagnostics</div>
-      {problems.map(d => {
+      {incident && incident.affected_domains.length > 0 && (
+        <div className={`chd-incident chd-incident-${incidentTone}`}>
+          <div className="chd-incident-head">
+            <span className={`status-light light-${incidentTone}`} />
+            <span>Collector dependency</span>
+            <span className={`chd-status chd-status-${incidentTone}`}>
+              {incident.status === 'active' ? 'unavailable' : 'recovering'}
+            </span>
+          </div>
+          <div className="chd-incident-message">
+            {incident.status === 'active'
+              ? 'These collectors are blocked by the connectivity incident above.'
+              : 'Connectivity is restored; these collectors are waiting for their next retry.'}
+          </div>
+          <div className="chd-incident-meta">
+            <span>Affected: {incident.affected_domains.map(fmtDomain).join(', ')}</span>
+            <span>{incident.action}</span>
+          </div>
+        </div>
+      )}
+      {independentProblems.map(d => {
         const light = domainLight(d)
         const cons = d.consecutive_problems ?? 0
         return (
@@ -80,9 +106,21 @@ function CompactDetails({ health }: { health: CollectorHealthReport }) {
     )
   }
 
-  const problems = health.domains.filter(isProblem)
+  const incident = health.infrastructure_incident
+  const attributed = new Set(incident?.affected_domains ?? [])
+  const problems = health.domains.filter(d => isProblem(d) && !attributed.has(d.domain))
   return (
     <>
+      {incident && incident.affected_domains.length > 0 && (
+        <div className="sp-row">
+          <span className="dot dot-yellow" />
+          <span className="sp-label">Collector impact</span>
+          <span className="sp-value sp-value-wrap">
+            {incident.affected_domains.length} dependent collector{incident.affected_domains.length === 1 ? '' : 's'}
+            {' · '}{incident.status === 'active' ? 'blocked' : 'retrying'}
+          </span>
+        </div>
+      )}
       {problems.map(d => {
         const light = domainLight(d)
         const cons = d.consecutive_problems ?? 0

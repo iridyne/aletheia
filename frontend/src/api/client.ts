@@ -228,7 +228,7 @@ export const api = {
   // topbar restart button when the health endpoint reports code_updated_pending_restart.
   restartGateway: () => post<{ mode: 'warm' | 'cold'; ok: boolean; message: string }>('/gateway/restart'),
   getStatus: () => fetchJson<SystemStatus>('/status'),
-  getInfraEvents: () => fetchJson<{ events: InfraEvent[] }>('/infra/events?limit=12&min_severity=warning'),
+  getInfraEvents: () => fetchJson<{ events: InfraEvent[] }>('/infra/events?limit=12&min_severity=info'),
   getOperatorStatus: () => fetchJson<any>('/operator/status'),
   getRuntimeStatus: () => fetchJson<any>('/operator/runtime'),
   createRuntimeCandidate: (body: {

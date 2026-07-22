@@ -14,6 +14,7 @@ from aletheia.storage import repositories as repo
 
 @pytest.fixture
 async def client(tmp_path, monkeypatch):
+    from aletheia.agent_runtime import connectivity
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -32,11 +33,17 @@ async def client(tmp_path, monkeypatch):
     from aletheia.data.data_coverage import clear_data_coverage_cache
     get_cache().invalidate()
     clear_data_coverage_cache()
+    connectivity._last_external_probe_result = None
+    connectivity._external_outage_started_at = None
+    connectivity._external_last_recovery_at = None
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
     get_cache().invalidate()
     clear_data_coverage_cache()
+    connectivity._last_external_probe_result = None
+    connectivity._external_outage_started_at = None
+    connectivity._external_last_recovery_at = None
     reset_db()
 
 
@@ -89,6 +96,47 @@ async def test_collector_health_route_returns_durable_domain_state(client):
     row = next(item for item in body["domains"] if item["domain"] == "microstructure")
     assert body["recorded_count"] == 1
     assert row["last_status"] == "success"
+    assert row["display_status"] == "success"
+    assert row["attributed_cause"] is None
+    assert body["infrastructure_incident"] is None
+
+
+@pytest.mark.anyio
+async def test_collector_health_route_groups_confirmed_connectivity_outage(
+    client, monkeypatch
+):
+    from aletheia.data.collector_health import record_collector_status
+    from aletheia.agent_runtime import connectivity
+
+    now = datetime.now(timezone.utc)
+    failed_at = (now - timedelta(seconds=20)).isoformat()
+    record_collector_status("microstructure", "failed", tick=1, occurred_at=failed_at)
+    record_collector_status("coingecko_top", "timed_out", tick=1, occurred_at=failed_at)
+    monkeypatch.setattr(
+        connectivity,
+        "get_status",
+        lambda: {
+            "external_connectivity": {
+                "state": "unavailable",
+                "severity": "warning",
+                "priority": 1,
+                "observed_at": (now - timedelta(seconds=5)).timestamp(),
+                "outage_started_at": (now - timedelta(seconds=30)).timestamp(),
+                "last_recovery_at": None,
+                "stale_after_sec": 180,
+            }
+        },
+    )
+
+    resp = await client.get("/api/market/collector-health")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["infrastructure_incident"]["code"] == "external_connectivity_unavailable"
+    assert body["infrastructure_incident"]["affected_domains"] == [
+        "microstructure",
+        "coingecko_top",
+    ]
 
 
 @pytest.mark.anyio

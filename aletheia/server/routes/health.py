@@ -252,6 +252,21 @@ def status():
     except Exception:
         boot_commit = None
 
+    try:
+        from aletheia.agent_runtime.connectivity import get_status as connectivity_status
+
+        external_connectivity = connectivity_status().get("external_connectivity")
+    except Exception as e:
+        logger.debug("status connectivity snapshot failed: %s", e)
+        external_connectivity = {
+            "state": "unknown",
+            "severity": "info",
+            "priority": 3,
+            "message": "External connectivity status is unavailable.",
+            "action": "Wait for the next connectivity probe.",
+            "observed_at": None,
+        }
+
     # #6 fix: /api/status is polled by the topbar every 10s. `current_commit()`
     # shells out to `git rev-parse HEAD` which blocks the event loop while the
     # subprocess runs. In a heavy-scheduler moment that ~30ms shell has been
@@ -279,6 +294,7 @@ def status():
         "scheduler_state": sched["state"],
         "scheduler_job_count": sched["job_count"],
         "model_provider": cfg.models.default_provider,
+        "external_connectivity": external_connectivity,
         "health_status": "healthy" if h["healthy"] else "degraded",
         "health_issues": h["issues"],
         "infra_events": list_infra_events(limit=5, min_severity="warning"),

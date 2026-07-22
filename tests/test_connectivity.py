@@ -38,8 +38,131 @@ def _reset_connectivity_state():
     conn_mod._consecutive_failures = 0
     conn_mod._consecutive_successes = 0
     conn_mod._last_probe_result = None
+    conn_mod._last_external_probe_result = None
+    conn_mod._external_outage_started_at = None
+    conn_mod._external_last_recovery_at = None
     conn_mod._active_resume_task = None
     conn_mod._uvicorn_loop = None
+
+
+def test_connectivity_status_retains_outage_and_recovery_transitions(monkeypatch):
+    import aletheia.agent_runtime.connectivity as conn_mod
+    from types import SimpleNamespace
+
+    _reset_connectivity_state()
+    monkeypatch.setattr(
+        "aletheia.config.loader.load_config",
+        lambda: SimpleNamespace(
+            health=SimpleNamespace(exchange_probe_interval_sec=60)
+        ),
+    )
+    clock = iter((1000.0, 1060.0, 1061.0))
+    monkeypatch.setattr(conn_mod.time, "time", lambda: next(clock))
+    monkeypatch.setattr("aletheia.infra.events.emit_infra_event", lambda **_kwargs: None)
+
+    conn_mod._record_external_probe_result({
+        "reachable": False,
+        "latency_ms": None,
+        "error_code": "ConnectTimeout",
+    })
+    conn_mod._record_external_probe_result({
+        "reachable": True,
+        "latency_ms": 20.0,
+        "error_code": None,
+    })
+
+    status = conn_mod.get_status()
+    external = status["external_connectivity"]
+    assert external["outage_started_at"] == 1000.0
+    assert external["last_recovery_at"] == 1060.0
+    assert external["state"] == "recovering"
+    assert external["severity"] == "info"
+    assert external["priority"] == 2
+
+
+@pytest.mark.asyncio
+async def test_exchange_failure_with_working_internet_is_not_global_outage(
+    tmp_path, monkeypatch
+):
+    setup_env(tmp_path, monkeypatch)
+    _reset_connectivity_state()
+
+    from aletheia.config.loader import load_config, save_config
+    import aletheia.agent_runtime.connectivity as conn_mod
+
+    cfg = load_config()
+    cfg.health.exchange_probe_failure_threshold = 5
+    save_config(cfg)
+    monkeypatch.setattr(
+        conn_mod,
+        "probe_exchange",
+        AsyncMock(return_value={
+            "reachable": False,
+            "latency_ms": None,
+            "error": "HTTP 503",
+            "exchange": "bitget",
+        }),
+    )
+    monkeypatch.setattr(
+        conn_mod,
+        "probe_external_network",
+        AsyncMock(return_value={
+            "reachable": True,
+            "latency_ms": 25.0,
+            "error_code": None,
+        }),
+    )
+
+    await conn_mod.run_connectivity_check()
+
+    assert conn_mod.get_status()["external_connectivity"]["state"] == "reachable"
+
+
+def test_external_outage_emits_one_root_cause_warning(monkeypatch):
+    import aletheia.agent_runtime.connectivity as conn_mod
+    from aletheia.infra.events import clear_infra_events, list_infra_events
+
+    _reset_connectivity_state()
+    clear_infra_events()
+    monkeypatch.setattr(conn_mod.time, "time", lambda: 1000.0)
+
+    result = {"reachable": False, "latency_ms": None, "error_code": "ConnectTimeout"}
+    conn_mod._record_external_probe_result(result)
+    conn_mod._record_external_probe_result(result)
+
+    warnings = [
+        event
+        for event in list_infra_events()
+        if event["code"] == "external_connectivity_unavailable"
+    ]
+    assert len(warnings) == 1
+    assert warnings[0]["severity"] == "warning"
+    assert "network" in warnings[0]["action"].lower()
+
+
+def test_external_recovery_emits_informational_transition():
+    import aletheia.agent_runtime.connectivity as conn_mod
+    from aletheia.infra.events import clear_infra_events, list_infra_events
+
+    _reset_connectivity_state()
+    clear_infra_events()
+    conn_mod._record_external_probe_result(
+        {"reachable": False, "latency_ms": None, "error_code": "ConnectTimeout"},
+        observed_at=1000.0,
+    )
+    conn_mod._record_external_probe_result(
+        {"reachable": True, "latency_ms": 20.0, "error_code": None},
+        observed_at=1060.0,
+    )
+
+    recoveries = [
+        event
+        for event in list_infra_events()
+        if event["code"] == "external_connectivity_restored"
+    ]
+    assert len(recoveries) == 1
+    assert recoveries[0]["severity"] == "info"
+    assert "no restart" in recoveries[0]["action"].lower()
 
 
 @pytest.mark.asyncio
