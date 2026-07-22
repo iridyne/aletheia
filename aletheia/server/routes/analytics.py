@@ -1159,6 +1159,10 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
 _VALID_OUTCOMES: frozenset[str] = frozenset({
     "trade", "operator_skip", "operator_watch",
     "user_reject", "auto_reject", "reject_unknown",
+    # #330: portfolio guard blocked after LLM approval (direction_bias_brake, etc.)
+    "portfolio_guard_reject",
+    # #327: operator_conviction_gate deferred (LLM trade intent, conviction < min)
+    "conviction_defer",
 })
 
 
@@ -1175,10 +1179,16 @@ def get_operator_decisions(
     not only pending / accepted proposals but also every kind of rejection that
     happened after a candidate reached the operator:
 
-    - `operator_skip`: pi_decisions.action = 'skip' — the LLM operator saw an
-      executable candidate and decided not to trade (reason in `reasoning`).
+    - `operator_skip`: pi_decisions.action = 'skip' AND the skip was operator-
+      initiated (LLM chose not to trade). Requires no portfolio guard rejection.
+    - `portfolio_guard_reject`: pi_decisions.action = 'skip' BUT a portfolio guard
+      (direction_bias_brake) blocked execution AFTER the LLM approved the trade.
+      Distinguishes guard-blocked from operator-initiated skips (issue #330).
     - `trade`: pi_decisions.action IN ('trade','flip','scale_in') — operator
       chose to trade; a proposal typically follows.
+    - `conviction_defer`: operator_conviction_gate rejected after LLM approved —
+      conviction below minimum threshold; opportunity re-queued for a later
+      evaluation. Sourced from filter_decisions (no pi_decisions row). (issue #327)
     - `user_reject`: trade_proposals.status='rejected' with matching
       audit_events row actor='human', source='dashboard' — a human pressed
       Reject in the dashboard before execution began.
@@ -1252,13 +1262,23 @@ def get_operator_decisions(
     reject_items: list[dict] = []
 
     # pi_decisions — operator trade / skip
+    # guard_blocked: direction_bias_brake rejected AFTER operator_action_assessment
+    # passed (issue #330) — these must be labelled portfolio_guard_reject, not
+    # operator_skip, because the LLM approved the trade and a portfolio guard
+    # overrode it downstream.
     rows = list(db.execute(
         "SELECT id, created_at, symbol, direction, market_type, action, "
         "p.conviction, p.reasoning, p.opportunity_id, p.proposal_id, "
         "p.evidence_manifest_json, p.runtime_session_id, "
         "COALESCE(p.producer_commit, rs.boot_commit) AS producer_commit, "
         "rs.runtime_id AS attributed_runtime_id, "
-        "julianday(created_at) AS sort_instant "
+        "julianday(created_at) AS sort_instant, "
+        "EXISTS("
+        "  SELECT 1 FROM filter_decisions fd"
+        "  WHERE fd.opportunity_id = p.opportunity_id"
+        "  AND fd.filter_name = 'direction_bias_brake'"
+        "  AND fd.decision = 'rejected'"
+        ") AS guard_blocked "
         "FROM pi_decisions p "
         "LEFT JOIN runtime_sessions rs ON rs.session_id=p.runtime_session_id "
         "WHERE p.action IN ('trade','skip','flip','scale_in','watch') "
@@ -1272,7 +1292,7 @@ def get_operator_decisions(
     for r in rows:
         act = str(r["action"] or "")
         if act == "skip":
-            outcome = "operator_skip"
+            outcome = "portfolio_guard_reject" if r["guard_blocked"] else "operator_skip"
         elif act == "watch":
             outcome = "operator_watch"
         else:
@@ -1386,11 +1406,58 @@ def get_operator_decisions(
             )
         )
     ]
-    all_items = pi_items + reject_items
+    # conviction_defer items — operator_conviction_gate rejected after LLM approved
+    # (issue #327). These opportunities never produce a pi_decisions row because
+    # DecisionUnavailable causes a re-queue instead of a terminal claim. Query
+    # filter_decisions directly so the blotter shows them instead of silently
+    # counting them as "reviewed with no reason".
+    conviction_defer_items: list[dict] = []
+    conviction_defer_rows = list(db.execute(
+        "SELECT fd.opportunity_id, fd.symbol, fd.direction, fd.market_type, "
+        "fd.evaluated_at, fd.reason_code, fd.input_snapshot, "
+        "julianday(fd.evaluated_at) AS sort_instant "
+        "FROM filter_decisions fd "
+        "WHERE fd.filter_name = 'operator_conviction_gate' "
+        "AND fd.decision = 'rejected' "
+        "AND julianday(fd.evaluated_at) >= julianday(?) "
+        "AND julianday(fd.evaluated_at) <= julianday(?) "
+        "AND (fd.symbol IS NOT NULL AND fd.symbol != '') "
+        "ORDER BY julianday(fd.evaluated_at) DESC, fd.rowid DESC",
+        (window_start, window_end),
+    ))
+    # Exclude conviction_defer rows for any opportunity that already has a
+    # terminal pi_decisions row (trade, skip, or guard_reject) — the defer
+    # was followed by a later terminal decision and is no longer informative.
+    pi_opportunity_ids = {item["opportunity_id"] for item in pi_items if item.get("opportunity_id")}
+    for r in conviction_defer_rows:
+        if r["opportunity_id"] in pi_opportunity_ids:
+            continue
+        try:
+            inputs = __import__("json").loads(r["input_snapshot"] or "{}")
+        except Exception:
+            inputs = {}
+        conviction_val = inputs.get("conviction")
+        conviction_defer_items.append({
+            "opportunity_id": r["opportunity_id"],
+            "proposal_id": None,
+            "decision_id": None,
+            "symbol": r["symbol"],
+            "direction": r["direction"],
+            "market_type": r["market_type"],
+            "decided_at": r["evaluated_at"],
+            "outcome": "conviction_defer",
+            "action": "defer",
+            "conviction": conviction_val,
+            "one_line_reason": f"Conviction below minimum threshold (reason: {r['reason_code']})",
+            "_sort_instant": float(r["sort_instant"] or 0),
+        })
+
+    all_items = pi_items + reject_items + conviction_defer_items
     all_items.sort(key=lambda x: float(x.get("_sort_instant") or 0), reverse=True)
 
     counts = {"trade": 0, "operator_skip": 0, "operator_watch": 0,
-              "user_reject": 0, "auto_reject": 0, "reject_unknown": 0}
+              "user_reject": 0, "auto_reject": 0, "reject_unknown": 0,
+              "portfolio_guard_reject": 0, "conviction_defer": 0}
     for it in all_items:
         oc = it.get("outcome")
         if oc in counts:
