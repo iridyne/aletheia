@@ -379,12 +379,11 @@ def _no_network_market_data(request, monkeypatch):
         return Ticker(symbol=str(symbol), last_price=50000.0,
                       volume_24h=1_000_000.0, change_pct_24h=1.5)
 
-    async def _noop_close(self):
-        pass
-
     monkeypatch.setattr(CCXTProvider, "get_ohlcv", _empty_ohlcv)
     monkeypatch.setattr(CCXTProvider, "get_ticker", _empty_ticker)
-    monkeypatch.setattr(CCXTProvider, "close", _noop_close)
+    # close() is NOT patched: the fake data methods above create no real CCXT
+    # session, so the real idempotent close() is safe. Patching it to a no-op
+    # (#238) prevented cleanup of any owned session opened by unguarded paths.
 
 
 # ---------------------------------------------------------------------------
