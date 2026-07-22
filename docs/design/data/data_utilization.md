@@ -56,6 +56,7 @@
 | **DefiLlama 链上(稳定币/TVL/DEX)** | DefiLlamaCollector | `onchain_snapshots` | market_observer→macro 链上块→LLM | ✅ |
 | 预测市场 | PolymarketProvider | prediction 表 | 原始 Opportunity observation-only；market_observer 预测块→LLM；派生 divergence 可进入 crypto 决策链，但必须先确定 question polarity | ✅ unknown/negated/mixed polarity fail-closed |
 | 美股/xStocks (ON-series, 15 tokens) | equity_observer | equity 表 | **observation-only（不交易，仅交叉验证/溢价监测）** | 🟡 |
+| xStock 上市状态（责任交易所 active spot market list） | market_data 失败路径经 `get_market_data_provider(native_ccxt=True)` 查询 | 不落行情表；确认缺失时更新 `observed_stock_tokens`/`observed_xstocks` 并写 audit | 仅维护 observation-only xStock 采集范围 | 🟡；单轮每 venue 一次、10s 硬截止；超时/网络失败/空列表均为 indeterminate，保留配置 |
 | **美股 r-series 代币 (113 tokens, Bitget)** | equity_observer (stock token cross-validation) | 不落库，实时抓取作 cross-val | **equity_observer → `_fetch_stock_token_price()` → yfinance 偏差监测 → LLM equity snapshot**；亦注入 Serenity equity_chain lens 上下文 | ✅ |
 | 市场状态 regime | MacroCollector 内联风险标签 + `regime/collector.py`/detector | `macro_snapshots.risk_regime` + `market_regimes` | market_observer / emitter / ranker / System Operator | ✅ Universe regime 使用真实约7天 market-cap baseline 与已完成日K true range；缺历史时 unavailable，不回落24h proxy |
 | OHLCV 历史 | history_downloader | ohlcv | 回测/指标 | ✅ |
@@ -83,6 +84,7 @@
 - **Position X 离线材料（🟡）**：`aletheia.data.position_x` 只读授权样本中的维度说明、结构总结、拟合结果、`analysis_*.json` 的表达样式和 prompt 组织方式；`extract_position_x_material_bundle()` 可一次性把目录中的授权材料提炼成安全 knowledge cards 与结构化快照。原始 prompt、账户、地址、余额、credential、token 不进入运行时卡片、日志或 prompt；拟合文件只保留公式提示、相关性结论和 source hash。
 - **清算 + OI 历史（✅ key-guard 接通）**：CoinGlass 全面 paywall、Glassnode 无免费 tier、Bitget OI 历史死代码已确认（2026-06-30 产品定义）。CCXT 清算死代码（`_fetch_liquidations_ccxt` + `_CCXTLiquidationsUnsupported`）已从 `derivatives.py` 删除（GAP-DU-C02，锁定于 DU-C02）。`CoinalyzeCollector` 已建并接入 `data_collector_context`；有 `coinalyze_api_key` 时写入 `open_interest_snapshots(exchange='coinalyze')` 与 `liquidation_events(exchange='coinalyze')`，无 key 时返回 `errors=["no_key"]` 并诚实跳过。持久化路径锁定于 DU-T01。
 - **美股/xStocks（🟡）**：owner 明确 observation-only（不交易），符合 R1 的"显式标注"分支，非违反。
+- **xStock 上市状态（🟡）**：只在 ticker 失败后查询责任交易所 active spot market list；结果只维护 observation-only 采集配置，不进入排序、风控或执行。查询按 venue 单轮复用并有硬截止，任何不确定结果都保留用户配置。锁定于 DU-S23。
 - **Learning Contribution Observability（🟠）**：这里登记的是已有内部事实的缺失展示消费者，
   不是 collected-but-unused 外部数据源。A1 evaluator/lifecycle 已消费这些表；缺口是把同一事实
   通过有界、只读、诚实的 `lco-v1` 投影提供给 owner。不得为填页面新增采集、复制表或把 activity
@@ -101,6 +103,7 @@
 | DU-S14 | L2a | `Position X` 离线解析器存在，能通过目录式 bundle 提取安全 knowledge cards / 结构快照；market_observer 与 System Operator 只消费压缩后的 advisory 结构证据 |
 | DU-S21 | L2c | Hyperliquid OI 按 source + freshness 读取并与 funding 一起渲染，System Operator manifest 保存实际 row ids |
 | DU-S22 | L2c | owner aggregate import 保存 source ref/hash + audit，建立 1h/4h/24h shadow outcomes；14 天前及无数据时均不影响决策 |
+| DU-S23 | L2a | xStock 上市状态源在 §3 登记；实现经 provider factory 精确查询责任 venue，单轮复用、有硬截止、不确定时保留配置，确认缺失的配置变更写 system audit |
 | DU-B01 | L2b | 给定 HL+主所 annualized funding，render 产出"Cross-venue funding"段、divergence 以 pp 计、含 predicted |
 | DU-B02 | L2b | 某 symbol 无 HL 数据时，跨venue段整体省略（不漏空行噪音，遵 R3） |
 | DU-C01 | L2a | `CoinalyzeCollector` 存在，有 `collect()` 方法和 `domain` 属性（Coinalyze 清算+OI 采集入口） |

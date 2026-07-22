@@ -7,9 +7,12 @@ provider from a previous loop raises "Event loop is closed" on the next fetch. E
 caller therefore constructs a provider, uses it, and ``await``s ``close()`` in a finally.
 
 Primary/fallback: each fetch tries the primary exchange, and on failure retries once on
-the configured fallback. Documented direct-construction sites (routing through the
-factory would either be wrong or lack the CCXT-native surface they need — 2026-07-07
-audit, #49):
+the configured fallback. Venue-pinned xStock listing checks still enter through
+``get_market_data_provider(native_ccxt=True, fallback_exchange=exchange)`` so they keep
+the managed session and malformed-market guard without substituting another venue.
+
+Documented direct-construction sites (routing through the factory would either be wrong
+or lack the CCXT-native surface they need - 2026-07-07 audit, #49):
 
 - xStocks (ON-series): builds ``CCXTProvider(exchange="bitget", fallback_exchange="bitget")``
   because only Bitget lists those tokens and the config fallback (bybit) would not find them.
@@ -287,8 +290,9 @@ def get_market_data_provider(
 ):
     """Construct a FRESH market-data provider (never cached — see module docstring).
 
-    Primary defaults to ``market_data.ccxt_exchange`` (overridable via ``exchange``);
-    the fallback ALWAYS comes from ``market_data.ccxt_fallback``, never the override.
+    Primary defaults to ``market_data.ccxt_exchange`` (overridable via ``exchange``).
+    Fallback defaults to ``market_data.ccxt_fallback`` and can be explicitly pinned via
+    ``fallback_exchange`` for venue-specific sources such as xStocks.
 
     When ``enable_crypto_fallback`` is True (default), returns a FallbackChainProvider
     wrapping [CCXTProvider, CoinGeckoProvider, BinancePublicProvider]. Callers that
