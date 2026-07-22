@@ -613,14 +613,15 @@ def latest_pi_decision(symbol: str, max_age_minutes: int = 30) -> dict | None:
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
     db = get_db()
     row = db.execute(
-        "SELECT * FROM pi_decisions WHERE symbol = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 1",
+        "SELECT * FROM pi_decisions WHERE symbol = ? AND created_at >= ?"
+        " ORDER BY created_at DESC, rowid DESC LIMIT 1",
         (symbol, cutoff),
     ).fetchone()
     return dict(row) if row else None
 
 
 def list_pi_decisions(limit: int = 20) -> list[dict]:
-    return _select_all("pi_decisions", order="created_at DESC", limit=limit)
+    return _select_all("pi_decisions", order="created_at DESC, rowid DESC", limit=limit)
 
 
 def get_pi_decision_for_proposal(proposal_id: str) -> dict | None:
