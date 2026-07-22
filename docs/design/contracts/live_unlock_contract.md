@@ -66,13 +66,17 @@ append-only(`jsonl.py` 不删,rotate 改名 `.1`)。完整审计字段见 [trust
 ## 4a. Core Philosophy：Demo 表现是 Live 的唯一入场券
 
 **不变式（D8-C01）**：`POST /api/settings/live-unlock` 在将状态迁移至 `live_limited` 之前，
-**必须**调用 `compute_scorecard()`，且 `composite_score >= 70` 方可放行。
+**必须**调用 `compute_scorecard()`，且仅在 `composite_score >= 70`、`traffic_light == "green"`、
+`blockers` 为空时方可放行。评分卡必须把合格交易的净已实现收益作为独立硬门：已有合格交易但
+净收益 `<= 0` 时强制红灯并产生 blocker，不得由其他加权维度抵消。
 任何绕过此 scorecard 检查的路径均违反本约。
 
 **依据**：产品定义 §8（失败与撤退）。demo 阶段是 live 的前置证明期；
 没有量化证据支撑的 live 解锁等同于盲目冒险。
 
-**当前实现状态（2026-07-07 更新）**：`server/routes/live.py:30-41` 已经实现 —— 在状态迁移前调用 `compute_scorecard()`，`composite_score < 70` 直接返回 422 并附上分项，D8-B02 / D8-C01 tripwire 已通过（不再 xfail）。#31 修订：把旧的「尚未实现 / xfail」描述纠正为「已实现且被 spec 锁定」，反映现状。
+**当前实现状态（2026-07-21 更新）**：`server/routes/live.py` 在状态迁移前调用
+`compute_scorecard()`；低于 70 分、非绿灯或存在 blocker 均返回 403 并附上分项。
+D8-B02 / D8-C01 及负净收益回归 spec 锁定该门禁。
 
 > 关联契约：[kill_conditions_contract.md § K3](kill_conditions_contract.md)
 

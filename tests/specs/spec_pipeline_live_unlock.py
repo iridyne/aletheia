@@ -317,3 +317,48 @@ def test_scorecard_gate_blocks_unlock_when_low(tmp_path, monkeypatch):
     assert detail.get("traffic_light") == "red", (
         f"traffic_light should be red when score < 50, got {detail.get('traffic_light')}"
     )
+
+
+@pytest.mark.parametrize(
+    ("traffic_light", "blockers", "expected_reason"),
+    [
+        ("red", [], "traffic_light=red is not green"),
+        (
+            "green",
+            ["Eligible net realized PnL -2.00 USDT must be > 0"],
+            "1 readiness blocker(s) remain",
+        ),
+    ],
+)
+def test_scorecard_gate_blocks_high_score_without_clear_green_readiness(
+    tmp_path,
+    monkeypatch,
+    traffic_light,
+    blockers,
+    expected_reason,
+):
+    _setup_config(tmp_path, monkeypatch, state="live_disabled", first_done=True)
+    monkeypatch.setattr(
+        "aletheia.analytics.go_live_scorecard.compute_scorecard",
+        lambda: {
+            "composite_score": 91.2,
+            "traffic_light": traffic_light,
+            "blockers": blockers,
+        },
+    )
+
+    from fastapi.testclient import TestClient
+    from aletheia.config.loader import load_config
+
+    client = TestClient(_make_live_app(), raise_server_exceptions=False)
+    resp = client.post(
+        "/api/settings/live-unlock",
+        json={"confirm": True, "acknowledge_first_unlock": True},
+    )
+
+    assert resp.status_code == 403
+    detail = resp.json()["detail"]
+    assert detail["error"] == "scorecard_gate_failed"
+    assert expected_reason in detail["message"]
+    assert "91.2 < 70" not in detail["message"]
+    assert load_config().live.state == "live_disabled"
