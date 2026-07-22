@@ -2014,6 +2014,7 @@ def test_per_symbol_cumulative_notional_cap():
     over = TradeProposal(
         symbol="SOL/USDT", market_type="usdt_futures", direction="long",
         execution_mode="okx_demo", quantity=(cap * 0.5) / 100.0, price=100.0,
+        leverage=1,
     )
     repo.insert_trade_proposal(over)
     res_over = eng.evaluate_proposal(over)
@@ -2023,6 +2024,7 @@ def test_per_symbol_cumulative_notional_cap():
     under = TradeProposal(
         symbol="SOL/USDT", market_type="usdt_futures", direction="long",
         execution_mode="okx_demo", quantity=(cap * 0.05) / 100.0, price=100.0,
+        leverage=1,
     )
     repo.insert_trade_proposal(under)
     res_under = eng.evaluate_proposal(under)
@@ -2055,7 +2057,7 @@ def test_same_symbol_duplicate_position_rejected():
     # New proposal for same symbol on a different demo broker → must be rejected.
     dup = TradeProposal(
         symbol="ETH/USDT", market_type="usdt_futures", direction="short",
-        execution_mode="okx_demo", quantity=0.05, price=1570.0,
+        execution_mode="okx_demo", quantity=0.05, price=1570.0, leverage=1,
     )
     repo.insert_trade_proposal(dup)
     res = eng.evaluate_proposal(dup)
@@ -2066,7 +2068,7 @@ def test_same_symbol_duplicate_position_rejected():
     # Proposal for a different symbol on same broker → must NOT trigger this violation.
     other = TradeProposal(
         symbol="BTC/USDT", market_type="usdt_futures", direction="short",
-        execution_mode="okx_demo", quantity=0.001, price=60000.0,
+        execution_mode="okx_demo", quantity=0.001, price=60000.0, leverage=1,
     )
     repo.insert_trade_proposal(other)
     res_other = eng.evaluate_proposal(other)
@@ -2345,7 +2347,8 @@ def test_d2_b01_market_disabled_behavior(tmp_path, monkeypatch):
     cfg3.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
     monkeypatch.setattr(eng, "load_config", lambda: cfg3)
     p3 = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
-                       execution_mode="paper_internal", quantity=0.001, price=60000)
+                       execution_mode="paper_internal", quantity=0.001, price=60000,
+                       leverage=1)
     repo.insert_trade_proposal(p3)
     r3 = evaluate_proposal(p3)
     assert any("futures_market_disabled" in v for v in r3.violations), (
@@ -2357,7 +2360,8 @@ def test_d2_b01_market_disabled_behavior(tmp_path, monkeypatch):
     cfg4.exchange.enabled_markets = {"spot": True, "usdt_futures": True}
     monkeypatch.setattr(eng, "load_config", lambda: cfg4)
     p4 = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
-                       execution_mode="paper_internal", quantity=0.001, price=60000)
+                       execution_mode="paper_internal", quantity=0.001, price=60000,
+                       leverage=1)
     repo.insert_trade_proposal(p4)
     r4 = evaluate_proposal(p4)
     assert not any("futures_market_disabled" in v for v in r4.violations), (

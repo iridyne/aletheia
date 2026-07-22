@@ -47,6 +47,63 @@ def local_paper_futures_config(e2e_db):
 
 
 class TestFuturesLeverageAcceptance:
+    def test_native_paper_futures_missing_leverage_fails_before_order(
+        self, local_paper_futures_config, monkeypatch,
+    ):
+        from aletheia.execution.gateway import submit_proposal
+
+        monkeypatch.setattr(
+            "aletheia.execution.paper_broker._btc_price_now", lambda: 60_000.0,
+        )
+        monkeypatch.setattr(
+            "aletheia.notifications.notify_trade_fill", lambda **_kwargs: None,
+        )
+
+        opportunity = Opportunity(
+            symbol="BTC/USDT",
+            market="usdt_futures",
+            direction_bias="long",
+            confidence="high",
+            confidence_score=82,
+            source_agent="market_observer",
+            scanner_family="momentum",
+            funding_rate=0.0001,
+            open_interest=1.0e9,
+            oi_delta_1h=2.5,
+        )
+        repo.insert_opportunity(opportunity)
+        strategy = StrategyRecord(name="fut-missing-leverage", state="paper_running")
+        repo.insert_strategy(strategy)
+        _seed_fresh_schedule(opportunity.symbol)
+        repo.insert_market_snapshot(MarketSnapshot(
+            id="futures-missing-leverage-mark",
+            symbol=opportunity.symbol,
+            market_type="perp",
+            exchange=local_paper_futures_config.market_data.ccxt_exchange,
+            price=60_000.0,
+            snapshot_at=datetime.now(timezone.utc).isoformat(),
+        ))
+
+        result = submit_proposal(
+            symbol=opportunity.symbol,
+            market_type="usdt_futures",
+            direction="long",
+            quantity=0.001,
+            price=60_000.0,
+            leverage=None,
+            stop_price=58_000.0,
+            take_profit=64_000.0,
+            risk_reward=2.0,
+            execution_mode="paper_internal",
+            strategy_id=strategy.id,
+            opportunity_id=opportunity.id,
+        )
+
+        assert result["status"] == "rejected"
+        assert "invalid_leverage" in result["risk_violations"]
+        assert repo.list_orders(limit=10) == []
+        assert repo.list_all_open_positions() == []
+
     def test_paper_futures_round_trip_has_simulated_funding_and_eligible_outcome(
         self, local_paper_futures_config, monkeypatch,
     ):
