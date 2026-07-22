@@ -581,3 +581,76 @@ async def test_divergence_evidence_failure_cannot_report_success(tmp_path, monke
     assert repo.list_opportunities(limit=10) == [], (
         "Opportunity creation and its terminal producer evidence must be atomic"
     )
+
+
+@pytest.mark.asyncio
+async def test_provider_closed_on_success(tmp_path, monkeypatch):
+    """#255: the per-call provider must be closed exactly once on success."""
+    _setup_db(tmp_path, monkeypatch)
+
+    now = datetime.now(timezone.utc).isoformat()
+    from aletheia.storage.repositories import _insert
+    _insert("prediction_markets", {
+        "id": "pm_close_test",
+        "event_id": "ev_close",
+        "source": "polymarket",
+        "external_market_id": "ext_close",
+        "question": "Will Bitcoin exceed $200k?",
+        "yes_probability": 0.72,
+        "no_probability": 0.28,
+        "probability_change_24h": 0.15,
+        "volume_24h": 120000.0,
+        "liquidity": 80000.0,
+        "status": "active",
+        "updated_at": now,
+    })
+    from aletheia.data.providers import Ticker
+    mock_provider = AsyncMock()
+    mock_provider.get_ticker = AsyncMock(return_value=Ticker(
+        symbol="BTC/USDT",
+        last_price=95000.0,
+        volume_24h=5_000_000_000.0,
+        change_pct_24h=0.5,
+    ))
+
+    with patch(
+        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        return_value=mock_provider,
+    ):
+        await run_divergence_scanner(permission_mode="Paper")
+
+    mock_provider.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_provider_closed_on_candidate_rejection(tmp_path, monkeypatch):
+    """#255: the per-call provider must be closed even when all candidates are rejected."""
+    _setup_db(tmp_path, monkeypatch)
+
+    now = datetime.now(timezone.utc).isoformat()
+    from aletheia.storage.repositories import _insert
+    _insert("prediction_markets", {
+        "id": "pm_close_reject",
+        "event_id": "ev_close_reject",
+        "source": "polymarket",
+        "external_market_id": "ext_close_reject",
+        "question": "Will Bitcoin be legal tender in another country?",
+        "yes_probability": 0.60,
+        "no_probability": 0.40,
+        "probability_change_24h": 0.20,
+        "volume_24h": 100000.0,
+        "liquidity": 70000.0,
+        "status": "active",
+        "updated_at": now,
+    })
+    mock_provider = AsyncMock()
+
+    with patch(
+        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        return_value=mock_provider,
+    ):
+        result = await run_divergence_scanner(permission_mode="Paper")
+
+    # Candidate rejected (ambiguous polarity) — provider still closed
+    assert "skip:BTC/USDT:prediction_polarity_ambiguous" in result["outputs"]
+    mock_provider.close.assert_awaited_once()
