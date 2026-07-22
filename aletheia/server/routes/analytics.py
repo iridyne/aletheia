@@ -1186,6 +1186,9 @@ def get_operator_decisions(
       execution before a proposal could be created (#330).
     - `trade`: pi_decisions.action IN ('trade','flip','scale_in') — operator
       chose to trade; a proposal typically follows.
+    - `conviction_defer`: operator_conviction_gate rejected after LLM approved —
+      conviction below minimum threshold; opportunity re-queued for a later
+      evaluation. Sourced from filter_decisions (no pi_decisions row). (issue #327)
     - `user_reject`: trade_proposals.status='rejected' with matching
       audit_events row actor='human', source='dashboard' — a human pressed
       Reject in the dashboard before execution began.
