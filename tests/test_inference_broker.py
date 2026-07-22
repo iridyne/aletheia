@@ -219,7 +219,7 @@ async def test_rpm_waits_and_tpm_rejects_impossible_request():
         assert elapsed >= 0.045
         metrics = (await broker.snapshot())["providers"]["provider-a"]["metrics"]
         assert metrics["rate_wait_count"] == 1
-        assert 0 < metrics["rate_wait_total_ms"] <= elapsed * 1000
+        assert 0 < metrics["rate_wait_total_ms"] <= round(elapsed * 1000, 3)
     finally:
         await broker.aclose()
 
