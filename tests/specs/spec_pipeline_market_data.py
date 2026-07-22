@@ -300,17 +300,16 @@ def test_xstock_consecutive_failures_trigger_infra_event(tmp_path, monkeypatch):
     SpecClaim(
         "PL-MD-08", "pipeline_market_data", "§4 xstock_auto_remove", "L2b",
         "When xStock fetch fails and live market-list check confirms symbol absent "
-        "on the responsible exchange, remove from config immediately on first failure",
+        "on the responsible exchange, remove it from current and legacy config fields, "
+        "audit the mutation, and reuse one venue listing per collection cycle",
         status="implemented",
     ),
 )
 def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monkeypatch):
-    """Verify that a confirmed-absent result from _check_symbol_listed_on_exchange removes
-    the symbol from config on the very first fetch failure — no threshold needed.
+    """Confirmed absence clears both config fields and records the system mutation.
 
     The check uses the exchange responsible for this specific token (instrument.exchange),
-    not a substitute venue. This test mocks _check_symbol_listed_on_exchange directly to
-    return False (confirmed absent) so no real network call is made.
+    not a substitute venue. Two failures on that venue still load its listing only once.
     """
     import asyncio
     import aletheia.trading.market_data as md_mod
@@ -325,7 +324,8 @@ def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monke
     cfg = AletheiaConfig()
     cfg.market_data = MarketDataConfig(
         observed_symbols=[],
-        observed_stock_tokens=["AAPLON/USDT"],
+        observed_stock_tokens=["AAPLON/USDT", "TSLAON/USDT"],
+        observed_xstocks=["AAPLON/USDT", "TSLAON/USDT"],
         ccxt_exchange="binance",
     )
 
@@ -335,6 +335,10 @@ def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monke
     saved_configs: list = []
     monkeypatch.setattr(loader_mod, "save_config", lambda c: saved_configs.append(c))
 
+    import aletheia.files.jsonl as jsonl_mod
+    audit_events: list[dict] = []
+    monkeypatch.setattr(jsonl_mod, "write_audit", lambda event: audit_events.append(event))
+
     try:
         import aletheia.infra.events as events_mod
         monkeypatch.setattr(events_mod, "emit_infra_event", lambda **kwargs: None)
@@ -343,14 +347,16 @@ def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monke
 
     monkeypatch.setattr(md_mod, "_build_dynamic_instruments", lambda cfg: [])
 
-    # Exchange check: confirmed absent on the responsible exchange (bitget for AAPLON/USDT)
-    async def _not_listed(sym, exchange_name):
+    listing_calls: list[str] = []
+
+    async def _no_listed_symbols(exchange_name):
+        listing_calls.append(exchange_name)
         assert exchange_name == "bitget", (
             f"Must query the responsible exchange (bitget), got '{exchange_name}'"
         )
-        return False
+        return frozenset()
 
-    monkeypatch.setattr(md_mod, "_check_symbol_listed_on_exchange", _not_listed)
+    monkeypatch.setattr(md_mod, "_listed_symbols_on_exchange", _no_listed_symbols)
 
     class _FailingProvider:
         async def get_ticker(self, instrument):
@@ -362,33 +368,36 @@ def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monke
     monkeypatch.setattr(ccxt_mod, "CCXTProvider", lambda **kwargs: _FailingProvider())
     monkeypatch.setattr(ccxt_mod, "get_market_data_provider", lambda: _FailingProvider())
 
-    # Single run — removal must happen immediately, not after a threshold
     asyncio.run(md_mod.collect_market_snapshots())
 
     assert saved_configs, (
-        "save_config was not called after the first failure + confirmed-absent check. "
-        "Auto-removal must be immediate once the exchange confirms the symbol is gone."
+        "save_config was not called after confirmed-absent listing verification"
     )
     from aletheia.data.symbols import to_canonical
-    tokens = list(saved_configs[-1].market_data.observed_stock_tokens or [])
-    assert not any(to_canonical(t) == "AAPLON/USDT" for t in tokens), (
-        f"AAPLON/USDT still in observed_stock_tokens after confirmed-absent removal: {tokens}."
-    )
+    removed = {"AAPLON/USDT", "TSLAON/USDT"}
+    for field in ("observed_stock_tokens", "observed_xstocks"):
+        tokens = list(getattr(saved_configs[-1].market_data, field) or [])
+        assert not removed.intersection({to_canonical(t) for t in tokens}), (
+            f"confirmed-absent tokens remain in {field}: {tokens}"
+        )
+    assert listing_calls == ["bitget"]
+    assert {event["entity_id"] for event in audit_events} == removed
+    assert all(event["actor"] == "system" for event in audit_events)
+    assert all(event["source"] == "market_data" for event in audit_events)
+    assert all(event["before"] != event["after"] for event in audit_events)
 
 
 @spec_claim(
     SpecClaim(
         "PL-MD-08b", "pipeline_market_data", "§4 xstock_auto_remove_safe_default", "L2b",
-        "When the exchange listing check itself fails (network error), "
-        "the symbol must NOT be removed — safe default is 'assume listed'",
+        "When the exchange listing check is indeterminate, the symbol must NOT be removed",
         status="implemented",
     ),
 )
 def test_xstock_listing_check_failure_does_not_remove(tmp_path, monkeypatch):
-    """Verify that a failed exchange listing check (returns True = assume listed) prevents removal.
+    """An indeterminate listing check preserves configured intent.
 
-    A transient network error during _check_symbol_listed_on_exchange must never
-    trigger auto-removal — the safe default is to assume the symbol is still listed.
+    A transient network error must never trigger auto-removal.
     """
     import asyncio
     import aletheia.trading.market_data as md_mod
@@ -415,11 +424,10 @@ def test_xstock_listing_check_failure_does_not_remove(tmp_path, monkeypatch):
 
     monkeypatch.setattr(md_mod, "_build_dynamic_instruments", lambda cfg: [])
 
-    # Exchange check: returns True (assume listed) — simulates a network error / can't verify
-    async def _assume_listed(sym, exchange_name):
-        return True
+    async def _indeterminate(exchange_name):
+        return None
 
-    monkeypatch.setattr(md_mod, "_check_symbol_listed_on_exchange", _assume_listed)
+    monkeypatch.setattr(md_mod, "_listed_symbols_on_exchange", _indeterminate)
 
     class _FailingProvider:
         async def get_ticker(self, instrument):
@@ -434,9 +442,72 @@ def test_xstock_listing_check_failure_does_not_remove(tmp_path, monkeypatch):
     asyncio.run(md_mod.collect_market_snapshots())
 
     assert not saved_configs, (
-        "save_config was called despite the listing check returning 'assume listed'. "
+        "save_config was called despite an indeterminate listing check. "
         "A transient outage must never trigger config auto-removal."
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-MD-08c", "pipeline_market_data", "§4 xstock_listing_deadline", "L2b",
+        "A cancellation-resistant exchange listing call returns indeterminate at the "
+        "hard deadline and still closes its provider eventually",
+        status="implemented",
+    ),
+)
+async def test_xstock_listing_check_has_hard_deadline_and_eventual_cleanup(monkeypatch):
+    import asyncio
+    import time
+
+    import aletheia.data.ccxt_provider as ccxt_mod
+    import aletheia.trading.market_data as md_mod
+
+    cancellation_seen = asyncio.Event()
+    cleanup_seen = asyncio.Event()
+    factory_calls: list[dict] = []
+
+    class _CancellationResistantExchange:
+        def __init__(self):
+            self.options = {}
+
+        async def load_markets(self):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancellation_seen.set()
+                await asyncio.sleep(0.15)
+                return {"AAPLON/USDT": {"spot": True, "active": True}}
+
+    class _Provider:
+        def __init__(self):
+            self.exchange = _CancellationResistantExchange()
+
+        def _ensure_primary(self):
+            return self.exchange
+
+        async def close(self):
+            cleanup_seen.set()
+
+    def _provider_factory(**kwargs):
+        factory_calls.append(kwargs)
+        return _Provider()
+
+    monkeypatch.setattr(ccxt_mod, "get_market_data_provider", _provider_factory)
+    monkeypatch.setattr(md_mod, "_XSTOCK_LISTING_TIMEOUT_SEC", 0.01)
+
+    started = time.monotonic()
+    listed = await md_mod._listed_symbols_on_exchange("bitget")
+    elapsed = time.monotonic() - started
+
+    assert listed is None
+    assert elapsed < 0.1, f"listing deadline drained cancellation for {elapsed:.3f}s"
+    assert factory_calls == [{
+        "exchange": "bitget",
+        "native_ccxt": True,
+        "fallback_exchange": "bitget",
+    }]
+    await asyncio.wait_for(cancellation_seen.wait(), timeout=0.1)
+    await asyncio.wait_for(cleanup_seen.wait(), timeout=1.0)
 
 
 # ---------------------------------------------------------------------------
