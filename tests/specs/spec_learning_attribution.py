@@ -221,6 +221,130 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     assert result["promotions"] == 0
 
 
+def test_guard_shadow_block_scanner_scope_includes_symbol_from_factor_keys(monkeypatch):
+    """block_scanner shadow derives symbol from evidence factor_keys — not globally scoped."""
+    from aletheia.learning import guard_routing
+
+    captured = {}
+
+    def fake_create(*, title, content, metadata):
+        captured.update(metadata)
+        return SimpleNamespace(id="g-1")
+
+    monkeypatch.setattr(guard_routing, "create_guard_candidate", fake_create)
+    routed = guard_routing.route_automatic_block_recommendation(
+        {"action": "block_scanner", "scanner": "momentum"},
+        evidence={
+            "factor_keys": ["momentum:BTC/USDT:long:high:late", "momentum:ETH/USDT:short:high:late"],
+            "scanner_families": ["momentum"],
+        },
+        source_id="src-1",
+    )
+
+    assert routed["action"] == "guard_shadow_candidate"
+    at = captured["applies_to"]
+    assert at["scanner_family"] == ["momentum"]
+    assert "BTC/USDT" in at["symbol"]
+    assert "ETH/USDT" in at["symbol"]
+    assert "asset_class" in at
+
+
+def test_guard_shadow_block_symbol_scope_includes_scanner_from_factor_keys(monkeypatch):
+    """block_symbol shadow derives scanner_family from evidence factor_keys."""
+    from aletheia.learning import guard_routing
+
+    captured = {}
+
+    def fake_create(*, title, content, metadata):
+        captured.update(metadata)
+        return SimpleNamespace(id="g-2")
+
+    monkeypatch.setattr(guard_routing, "create_guard_candidate", fake_create)
+    routed = guard_routing.route_automatic_block_recommendation(
+        {"action": "block_symbol", "symbol": "BTC/USDT"},
+        evidence={
+            "factor_keys": ["momentum:BTC/USDT:long:high:late"],
+            "scanner_families": ["momentum"],
+        },
+        source_id="src-2",
+    )
+
+    assert routed["action"] == "guard_shadow_candidate"
+    at = captured["applies_to"]
+    assert at["symbol"] == ["BTC/USDT"]
+    assert at["scanner_family"] == ["momentum"]
+
+
+def test_guard_shadow_block_direction_scope_from_factor_keys(monkeypatch):
+    """block_direction shadow derives both symbol and scanner_family from factor_keys."""
+    from aletheia.learning import guard_routing
+
+    captured = {}
+
+    def fake_create(*, title, content, metadata):
+        captured.update(metadata)
+        return SimpleNamespace(id="g-3")
+
+    monkeypatch.setattr(guard_routing, "create_guard_candidate", fake_create)
+    routed = guard_routing.route_automatic_block_recommendation(
+        {"action": "block_direction", "direction": "long"},
+        evidence={
+            "factor_keys": ["momentum:BTC/USDT:long:high:late"],
+            "scanner_families": ["momentum"],
+        },
+        source_id="src-3",
+    )
+
+    assert routed["action"] == "guard_shadow_candidate"
+    at = captured["applies_to"]
+    assert at["direction"] == ["long"]
+    assert at["symbol"] == ["BTC/USDT"]
+    assert at["scanner_family"] == ["momentum"]
+
+
+def test_guard_shadow_block_direction_fails_closed_on_empty_evidence():
+    """block_direction with no factor_keys must fail closed rather than produce a global guard."""
+    from aletheia.learning import guard_routing
+
+    routed = guard_routing.route_automatic_block_recommendation(
+        {"action": "block_direction", "direction": "long"},
+        evidence={},
+        source_id="src-4",
+    )
+
+    assert routed is not None
+    assert routed["action"] == "guard_shadow_unavailable"
+    assert routed["reason"] == "invalid_block_scope"
+
+
+def test_guard_shadow_scope_included_in_identity_hash(monkeypatch):
+    """Different derived scopes must produce different guard_ids even for the same action+value."""
+    from aletheia.learning import guard_routing
+
+    ids = []
+
+    def fake_create(*, title, content, metadata):
+        ids.append(metadata["guard_id"])
+        return SimpleNamespace(id="g-x")
+
+    monkeypatch.setattr(guard_routing, "create_guard_candidate", fake_create)
+
+    # Same scanner, different symbols → different scope → different guard_id
+    guard_routing.route_automatic_block_recommendation(
+        {"action": "block_scanner", "scanner": "momentum"},
+        evidence={"factor_keys": ["momentum:BTC/USDT:long:high:late"]},
+        source_id="src-5",
+    )
+    guard_routing.route_automatic_block_recommendation(
+        {"action": "block_scanner", "scanner": "momentum"},
+        evidence={"factor_keys": ["momentum:ETH/USDT:long:high:late"]},
+        source_id="src-5",
+    )
+
+    assert len(ids) == 2
+    assert ids[0] != ids[1]
+
+
 @spec_claim(SpecClaim(
     "LE-C14", "learning_evolution", "§10 disabled consumer baseline", "L2c",
     "autonomous_learning=false removes the complete Operator Learning bundle while retaining "

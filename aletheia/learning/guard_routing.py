@@ -20,8 +20,11 @@ def route_automatic_block_recommendation(
     field, value = _predicate(action, recommendation)
     if not field or not value:
         return {"action": "guard_shadow_unavailable", "reason": "invalid_block_scope"}
+    scope = _scope(field, value, evidence)
+    if scope is None:
+        return {"action": "guard_shadow_unavailable", "reason": "invalid_block_scope"}
     identity = json.dumps(
-        {"action": action, "field": field, "value": value, "source_id": source_id},
+        {"action": action, "applies_to": scope, "field": field, "value": value, "source_id": source_id},
         sort_keys=True,
     )
     guard_id = f"auto_shadow_{hashlib.sha256(identity.encode()).hexdigest()[:16]}"
@@ -33,7 +36,7 @@ def route_automatic_block_recommendation(
         "shadow_only": True,
         "source_type": "automatic_lesson_recommendation", "source_id": source_id,
         "predicates": [{"field": field, "op": "eq", "value": value}],
-        "applies_to": {"asset_class": ["crypto"]}, "evidence_summary": evidence,
+        "applies_to": scope, "evidence_summary": evidence,
         "tags": ["auto-generated", "shadow-only", action],
     }
     try:
@@ -62,3 +65,58 @@ def _predicate(action: str, recommendation: dict) -> tuple[str | None, str | Non
     if action == "block_symbol":
         return "symbol", recommendation.get("symbol")
     return None, None
+
+
+def _scope(field: str, value: str, evidence: dict) -> dict | None:
+    """Derive applies_to scope from the primary predicate + evidence factor_keys.
+
+    Returns None if minimum scope cannot be derived (requires at least symbol
+    or scanner_family to avoid a globally-scoped guard shadow).
+    """
+    factor_keys = evidence.get("factor_keys") or []
+    scanner_families = evidence.get("scanner_families") or []
+
+    scope: dict = {"asset_class": ["crypto"], field: [value]}
+
+    if field == "scanner_family":
+        # block_scanner: derive unique symbols from factor_keys for this scanner
+        symbols = list(dict.fromkeys(
+            fk.split(":")[1]
+            for fk in factor_keys
+            if fk.split(":")[0] == value
+            and len(fk.split(":")) >= 2
+            and fk.split(":")[1] != "unknown"
+        ))
+        if symbols:
+            scope["symbol"] = symbols
+
+    elif field == "symbol":
+        # block_symbol: derive scanner families from factor_keys for this symbol
+        scanners = list(dict.fromkeys(
+            fk.split(":")[0]
+            for fk in factor_keys
+            if len(fk.split(":")) >= 2
+            and fk.split(":")[1] == value
+            and fk.split(":")[0] != "unknown"
+        ))
+        if not scanners:
+            scanners = [s for s in scanner_families if s and s != "unknown"]
+        if scanners:
+            scope["scanner_family"] = scanners
+
+    elif field == "direction":
+        # block_direction: derive both symbols and scanners from matching factor_keys
+        matching = [fk for fk in factor_keys if len(fk.split(":")) >= 3 and fk.split(":")[2] == value]
+        symbols = list(dict.fromkeys(fk.split(":")[1] for fk in matching if fk.split(":")[1] != "unknown"))
+        scanners = list(dict.fromkeys(fk.split(":")[0] for fk in matching if fk.split(":")[0] != "unknown"))
+        if symbols:
+            scope["symbol"] = symbols
+        if scanners:
+            scope["scanner_family"] = scanners
+
+    # Fail closed: at least one of symbol or scanner_family must be present to
+    # avoid creating a guard that matches any asset in the crypto class.
+    if "symbol" not in scope and "scanner_family" not in scope:
+        return None
+
+    return scope
