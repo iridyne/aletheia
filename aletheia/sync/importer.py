@@ -82,10 +82,17 @@ class ImportService:
                 return result
             bundle_dir = subdirs[0]
 
-            # Verify checksums
+            # checksums.txt is mandatory — an import without it cannot be trusted.
             checksums_file = bundle_dir / "checksums.txt"
-            if checksums_file.exists():
-                self._verify_checksums(bundle_dir, checksums_file, result)
+            if not checksums_file.exists():
+                result.errors.append("checksums.txt missing — bundle integrity cannot be verified")
+                return result
+
+            self._verify_checksums(bundle_dir, checksums_file, result)
+
+            # Fail-closed: any verification error aborts before touching state.
+            if result.errors:
+                return result
 
             # Import DB tables
             db_dir = bundle_dir / "db"
@@ -104,21 +111,41 @@ class ImportService:
         return result
 
     def _verify_checksums(self, bundle_dir: Path, checksums_file: Path, result: ImportResult) -> None:
-        """Verify all files against checksums.txt.
+        """Strict manifest verification (#271).
 
-        #63 fix: a file listed in the manifest but MISSING on disk used to be
-        silently skipped (the `if file_path.exists()` branch just fell through
-        with no `result.errors` append). Now the missing case is an explicit
-        error — a bundle can't be safely imported when the manifest lists files
-        that were never delivered.
+        - Rejects malformed lines, non-hex hashes, and unsafe paths.
+        - Rejects duplicate paths within the manifest.
+        - Errors if any listed file is missing or its SHA-256 does not match.
+        - Errors if any file under db/ or artifacts/ is not in the manifest
+          (manifest.yaml is exempt — the exporter writes it after checksums).
         """
-        for line in checksums_file.read_text(encoding="utf-8").splitlines():
+        import re
+
+        _HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+        declared: dict[str, str] = {}  # rel_path → expected_hash
+
+        for lineno, line in enumerate(checksums_file.read_text(encoding="utf-8").splitlines(), 1):
             if not line.strip():
                 continue
             parts = line.split("  ", 1)
             if len(parts) != 2:
+                result.errors.append(f"checksums.txt line {lineno}: malformed (expected '<hash>  <path>')")
                 continue
             expected_hash, rel_path = parts
+            if not _HEX_RE.match(expected_hash):
+                result.errors.append(f"checksums.txt line {lineno}: non-hex SHA-256 hash for {rel_path!r}")
+                continue
+            # Reject path traversal and absolute paths
+            if rel_path.startswith("/") or ".." in rel_path.split("/"):
+                result.errors.append(f"checksums.txt line {lineno}: unsafe path {rel_path!r}")
+                continue
+            if rel_path in declared:
+                result.errors.append(f"checksums.txt line {lineno}: duplicate path {rel_path!r}")
+                continue
+            declared[rel_path] = expected_hash
+
+        # Validate each declared file
+        for rel_path, expected_hash in declared.items():
             file_path = bundle_dir / rel_path
             if not file_path.exists():
                 result.errors.append(f"Checksum manifest lists missing file: {rel_path}")
@@ -126,6 +153,23 @@ class ImportService:
             actual = sha256_file(file_path)
             if actual != expected_hash:
                 result.errors.append(f"Checksum mismatch: {rel_path}")
+
+        # Reject payload files not declared in the manifest (unlisted files).
+        # manifest.yaml is exempt — the exporter writes it after checksums.txt.
+        _EXEMPT = {"manifest.yaml"}
+        for subdir_name in ("db", "artifacts"):
+            subdir = bundle_dir / subdir_name
+            if not subdir.exists():
+                continue
+            for file_path in subdir.rglob("*"):
+                if not file_path.is_file():
+                    continue
+                try:
+                    rel = file_path.relative_to(bundle_dir).as_posix()
+                except ValueError:
+                    rel = str(file_path)
+                if rel not in declared and rel not in _EXEMPT:
+                    result.errors.append(f"Unlisted payload file not in checksum manifest: {rel}")
 
     def _import_db_tables(self, db_dir: Path, result: ImportResult, commit: bool) -> None:
         """Import JSONL table data with deduplication."""

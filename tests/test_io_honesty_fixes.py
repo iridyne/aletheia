@@ -282,3 +282,169 @@ def test_import_identical_duplicate_still_counted_as_skipped(tmp_path, monkeypat
 
     assert result.conflicts == []
     assert result.skipped_duplicates == 1
+
+
+# ---------------------------------------------------------------------------
+# #271 — import fail-closed: verification errors abort before any mutation
+# ---------------------------------------------------------------------------
+
+
+def _build_bundle_with_db_row_and_checksums(
+    tmp_path: Path,
+    archive_name: str,
+    *,
+    checksums_content: str | None = None,
+    include_checksums: bool = True,
+    extra_files: dict[str, str] | None = None,
+) -> Path:
+    """Build a minimal valid bundle with one ps_lessons row.
+
+    ``checksums_content`` overrides the auto-generated checksums.txt.
+    ``extra_files`` adds additional files (path-relative-to-bundle-root → content).
+    ``include_checksums=False`` omits checksums.txt entirely.
+    """
+    from aletheia.storage.hashing import sha256_file
+
+    staging = tmp_path / f"staging_{archive_name}"
+    staging.mkdir(parents=True)
+    db_dir = staging / "db"
+    db_dir.mkdir()
+
+    row = {
+        "lesson_id": f"lesson-{archive_name}",
+        "source_type": "test",
+        "source_id": "s1",
+        "category": "risk",
+        "severity": "medium",
+        "status": "accepted",
+        "summary": "hello",
+        "evidence_json": "{}",
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    jsonl_path = db_dir / "ps_lessons.jsonl"
+    jsonl_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    if extra_files:
+        for rel, content in extra_files.items():
+            p = staging / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+
+    if include_checksums:
+        if checksums_content is not None:
+            (staging / "checksums.txt").write_text(checksums_content, encoding="utf-8")
+        else:
+            good_hash = sha256_file(jsonl_path)
+            lines = [f"{good_hash}  db/ps_lessons.jsonl"]
+            if extra_files:
+                for rel in extra_files:
+                    lines.append(f"{sha256_file(staging / rel)}  {rel}")
+            (staging / "checksums.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    archive = tmp_path / f"{archive_name}.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname=archive_name)
+    return archive
+
+
+def _count_lessons(tmp_path: Path, lesson_id: str) -> int:
+    conn = sqlite3.connect(str(tmp_path / "test.db"))
+    row = conn.execute(
+        "SELECT COUNT(*) FROM ps_lessons WHERE lesson_id=?", (lesson_id,)
+    ).fetchone()
+    conn.close()
+    return row[0]
+
+
+def test_import_missing_checksums_aborts_without_mutation(tmp_path, monkeypatch):
+    """#271: merge with no checksums.txt must report error and leave DB unchanged."""
+    _setup_env(tmp_path, monkeypatch)
+    archive = _build_bundle_with_db_row_and_checksums(
+        tmp_path, "no_checksums", include_checksums=False
+    )
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert result.errors, "missing checksums.txt must report an error"
+    assert "checksums" in result.errors[0].lower()
+    assert _count_lessons(tmp_path, "lesson-no_checksums") == 0, (
+        "no rows must be inserted when checksums.txt is missing"
+    )
+
+
+def test_import_checksum_mismatch_aborts_without_mutation(tmp_path, monkeypatch):
+    """#271: merge with wrong hash must report error and leave DB unchanged."""
+    _setup_env(tmp_path, monkeypatch)
+    bad_checksums = "0" * 64 + "  db/ps_lessons.jsonl\n"
+    archive = _build_bundle_with_db_row_and_checksums(
+        tmp_path, "bad_hash", checksums_content=bad_checksums
+    )
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert any("mismatch" in e.lower() for e in result.errors), (
+        f"checksum mismatch must be reported; got {result.errors}"
+    )
+    assert _count_lessons(tmp_path, "lesson-bad_hash") == 0, (
+        "no rows must be inserted when checksum mismatch is detected"
+    )
+
+
+def test_import_unlisted_payload_aborts_without_mutation(tmp_path, monkeypatch):
+    """#271: merge with an extra db file not in checksums must error and not insert."""
+    _setup_env(tmp_path, monkeypatch)
+    # Build a bundle where checksums only covers ps_lessons.jsonl, but there's
+    # an extra unlisted db file that would otherwise be imported.
+    from aletheia.storage.hashing import sha256_file
+
+    staging = tmp_path / "staging_unlisted"
+    staging.mkdir()
+    db_dir = staging / "db"
+    db_dir.mkdir()
+
+    row = {
+        "lesson_id": "lesson-unlisted",
+        "source_type": "test", "source_id": "s1",
+        "category": "risk", "severity": "medium", "status": "accepted",
+        "summary": "hi", "evidence_json": "{}", "created_at": "2026-01-01T00:00:00Z",
+    }
+    jsonl_path = db_dir / "ps_lessons.jsonl"
+    jsonl_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    # An extra file that is NOT listed in checksums.txt
+    extra_path = db_dir / "unknown_table.jsonl"
+    extra_path.write_text('{"id":"x"}\n', encoding="utf-8")
+
+    # Only list the main file, not the extra
+    good_hash = sha256_file(jsonl_path)
+    (staging / "checksums.txt").write_text(
+        f"{good_hash}  db/ps_lessons.jsonl\n", encoding="utf-8"
+    )
+    archive = tmp_path / "unlisted.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname="unlisted")
+
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert any("unlisted" in e.lower() for e in result.errors), (
+        f"unlisted payload must be reported; got {result.errors}"
+    )
+    assert _count_lessons(tmp_path, "lesson-unlisted") == 0, (
+        "no rows must be inserted when unlisted payload is detected"
+    )
+
+
+def test_import_malformed_checksum_line_aborts_without_mutation(tmp_path, monkeypatch):
+    """#271: malformed checksums.txt lines must error and prevent import."""
+    _setup_env(tmp_path, monkeypatch)
+    archive = _build_bundle_with_db_row_and_checksums(
+        tmp_path, "malformed", checksums_content="not-a-valid-checksum-line\n"
+    )
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert result.errors, "malformed checksum line must produce an error"
+    assert _count_lessons(tmp_path, "lesson-malformed") == 0, (
+        "no rows must be inserted when checksums.txt is malformed"
+    )
