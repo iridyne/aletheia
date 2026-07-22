@@ -15,6 +15,7 @@ from datetime import datetime, timezone, timedelta
 import pytest
 from httpx import AsyncClient, ASGITransport
 
+from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
 from aletheia.server.app import app
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
@@ -307,11 +308,14 @@ class TestEquityCurveEndpoint:
     async def test_filters_by_days(self, client):
         c, _ = client
         now = datetime.now(timezone.utc)
+        pre_clean_window = (
+            datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO) - timedelta(minutes=1)
+        )
         _insert_verified_closed_position(
             position_id="curve-days-old", symbol="BTC/USDT",
             entry_price=100.0, realized_pnl=5.0,
             execution_mode="paper_internal",
-            closed_at=(now - timedelta(days=10)).isoformat(),
+            closed_at=pre_clean_window.isoformat(),
             expected_outcome_eligible=False,
         )
         _insert_verified_closed_position(
