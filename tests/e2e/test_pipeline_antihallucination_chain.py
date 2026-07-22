@@ -18,11 +18,22 @@ the e2e in-process SQLite (network/LLM are never touched on the paper path).
 
 from datetime import datetime, timezone
 
-from aletheia.storage.models import Opportunity, StrategyRecord
+from aletheia.storage.models import MarketSnapshot, Opportunity, StrategyRecord
 from aletheia.storage import repositories as repo
 
 
-def _run_paper_trade(symbol, entry, exit_price, *, opportunity_id, strategy_id):
+def _run_paper_trade(
+    symbol,
+    entry,
+    exit_price,
+    *,
+    opportunity_id,
+    strategy_id,
+    stop_price=None,
+    take_profit=None,
+    risk_reward=None,
+    source="native",
+):
     """Open a paper position through the real gateway, then close it. Returns position id."""
     from aletheia.execution.gateway import submit_proposal
     from aletheia.execution.verified_exit import VerifiedExitFill, VerifiedExitResult
@@ -33,6 +44,8 @@ def _run_paper_trade(symbol, entry, exit_price, *, opportunity_id, strategy_id):
         quantity=round(60.0 / entry, 6), price=entry,
         execution_mode="paper_internal",
         strategy_id=strategy_id, opportunity_id=opportunity_id,
+        stop_price=stop_price, take_profit=take_profit, risk_reward=risk_reward,
+        source=source,
     )
     assert res["status"] == "executed", f"paper proposal should execute, got {res}"
     pos_id = res["position_id"]
@@ -66,6 +79,21 @@ def _run_paper_trade(symbol, entry, exit_price, *, opportunity_id, strategy_id):
 
 class TestAntiHallucinationChain:
     def test_full_chain_reaches_pool_broken_chain_excluded(self, e2e_db):
+        from aletheia.config.loader import load_config
+
+        # paper_internal + native proposals require a fresh market snapshot at
+        # cfg.market_data.ccxt_exchange ("binance").  Seed it for the BTC trade.
+        cfg = load_config()
+        repo.insert_market_snapshot(MarketSnapshot(
+            id="antihallucination-btc-snapshot",
+            symbol="BTC/USDT",
+            market_type="spot",
+            exchange=cfg.market_data.ccxt_exchange,
+            price=60_000.0,
+            volume_24h=1_000_000_000.0,
+            snapshot_at=datetime.now(timezone.utc).isoformat(),
+        ))
+
         # ── Full chain: real opportunity + strategy linked all the way down ──
         opp = Opportunity(
             symbol="BTC/USDT", market="spot", direction_bias="long",
@@ -76,9 +104,12 @@ class TestAntiHallucinationChain:
         strat = StrategyRecord(name="mom-e2e", state="paper_running")
         repo.insert_strategy(strat)
 
+        # BTC: full native path — needs a complete entry plan.
+        # stop=58800 (−2%), tp=62400 (+4%), rr=2.0
         btc_pos = _run_paper_trade(
             "BTC/USDT", 60000.0, 63000.0,
             opportunity_id=opp.id, strategy_id=strat.id,
+            stop_price=58_800.0, take_profit=62_400.0, risk_reward=2.0,
         )
 
         # The real broker stamped the full causal chain onto the Position (CR-EX-03).
@@ -88,9 +119,14 @@ class TestAntiHallucinationChain:
         assert pos_row["strategy_id"] == strat.id
 
         # ── Broken chain: a trade with NO opportunity link (un-attributable) ──
+        # Use source="adopted" so the risk engine skips the native paper checks
+        # (paper_market_data_unavailable, proposal_opportunity_required,
+        # incomplete_entry_plan) that require a linked opportunity.  This mirrors
+        # a reconciler-adopted position that is intentionally missing attribution.
         eth_pos = _run_paper_trade(
             "ETH/USDT", 3000.0, 3300.0,
             opportunity_id=None, strategy_id=None,
+            source="adopted",
         )
         eth_row = repo._select_one("positions", eth_pos)
         assert eth_row["opportunity_id"] is None

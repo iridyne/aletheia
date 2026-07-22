@@ -142,6 +142,7 @@ def submit_proposal(
     trade_school: str = "short_term",
     expected_horizon_hours: float | None = None,
     stop_source: str | None = None,
+    source: str = "native",
 ) -> dict:
     """Submit a trade proposal through the full execution pipeline.
 
@@ -173,6 +174,7 @@ def submit_proposal(
         trade_school=trade_school,
         expected_horizon_hours=expected_horizon_hours,
         stop_source=stop_source,
+        source=source,
     )
     insert_trade_proposal(proposal)
     return execute_existing_proposal(proposal.id, execution_mode)
