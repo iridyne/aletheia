@@ -132,6 +132,13 @@ def test_sqlite_integrity_failure_blocks(tmp_path, monkeypatch):
     _healthy_cfg()
     from aletheia.agent_runtime import startup_behavior_gate as gate
 
+    # Pre-import state_store so its `get_db` binding captures the real function
+    # BEFORE we patch sq.get_db below.  evaluate_startup_gate() lazily imports
+    # state_store on first call; if that import happens while the patch is active,
+    # state_store.get_db permanently binds to the lambda and leaks into subsequent
+    # tests running on the same worker, causing "closed database" errors.
+    import aletheia.gateway.state_store as _ss  # noqa: F401
+
     # Force integrity_check to report corruption by wrapping the connection
     # (setattr on a C sqlite3.Connection is unreliable, so wrap get_db instead).
     import aletheia.storage.sqlite as sq
