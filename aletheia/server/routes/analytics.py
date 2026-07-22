@@ -581,7 +581,7 @@ def get_pipeline_funnel(hours: int = 24):
         "AND julianday(created_at) >= julianday(?)"
     )
     pi_skip = _count(
-        "SELECT COUNT(*) FROM pi_decisions WHERE action='skip' "
+        "SELECT COUNT(*) FROM pi_decisions WHERE action IN ('skip','portfolio_guard_skip') "
         "AND COALESCE(signal_source, 'market_observer') != 'system_cascade' "
         "AND julianday(created_at) >= julianday(?)"
     )
@@ -900,6 +900,8 @@ def _funnel_cohort_inputs(db, hours: int) -> dict:
         "              AND p.action IN ('trade','scale_in','flip')) "
         " THEN 'operator_trade' "
         " WHEN EXISTS (SELECT 1 FROM pi_decisions p WHERE p.opportunity_id=o.id "
+        "              AND p.action='portfolio_guard_skip') THEN 'portfolio_guard_reject' "
+        " WHEN EXISTS (SELECT 1 FROM pi_decisions p WHERE p.opportunity_id=o.id "
         "              AND p.action='skip') THEN 'operator_skip' "
         " WHEN EXISTS (SELECT 1 FROM pi_decisions p WHERE p.opportunity_id=o.id "
         "              AND p.action='watch') THEN 'operator_watch' "
@@ -1159,6 +1161,7 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
 _VALID_OUTCOMES: frozenset[str] = frozenset({
     "trade", "operator_skip", "operator_watch",
     "user_reject", "auto_reject", "reject_unknown",
+    "portfolio_guard_reject",
 })
 
 
@@ -1177,6 +1180,9 @@ def get_operator_decisions(
 
     - `operator_skip`: pi_decisions.action = 'skip' — the LLM operator saw an
       executable candidate and decided not to trade (reason in `reasoning`).
+    - `portfolio_guard_reject`: pi_decisions.action = 'portfolio_guard_skip' — the
+      LLM approved (trade intent) but a portfolio guard (direction_bias_brake, equity
+      guard, etc.) blocked execution after the operator action assessment passed.
     - `trade`: pi_decisions.action IN ('trade','flip','scale_in') — operator
       chose to trade; a proposal typically follows.
     - `user_reject`: trade_proposals.status='rejected' with matching
@@ -1261,7 +1267,7 @@ def get_operator_decisions(
         "julianday(created_at) AS sort_instant "
         "FROM pi_decisions p "
         "LEFT JOIN runtime_sessions rs ON rs.session_id=p.runtime_session_id "
-        "WHERE p.action IN ('trade','skip','flip','scale_in','watch') "
+        "WHERE p.action IN ('trade','skip','flip','scale_in','watch','portfolio_guard_skip') "
         "AND COALESCE(p.signal_source, 'market_observer') != 'system_cascade' "
         "AND julianday(p.created_at)>=julianday(?) "
         "AND julianday(p.created_at)<=julianday(?) "
@@ -1271,7 +1277,9 @@ def get_operator_decisions(
     ))
     for r in rows:
         act = str(r["action"] or "")
-        if act == "skip":
+        if act == "portfolio_guard_skip":
+            outcome = "portfolio_guard_reject"
+        elif act == "skip":
             outcome = "operator_skip"
         elif act == "watch":
             outcome = "operator_watch"
@@ -1390,7 +1398,8 @@ def get_operator_decisions(
     all_items.sort(key=lambda x: float(x.get("_sort_instant") or 0), reverse=True)
 
     counts = {"trade": 0, "operator_skip": 0, "operator_watch": 0,
-              "user_reject": 0, "auto_reject": 0, "reject_unknown": 0}
+              "user_reject": 0, "auto_reject": 0, "reject_unknown": 0,
+              "portfolio_guard_reject": 0}
     for it in all_items:
         oc = it.get("outcome")
         if oc in counts:

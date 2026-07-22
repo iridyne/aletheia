@@ -468,7 +468,10 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
                 "bypass_conviction": _BIAS_BRAKE_BYPASS_CONVICTION,
             },
         })
-        decision.action = "skip"
+        # Use a distinct action so the decisions API can distinguish a
+        # portfolio-guard rejection from a genuine LLM-initiated operator_skip.
+        # (#330: direction_bias_brake rejection was misattributed as operator_skip)
+        decision.action = "portfolio_guard_skip"
         decision.reasoning = f"{decision.reasoning} [{bias_brake_reason}]"
         return decision
     if trade_intent:
