@@ -342,11 +342,15 @@ def find_port_holders(port: int) -> list[int]:
     pids: set[int] = set()
     try:
         if platform.system() == "Windows":
-            out = subprocess.run(
+            raw = subprocess.run(
                 ["netstat", "-ano"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, timeout=10,
                 **_no_window_kwargs(),
             ).stdout
+            # Decode with replacement so localized netstat bytes (e.g. on
+            # Windows UTF-8 runtime) don't raise UnicodeDecodeError (#232).
+            # Port/PID fields are ASCII so replacement chars never affect parsing.
+            out = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
             for line in out.splitlines():
                 parts = line.split()
                 if len(parts) >= 5 and "LISTENING" in parts[3]:
