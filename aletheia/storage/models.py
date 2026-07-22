@@ -1173,6 +1173,7 @@ class UniverseMember(BaseModel):
     risk_flags: str = "[]"
     execution_eligible: bool = True
     entry_price_usd: float | None = None
+    learning_candidate_key: str | None = None
 
 
 class UniverseForwardOutcome(BaseModel):

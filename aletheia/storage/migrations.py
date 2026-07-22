@@ -2150,6 +2150,11 @@ _ADDITIVE_COLUMNS = [
     # at open (stamped by the execution gateway). NULL on legacy proposals.
     ("expected_horizon_hours", "trade_proposals", "REAL"),
     ("stop_source", "trade_proposals", "TEXT"),
+    # Observer Learning identity repair (#323): persist the learning candidate key
+    # assigned during Universe allocation so that market_observer reloads can pass
+    # the exact pre-publication outcome key to authorize_observer_learning_bundle.
+    # NULL on legacy rows — they remain unavailable as intended.
+    ("learning_candidate_key", "universe_members", "TEXT"),
 ]
 
 
