@@ -229,13 +229,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Test locked host release/update core
+      - name: Test locked host release/update core (tray feature enabled for macOS)
         working-directory: native/aletheia-host
-        run: cargo test --locked --all-targets
+        run: cargo test --locked --all-targets --features tray
 
       - name: Build stable CLI and tray binaries
         working-directory: native/aletheia-host
-        run: cargo build --locked --release --bins
+        run: cargo build --locked --release --bins --features tray
 
       - name: Exercise stable CLI selection and direct tray smoke
         id: host_smoke

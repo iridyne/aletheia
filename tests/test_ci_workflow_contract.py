@@ -226,6 +226,38 @@ def test_python_test_jobs_set_scoped_data_dir() -> None:
     )
 
 
+def test_native_host_tray_feature_split() -> None:
+    """Linux CI must not compile aletheia-tray; macOS build must explicitly enable the tray feature.
+
+    The tray binary requires macOS GUI dependencies (tray-icon / winit / muda) that
+    cannot compile on Linux.  The Cargo `tray` feature gates both the binary (via
+    required-features) and its optional deps.  This split must not silently regress:
+
+    - ci.yml native job: no `--features tray` — aletheia-tray is skipped on Linux.
+    - build-packaged-runtime.yml macOS job: `--features tray` so aletheia-tray is built.
+    """
+    # Linux CI (ci.yml) native job must NOT pass --features tray
+    native_job = _workflow()["jobs"]["native"]
+    linux_cargo_commands = _run_commands(native_job)
+    assert "--features tray" not in linux_cargo_commands, (
+        "ci.yml native job must not pass '--features tray' — Linux CI must skip aletheia-tray "
+        "via required-features, not by opting into the tray feature"
+    )
+    assert "cargo test" in linux_cargo_commands, (
+        "ci.yml native job must still run cargo test for platform-neutral targets"
+    )
+
+    # macOS build workflow must explicitly enable tray
+    macos_wf_path = _WORKFLOW_DIR / "build-packaged-runtime.yml"
+    macos_wf = _load_workflow(macos_wf_path)
+    macos_job = macos_wf.get("jobs", {}).get("macos-package", {})
+    macos_commands = _run_commands(macos_job)
+    assert "--features tray" in macos_commands, (
+        "build-packaged-runtime.yml macos-package job must pass '--features tray' "
+        "so aletheia-tray is compiled and the tray smoke test can run"
+    )
+
+
 def test_repository_task_subsystem_is_absent_from_ci() -> None:
     workflow_text = _WORKFLOW_PATH.read_text(encoding="utf-8")
 
