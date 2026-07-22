@@ -313,6 +313,19 @@ def _create_factor_guard_candidate(
     if not predicates:
         return None
 
+    # Scope to the concrete (symbol, scanner_family, direction) observed in this factor
+    # key — not the entire crypto asset class (#193). This mirrors the fix already applied
+    # in universe/outcome_recorder.py (commit c945110f).
+    applies_to_scope: dict = {}
+    if symbol and symbol != "unknown":
+        applies_to_scope["symbol"] = [symbol]
+    if scanner and scanner != "unknown":
+        applies_to_scope["scanner_family"] = [scanner]
+    if direction in ("long", "short"):
+        applies_to_scope["direction"] = [direction]
+    if not applies_to_scope:
+        applies_to_scope = {"asset_class": ["crypto"]}
+
     metadata = {
         "type": "Trading Guard",
         "guard_id": guard_id,
@@ -329,7 +342,7 @@ def _create_factor_guard_candidate(
         # block; enforcement is suppressed until an experiment grants authority.
         "auto_generated": True,
         "shadow_only": True,
-        "applies_to": {"asset_class": ["crypto"]},
+        "applies_to": applies_to_scope,
         "predicates": predicates,
         "evidence_refs": [r.get("position_id") for r in losses[:5] if r.get("position_id")],
         "tags": ["auto-generated", "factor-pattern", "shadow-only", scanner],
