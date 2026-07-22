@@ -251,6 +251,9 @@ _DECISION_SCHEMA = {
         # stop and take-profit price at decision time. When omitted, the proposal
         # builder derives them from config defaults so the four-element entry
         # (entry/stop/tp/reward:risk) is always complete before the limit order.
+        # Direction geometry: long → stop_price < entry < take_profit;
+        # short → take_profit < entry < stop_price. Values violating this are
+        # silently replaced with config defaults (see submit_trade_proposal).
         "stop_price": {"type": "number"},
         "take_profit": {"type": "number"},
         # M2: Operator's intended holding horizon in hours (drives the time-stop /
@@ -823,6 +826,15 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
     trade_school = "serenity" if getattr(decision, "signal_source", None) == "serenity" else "short_term"
 
     stop_price = _valid_protective_price(decision.stop_price)
+    # Discard a stop that is geometrically inverted for the declared direction
+    # (long: stop must be below entry; short: stop must be above entry).
+    # The LLM occasionally supplies long-convention values for short proposals;
+    # silently falling back to the config default avoids a hard risk-engine reject.
+    if stop_price is not None:
+        if decision.direction == "long" and stop_price >= price:
+            stop_price = None
+        elif decision.direction == "short" and stop_price <= price:
+            stop_price = None
     if stop_price is None:
         stop_pct = (
             cfg.serenity.stop_loss_pct
@@ -840,6 +852,12 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
     # from the committed entry/stop/tp. The risk engine rejects every native local
     # paper entry (and native exchange limit entry) missing any of the four.
     take_profit = _valid_protective_price(decision.take_profit)
+    # Same directional guard: long take_profit must be above entry; short below.
+    if take_profit is not None:
+        if decision.direction == "long" and take_profit <= price:
+            take_profit = None
+        elif decision.direction == "short" and take_profit >= price:
+            take_profit = None
     if take_profit is None:
         tp_pct = cfg.trading.default_take_profit_pct
         if decision.direction == "long":
