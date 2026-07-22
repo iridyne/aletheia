@@ -1104,7 +1104,7 @@ def test_serenity_pending_signal_is_not_hidden_by_market_queue_ttl(tmp_path, mon
 
 @spec_claim(
     SpecClaim(
-        "DL-S19", "decision_lifecycle_contract", "§2.3 serenity expired-source cleanup", "L2b",
+        "DL-S63", "decision_lifecycle_contract", "§2.3 serenity expired-source cleanup", "L2b",
         "A Serenity pending carrier whose source SerenityOpportunity is missing, "
         "terminal, or whose parent SerenityTheme is dismissed/expired is not "
         "actionable and is counted in expired_unconsumed_rows (#199).",
@@ -1161,7 +1161,7 @@ def test_serenity_pending_signal_is_invisible_after_source_expires(tmp_path, mon
 
 @spec_claim(
     SpecClaim(
-        "DL-S20", "decision_lifecycle_contract", "§2.3 serenity maintenance expiry", "L2b",
+        "DL-S64", "decision_lifecycle_contract", "§2.3 serenity maintenance expiry", "L2b",
         "expire_stale_serenity_themes() transitions themes past their expires_at "
         "deadline to 'expired' and cascades to active child opportunities so the "
         "pending-signal queue treats them as stale (#199).",
