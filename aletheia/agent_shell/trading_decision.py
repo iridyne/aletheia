@@ -1546,12 +1546,10 @@ def _build_assessment_prompt(ctx: dict) -> str:
 
     balance = layer1.get("balance")
     if balance:
-        # equity_usdt is deliberately None when the paper account has an
-        # unsettled close (get_paper_account: "a missing close result makes the
-        # spendable account value unknown"); available_usdt can be None on the
-        # cached-exchange branch. Render "unknown" honestly instead of crashing
-        # the entire evaluation on a NoneType format spec — a None here otherwise
-        # kills every pi_trading_decision cycle.
+        # available_usdt can be None on the cached-exchange branch.
+        # equity_usdt is always a float for paper_internal (issue #316), but may
+        # still be None on the exchange branch — render "unknown" to avoid
+        # crashing the evaluation cycle on a NoneType format spec.
         _equity = balance.get("equity_usdt")
         _available = balance.get("available_usdt")
         _equity_str = f"${_equity:.0f}" if _equity is not None else "unknown (unsettled closes)"

@@ -1154,11 +1154,11 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         from aletheia.portfolio.paper_account import get_paper_account
 
         local_account = get_paper_account(event_limit=0)
-        if local_account["economics_complete"]:
-            account_equity_usdt = round(
-                float(local_account["cash_balance_usdt"]) + total_unrealized,
-                4,
-            )
+        # equity_usdt is always set now (issue #316: no longer gated on
+        # economics_complete); use it directly.
+        _eq = local_account.get("equity_usdt")
+        if _eq is not None:
+            account_equity_usdt = round(float(_eq), 4)
             final_total_value = account_equity_usdt
     else:
         try:
