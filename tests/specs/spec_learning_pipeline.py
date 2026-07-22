@@ -1468,3 +1468,63 @@ def test_dreaming_agent_null_pnl_is_not_available():
         assert label not in result, (
             f"Must not assign {label} when any eligible close has NULL realized_pnl"
         )
+
+
+# ---------------------------------------------------------------------------
+# LP-S21 — Dreaming summary separates current knowledge from deprecated memory
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "LP-S21",
+        "learning_pipeline",
+        "api_reference §Knowledge & Learning",
+        "L2b",
+        "dreaming summary recent collections contain active knowledge only, "
+        "with archived and deprecated records returned separately",
+        status="implemented",
+    ),
+)
+def test_dreaming_summary_separates_active_and_deprecated_knowledge():
+    """Archived knowledge must not also inflate the owner-facing recent count."""
+    from aletheia.server.routes.data import get_dreaming_summary
+    from aletheia.storage.models import KnowledgeItem
+    from aletheia.storage.repositories import insert_knowledge_item
+
+    collections = {
+        "research_note": "recent_research_notes",
+        "strategy_memory": "recent_strategy_hypotheses",
+        "dreaming_log": "recent_dreaming_logs",
+        "daily_review": "recent_daily_reviews",
+    }
+    active_ids = set()
+    inactive_ids = set()
+    for item_type in collections:
+        active_id = f"active-{item_type}"
+        active_ids.add(active_id)
+        insert_knowledge_item(
+            KnowledgeItem(id=active_id, item_type=item_type, title=active_id)
+        )
+        for status in ("archived", "deprecated"):
+            item_id = f"{status}-{item_type}"
+            inactive_ids.add(item_id)
+            insert_knowledge_item(
+                KnowledgeItem(
+                    id=item_id,
+                    item_type=item_type,
+                    title=item_id,
+                    status=status,
+                )
+            )
+
+    summary = get_dreaming_summary()
+
+    for item_type, collection_name in collections.items():
+        ids = {item["id"] for item in summary[collection_name]}
+        assert f"active-{item_type}" in ids
+        assert ids.isdisjoint(inactive_ids)
+
+    deprecated_ids = {item["id"] for item in summary["deprecated_memories"]}
+    assert inactive_ids <= deprecated_ids
+    assert deprecated_ids.isdisjoint(active_ids)
