@@ -14,6 +14,7 @@ _DECISION_COUNT_KEYS = (
     "trade",
     "operator_skip",
     "operator_watch",
+    "portfolio_guard_reject",
     "user_reject",
     "auto_reject",
     "reject_unknown",
@@ -1158,6 +1159,7 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
 
 _VALID_OUTCOMES: frozenset[str] = frozenset({
     "trade", "operator_skip", "operator_watch",
+    "portfolio_guard_reject",
     "user_reject", "auto_reject", "reject_unknown",
     "conviction_defer",
 })
@@ -1176,8 +1178,12 @@ def get_operator_decisions(
     not only pending / accepted proposals but also every kind of rejection that
     happened after a candidate reached the operator:
 
-    - `operator_skip`: pi_decisions.action = 'skip' — the LLM operator saw an
-      executable candidate and decided not to trade (reason in `reasoning`).
+    - `operator_skip`: pi_decisions.action = 'skip' and no portfolio guard fired —
+      the LLM operator saw an executable candidate and decided not to trade
+      (reason in `reasoning`).
+    - `portfolio_guard_reject`: pi_decisions.action = 'skip' but the LLM actually
+      approved the trade; a downstream portfolio guard (direction_bias_brake) blocked
+      execution before a proposal could be created (#330).
     - `trade`: pi_decisions.action IN ('trade','flip','scale_in') — operator
       chose to trade; a proposal typically follows.
     - `user_reject`: trade_proposals.status='rejected' with matching
@@ -1255,14 +1261,22 @@ def get_operator_decisions(
     pi_items: list[dict] = []
     reject_items: list[dict] = []
 
-    # pi_decisions — operator trade / skip
+    # pi_decisions — operator trade / skip.
+    # The guard_blocked subquery detects cases where the LLM approved the trade
+    # (operator_action_assessment passed) but direction_bias_brake rejected it
+    # before a proposal was created — those skips are portfolio_guard_reject,
+    # not operator_skip (#330).
     rows = list(db.execute(
-        "SELECT id, created_at, symbol, direction, market_type, action, "
+        "SELECT p.id, p.created_at, p.symbol, p.direction, p.market_type, p.action, "
         "p.conviction, p.reasoning, p.opportunity_id, p.proposal_id, "
         "p.evidence_manifest_json, p.runtime_session_id, "
         "COALESCE(p.producer_commit, rs.boot_commit) AS producer_commit, "
         "rs.runtime_id AS attributed_runtime_id, "
-        "julianday(created_at) AS sort_instant "
+        "julianday(p.created_at) AS sort_instant, "
+        "(SELECT fd.reason_code FROM filter_decisions fd "
+        " WHERE fd.candidate_key='pi_decision:'||p.id "
+        " AND fd.filter_name='direction_bias_brake' "
+        " AND fd.decision='rejected' LIMIT 1) AS guard_block_reason "
         "FROM pi_decisions p "
         "LEFT JOIN runtime_sessions rs ON rs.session_id=p.runtime_session_id "
         "WHERE p.action IN ('trade','skip','flip','scale_in','watch') "
@@ -1275,13 +1289,16 @@ def get_operator_decisions(
     ))
     for r in rows:
         act = str(r["action"] or "")
-        if act == "skip":
+        guard_block = r["guard_block_reason"] if "guard_block_reason" in r.keys() else None
+        if act == "skip" and guard_block:
+            outcome = "portfolio_guard_reject"
+        elif act == "skip":
             outcome = "operator_skip"
         elif act == "watch":
             outcome = "operator_watch"
         else:
             outcome = "trade"
-        pi_items.append({
+        item: dict = {
             "opportunity_id": r["opportunity_id"],
             "proposal_id": r["proposal_id"],
             "decision_id": r["id"],
@@ -1304,7 +1321,11 @@ def get_operator_decisions(
                 current_runtime_session_id=current_runtime_session_id,
             ),
             "_sort_instant": float(r["sort_instant"] or 0),
-        })
+        }
+        if guard_block:
+            item["guard_filter"] = "direction_bias_brake"
+            item["guard_block_reason"] = guard_block
+        pi_items.append(item)
 
     # trade_proposals rejected — user vs auto reject determined by paired audit event
     rows = list(db.execute(
@@ -1439,6 +1460,7 @@ def get_operator_decisions(
     all_items.sort(key=lambda x: float(x.get("_sort_instant") or 0), reverse=True)
 
     counts = {"trade": 0, "operator_skip": 0, "operator_watch": 0,
+              "portfolio_guard_reject": 0,
               "user_reject": 0, "auto_reject": 0, "reject_unknown": 0,
               "conviction_defer": 0}
     for it in all_items:

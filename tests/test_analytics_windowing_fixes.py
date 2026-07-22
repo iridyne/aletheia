@@ -417,3 +417,80 @@ def test_conviction_defer_appears_in_operator_decisions(tmp_path, monkeypatch):
     assert item["direction"] == "long"
     assert item["market_type"] == "usdt_futures"
     assert item["defer_reason"] == "operator_low_conviction"
+
+
+# ---------------------------------------------------------------------------
+# #330 — direction_bias_brake rejection → portfolio_guard_reject, not operator_skip
+# ---------------------------------------------------------------------------
+
+
+def test_direction_bias_brake_skip_classified_as_portfolio_guard_reject(tmp_path, monkeypatch):
+    """#330: when direction_bias_brake rejects a trade after operator_action_assessment
+    passed, the pi_decisions.action='skip' row must surface as portfolio_guard_reject,
+    not operator_skip — the LLM approved the trade; a portfolio guard blocked it."""
+    from datetime import datetime, timezone
+
+    _setup_env(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sq
+
+    conn = sq._db_conn
+    now = datetime.now(timezone.utc).isoformat()
+
+    # pi_decisions row: LLM said trade, but direction_bias_brake overrode to skip.
+    conn.execute(
+        "INSERT INTO pi_decisions "
+        "(id, symbol, direction, market_type, action, conviction, reasoning, "
+        "opportunity_id, signal_source, created_at) "
+        "VALUES (?, 'ACE/USDT', 'long', 'spot', 'skip', 72, "
+        "'operator approved; guard blocked', 'opp-guard-330', 'market_observer', ?)",
+        ("pid-guard-330", now),
+    )
+    # filter_decisions row: direction_bias_brake rejected this pi_decision.
+    conn.execute(
+        "INSERT INTO filter_decisions "
+        "(id, dedup_key, candidate_key, candidate_kind, symbol, market_type, "
+        "filter_name, stage, sequence_no, decision, reason_code, "
+        "input_snapshot, parameter_snapshot, filter_version, evaluated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "fd-guard-330", "fd-dedup-guard-330",
+            "pi_decision:pid-guard-330", "pi_decision",
+            "ACE/USDT", "spot",
+            "direction_bias_brake", "system_operator", 2, "rejected",
+            "proposal_direction_concentration",
+            "{}", "{}", "v1", now,
+        ),
+    )
+    # A regular skip with no guard trace — must stay operator_skip.
+    conn.execute(
+        "INSERT INTO pi_decisions "
+        "(id, symbol, direction, market_type, action, conviction, reasoning, "
+        "opportunity_id, signal_source, created_at) "
+        "VALUES (?, 'BTC/USDT', 'short', 'spot', 'skip', 55, "
+        "'llm decided to skip', 'opp-skip-330', 'market_observer', ?)",
+        ("pid-skip-330", now),
+    )
+    conn.commit()
+
+    from aletheia.server.routes.analytics import get_operator_decisions
+
+    result = get_operator_decisions(hours=24, limit=50)
+
+    assert result["counts"]["portfolio_guard_reject"] == 1, (
+        "direction_bias_brake skip should count as portfolio_guard_reject"
+    )
+    assert result["counts"]["operator_skip"] == 1, (
+        "regular skip must still count as operator_skip"
+    )
+
+    guard_items = [it for it in result["items"] if it["outcome"] == "portfolio_guard_reject"]
+    assert len(guard_items) == 1
+    g = guard_items[0]
+    assert g["decision_id"] == "pid-guard-330"
+    assert g["symbol"] == "ACE/USDT"
+    assert g["guard_filter"] == "direction_bias_brake"
+    assert g["guard_block_reason"] == "proposal_direction_concentration"
+
+    skip_items = [it for it in result["items"] if it["outcome"] == "operator_skip"]
+    assert len(skip_items) == 1
+    assert skip_items[0]["decision_id"] == "pid-skip-330"
