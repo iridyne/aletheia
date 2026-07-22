@@ -1186,7 +1186,7 @@ def test_opportunity_progress_read_model_does_not_import_ranker_preview():
 
 @spec_claim(
     SpecClaim(
-        "FE-S21", _CONTRACT, "§2 allocation_selected upsert", "L2b",
+        "FE-S23", _CONTRACT, "§2 allocation_selected upsert", "L2b",
         "A filter_candidate_outcomes row first written with allocation_selected=NULL "
         "by the filter-evidence path is updated to the authoritative True/False when "
         "the experiment path re-inserts the same row with a definitive value. A second "
@@ -1272,7 +1272,7 @@ def test_fco_allocation_selected_upsert_updates_null_row(tmp_path, monkeypatch):
 
 @spec_claim(
     SpecClaim(
-        "FE-S22", _CONTRACT, "§2 allocation_selected backfill", "L2b",
+        "FE-S24", _CONTRACT, "§2 allocation_selected backfill", "L2b",
         "The run_migrations() backfill sets allocation_selected=0 for settled and "
         "failed filter_candidate_outcomes rows whose allocation_selected is NULL. "
         "Pending rows and rows with explicit True/False are left untouched.",
