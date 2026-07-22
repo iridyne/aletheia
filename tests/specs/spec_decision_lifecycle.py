@@ -4918,7 +4918,7 @@ def test_defer_ttl_guard_emits_warning_when_extend_is_noop(tmp_path, monkeypatch
 
 @spec_claim(
     SpecClaim(
-        "DL-S52", "decision_lifecycle_contract",
+        "DL-S63", "decision_lifecycle_contract",
         "§2.3 Serenity source lifecycle queue gate", "L2b",
         "A Serenity signal_pending carrier is unresolved only while its "
         "source serenity_opportunity is active and its parent serenity_theme "
@@ -5004,7 +5004,7 @@ def test_serenity_expired_source_excluded_from_queue(tmp_path, monkeypatch):
 
 @spec_claim(
     SpecClaim(
-        "DL-S53", "decision_lifecycle_contract",
+        "DL-S64", "decision_lifecycle_contract",
         "§2.3 Serenity theme maintenance expiry cascade", "L2b",
         "expire_stale_serenity_themes() transitions themes past their "
         "expires_at to status='expired' and cascades to active child "
