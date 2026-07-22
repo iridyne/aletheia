@@ -1646,22 +1646,23 @@ def get_learning_contribution():
         pass
 
     # Verdict distribution
-    verdicts_by_classification: list[dict] = []
+    verdicts_by_verdict: list[dict] = []
     total_verdicts = 0
+    verdicts_error: str | None = None
     try:
         for r in db.execute(
-            "SELECT classification, COUNT(*) n, MAX(created_at) latest_at "
+            "SELECT verdict, COUNT(*) n, MAX(created_at) latest_at "
             "FROM learning_contribution_verdicts "
-            "GROUP BY classification ORDER BY n DESC"
+            "GROUP BY verdict ORDER BY n DESC"
         ):
-            verdicts_by_classification.append({
-                "classification": r["classification"],
+            verdicts_by_verdict.append({
+                "verdict": r["verdict"],
                 "n": int(r["n"]),
                 "latest_at": r["latest_at"],
             })
             total_verdicts += int(r["n"])
-    except Exception:
-        pass
+    except Exception as _verdict_exc:
+        verdicts_error = type(_verdict_exc).__name__
 
     # Experiment stage distribution
     experiments_by_stage: list[dict] = []
@@ -1720,7 +1721,8 @@ def get_learning_contribution():
         "exposures_by_path": exposures_by_path,
         "verdicts": {
             "total": total_verdicts,
-            "by_classification": verdicts_by_classification,
+            "by_verdict": verdicts_by_verdict,
+            **({"error": verdicts_error} if verdicts_error else {}),
         },
         "experiments_by_stage": experiments_by_stage,
         "lifecycle_event_n": lifecycle_event_n,

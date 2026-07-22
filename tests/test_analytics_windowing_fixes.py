@@ -302,3 +302,62 @@ def test_overview_funnels_share_the_same_parsed_iso_window(tmp_path, monkeypatch
     assert opportunity["emitted_count"] == 1
     assert opportunity["reviewed_count"] == 1
     assert opportunity["proposed_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# #322 — learning-contribution verdict column fix
+# ---------------------------------------------------------------------------
+
+
+def _insert_verdict(conn, verdict_id: str, verdict: str, experiment_id: str = "exp-1") -> None:
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO learning_contribution_verdicts "
+        "(verdict_id, experiment_id, hypothesis_id, window_start, window_end, "
+        "unique_treatment_n, unique_control_n, verdict, reason, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (verdict_id, experiment_id, "hyp-1", now, now, 5, 5, verdict, "test", now),
+    )
+    conn.commit()
+
+
+def test_learning_contribution_verdict_counts_use_verdict_column(tmp_path, monkeypatch):
+    """#322: route queried 'classification' (non-existent) — fixed to 'verdict'."""
+    _setup_env(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sq
+
+    conn = sq._db_conn
+    _insert_verdict(conn, "v-1", "invalid")
+    _insert_verdict(conn, "v-2", "invalid")
+    _insert_verdict(conn, "v-3", "insufficient_data")
+
+    from aletheia.server.routes.analytics import get_learning_contribution
+
+    result = get_learning_contribution()
+
+    assert result["verdicts"]["total"] == 3
+    assert "error" not in result["verdicts"]
+    by_verdict = {row["verdict"]: row["n"] for row in result["verdicts"]["by_verdict"]}
+    assert by_verdict["invalid"] == 2
+    assert by_verdict["insufficient_data"] == 1
+
+
+def test_learning_contribution_verdict_db_error_surfaces_error_not_zero(tmp_path, monkeypatch):
+    """#322: a schema/read failure must not silently return total=0."""
+    _setup_env(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sq
+
+    # Drop the table to simulate a schema error.
+    sq._db_conn.execute("DROP TABLE learning_contribution_verdicts")
+    sq._db_conn.commit()
+
+    from aletheia.server.routes.analytics import get_learning_contribution
+
+    result = get_learning_contribution()
+
+    # total stays 0 because no rows were read — but an explicit error key is present
+    assert result["verdicts"]["total"] == 0
+    assert "error" in result["verdicts"]
+    assert result["verdicts"]["error"]  # non-empty error string
