@@ -292,6 +292,154 @@ def test_xstock_consecutive_failures_trigger_infra_event(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# PL-MD-08  L2b  xstock_auto_remove: delist error removes symbol from config
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-MD-08", "pipeline_market_data", "§4 xstock_auto_remove", "L2b",
+        "When xStock fetch fails and live market-list check confirms symbol absent "
+        "on the responsible exchange, remove from config immediately on first failure",
+        status="implemented",
+    ),
+)
+def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monkeypatch):
+    """Verify that a confirmed-absent result from _check_symbol_listed_on_exchange removes
+    the symbol from config on the very first fetch failure — no threshold needed.
+
+    The check uses the exchange responsible for this specific token (instrument.exchange),
+    not a substitute venue. This test mocks _check_symbol_listed_on_exchange directly to
+    return False (confirmed absent) so no real network call is made.
+    """
+    import asyncio
+    import aletheia.trading.market_data as md_mod
+    import aletheia.config.loader as loader_mod
+    import aletheia.data.ccxt_provider as ccxt_mod
+
+    _setup_db(tmp_path, monkeypatch)
+
+    md_mod._xstock_failure_counts.clear()
+
+    from aletheia.config.schema import AletheiaConfig, MarketDataConfig
+    cfg = AletheiaConfig()
+    cfg.market_data = MarketDataConfig(
+        observed_symbols=[],
+        observed_stock_tokens=["AAPLON/USDT"],
+        ccxt_exchange="binance",
+    )
+
+    monkeypatch.setattr(md_mod, "load_config", lambda: cfg)
+    monkeypatch.setattr(loader_mod, "load_config", lambda: cfg)
+
+    saved_configs: list = []
+    monkeypatch.setattr(loader_mod, "save_config", lambda c: saved_configs.append(c))
+
+    try:
+        import aletheia.infra.events as events_mod
+        monkeypatch.setattr(events_mod, "emit_infra_event", lambda **kwargs: None)
+    except (ImportError, AttributeError):
+        pass
+
+    monkeypatch.setattr(md_mod, "_build_dynamic_instruments", lambda cfg: [])
+
+    # Exchange check: confirmed absent on the responsible exchange (bitget for AAPLON/USDT)
+    async def _not_listed(sym, exchange_name):
+        assert exchange_name == "bitget", (
+            f"Must query the responsible exchange (bitget), got '{exchange_name}'"
+        )
+        return False
+
+    monkeypatch.setattr(md_mod, "_check_symbol_listed_on_exchange", _not_listed)
+
+    class _FailingProvider:
+        async def get_ticker(self, instrument):
+            raise RuntimeError("fetch failed")
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(ccxt_mod, "CCXTProvider", lambda **kwargs: _FailingProvider())
+    monkeypatch.setattr(ccxt_mod, "get_market_data_provider", lambda: _FailingProvider())
+
+    # Single run — removal must happen immediately, not after a threshold
+    asyncio.run(md_mod.collect_market_snapshots())
+
+    assert saved_configs, (
+        "save_config was not called after the first failure + confirmed-absent check. "
+        "Auto-removal must be immediate once the exchange confirms the symbol is gone."
+    )
+    from aletheia.data.symbols import to_canonical
+    tokens = list(saved_configs[-1].market_data.observed_stock_tokens or [])
+    assert not any(to_canonical(t) == "AAPLON/USDT" for t in tokens), (
+        f"AAPLON/USDT still in observed_stock_tokens after confirmed-absent removal: {tokens}."
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-MD-08b", "pipeline_market_data", "§4 xstock_auto_remove_safe_default", "L2b",
+        "When the exchange listing check itself fails (network error), "
+        "the symbol must NOT be removed — safe default is 'assume listed'",
+        status="implemented",
+    ),
+)
+def test_xstock_listing_check_failure_does_not_remove(tmp_path, monkeypatch):
+    """Verify that a failed exchange listing check (returns True = assume listed) prevents removal.
+
+    A transient network error during _check_symbol_listed_on_exchange must never
+    trigger auto-removal — the safe default is to assume the symbol is still listed.
+    """
+    import asyncio
+    import aletheia.trading.market_data as md_mod
+    import aletheia.config.loader as loader_mod
+    import aletheia.data.ccxt_provider as ccxt_mod
+
+    _setup_db(tmp_path, monkeypatch)
+
+    md_mod._xstock_failure_counts.clear()
+
+    from aletheia.config.schema import AletheiaConfig, MarketDataConfig
+    cfg = AletheiaConfig()
+    cfg.market_data = MarketDataConfig(
+        observed_symbols=[],
+        observed_stock_tokens=["AAPLON/USDT"],
+        ccxt_exchange="binance",
+    )
+
+    monkeypatch.setattr(md_mod, "load_config", lambda: cfg)
+    monkeypatch.setattr(loader_mod, "load_config", lambda: cfg)
+
+    saved_configs: list = []
+    monkeypatch.setattr(loader_mod, "save_config", lambda c: saved_configs.append(c))
+
+    monkeypatch.setattr(md_mod, "_build_dynamic_instruments", lambda cfg: [])
+
+    # Exchange check: returns True (assume listed) — simulates a network error / can't verify
+    async def _assume_listed(sym, exchange_name):
+        return True
+
+    monkeypatch.setattr(md_mod, "_check_symbol_listed_on_exchange", _assume_listed)
+
+    class _FailingProvider:
+        async def get_ticker(self, instrument):
+            raise RuntimeError("connection timeout")
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(ccxt_mod, "CCXTProvider", lambda **kwargs: _FailingProvider())
+    monkeypatch.setattr(ccxt_mod, "get_market_data_provider", lambda: _FailingProvider())
+
+    asyncio.run(md_mod.collect_market_snapshots())
+
+    assert not saved_configs, (
+        "save_config was called despite the listing check returning 'assume listed'. "
+        "A transient outage must never trigger config auto-removal."
+    )
+
+
+# ---------------------------------------------------------------------------
 # PL-MD-06  L2b  typed_freshness: futures freshness prefers the perp snapshot
 # ---------------------------------------------------------------------------
 

@@ -61,6 +61,80 @@ _xstock_failure_counts: dict[str, int] = {}
 _XSTOCK_FAILURE_THRESHOLD = 3
 
 
+async def _check_symbol_listed_on_exchange(sym: str, exchange_name: str) -> bool:
+    """Return True if sym is confirmed listed on exchange_name; True on any error (safe default).
+
+    Loads the exchange's live market list and checks whether the canonical symbol
+    appears in it. Only a successful, definitive "not present" response returns False.
+    Network failures, timeouts, or exchange API errors all return True so a transient
+    outage never triggers accidental removal.
+
+    Always queries exchange_name directly — never substitutes a different exchange —
+    so a symbol absent on binance but present on bitget is correctly treated as listed
+    when exchange_name is bitget.
+    """
+    import asyncio as _aio
+    try:
+        from aletheia.net import make_ccxt
+        exchange, session = make_ccxt(exchange_name)
+        try:
+            markets = await _aio.wait_for(exchange.load_markets(), timeout=10.0)
+            canon = to_canonical(sym)
+            return canon in markets
+        finally:
+            try:
+                await _aio.wait_for(exchange.close(), timeout=5.0)
+            except Exception:
+                pass
+            try:
+                await _aio.wait_for(session.close(), timeout=5.0)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.debug(
+            "Could not verify listing status of %s on %s (%s) — assuming listed",
+            sym, exchange_name, e,
+        )
+        return True  # safe default: don't remove when we can't confirm absence
+
+
+def _auto_remove_xstock(sym: str, consecutive: int) -> None:
+    """Remove a stock token from config after live market-list verification confirms it is absent.
+
+    consecutive is the current failure count, used only for logging context.
+    """
+    try:
+        from aletheia.config.loader import load_config, save_config
+        from aletheia.infra.events import emit_infra_event
+
+        cfg = load_config()
+        canon = to_canonical(sym)
+        tokens = list(cfg.market_data.observed_stock_tokens or [])
+        filtered = [t for t in tokens if to_canonical(t) != canon]
+        if len(filtered) == len(tokens):
+            return  # already removed or not present
+        cfg.market_data.observed_stock_tokens = filtered
+        save_config(cfg)
+        logger.warning(
+            "Auto-removed xStock %s from config (confirmed not listed on exchange, "
+            "failure count=%d)",
+            sym, consecutive,
+        )
+        emit_infra_event(
+            severity="warning",
+            source="market_data",
+            code=f"xstock_auto_removed:{sym}",
+            message=(
+                f"xStock {sym} auto-removed from config — confirmed not listed on exchange "
+                f"(failure count={consecutive})"
+            ),
+            action="Review observed_stock_tokens in config to confirm removal is correct",
+            dedupe_sec=0,
+        )
+    except Exception:
+        logger.debug("Failed to auto-remove xStock %s from config", sym, exc_info=True)
+
+
 def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
     """Build deduplicated instrument list from config + universe + open positions.
 
@@ -196,7 +270,8 @@ async def collect_market_snapshots() -> dict:
                     logger.warning("Failed to fetch xStocks ticker %s: %s", instrument, e)
                     sym = instrument.symbol
                     _xstock_failure_counts[sym] = _xstock_failure_counts.get(sym, 0) + 1
-                    if _xstock_failure_counts[sym] >= _XSTOCK_FAILURE_THRESHOLD:
+                    consecutive = _xstock_failure_counts[sym]
+                    if consecutive >= _XSTOCK_FAILURE_THRESHOLD:
                         from aletheia.files.jsonl import write_audit
                         write_audit({
                             "actor": "system",
@@ -204,13 +279,18 @@ async def collect_market_snapshots() -> dict:
                             "event_type": "infra_event",
                             "entity_id": sym,
                             "message": (
-                                f"xStock {sym} fetch failed {_xstock_failure_counts[sym]} "
+                                f"xStock {sym} fetch failed {consecutive} "
                                 "consecutive times — provider may be degraded"
                             ),
                             "severity": "warning",
-                            "consecutive_failures": _xstock_failure_counts[sym],
+                            "consecutive_failures": consecutive,
                             "last_error": str(e)[:200],
                         })
+                    # Verify against the exchange that specifically lists this token.
+                    # instrument.exchange is set by stock_token_exchange() — always the
+                    # responsible venue (bitget for ON-series and r-series), never a substitute.
+                    if not await _check_symbol_listed_on_exchange(sym, instrument.exchange):
+                        _auto_remove_xstock(sym, consecutive)
         finally:
             await xprovider.close()
 
