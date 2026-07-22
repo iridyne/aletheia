@@ -38,12 +38,17 @@ def _fills_window_key(strategy_id: str | None, fills: list) -> str:
 
 
 def _review_already_written(strategy_id: str | None, window_key: str) -> bool:
-    """Return True if a post_trade_review for this exact fills-window exists."""
+    """Return True if an active post_trade_review for this exact fills-window exists.
+
+    Archived/deprecated reviews are excluded so they do not permanently block
+    regeneration after an owner archives an invalid review (#269).
+    """
     from aletheia.storage.sqlite import get_db
     tag_fragment = f"window:{window_key}"
     row = get_db().execute(
         "SELECT id FROM knowledge_items "
         "WHERE item_type = 'post_trade_review' "
+        "  AND status NOT IN ('archived', 'deprecated') "
         "  AND strategy_id IS ? "
         "  AND tags LIKE ? "
         "LIMIT 1",
@@ -53,12 +58,18 @@ def _review_already_written(strategy_id: str | None, window_key: str) -> bool:
 
 
 def _reviewed_position_ids(strategy_id: str | None) -> set[str]:
-    """Return only Position identities actually included in prior reviews."""
+    """Return Position identities covered by active (non-archived) reviews only.
+
+    Archived/deprecated reviews are excluded so their covered Positions remain
+    schedulable for regeneration (#269).
+    """
     from aletheia.storage.sqlite import get_db
 
     rows = get_db().execute(
         "SELECT tags FROM knowledge_items "
-        "WHERE item_type='post_trade_review' AND strategy_id IS ?",
+        "WHERE item_type='post_trade_review' "
+        "  AND status NOT IN ('archived', 'deprecated') "
+        "  AND strategy_id IS ?",
         (strategy_id,),
     ).fetchall()
     reviewed: set[str] = set()

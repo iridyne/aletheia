@@ -1187,9 +1187,11 @@ def build_recommendations(limit: int = 10) -> list[dict]:
     recent_closed_positions = list(reversed(
         eligible_strategy_outcomes(closed_after=cutoff_24h)
     ))[:20]
+    # Exclude archived/deprecated reviews so they do not suppress regeneration
+    # after an owner archives an invalid review (#269).
     recent_post_trade_reviews = repo._select_all(
         "knowledge_items",
-        where="item_type = ? AND created_at > ?",
+        where="item_type = ? AND status NOT IN ('archived', 'deprecated') AND created_at > ?",
         params=("post_trade_review", cutoff_24h),
         limit=20,
     )
@@ -1199,16 +1201,27 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         params=("post_trade_reviewer", cutoff_15m),
         limit=5,
     )
-    reviewed_strategy_ids = {
-        str(item.get("strategy_id"))
-        for item in recent_post_trade_reviews
-        if item.get("strategy_id")
-    }
+    # Position-level coverage: a strategy is covered only if the eligible
+    # Position's exact ID appears in an active review's tags (#269).
+    reviewed_position_ids: set[str] = set()
+    for item in recent_post_trade_reviews:
+        try:
+            tags = json.loads(item.get("tags") or "[]")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(tags, list):
+            continue
+        reviewed_position_ids.update(
+            str(tag).split(":", 1)[1]
+            for tag in tags
+            if str(tag).startswith("position:")
+        )
     missing_review_strategy_ids = sorted(
         {
             str(position.get("strategy_id"))
             for position in recent_closed_positions
-            if position.get("strategy_id") and str(position.get("strategy_id")) not in reviewed_strategy_ids
+            if position.get("strategy_id")
+            and str(position.get("id")) not in reviewed_position_ids
         }
     )
     if not cfg.runtime.paused and missing_review_strategy_ids and not recent_reviewer_runs:
