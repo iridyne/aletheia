@@ -49,6 +49,16 @@ SUPPORTED_PATH_IDS = frozenset({
     SUPPORTED_PATH_ID,
 })
 
+# Paths that use opportunity-keyed outcomes (opportunity:{id}:{horizon}).
+# filter_candidate_outcomes rows for these paths have allocation_selected=NULL by
+# contract — they are emitted-opportunity observations, not Universe full-arm
+# allocation members.  The Universe mirror cannot supply allocation_selected
+# because it uses a different candidate identity.  Treat NULL as implicitly
+# allocated (True) rather than invalidating the experiment. (issue #324)
+_OPPORTUNITY_KEYED_PATHS = frozenset({
+    "operator_learning_bundle",
+})
+
 
 @dataclass(frozen=True, order=True)
 class CohortKey:
@@ -152,6 +162,7 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
     outcome_resolutions = _load_exact_outcomes(
         {str(row.get("outcome_candidate_key") or "") for row in rows},
         str(hypothesis.target_horizon or ""),
+        path_id=hypothesis.path_id,
     )
     cohorts: dict[CohortKey, ContributionCohort] = {}
     candidates: dict[CohortKey, dict[str, dict[str, list[tuple[dict[str, Any], dict[str, Any]]]]]] = defaultdict(
@@ -341,6 +352,8 @@ def _manifest_authority_applied(manifest_json: Any) -> bool:
 def _load_exact_outcomes(
     outcome_candidate_keys: set[str],
     horizon: str,
+    *,
+    path_id: str | None = None,
 ) -> dict[str, tuple[dict[str, Any] | None, str | None, int, int, str | None]]:
     """Resolve all requested outcomes with two bounded, exact-key query sets."""
     requested = {key for key in outcome_candidate_keys if key}
@@ -379,6 +392,13 @@ def _load_exact_outcomes(
             if allocation_selected is None and universe_matches:
                 allocation_selected = True
                 allocation_selection_source = "universe_forward_outcomes_mirror_inference"
+            if allocation_selected is None and path_id in _OPPORTUNITY_KEYED_PATHS:
+                # Opportunity-keyed paths (e.g. operator_learning_bundle) emit
+                # filter_candidate_outcomes rows with allocation_selected=NULL by
+                # contract — they are observations of chosen opportunities, not
+                # Universe-allocated arms.  Treat as implicitly allocated. (#324)
+                allocation_selected = True
+                allocation_selection_source = "opportunity_keyed_path_implicit"
             if allocation_selected is None:
                 resolved[outcome_key] = (
                     None, "missing_allocation_result", 0, wrong_horizon_n, None,
