@@ -448,3 +448,116 @@ def test_import_malformed_checksum_line_aborts_without_mutation(tmp_path, monkey
     assert _count_lessons(tmp_path, "lesson-malformed") == 0, (
         "no rows must be inserted when checksums.txt is malformed"
     )
+
+
+# ---------------------------------------------------------------------------
+# #273 — import table allowlist and identifier quoting
+# ---------------------------------------------------------------------------
+
+
+def _build_bundle_with_arbitrary_table(
+    tmp_path: Path, archive_name: str, table_name: str, row: dict
+) -> Path:
+    """Bundle containing db/<table_name>.jsonl with one row, checksums correct."""
+    from aletheia.storage.hashing import sha256_file
+
+    staging = tmp_path / f"staging_{archive_name}"
+    staging.mkdir(parents=True)
+    db_dir = staging / "db"
+    db_dir.mkdir()
+    jsonl_path = db_dir / f"{table_name}.jsonl"
+    jsonl_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    (staging / "checksums.txt").write_text(
+        f"{sha256_file(jsonl_path)}  db/{table_name}.jsonl\n", encoding="utf-8"
+    )
+    archive = tmp_path / f"{archive_name}.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname=archive_name)
+    return archive
+
+
+def test_import_rejects_unauthorized_table(tmp_path, monkeypatch):
+    """#273: a checksum-valid bundle targeting an unlisted table must be rejected."""
+    _setup_env(tmp_path, monkeypatch)
+    archive = _build_bundle_with_arbitrary_table(
+        tmp_path, "unauth", "risk_decisions",
+        {"id": "rd-1", "decision": "kill", "created_at": "2026-01-01T00:00:00Z"},
+    )
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert any("authorized" in e.lower() or "rejected" in e.lower() for e in result.errors), (
+        f"unauthorized table must be rejected; got {result.errors}"
+    )
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    count = db.execute("SELECT COUNT(*) FROM risk_decisions WHERE id='rd-1'").fetchone()[0]
+    assert count == 0, "unauthorized table row must not be inserted"
+
+
+def test_import_mixed_bundle_writes_nothing_on_unauthorized_table(tmp_path, monkeypatch):
+    """#273: a bundle with one valid + one unauthorized table must write neither."""
+    from aletheia.storage.hashing import sha256_file
+
+    _setup_env(tmp_path, monkeypatch)
+
+    staging = tmp_path / "staging_mixed"
+    staging.mkdir()
+    db_dir = staging / "db"
+    db_dir.mkdir()
+
+    good_row = {
+        "lesson_id": "lesson-mixed-ok",
+        "source_type": "test", "source_id": "s1",
+        "category": "risk", "severity": "medium", "status": "accepted",
+        "summary": "good", "evidence_json": "{}", "created_at": "2026-01-01T00:00:00Z",
+    }
+    bad_row = {"id": "settings-poison", "key": "admin", "value": "evil"}
+
+    good_file = db_dir / "ps_lessons.jsonl"
+    bad_file = db_dir / "settings.jsonl"
+    good_file.write_text(json.dumps(good_row) + "\n", encoding="utf-8")
+    bad_file.write_text(json.dumps(bad_row) + "\n", encoding="utf-8")
+
+    lines = [
+        f"{sha256_file(good_file)}  db/ps_lessons.jsonl",
+        f"{sha256_file(bad_file)}  db/settings.jsonl",
+    ]
+    (staging / "checksums.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    archive = tmp_path / "mixed.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname="mixed")
+
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert result.errors, "mixed bundle with unauthorized table must report errors"
+    assert _count_lessons(tmp_path, "lesson-mixed-ok") == 0, (
+        "valid-table rows must not be inserted when a sibling table is unauthorized"
+    )
+
+
+def test_import_rejects_row_with_unknown_column(tmp_path, monkeypatch):
+    """#273: a row in an allowed table with an unknown column is rejected."""
+    _setup_env(tmp_path, monkeypatch)
+
+    row_with_extra = {
+        "lesson_id": "lesson-badcol",
+        "source_type": "test", "source_id": "s1",
+        "category": "risk", "severity": "medium", "status": "accepted",
+        "summary": "ok", "evidence_json": "{}", "created_at": "2026-01-01T00:00:00Z",
+        "injected_column": "DROP TABLE ps_lessons",
+    }
+    archive = _build_bundle_with_arbitrary_table(
+        tmp_path, "badcol", "ps_lessons", row_with_extra
+    )
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert any("schema" in e.lower() or "column" in e.lower() for e in result.errors), (
+        f"unknown column must be rejected; got {result.errors}"
+    )
+    assert _count_lessons(tmp_path, "lesson-badcol") == 0, (
+        "no rows must be inserted when an unknown column is present"
+    )

@@ -9,6 +9,28 @@ from aletheia.config.loader import get_data_dir
 from aletheia.storage.hashing import sha256_file
 from aletheia.storage.sqlite import get_db
 
+# Tables the importer is allowed to write — exactly the set emitted by the
+# supported exporter modes (research-pack, proposal-pack, runtime-snapshot).
+# full-backup restores the whole app.db directly and does not use this path.
+_IMPORT_ALLOWED_TABLES: frozenset[str] = frozenset({
+    # research-pack
+    "serenity_themes",
+    "serenity_evidence",
+    "serenity_claims",
+    "serenity_opportunities",
+    "ps_lessons",
+    "ps_skills",
+    # proposal-pack (trade_proposals + serenity chain)
+    "trade_proposals",
+    # runtime-snapshot
+    "ps_orders",
+    "ps_fills",
+    "ps_positions",
+    "ps_gateway_sessions",
+    "ps_order_intents",
+    "ps_execution_intents",
+})
+
 
 class ImportConflict:
     """Represents a conflict during import."""
@@ -172,69 +194,116 @@ class ImportService:
                     result.errors.append(f"Unlisted payload file not in checksum manifest: {rel}")
 
     def _import_db_tables(self, db_dir: Path, result: ImportResult, commit: bool) -> None:
-        """Import JSONL table data with deduplication."""
+        """Import JSONL table data with deduplication (#273: allowlist + preflight).
+
+        Preflight phase (no DB writes):
+        - Reject tables not in _IMPORT_ALLOWED_TABLES.
+        - Reject rows that are not plain JSON objects.
+        - Reject rows containing columns absent from the local schema.
+        Any preflight failure aborts the entire import before any DB mutation.
+
+        Commit phase (only reached when preflight passes):
+        - All identifiers are quoted to prevent injection.
+        - Conflicts / duplicates are classified as before (#64).
+        """
         db = get_db()
 
+        # ── Discover local schema for allowed tables ──────────────────────────
+        def _schema_cols(table: str) -> frozenset[str]:
+            try:
+                rows = db.execute(f'PRAGMA table_info("{table}")').fetchall()
+                return frozenset(r["name"] for r in rows)
+            except Exception:
+                return frozenset()
+
+        # ── Preflight pass ────────────────────────────────────────────────────
+        preflight_tables: list[tuple[str, Path, list[dict]]] = []
         for jsonl_file in sorted(db_dir.glob("*.jsonl")):
             table_name = jsonl_file.stem
-            new_count = 0
+            if table_name not in _IMPORT_ALLOWED_TABLES:
+                result.errors.append(
+                    f"Import rejected: table {table_name!r} is not in the authorized import surface"
+                )
+                return
 
+            allowed_cols = _schema_cols(table_name)
+            rows_for_table: list[dict] = []
             with open(jsonl_file, "r", encoding="utf-8") as f:
-                for line in f:
+                for lineno, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:
                         continue
-                    row = json.loads(line)
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        result.errors.append(
+                            f"{table_name} line {lineno}: invalid JSON: {exc}"
+                        )
+                        return
+                    if not isinstance(row, dict):
+                        result.errors.append(
+                            f"{table_name} line {lineno}: row is not a JSON object"
+                        )
+                        return
+                    unknown_cols = set(row.keys()) - allowed_cols
+                    if unknown_cols:
+                        result.errors.append(
+                            f"{table_name} line {lineno}: columns not in local schema: "
+                            f"{', '.join(sorted(unknown_cols))}"
+                        )
+                        return
+                    rows_for_table.append(row)
+            preflight_tables.append((table_name, jsonl_file, rows_for_table))
 
-                    # Check for duplicate by primary key (assume 'id' column).
-                    # #64 fix: an existing PK with DIFFERENT column values used to
-                    # be counted as `skipped_duplicates` — a diverged row silently
-                    # ignored so the operator never learned the bundle was already
-                    # out of sync. The `ImportConflict` class existed but was
-                    # never instantiated. Now we distinguish:
-                    #   PK exists, payload identical  → `skipped_duplicates`
-                    #   PK exists, payload different  → `conflicts` entry
-                    #   PK missing                    → inserted (as before)
+        # ── Import phase ──────────────────────────────────────────────────────
+        for table_name, _jsonl_file, rows in preflight_tables:
+            new_count = 0
+            pk_col = None  # resolved lazily from first row
+            for row in rows:
+                if pk_col is None:
                     pk_col = self._find_pk(table_name, row)
-                    if pk_col and pk_col in row:
-                        existing = db.execute(
-                            f"SELECT * FROM {table_name} WHERE {pk_col} = ?",
-                            (row[pk_col],),
-                        ).fetchone()
-                        if existing:
-                            local = dict(existing)
-                            diff_cols = [
-                                col for col, val in row.items()
-                                if col in local and local[col] != val
-                            ]
-                            if diff_cols:
-                                result.conflicts.append(ImportConflict(
-                                    object_type=table_name,
-                                    object_id=str(row[pk_col]),
-                                    local_hash=self._row_fingerprint(local),
-                                    remote_hash=self._row_fingerprint(row),
-                                    message=(
-                                        f"{table_name} row {row[pk_col]!r} diverges "
-                                        f"from local on columns: {', '.join(sorted(diff_cols))}"
-                                    ),
-                                ))
-                            else:
-                                result.skipped_duplicates += 1
-                            continue
 
-                    if commit:
-                        cols = ", ".join(row.keys())
-                        placeholders = ", ".join(["?"] * len(row))
-                        try:
-                            db.execute(
-                                f"INSERT OR IGNORE INTO {table_name} ({cols}) VALUES ({placeholders})",
-                                list(row.values()),
-                            )
-                        except Exception as e:
-                            result.errors.append(f"Insert into {table_name} failed: {e}")
-                            continue
+                # Conflict / duplicate detection (#64)
+                if pk_col and pk_col in row:
+                    existing = db.execute(
+                        f'SELECT * FROM "{table_name}" WHERE "{pk_col}" = ?',
+                        (row[pk_col],),
+                    ).fetchone()
+                    if existing:
+                        local = dict(existing)
+                        diff_cols = [
+                            col for col, val in row.items()
+                            if col in local and local[col] != val
+                        ]
+                        if diff_cols:
+                            result.conflicts.append(ImportConflict(
+                                object_type=table_name,
+                                object_id=str(row[pk_col]),
+                                local_hash=self._row_fingerprint(local),
+                                remote_hash=self._row_fingerprint(row),
+                                message=(
+                                    f"{table_name} row {row[pk_col]!r} diverges "
+                                    f"from local on columns: {', '.join(sorted(diff_cols))}"
+                                ),
+                            ))
+                        else:
+                            result.skipped_duplicates += 1
+                        continue
 
-                    new_count += 1
+                if commit:
+                    quoted_cols = ", ".join(f'"{c}"' for c in row.keys())
+                    placeholders = ", ".join(["?"] * len(row))
+                    try:
+                        db.execute(
+                            f'INSERT OR IGNORE INTO "{table_name}" ({quoted_cols}) '
+                            f"VALUES ({placeholders})",
+                            list(row.values()),
+                        )
+                    except Exception as exc:
+                        result.errors.append(f"Insert into {table_name} failed: {exc}")
+                        continue
+
+                new_count += 1
 
             if new_count > 0:
                 result.new_rows[table_name] = new_count
