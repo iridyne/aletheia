@@ -313,6 +313,14 @@ def _create_factor_guard_candidate(
     if not predicates:
         return None
 
+    applies_to: dict = {"asset_class": ["crypto"]}
+    if scanner != "unknown":
+        applies_to["scanner_family"] = [scanner]
+    if symbol != "unknown":
+        applies_to["symbol"] = [symbol]
+    if direction != "unknown":
+        applies_to["direction"] = [direction]
+
     metadata = {
         "type": "Trading Guard",
         "guard_id": guard_id,
@@ -329,7 +337,7 @@ def _create_factor_guard_candidate(
         # block; enforcement is suppressed until an experiment grants authority.
         "auto_generated": True,
         "shadow_only": True,
-        "applies_to": {"asset_class": ["crypto"]},
+        "applies_to": applies_to,
         "predicates": predicates,
         "evidence_refs": [r.get("position_id") for r in losses[:5] if r.get("position_id")],
         "tags": ["auto-generated", "factor-pattern", "shadow-only", scanner],

@@ -237,6 +237,41 @@ class TestDetectGuardCandidates:
         assert result == []
         mock_create.assert_not_called()
 
+    @patch("aletheia.analytics.trade_case_builder.create_guard_candidate")
+    @patch("aletheia.analytics.trade_case_builder._get_existing_guard_ids")
+    @patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
+    def test_guard_candidate_scoped_to_source_symbol_scanner_direction(
+        self, mock_rows, mock_guards, mock_create
+    ):
+        """Guard candidates must be scoped to the source (symbol, scanner, direction)
+        so a BTC loss pattern cannot match unrelated ETH/SOL candidates."""
+        mock_guards.return_value = set()
+        mock_create.return_value = MagicMock(id="gc-scope-1")
+
+        rows = [
+            _make_row(
+                position_id=f"pos-{i}",
+                symbol="BTC/USDT",
+                direction="long",
+                scanner_family="momentum",
+                realized_pnl=-5.0,
+                realized_pnl_pct=-2.5,
+                late_entry_penalty=15,
+            )
+            for i in range(4)
+        ]
+        mock_rows.return_value = rows
+
+        detect_guard_candidates(min_losses=3)
+
+        mock_create.assert_called_once()
+        metadata = mock_create.call_args.kwargs["metadata"]
+        applies_to = metadata["applies_to"]
+
+        assert applies_to.get("symbol") == ["BTC/USDT"]
+        assert applies_to.get("scanner_family") == ["momentum"]
+        assert applies_to.get("direction") == ["long"]
+
 
 class TestIsSyntheticClosure:
     def test_reconciled_gone_is_synthetic(self):
