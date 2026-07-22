@@ -369,7 +369,7 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
             # consuming the pending carrier so an evidence failure rolls the
             # entire claim back instead of becoming an invisible permanent skip.
             if (
-                pi_dec.action == "skip"
+                pi_dec.action in ("skip", "portfolio_guard_skip")
                 and pi_dec.opportunity_id
                 and decision_result.get("filter_trace")
             ):
@@ -393,7 +393,7 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
             if pi_dec.opportunity_id and pi_dec.signal_source == "market_observer":
                 transition_opportunity_to_reviewed(pi_dec.opportunity_id)
             elif (
-                pi_dec.action == "skip"
+                pi_dec.action in ("skip", "portfolio_guard_skip")
                 and pi_dec.opportunity_id
                 and pi_dec.signal_source == "serenity"
             ):

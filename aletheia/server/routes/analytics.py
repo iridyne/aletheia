@@ -582,7 +582,7 @@ def get_pipeline_funnel(hours: int = 24):
         "AND julianday(created_at) >= julianday(?)"
     )
     pi_skip = _count(
-        "SELECT COUNT(*) FROM pi_decisions WHERE action='skip' "
+        "SELECT COUNT(*) FROM pi_decisions WHERE action IN ('skip','portfolio_guard_skip') "
         "AND COALESCE(signal_source, 'market_observer') != 'system_cascade' "
         "AND julianday(created_at) >= julianday(?)"
     )
@@ -901,6 +901,8 @@ def _funnel_cohort_inputs(db, hours: int) -> dict:
         "              AND p.action IN ('trade','scale_in','flip')) "
         " THEN 'operator_trade' "
         " WHEN EXISTS (SELECT 1 FROM pi_decisions p WHERE p.opportunity_id=o.id "
+        "              AND p.action='portfolio_guard_skip') THEN 'portfolio_guard_reject' "
+        " WHEN EXISTS (SELECT 1 FROM pi_decisions p WHERE p.opportunity_id=o.id "
         "              AND p.action='skip') THEN 'operator_skip' "
         " WHEN EXISTS (SELECT 1 FROM pi_decisions p WHERE p.opportunity_id=o.id "
         "              AND p.action='watch') THEN 'operator_watch' "
@@ -1181,9 +1183,11 @@ def get_operator_decisions(
     - `operator_skip`: pi_decisions.action = 'skip' and no portfolio guard fired —
       the LLM operator saw an executable candidate and decided not to trade
       (reason in `reasoning`).
-    - `portfolio_guard_reject`: pi_decisions.action = 'skip' but the LLM actually
-      approved the trade; a downstream portfolio guard (direction_bias_brake) blocked
-      execution before a proposal could be created (#330).
+    - `portfolio_guard_reject`: pi_decisions.action = 'portfolio_guard_skip' (new
+      data) or action = 'skip' with guard_block_reason from filter_decisions (legacy
+      data) — the LLM approved a trade but a portfolio guard (direction_bias_brake,
+      equity guard, etc.) blocked execution after operator action assessment passed
+      (#330).
     - `trade`: pi_decisions.action IN ('trade','flip','scale_in') — operator
       chose to trade; a proposal typically follows.
     - `conviction_defer`: operator_conviction_gate rejected after LLM approved —
@@ -1282,7 +1286,7 @@ def get_operator_decisions(
         " AND fd.decision='rejected' LIMIT 1) AS guard_block_reason "
         "FROM pi_decisions p "
         "LEFT JOIN runtime_sessions rs ON rs.session_id=p.runtime_session_id "
-        "WHERE p.action IN ('trade','skip','flip','scale_in','watch') "
+        "WHERE p.action IN ('trade','skip','flip','scale_in','watch','portfolio_guard_skip') "
         "AND COALESCE(p.signal_source, 'market_observer') != 'system_cascade' "
         "AND julianday(p.created_at)>=julianday(?) "
         "AND julianday(p.created_at)<=julianday(?) "
@@ -1293,7 +1297,7 @@ def get_operator_decisions(
     for r in rows:
         act = str(r["action"] or "")
         guard_block = r["guard_block_reason"] if "guard_block_reason" in r.keys() else None
-        if act == "skip" and guard_block:
+        if act == "portfolio_guard_skip" or (act == "skip" and guard_block):
             outcome = "portfolio_guard_reject"
         elif act == "skip":
             outcome = "operator_skip"
@@ -1414,7 +1418,6 @@ def get_operator_decisions(
             )
         )
     ]
-<<<<<<< HEAD
 
     # conviction gate deferrals — LLM said trade but conviction was below minimum.
     # These never produce a pi_decisions row (DL-S47 non-terminal defer), so the
