@@ -4686,7 +4686,14 @@ def insert_filter_decision_batch(batch) -> bool:
 
 
 def insert_filter_candidate_outcomes_batch(outcomes: list) -> int:
-    """Register fixed-horizon candidate outcomes without duplicating a candidate."""
+    """Register fixed-horizon candidate outcomes without duplicating a candidate.
+
+    Uses an upsert so that a later call carrying a definitive allocation_selected
+    (True or False) can update a row that was first written with NULL by the filter
+    evidence path. COALESCE(excluded.allocation_selected, existing) ensures an
+    explicit True/False always wins, while a NULL incoming value never overwrites
+    an already-resolved value.
+    """
     if not outcomes:
         return 0
     rows = [outcome.model_dump() for outcome in outcomes]
@@ -4696,7 +4703,10 @@ def insert_filter_candidate_outcomes_batch(outcomes: list) -> int:
     before = db.total_changes
     with transaction():
         execute_many_write(
-            f"INSERT OR IGNORE INTO filter_candidate_outcomes ({', '.join(columns)}) VALUES ({placeholders})",
+            f"INSERT INTO filter_candidate_outcomes ({', '.join(columns)}) VALUES ({placeholders})"
+            " ON CONFLICT(id) DO UPDATE SET"
+            " allocation_selected = COALESCE(excluded.allocation_selected,"
+            "                                filter_candidate_outcomes.allocation_selected)",
             [[row[column] for column in columns] for row in rows],
         )
     return db.total_changes - before

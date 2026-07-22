@@ -3171,6 +3171,28 @@ def _clear_learning_verdict_runner_zombie(db) -> None:
     db.execute("DELETE FROM learning_job_health WHERE job_id = 'learning_verdict_runner'")
 
 
+def _backfill_fco_allocation_selected(db) -> None:
+    """Backfill allocation_selected = 0 for settled/failed filter candidate outcome rows.
+
+    The filter-evidence path (record_filter_decision) creates rows via
+    INSERT OR IGNORE with allocation_selected = NULL, then
+    _register_experiment_candidate_outcomes tries to write the authoritative
+    True/False — but the earlier INSERT OR IGNORE blocked any update.
+
+    After the upsert fix in insert_filter_candidate_outcomes_batch this is
+    prevented going forward. For existing settled/failed rows whose window has
+    already elapsed and where allocation_selected is still NULL the only safe
+    interpretation is 0 (not selected): had they been selected the universe
+    service would have written True.
+    """
+    db.execute(
+        "UPDATE filter_candidate_outcomes "
+        "SET allocation_selected = 0 "
+        "WHERE allocation_selected IS NULL "
+        "AND status IN ('settled', 'failed')"
+    )
+
+
 def _run_all_ddl(db) -> None:
     """Execute every DDL statement against db (used for both real and blueprint DBs)."""
     db.executescript(SCHEMA_SQL)
@@ -3206,6 +3228,7 @@ def _run_all_ddl(db) -> None:
     _ensure_knowledge_fts(db)
     db.executescript(_CORE_INDEXES_SQL)
     _clear_learning_verdict_runner_zombie(db)
+    _backfill_fco_allocation_selected(db)
     db.commit()
 
 
