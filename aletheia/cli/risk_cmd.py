@@ -18,7 +18,14 @@ def status():
     from aletheia.risk import kill_switch
     cfg = load_config()
     typer.echo(f"Kill switch: {'ACTIVE' if kill_switch.is_active() else 'inactive'}")
-    typer.echo(f"Max daily loss: {cfg.risk.max_daily_loss_pct}%")
+    typer.echo(f"Demo daily loss: {cfg.risk.demo.loss.max_daily_loss_pct}%")
+    typer.echo(f"Live daily loss: {cfg.risk.live.loss.max_daily_loss_pct}%")
+    typer.echo(
+        "Brakes: "
+        f"global={'ACTIVE' if kill_switch.is_active('global') else 'inactive'}, "
+        f"demo={'ACTIVE' if kill_switch.is_active('demo') else 'inactive'}, "
+        f"live={'ACTIVE' if kill_switch.is_active('live') else 'inactive'}"
+    )
     mode = cfg.risk.symbol_filter_mode
     syms = ', '.join(cfg.risk.symbol_list) or '(none)'
     typer.echo(f"Symbol filter: {mode} — {syms}")

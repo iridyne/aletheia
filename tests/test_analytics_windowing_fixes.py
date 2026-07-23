@@ -114,7 +114,9 @@ async def test_equity_curve_returns_recent_points_when_over_limit(tmp_path, monk
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         # limit=3 forces truncation — we should get the 3 MOST RECENT closes,
-        # not the 3 oldest. All returned times are within the last 10 days.
+        # not the 3 oldest. The response may include the cumulative baseline
+        # immediately before the selected closes, so use a 15-day boundary:
+        # it still distinguishes the recent 9/6/3-day window from 30/27/24.
         r = await client.get("/api/analytics/equity-curve?limit=3")
 
     assert r.status_code == 200
@@ -122,9 +124,11 @@ async def test_equity_curve_returns_recent_points_when_over_limit(tmp_path, monk
     assert len(points) == 3, f"expected 3 points; got {len(points)}"
 
     from datetime import datetime, timedelta, timezone
-    ten_days_ago = (datetime.now(timezone.utc) - timedelta(days=11)).isoformat()
+    recent_window_start = (
+        datetime.now(timezone.utc) - timedelta(days=15)
+    ).isoformat()
     for p in points:
-        assert p["time"] > ten_days_ago, (
+        assert p["time"] > recent_window_start, (
             f"equity-curve returned an OLD point {p['time']!r} under limit=3 — "
             f"the ASC-limit truncation regressed"
         )

@@ -3,7 +3,7 @@
 import logging
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _logger = logging.getLogger("aletheia.config")
 
@@ -47,6 +47,8 @@ class RuntimeConfig(BaseModel):
     # Global trading brake. When true, the risk engine rejects every proposal
     # (paper and live). Set by human action or auto-tripped on daily-loss limit.
     kill_switch_active: bool = False
+    demo_brake_active: bool = False
+    live_brake_active: bool = False
     # Git versioning of data/knowledge, data/playbooks, data/reports.
     git_enabled: bool = True
     # Hot-reload the inner uvicorn worker when files under aletheia/ change.
@@ -268,7 +270,305 @@ class ModelsConfig(BaseModel):
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
 
 
+class StrictRiskPolicyModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class RiskCapitalPolicy(StrictRiskPolicyModel):
+    base_usdt: float = 100.0
+    max_position_notional_usdt: float = 50.0
+    max_per_symbol_notional_usdt: float = 400.0
+    max_total_exposure_pct: float = 5.0
+
+
+class RiskLossPolicy(StrictRiskPolicyModel):
+    max_single_trade_risk_pct: float = 0.25
+    max_daily_loss_pct: float = 1.0
+
+
+class RiskPositionsPolicy(StrictRiskPolicyModel):
+    max_open_positions: int = 3
+    allow_short: bool = True
+
+
+class RiskLeveragePolicy(StrictRiskPolicyModel):
+    futures_cap: int = 2
+    major_cap: int = 3
+    mid_cap: int = 2
+    alt_cap: int = 1
+    account_cap: float = 1.5
+
+
+class RiskMarginPolicy(StrictRiskPolicyModel):
+    warning_ratio: float = 0.70
+    block_ratio: float = 0.85
+    min_entry_liquidation_buffer_pct: float = 5.0
+    runtime_liquidation_buffer_pct: float = 3.0
+
+
+class RiskCorrelationPolicy(StrictRiskPolicyModel):
+    enabled: bool = True
+    max_sector_concentration_pct: float = 60.0
+    max_portfolio_beta: float = 3.0
+
+
+class RiskExitPolicy(StrictRiskPolicyModel):
+    catastrophic_stop_enabled: bool = True
+    catastrophic_stop_pct: float = 10.0
+    catastrophic_stop_pct_serenity: float = 15.0
+    horizon_hard_backstop_mult: float = 3.0
+
+
+class RiskEligibilityPolicy(StrictRiskPolicyModel):
+    family_min_samples: int = 30
+    family_min_win_rate_pct: float = 50.0
+
+
+class ModeRiskPolicy(StrictRiskPolicyModel):
+    policy_id: str
+    revision: int = 1
+    capital: RiskCapitalPolicy = Field(default_factory=RiskCapitalPolicy)
+    loss: RiskLossPolicy = Field(default_factory=RiskLossPolicy)
+    positions: RiskPositionsPolicy = Field(default_factory=RiskPositionsPolicy)
+    leverage: RiskLeveragePolicy = Field(default_factory=RiskLeveragePolicy)
+    margin: RiskMarginPolicy = Field(default_factory=RiskMarginPolicy)
+    correlation: RiskCorrelationPolicy = Field(default_factory=RiskCorrelationPolicy)
+    exits: RiskExitPolicy = Field(default_factory=RiskExitPolicy)
+    eligibility: RiskEligibilityPolicy | None = None
+    auto_trip_mode_brake_on_daily_loss: bool = False
+
+
+def _legacy_mode_policy(data: dict, mode: str) -> dict:
+    is_live = mode == "live"
+    suffix = "live" if is_live else "demo"
+    return {
+        "policy_id": f"{mode}-migrated-v2",
+        "revision": 1,
+        "capital": {
+            "base_usdt": data.get(
+                "max_live_limited_cap_usdt" if is_live else "starting_capital_usdt",
+                100.0,
+            ),
+            "max_position_notional_usdt": data.get(
+                f"max_{suffix}_position_notional_usdt",
+                50.0 if is_live else 100_000.0,
+            ),
+            "max_per_symbol_notional_usdt": data.get(
+                "max_per_symbol_notional_usdt", 400.0
+            ),
+            "max_total_exposure_pct": data.get(
+                "max_total_live_exposure_pct", 5.0 if is_live else 100.0
+            ),
+        },
+        "loss": {
+            "max_single_trade_risk_pct": data.get(
+                "max_single_trade_risk_pct" if is_live
+                else "max_demo_single_trade_risk_pct",
+                0.25 if is_live else 20.0,
+            ),
+            "max_daily_loss_pct": data.get("max_daily_loss_pct", 1.0),
+        },
+        "positions": {
+            "max_open_positions": data.get(
+                f"max_open_positions_{suffix}", 3 if is_live else 200
+            ),
+            "allow_short": data.get(f"allow_short_{suffix}", True),
+        },
+        "leverage": {
+            "futures_cap": data.get(
+                f"max_futures_leverage_{suffix}", 2 if is_live else 125
+            ),
+            "major_cap": data.get(
+                f"max_leverage_major_{suffix}", 3 if is_live else 20
+            ),
+            "mid_cap": data.get(
+                f"max_leverage_mid_{suffix}", 2 if is_live else 10
+            ),
+            "alt_cap": data.get(
+                f"max_leverage_alt_{suffix}", 1 if is_live else 5
+            ),
+            "account_cap": data.get(
+                f"max_account_leverage_{suffix}", 1.5 if is_live else 10.0
+            ),
+        },
+        "margin": {
+            "warning_ratio": data.get("futures_margin_warning_ratio", 0.70),
+            "block_ratio": data.get("futures_margin_force_close_ratio", 0.85),
+            "min_entry_liquidation_buffer_pct": data.get(
+                "min_liquidation_buffer_pct", 5.0
+            ),
+            "runtime_liquidation_buffer_pct": data.get(
+                "runtime_liquidation_buffer_pct", 3.0
+            ),
+        },
+        "correlation": {
+            "enabled": data.get("correlation_guard_enabled", True),
+            "max_sector_concentration_pct": data.get(
+                "max_sector_concentration_pct", 60.0
+            ),
+            "max_portfolio_beta": data.get("max_portfolio_beta", 3.0),
+        },
+        "exits": {
+            "catastrophic_stop_enabled": data.get(
+                "catastrophic_stop_enabled", True
+            ),
+            "catastrophic_stop_pct": data.get("catastrophic_stop_pct", 10.0),
+            "catastrophic_stop_pct_serenity": data.get(
+                "catastrophic_stop_pct_serenity", 15.0
+            ),
+            "horizon_hard_backstop_mult": data.get(
+                "horizon_hard_backstop_mult", 3.0
+            ),
+        },
+        "eligibility": (
+            {
+                "family_min_samples": data.get("live_family_min_samples", 30),
+                "family_min_win_rate_pct": data.get(
+                    "live_family_min_win_rate_pct", 50.0
+                ),
+            }
+            if is_live else None
+        ),
+        "auto_trip_mode_brake_on_daily_loss": data.get(
+            f"kill_switch_enabled_{suffix}", is_live
+        ),
+    }
+
+
+def default_mode_risk_policy(mode: Literal["demo", "live"]) -> ModeRiskPolicy:
+    """Return the current shipped default for one independently owned mode."""
+    return ModeRiskPolicy.model_validate(_legacy_mode_policy({}, mode))
+
+
+def _merge_policy(base: dict, override: dict) -> dict:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_policy(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 class RiskConfig(BaseModel):
+    schema_version: int = 2
+    demo: ModeRiskPolicy
+    live: ModeRiskPolicy
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_flat_policies(cls, value):
+        data = dict(value or {})
+        for mode in ("demo", "live"):
+            base = _legacy_mode_policy(data, mode)
+            override = data.get(mode)
+            data[mode] = (
+                _merge_policy(base, override)
+                if isinstance(override, dict)
+                else base
+            )
+        data["schema_version"] = 2
+        return data
+
+    def __setattr__(self, name: str, value) -> None:
+        """Keep one-release legacy assignments synchronized with v2 policies."""
+        super().__setattr__(name, value)
+        if "demo" not in self.__dict__ or "live" not in self.__dict__:
+            return
+        mode_paths = {
+            "max_live_limited_cap_usdt": ("live", "capital", "base_usdt"),
+            "starting_capital_usdt": ("demo", "capital", "base_usdt"),
+            "max_live_position_notional_usdt": (
+                "live", "capital", "max_position_notional_usdt",
+            ),
+            "max_demo_position_notional_usdt": (
+                "demo", "capital", "max_position_notional_usdt",
+            ),
+            "max_total_live_exposure_pct": (
+                "live", "capital", "max_total_exposure_pct",
+            ),
+            "max_single_trade_risk_pct": (
+                "live", "loss", "max_single_trade_risk_pct",
+            ),
+            "max_demo_single_trade_risk_pct": (
+                "demo", "loss", "max_single_trade_risk_pct",
+            ),
+            "max_open_positions_live": (
+                "live", "positions", "max_open_positions",
+            ),
+            "max_open_positions_demo": (
+                "demo", "positions", "max_open_positions",
+            ),
+            "allow_short_live": ("live", "positions", "allow_short"),
+            "allow_short_demo": ("demo", "positions", "allow_short"),
+            "max_futures_leverage_live": (
+                "live", "leverage", "futures_cap",
+            ),
+            "max_futures_leverage_demo": (
+                "demo", "leverage", "futures_cap",
+            ),
+            "max_leverage_major_live": ("live", "leverage", "major_cap"),
+            "max_leverage_major_demo": ("demo", "leverage", "major_cap"),
+            "max_leverage_mid_live": ("live", "leverage", "mid_cap"),
+            "max_leverage_mid_demo": ("demo", "leverage", "mid_cap"),
+            "max_leverage_alt_live": ("live", "leverage", "alt_cap"),
+            "max_leverage_alt_demo": ("demo", "leverage", "alt_cap"),
+            "max_account_leverage_live": (
+                "live", "leverage", "account_cap",
+            ),
+            "max_account_leverage_demo": (
+                "demo", "leverage", "account_cap",
+            ),
+            "kill_switch_enabled_live": (
+                "live", None, "auto_trip_mode_brake_on_daily_loss",
+            ),
+            "kill_switch_enabled_demo": (
+                "demo", None, "auto_trip_mode_brake_on_daily_loss",
+            ),
+            "live_family_min_samples": (
+                "live", "eligibility", "family_min_samples",
+            ),
+            "live_family_min_win_rate_pct": (
+                "live", "eligibility", "family_min_win_rate_pct",
+            ),
+        }
+        shared_paths = {
+            "max_per_symbol_notional_usdt": ("capital", "max_per_symbol_notional_usdt"),
+            "max_daily_loss_pct": ("loss", "max_daily_loss_pct"),
+            "futures_margin_warning_ratio": ("margin", "warning_ratio"),
+            "futures_margin_force_close_ratio": ("margin", "block_ratio"),
+            "min_liquidation_buffer_pct": (
+                "margin", "min_entry_liquidation_buffer_pct",
+            ),
+            "runtime_liquidation_buffer_pct": (
+                "margin", "runtime_liquidation_buffer_pct",
+            ),
+            "correlation_guard_enabled": ("correlation", "enabled"),
+            "max_sector_concentration_pct": (
+                "correlation", "max_sector_concentration_pct",
+            ),
+            "max_portfolio_beta": ("correlation", "max_portfolio_beta"),
+            "catastrophic_stop_enabled": ("exits", "catastrophic_stop_enabled"),
+            "catastrophic_stop_pct": ("exits", "catastrophic_stop_pct"),
+            "catastrophic_stop_pct_serenity": (
+                "exits", "catastrophic_stop_pct_serenity",
+            ),
+            "horizon_hard_backstop_mult": (
+                "exits", "horizon_hard_backstop_mult",
+            ),
+        }
+        if name in mode_paths:
+            mode, group, field = mode_paths[name]
+            target = getattr(self, mode)
+            if group is not None:
+                target = getattr(target, group)
+            if target is not None:
+                setattr(target, field, value)
+        elif name in shared_paths:
+            group, field = shared_paths[name]
+            for mode in ("demo", "live"):
+                setattr(getattr(getattr(self, mode), group), field, value)
+
     # Kill switch auto-trigger: when enabled, breaching max_daily_loss_pct trips
     # the global trading brake automatically. Separate toggles for demo and live.
     kill_switch_enabled_live: bool = True
@@ -280,31 +580,31 @@ class RiskConfig(BaseModel):
     # snapshot. Exchange-backed orders use min(this value, available USDT).
     max_live_position_notional_usdt: float = 50.0
     max_live_limited_cap_usdt: float = 100.0
-    # Paper/demo bounds — promotion-gate evidence is built from paper trades, so
-    # paper orders must NOT be unbounded (guide §21.3). Distinct tokens keep demo
-    # size rejections out of the live-critical-violation count.
+    # Paper/demo boundaries remain explicit Risk Engine inputs even though their
+    # dashboard/API controls do not impose application-level maximums. Account
+    # balance, shared guards, and exchange constraints can still tighten them.
     starting_capital_usdt: float = 100.0
-    # Default demo hard ceiling/fallback. Exchange-backed demo orders use the
-    # lower of this $200 ceiling and the demo account's cached available USDT.
-    max_demo_position_notional_usdt: float = 200.0
+    # Default demo configured ceiling/fallback. Exchange-backed demo orders use
+    # the lower of this value and the demo account's cached available USDT.
+    max_demo_position_notional_usdt: float = 100_000.0
     # Per-symbol cumulative notional cap (CUM-ADD). Same-symbol+direction adds
     # average-merge into ONE position, so repeated adds can grow a position past the
     # single-trade cap. This bounds TOTAL open notional per symbol (across positions,
     # both demo and live). 0 disables. Set above the single-position caps so it only
     # catches genuine runaway accumulation, not a normal first entry.
     max_per_symbol_notional_usdt: float = 400.0
-    max_demo_single_trade_risk_pct: float = 2.0
+    max_demo_single_trade_risk_pct: float = 20.0
     max_futures_leverage_live: int = 2
-    max_futures_leverage_demo: int = 5
+    max_futures_leverage_demo: int = 125
     # Per-asset-tier leverage limits (major=BTC/ETH, mid=SOL/BNB/XRP, alt=others)
-    max_leverage_major_demo: int = 5
+    max_leverage_major_demo: int = 20
     max_leverage_major_live: int = 3
-    max_leverage_mid_demo: int = 3
+    max_leverage_mid_demo: int = 10
     max_leverage_mid_live: int = 2
-    max_leverage_alt_demo: int = 2
+    max_leverage_alt_demo: int = 5
     max_leverage_alt_live: int = 1
     # Account-level aggregate leverage cap: sum(notional*leverage)/equity
-    max_account_leverage_demo: float = 3.0
+    max_account_leverage_demo: float = 10.0
     max_account_leverage_live: float = 1.5
     # Margin monitoring thresholds
     futures_margin_warning_ratio: float = 0.70
@@ -332,7 +632,7 @@ class RiskConfig(BaseModel):
     # min(expected_horizon * this multiplier, the school's absolute max_hold).
     horizon_hard_backstop_mult: float = 3.0
     max_open_positions_live: int = 3
-    max_open_positions_demo: int = 6
+    max_open_positions_demo: int = 200
     # "whitelist" = only symbol_list may trade; "blacklist" = all except symbol_list.
     symbol_filter_mode: str = "blacklist"
     symbol_list: list[str] = Field(default_factory=list)
@@ -619,8 +919,8 @@ def _default_personas() -> dict:
                 # Grounded initial values (owner + operator, 2026-07-02): 1% single-
                 # trade loss (classic 1% rule), leverage init 10x / HARD CAP 15x (20x
                 # buffer too thin), fractional Kelly ≤0.5, ≤3 pyramid adds. NOTE: the
-                # risk-engine demo leverage cap (max_futures_leverage_demo=5) still
-                # clamps this until the owner raises it (a separate trust-boundary call).
+                # The asset-tier demo leverage cap still clamps this; the default
+                # roll persona ceiling remains deliberately lower than that boundary.
                 "notional_usdt": P(20, 50, 200),
                 "kelly_fraction": P(0.10, 0.25, 0.50),
                 "leverage_max": P(5, 10, 15),

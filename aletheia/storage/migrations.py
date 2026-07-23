@@ -121,6 +121,10 @@ CREATE TABLE IF NOT EXISTS risk_decisions (
     decision_role TEXT NOT NULL DEFAULT 'legacy',
     evaluated_quantity REAL,
     proposal_commit_hash TEXT,
+    risk_mode TEXT,
+    policy_id TEXT,
+    policy_revision INTEGER,
+    policy_hash TEXT,
     message TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -1779,6 +1783,10 @@ _ADDITIVE_COLUMNS = [
     ("decision_role", "risk_decisions", "TEXT NOT NULL DEFAULT 'legacy'"),
     ("evaluated_quantity", "risk_decisions", "REAL"),
     ("proposal_commit_hash", "risk_decisions", "TEXT"),
+    ("risk_mode", "risk_decisions", "TEXT"),
+    ("policy_id", "risk_decisions", "TEXT"),
+    ("policy_revision", "risk_decisions", "INTEGER"),
+    ("policy_hash", "risk_decisions", "TEXT"),
     # Durable pre-Order Risk allowances need the same economics used by the
     # account-leverage guard. Existing databases are populated by the verified
     # authority backfill after these additive columns are present.
@@ -2541,11 +2549,12 @@ CREATE INDEX IF NOT EXISTS idx_orders_client_order_id ON orders(client_order_id)
 CREATE INDEX IF NOT EXISTS idx_orders_position_id ON orders(position_id);
 CREATE INDEX IF NOT EXISTS idx_fills_order_id ON fills(order_id);
 CREATE INDEX IF NOT EXISTS idx_risk_decisions_proposal_id ON risk_decisions(proposal_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_risk_authoritative_snapshot
+CREATE UNIQUE INDEX IF NOT EXISTS idx_risk_authoritative_snapshot_v2
 ON risk_decisions(
     proposal_id,
     COALESCE(proposal_commit_hash, ''),
-    COALESCE(evaluated_quantity, -1.7976931348623157e308)
+    COALESCE(evaluated_quantity, -1.7976931348623157e308),
+    COALESCE(policy_hash, '')
 )
 WHERE decision_role = 'authoritative';
 CREATE INDEX IF NOT EXISTS idx_positions_strategy_id ON positions(strategy_id);
@@ -3232,6 +3241,10 @@ def _run_all_ddl(db) -> None:
     db.executescript(_FILTER_SHADOW_EXPERIMENTS_DDL)
     db.executescript(_LEARNING_LEDGER_DDL)
     _ensure_columns(db)
+    # v2 authoritative identity includes the exact Risk Policy hash. The former
+    # three-column unique index would incorrectly reuse/block a decision after a
+    # policy revision, so remove it once the additive policy_hash column exists.
+    db.execute("DROP INDEX IF EXISTS idx_risk_authoritative_snapshot")
     db.executescript(_LEARNING_ADDITIVE_INDEX_DDL)
     _repair_learning_experiment_activation(db)
     _repair_terminal_serenity_skips(db)

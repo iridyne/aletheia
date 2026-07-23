@@ -53,7 +53,7 @@ def test_kill_switch_writes_audit_event(tmp_path, monkeypatch):
     kill_switch.activate(reason="loss limit", actor="system")
     events = read_jsonl("audit.jsonl")
     types = [e.get("event_type") for e in events]
-    assert "kill_switch_activated" in types
+    assert "trading_brake_activated" in types
 
 
 def test_kill_switch_blocks_all_proposals(tmp_path, monkeypatch):

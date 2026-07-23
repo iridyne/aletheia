@@ -326,6 +326,114 @@ async def test_settings_post_does_not_echo_secrets(client):
 
 
 @pytest.mark.anyio
+async def test_risk_config_saves_per_symbol_notional_cap(client):
+    """The Settings risk form must be able to round-trip its shared symbol cap."""
+    response = await client.post(
+        "/api/settings/risk",
+        json={"max_per_symbol_notional_usdt": 450.0},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["risk"]["max_per_symbol_notional_usdt"] == 450.0
+
+    settings = (await client.get("/api/settings")).json()
+    assert settings["risk"]["max_per_symbol_notional_usdt"] == 450.0
+
+
+@pytest.mark.anyio
+async def test_demo_risk_config_has_no_application_level_upper_caps(client):
+    """Paper limits may exceed the old UI ceilings while retaining positive minima."""
+    uncapped = {
+        "max_demo_position_notional_usdt": 250_000.0,
+        "max_demo_single_trade_risk_pct": 50.0,
+        "max_open_positions_demo": 500,
+        "max_account_leverage_demo": 25.0,
+    }
+
+    response = await client.post("/api/settings/risk", json=uncapped)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["updated"] == uncapped
+
+    invalid = await client.post(
+        "/api/settings/risk",
+        json={"max_open_positions_demo": 0},
+    )
+    assert invalid.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_risk_policy_copy_is_revision_guarded_and_preserves_live_identity(client):
+    policies = (await client.get("/api/settings/risk-policies")).json()
+    demo = policies["demo"]
+    live = policies["live"]
+
+    copied = await client.post(
+        "/api/settings/risk-policies/copy",
+        json={
+            "source": "demo",
+            "target": "live",
+            "source_revision": demo["revision"],
+            "target_revision": live["revision"],
+            "confirm_target_replacement": True,
+            "reason": "test copy",
+        },
+    )
+    assert copied.status_code == 200, copied.text
+    body = copied.json()
+    assert body["live"]["revision"] == live["revision"] + 1
+    assert body["live"]["policy_id"] == live["policy_id"]
+    assert body["live"]["capital"] == demo["capital"]
+    assert body["live"]["eligibility"] == live["eligibility"]
+
+    stale = await client.post(
+        "/api/settings/risk-policies/copy",
+        json={
+            "source": "demo",
+            "target": "live",
+            "source_revision": demo["revision"],
+            "target_revision": live["revision"],
+            "confirm_target_replacement": True,
+            "reason": "stale retry",
+        },
+    )
+    assert stale.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_risk_policy_reset_defaults_is_mode_scoped_and_revision_guarded(client):
+    policies = (await client.get("/api/settings/risk-policies")).json()
+    demo = policies["demo"]
+    live = policies["live"]
+
+    reset = await client.post(
+        "/api/settings/risk-policies/demo/reset-defaults",
+        json={
+            "expected_revision": demo["revision"],
+            "confirm_target_replacement": True,
+            "reason": "test reset",
+        },
+    )
+
+    assert reset.status_code == 200, reset.text
+    body = reset.json()
+    assert body["demo"]["revision"] == demo["revision"] + 1
+    assert body["demo"]["policy_id"] == demo["policy_id"]
+    assert body["demo"]["capital"]["max_position_notional_usdt"] == 100_000.0
+    assert body["live"] == live
+
+    stale = await client.post(
+        "/api/settings/risk-policies/demo/reset-defaults",
+        json={
+            "expected_revision": demo["revision"],
+            "confirm_target_replacement": True,
+            "reason": "stale reset",
+        },
+    )
+    assert stale.status_code == 409
+
+
+@pytest.mark.anyio
 async def test_tunnel_guard_protects_risk_config_mutation(client):
     """Regression #137: with the tunnel enabled, POST /settings/risk requires the token."""
     from aletheia.config.loader import load_config, save_config

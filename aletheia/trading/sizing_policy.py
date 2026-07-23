@@ -229,7 +229,7 @@ def pyramid_plan(position: dict, adds_done: int = 0, cfg=None) -> dict:
 
     # CAP 2 (risk envelope): base + adds must fit the per-symbol exposure limit —
     # the immutable outer bound regardless of persona/pyramid state.
-    cap = float(getattr(cfg.risk, "max_per_symbol_notional_usdt", 0) or 0)
+    cap = float(cfg.risk.demo.capital.max_per_symbol_notional_usdt or 0)
     if cap > 0:
         room = max(0.0, cap - (base_notional + already_added))
         add_notional = min(add_notional, room)

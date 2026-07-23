@@ -45,6 +45,48 @@ def test_risk_approves_valid_paper_proposal(tmp_path, monkeypatch):
     reset_db()
 
 
+def test_authoritative_risk_decision_identity_includes_policy_hash(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from tests.paper_trade_fixture import approvable_paper_trade
+
+    trade = approvable_paper_trade(
+        monkeypatch,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        price=60000,
+    )
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.001,
+        price=60000,
+        **trade,
+    )
+    repo.insert_trade_proposal(proposal)
+    first = evaluate_proposal(proposal)
+    assert first.approved is True
+
+    cfg = load_config()
+    cfg.risk.demo.capital.max_per_symbol_notional_usdt += 1
+    cfg.risk.demo.revision += 1
+    save_config(cfg)
+
+    second = evaluate_proposal(proposal)
+    assert second.approved is True
+    decisions = [
+        row for row in repo.list_risk_decisions(limit=10)
+        if row["proposal_id"] == proposal.id
+        and row["decision_role"] == "authoritative"
+    ]
+    assert len(decisions) == 2
+    assert len({row["policy_hash"] for row in decisions}) == 2
+    reset_db()
+
+
 def test_risk_rejects_disallowed_symbol(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config

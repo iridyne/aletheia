@@ -91,6 +91,10 @@ function post<T>(path: string, body?: unknown): Promise<T> {
   return fetchJson<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined })
 }
 
+function put<T>(path: string, body?: unknown): Promise<T> {
+  return fetchJson<T>(path, { method: 'PUT', body: body ? JSON.stringify(body) : undefined })
+}
+
 export interface KeyStatus { configured: boolean; last4: string | null }
 
 export interface SerenityTheme {
@@ -710,6 +714,54 @@ export const api = {
   // Releasing the brake requires confirm_release=true (backend returns 422 otherwise).
   setKillSwitch: (active: boolean, reason = '', confirmRelease = false) =>
     post<{ active: boolean }>('/risk/kill-switch', { active, reason, confirm_release: confirmRelease }),
+  getRiskPolicies: () => fetchJson<Record<'demo' | 'live', any>>('/settings/risk-policies'),
+  replaceRiskPolicy: (
+    mode: 'demo' | 'live',
+    policy: any,
+    expectedRevision: number,
+    reason: string,
+  ) => put<Record<'demo' | 'live', any>>(`/settings/risk-policies/${mode}`, {
+    policy,
+    expected_revision: expectedRevision,
+    confirm_target_replacement: true,
+    reason,
+  }),
+  copyRiskPolicy: (
+    source: 'demo' | 'live',
+    target: 'demo' | 'live',
+    sourceRevision: number,
+    targetRevision: number,
+    reason: string,
+  ) => post<Record<'demo' | 'live', any>>('/settings/risk-policies/copy', {
+    source,
+    target,
+    source_revision: sourceRevision,
+    target_revision: targetRevision,
+    confirm_target_replacement: true,
+    reason,
+  }),
+  resetRiskPolicy: (
+    mode: 'demo' | 'live',
+    expectedRevision: number,
+    reason: string,
+  ) => post<Record<'demo' | 'live', any>>(`/settings/risk-policies/${mode}/reset-defaults`, {
+    expected_revision: expectedRevision,
+    confirm_target_replacement: true,
+    reason,
+  }),
+  getRiskBrakes: () => fetchJson<{
+    global_active: boolean; demo_active: boolean; live_active: boolean
+  }>('/risk/brakes'),
+  setRiskBrake: (
+    scope: 'global' | 'demo' | 'live',
+    active: boolean,
+    reason = '',
+    confirmRelease = false,
+  ) => post(`/risk/brakes/${scope}`, {
+    active,
+    reason,
+    confirm_release: confirmRelease,
+  }),
   updateRiskConfig: (body: Partial<{
     max_daily_loss_pct: number; max_single_trade_risk_pct: number
     max_total_live_exposure_pct: number; max_live_position_notional_usdt: number

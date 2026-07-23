@@ -4,6 +4,24 @@
 > **Created**: 2026-06-21
 > **协议状态**: Round 1 已于 2026-06-27 **提前终止**(详见下方「Round 1 终止判决」段);冻结已解除,进入「Round 1 后全量修复」阶段。Round 2 是否启动待修复完成后判定。
 
+> **2026-07-23 demo-capacity policy epoch**:
+> `demo_capacity_defaults/v1` raises only demo/paper-specific configuration
+> defaults and removes dashboard/API upper ceilings for demo position notional,
+> single-trade risk percentage, open-position count, and account leverage.
+> Exchange-compatible leverage ceilings, every live limit, and all shared risk
+> fields remain unchanged. This is a B-class sizing/risk-boundary change: close
+> the preceding demo observation window and do not pool post-change trade size,
+> rejection-rate, drawdown, or outcome evidence with the earlier cohort.
+
+> **2026-07-23 Demo/Live risk-policy split epoch**:
+> `demo_live_risk_policy/v2` replaces flat/shared risk parameters with two
+> independently versioned policies selected only from the Proposal's durable
+> execution mode. Risk approval remains mandatory and shared; RiskDecision now
+> records the selected policy hash. Global, Demo and Live brakes are distinct,
+> and a mode daily-loss breach trips only that mode brake. Policy copy/replace is
+> a multi-variable B-class intervention: every target revision starts a fresh
+> target-mode observation cohort and cannot be pooled with prior revisions.
+
 > **2026-07-17 repair epoch**: funding raw-unit correction, candidate-specific
 > 15m/1h/4h context, Hyperliquid OI consumption, and the 1.5 ATR no-chase guard
 > are attributed under `system_operator_vergex_utilization/v1`. This is a new

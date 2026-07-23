@@ -26,6 +26,7 @@ dependencies = [
 
 [project.scripts]
 aletheia = "aletheia.main:app"
+aletheia-install = "aletheia.cli.install:app"
 ato = "aletheia.main:app"
 
 [project.optional-dependencies]

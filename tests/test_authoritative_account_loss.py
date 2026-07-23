@@ -154,7 +154,8 @@ def test_genuine_authoritative_loss_keeps_existing_threshold_and_trip(monkeypatc
     repo.insert_trade_proposal(proposal)
     result = evaluate_proposal(proposal)
     assert any(value.startswith("max_daily_loss_exceeded:-10.0") for value in result.violations)
-    assert is_active() is True
+    assert is_active("demo") is True
+    assert is_active("global") is False
 
 
 def _pending_paper_close(

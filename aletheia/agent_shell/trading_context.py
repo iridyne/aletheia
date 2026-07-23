@@ -1610,8 +1610,9 @@ def _build_layer1_snapshot() -> dict[str, Any]:
             # "max_daily_loss=?%, max_positions=?", blinding the System Operator to its
             # own risk limits (2026-06-23 profit-loop audit, freeze exception).
             "kill_switch": cfg.runtime.kill_switch_active,
-            "max_daily_loss_pct": cfg.risk.max_daily_loss_pct,
-            "max_open_positions": cfg.risk.max_open_positions_demo,
+            "demo_brake": cfg.runtime.demo_brake_active,
+            "max_daily_loss_pct": cfg.risk.demo.loss.max_daily_loss_pct,
+            "max_open_positions": cfg.risk.demo.positions.max_open_positions,
         }
     except Exception:
         layer["risk"] = {}
