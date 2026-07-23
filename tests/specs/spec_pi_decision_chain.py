@@ -137,6 +137,51 @@ def test_recommend_promote_gates_paper_running(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# PI-S05 — §B three-layer context assembly (L2a structural)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "PI-S05",
+        "agent_contracts",
+        "§three-layer context assembly",
+        "L2a",
+        "build_enriched_trading_context wires all three layer builders "
+        "(_build_layer1_snapshot, _build_layer2_short_term, _build_layer3_wisdom) "
+        "and returns their results under 'layer1', 'layer2', 'layer3' keys. "
+        "Guards against plumbing regressions where a builder call or key assignment "
+        "is accidentally dropped.",
+    )
+)
+def test_three_layer_context_assembly_wired():
+    src = _src("aletheia/agent_shell/trading_context.py")
+    # All three builders must be called inside the function body.
+    assert "_build_layer1_snapshot()" in src, (
+        "build_enriched_trading_context no longer calls _build_layer1_snapshot() "
+        "— layer1 plumbing broken (§B regression)"
+    )
+    assert "_build_layer2_short_term()" in src, (
+        "build_enriched_trading_context no longer calls _build_layer2_short_term() "
+        "— layer2 plumbing broken (§B regression)"
+    )
+    assert "_build_layer3_wisdom()" in src, (
+        "build_enriched_trading_context no longer calls _build_layer3_wisdom() "
+        "— layer3 plumbing broken (§B regression)"
+    )
+    # The assembled ctx dict must expose all three layer keys.
+    assert '"layer1": layer1' in src, (
+        "layer1 key missing from the ctx dict returned by build_enriched_trading_context"
+    )
+    assert '"layer2": layer2' in src, (
+        "layer2 key missing from the ctx dict returned by build_enriched_trading_context"
+    )
+    assert '"layer3": layer3' in src, (
+        "layer3 key missing from the ctx dict returned by build_enriched_trading_context"
+    )
+
+
+# ---------------------------------------------------------------------------
 # PCI-G02 — A路架构：observer tools in PI tool registry (L2a, missing)
 # ---------------------------------------------------------------------------
 
