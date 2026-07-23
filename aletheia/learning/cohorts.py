@@ -39,14 +39,17 @@ SUPPORTED_PATH_ID = "universe_family_calibration"
 # "missing_allocation_result" → "invalid" for experiments whose outcomes are
 # still legitimately pending. See issue #324 for the full audit.
 #
+# operator_learning_bundle is now measurement_supported via the _OPPORTUNITY_KEYED_PATHS
+# implicit-allocation adapter (allocation_selected=NULL treated as True). See #324.
+#
 # Paths blocked from measurement until per-path cohort adapters are implemented:
-#   operator_learning_bundle:   emitted-opportunity observations, allocation_selected=NULL by contract
 #   observer_advisory_bundle:   needs path-specific statistical-unit/outcome contract
 #   ranker_case_score:          needs path-specific statistical-unit/outcome contract
 #   ranker_memo_score:          needs path-specific statistical-unit/outcome contract
 #   ranker_factor_filter:       needs path-specific statistical-unit/outcome contract
 SUPPORTED_PATH_IDS = frozenset({
     SUPPORTED_PATH_ID,
+    "operator_learning_bundle",
 })
 
 # Paths that use opportunity-keyed outcomes (opportunity:{id}:{horizon}).
