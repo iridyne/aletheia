@@ -271,7 +271,11 @@ def test_xstock_consecutive_failures_trigger_infra_event(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ccxt_mod, "CCXTProvider", lambda **kwargs: _FailingCCXTProvider())
     # get_market_data_provider also needs to return something that can be closed
-    monkeypatch.setattr(ccxt_mod, "get_market_data_provider", lambda: _FailingCCXTProvider())
+    monkeypatch.setattr(
+        ccxt_mod,
+        "get_market_data_provider",
+        lambda **kwargs: _FailingCCXTProvider(),
+    )
 
     # Run collect_market_snapshots 3 times — each run is one "consecutive failure"
     for _ in range(3):
@@ -366,7 +370,11 @@ def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monke
             pass
 
     monkeypatch.setattr(ccxt_mod, "CCXTProvider", lambda **kwargs: _FailingProvider())
-    monkeypatch.setattr(ccxt_mod, "get_market_data_provider", lambda: _FailingProvider())
+    monkeypatch.setattr(
+        ccxt_mod,
+        "get_market_data_provider",
+        lambda **kwargs: _FailingProvider(),
+    )
 
     asyncio.run(md_mod.collect_market_snapshots())
 
@@ -437,7 +445,11 @@ def test_xstock_listing_check_failure_does_not_remove(tmp_path, monkeypatch):
             pass
 
     monkeypatch.setattr(ccxt_mod, "CCXTProvider", lambda **kwargs: _FailingProvider())
-    monkeypatch.setattr(ccxt_mod, "get_market_data_provider", lambda: _FailingProvider())
+    monkeypatch.setattr(
+        ccxt_mod,
+        "get_market_data_provider",
+        lambda **kwargs: _FailingProvider(),
+    )
 
     asyncio.run(md_mod.collect_market_snapshots())
 
