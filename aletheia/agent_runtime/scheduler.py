@@ -3167,8 +3167,6 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
         elapsed_ms = int((_time.monotonic() - started) * 1000)
         logger.warning("data_collectors: %s timed out (%.0fs cap) — skipped this tick",
                        label, min(cap, remaining))
-        task.cancel()  # fire-and-forget: don't await, avoids 3.12 cancellation hang
-        task.add_done_callback(lambda _: None)  # consume completion; suppress GC noise
         _record_collector_health(
             label,
             "timed_out",

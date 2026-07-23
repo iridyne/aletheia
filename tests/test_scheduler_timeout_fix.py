@@ -228,11 +228,19 @@ def test_shielded_wait_for_source_uses_shield():
     )
 
 
-def test_derivatives_history_source_uses_shielded_wait_for():
-    """The derivatives history backfill path must use _shielded_wait_for (#253)."""
+def test_derivatives_history_source_uses_bounded():
+    """The derivatives history backfill path must use _bounded() (#253).
+
+    _bounded() wraps _shielded_wait_for internally so CCXT cancellation delay
+    cannot stall the context lane. A source check guards against regression
+    back to bare asyncio.wait_for.
+    """
     import inspect
     from aletheia.agent_runtime import scheduler
     source = inspect.getsource(scheduler._async_data_collector_context)
-    assert "_shielded_wait_for" in source, (
-        "derivatives history path must use _shielded_wait_for, not bare asyncio.wait_for"
+    assert "_bounded(" in source, (
+        "derivatives history path must route through _bounded(), not bare asyncio.wait_for"
+    )
+    assert "asyncio.wait_for" not in source, (
+        "derivatives history path must not use bare asyncio.wait_for — use _bounded()"
     )

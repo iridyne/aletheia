@@ -1476,13 +1476,58 @@ def get_operator_decisions(
             "_sort_instant": float(r["sort_instant"] or 0),
         })
 
-    all_items = pi_items + reject_items + conv_items
+    # conviction_deferred: operator_decision_deferred_low_conviction events from
+    # operator_evaluation_events (#327 follow-up — low-conviction defer via evaluation loop).
+    defer_rows = []
+    try:
+        defer_rows = list(db.execute(
+            "SELECT id, queue_snapshot_json, created_at, "
+            "julianday(created_at) AS sort_instant "
+            "FROM operator_evaluation_events "
+            "WHERE event_kind='operator_decision_deferred_low_conviction' "
+            "AND julianday(created_at) >= julianday(?) "
+            "AND julianday(created_at) <= julianday(?) "
+            "ORDER BY julianday(created_at) DESC, rowid DESC",
+            (window_start, window_end),
+        ))
+    except Exception:
+        pass
+    terminal_opportunity_ids_for_defer = {
+        item["opportunity_id"] for item in pi_items + reject_items + conv_items
+        if item.get("opportunity_id")
+    }
+    defer_items: list[dict] = []
+    for r in defer_rows:
+        try:
+            snapshot = _json.loads(r["queue_snapshot_json"] or "{}")
+        except Exception:
+            snapshot = {}
+        opp_id = snapshot.get("opportunity_id")
+        defer_reason = snapshot.get("defer_reason")
+        if opp_id and opp_id in terminal_opportunity_ids_for_defer:
+            continue
+        defer_items.append({
+            "opportunity_id": opp_id,
+            "proposal_id": None,
+            "decision_id": r["id"],
+            "symbol": None,
+            "direction": None,
+            "market_type": None,
+            "decided_at": r["created_at"],
+            "outcome": "conviction_deferred",
+            "action": "conviction_deferred",
+            "conviction": None,
+            "one_line_reason": defer_reason,
+            "_sort_instant": float(r["sort_instant"] or 0),
+        })
+
+    all_items = pi_items + reject_items + conv_items + defer_items
     all_items.sort(key=lambda x: float(x.get("_sort_instant") or 0), reverse=True)
 
     counts = {"trade": 0, "operator_skip": 0, "operator_watch": 0,
               "portfolio_guard_reject": 0,
               "user_reject": 0, "auto_reject": 0, "reject_unknown": 0,
-              "conviction_gate_defer": 0}
+              "conviction_gate_defer": 0, "conviction_deferred": 0}
     for it in all_items:
         oc = it.get("outcome")
         if oc in counts:
@@ -1738,9 +1783,10 @@ def get_learning_contribution():
         pass
 
     # Verdict distribution — keyed by the actual `verdict` column (not `classification`).
+    # Schema errors surface in the `error` key (not silently as total=0).
     verdicts_by_verdict: list[dict] = []
     total_verdicts = 0
-    verdicts_query_error: str | None = None
+    verdicts_error: str | None = None
     try:
         for r in db.execute(
             "SELECT verdict, COUNT(*) n, MAX(created_at) latest_at "
@@ -1754,7 +1800,7 @@ def get_learning_contribution():
             })
             total_verdicts += int(r["n"])
     except Exception as e:
-        verdicts_query_error = str(e)
+        verdicts_error = str(e)
 
     # Experiment stage distribution
     experiments_by_stage: list[dict] = []
@@ -1812,9 +1858,9 @@ def get_learning_contribution():
     return {
         "exposures_by_path": exposures_by_path,
         "verdicts": {
-            "total": total_verdicts if not verdicts_query_error else None,
+            "total": total_verdicts if not verdicts_error else 0,
             "by_verdict": verdicts_by_verdict,
-            **({"query_error": verdicts_query_error} if verdicts_query_error else {}),
+            **({"error": verdicts_error} if verdicts_error else {}),
         },
         "experiments_by_stage": experiments_by_stage,
         "lifecycle_event_n": lifecycle_event_n,

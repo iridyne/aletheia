@@ -78,7 +78,7 @@ async def test_verdicts_by_verdict_returned(tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_db_error_is_not_silently_zero(tmp_path, monkeypatch):
-    """A schema/read failure on the verdicts query must raise, not return total=0."""
+    """A schema/read failure on the verdicts query must surface in the response, not return total=0."""
     _setup_env(tmp_path, monkeypatch)
 
     import aletheia.storage.sqlite as sq
@@ -98,11 +98,15 @@ async def test_db_error_is_not_silently_zero(tmp_path, monkeypatch):
     from httpx import ASGITransport, AsyncClient
     from aletheia.server.app import app
 
-    # The route must not swallow DB errors — they should propagate (old code had
-    # `except Exception: pass` which silently returned total=0 instead).
-    with pytest.raises(Exception):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.get("/api/analytics/learning-contribution")
+    # The route must not swallow DB errors — the error should appear in the response
+    # so the dashboard can show it rather than silently displaying total=0.
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/analytics/learning-contribution")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["verdicts"]["total"] == 0
+    assert "error" in body["verdicts"]
+    assert "simulated schema error" in body["verdicts"]["error"]
 
 
 @pytest.fixture
