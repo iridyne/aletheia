@@ -196,10 +196,8 @@ def test_full_regression_is_a_separate_manual_job_with_realistic_timeout() -> No
 def test_python_test_jobs_set_scoped_data_dir() -> None:
     """Python CI jobs must isolate runtime state via ALETHEIA_DATA_DIR (#205).
 
-    Each job gets a unique path under runner.temp so no test can read or write
-    ~/.aletheia on the CI host, even at module import time (DATA_DIR is set
-    before any aletheia import occurs because the env var is injected at the
-    job level, not in a run step).
+    runner.temp is unavailable while GitHub evaluates job-level env, so each
+    job must export a unique runtime path before checkout or dependency setup.
     """
     jobs = _workflow()["jobs"]
     python_test_jobs = {"e2e", "unit", "integration", "simulation", "specs", "full-regression"}
@@ -213,13 +211,24 @@ def test_python_test_jobs_set_scoped_data_dir() -> None:
         if not isinstance(job_env, dict):
             failures.append(f"{job_name}: env block is not a mapping")
             continue
-        value = job_env.get("ALETHEIA_DATA_DIR", "")
-        if not value:
-            failures.append(f"{job_name}: missing ALETHEIA_DATA_DIR in job-level env")
-        elif "runner.temp" not in str(value):
-            failures.append(
-                f"{job_name}: ALETHEIA_DATA_DIR must use runner.temp for per-job isolation, got {value!r}"
-            )
+        if "runner." in str(job_env):
+            failures.append(f"{job_name}: runner context is invalid in job-level env")
+
+        steps = job.get("steps", [])
+        setup_steps = [
+            (index, str(step.get("run") or ""))
+            for index, step in enumerate(steps)
+            if isinstance(step, dict) and "ALETHEIA_DATA_DIR" in str(step.get("run") or "")
+        ]
+        if not setup_steps:
+            failures.append(f"{job_name}: missing ALETHEIA_DATA_DIR runtime setup step")
+            continue
+        setup_index, command = setup_steps[0]
+        if setup_index != 0:
+            failures.append(f"{job_name}: ALETHEIA_DATA_DIR must be exported by the first step")
+        for required in ("RUNNER_TEMP", "GITHUB_RUN_ID", "GITHUB_JOB", "GITHUB_ENV"):
+            if required not in command:
+                failures.append(f"{job_name}: data-dir setup missing {required}")
     assert not failures, (
         "Python test jobs must isolate runtime state via ALETHEIA_DATA_DIR:\n"
         + "\n".join(failures)
