@@ -635,7 +635,11 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
    preference eat the whole content area on a narrower window. Resize
    handle is hidden here — it's a wide-screen affordance only. */
 @media (max-width: 1023px) {
-  .settings-nav {
+  /* Cap only the expanded nav. A collapsed nav keeps its 52px icon-only
+     width (var(--settings-nav-width) set by JS); the !important cap must
+     not override it, or the collapsed nav renders as a 220px empty box
+     with a single column of centred icons. */
+  .settings-nav:not(.is-collapsed) {
     width: 220px !important;
     flex-basis: 220px !important;
   }
