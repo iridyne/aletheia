@@ -688,9 +688,10 @@ class TestLoosenHandlers:
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
-        from aletheia.agent_shell.operator_loop import OperatorAction, _action_loosen_confidence
+        from aletheia.agent_shell.operator_loop import OperatorAction, _action_loosen_confidence, _action_log
         from aletheia.config.loader import load_config
 
+        _action_log.clear()
         action = OperatorAction(action_type="loosen_confidence", level=2, reason="test")
         result = _action_loosen_confidence(action)
         assert result["status"] == "executed"
@@ -708,9 +709,10 @@ class TestLoosenHandlers:
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
-        from aletheia.agent_shell.operator_loop import OperatorAction, _action_increase_sizing
+        from aletheia.agent_shell.operator_loop import OperatorAction, _action_increase_sizing, _action_log
         from aletheia.config.loader import load_config
 
+        _action_log.clear()
         action = OperatorAction(action_type="increase_sizing", level=2,
                                 params={"increase_pct": 20}, reason="test")
         result = _action_increase_sizing(action)
@@ -730,9 +732,10 @@ class TestLoosenHandlers:
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
-        from aletheia.agent_shell.operator_loop import OperatorAction, _action_widen_stop_loss
+        from aletheia.agent_shell.operator_loop import OperatorAction, _action_widen_stop_loss, _action_log
         from aletheia.config.loader import load_config
 
+        _action_log.clear()
         # Request +1.5 delta, should cap at neutral=2.0
         action = OperatorAction(action_type="widen_stop_loss", level=2,
                                 params={"delta": 1.5}, reason="test")
