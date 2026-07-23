@@ -64,6 +64,8 @@ def test_all_jobs_use_self_hosted_runners_and_read_only_permissions() -> None:
     assert workflow["permissions"] == {"contents": "read"}
     for job in workflow["jobs"].values():
         assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
+        setup_uv = next(step for step in job["steps"] if str(step.get("uses", "")).startswith("astral-sh/setup-uv@"))
+        assert setup_uv["with"]["enable-cache"] == "false"
 
 
 def test_third_party_actions_are_pinned_to_full_commit_shas() -> None:
