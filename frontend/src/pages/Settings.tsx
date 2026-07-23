@@ -1359,6 +1359,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
           return <div style={{ fontSize: '0.72rem', color: ok ? 'var(--green)' : 'var(--red)', marginTop: 'var(--space-1)' }}>Total: {total.toFixed(3)}{ok ? ' ✓' : ' — must equal 1.0'}</div>
         })()}
       </div>
+      <Collapsible title="Per-regime family quota overrides">
       <div className="mb-3">
         <span className="settings-field-label">Per-regime family quota (2A+.9 — overrides the static quota above when that regime is active; each row must sum to 1.0)</span>
         {Object.entries(familyQuotaByRegime).map(([regime, quota]) => {
@@ -1385,6 +1386,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
           )
         })}
       </div>
+      </Collapsible>
       <div className="flex items-center gap-2">
         <button onClick={() => {
           const total = Object.values(familyQuota).reduce((s, v) => s + (parseFloat(v) || 0), 0)
@@ -1403,6 +1405,9 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
         }} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
       </div>
       <SaveMsg msg={msg} />
+      {((universe?.scanner_weights && Object.keys(universe.scanner_weights).length > 0) ||
+        (universe?.scanner_regime_scoring && Object.keys(universe.scanner_regime_scoring).length > 0)) && (
+      <Collapsible title="Scanner internals (read-only)">
       {universe?.scanner_weights && Object.keys(universe.scanner_weights).length > 0 && (
         <div className="mb-3">
           <span className="settings-field-label">Scanner weights (operator-adjusted, read-only)</span>
@@ -1430,6 +1435,8 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
           </div>
           <p className="hint m-0">Soft ranker score deltas applied per candidate by regime × direction/family (applies to strategy-less opportunities too — not a hard block). Tune via <code>aletheia config set universe.scanner_regime_scoring &#123;…&#125;</code>.</p>
         </div>
+      )}
+      </Collapsible>
       )}
       <p className="hint">
         When enabled, the Universe Generator scans all exchange USDT pairs every {refreshMin} min, scores them by momentum/mean-reversion/volatility/derivatives,
@@ -3279,17 +3286,20 @@ function RiskCard({ settings, qc }: any) {
       <p className="hint">Exchange-backed orders use the lower of this ceiling and the live account's cached available USDT. If no balance snapshot is available, this ceiling is used.</p>
 
       {/* Demo limits */}
-      <div className="section-label mt-4">Demo / paper limits</div>
+      <Collapsible title="Demo / paper limits">
       <NumGrid fields={RISK_DEMO} vals={vals} set={set} errors={errors} />
       <p className="hint">Demo account orders use the lower of this ceiling and the demo account's cached available USDT. Local paper simulation has no external balance and uses this ceiling directly.</p>
+      </Collapsible>
 
       {/* Cross-mode guards (both demo and live) */}
-      <div className="section-label mt-4">Per-symbol exposure (demo + live)</div>
+      <Collapsible title="Per-symbol & family-evidence gates">
+      <div className="section-label">Per-symbol exposure (demo + live)</div>
       <NumGrid fields={RISK_SHARED} vals={vals} set={set} errors={errors} />
 
       {/* Scanner-family live-eligibility gate (risk check #14) */}
       <div className="section-label mt-4">Live scanner-family evidence gate (#14)</div>
       <NumGrid fields={RISK_FAMILY_GATE} vals={vals} set={set} errors={errors} />
+      </Collapsible>
 
       <ToggleGrid fields={RISK_BOOLS} vals={vals} set={set} />
 
@@ -3303,8 +3313,8 @@ function RiskCard({ settings, qc }: any) {
 
       {/* Futures / leverage tier limits — shown when usdt_futures is enabled */}
       {(settings?.exchange as any)?.enabled_markets?.usdt_futures && (
-        <>
-          <div className="section-label mt-4">Futures leverage — Live (per-tier)</div>
+        <Collapsible title="Futures leverage & margin">
+          <div className="section-label">Futures leverage — Live (per-tier)</div>
           <NumGrid fields={RISK_FUTURES_LIVE} vals={vals} set={set} errors={errors} />
 
           <div className="section-label mt-4">Futures leverage — Demo (per-tier)</div>
@@ -3312,10 +3322,11 @@ function RiskCard({ settings, qc }: any) {
 
           <div className="section-label mt-4">Margin safety thresholds</div>
           <NumGrid fields={RISK_MARGIN} vals={vals} set={set} errors={errors} />
-        </>
+        </Collapsible>
       )}
 
-      {/* Kill switch trigger conditions — always visible for transparency */}
+      {/* Kill switch trigger conditions — read-only reference, collapsed by default (§渐进式披露) */}
+      <Collapsible title="Kill switch trigger conditions">
       <div className="kill-switch-info">
         <div className="kill-switch-info-title">Kill Switch Auto-Trigger Conditions</div>
         <ul>
@@ -3334,6 +3345,7 @@ function RiskCard({ settings, qc }: any) {
           <li><strong>Reset:</strong> release from Risk Controls panel or CLI after UTC new day</li>
         </ul>
       </div>
+      </Collapsible>
 
       <div className="settings-action-row">
         <button onClick={validateAndSave} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save risk limits'}</button>
