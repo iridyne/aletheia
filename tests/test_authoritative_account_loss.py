@@ -341,6 +341,7 @@ def test_funding_settler_repairs_orphan_when_no_unsettled_rows_exist():
     assert float(event["amount_usdt"]) == -4.0
     assert result == {
         "settled": 1,
+        "revived": 0,
         "still_pending": 0,
         "gave_up": 0,
         "errors": [],

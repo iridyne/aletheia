@@ -1724,6 +1724,105 @@ def test_paper_funding_settler_transitions_to_terminal_after_giveup_window(
     assert len(events_after) == 1
 
 
+def test_paper_funding_settler_revives_terminal_row_once_backfill_lands(
+    tmp_path, monkeypatch,
+):
+    """A row terminalized as funding_permanently_unrecoverable is revived once
+    funding becomes computable again (a backfill finally landed).
+
+    Give-up was only ever a churn guard against a missing source, never an
+    irreversible verdict against real data.  A sibling terminal row whose
+    funding stays unknown must be left completely untouched and metric-neutral.
+    """
+    _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    import asyncio
+    from datetime import timedelta
+    from aletheia.portfolio import paper_account as pa
+    from aletheia.portfolio.local_funding import LocalFundingResult
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    close_time = datetime.now(timezone.utc) - timedelta(hours=30)
+    # Recoverable terminal row — funding computes now that data has landed.
+    # A normally-closed position has exactly one full close event; that is what
+    # materialize_position_economics converges, so seed one.
+    _seed_stuck_paper_close(
+        position_id="pos-revive-1",
+        symbol="FIL/USDT",
+        closed_at=close_time,
+        outcome_exclusion_reason="funding_permanently_unrecoverable",
+    )
+    _seed_null_close_event("pos-revive-1", close_time.isoformat())
+    # Sibling terminal row that stays unrecoverable — must be left alone.
+    _seed_stuck_paper_close(
+        position_id="pos-revive-stuck",
+        symbol="ALLO/USDT",
+        closed_at=close_time,
+        outcome_exclusion_reason="funding_permanently_unrecoverable",
+    )
+
+    def _fake_funding(row, *_args, **_kwargs):
+        if str(row.get("id")) == "pos-revive-1":
+            return LocalFundingResult(
+                complete=True,
+                funding_cost=0.02,
+                funding_source="local_simulation",
+                evidence=_complete_recovered_funding("pos-revive-1", cost=0.02),
+            )
+        return LocalFundingResult(
+            complete=False,
+            funding_cost=None,
+            funding_source="unavailable",
+            evidence={"reason": "missing_close_anchor"},
+        )
+
+    monkeypatch.setattr(
+        "aletheia.portfolio.local_funding.compute_local_funding",
+        _fake_funding,
+    )
+
+    result = asyncio.run(pa.settle_unsettled_paper_closes())
+
+    assert result["revived"] == 1
+    assert result["settled"] == 0
+    assert result.get("gave_up", 0) == 0
+    assert result["errors"] == []
+
+    # gross (100.5-100)*1 = 0.5, minus fees 0.06+0.06 and funding 0.02 => 0.36
+    revived = repo._select_one("positions", "pos-revive-1")
+    assert revived["realized_pnl"] == pytest.approx(0.36)
+    assert revived["funding_cost"] == pytest.approx(0.02)
+    assert revived["outcome_exclusion_reason"] != "funding_permanently_unrecoverable"
+
+    # The still-unrecoverable sibling is untouched: NULL pnl, still terminal.
+    stuck = repo._select_one("positions", "pos-revive-stuck")
+    assert stuck["realized_pnl"] is None
+    assert stuck["outcome_exclusion_reason"] == "funding_permanently_unrecoverable"
+
+    def _settler_events(pid):
+        return get_db().execute(
+            "SELECT event_type FROM audit_events WHERE entity_type='position' "
+            "AND entity_id=? AND source='paper_funding_settler'",
+            (pid,),
+        ).fetchall()
+
+    revive_events = [
+        e for e in _settler_events("pos-revive-1")
+        if e["event_type"] == "paper_position_funding_revived"
+    ]
+    assert len(revive_events) == 1
+    # No audit churn for the sibling that stayed terminal.
+    assert _settler_events("pos-revive-stuck") == []
+
+    # Idempotency: once revived, realized_pnl is set so the row leaves the
+    # revival query; a second run neither re-revives nor errors.
+    result2 = asyncio.run(pa.settle_unsettled_paper_closes())
+    assert result2["revived"] == 0
+    assert result2["errors"] == []
+
+
 @spec_claim(
     SpecClaim(
         "PL-PCM-17",

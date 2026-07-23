@@ -550,6 +550,57 @@ async def _backfill_historical_funding_for_position(row: dict) -> int:
     return n
 
 
+def _persist_complete_paper_funding(row: dict, result) -> float:
+    """Compute realized PnL from a COMPLETE local-funding result and persist it.
+
+    Writes the positions row and the paper cash ledger via
+    ``materialize_position_economics`` (one transaction).  Shared by the
+    settler's first-pass settle and the terminal-revival pass so the two paths
+    can never diverge.  Raises ``ValueError`` for an unusable direction or a
+    non-finite PnL; returns the realized_pnl written.
+    """
+    from aletheia.analytics.outcome_integrity import outcome_write_eligibility
+
+    entry = float(row["entry_price"])
+    exit_p = float(row["current_price"])
+    qty = float(row["quantity"])
+    efee = float(row["entry_fee"])
+    xfee = float(row["exit_fee"])
+    funding_cost = result.funding_cost
+
+    direction = str(row.get("direction") or "").lower()
+    if direction in {"long", "buy"}:
+        gross = (exit_p - entry) * qty
+    elif direction in {"short", "sell"}:
+        gross = (entry - exit_p) * qty
+    else:
+        raise ValueError(f"invalid direction {direction!r}")
+
+    realized_pnl = round(gross - efee - xfee - funding_cost, 8)
+    if not math.isfinite(realized_pnl):
+        raise ValueError("non-finite realized_pnl")
+
+    check_row = {
+        **row,
+        "realized_pnl": realized_pnl,
+        "funding_cost": funding_cost,
+        "funding_source": "local_simulation",
+        "exit_fill_verified": True,
+    }
+    outcome_eligible, outcome_reason = outcome_write_eligibility(
+        check_row, exit_fill_verified=True,
+    )
+    materialize_position_economics(
+        str(row.get("id") or ""),
+        realized_pnl=realized_pnl,
+        funding_cost=funding_cost,
+        funding_evidence=result.evidence,
+        outcome_eligible=outcome_eligible,
+        outcome_exclusion_reason=outcome_reason,
+    )
+    return realized_pnl
+
+
 async def settle_unsettled_paper_closes() -> dict:
     """Retry funding computation for paper_internal futures with realized_pnl=NULL.
 
@@ -559,17 +610,20 @@ async def settle_unsettled_paper_closes() -> dict:
     collection gap, fetches historical funding from the exchange and retries.
     On success, updates the position and settles the cash ledger.
 
-    Designed to run as a periodic maintenance job after a collection outage.
-    Returns {'settled': int, 'still_pending': int, 'errors': list[str]}.
+    A later revival pass re-checks rows previously terminalized as
+    ``funding_permanently_unrecoverable``: give-up was only ever meant to stop
+    per-tick churn while the source was missing, never to be irreversible once a
+    backfill finally lands.  Designed to run as a periodic maintenance job after
+    a collection outage.  Returns
+    {'settled': int, 'revived': int, 'still_pending': int, 'errors': list[str]}.
     """
     from aletheia.storage.sqlite import get_db
     from aletheia.portfolio.local_funding import compute_local_funding
-    from aletheia.analytics.outcome_integrity import outcome_write_eligibility
     from aletheia.files.jsonl import write_audit
 
-    # Exclude already-terminal ("gave up") rows so the settler stops touching
-    # them on every tick. They stay realized_pnl=NULL forever — only the
-    # surfaced reason distinguishes "still trying" from "gave up".
+    # First pass excludes already-terminal ("gave up") rows so a genuinely
+    # missing source does not churn every tick; the revival pass below re-checks
+    # those rows explicitly and only ever acts on a now-complete result.
     rows = [
         dict(r) for r in get_db().execute(
             """SELECT * FROM positions
@@ -583,6 +637,7 @@ async def settle_unsettled_paper_closes() -> dict:
     ]
 
     settled = 0
+    revived = 0
     still_pending = 0
     gave_up = 0
     errors: list[str] = []
@@ -658,42 +713,12 @@ async def settle_unsettled_paper_closes() -> dict:
                 still_pending += 1
                 continue
 
-            entry = float(row["entry_price"])
-            exit_p = float(row["current_price"])
-            qty = float(row["quantity"])
-            efee = float(row["entry_fee"])
-            xfee = float(row["exit_fee"])
-            funding_cost = result.funding_cost
-
-            direction = str(row.get("direction") or "").lower()
-            if direction in {"long", "buy"}:
-                gross = (exit_p - entry) * qty
-            elif direction in {"short", "sell"}:
-                gross = (entry - exit_p) * qty
-            else:
-                errors.append(f"{position_id}: invalid direction {direction!r}")
+            try:
+                realized_pnl = _persist_complete_paper_funding(row, result)
+            except ValueError as exc:
+                errors.append(f"{position_id}: {exc}")
                 still_pending += 1
                 continue
-
-            realized_pnl = round(gross - efee - xfee - funding_cost, 8)
-            if not math.isfinite(realized_pnl):
-                errors.append(f"{position_id}: non-finite realized_pnl")
-                still_pending += 1
-                continue
-
-            check_row = {**row, "realized_pnl": realized_pnl, "funding_cost": funding_cost,
-                         "funding_source": "local_simulation", "exit_fill_verified": True}
-            outcome_eligible, outcome_reason = outcome_write_eligibility(
-                check_row, exit_fill_verified=True,
-            )
-            materialize_position_economics(
-                position_id,
-                realized_pnl=realized_pnl,
-                funding_cost=funding_cost,
-                funding_evidence=result.evidence,
-                outcome_eligible=outcome_eligible,
-                outcome_exclusion_reason=outcome_reason,
-            )
             logger.info(
                 "paper_funding_settler: settled %s position %s realized_pnl=%s",
                 sym, position_id, realized_pnl,
@@ -707,6 +732,75 @@ async def settle_unsettled_paper_closes() -> dict:
             )
             errors.append(f"{position_id}: {exc}")
             still_pending += 1
+
+    # Revival pass: rows previously terminalized as
+    # FUNDING_PERMANENTLY_UNRECOVERABLE. The funding schedule/backfill may have
+    # landed since give-up, so re-run the computation and revive ONLY on a
+    # now-complete result. An still-incomplete result is left completely
+    # untouched (no audit, no state change) so a genuinely lost row stays
+    # churn-free — the give-up state is sticky against absence, reversible only
+    # against real data.
+    terminal_rows = [
+        dict(r) for r in get_db().execute(
+            """SELECT * FROM positions
+               WHERE status='closed' AND execution_mode='paper_internal'
+                 AND market_type='usdt_futures' AND realized_pnl IS NULL
+                 AND outcome_exclusion_reason = ?
+               ORDER BY rowid ASC LIMIT 50""",
+            (FUNDING_PERMANENTLY_UNRECOVERABLE,),
+        ).fetchall()
+    ]
+    for row in terminal_rows:
+        position_id = str(row.get("id") or "")
+        sym = str(row.get("symbol") or "")
+        try:
+            result = compute_local_funding(
+                row, closed_at=row["closed_at"], allow_historical_ledger=True,
+            )
+            if not result.complete and result.evidence.get("reason") in _BACKFILLABLE_REASONS:
+                await _backfill_historical_funding_for_position(row)
+                result = compute_local_funding(
+                    row, closed_at=row["closed_at"], allow_historical_ledger=True,
+                )
+            if not result.complete:
+                # Still unrecoverable — leave the terminal row completely
+                # untouched and metric-neutral (no still_pending bump): give-up
+                # means "stop counting this as pending work", and merely
+                # re-checking it must not resurrect it into the pending count.
+                continue
+            try:
+                realized_pnl = _persist_complete_paper_funding(row, result)
+            except ValueError as exc:
+                errors.append(f"{position_id}:revive: {exc}")
+                continue
+            write_audit({
+                "actor": "system",
+                "source": "paper_funding_settler",
+                "event_type": "paper_position_funding_revived",
+                "entity_type": "position",
+                "entity_id": position_id,
+                "before": {
+                    "outcome_exclusion_reason": FUNDING_PERMANENTLY_UNRECOVERABLE,
+                    "realized_pnl": None,
+                },
+                "after": {"realized_pnl": realized_pnl},
+                "message": (
+                    f"Revived funding economics for {sym} position {position_id} "
+                    f"after backfill: realized_pnl={realized_pnl} "
+                    "(was funding_permanently_unrecoverable)"
+                ),
+            })
+            logger.info(
+                "paper_funding_settler: revived %s position %s realized_pnl=%s",
+                sym, position_id, realized_pnl,
+            )
+            revived += 1
+        except Exception as exc:
+            logger.warning(
+                "paper_funding_settler: error reviving %s position %s: %s",
+                sym, position_id, exc,
+            )
+            errors.append(f"{position_id}:revive: {exc}")
 
     # Second pass: positions where realized_pnl IS already set but the cash ledger
     # has no matching position_closed entry.  This happens when funding_cost is written
@@ -760,6 +854,7 @@ async def settle_unsettled_paper_closes() -> dict:
 
     return {
         "settled": settled,
+        "revived": revived,
         "still_pending": still_pending,
         "gave_up": gave_up,
         "errors": errors,

@@ -117,6 +117,7 @@ jobs:
                 --ignore=tests/simulation \
                 -m "$tier" \
                 -n auto \
+                --dist loadfile \
                 -q --tb=short \
                 --timeout=120
           done
