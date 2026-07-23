@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -223,7 +224,9 @@ def test_paper_funding_cli_and_doctor_expose_guarded_reconciliation(
     assert dry_run.exit_code == 0
     assert json.loads(dry_run.output)["summary"]["recoverable_null_pnl"] == 1
     assert unguarded.exit_code != 0
-    assert "--expected-fingerprint" in unguarded.output
+    # Strip ANSI color codes before checking: FORCE_COLOR (set by GitHub Actions)
+    # causes Rich to split option names with escape sequences, breaking literal match.
+    assert "--expected-fingerprint" in re.sub(r"\x1b\[[0-9;]*m", "", unguarded.output)
     assert check.severity == "blocker"
     assert "recoverable=1" in check.detail
     assert "ledger_mismatch=1" in check.detail
