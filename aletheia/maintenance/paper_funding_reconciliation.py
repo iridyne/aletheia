@@ -26,14 +26,16 @@ def _position_rows(
     *,
     limit: int | None,
 ) -> list[dict]:
+    from aletheia.portfolio.paper_account import INVALID_EXIT_PRICE_EVIDENCE
     from aletheia.storage.sqlite import get_db
 
     clauses = [
         "status='closed'",
         "execution_mode='paper_internal'",
         "market_type='usdt_futures'",
+        "(outcome_exclusion_reason IS NULL OR outcome_exclusion_reason != ?)",
     ]
-    params: list[Any] = []
+    params: list[Any] = [INVALID_EXIT_PRICE_EVIDENCE]
     normalized = sorted(set(str(item) for item in position_ids or [] if str(item)))
     if normalized:
         clauses.append("id IN (" + ",".join("?" for _ in normalized) + ")")

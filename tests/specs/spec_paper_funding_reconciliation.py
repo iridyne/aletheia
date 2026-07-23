@@ -132,6 +132,26 @@ def test_paper_funding_reconciliation_dry_run_is_deterministic_and_read_only(
     ).fetchone()["n"] == 0
 
 
+def test_invalid_exit_price_is_out_of_scope_for_funding_reconciliation(
+    tmp_path, monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    position_id = _seed_recoverable_position()
+    conn.execute(
+        "UPDATE positions SET outcome_exclusion_reason=? WHERE id=?",
+        ("invalid_exit_price_evidence", position_id),
+    )
+    conn.commit()
+    from aletheia.maintenance.paper_funding_reconciliation import (
+        inspect_paper_funding_reconciliation,
+    )
+
+    report = inspect_paper_funding_reconciliation()
+
+    assert report["rows"] == []
+    assert all(value == 0 for value in report["summary"].values())
+
+
 @spec_claim(
     SpecClaim(
         "PFA-REC-02",

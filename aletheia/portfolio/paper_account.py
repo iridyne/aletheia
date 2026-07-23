@@ -572,18 +572,20 @@ async def settle_unsettled_paper_closes() -> dict:
     from aletheia.analytics.outcome_integrity import outcome_write_eligibility
     from aletheia.files.jsonl import write_audit
 
-    # Exclude already-terminal ("gave up") rows so the settler stops touching
-    # them on every tick. They stay realized_pnl=NULL forever — only the
-    # surfaced reason distinguishes "still trying" from "gave up".
+    # Exclude terminal rows so the settler never recreates an invalidated result
+    # or keeps retrying economics that have already been classified unavailable.
     rows = [
         dict(r) for r in get_db().execute(
             """SELECT * FROM positions
                WHERE status='closed' AND execution_mode='paper_internal'
                  AND market_type='usdt_futures' AND realized_pnl IS NULL
                  AND (outcome_exclusion_reason IS NULL
-                      OR outcome_exclusion_reason != ?)
+                      OR outcome_exclusion_reason NOT IN (?, ?))
                ORDER BY rowid ASC LIMIT 50""",
-            (FUNDING_PERMANENTLY_UNRECOVERABLE,),
+            (
+                FUNDING_PERMANENTLY_UNRECOVERABLE,
+                INVALID_EXIT_PRICE_EVIDENCE,
+            ),
         ).fetchall()
     ]
 

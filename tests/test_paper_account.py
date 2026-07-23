@@ -1,5 +1,6 @@
 """Regression tests for the local-only paper account ledger."""
 
+import asyncio
 import json
 import sqlite3
 import sys
@@ -148,7 +149,7 @@ def test_invalid_exit_price_is_terminal_not_unsettled_funding(tmp_path, monkeypa
         get_paper_account,
     )
 
-    repo.insert_position(Position(
+    invalid_position = Position(
         symbol="ON/USDT",
         market_type="usdt_futures",
         direction="long",
@@ -164,12 +165,28 @@ def test_invalid_exit_price_is_terminal_not_unsettled_funding(tmp_path, monkeypa
         funding_source="local_simulation",
         outcome_eligible=False,
         outcome_exclusion_reason=INVALID_EXIT_PRICE_EVIDENCE,
-    ))
+    )
+    repo.insert_position(invalid_position)
 
     account = get_paper_account()
 
     assert account["economics_complete"] is True
     assert account["unsettled_closed_positions_count"] == 0
+    result = asyncio.run(
+        __import__(
+            "aletheia.portfolio.paper_account",
+            fromlist=["settle_unsettled_paper_closes"],
+        ).settle_unsettled_paper_closes()
+    )
+    assert result == {
+        "settled": 0,
+        "still_pending": 0,
+        "gave_up": 0,
+        "errors": [],
+    }
+    assert repo._select_one(
+        "positions", invalid_position.id,
+    )["realized_pnl"] is None
 
 
 def test_local_paper_available_balance_tightens_risk_without_affecting_external(tmp_path, monkeypatch):
