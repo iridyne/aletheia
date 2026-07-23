@@ -154,11 +154,11 @@ async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
     class _FakeCCXT:
         async def get_ticker(self, symbol):
             return Ticker(symbol=symbol, last_price=60000.0, volume_24h=123.0,
-                          change_pct_24h=1.5, provider="fake")
+                          change_pct_24h=1.5, provider="binance")
         async def get_ohlcv(self, symbol, timeframe, limit):
             return []
-    async def close(self):
-        pass
+        async def close(self):
+            pass
 
     monkeypatch.setattr(ccxt_provider, "CCXTProvider", lambda **kw: _FakeCCXT())
 
@@ -179,6 +179,62 @@ async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
     snaps = repo.list_market_snapshots()
     assert len(snaps) == 3
     assert snaps[0]["price"] == 60000.0
+    reset_db()
+
+
+@pytest.mark.anyio
+async def test_market_data_rejects_cross_venue_fallback_snapshot(
+    tmp_path, monkeypatch
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.data.providers import Ticker
+    from aletheia.data import ccxt_provider
+
+    class _CrossVenueProvider:
+        async def get_ticker(self, symbol):
+            return Ticker(
+                symbol=symbol,
+                last_price=90.57,
+                volume_24h=3_012_868.0,
+                change_pct_24h=0.9248,
+                provider="bybit",
+            )
+
+        async def close(self):
+            pass
+
+    calls = []
+
+    def _provider_factory(**kwargs):
+        calls.append(kwargs)
+        return _CrossVenueProvider()
+
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", _provider_factory
+    )
+
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.market_data.ccxt_exchange = "binance"
+    cfg.market_data.observed_xstocks = []
+    cfg.market_data.observed_stock_tokens = []
+    save_config(cfg)
+
+    from aletheia.trading.market_data import collect_market_snapshots
+    result = await collect_market_snapshots()
+
+    assert calls == [{
+        "exchange": "binance",
+        "native_ccxt": True,
+        "fallback_exchange": "binance",
+    }]
+    assert result["collected"] == []
+    assert len(result["errors"]) == 3
+    assert all(
+        "ticker provider bybit does not match venue binance" in error
+        for error in result["errors"]
+    )
+    assert repo.list_market_snapshots() == []
     reset_db()
 
 

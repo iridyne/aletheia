@@ -297,14 +297,25 @@ async def collect_market_snapshots() -> dict:
     instruments = _build_dynamic_instruments(cfg)
     xstocks = xstocks_instruments_from_config(cfg)
 
-    from aletheia.data.ccxt_provider import CCXTProvider, get_market_data_provider
-    provider = get_market_data_provider()
+    from aletheia.data.ccxt_provider import (
+        CCXTProvider,
+        get_market_data_provider,
+        require_exact_ticker_venue,
+    )
+    primary_exchange = cfg.market_data.ccxt_exchange or "binance"
+    provider = get_market_data_provider(
+        exchange=primary_exchange,
+        native_ccxt=True,
+        fallback_exchange=primary_exchange,
+    )
 
     collected = []
     errors = []
 
     async def _fetch_and_store(instrument, prov):
-        ticker = await prov.get_ticker(instrument)
+        ticker = require_exact_ticker_venue(
+            await prov.get_ticker(instrument), instrument.exchange,
+        )
         snap = MarketSnapshot(
             symbol=instrument.symbol,
             market_type=instrument.market_type,

@@ -296,8 +296,11 @@ async def refresh_watched_prices() -> dict:
     try:
         from collections import defaultdict
 
-        from aletheia.data.ccxt_provider import get_market_data_provider
-        from aletheia.data.ccxt_provider import CCXTProvider
+        from aletheia.data.ccxt_provider import (
+            CCXTProvider,
+            get_market_data_provider,
+            require_exact_ticker_venue,
+        )
         from aletheia.data.symbols import is_stock_token
         from aletheia.config.loader import load_config
 
@@ -312,12 +315,18 @@ async def refresh_watched_prices() -> dict:
             if any(is_stock_token(item.symbol) for item in group):
                 provider = CCXTProvider(exchange=venue, fallback_exchange=venue)
             else:
-                provider = get_market_data_provider(exchange=venue, native_ccxt=True)
+                provider = get_market_data_provider(
+                    exchange=venue,
+                    native_ccxt=True,
+                    fallback_exchange=venue,
+                )
             try:
                 for instrument in group:
                     sym = instrument.symbol
                     try:
-                        ticker = await provider.get_ticker(instrument)
+                        ticker = require_exact_ticker_venue(
+                            await provider.get_ticker(instrument), venue,
+                        )
                         if ticker and ticker.last_price and ticker.last_price > 0:
                             with _cache_lock:
                                 prev_entry = _price_cache.get(sym, {})

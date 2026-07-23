@@ -48,6 +48,12 @@ _FUNDING_GIVE_UP_HOURS = 24.0
 # economics" (which reads as "still trying"). Not a whitelist for
 # validated_funding_economics — that layer still returns (None, "unavailable").
 FUNDING_PERMANENTLY_UNRECOVERABLE = "funding_permanently_unrecoverable"
+INVALID_EXIT_PRICE_EVIDENCE = "invalid_exit_price_evidence"
+
+_TERMINAL_ECONOMICS_EXCLUSIONS = frozenset({
+    FUNDING_PERMANENTLY_UNRECOVERABLE,
+    INVALID_EXIT_PRICE_EVIDENCE,
+})
 
 INITIAL_PAPER_CASH_USDT = 200.0
 
@@ -62,9 +68,8 @@ def _open_local_positions() -> list[dict]:
 def _unsettled_local_closes() -> list[dict]:
     """Closed local positions whose net account result is still in flight.
 
-    A row that the settler has terminally given up on
-    (outcome_exclusion_reason=FUNDING_PERMANENTLY_UNRECOVERABLE) is NOT
-    in flight — it is a durable, distinct outcome. Excluding it here lets
+    A row with a terminal exclusion reason is NOT in flight — it is a durable,
+    distinct outcome. Excluding it here lets
     `get_paper_account().economics_complete` return True once every
     remaining unsettled row is either settled or terminally excluded,
     which in turn unblocks `total_value_usdt` / `available_balance_usdt` /
@@ -85,7 +90,7 @@ def _unsettled_local_closes() -> list[dict]:
         for position in [dict(row)]
         if _realized_economics_value(position) is None
         and str(position.get("outcome_exclusion_reason") or "")
-            != FUNDING_PERMANENTLY_UNRECOVERABLE
+            not in _TERMINAL_ECONOMICS_EXCLUSIONS
     ]
 
 
@@ -621,18 +626,21 @@ async def settle_unsettled_paper_closes() -> dict:
     from aletheia.portfolio.local_funding import compute_local_funding
     from aletheia.files.jsonl import write_audit
 
-    # First pass excludes already-terminal ("gave up") rows so a genuinely
-    # missing source does not churn every tick; the revival pass below re-checks
-    # those rows explicitly and only ever acts on a now-complete result.
+    # First pass excludes every terminal row so an invalidated result can never
+    # be recreated. The revival pass below explicitly re-checks funding-only
+    # give-up rows and acts only when their economics have become complete.
     rows = [
         dict(r) for r in get_db().execute(
             """SELECT * FROM positions
                WHERE status='closed' AND execution_mode='paper_internal'
                  AND market_type='usdt_futures' AND realized_pnl IS NULL
                  AND (outcome_exclusion_reason IS NULL
-                      OR outcome_exclusion_reason != ?)
+                      OR outcome_exclusion_reason NOT IN (?, ?))
                ORDER BY rowid ASC LIMIT 50""",
-            (FUNDING_PERMANENTLY_UNRECOVERABLE,),
+            (
+                FUNDING_PERMANENTLY_UNRECOVERABLE,
+                INVALID_EXIT_PRICE_EVIDENCE,
+            ),
         ).fetchall()
     ]
 

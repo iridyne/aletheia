@@ -265,8 +265,10 @@ class TestRefreshWatchedPrices:
 
         mock_ticker_btc = MagicMock()
         mock_ticker_btc.last_price = 65000.0
+        mock_ticker_btc.provider = "binance"
         mock_ticker_eth = MagicMock()
         mock_ticker_eth.last_price = 3500.0
+        mock_ticker_eth.provider = "binance"
 
         provider = AsyncMock()
         provider.get_ticker = AsyncMock(side_effect=[mock_ticker_btc, mock_ticker_eth])
@@ -283,6 +285,47 @@ class TestRefreshWatchedPrices:
         assert get_fresh_price_for_protective_close(
             "BTC/USDT", "spot", venue="binance",
         ) == 65000.0
+
+    @patch(
+        "aletheia.data.price_feed.get_watched_instruments",
+        return_value=[InstrumentId.from_parts("binance", "ON/USDT", "perp")],
+    )
+    @patch("aletheia.data.ccxt_provider.get_market_data_provider")
+    @patch("aletheia.config.loader.load_config")
+    def test_cross_venue_fallback_never_enters_exact_cache(
+        self, mock_cfg, mock_provider_fn, mock_symbols
+    ):
+        cfg = MagicMock()
+        cfg.market_data.ccxt_exchange = "binance"
+        cfg.event_triggers.enabled = False
+        mock_cfg.return_value = cfg
+
+        ticker = MagicMock(
+            last_price=90.57,
+            volume_24h=3_012_868.0,
+            provider="bybit",
+        )
+        provider = AsyncMock()
+        provider.get_ticker = AsyncMock(return_value=ticker)
+        provider.close = AsyncMock()
+        mock_provider_fn.return_value = provider
+
+        result = asyncio.run(refresh_watched_prices())
+
+        mock_provider_fn.assert_called_once_with(
+            exchange="binance",
+            native_ccxt=True,
+            fallback_exchange="binance",
+        )
+        assert result["refreshed"] == 0
+        assert result["errors"] == [
+            "binance:ON/USDT:perp: ticker provider bybit does not match venue binance"
+        ]
+        from aletheia.data.price_feed import get_fresh_price_for_protective_close
+        assert get_fresh_price_for_protective_close(
+            "ON/USDT", "usdt_futures", venue="binance",
+        ) is None
+        assert get_cached_price("ON/USDT") is None
 
     @patch(
         "aletheia.data.price_feed.get_watched_instruments",
