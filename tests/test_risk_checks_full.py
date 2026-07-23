@@ -203,8 +203,9 @@ def test_daily_loss_exceeded_blocks_and_trips_kill_switch(tmp_path, monkeypatch)
     result = evaluate_proposal(p)
     assert result.approved is False
     assert any("max_daily_loss" in v for v in result.violations)
-    # auto-tripped the global brake
-    assert kill_switch.is_active() is True
+    # Auto-trip is scoped to the evaluated Demo policy.
+    assert kill_switch.is_active("demo") is True
+    assert kill_switch.is_active("global") is False
 
 
 # --- account_mode_match ---
@@ -316,8 +317,10 @@ def test_live_exposure_cap_allows_order_under_limit(tmp_path, monkeypatch):
 def test_demo_leverage_over_limit_blocks(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
-    # demo futures leverage limit default = 5
+    cfg = load_config()
+    cfg.agent.permission_mode = "Paper"
+    cfg.risk.max_futures_leverage_demo = 5
+    save_config(cfg)
     p = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
                       execution_mode="bitget_demo", quantity=0.001, price=60000)
     p.leverage = 10
@@ -478,6 +481,10 @@ def test_demo_position_notional_bounded(tmp_path, monkeypatch):
 def test_demo_single_trade_risk_bounded(tmp_path, monkeypatch):
     """A paper order whose loss-at-stop exceeds the demo risk cap is rejected."""
     setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.risk.max_demo_single_trade_risk_pct = 2.0
+    save_config(cfg)
     # demo cap = starting_capital(100) * 2% = $2. Stop 10% away on $150 notional
     # = 0.0025 * 60000 * 0.10 = $15 risk > $2. Notional 150 < 200 so only the
     # risk check should trip.
@@ -567,9 +574,9 @@ def test_kill_switch_trip_blocks_subsequent_proposal(tmp_path, monkeypatch):
     r1 = evaluate_proposal(p1)
     assert any("max_daily_loss_exceeded" in v for v in r1.violations)
 
-    # Kill switch is now persisted; a brand-new proposal must be rejected for it.
+    # The Demo brake is now persisted; a brand-new Demo proposal is rejected.
     p2 = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
                        execution_mode="paper_internal", quantity=0.0004, price=60000, stop_price=58800)
     repo.insert_trade_proposal(p2)
     r2 = evaluate_proposal(p2)
-    assert "kill_switch_active" in r2.violations
+    assert "demo_brake_active" in r2.violations

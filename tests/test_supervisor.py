@@ -113,13 +113,14 @@ def test_run_supervised_default_uses_frontdoor_and_internal_backend_port(tmp_pat
     monkeypatch.setattr(runner, "kill_pid_tree", lambda pid: captured.setdefault("killed_frontdoor", pid))
 
     def fake_spawn_server(
-        cfg, *, port=None, frontdoor_holder=None, collector_holder=None,
+        cfg, *, port=None, frontdoor_holder=None, collector_holder=None, backend_holder=None,
     ):
         captured["backend_port"] = port
         captured["frontdoor_holder"] = frontdoor_holder
         captured["frontdoor_proc"] = frontdoor_holder[0] if frontdoor_holder else None
         captured["collector_holder"] = collector_holder
         captured["collector_proc"] = collector_holder[0] if collector_holder else None
+        captured["backend_holder"] = backend_holder
         return 0
 
     monkeypatch.setattr(runner, "_spawn_server", fake_spawn_server)
@@ -391,3 +392,309 @@ def test_inner_uvicorn_no_creationflags_on_posix(tmp_path, monkeypatch):
     runner._spawn_server(load_config())
 
     assert "creationflags" not in captured["kwargs"]
+
+
+# --- SIGTERM/SIGINT controlled shutdown (issue #355) -------------------------
+#
+# A managed stop (launchd/systemd) delivers SIGTERM to the supervisor. The
+# default POSIX disposition kills it without unwinding Python frames, so the
+# finally-block teardown never runs and the collector/frontdoor/backend children
+# are reparented to PID 1 (orphaned). The supervisor must instead catch the
+# signal, route it through the single idempotent cleanup path, remove its pid
+# file, and record a durable system-actor event.
+
+
+def test_sigterm_triggers_controlled_shutdown_and_records_system_event(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    import os
+    import signal
+    import time
+
+    from aletheia import _gateway_runner as runner
+    from aletheia.gateway import pidfile
+
+    monkeypatch.setattr(runner, "_cleanup_before_spawn", lambda cfg: None)
+
+    def fake_spawn():
+        # Stand in for the blocking server lifetime, then take a managed SIGTERM.
+        # Our installed handler re-arms SIG_IGN and raises KeyboardInterrupt, so
+        # this returns via the supervisor's cleanup path rather than exit code 0.
+        # Guard: only self-signal once the supervisor's handler is installed —
+        # otherwise the default disposition would kill the test runner instead of
+        # failing this assertion.
+        assert callable(signal.getsignal(signal.SIGTERM)), "SIGTERM handler not installed"
+        os.kill(os.getpid(), signal.SIGTERM)
+        time.sleep(2)  # interrupted by the pending SIGTERM
+        return 0  # unreachable
+
+    result = runner.run_supervised(spawn_fn=fake_spawn)
+
+    # Unwound cleanly through the finally (no traceback escapes run_supervised).
+    assert result.get("stopped_by_signal") is True
+
+    # PID file removed so status/stop don't act on a stale live pid.
+    assert pidfile.read_pid() is None
+    assert not pidfile.pid_path().exists()
+
+    # Durable event, system actor (never a fabricated human), names the signal.
+    from aletheia.files.jsonl import read_jsonl
+    events = [
+        e for e in read_jsonl("audit.jsonl")
+        if e.get("event_type") == "gateway_signal_shutdown"
+    ]
+    assert len(events) == 1
+    assert events[0]["actor"] == "system"
+    assert "SIGTERM" in events[0]["message"]
+
+
+def test_repeated_shutdown_signals_are_idempotent(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    import os
+    import signal
+    import time
+
+    from aletheia import _gateway_runner as runner
+    from aletheia.gateway import pidfile
+
+    monkeypatch.setattr(runner, "_cleanup_before_spawn", lambda cfg: None)
+
+    # A second SIGTERM arrives mid-cleanup (signals are already neutralized by
+    # then). It must be dropped: no crash, no duplicate event.
+    def noisy_stop_vite(proc):  # runs inside the finally, after SIG_IGN is set
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    monkeypatch.setattr(runner, "_stop_vite_watch", noisy_stop_vite)
+
+    def fake_spawn():
+        assert callable(signal.getsignal(signal.SIGTERM)), "SIGTERM handler not installed"
+        os.kill(os.getpid(), signal.SIGTERM)
+        time.sleep(2)
+        return 0
+
+    result = runner.run_supervised(spawn_fn=fake_spawn)
+    assert result.get("stopped_by_signal") is True
+
+    from aletheia.files.jsonl import read_jsonl
+    events = [
+        e for e in read_jsonl("audit.jsonl")
+        if e.get("event_type") == "gateway_signal_shutdown"
+    ]
+    assert len(events) == 1  # re-delivered SIGTERM added nothing
+    assert pidfile.read_pid() is None
+
+
+def test_abnormal_restart_path_records_no_signal_event(tmp_path, monkeypatch):
+    """A crash/give-up (no signal) must not fabricate a signal-shutdown event."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia import _gateway_runner as runner
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.health.supervisor_max_restarts = 2
+    cfg.health.supervisor_restart_window_sec = 600
+    cfg.health.supervisor_backoff_cap_sec = 0
+    save_config(cfg)
+
+    monkeypatch.setattr(runner, "_sleep", lambda s: None)
+    monkeypatch.setattr(runner, "_cleanup_before_spawn", lambda cfg: None)
+
+    result = runner.run_supervised(spawn_fn=lambda: 1)
+    assert result["gave_up"] is True
+    assert "stopped_by_signal" not in result
+
+    from aletheia.files.jsonl import read_jsonl
+    assert not any(
+        e.get("event_type") == "gateway_signal_shutdown"
+        for e in read_jsonl("audit.jsonl")
+    )
+
+
+# --- Acceptance: subprocess proves every owned descendant exits on SIGTERM ---
+
+_SUBPROCESS_DRIVER = r'''
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+DATA = Path(os.environ["ALETHEIA_DATA_DIR"])
+PIDS = DATA / "children.json"
+
+from aletheia import _gateway_runner as runner
+from aletheia.config.loader import load_config, ensure_data_dirs
+import aletheia.gateway.operator_shell as opshell
+
+ensure_data_dirs()
+
+children = {}
+
+
+def _sleeper():
+    # A benign, long-lived owned child standing in for a real subprocess.
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+
+
+def _maybe_dump():
+    if {"frontdoor", "collector", "operator", "backend"} <= set(children):
+        PIDS.write_text(json.dumps(children))
+
+
+def fake_frontdoor(cfg, backend_port):
+    p = _sleeper(); children["frontdoor"] = p.pid; _maybe_dump(); return p
+
+
+def fake_ensure_frontdoor(cfg, backend_port, proc):
+    if proc is not None and proc.poll() is None:
+        return proc
+    return fake_frontdoor(cfg, backend_port)
+
+
+def fake_collector(cfg):
+    p = _sleeper(); children["collector"] = p.pid; _maybe_dump(); return p
+
+
+class FakeOperator:
+    def __init__(self, cfg):
+        self._p = None
+
+    def start(self):
+        self._p = _sleeper(); children["operator"] = self._p.pid; _maybe_dump()
+
+    def stop(self):
+        if self._p is not None:
+            try:
+                runner.kill_pid_tree(self._p.pid)
+            except Exception:
+                pass
+
+
+def fake_spawn_server(cfg, *, port=None, frontdoor_holder=None, collector_holder=None, backend_holder=None):
+    p = _sleeper(); children["backend"] = p.pid
+    if backend_holder is not None:
+        backend_holder[0] = p
+    _maybe_dump()
+    return p.wait()  # blocks until SIGTERM unwinds the supervisor
+
+
+runner.bootstrap = load_config
+runner._cleanup_before_spawn = lambda cfg: None
+runner._cleanup_backend_before_spawn = lambda cfg, backend_port: None
+runner._publish_frontdoor_route = lambda *a, **k: None
+runner._ensure_frontdoor_running = fake_ensure_frontdoor
+runner._spawn_frontdoor = fake_frontdoor
+runner._spawn_collector_process = fake_collector
+runner._spawn_server = fake_spawn_server
+runner._start_vite_build_watch = lambda: None
+opshell.OperatorShellMonitor = FakeOperator
+
+runner.run_supervised()
+'''
+
+
+def _pid_alive(pid: int) -> bool:
+    import os
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _wait_all_dead(pids, timeout: float) -> list[int]:
+    import time
+    pids = list(pids)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not any(_pid_alive(p) for p in pids):
+            return []
+        time.sleep(0.1)
+    return [p for p in pids if _pid_alive(p)]
+
+
+@pytest.mark.skipif(__import__("platform").system() == "Windows", reason="POSIX signal/process-group teardown")
+def test_sigterm_tears_down_all_owned_descendants_subprocess(tmp_path):
+    import json
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    driver = tmp_path / "driver.py"
+    driver.write_text(_SUBPROCESS_DRIVER)
+    driver_log = (data_dir / "driver.log").open("w")
+
+    env = dict(os.environ)
+    env["ALETHEIA_DATA_DIR"] = str(data_dir)
+    env.pop("ALETHEIA_COLLECTOR_PROCESS", None)
+
+    # start_new_session=True → the supervisor leads its own session/process group,
+    # exactly like the launchd/systemd-managed gateway. kill_pid_tree then reaches
+    # only its own descendants, never the test runner or sibling worktrees.
+    proc = subprocess.Popen(
+        [sys.executable, str(driver)],
+        cwd=str(repo_root), env=env,
+        stdout=driver_log, stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    children: dict = {}
+    try:
+        pids_file = data_dir / "children.json"
+        deadline = time.time() + 30
+        while time.time() < deadline and not pids_file.exists():
+            if proc.poll() is not None:
+                driver_log.flush()
+                raise AssertionError(
+                    "supervisor exited early:\n" + (data_dir / "driver.log").read_text()
+                )
+            time.sleep(0.1)
+        assert pids_file.exists(), "supervisor never reported its children"
+        children = json.loads(pids_file.read_text())
+        assert set(children) == {"frontdoor", "collector", "operator", "backend"}
+        for pid in children.values():
+            assert _pid_alive(pid)
+
+        pid_file = data_dir / "gateway.pid"
+        assert pid_file.exists()
+        assert int(pid_file.read_text().strip()) == proc.pid
+
+        # Managed stop: SIGTERM the SUPERVISOR ONLY (not the group). Without the
+        # fix its default disposition would kill it and orphan the children.
+        os.kill(proc.pid, signal.SIGTERM)
+        proc.wait(timeout=30)
+
+        orphans = _wait_all_dead(children.values(), timeout=15)
+        assert not orphans, f"owned descendants orphaned after SIGTERM: {orphans}"
+
+        # PID file removed / unambiguously stale after shutdown.
+        assert not pid_file.exists()
+
+        # Durable, system-actor signal-shutdown event.
+        audit = data_dir / "logs" / "audit.jsonl"
+        assert audit.exists()
+        sig_events = [
+            json.loads(line)
+            for line in audit.read_text().splitlines()
+            if line.strip() and '"gateway_signal_shutdown"' in line
+        ]
+        assert len(sig_events) == 1
+        assert sig_events[0]["actor"] == "system"
+    finally:
+        driver_log.close()
+        # Safety net: never leak the supervisor or its children if we failed above.
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            pass
+        for pid in children.values():
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except Exception:
+                pass

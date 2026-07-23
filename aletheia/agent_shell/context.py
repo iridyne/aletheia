@@ -303,9 +303,12 @@ def build_app_context(sections: list[str] | None = None) -> dict:
     if "risk" in wanted:
         ctx["risk"] = {
             "kill_switch": cfg.runtime.kill_switch_active,
-            "max_daily_loss_pct": cfg.risk.max_daily_loss_pct,
-            "max_demo_position_usdt": cfg.risk.max_demo_position_notional_usdt,
-            "max_open_positions_demo": cfg.risk.max_open_positions_demo,
+            "demo_brake": cfg.runtime.demo_brake_active,
+            "max_daily_loss_pct": cfg.risk.demo.loss.max_daily_loss_pct,
+            "max_demo_position_usdt":
+                cfg.risk.demo.capital.max_position_notional_usdt,
+            "max_open_positions_demo":
+                cfg.risk.demo.positions.max_open_positions,
         }
 
     if "knowledge" in wanted:

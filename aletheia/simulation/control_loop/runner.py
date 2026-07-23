@@ -164,7 +164,7 @@ class ControlLoopHarness:
             },
             "risk": {
                 "max_demo_position_notional_usdt":
-                    cfg.risk.max_demo_position_notional_usdt,
+                    cfg.risk.demo.capital.max_position_notional_usdt,
             },
         }
 

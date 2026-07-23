@@ -939,13 +939,16 @@ def _action_reduce_sizing(action: OperatorAction) -> dict:
 
     pct = min(action.params.get("reduce_pct", 20), 30)
     cfg = load_config()
-    current = getattr(cfg.risk, param_name, 200.0)
+    current = cfg.risk.demo.capital.max_position_notional_usdt
     new_val = round(current * (1 - pct / 100), 2)
     new_val = max(new_val, 20.0)
     if new_val >= current:
         return {"action": "reduce_sizing", "status": "skipped", "reason": "already at floor"}
 
+    # Compatibility assignment keeps the one-release flat projection and the
+    # authoritative Demo policy synchronized.
     cfg.risk.max_demo_position_notional_usdt = new_val
+    cfg.risk.demo.revision += 1
     save_config(cfg)
     _persist_action("config_patch", param=param_name,
                     before=str(current), after=str(new_val), direction="tighten",
@@ -969,13 +972,14 @@ def _action_increase_sizing(action: OperatorAction) -> dict:
     spec = PARAM_REGISTRY[param_name]
     pct = min(action.params.get("increase_pct", 20), 30)
     cfg = load_config()
-    current = getattr(cfg.risk, param_name, 200.0)
+    current = cfg.risk.demo.capital.max_position_notional_usdt
     new_val = round(current * (1 + pct / 100), 2)
     new_val = min(new_val, spec.neutral)  # never exceed neutral
     if new_val <= current:
         return {"action": "increase_sizing", "status": "skipped", "reason": "already at or above neutral"}
 
     cfg.risk.max_demo_position_notional_usdt = new_val
+    cfg.risk.demo.revision += 1
     save_config(cfg)
     _persist_action("config_patch", param=param_name,
                     before=str(current), after=str(new_val), direction="loosen",

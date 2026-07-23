@@ -323,6 +323,10 @@ class RiskDecision(_Provenanced):
     # the final size Risk actually assessed.
     evaluated_quantity: float | None = None
     proposal_commit_hash: str | None = None
+    risk_mode: str | None = None
+    policy_id: str | None = None
+    policy_revision: int | None = None
+    policy_hash: str | None = None
     message: str | None = None
     created_at: str = Field(default_factory=_utcnow)
 

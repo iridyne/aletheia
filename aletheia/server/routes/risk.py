@@ -23,6 +23,19 @@ async def kill_switch_status():
     return {"active": kill_switch.is_active()}
 
 
+def _brake_status() -> dict:
+    return {
+        "global_active": kill_switch.is_active("global"),
+        "demo_active": kill_switch.is_active("demo"),
+        "live_active": kill_switch.is_active("live"),
+    }
+
+
+@router.get("/brakes")
+async def brakes_status():
+    return _brake_status()
+
+
 @router.get("/status")
 async def risk_status():
     cfg = load_config()
@@ -38,6 +51,12 @@ async def risk_status():
     if cfg.runtime.kill_switch_active:
         status = "blocked"
         violations.append("kill_switch_active")
+    elif cfg.runtime.live_brake_active and exchange_mode == "live":
+        status = "blocked"
+        violations.append("live_brake_active")
+    elif cfg.runtime.demo_brake_active and exchange_mode != "live":
+        status = "blocked"
+        violations.append("demo_brake_active")
     else:
         if exchange_mode == "live" and live_state == "live_disabled":
             status = "warning"
@@ -53,6 +72,8 @@ async def risk_status():
 
     return {
         "kill_switch_active": cfg.runtime.kill_switch_active,
+        "demo_brake_active": cfg.runtime.demo_brake_active,
+        "live_brake_active": cfg.runtime.live_brake_active,
         "live_state": live_state,
         "permission_mode": permission_mode,
         "latest_risk_decision": latest_decision,
@@ -93,6 +114,22 @@ async def set_kill_switch(req: KillSwitchRequest):
             )
         kill_switch.deactivate(actor="human")
     return {"active": kill_switch.is_active()}
+
+
+@router.post("/brakes/{scope}")
+async def set_mode_brake(scope: str, req: KillSwitchRequest):
+    if scope not in {"global", "demo", "live"}:
+        raise HTTPException(404, "Unknown trading brake scope")
+    if req.active:
+        kill_switch.activate(reason=req.reason, actor="human", scope=scope)
+    else:
+        if not req.confirm_release:
+            raise HTTPException(
+                422,
+                "Releasing a trading brake requires confirm_release=true",
+            )
+        kill_switch.deactivate(actor="human", scope=scope)
+    return {"scope": scope, "active": kill_switch.is_active(scope), **_brake_status()}
 
 
 @router.get("/account-leverage")
