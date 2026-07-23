@@ -1801,6 +1801,7 @@ def get_learning_contribution():
             total_verdicts += int(r["n"])
     except Exception as e:
         verdicts_error = str(e)
+        total_verdicts = None  # type: ignore[assignment]
 
     # Experiment stage distribution
     experiments_by_stage: list[dict] = []
@@ -1858,9 +1859,9 @@ def get_learning_contribution():
     return {
         "exposures_by_path": exposures_by_path,
         "verdicts": {
-            "total": total_verdicts if not verdicts_error else 0,
+            "total": total_verdicts,
             "by_verdict": verdicts_by_verdict,
-            **({"error": verdicts_error} if verdicts_error else {}),
+            **({"query_error": verdicts_error} if verdicts_error else {}),
         },
         "experiments_by_stage": experiments_by_stage,
         "lifecycle_event_n": lifecycle_event_n,

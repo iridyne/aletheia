@@ -77,7 +77,7 @@ def test_operator_evaluation_observation_is_registered_and_consumed_read_only():
 
 @spec_claim(
     SpecClaim(
-        "DU-S23", _CONTRACT, "§3 xStock listing status", "L2a",
+        "DU-S24", _CONTRACT, "§3 xStock listing status", "L2a",
         "The venue-specific xStock listing source is registered, bounded, fail-open for "
         "configured intent, and its confirmed-removal consumer writes a system audit.",
         status="implemented",
@@ -87,7 +87,7 @@ def test_xstock_listing_source_is_registered_and_bounded():
     doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
     source = _MARKET_DATA.read_text(encoding="utf-8")
 
-    assert "xStock 上市状态" in doc and "DU-S23" in doc
+    assert "xStock 上市状态" in doc and "DU-S24" in doc
     assert "native_ccxt=True" in source
     assert "fallback_exchange=exchange_name" in source
     assert "_XSTOCK_LISTING_TIMEOUT_SEC" in source

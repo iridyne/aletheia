@@ -104,9 +104,9 @@ async def test_db_error_is_not_silently_zero(tmp_path, monkeypatch):
         resp = await client.get("/api/analytics/learning-contribution")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["verdicts"]["total"] == 0
-    assert "error" in body["verdicts"]
-    assert "simulated schema error" in body["verdicts"]["error"]
+    assert body["verdicts"]["total"] is None
+    assert "query_error" in body["verdicts"]
+    assert "simulated schema error" in body["verdicts"]["query_error"]
 
 
 @pytest.fixture

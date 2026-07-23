@@ -357,10 +357,10 @@ def test_learning_contribution_verdict_db_error_surfaces_error_not_zero(tmp_path
 
     result = get_learning_contribution()
 
-    # total stays 0 because no rows were read — but an explicit error key is present
-    assert result["verdicts"]["total"] == 0
-    assert "error" in result["verdicts"]
-    assert result["verdicts"]["error"]  # non-empty error string
+    # total is None (not 0) when a DB error occurred — total=0 is ambiguous with "no verdicts"
+    assert result["verdicts"]["total"] is None
+    assert "query_error" in result["verdicts"]
+    assert result["verdicts"]["query_error"]  # non-empty error string
 
 
 # ---------------------------------------------------------------------------

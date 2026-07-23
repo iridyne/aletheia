@@ -1784,15 +1784,21 @@ def _existing_deferred_context_observation(
 
     now_iso = datetime.now(timezone.utc).isoformat()
     # Market-quiet fast-path: check by opportunity_id regardless of fingerprint.
+    # For conviction/debate reasons, defer_until guards the re-evaluation window.
+    # For direct_skip_not_confirmed reasons the model already decided the evidence
+    # is not actionable; re-evaluating on every expired-defer cycle causes churn
+    # without a genuine judgment change. Suppress regardless of defer_until.
     market_quiet_row = get_db().execute(
         "SELECT * FROM operator_evaluation_events "
         "WHERE json_extract(queue_snapshot_json, '$.opportunity_id') = ? "
         "AND event_kind LIKE 'operator_decision_deferred_%' "
-        "AND json_extract(queue_snapshot_json, '$.defer_until') > ? "
-        "AND (json_extract(queue_snapshot_json, '$.defer_reason') IN "
-        "         ('operator_low_conviction', 'debate_not_confirmed') "
-        "     OR json_extract(queue_snapshot_json, '$.defer_reason') LIKE "
-        "         'direct_skip_not_confirmed%') "
+        "AND ("
+        "    (json_extract(queue_snapshot_json, '$.defer_until') > ? "
+        "     AND json_extract(queue_snapshot_json, '$.defer_reason') IN "
+        "             ('operator_low_conviction', 'debate_not_confirmed')) "
+        "    OR json_extract(queue_snapshot_json, '$.defer_reason') LIKE "
+        "             'direct_skip_not_confirmed%'"
+        ") "
         "ORDER BY created_at DESC LIMIT 1",
         (opportunity_id, now_iso),
     ).fetchone()

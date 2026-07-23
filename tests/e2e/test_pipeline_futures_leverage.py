@@ -17,7 +17,7 @@ from aletheia.storage import repositories as repo
 
 
 def _seed_fresh_schedule(symbol: str) -> tuple[datetime, datetime]:
-    observed = datetime.now(timezone.utc) - timedelta(minutes=1)
+    observed = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(microsecond=0)
     target = observed + timedelta(hours=4)
     repo.insert_funding_rate_snapshot({
         "symbol": symbol,
