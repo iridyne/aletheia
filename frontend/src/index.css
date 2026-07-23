@@ -278,6 +278,12 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   padding: calc(var(--space-2) + var(--space-1)) var(--space-4) var(--space-3);
   background: var(--surface); border: 1px solid var(--border-2);
   border-radius: var(--r); box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  /* Cap to the viewport below the topbar and scroll internally — the popover
+     grows with infra events / operator intent and would otherwise run off the
+     bottom of the screen with no way to reach the lower sections. overscroll
+     containment stops the wheel from chaining to the page behind it. */
+  max-height: calc(100vh - var(--header-height) - (2 * var(--space-4)));
+  overflow-y: auto; overscroll-behavior: contain;
   opacity: 0; pointer-events: none; transform: translateY(-4px);
   transition: opacity 0.15s, transform 0.15s; z-index: 50;
 }
