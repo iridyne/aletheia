@@ -320,6 +320,16 @@ def create_app(
             through so browsers detect stale chunk hashes correctly.
             """
 
+            async def __call__(self, scope, receive, send):
+                # StaticFiles is HTTP-only; its parent asserts scope["type"] == "http".
+                # Reject non-HTTP scopes explicitly so WebSocket connections get a
+                # clean close frame instead of an unhandled AssertionError (#357).
+                if scope["type"] != "http":
+                    if scope["type"] == "websocket":
+                        await send({"type": "websocket.close", "code": 1001})
+                    return
+                await super().__call__(scope, receive, send)
+
             async def get_response(self, path: str, scope):
                 try:
                     return await super().get_response(path, scope)

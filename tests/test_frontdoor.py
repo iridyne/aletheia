@@ -120,6 +120,27 @@ async def test_frontdoor_readyz_fails_only_when_static_missing(tmp_path):
     assert "dashboard assets are unavailable" in root.text.lower()
 
 
+def test_frontdoor_websocket_scope_rejected_without_assertion_error(tmp_path):
+    """Unmatched WebSocket scopes must close cleanly, not raise AssertionError.
+
+    Before the fix, StaticFiles.__call__ did `assert scope["type"] == "http"`, so
+    any WebSocket path not matched by an earlier route crashed the server with an
+    unhandled AssertionError (#357).
+    """
+    from starlette.testclient import TestClient
+    from aletheia.gateway.frontdoor import create_app
+
+    app = create_app(static_dir=_static_fixture(tmp_path), backend_url="http://127.0.0.1:9")
+    client = TestClient(app)
+    try:
+        with client.websocket_connect("/unmatched-ws"):
+            pass
+    except AssertionError:
+        pytest.fail("StaticFiles assertion error leaked to test: WebSocket scope hit HTTP-only mount")
+    except Exception:
+        pass  # WebSocketDisconnect or similar is fine — connection was rejected cleanly
+
+
 @pytest.mark.anyio
 async def test_proxy_stream_interrupted_ends_cleanly(tmp_path, monkeypatch):
     """A mid-stream backend reset must NOT crash the frontdoor response.
