@@ -286,6 +286,9 @@ def _force_shadow_only_if_auto(metadata: dict | None) -> dict | None:
     chokepoint means no producer (trade_case_builder, outcome_recorder, guard_routing)
     can accidentally mint an auto candidate that the promotion job could turn into a
     hard block. Owner-authored (manual) candidates are left untouched.
+
+    Also stamps created_at and expires_at so auto candidates have a finite lifetime
+    and are excluded at load time once expired (#195).
     """
     if not metadata:
         return metadata
@@ -308,6 +311,15 @@ def _force_shadow_only_if_auto(metadata: dict | None) -> dict | None:
     if "shadow-only" not in tags:
         tags.append("shadow-only")
     meta["tags"] = tags
+    # Finite TTL: auto-generated candidates expire after LEARNED_GUARD_TTL_DAYS (#195).
+    if not meta.get("created_at") or not meta.get("expires_at"):
+        from datetime import datetime, timedelta, timezone
+        from aletheia.knowledge.guards import LEARNED_GUARD_TTL_DAYS
+        now = datetime.now(timezone.utc)
+        if not meta.get("created_at"):
+            meta["created_at"] = now.isoformat()
+        if not meta.get("expires_at"):
+            meta["expires_at"] = (now + timedelta(days=LEARNED_GUARD_TTL_DAYS)).isoformat()
     return meta
 
 

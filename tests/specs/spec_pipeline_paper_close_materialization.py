@@ -935,18 +935,18 @@ def test_unknown_paper_perp_funding_closes_without_zero_equivalent_cash_settleme
     assert assessment.reason == "incomplete_funding_economics"
     assert repo.list_outcome_hook_jobs(position_id=stored["id"]) == []
 
-    # The read models must preserve the same unavailability.  Converting this
-    # NULL back to zero would still show a fabricated account result and could
-    # authorize another local-paper order against an economically incomplete
-    # balance.
+    # economics_complete=False signals the unsettled funding leg for monitoring;
+    # it must NOT zero out available_balance_usdt — the known cash is spendable
+    # even while the funding delta is still in flight (#316).
     from aletheia.portfolio.paper_account import get_paper_account
     from aletheia.portfolio.pnl import compute_portfolio
 
     account = get_paper_account(event_limit=100)
     assert account["economics_complete"] is False
     assert account["unsettled_closed_positions_count"] == 1
-    assert account["available_balance_usdt"] == 0.0
-    assert account["equity_usdt"] is None
+    # Actual cash is returned regardless of economics_complete (#316 fix).
+    assert account["available_balance_usdt"] == account["cash_balance_usdt"]
+    assert account["equity_usdt"] == pytest.approx(account["cash_balance_usdt"])
 
     portfolio = compute_portfolio(execution_mode="paper_internal")
     # Method B: partial sums shown with complete=False; no complete closes → 0.0
@@ -1034,8 +1034,9 @@ def test_legacy_numeric_paper_perp_close_with_unknown_funding_stays_unavailable(
     account = get_paper_account(event_limit=100)
     assert account["economics_complete"] is False
     assert account["unsettled_closed_positions_count"] == 1
-    assert account["available_balance_usdt"] == 0.0
-    assert account["equity_usdt"] is None
+    # Actual cash is returned regardless of economics_complete (#316 fix).
+    assert account["available_balance_usdt"] == pytest.approx(account["cash_balance_usdt"])
+    assert account["equity_usdt"] == pytest.approx(account["cash_balance_usdt"])
 
     portfolio = compute_portfolio(execution_mode="paper_internal")
     # Method B: partial sums shown; no complete closes → 0.0
@@ -1105,8 +1106,9 @@ def test_old_incomplete_close_beyond_ten_thousand_rows_still_freezes_account(
     account = get_paper_account(event_limit=0)
     assert account["economics_complete"] is False
     assert account["unsettled_closed_positions_count"] == 1
-    assert account["available_balance_usdt"] == 0.0
-    assert account["equity_usdt"] is None
+    # Actual cash is returned regardless of economics_complete (#316 fix).
+    assert account["available_balance_usdt"] == pytest.approx(account["cash_balance_usdt"])
+    assert account["equity_usdt"] == pytest.approx(account["cash_balance_usdt"])
 
     portfolio = compute_portfolio(execution_mode="paper_internal")
     # Method B: 10,000 complete closes (0.0 each) + 1 unavailable → partial sum = 0.0
@@ -1795,7 +1797,8 @@ def test_overview_hero_unblocks_when_all_unsettled_closes_are_terminal(
     account_after = get_paper_account(event_limit=0)
     assert account_after["economics_complete"] is False
     assert account_after["unsettled_closed_positions_count"] == 1
-    assert account_after["equity_usdt"] is None
+    # equity_usdt reflects actual cash even when economics_complete=False (#316 fix)
+    assert account_after["equity_usdt"] == pytest.approx(account_after["cash_balance_usdt"])
 
     portfolio_after = compute_portfolio(execution_mode="paper_internal")
     assert portfolio_after["total_value_usdt"] is None
@@ -1884,3 +1887,66 @@ def test_paper_funding_settler_reacquires_db_after_async_backfill_cleanup(
     )
     from aletheia.storage.sqlite import get_db
     assert get_db().execute("SELECT 1").fetchone() is not None
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PCM-18",
+        "pipeline_paper_close_materialization",
+        "atomic paper funding settlement",
+        "L2c",
+        "A recovered paper_internal funding result commits positions.realized_pnl "
+        "and exactly one paper_account_events.position_closed row atomically; a "
+        "cash-ledger write failure leaves the Position economics unsettled.",
+        status="implemented",
+    )
+)
+def test_recovered_funding_economics_roll_back_when_cash_ledger_write_fails(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from aletheia.portfolio import paper_account as pa
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    pa.ensure_paper_account()
+    closed_at = datetime.now(timezone.utc)
+    _seed_stuck_paper_close(
+        position_id="pos-atomic-funding",
+        symbol="BTC/USDT",
+        closed_at=closed_at,
+    )
+    _seed_null_close_event("pos-atomic-funding", closed_at.isoformat())
+    original_insert = repo.insert_paper_account_event
+
+    def fail_close_event(event):
+        if event.action == "position_closed":
+            raise RuntimeError("cash ledger unavailable")
+        return original_insert(event)
+
+    monkeypatch.setattr(repo, "insert_paper_account_event", fail_close_event)
+
+    with pytest.raises(RuntimeError, match="cash ledger unavailable"):
+        pa.materialize_position_economics(
+            "pos-atomic-funding",
+            realized_pnl=0.25,
+            funding_cost=0.05,
+            funding_evidence=_complete_recovered_funding(
+                "pos-atomic-funding", cost=0.05,
+            ),
+            outcome_eligible=True,
+            outcome_exclusion_reason="",
+        )
+
+    stored = repo._select_one("positions", "pos-atomic-funding")
+    assert stored["realized_pnl"] is None
+    assert stored["funding_cost"] is None
+    assert stored["funding_source"] == "unavailable"
+    ledger_count = get_db().execute(
+        "SELECT COUNT(*) FROM paper_account_events "
+        "WHERE action='position_closed' AND position_id=?",
+        ("pos-atomic-funding",),
+    ).fetchone()[0]
+    assert ledger_count == 0

@@ -99,6 +99,7 @@ async def test_status_reports_actual_scheduler_and_health(client, monkeypatch):
     import aletheia.agent_runtime.build_info as build_info
     import aletheia.update.git_ops as git_ops
     import aletheia.server.routes.health as health_routes
+    import aletheia.agent_runtime.connectivity as connectivity
 
     monkeypatch.setattr(health_routes, "_cached_head_commit", lambda ttl_sec=60.0: "new")
     monkeypatch.setattr(
@@ -113,6 +114,23 @@ async def test_status_reports_actual_scheduler_and_health(client, monkeypatch):
     )
     monkeypatch.setattr(build_info, "get_boot_commit", lambda: "old")
     monkeypatch.setattr(git_ops, "current_commit", lambda: "new")
+    monkeypatch.setattr(
+        connectivity,
+        "get_status",
+        lambda: {
+            "external_connectivity": {
+                "state": "unavailable",
+                "severity": "warning",
+                "priority": 1,
+                "message": "External network or configured proxy is unavailable.",
+                "action": "Check the network and proxy process.",
+                "observed_at": "2026-07-22T12:00:00+00:00",
+                "outage_started_at": 1.0,
+                "last_recovery_at": None,
+                "stale_after_sec": 180,
+            }
+        },
+    )
 
     resp = await client.get("/api/status")
     assert resp.status_code == 200
@@ -124,6 +142,8 @@ async def test_status_reports_actual_scheduler_and_health(client, monkeypatch):
     assert data["health_issues"] == ["code_updated_pending_restart:old..new"]
     assert data["boot_commit"] == "old"
     assert data["current_commit"] == "new"
+    assert data["external_connectivity"]["state"] == "unavailable"
+    assert data["external_connectivity"]["priority"] == 1
     # A fresh config intentionally has no default provider. Status must report
     # that honestly instead of inventing a reassuring provider value.
     assert data["model_provider"] == ""

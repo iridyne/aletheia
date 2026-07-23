@@ -115,6 +115,7 @@ def test_broker_open_stamps_entry_metadata(
         quantity=0.01,
         price=59950.0,
         execution_mode=exec_mode,
+        leverage=10,
     )
 
     position_id = _materialize_exchange_result(result)
@@ -176,6 +177,7 @@ def test_gateway_persists_decision_reasoning(tmp_path, monkeypatch):
         stop_price=round(1551.57 * 0.98, 8),
         execution_mode="okx_demo",
         agent_rationale=rationale,
+        leverage=5,
     )
     if result.get("status") != "materialization_missing":
         pytest.fail(
@@ -251,7 +253,7 @@ def test_close_routes_through_exchange(
         proposal_id=proposal_id, risk_decision_id=risk_decision_id,
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         order_type="market", quantity=0.01, price=100.0,
-        execution_mode=exec_mode,
+        execution_mode=exec_mode, leverage=10,
     )
     position_id = _materialize_exchange_result(opened)
 
@@ -323,7 +325,7 @@ def test_router_refuses_autonomous_live_close(tmp_path, monkeypatch):
         proposal_id="p-live-guard", risk_decision_id="rd-live-guard",
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         order_type="market", quantity=0.01, price=100.0,
-        execution_mode="okx_live_limited",
+        execution_mode="okx_live_limited", leverage=10,
     )
     position_id = _materialize_exchange_result(opened)
 

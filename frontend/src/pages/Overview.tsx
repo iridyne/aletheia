@@ -1,4 +1,5 @@
-import { useState, useEffect, useLayoutEffect, useRef, forwardRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import AnimatedSection from '../components/AnimatedSection'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
@@ -91,6 +92,11 @@ export default function Overview() {
 
   // System state
   const liveState = String(s.live_state || 'live_disabled')
+  const connectivityState = String(s.external_connectivity?.state || 'unknown')
+  const connectivityLight = connectivityState === 'reachable' ? 'green'
+    : connectivityState === 'unavailable' ? 'red'
+    : connectivityState === 'recovering' ? 'yellow'
+    : 'muted'
   const defaultProvider = String(modelConfig?.default_provider || '')
   const dph = (modelHealth as any[]).find(h => h.provider === defaultProvider)
 
@@ -181,6 +187,12 @@ export default function Overview() {
                   return <StatusRow label="Scheduler" light={light} value={state} />
                 })()}
                 <StatusRow
+                  label="Connectivity"
+                  light={connectivityLight}
+                  value={connectivityState}
+                  title={String(s.external_connectivity?.message || '') || undefined}
+                />
+                <StatusRow
                   label="Exchange"
                   light={
                     !usesExternalExchange ? 'muted' :
@@ -210,12 +222,19 @@ export default function Overview() {
                   label="Collectors"
                   light={
                     !collectorHealth ? 'yellow' :
+                    collectorHealth.infrastructure_incident?.status === 'active' ? 'yellow' :
+                    collectorHealth.infrastructure_incident?.status === 'recovering' ? 'yellow' :
                     collectorHealth.status === 'healthy' ? 'green' :
                     collectorHealth.status === 'initializing' ? 'muted' :
                     collectorHealth.status === 'degraded' ? 'red' : 'yellow'
                   }
                   value={
                     !collectorHealth ? 'loading' :
+                    collectorHealth.infrastructure_incident?.status === 'active'
+                      ? `${collectorHealth.infrastructure_incident.affected_domains.length} dependent on connectivity`
+                      : collectorHealth.infrastructure_incident?.status === 'recovering'
+                        ? `${collectorHealth.infrastructure_incident.affected_domains.length} retrying after recovery`
+                        :
                     collectorHealth.status === 'initializing' ? 'initializing' :
                     collectorHealth.status === 'degraded'
                       ? `${collectorHealth.degraded_count} degraded · ${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
@@ -252,18 +271,18 @@ export default function Overview() {
               </tbody>
             </table>
             {collectorHealth?.domains?.length ? (
-              <CollapsibleSection ref={chdRef} open={collectorsExpanded}>
+              <AnimatedSection ref={chdRef} open={collectorsExpanded}>
                 <CollectorHealthDetails health={collectorHealth} mode="full" />
-              </CollapsibleSection>
+              </AnimatedSection>
             ) : null}
             {dataCoverage?.domains?.length ? (
-              <CollapsibleSection ref={coverageRef} open={coverageExpanded}>
+              <AnimatedSection ref={coverageRef} open={coverageExpanded}>
                 <DataCoverageDetail coverage={dataCoverage} />
-              </CollapsibleSection>
+              </AnimatedSection>
             ) : null}
-            <CollapsibleSection ref={modeRef} open={modeExpanded}>
+            <AnimatedSection ref={modeRef} open={modeExpanded}>
               <ModeDetail s={s} paused={paused} killed={killed} liveState={liveState} riskState={riskState} />
-            </CollapsibleSection>
+            </AnimatedSection>
             </>)}
           </Card>
 
@@ -461,76 +480,6 @@ function StatusRow({
   )
 }
 
-// ── Collapsible panel — explicit pixel heights to avoid fr-unit jump on close ──
-/**
- * Shadcn/Radix pattern: measure the inner div's scrollHeight before each
- * transition so the browser always has a concrete "from" and "to" pixel value.
- * grid-template-rows: 0fr → 1fr can't reliably capture the "from" value at the
- * very first frame on close, which produces the visible jump at scrollTop = 0.
- */
-const CollapsibleSection = forwardRef<HTMLDivElement, { open: boolean; children: React.ReactNode }>(
-  ({ open, children }, forwardedRef) => {
-    const outerRef = useRef<HTMLDivElement>(null)
-    const innerRef = useRef<HTMLDivElement>(null)
-    const committedOpen = useRef(open)
-
-    const mergeRef = (el: HTMLDivElement | null) => {
-      outerRef.current = el
-      if (!forwardedRef) return
-      if (typeof forwardedRef === 'function') forwardedRef(el)
-      else (forwardedRef as React.MutableRefObject<HTMLDivElement | null>).current = el
-    }
-
-    useLayoutEffect(() => {
-      const outer = outerRef.current
-      const inner = innerRef.current
-      if (!outer || !inner || open === committedOpen.current) return
-      committedOpen.current = open
-
-      if (open) {
-        const h = inner.scrollHeight
-        outer.style.overflow = 'hidden'
-        outer.style.height = '0px'
-        outer.style.opacity = '0'
-        void outer.offsetHeight                          // force reflow — capture start state
-        outer.style.transition = 'height .22s cubic-bezier(.4,0,.2,1), opacity .16s ease-out .06s'
-        outer.style.height = `${h}px`
-        outer.style.opacity = '1'
-        const onEnd = (e: TransitionEvent) => {
-          if (e.propertyName !== 'height') return
-          outer.style.height = 'auto'
-          outer.style.overflow = ''
-          outer.style.transition = ''
-        }
-        outer.addEventListener('transitionend', onEnd)
-        return () => outer.removeEventListener('transitionend', onEnd)
-      } else {
-        const h = outer.offsetHeight                     // snapshot current pixel height
-        outer.style.overflow = 'hidden'
-        outer.style.height = `${h}px`
-        void outer.offsetHeight                          // force reflow — capture start state
-        outer.style.transition = 'height .22s cubic-bezier(.4,0,.2,1), opacity .14s ease-out'
-        outer.style.height = '0px'
-        outer.style.opacity = '0'
-        const onEnd = (e: TransitionEvent) => {
-          if (e.propertyName !== 'height') return
-          outer.style.transition = ''
-        }
-        outer.addEventListener('transitionend', onEnd)
-        return () => outer.removeEventListener('transitionend', onEnd)
-      }
-    }, [open])
-
-    return (
-      <div ref={mergeRef} style={{ overflow: 'hidden', height: '0px', opacity: 0 }}>
-        <div ref={innerRef} style={{ paddingTop: 'var(--space-2)' }}>
-          {children}
-        </div>
-      </div>
-    )
-  }
-)
-CollapsibleSection.displayName = 'CollapsibleSection'
 
 // ── Inline detail panels ──────────────────────────────────────────────────────
 

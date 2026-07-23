@@ -1617,3 +1617,131 @@ def agent_status(
         "heartbeat_at": hb.get("heartbeat_at") or hb.get("updated_at"),
     }
     _output(display, json_output)
+
+
+# ---------------------------------------------------------------------------
+
+@inspect_app.command("decisions")
+def decisions(
+    hours: int = typer.Option(24, "--hours", "-h", help="Rolling window in hours (1–168)"),
+    limit: int = typer.Option(50, "--limit", "-n", help="Max rows (capped at 200)"),
+    outcome: str = typer.Option(
+        "",
+        "--outcome",
+        help="Filter by outcome: trade, operator_skip, operator_watch, user_reject, auto_reject (comma-separated)",
+    ),
+    symbol: str = typer.Option("", "--symbol", "-s", help="Filter to a single symbol"),
+    summary: bool = typer.Option(False, "--summary", help="Show counts + top reasons instead of rows"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Candidate Ledger: recent terminal decisions (trade / skip / auto-reject).
+
+    Mirrors the Blotter's Candidate Ledger table so operators can audit
+    skip and rejection patterns without opening the browser UI.
+
+    Examples:
+      aletheia inspect decisions                      # last 24h, all outcomes
+      aletheia inspect decisions --hours 168          # last 7 days
+      aletheia inspect decisions --outcome operator_skip --limit 20
+      aletheia inspect decisions --outcome auto_reject --summary
+      aletheia inspect decisions --symbol BTC/USDT --hours 48
+    """
+    from aletheia.server.routes.analytics import get_operator_decisions
+
+    hours_i = max(1, min(int(hours), 168))
+    limit_i = max(1, min(int(limit), 200))
+    outcome_arg: str | None = outcome.strip() or None
+    symbol_arg: str | None = symbol.strip() or None
+
+    data = get_operator_decisions(
+        hours=hours_i,
+        limit=limit_i,
+        outcome=outcome_arg,
+        symbol=symbol_arg,
+    )
+
+    counts = data.get("counts") or {}
+    items = data.get("items") or []
+    total = data.get("total_count", 0)
+    matched = data.get("matched_count", total)
+
+    if summary:
+        from collections import Counter
+        if json_output:
+            _output({"window_hours": hours_i, "total_count": total, "counts": counts}, True)
+            return
+        typer.echo(f"window: {hours_i}h  total: {total}  matched: {matched}")
+        typer.echo("")
+        label_map = {
+            "trade": "Filled",
+            "operator_skip": "Op Skip",
+            "operator_watch": "Watch",
+            "user_reject": "User Reject",
+            "auto_reject": "Auto Reject",
+            "reject_unknown": "Reject (?)",
+        }
+        for oc in ("trade", "operator_skip", "operator_watch", "auto_reject", "user_reject", "reject_unknown"):
+            n = counts.get(oc, 0)
+            if n == 0:
+                continue
+            typer.echo(f"  {label_map.get(oc, oc):12}  {n}")
+        # Top reasons per outcome bucket
+        for bucket, label in [
+            ("auto_reject", "auto_reject top reasons"),
+            ("operator_skip", "operator_skip top reasons"),
+        ]:
+            bucket_items = [it for it in items if it.get("outcome") == bucket]
+            if not bucket_items:
+                continue
+            reason_counts: Counter = Counter()
+            for it in bucket_items:
+                r = it.get("one_line_reason") or ""
+                if "Rejected: " in r:
+                    after = r.split("Rejected: ", 1)[1]
+                    for chunk in after.split(","):
+                        tok = chunk.strip().split(":")[0].split("[")[0].strip()
+                        if tok and not tok.endswith("…"):
+                            reason_counts[tok] += 1
+                elif "terminal skip:" in r:
+                    after = r.split("terminal skip:", 1)[1]
+                    for chunk in after.split(";"):
+                        tok = chunk.strip().split(":")[0].strip()
+                        if tok and not tok.endswith("…"):
+                            reason_counts[tok] += 1
+            if reason_counts:
+                typer.echo(f"\n  {label}:")
+                for tok, cnt in reason_counts.most_common(8):
+                    typer.echo(f"    {cnt:4d}  {tok}")
+        return
+
+    if json_output:
+        display = [
+            {
+                "decided_at": it.get("decided_at", "")[:19],
+                "symbol": it.get("symbol"),
+                "direction": it.get("direction"),
+                "outcome": it.get("outcome"),
+                "conviction": it.get("conviction"),
+                "reason": it.get("one_line_reason"),
+            }
+            for it in items
+        ]
+        _output(display, True)
+        return
+
+    if not items:
+        typer.echo(f"(no decisions in the last {hours_i}h)")
+        return
+
+    header = f"{'Time':19}  {'Symbol':15}  {'Side':5}  {'Outcome':14}  Reason"
+    typer.echo(header)
+    typer.echo("-" * min(len(header) + 40, 120))
+    for it in items:
+        ts = (it.get("decided_at") or "")[:19]
+        sym = (it.get("symbol") or "")[:15]
+        side = (it.get("direction") or "")[:5]
+        oc = (it.get("outcome") or "")[:14]
+        reason = (it.get("one_line_reason") or "")
+        # Trim reason to fit terminal width reasonably
+        reason_short = reason[:70] + "…" if len(reason) > 70 else reason
+        typer.echo(f"{ts:19}  {sym:15}  {side:5}  {oc:14}  {reason_short}")

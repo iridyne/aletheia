@@ -13,10 +13,17 @@ from aletheia.storage import repositories as repo
 @pytest.fixture
 async def client(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
+    import aletheia.server.routes.data as data_routes
     import aletheia.storage.sqlite as sq
+
+    def _clear_portfolio_cache():
+        with data_routes._portfolio_cache_lock:
+            data_routes._portfolio_cache = None
+
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    _clear_portfolio_cache()
     reset_db()
     sq._db_conn = None
     import sqlite3
@@ -32,9 +39,12 @@ async def client(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
-    reset_db()
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+    finally:
+        _clear_portfolio_cache()
+        reset_db()
 
 
 @pytest.mark.anyio

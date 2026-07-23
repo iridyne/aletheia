@@ -116,6 +116,56 @@ def test_equity_observer_creates_equity_opportunity(tmp_path, monkeypatch):
     reset_db()
 
 
+def test_equity_observer_stamps_attribution_fields_and_confidence_fallback(tmp_path, monkeypatch):
+    """equity_observer must set scanner_family, valid_until, and confidence_score=0 on LLM failure (#183)."""
+    _setup(tmp_path, monkeypatch)
+
+    import aletheia.agents.equity_observer as eo
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.market_data.observed_equities = ["MSFT"]
+    cfg.market_data.observed_xstocks = []
+    cfg.market_data.observed_stock_tokens = []
+    save_config(cfg)
+
+    def fake_fetch(ticker, _retry=True):
+        return {
+            "ticker": ticker, "last": 420.0, "bars": 65,
+            "sma20": 410.0, "sma50": 400.0, "rsi14": 55.0, "atr14": 4.0,
+            "bb_lower": 390.0, "bb_upper": 450.0, "bb_pct_b": 0.55,
+            "momentum_10": 1.5, "volume_zscore": 0.5,
+        }
+    monkeypatch.setattr(eo, "_fetch_equity_indicators", fake_fetch)
+
+    # LLM fails — structured read is unavailable
+    async def fake_llm_fail(*a, **kw):
+        return (None, "llm_timeout")
+    monkeypatch.setattr(eo, "llm_structured", fake_llm_fail)
+
+    from aletheia.agents.equity_observer import run_equity_observer
+    asyncio.run(run_equity_observer(permission_mode="Full", run_id="run-eq-attr"))
+
+    opps = repo.list_opportunities(limit=20)
+    msft_opps = [o for o in opps if o.get("canonical_ticker") == "MSFT"]
+    assert msft_opps, "Expected MSFT equity opportunity"
+    opp = msft_opps[0]
+
+    # scanner_family and valid_until must always be present
+    assert opp["scanner_family"] == "equity_daily", (
+        f"scanner_family should be 'equity_daily', got {opp['scanner_family']!r}"
+    )
+    assert opp["valid_until"] is not None, "valid_until must not be NULL"
+
+    # When LLM fails, confidence_score must be 0 (not NULL)
+    assert opp["confidence_score"] == 0, (
+        f"confidence_score should be 0 on LLM failure, got {opp['confidence_score']!r}"
+    )
+
+    from aletheia.agents.helpers import _release_run_counter
+    _release_run_counter("run-eq-attr")
+    reset_db()
+
+
 def test_paper_trader_ignores_xstocks_opportunities(tmp_path, monkeypatch):
     """paper_trader must not trade asset_class=equity opportunities (shadow track only)."""
     _setup(tmp_path, monkeypatch)

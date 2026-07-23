@@ -147,6 +147,7 @@ def test_gateway_routes_demo_order_to_broker(tmp_path, monkeypatch):
     result = submit_proposal(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=0.0004, price=60000.0, execution_mode="bitget_demo",
+        leverage=5,
     )
     assert result["status"] == "materialization_missing"
     assert result["exchange_order_id"] == "EX-DEMO-1"
@@ -181,6 +182,7 @@ def test_demo_order_not_blocked_by_live_disabled(tmp_path, monkeypatch):
     result = submit_proposal(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=0.0004, price=60000.0, execution_mode="bitget_demo",
+        leverage=5,
     )
     assert result["status"] == "materialization_missing"
     assert len(captured) == 1
@@ -203,6 +205,7 @@ def test_demo_requires_demo_exchange_mode(tmp_path, monkeypatch):
     result = submit_proposal(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=0.0004, price=60000.0, execution_mode="bitget_demo",
+        leverage=5,
     )
     assert result["status"] == "rejected"
     assert any("account_mode_mismatch" in v for v in result["risk_violations"])
@@ -253,6 +256,7 @@ def test_demo_order_db_trace_when_exchange_fails(tmp_path, monkeypatch):
     result = submit_proposal(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=0.0004, price=60000.0, execution_mode="bitget_demo",
+        leverage=5,
     )
     assert result["status"] == "error"
     orders = repo.list_orders()
@@ -283,6 +287,7 @@ def test_demo_records_private_fill_price_not_aggregate_or_request(tmp_path, monk
     result = submit_proposal(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=0.0004, price=60000.0, execution_mode="bitget_demo",
+        leverage=5,
     )
     assert result["status"] == "materialization_missing"
     assert repo.list_fills() == []

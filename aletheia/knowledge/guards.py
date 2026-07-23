@@ -6,6 +6,7 @@ No LLM, no arbitrary code execution, no live/risk modification.
 """
 
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -15,6 +16,15 @@ from aletheia.config.loader import get_data_dir, load_config
 from aletheia.knowledge.frontmatter import parse_frontmatter
 
 logger = logging.getLogger("aletheia.knowledge.guards")
+
+# Default TTL for automatically learned guards (days). Owner-authored seed/manual
+# guards are persistent and never subject to this window (#195).
+LEARNED_GUARD_TTL_DAYS = 30
+
+# Legacy learned guards written before this fix lack explicit expires_at.  They
+# receive a bounded migration deadline rather than remaining immortal.  After this
+# date the loader excludes them and the daily job soft-deprecates them (#195).
+LEARNED_GUARD_MIGRATION_DEADLINE_ISO = "2026-10-22T00:00:00+00:00"
 
 GuardScope = Literal["strategy_design", "market_read", "opportunity", "paper_entry", "exit_policy"]
 GuardEnforcement = Literal["advisory", "scoring", "blocking"]
@@ -67,6 +77,10 @@ class TradingGuard(BaseModel):
     predicates: list[GuardPredicate] = Field(default_factory=list)
     evidence_refs: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+    # ISO timestamp — set at creation for auto-generated learned guards. None for
+    # seed/manual guards (persistent). Used by the loader and promotion check (#195).
+    created_at: str | None = None
+    expires_at: str | None = None
 
 
 class GuardHit(BaseModel):
@@ -144,6 +158,36 @@ def _applies_to_from_meta(meta: dict) -> dict:
     return applies_to
 
 
+def _effective_learned_expires_at(meta: dict) -> str:
+    """Return the effective ISO expiry for a learned guard metadata dict.
+
+    Order of precedence (#195):
+    1. explicit ``expires_at`` in the metadata
+    2. ``created_at + LEARNED_GUARD_TTL_DAYS`` when created_at is present
+    3. ``LEARNED_GUARD_MIGRATION_DEADLINE_ISO`` (bounded migration for legacy items)
+    """
+    if meta.get("expires_at"):
+        return str(meta["expires_at"])
+    created_at_raw = meta.get("created_at")
+    if created_at_raw:
+        try:
+            created_dt = datetime.fromisoformat(str(created_at_raw).replace("Z", "+00:00"))
+            return (created_dt + timedelta(days=LEARNED_GUARD_TTL_DAYS)).isoformat()
+        except (ValueError, TypeError):
+            pass
+    return LEARNED_GUARD_MIGRATION_DEADLINE_ISO
+
+
+def _learned_guard_is_expired(meta: dict) -> bool:
+    """Return True if a learned guard has passed its effective expiry."""
+    effective = _effective_learned_expires_at(meta)
+    try:
+        exp = datetime.fromisoformat(effective.replace("Z", "+00:00"))
+        return datetime.now(timezone.utc) >= exp
+    except (ValueError, TypeError):
+        return False
+
+
 def load_trading_guards(
     scope: str | None = None,
     status: str = "active",
@@ -154,6 +198,9 @@ def load_trading_guards(
     (auto-generated candidates) so the promotion check — which calls this with
     status="candidate" — can actually reach the堆积的 candidates. Reading only
     guards/ was why 0 candidates were ever promoted (L-Bug-D/B2).
+
+    Expired learned guards are excluded at load time even if the scheduled cleanup
+    has not yet run (#195). Seed and manual guards are never excluded this way.
     """
     guards: list[TradingGuard] = []
     for guards_dir in (_guards_dir(), _guard_candidates_dir()):
@@ -167,6 +214,10 @@ def load_trading_guards(
                 if meta.get("status") != status:
                     continue
                 if scope and meta.get("scope") != scope:
+                    continue
+                # Expired learned guards are invisible at load time (#195).
+                # Seed/manual guards are persistent and are never excluded here.
+                if guard_origin(meta) == "learned" and _learned_guard_is_expired(meta):
                     continue
 
                 applies_to = _applies_to_from_meta(meta)
@@ -204,6 +255,8 @@ def load_trading_guards(
                     predicates=predicates,
                     evidence_refs=meta.get("evidence_refs") or [],
                     tags=meta.get("tags") or [],
+                    created_at=meta.get("created_at"),
+                    expires_at=meta.get("expires_at"),
                 )
                 guards.append(guard)
             except Exception as e:

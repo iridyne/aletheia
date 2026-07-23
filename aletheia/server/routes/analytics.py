@@ -14,6 +14,7 @@ _DECISION_COUNT_KEYS = (
     "trade",
     "operator_skip",
     "operator_watch",
+    "portfolio_guard_reject",
     "user_reject",
     "auto_reject",
     "reject_unknown",
@@ -1158,7 +1159,9 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
 
 _VALID_OUTCOMES: frozenset[str] = frozenset({
     "trade", "operator_skip", "operator_watch",
+    "portfolio_guard_reject",
     "user_reject", "auto_reject", "reject_unknown",
+    "conviction_defer",
 })
 
 
@@ -1175,8 +1178,12 @@ def get_operator_decisions(
     not only pending / accepted proposals but also every kind of rejection that
     happened after a candidate reached the operator:
 
-    - `operator_skip`: pi_decisions.action = 'skip' — the LLM operator saw an
-      executable candidate and decided not to trade (reason in `reasoning`).
+    - `operator_skip`: pi_decisions.action = 'skip' and no portfolio guard fired —
+      the LLM operator saw an executable candidate and decided not to trade
+      (reason in `reasoning`).
+    - `portfolio_guard_reject`: pi_decisions.action = 'skip' but the LLM actually
+      approved the trade; a downstream portfolio guard (direction_bias_brake) blocked
+      execution before a proposal could be created (#330).
     - `trade`: pi_decisions.action IN ('trade','flip','scale_in') — operator
       chose to trade; a proposal typically follows.
     - `user_reject`: trade_proposals.status='rejected' with matching
@@ -1186,6 +1193,9 @@ def get_operator_decisions(
       audit_events row actor='system', source='execution_gateway' — pre-flight/risk
       auto-rejected before execution.
     - `reject_unknown`: rejected Proposal with missing or inconsistent audit actor/source.
+    - `conviction_defer`: LLM produced action='trade' but conviction was below the
+      minimum threshold — operator_conviction_gate fired, no proposal created, candidate
+      re-queued for evaluation after a material context change (#327).
 
     The reject timestamp defines window membership when available. Counts cover the
     full window before the display list is truncated, and a rejection supersedes the
@@ -1251,14 +1261,22 @@ def get_operator_decisions(
     pi_items: list[dict] = []
     reject_items: list[dict] = []
 
-    # pi_decisions — operator trade / skip
+    # pi_decisions — operator trade / skip.
+    # The guard_blocked subquery detects cases where the LLM approved the trade
+    # (operator_action_assessment passed) but direction_bias_brake rejected it
+    # before a proposal was created — those skips are portfolio_guard_reject,
+    # not operator_skip (#330).
     rows = list(db.execute(
-        "SELECT id, created_at, symbol, direction, market_type, action, "
+        "SELECT p.id, p.created_at, p.symbol, p.direction, p.market_type, p.action, "
         "p.conviction, p.reasoning, p.opportunity_id, p.proposal_id, "
         "p.evidence_manifest_json, p.runtime_session_id, "
         "COALESCE(p.producer_commit, rs.boot_commit) AS producer_commit, "
         "rs.runtime_id AS attributed_runtime_id, "
-        "julianday(created_at) AS sort_instant "
+        "julianday(p.created_at) AS sort_instant, "
+        "(SELECT fd.reason_code FROM filter_decisions fd "
+        " WHERE fd.candidate_key='pi_decision:'||p.id "
+        " AND fd.filter_name='direction_bias_brake' "
+        " AND fd.decision='rejected' LIMIT 1) AS guard_block_reason "
         "FROM pi_decisions p "
         "LEFT JOIN runtime_sessions rs ON rs.session_id=p.runtime_session_id "
         "WHERE p.action IN ('trade','skip','flip','scale_in','watch') "
@@ -1271,13 +1289,16 @@ def get_operator_decisions(
     ))
     for r in rows:
         act = str(r["action"] or "")
-        if act == "skip":
+        guard_block = r["guard_block_reason"] if "guard_block_reason" in r.keys() else None
+        if act == "skip" and guard_block:
+            outcome = "portfolio_guard_reject"
+        elif act == "skip":
             outcome = "operator_skip"
         elif act == "watch":
             outcome = "operator_watch"
         else:
             outcome = "trade"
-        pi_items.append({
+        item: dict = {
             "opportunity_id": r["opportunity_id"],
             "proposal_id": r["proposal_id"],
             "decision_id": r["id"],
@@ -1300,7 +1321,11 @@ def get_operator_decisions(
                 current_runtime_session_id=current_runtime_session_id,
             ),
             "_sort_instant": float(r["sort_instant"] or 0),
-        })
+        }
+        if guard_block:
+            item["guard_filter"] = "direction_bias_brake"
+            item["guard_block_reason"] = guard_block
+        pi_items.append(item)
 
     # trade_proposals rejected — user vs auto reject determined by paired audit event
     rows = list(db.execute(
@@ -1386,11 +1411,58 @@ def get_operator_decisions(
             )
         )
     ]
-    all_items = pi_items + reject_items
+
+    # operator_evaluation_events: low-conviction defers (#327).
+    # When the LLM produces action='trade' but conviction is below the minimum,
+    # operator_conviction_gate fires and records an operator_evaluation_event
+    # with event_kind='operator_decision_deferred_low_conviction' — no pi_decision
+    # is written so these are completely invisible to any monitor watching for
+    # operator_skip. Surface them here as outcome='conviction_defer'.
+    import json as _json
+    defer_rows = list(db.execute(
+        "SELECT oee.id, oee.created_at, oee.queue_snapshot_json, "
+        "opp.symbol, opp.direction_bias AS direction, opp.market AS market_type, "
+        "json_extract(oee.queue_snapshot_json, '$.opportunity_id') AS opportunity_id, "
+        "julianday(oee.created_at) AS sort_instant "
+        "FROM operator_evaluation_events oee "
+        "LEFT JOIN opportunities opp "
+        "  ON opp.id=json_extract(oee.queue_snapshot_json,'$.opportunity_id') "
+        "WHERE oee.event_kind='operator_decision_deferred_low_conviction' "
+        "AND julianday(oee.created_at)>=julianday(?) "
+        "AND julianday(oee.created_at)<=julianday(?) "
+        "ORDER BY julianday(oee.created_at) DESC, oee.rowid DESC",
+        (window_start, window_end),
+    ))
+    defer_items: list[dict] = []
+    for r in defer_rows:
+        try:
+            snap = _json.loads(r["queue_snapshot_json"] or "{}")
+        except Exception:
+            snap = {}
+        defer_items.append({
+            "opportunity_id": r["opportunity_id"],
+            "proposal_id": None,
+            "decision_id": r["id"],
+            "symbol": r["symbol"],
+            "direction": r["direction"],
+            "market_type": r["market_type"],
+            "decided_at": r["created_at"],
+            "outcome": "conviction_defer",
+            "action": "conviction_defer",
+            "conviction": None,
+            "one_line_reason": "conviction_below_minimum — deferred for re-evaluation",
+            "defer_reason": snap.get("defer_reason"),
+            "defer_until": snap.get("defer_until"),
+            "_sort_instant": float(r["sort_instant"] or 0),
+        })
+
+    all_items = pi_items + reject_items + defer_items
     all_items.sort(key=lambda x: float(x.get("_sort_instant") or 0), reverse=True)
 
     counts = {"trade": 0, "operator_skip": 0, "operator_watch": 0,
-              "user_reject": 0, "auto_reject": 0, "reject_unknown": 0}
+              "portfolio_guard_reject": 0,
+              "user_reject": 0, "auto_reject": 0, "reject_unknown": 0,
+              "conviction_defer": 0}
     for it in all_items:
         oc = it.get("outcome")
         if oc in counts:
@@ -1646,22 +1718,23 @@ def get_learning_contribution():
         pass
 
     # Verdict distribution
-    verdicts_by_classification: list[dict] = []
+    verdicts_by_verdict: list[dict] = []
     total_verdicts = 0
+    verdicts_error: str | None = None
     try:
         for r in db.execute(
-            "SELECT classification, COUNT(*) n, MAX(created_at) latest_at "
+            "SELECT verdict, COUNT(*) n, MAX(created_at) latest_at "
             "FROM learning_contribution_verdicts "
-            "GROUP BY classification ORDER BY n DESC"
+            "GROUP BY verdict ORDER BY n DESC"
         ):
-            verdicts_by_classification.append({
-                "classification": r["classification"],
+            verdicts_by_verdict.append({
+                "verdict": r["verdict"],
                 "n": int(r["n"]),
                 "latest_at": r["latest_at"],
             })
             total_verdicts += int(r["n"])
-    except Exception:
-        pass
+    except Exception as _verdict_exc:
+        verdicts_error = type(_verdict_exc).__name__
 
     # Experiment stage distribution
     experiments_by_stage: list[dict] = []
@@ -1720,7 +1793,8 @@ def get_learning_contribution():
         "exposures_by_path": exposures_by_path,
         "verdicts": {
             "total": total_verdicts,
-            "by_classification": verdicts_by_classification,
+            "by_verdict": verdicts_by_verdict,
+            **({"error": verdicts_error} if verdicts_error else {}),
         },
         "experiments_by_stage": experiments_by_stage,
         "lifecycle_event_n": lifecycle_event_n,

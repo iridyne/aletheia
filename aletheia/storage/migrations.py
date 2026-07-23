@@ -2150,6 +2150,11 @@ _ADDITIVE_COLUMNS = [
     # at open (stamped by the execution gateway). NULL on legacy proposals.
     ("expected_horizon_hours", "trade_proposals", "REAL"),
     ("stop_source", "trade_proposals", "TEXT"),
+    # Observer Learning outcome identity (#323, 2026-07-22): persist the 4h
+    # outcome key on the universe_member row so market observer can carry it
+    # into learning exposures after a DB reload. NULL on legacy rows → observer
+    # skips outcome tracking for those members (fail-safe, not fail-open).
+    ("learning_candidate_key", "universe_members", "TEXT"),
 ]
 
 
@@ -2421,6 +2426,20 @@ def _ensure_filter_evidence_indexes(db) -> None:
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_alpha_control_outcome "
         "ON alpha_control_observations(outcome_candidate_key)"
+    )
+    # Learning cohort builder queries filter_candidate_outcomes by outcome_candidate_key.
+    # Without this index the IN(...) lookup was a full-table scan on 300k+ rows (#332).
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_filter_candidate_outcomes_key "
+        "ON filter_candidate_outcomes(outcome_candidate_key)"
+    )
+    # Portfolio-guard detection in get_operator_decisions joins filter_decisions by
+    # candidate_key + filter_name + decision (#330). The existing idx_filter_decisions_candidate
+    # covers (candidate_key, sequence_no) but not the filter_name/decision predicates,
+    # so add a covering index for the most common guard lookup pattern.
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_filter_decisions_guard_lookup "
+        "ON filter_decisions(candidate_key, filter_name, decision)"
     )
 
 

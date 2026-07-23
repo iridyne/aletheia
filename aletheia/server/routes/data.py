@@ -1439,15 +1439,18 @@ def get_dreaming_summary():
     cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
 
+    # #267: include only active items in recent_* collections so archived/
+    # deprecated items do not also appear as fresh knowledge production.
+    _active = "(status = 'active' OR status IS NULL)"
     recent_research = repo._select_all(
         "knowledge_items",
-        where="item_type = ? AND created_at > ?",
+        where=f"item_type = ? AND created_at > ? AND {_active}",
         params=("research_note", cutoff_24h),
         limit=20,
     )
     recent_hypotheses = repo._select_all(
         "knowledge_items",
-        where="item_type = ? AND created_at > ?",
+        where=f"item_type = ? AND created_at > ? AND {_active}",
         params=("strategy_memory", cutoff_24h),
         limit=20,
     )
@@ -1459,13 +1462,13 @@ def get_dreaming_summary():
     )
     recent_dreaming_logs = repo._select_all(
         "knowledge_items",
-        where="item_type = ? AND created_at > ?",
+        where=f"item_type = ? AND created_at > ? AND {_active}",
         params=("dreaming_log", cutoff_24h),
         limit=10,
     )
     recent_daily_reviews = repo._select_all(
         "knowledge_items",
-        where="item_type = ? AND created_at > ?",
+        where=f"item_type = ? AND created_at > ? AND {_active}",
         params=("daily_review", cutoff_24h),
         limit=10,
     )
@@ -1489,10 +1492,12 @@ def get_dreaming_summary():
 def get_reviews_summary():
     """Aggregated post-trade review summary for operator delegation.
 
-    Returns recent closed positions, recent post-trade reviews, recent reviewer runs,
-    and the strategy IDs that still lack fresh review coverage.
+    Returns recent closed positions, recent active post-trade reviews,
+    recent reviewer runs, and the strategy IDs whose Positions are not yet
+    covered by any active review (#269).
     """
     _ensure_db()
+    import json
     from datetime import datetime, timezone
 
     cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
@@ -1510,9 +1515,12 @@ def get_reviews_summary():
     recent_closed_positions = [
         position_realized_pnl_view(row) for row in recent_closed_positions
     ]
+
+    # Exclude archived/deprecated reviews: an owner who archives an invalid
+    # review must be able to schedule a replacement (#269).
     recent_post_trade_reviews = repo._select_all(
         "knowledge_items",
-        where="item_type = ? AND created_at > ?",
+        where="item_type = ? AND status NOT IN ('archived', 'deprecated') AND created_at > ?",
         params=("post_trade_review", cutoff_24h),
         limit=20,
     )
@@ -1523,16 +1531,27 @@ def get_reviews_summary():
         limit=5,
     )
 
-    reviewed_strategy_ids = {
-        str(item.get("strategy_id"))
-        for item in recent_post_trade_reviews
-        if item.get("strategy_id")
-    }
+    # Position-level coverage: a strategy is covered only if its specific
+    # Positions appear in an active review's position:{id} tags (#269).
+    reviewed_position_ids: set[str] = set()
+    for item in recent_post_trade_reviews:
+        try:
+            tags = json.loads(item.get("tags") or "[]")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(tags, list):
+            continue
+        reviewed_position_ids.update(
+            str(tag).split(":", 1)[1]
+            for tag in tags
+            if str(tag).startswith("position:")
+        )
     missing_review_strategy_ids = sorted(
         {
             str(position.get("strategy_id"))
             for position in recent_closed_positions
-            if position.get("strategy_id") and str(position.get("strategy_id")) not in reviewed_strategy_ids
+            if position.get("strategy_id")
+            and str(position.get("id")) not in reviewed_position_ids
         }
     )
 

@@ -152,7 +152,8 @@ def test_governance_matches_policy():
 def test_ci_runs_specs_without_repository_work_gate():
     workflow = (_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     obsolete_test_name = "test_agent_" + "workflow"
-    assert "uv run pytest tests/specs/" in workflow
+    # CI redesign uses the tier_spec marker rather than an explicit directory path
+    assert "-m tier_spec" in workflow
     assert "agent workflow" not in workflow.lower()
     assert obsolete_test_name not in workflow
     assert ".agent/" not in workflow

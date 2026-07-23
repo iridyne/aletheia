@@ -2343,6 +2343,7 @@ def _run_cleanup():
             # of app.db so it needs its own DELETE cycle.
             "agent_task_claims": _prune_agent_task_claims_tasks_db(),
             "opportunities_expired": repo.expire_stale_opportunities(r.opportunity_ttl_hours),
+            "serenity_themes_expired": repo.expire_stale_serenity_themes(),
             "news_items": _prune_news(cfg),
             # Cancel abandoned unresolved Orders reconciliation can never resolve
             # (no credentials / venue dropped them) so they stop failing every
@@ -3104,16 +3105,42 @@ _DC_DEADLINE_S = 50.0
 _DC_CONTEXT_DEADLINE_S = 55.0
 
 
+async def _shielded_wait_for(coro, timeout: float):
+    """Wait for `coro` using the Python 3.12-safe shield pattern (#253).
+
+    Python 3.12 changed asyncio.wait_for: on timeout it cancels the inner task
+    and *awaits the cancellation* before raising TimeoutError. CCXT coroutines
+    (load_markets / fetch_tickers / funding history) can take tens of seconds to
+    respond to CancelledError, stalling the caller well past the declared timeout.
+
+    Fix: wrap `coro` in a Task and shield it — wait_for cancels the shield
+    (instant), then we fire-and-forget task.cancel() without awaiting it. A
+    done_callback consumes any deferred exception so the task cannot emit an
+    'exception was never retrieved' warning after delayed cleanup.
+    """
+    task = asyncio.ensure_future(coro)
+
+    def _consume_done(t):
+        if not t.cancelled():
+            try:
+                t.exception()
+            except Exception:
+                pass
+
+    task.add_done_callback(_consume_done)
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+    except Exception:
+        task.cancel()  # fire-and-forget; _consume_done handles deferred cleanup
+        raise
+
+
 async def _bounded(coro, label: str, cap: float, deadline: float):
     """Await `coro` under min(cap, time-left-to-deadline). On timeout/skip/error
     return None and keep the job moving — never let one collector hang the tick.
 
-    Python 3.12 changed asyncio.wait_for: on timeout it cancels the inner task
-    and then *awaits the cancellation* before raising TimeoutError.  CCXT coroutines
-    (load_markets / fetch_tickers) can take tens of seconds to respond to
-    CancelledError, causing the lane to stall well past the cap.  Fix: wrap the
-    real coro in a Task and shield it so wait_for cancels the shield (instant),
-    then fire-and-forget task.cancel() without awaiting it.
+    Uses _shielded_wait_for (#253) so CCXT cancellation delay cannot extend the
+    caller-visible timeout.
     """
     import time as _time
     started = _time.monotonic()
@@ -3125,9 +3152,8 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
         _record_collector_health(label, "skipped_budget", duration_ms=0)
         return None
 
-    task = asyncio.ensure_future(coro)
     try:
-        result = await asyncio.wait_for(asyncio.shield(task), timeout=min(cap, remaining))
+        result = await _shielded_wait_for(coro, timeout=min(cap, remaining))
         from aletheia.data.collector_health import classify_collector_result
 
         if label not in _PERSISTENCE_GATED_COLLECTOR_HEALTH:
@@ -3141,7 +3167,6 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
         elapsed_ms = int((_time.monotonic() - started) * 1000)
         logger.warning("data_collectors: %s timed out (%.0fs cap) — skipped this tick",
                        label, min(cap, remaining))
-        task.cancel()  # fire-and-forget: don't await, avoids 3.12 cancellation hang
         _record_collector_health(
             label,
             "timed_out",
@@ -3152,7 +3177,6 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
     except Exception as e:
         elapsed_ms = int((_time.monotonic() - started) * 1000)
         logger.debug("data_collectors: %s failed: %s", label, e)
-        task.cancel()
         _record_collector_health(
             label,
             "failed",
@@ -3475,7 +3499,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
             from aletheia.data.collectors.derivatives import DerivativesCollector
 
             try:
-                history_result = await asyncio.wait_for(
+                history_result = await _shielded_wait_for(
                     DerivativesCollector().collect_history(symbols),
                     timeout=min(12.0, remaining),
                 )

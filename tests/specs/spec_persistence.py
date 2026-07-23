@@ -10,6 +10,7 @@ Claim prefix: PR
 """
 
 import ast
+import sqlite3
 from pathlib import Path
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
@@ -119,4 +120,151 @@ def test_recovery_fsm_not_yet_wired_into_lifecycle():
         f"gateway/lifecycle.py now references {found} — the recovery FSM appears WIRED. "
         "Update persistence_recovery_contract §1.3/§1.4/§4/§6 to 'enforced' and remove "
         "this tripwire (the safety net is now active)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# PR-S05 / PR-S06 — EventStore idempotency correctness (#247)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "PR-S05", "persistence_recovery_contract",
+        "§2.1 EventStore idempotency — single append", "L2b",
+        "Repeating append() with the same idempotency_key must: return the original "
+        "persisted event_id (not a new phantom), leave exactly one SQLite row, and write "
+        "exactly one JSONL line.  Non-idempotency IntegrityError must propagate (#247).",
+        status="implemented",
+    ),
+)
+def test_event_store_idempotency_single_append(tmp_path, monkeypatch):
+    """#247: duplicate idempotency_key → return existing event, one DB row, one JSONL line."""
+    from tests.test_entry_logic import setup_env
+    setup_env(tmp_path, monkeypatch)
+
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.migrations import run_migrations
+
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "ev_idem.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    sq._db_conn = conn
+    run_migrations()
+
+    monkeypatch.setattr(
+        "aletheia.storage.event_store.get_data_dir", lambda: tmp_path
+    )
+
+    from aletheia.storage.event_store import EventStore, make_event
+
+    store = EventStore()
+    ev = make_event(
+        "test_event", "order", "order-1",
+        payload={"x": 1},
+        idempotency_key="idem-key-1",
+    )
+
+    first = store.append(ev)
+    second = store.append(
+        make_event("test_event", "order", "order-1",
+                   payload={"x": 99},
+                   idempotency_key="idem-key-1")
+    )
+
+    assert first.event_id == second.event_id, (
+        "both calls must return the same event_id on idempotency conflict"
+    )
+    rows = conn.execute(
+        "SELECT COUNT(*) FROM ps_event_log WHERE idempotency_key='idem-key-1'"
+    ).fetchone()[0]
+    assert rows == 1, f"expected 1 DB row, got {rows}"
+
+    jsonl_files = list((tmp_path / "events").glob("event_log_*.jsonl"))
+    assert jsonl_files, "no JSONL file written"
+    lines = [ln for f in jsonl_files for ln in f.read_text().splitlines() if ln.strip()]
+    idem_lines = [ln for ln in lines if "idem-key-1" in ln]
+    assert len(idem_lines) == 1, (
+        f"expected exactly 1 JSONL line for idempotency_key, got {len(idem_lines)}"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "PR-S06", "persistence_recovery_contract",
+        "§2.2 EventStore idempotency — batch append + non-idempotency error", "L2b",
+        "append_many() with duplicate idempotency_keys must return existing events and "
+        "write JSONL only for newly inserted rows.  A PK clash without an idempotency_key "
+        "must raise IntegrityError and must not write a JSONL mirror entry (#247).",
+        status="implemented",
+    ),
+)
+def test_event_store_idempotency_batch_and_pk_error(tmp_path, monkeypatch):
+    """#247: append_many dedup + raw PK clash propagates IntegrityError without JSONL."""
+    from tests.test_entry_logic import setup_env
+    setup_env(tmp_path, monkeypatch)
+
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.migrations import run_migrations
+
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "ev_batch.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    sq._db_conn = conn
+    run_migrations()
+
+    monkeypatch.setattr(
+        "aletheia.storage.event_store.get_data_dir", lambda: tmp_path
+    )
+
+    from aletheia.storage.event_store import EventStore, make_event
+    from aletheia.storage.models import new_id
+
+    store = EventStore()
+
+    # -- Batch idempotency: first insert ev_a, then batch with ev_a (dup) + ev_b (new) --
+    ev_a = make_event("t", "agg", "a1", idempotency_key="batch-idem-a")
+    first_a = store.append(ev_a)
+
+    ev_b = make_event("t", "agg", "b1", idempotency_key="batch-idem-b")
+    results = store.append_many([
+        make_event("t", "agg", "a1", idempotency_key="batch-idem-a"),
+        ev_b,
+    ])
+    assert results[0].event_id == first_a.event_id, (
+        "batch result[0] must resolve to the originally inserted event_id"
+    )
+    assert results[1].event_id == ev_b.event_id, (
+        "batch result[1] must be the newly inserted event"
+    )
+    count_a = conn.execute(
+        "SELECT COUNT(*) FROM ps_event_log WHERE idempotency_key='batch-idem-a'"
+    ).fetchone()[0]
+    assert count_a == 1, f"expected 1 row for batch-idem-a, got {count_a}"
+
+    jsonl_files = list((tmp_path / "events").glob("event_log_*.jsonl"))
+    lines = [ln for f in jsonl_files for ln in f.read_text().splitlines() if ln.strip()]
+    a_lines = [ln for ln in lines if "batch-idem-a" in ln]
+    b_lines = [ln for ln in lines if "batch-idem-b" in ln]
+    assert len(a_lines) == 1, f"expected 1 JSONL line for batch-idem-a, got {len(a_lines)}"
+    assert len(b_lines) == 1, f"expected 1 JSONL line for batch-idem-b, got {len(b_lines)}"
+
+    # -- PK clash without idempotency_key must raise IntegrityError, no JSONL written --
+    fixed_id = new_id()
+    pk_ev = make_event("t", "agg", "pk1")
+    pk_ev.event_id = fixed_id
+    store.append(pk_ev)
+    lines_before = [ln for f in jsonl_files for ln in f.read_text().splitlines() if ln.strip()]
+
+    pk_ev2 = make_event("t", "agg", "pk1")
+    pk_ev2.event_id = fixed_id
+    import pytest
+    with pytest.raises(sqlite3.IntegrityError):
+        store.append(pk_ev2)
+
+    lines_after = [ln for f in jsonl_files for ln in f.read_text().splitlines() if ln.strip()]
+    assert len(lines_after) == len(lines_before), (
+        "IntegrityError on PK clash must not write an extra JSONL line"
     )

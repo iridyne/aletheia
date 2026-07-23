@@ -195,7 +195,8 @@ def test_capital_events_table():
 @spec_claim(
     SpecClaim(
         "DM-S23", "data_model", "§3 local paper account", "L2a",
-        "Local paper cash is an append-only ledger, separate from cross-broker capital events",
+        "Local paper cash is an append-only ledger, separate from cross-broker capital "
+        "events, and every appended amount and resulting balance are finite.",
     ),
 )
 def test_local_paper_account_ledger_contract():
@@ -207,6 +208,8 @@ def test_local_paper_account_ledger_contract():
     assert "CREATE TABLE IF NOT EXISTS paper_account_events" in migration
     assert "INITIAL_PAPER_CASH_USDT = 200.0" in account
     assert "manual_set_balance" in account
+    assert "math.isfinite(amount_usdt)" in account
+    assert "math.isfinite(after)" in account
 
 
 @spec_claim(
@@ -573,7 +576,9 @@ def test_pi_decision_carries_opportunity_id(tmp_path, monkeypatch):
 
     rows = repo.list_pi_decisions(limit=5)
     assert rows, "pi_decisions must have at least one row after record_decision()"
-    latest = rows[0]
+    trade_rows = [r for r in rows if r.get("action") == "trade"]
+    assert trade_rows, "list_pi_decisions must include the trade row written by record_decision()"
+    latest = trade_rows[0]
     assert latest.get("opportunity_id") == test_opp_id, (
         f"opportunity_id mismatch: expected {test_opp_id!r}, got {latest.get('opportunity_id')!r}. "
         "A13 fix: commands.py and reflection.py must wire opportunity_id through."
@@ -584,6 +589,77 @@ def test_pi_decision_carries_opportunity_id(tmp_path, monkeypatch):
     assert latest.get("debate_bull_confidence") == 43
     assert latest.get("debate_bear_confidence") == 73
     assert latest.get("debate_adjustment") == -9
+
+
+@spec_claim(
+    SpecClaim(
+        "DM-A14", "data_model", "§pi_decisions insertion-order tie-breaker", "L2b",
+        "list_pi_decisions returns rows in insertion order when created_at timestamps are equal; "
+        "the later-inserted final decision always sorts ahead of an earlier pending row",
+    ),
+)
+def test_pi_decisions_tie_broken_by_rowid(tmp_path, monkeypatch):
+    """Regression for #293: equal-timestamp rows must be sorted by rowid DESC.
+
+    SQLite is free to return either row first when ORDER BY created_at DESC is the
+    only sort key and both rows land in the same sub-millisecond window. The fix
+    adds rowid DESC as a tie-breaker so the later-inserted final decision always
+    ranks ahead of the earlier pending carrier.
+    """
+    import sqlite3
+
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import PiDecision
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    sq._db_conn = conn
+    run_migrations()
+
+    shared_ts = "2026-07-21T14:20:20.949256+00:00"
+    pending = PiDecision(
+        id="pending-tie-test",
+        action="signal_pending",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        created_at=shared_ts,
+    )
+    final = PiDecision(
+        id="final-tie-test",
+        action="trade",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        bear_case="real final rationale",
+        created_at=shared_ts,
+    )
+    repo.insert_pi_decision(pending)
+    repo.insert_pi_decision(final)
+
+    rows = repo.list_pi_decisions(limit=5)
+    assert rows[0]["id"] == "final-tie-test", (
+        f"final (higher rowid) must sort first; got {rows[0]['id']!r}. "
+        "rowid DESC tie-breaker missing from list_pi_decisions ORDER BY."
+    )
+    assert rows[1]["id"] == "pending-tie-test"
+
+    latest = repo.latest_pi_decision("BTC/USDT", max_age_minutes=60 * 24 * 365)
+    assert latest is not None
+    assert latest["id"] == "final-tie-test", (
+        f"latest_pi_decision must return final row; got {latest['id']!r}. "
+        "rowid DESC tie-breaker missing from latest_pi_decision ORDER BY."
+    )
 
 
 @spec_claim(

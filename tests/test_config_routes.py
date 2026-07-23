@@ -176,7 +176,7 @@ async def test_model_health_endpoint(client):
 async def test_universe_settings_are_visible_and_persisted(client):
     resp = await client.get("/api/settings")
     assert resp.status_code == 200
-    assert resp.json()["universe"]["enabled"] is False
+    assert resp.json()["universe"]["enabled"] is True
 
     resp = await client.post(
         "/api/settings/universe",

@@ -321,6 +321,97 @@ def test_news_entity_matching_is_exact():
 
 @spec_claim(
     SpecClaim(
+        "OBS-A01", "agent_contracts", "§4 equity_observer attribution fields", "L2c",
+        "Every Opportunity constructed in equity_observer stamps scanner_family='equity_daily' "
+        "and a non-null valid_until field. confidence_score must never be NULL — the "
+        "LLM-unavailable fallback uses 0 (schema-defined 'no idea' sentinel).",
+        status="implemented",
+    ),
+)
+def test_equity_observer_stamps_scanner_family_and_valid_until():
+    """AST-level: equity_observer Opportunity() calls must set scanner_family and valid_until."""
+    tree = ast.parse(_EQUITY_OBS.read_text(encoding="utf-8"))
+    opportunity_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Opportunity"
+    ]
+    assert opportunity_calls, "No Opportunity() constructor calls found in equity_observer.py"
+
+    for call in opportunity_calls:
+        kwargs = {kw.arg: kw.value for kw in call.keywords}
+
+        assert "scanner_family" in kwargs, (
+            f"Opportunity() at line {call.lineno} is missing scanner_family kwarg"
+        )
+        sf = kwargs["scanner_family"]
+        assert isinstance(sf, ast.Constant) and sf.value == "equity_daily", (
+            f"Opportunity() at line {call.lineno}: scanner_family={ast.unparse(sf)!r}, "
+            "expected 'equity_daily'"
+        )
+
+        assert "valid_until" in kwargs, (
+            f"Opportunity() at line {call.lineno} is missing valid_until kwarg"
+        )
+
+    # confidence_score must not pass None directly — must use a fallback expression
+    src = _EQUITY_OBS.read_text(encoding="utf-8")
+    assert "confidence_score is not None else 0" in src, (
+        "equity_observer must use 'confidence_score if confidence_score is not None else 0' "
+        "to prevent NULL confidence_score in persisted Opportunities"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "OBS-A02", "agent_contracts", "§4 prediction_observer attribution fields", "L2c",
+        "Every Opportunity constructed in prediction_observer stamps "
+        "scanner_family='prediction_market' and a non-null valid_until field. "
+        "confidence_score must never be NULL for the LLM-derived top market — "
+        "fallback uses 0 when the structured read is unavailable.",
+        status="implemented",
+    ),
+)
+def test_prediction_observer_stamps_scanner_family_and_valid_until():
+    """AST-level: prediction_observer Opportunity() calls must set scanner_family and valid_until."""
+    tree = ast.parse(_PRED_OBS.read_text(encoding="utf-8"))
+    opportunity_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Opportunity"
+    ]
+    assert opportunity_calls, "No Opportunity() constructor calls found in prediction_observer.py"
+
+    for call in opportunity_calls:
+        kwargs = {kw.arg: kw.value for kw in call.keywords}
+
+        assert "scanner_family" in kwargs, (
+            f"Opportunity() at line {call.lineno} is missing scanner_family kwarg"
+        )
+        sf = kwargs["scanner_family"]
+        assert isinstance(sf, ast.Constant) and sf.value == "prediction_market", (
+            f"Opportunity() at line {call.lineno}: scanner_family={ast.unparse(sf)!r}, "
+            "expected 'prediction_market'"
+        )
+
+        assert "valid_until" in kwargs, (
+            f"Opportunity() at line {call.lineno} is missing valid_until kwarg"
+        )
+
+    # confidence_score for the LLM-derived top market must use a 0 fallback
+    src = _PRED_OBS.read_text(encoding="utf-8")
+    assert "confidence_score is not None else 0" in src, (
+        "prediction_observer must use 'confidence_score if confidence_score is not None else 0' "
+        "for the LLM-derived top market to prevent NULL confidence_score"
+    )
+
+
+@spec_claim(
+    SpecClaim(
         "OBS-NEWS-ANALYZER", "agent_contracts", "§scheduler news analysis", "L2a",
         "News analysis is a separate small-batch timeout job and RSS fetch never calls it.",
         status="implemented",

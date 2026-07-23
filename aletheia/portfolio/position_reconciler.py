@@ -505,7 +505,9 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
     live management stays human-only by construction.
 
     Entry price and quantity come from the exchange (the truth); no exit/PnL is
-    realized here. Returns the created ids. Raises ValueError on bad input.
+    realized here. Reconciliation never places or cancels exchange orders;
+    protective-order placement belongs to Gateway-owned execution flows. Returns
+    the created ids. Raises ValueError on bad input.
     """
     from aletheia.storage.models import TradeProposal, Order, Position
     from aletheia.storage.repositories import (
@@ -566,6 +568,10 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         agent_rationale=rationale,
         status="executed",
         source="adopted",
+        # Recovered attribution: keeps the learning signal alive through a
+        # transient orphan→re-adopt cycle (#189). None for genuinely-new external.
+        strategy_id=recovered_strategy_id,
+        opportunity_id=recovered_opp_id,
     )
     order = Order(
         proposal_id=proposal.id,
@@ -579,6 +585,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         status="filled",
         source="adopted",
         filled_at=now,
+        # position_id backfilled below after Position is constructed (#189).
     )
     # Compute default protective stop and take-profit at adoption time so the
     # position row is never left with NULL stop/tp. The values are derived from
@@ -626,6 +633,8 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         # SH-S05: ALL FOUR brokers + reconciler must propagate trade_school).
         trade_school="short_term",
     )
+    # Backfill position_id on the order now that position.id is known (#189).
+    order.position_id = position.id
 
     with transaction():
         insert_trade_proposal(proposal)
@@ -660,23 +669,6 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         },
         "message": rationale,
     })
-    # Exchange-side protective bracket (P2-1, 2026-07-01): persist DB stop/tp is not
-    # enough — an adopted position had no NATIVE exchange SL/TP, so it was unprotected
-    # if the gateway went down. Place a reduce-only exchange bracket now. Gated by
-    # cfg.trading.exchange_tpsl_enabled (default False → dormant) + DEMO-only inside
-    # the dispatcher (never an autonomous live order). Non-fatal: a placement failure
-    # must not undo the adoption. See execution.stops.place_exchange_protective_orders.
-    try:
-        from aletheia.execution.stops import place_exchange_protective_orders
-        place_exchange_protective_orders({
-            "id": position.id, "symbol": symbol, "market_type": market_type,
-            "direction": direction, "quantity": quantity,
-            "stop_price": _adopted_stop, "take_profit_price": _adopted_tp,
-            "execution_mode": execution_mode,
-        })
-    except Exception as e:  # noqa: BLE001
-        logger.warning("adopt_position: exchange protective-order placement skipped: %s", e)
-
     try:
         from aletheia.notifications import notify_operator
         notify_operator(

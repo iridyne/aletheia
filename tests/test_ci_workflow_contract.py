@@ -7,16 +7,30 @@ import yaml
 
 _WORKFLOW_DIR = Path(__file__).resolve().parents[1] / ".github" / "workflows"
 _WORKFLOW_PATH = _WORKFLOW_DIR / "ci.yml"
+
+# All jobs that ci-gate lists in its `needs` array
 _REQUIRED_GATE_NEEDS = {
-    "secrets-scan",
-    "backend",
-    "fast-tests",
-    "integration-tests",
-    "active-paper-chain",
-    "frontend",
+    "changes",
+    "e2e",
+    "unit",
+    "integration",
+    "simulation",
+    "specs",
     "operator-shell",
-    "windows-runtime-smoke",
+    "native",
+    "frontend",
+    "static-checks",
+    "secrets-scan",
 }
+
+# Python + static surfaces: must succeed (no skip tolerance)
+_STRICT_SURFACES = frozenset({
+    "e2e", "unit", "integration", "simulation", "specs",
+    "static-checks", "secrets-scan",
+})
+
+# Path-gated surfaces: success or skipped both accepted by the gate
+_SKIP_OK_SURFACES = frozenset({"operator-shell", "native", "frontend"})
 
 
 def _load_workflow(path: Path) -> dict:
@@ -107,6 +121,27 @@ def test_manual_dispatch_does_not_share_a_pending_group_with_same_sha_push() -> 
     assert "github.workflow, github.event_name, github.sha" in group
 
 
+def test_changes_job_detects_path_areas_for_pull_requests() -> None:
+    job = _workflow()["jobs"]["changes"]
+    commands = _run_commands(job)
+    outputs = job.get("outputs", {})
+
+    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
+    assert "native" in outputs
+    assert "frontend" in outputs
+    assert "operator_shell" in outputs
+    assert "pull_request" in commands
+    assert "GITHUB_OUTPUT" in commands
+
+
+def test_native_frontend_operator_shell_are_gated_on_path_changes() -> None:
+    jobs = _workflow()["jobs"]
+    for surface in ("native", "frontend", "operator-shell"):
+        job = jobs[surface]
+        assert "changes" in job.get("needs", []), f"{surface} must need the changes job"
+        assert "changes.outputs" in str(job.get("if", "")), f"{surface} must have a path-change if condition"
+
+
 def test_operator_shell_has_an_independent_test_and_build_gate() -> None:
     job = _workflow()["jobs"]["operator-shell"]
     commands = _run_commands(job)
@@ -119,68 +154,108 @@ def test_operator_shell_has_an_independent_test_and_build_gate() -> None:
     assert "npm run build" in commands
 
 
-def test_active_paper_chain_is_an_independent_required_surface() -> None:
-    job = _workflow()["jobs"]["active-paper-chain"]
+def test_e2e_job_covers_the_full_pipeline_directory() -> None:
+    job = _workflow()["jobs"]["e2e"]
     commands = _run_commands(job)
 
-    assert "test_active_mainline_golden_path.py" in commands
-    assert "test_pipeline_real_paper_roundtrip.py" in commands
-    assert "test_pipeline_futures_leverage.py" in commands
-    assert "test_pipeline_feedback_loop.py" in commands
-    assert "test_ci_execution_contracts.py" in commands
+    assert "tests/e2e/" in commands
     assert "continue-on-error" not in str(job)
 
 
-def test_windows_runtime_smoke_runs_platform_specific_contracts() -> None:
-    job = _workflow()["jobs"]["windows-runtime-smoke"]
-    commands = _run_commands(job)
-
-    assert job["runs-on"] == ["self-hosted", "Windows", "X64"]
-    assert "test_event_loop_policy.py" in commands
-    assert "test_pidfile.py" in commands
-    assert "continue-on-error" not in str(job)
-
-
-def test_pr_ci_gate_aggregates_the_exact_required_matrix() -> None:
-    job = _workflow()["jobs"]["pr-ci-gate"]
+def test_ci_gate_aggregates_the_exact_required_matrix() -> None:
+    job = _workflow()["jobs"]["ci-gate"]
     commands = _run_commands(job)
     condition = str(job["if"])
 
-    assert job["name"] == "PR CI gate"
+    assert job["name"] == "CI gate"
     assert set(job["needs"]) == _REQUIRED_GATE_NEEDS
     assert "always()" in condition
     assert "github.event_name == 'pull_request'" in condition
-    for dependency in _REQUIRED_GATE_NEEDS:
-        assert f"needs.{dependency}.result" in commands
-    assert "continue-on-error" not in str(job)
-
-
-def test_master_verification_gate_aggregates_the_exact_required_matrix() -> None:
-    job = _workflow()["jobs"]["master-verification-gate"]
-    commands = _run_commands(job)
-    condition = str(job["if"])
-
-    assert job["name"] == "Master verification gate"
-    assert set(job["needs"]) == _REQUIRED_GATE_NEEDS
-    assert "always()" in condition
-    assert "github.event_name == 'push'" in condition
     assert "refs/heads/master" in condition
-    for dependency in _REQUIRED_GATE_NEEDS:
-        assert f"needs.{dependency}.result" in commands
+    # Strict surfaces must require success
+    for surface in _STRICT_SURFACES:
+        assert f"needs.{surface}.result" in commands, f"gate missing strict check for {surface}"
+    # Path-gated surfaces must be checked but allow skipped
+    for surface in _SKIP_OK_SURFACES:
+        assert f"needs.{surface}.result" in commands, f"gate missing check for {surface}"
+    assert "skipped" in commands, "gate must tolerate skipped for path-gated surfaces"
     assert "continue-on-error" not in str(job)
 
 
 def test_full_regression_is_a_separate_manual_job_with_realistic_timeout() -> None:
     workflow = _workflow()
     jobs = workflow["jobs"]
-    backend_commands = _run_commands(jobs["backend"])
     full = jobs["full-regression"]
 
-    assert "uv run pytest tests/ -q" not in backend_commands
     assert int(full["timeout-minutes"]) >= 45
     assert "workflow_dispatch" in str(full["if"])
     assert "inputs.full_regression" in str(full["if"])
     assert "uv run pytest tests/" in _run_commands(full)
+
+
+def test_python_test_jobs_set_scoped_data_dir() -> None:
+    """Python CI jobs must isolate runtime state via ALETHEIA_DATA_DIR (#205).
+
+    Each job gets a unique path under runner.temp so no test can read or write
+    ~/.aletheia on the CI host, even at module import time (DATA_DIR is set
+    before any aletheia import occurs because the env var is injected at the
+    job level, not in a run step).
+    """
+    jobs = _workflow()["jobs"]
+    python_test_jobs = {"e2e", "unit", "integration", "simulation", "specs", "full-regression"}
+    failures: list[str] = []
+    for job_name in python_test_jobs:
+        job = jobs.get(job_name)
+        if job is None:
+            failures.append(f"{job_name}: job missing from workflow")
+            continue
+        job_env = job.get("env") or {}
+        if not isinstance(job_env, dict):
+            failures.append(f"{job_name}: env block is not a mapping")
+            continue
+        value = job_env.get("ALETHEIA_DATA_DIR", "")
+        if not value:
+            failures.append(f"{job_name}: missing ALETHEIA_DATA_DIR in job-level env")
+        elif "runner.temp" not in str(value):
+            failures.append(
+                f"{job_name}: ALETHEIA_DATA_DIR must use runner.temp for per-job isolation, got {value!r}"
+            )
+    assert not failures, (
+        "Python test jobs must isolate runtime state via ALETHEIA_DATA_DIR:\n"
+        + "\n".join(failures)
+    )
+
+
+def test_native_host_tray_feature_split() -> None:
+    """Linux CI must not compile aletheia-tray; macOS build must explicitly enable the tray feature.
+
+    The tray binary requires macOS GUI dependencies (tray-icon / winit / muda) that
+    cannot compile on Linux.  The Cargo `tray` feature gates both the binary (via
+    required-features) and its optional deps.  This split must not silently regress:
+
+    - ci.yml native job: no `--features tray` — aletheia-tray is skipped on Linux.
+    - build-packaged-runtime.yml macOS job: `--features tray` so aletheia-tray is built.
+    """
+    # Linux CI (ci.yml) native job must NOT pass --features tray
+    native_job = _workflow()["jobs"]["native"]
+    linux_cargo_commands = _run_commands(native_job)
+    assert "--features tray" not in linux_cargo_commands, (
+        "ci.yml native job must not pass '--features tray' — Linux CI must skip aletheia-tray "
+        "via required-features, not by opting into the tray feature"
+    )
+    assert "cargo test" in linux_cargo_commands, (
+        "ci.yml native job must still run cargo test for platform-neutral targets"
+    )
+
+    # macOS build workflow must explicitly enable tray
+    macos_wf_path = _WORKFLOW_DIR / "build-packaged-runtime.yml"
+    macos_wf = _load_workflow(macos_wf_path)
+    macos_job = macos_wf.get("jobs", {}).get("macos-package", {})
+    macos_commands = _run_commands(macos_job)
+    assert "--features tray" in macos_commands, (
+        "build-packaged-runtime.yml macos-package job must pass '--features tray' "
+        "so aletheia-tray is compiled and the tray smoke test can run"
+    )
 
 
 def test_repository_task_subsystem_is_absent_from_ci() -> None:

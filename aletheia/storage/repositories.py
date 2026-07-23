@@ -487,6 +487,36 @@ def find_open_opportunity_by_symbol_snapshot(symbol: str, snapshot_id: str, mark
     return dict(row) if row else None
 
 
+def find_live_opportunity_by_symbol_direction(
+    symbol: str,
+    direction: str,
+    market: str | None = None,
+) -> dict | None:
+    """Return the most-recent live (open or queued, non-expired) opportunity for
+    a given symbol+direction+market combination.
+
+    Used by the signal emitter to suppress duplicate emissions when a live candidate
+    for the same symbol+direction already occupies the evaluation queue (#326).
+    ``valid_until IS NULL`` rows are treated as never-expiring and always considered
+    live (paranoid fail-safe: better to suppress one extra signal than to flood the
+    queue).
+    """
+    db = get_db()
+    sql = (
+        "SELECT * FROM opportunities "
+        "WHERE symbol = ? AND direction_bias = ? "
+        "AND status IN ('open','queued') "
+        "AND (valid_until IS NULL OR datetime(valid_until) > datetime('now'))"
+    )
+    params: list = [symbol, direction]
+    if market:
+        sql += " AND market = ?"
+        params.append(market)
+    sql += " ORDER BY created_at DESC, rowid DESC LIMIT 1"
+    row = db.execute(sql, params).fetchone()
+    return dict(row) if row else None
+
+
 def find_opportunity_by_symbol_snapshot(
     symbol: str,
     snapshot_id: str,
@@ -613,14 +643,15 @@ def latest_pi_decision(symbol: str, max_age_minutes: int = 30) -> dict | None:
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
     db = get_db()
     row = db.execute(
-        "SELECT * FROM pi_decisions WHERE symbol = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 1",
+        "SELECT * FROM pi_decisions WHERE symbol = ? AND created_at >= ?"
+        " ORDER BY created_at DESC, rowid DESC LIMIT 1",
         (symbol, cutoff),
     ).fetchone()
     return dict(row) if row else None
 
 
 def list_pi_decisions(limit: int = 20) -> list[dict]:
-    return _select_all("pi_decisions", order="created_at DESC", limit=limit)
+    return _select_all("pi_decisions", order="created_at DESC, rowid DESC", limit=limit)
 
 
 def get_pi_decision_for_proposal(proposal_id: str) -> dict | None:
@@ -814,6 +845,72 @@ def count_unresolved_signal_pending(max_age_minutes: int = 30) -> int:
         .fetchone()
     )
     return int(row[0] or 0)
+
+
+def list_pending_signal_queue(max_age_minutes: int = 30) -> list[dict]:
+    """Return current queue occupants with their conviction score for priority comparison.
+
+    Each dict contains opportunity_id, symbol, conviction.  Same eligibility
+    criteria as count_unresolved_signal_pending — only rows that consume an
+    admission slot are returned.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
+    rows = (
+        get_db()
+        .execute(
+            "SELECT pending.opportunity_id, pending.symbol, pending.conviction "
+            "FROM pi_decisions pending "
+            "JOIN opportunities source ON source.id=pending.opportunity_id "
+            "WHERE pending.action='signal_pending' "
+            "AND COALESCE(pending.signal_source, 'market_observer')='market_observer' "
+            "AND source.status='queued' "
+            "AND ((datetime(source.valid_until) IS NOT NULL "
+            "      AND datetime(source.valid_until)>datetime('now')) "
+            " OR (datetime(source.valid_until) IS NULL "
+            "      AND datetime(pending.created_at)>=datetime(?))) "
+            "AND NOT EXISTS ("
+            " SELECT 1 FROM pi_decisions final "
+            " WHERE final.opportunity_id=pending.opportunity_id "
+            " AND COALESCE(final.signal_source, 'market_observer')="
+            "     COALESCE(pending.signal_source, 'market_observer') "
+            " AND final.action!='signal_pending' "
+            " AND COALESCE(final.proposal_status, '')!='submitting'"
+            ") "
+            "AND NOT EXISTS ("
+            " SELECT 1 FROM operator_evaluation_events e "
+            " WHERE json_extract(e.queue_snapshot_json,'$.opportunity_id')"
+            "       = pending.opportunity_id "
+            " AND e.event_kind LIKE 'operator_decision_deferred_%' "
+            " AND datetime(json_extract(e.queue_snapshot_json,'$.defer_until'))"
+            "     > datetime('now')"
+            ") "
+            "GROUP BY pending.opportunity_id",
+            (cutoff,),
+        )
+        .fetchall()
+    )
+    return [
+        {
+            "opportunity_id": str(row["opportunity_id"]),
+            "symbol": str(row["symbol"] or ""),
+            "conviction": int(row["conviction"] or 0),
+        }
+        for row in rows
+    ]
+
+
+def transition_queued_opportunity_to_open(oid: str) -> bool:
+    """Return a queued Opportunity to open so it can be re-admitted in a later run.
+
+    Used by priority-replacement eviction: a lower-scored incumbent is released
+    back to open status and its signal_pending carrier becomes superseded by the
+    subsequent eviction pi_decision written by the caller.
+    """
+    cur = execute_write(
+        "UPDATE opportunities SET status='open' WHERE id=? AND status='queued'",
+        (oid,),
+    )
+    return cur.rowcount == 1
 
 
 def active_defer_opportunity_ids(now_iso: str | None = None) -> set[str]:
@@ -6357,6 +6454,36 @@ def prune_market_ohlcv(
         ("legacy_unknown",),
     )
     return total
+
+
+def expire_stale_serenity_themes() -> int:
+    """Soft-expire Serenity themes whose deadline has elapsed and cascade to children.
+
+    Finds active/watching SerenityTheme rows where expires_at is in the past,
+    transitions them to 'expired', and cascades the same status to their active
+    SerenityOpportunity children so the pending-signal queue treats them as stale
+    (#199). Writes are atomic; the transaction is not held across I/O.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with transaction(immediate=True):
+        db = get_db()
+        expired_themes = db.execute(
+            "SELECT id FROM serenity_themes "
+            "WHERE expires_at IS NOT NULL "
+            "AND datetime(expires_at) <= datetime('now') "
+            "AND status NOT IN ('dismissed', 'expired')",
+        ).fetchall()
+        if not expired_themes:
+            return 0
+        theme_ids = [row["id"] for row in expired_themes]
+        for theme_id in theme_ids:
+            update_serenity_theme(theme_id, status="expired", updated_at=now_iso)
+            execute_write(
+                "UPDATE serenity_opportunities SET status='expired', updated_at=? "
+                "WHERE theme_id=? AND status='active'",
+                (now_iso, theme_id),
+            )
+        return len(theme_ids)
 
 
 def expire_stale_opportunities(ttl_hours: int = 48) -> int:

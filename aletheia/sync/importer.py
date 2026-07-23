@@ -5,9 +5,34 @@ import shutil
 import tarfile
 from pathlib import Path
 
+import uuid
+
 from aletheia.config.loader import get_data_dir
 from aletheia.storage.hashing import sha256_file
 from aletheia.storage.sqlite import get_db
+from aletheia.storage.repositories import transaction as _db_transaction
+
+# Tables the importer is allowed to write — exactly the set emitted by the
+# supported exporter modes (research-pack, proposal-pack, runtime-snapshot).
+# full-backup restores the whole app.db directly and does not use this path.
+_IMPORT_ALLOWED_TABLES: frozenset[str] = frozenset({
+    # research-pack
+    "serenity_themes",
+    "serenity_evidence",
+    "serenity_claims",
+    "serenity_opportunities",
+    "ps_lessons",
+    "ps_skills",
+    # proposal-pack (trade_proposals + serenity chain)
+    "trade_proposals",
+    # runtime-snapshot
+    "ps_orders",
+    "ps_fills",
+    "ps_positions",
+    "ps_gateway_sessions",
+    "ps_order_intents",
+    "ps_execution_intents",
+})
 
 
 class ImportConflict:
@@ -65,10 +90,8 @@ class ImportService:
     def _process(self, archive_path: Path, commit: bool) -> ImportResult:
         result = ImportResult()
 
-        # Extract to temp dir
-        extract_dir = self._data_dir / "tmp" / "import_staging"
-        if extract_dir.exists():
-            shutil.rmtree(extract_dir)
+        # Each invocation gets an isolated staging directory (#277).
+        extract_dir = self._data_dir / "tmp" / f"import_staging_{uuid.uuid4().hex}"
         extract_dir.mkdir(parents=True)
 
         try:
@@ -82,10 +105,17 @@ class ImportService:
                 return result
             bundle_dir = subdirs[0]
 
-            # Verify checksums
+            # checksums.txt is mandatory — an import without it cannot be trusted.
             checksums_file = bundle_dir / "checksums.txt"
-            if checksums_file.exists():
-                self._verify_checksums(bundle_dir, checksums_file, result)
+            if not checksums_file.exists():
+                result.errors.append("checksums.txt missing — bundle integrity cannot be verified")
+                return result
+
+            self._verify_checksums(bundle_dir, checksums_file, result)
+
+            # Fail-closed: any verification error aborts before touching state.
+            if result.errors:
+                return result
 
             # Import DB tables
             db_dir = bundle_dir / "db"
@@ -104,21 +134,41 @@ class ImportService:
         return result
 
     def _verify_checksums(self, bundle_dir: Path, checksums_file: Path, result: ImportResult) -> None:
-        """Verify all files against checksums.txt.
+        """Strict manifest verification (#271).
 
-        #63 fix: a file listed in the manifest but MISSING on disk used to be
-        silently skipped (the `if file_path.exists()` branch just fell through
-        with no `result.errors` append). Now the missing case is an explicit
-        error — a bundle can't be safely imported when the manifest lists files
-        that were never delivered.
+        - Rejects malformed lines, non-hex hashes, and unsafe paths.
+        - Rejects duplicate paths within the manifest.
+        - Errors if any listed file is missing or its SHA-256 does not match.
+        - Errors if any file under db/ or artifacts/ is not in the manifest
+          (manifest.yaml is exempt — the exporter writes it after checksums).
         """
-        for line in checksums_file.read_text(encoding="utf-8").splitlines():
+        import re
+
+        _HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+        declared: dict[str, str] = {}  # rel_path → expected_hash
+
+        for lineno, line in enumerate(checksums_file.read_text(encoding="utf-8").splitlines(), 1):
             if not line.strip():
                 continue
             parts = line.split("  ", 1)
             if len(parts) != 2:
+                result.errors.append(f"checksums.txt line {lineno}: malformed (expected '<hash>  <path>')")
                 continue
             expected_hash, rel_path = parts
+            if not _HEX_RE.match(expected_hash):
+                result.errors.append(f"checksums.txt line {lineno}: non-hex SHA-256 hash for {rel_path!r}")
+                continue
+            # Reject path traversal and absolute paths
+            if rel_path.startswith("/") or ".." in rel_path.split("/"):
+                result.errors.append(f"checksums.txt line {lineno}: unsafe path {rel_path!r}")
+                continue
+            if rel_path in declared:
+                result.errors.append(f"checksums.txt line {lineno}: duplicate path {rel_path!r}")
+                continue
+            declared[rel_path] = expected_hash
+
+        # Validate each declared file
+        for rel_path, expected_hash in declared.items():
             file_path = bundle_dir / rel_path
             if not file_path.exists():
                 result.errors.append(f"Checksum manifest lists missing file: {rel_path}")
@@ -127,76 +177,155 @@ class ImportService:
             if actual != expected_hash:
                 result.errors.append(f"Checksum mismatch: {rel_path}")
 
+        # Reject payload files not declared in the manifest (unlisted files).
+        # manifest.yaml is exempt — the exporter writes it after checksums.txt.
+        _EXEMPT = {"manifest.yaml"}
+        for subdir_name in ("db", "artifacts"):
+            subdir = bundle_dir / subdir_name
+            if not subdir.exists():
+                continue
+            for file_path in subdir.rglob("*"):
+                if not file_path.is_file():
+                    continue
+                try:
+                    rel = file_path.relative_to(bundle_dir).as_posix()
+                except ValueError:
+                    rel = str(file_path)
+                if rel not in declared and rel not in _EXEMPT:
+                    result.errors.append(f"Unlisted payload file not in checksum manifest: {rel}")
+
     def _import_db_tables(self, db_dir: Path, result: ImportResult, commit: bool) -> None:
-        """Import JSONL table data with deduplication."""
+        """Import JSONL table data (#271/#273/#275: allowlist, preflight, atomic tx).
+
+        Preflight phase (no DB writes):
+        - Reject tables not in _IMPORT_ALLOWED_TABLES.
+        - Reject rows that are not plain JSON objects.
+        - Reject rows containing columns absent from the local schema.
+        Any preflight failure aborts the entire import before any DB mutation.
+
+        Classification phase (read-only):
+        - Detect conflicts (#64) and duplicates via explicit PK lookup.
+        - Build a queue of rows to insert.
+
+        Commit phase (#275, only when commit=True):
+        - Executes all INSERTs inside a single repository transaction()
+          (acquires the process-wide write lock).
+        - Uses plain INSERT — no OR IGNORE; constraint violations propagate.
+        - Rolls back the entire import on first failure; result.new_rows is
+          cleared so callers see zero committed rows.
+        """
         db = get_db()
 
+        # ── Discover local schema for allowed tables ──────────────────────────
+        def _schema_cols(table: str) -> frozenset[str]:
+            try:
+                rows = db.execute(f'PRAGMA table_info("{table}")').fetchall()
+                return frozenset(r["name"] for r in rows)
+            except Exception:
+                return frozenset()
+
+        # ── Preflight pass ────────────────────────────────────────────────────
+        preflight_tables: list[tuple[str, list[dict]]] = []
         for jsonl_file in sorted(db_dir.glob("*.jsonl")):
             table_name = jsonl_file.stem
-            new_count = 0
+            if table_name not in _IMPORT_ALLOWED_TABLES:
+                result.errors.append(
+                    f"Import rejected: table {table_name!r} is not in the authorized import surface"
+                )
+                return
 
+            allowed_cols = _schema_cols(table_name)
+            rows_for_table: list[dict] = []
             with open(jsonl_file, "r", encoding="utf-8") as f:
-                for line in f:
+                for lineno, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:
                         continue
-                    row = json.loads(line)
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        result.errors.append(
+                            f"{table_name} line {lineno}: invalid JSON: {exc}"
+                        )
+                        return
+                    if not isinstance(row, dict):
+                        result.errors.append(
+                            f"{table_name} line {lineno}: row is not a JSON object"
+                        )
+                        return
+                    unknown_cols = set(row.keys()) - allowed_cols
+                    if unknown_cols:
+                        result.errors.append(
+                            f"{table_name} line {lineno}: columns not in local schema: "
+                            f"{', '.join(sorted(unknown_cols))}"
+                        )
+                        return
+                    rows_for_table.append(row)
+            preflight_tables.append((table_name, rows_for_table))
 
-                    # Check for duplicate by primary key (assume 'id' column).
-                    # #64 fix: an existing PK with DIFFERENT column values used to
-                    # be counted as `skipped_duplicates` — a diverged row silently
-                    # ignored so the operator never learned the bundle was already
-                    # out of sync. The `ImportConflict` class existed but was
-                    # never instantiated. Now we distinguish:
-                    #   PK exists, payload identical  → `skipped_duplicates`
-                    #   PK exists, payload different  → `conflicts` entry
-                    #   PK missing                    → inserted (as before)
+        # ── Classification pass (read-only) ───────────────────────────────────
+        # Fills result.conflicts / result.skipped_duplicates; builds insert queue.
+        insert_queue: list[tuple[str, list[dict]]] = []
+        for table_name, rows in preflight_tables:
+            pk_col = None
+            to_insert: list[dict] = []
+            for row in rows:
+                if pk_col is None:
                     pk_col = self._find_pk(table_name, row)
-                    if pk_col and pk_col in row:
-                        existing = db.execute(
-                            f"SELECT * FROM {table_name} WHERE {pk_col} = ?",
-                            (row[pk_col],),
-                        ).fetchone()
-                        if existing:
-                            local = dict(existing)
-                            diff_cols = [
-                                col for col, val in row.items()
-                                if col in local and local[col] != val
-                            ]
-                            if diff_cols:
-                                result.conflicts.append(ImportConflict(
-                                    object_type=table_name,
-                                    object_id=str(row[pk_col]),
-                                    local_hash=self._row_fingerprint(local),
-                                    remote_hash=self._row_fingerprint(row),
-                                    message=(
-                                        f"{table_name} row {row[pk_col]!r} diverges "
-                                        f"from local on columns: {', '.join(sorted(diff_cols))}"
-                                    ),
-                                ))
-                            else:
-                                result.skipped_duplicates += 1
-                            continue
+                # #64: explicit PK lookup — classify before any write
+                if pk_col and pk_col in row:
+                    existing = db.execute(
+                        f'SELECT * FROM "{table_name}" WHERE "{pk_col}" = ?',
+                        (row[pk_col],),
+                    ).fetchone()
+                    if existing:
+                        local = dict(existing)
+                        diff_cols = [
+                            col for col, val in row.items()
+                            if col in local and local[col] != val
+                        ]
+                        if diff_cols:
+                            result.conflicts.append(ImportConflict(
+                                object_type=table_name,
+                                object_id=str(row[pk_col]),
+                                local_hash=self._row_fingerprint(local),
+                                remote_hash=self._row_fingerprint(row),
+                                message=(
+                                    f"{table_name} row {row[pk_col]!r} diverges "
+                                    f"from local on columns: {', '.join(sorted(diff_cols))}"
+                                ),
+                            ))
+                        else:
+                            result.skipped_duplicates += 1
+                        continue
+                to_insert.append(row)
 
-                    if commit:
-                        cols = ", ".join(row.keys())
-                        placeholders = ", ".join(["?"] * len(row))
-                        try:
-                            db.execute(
-                                f"INSERT OR IGNORE INTO {table_name} ({cols}) VALUES ({placeholders})",
-                                list(row.values()),
-                            )
-                        except Exception as e:
-                            result.errors.append(f"Insert into {table_name} failed: {e}")
-                            continue
+            if to_insert:
+                insert_queue.append((table_name, to_insert))
+            # Report would-be new rows for dry-run and as optimistic count for commit.
+            if to_insert:
+                result.new_rows[table_name] = len(to_insert)
 
-                    new_count += 1
+        # ── Commit phase ──────────────────────────────────────────────────────
+        if not commit:
+            return
 
-            if new_count > 0:
-                result.new_rows[table_name] = new_count
-
-        if commit:
-            db.commit()
+        result.new_rows = {}  # clear optimistic counts; reset only after success
+        try:
+            with _db_transaction():
+                for table_name, rows in insert_queue:
+                    quoted_cols = ", ".join(f'"{c}"' for c in rows[0].keys())
+                    placeholders = ", ".join(["?"] * len(rows[0]))
+                    for row in rows:
+                        db.execute(
+                            f'INSERT INTO "{table_name}" ({quoted_cols}) '
+                            f"VALUES ({placeholders})",
+                            list(row.values()),
+                        )
+                    result.new_rows[table_name] = len(rows)
+        except Exception as exc:
+            result.errors.append(f"Import transaction failed and was rolled back: {exc}")
+            result.new_rows = {}
 
     def _import_artifacts(self, artifacts_dir: Path) -> None:
         """Copy artifacts into local store."""

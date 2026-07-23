@@ -194,20 +194,19 @@ async def test_review_summary_reports_missing_post_trade_review_coverage(client)
     for path in ("knowledge/post_trade_reviews", "knowledge/daily_reviews", "knowledge/dreaming_logs"):
         (tmp_path / path).mkdir(parents=True, exist_ok=True)
 
-    repo.insert_position(
-        Position(
-            symbol="BTCUSDT",
-            market_type="spot",
-            direction="long",
-            quantity=0.1,
-            entry_price=60000,
-            execution_mode="paper_internal",
-            strategy_id="strat-1",
-            status="closed",
-            opened_at=datetime.now(timezone.utc).isoformat(),
-            closed_at=datetime.now(timezone.utc).isoformat(),
-        )
+    pos = Position(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.1,
+        entry_price=60000,
+        execution_mode="paper_internal",
+        strategy_id="strat-1",
+        status="closed",
+        opened_at=datetime.now(timezone.utc).isoformat(),
+        closed_at=datetime.now(timezone.utc).isoformat(),
     )
+    repo.insert_position(pos)
 
     first = await c.get("/api/reviews/summary")
     assert first.status_code == 200
@@ -215,11 +214,14 @@ async def test_review_summary_reports_missing_post_trade_review_coverage(client)
     assert len(first_data["recent_closed_positions"]) == 1
     assert first_data["missing_review_strategy_ids"] == ["strat-1"]
 
+    # Review must tag the specific Position for position-level coverage (#269);
+    # strategy-level recency alone is no longer sufficient.
     create_post_trade_review(
         "Post-Trade Review",
         "Reviewed the BTC paper position closed at a loss. Entry momentum confirmed but exit was premature. "
         "Recommend tighter stop placement and trailing stop on profitable positions.",
         strategy_id="strat-1",
+        tags=[f"position:{pos.id}"],
     )
 
     second = await c.get("/api/reviews/summary")
@@ -227,6 +229,47 @@ async def test_review_summary_reports_missing_post_trade_review_coverage(client)
     second_data = second.json()
     assert len(second_data["recent_post_trade_reviews"]) == 1
     assert second_data["missing_review_strategy_ids"] == []
+
+
+@pytest.mark.anyio
+async def test_archived_review_does_not_suppress_missing_coverage(client):
+    """#269: archiving an invalid review must re-expose the strategy as needing review."""
+    c, tmp_path = client
+    from aletheia.knowledge.manager import create_post_trade_review
+    from aletheia.storage import repositories as _repo
+    from aletheia.storage.models import Position
+
+    for path in ("knowledge/post_trade_reviews", "knowledge/daily_reviews", "knowledge/dreaming_logs"):
+        (tmp_path / path).mkdir(parents=True, exist_ok=True)
+
+    pos = Position(
+        symbol="ETHUSDT", market_type="spot", direction="long", quantity=0.5,
+        entry_price=3000, execution_mode="paper_internal", strategy_id="strat-arch",
+        status="closed",
+        opened_at=datetime.now(timezone.utc).isoformat(),
+        closed_at=datetime.now(timezone.utc).isoformat(),
+    )
+    _repo.insert_position(pos)
+
+    item = create_post_trade_review(
+        "Post-Trade Review",
+        "This is a review that will be archived because it contained hallucinated details. "
+        "ETH position closed with a minor loss. Exit was timely given resistance at 3100.",
+        strategy_id="strat-arch",
+        tags=[f"position:{pos.id}"],
+    )
+    assert item is not None
+
+    data = (await c.get("/api/reviews/summary")).json()
+    assert data["missing_review_strategy_ids"] == []
+
+    # Archive the review (simulates owner detecting a hallucination).
+    _repo.update_knowledge_item(item.id, status="archived")
+
+    after_archive = (await c.get("/api/reviews/summary")).json()
+    assert "strat-arch" in after_archive["missing_review_strategy_ids"], (
+        "Archived review must not suppress strategy from missing list"
+    )
 
 
 @pytest.mark.anyio

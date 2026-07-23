@@ -15,6 +15,7 @@ from datetime import datetime, timezone, timedelta
 import pytest
 from httpx import AsyncClient, ASGITransport
 
+from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
 from aletheia.server.app import app
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
@@ -206,6 +207,14 @@ class TestSnapshotConsistency:
             execution_mode="okx_demo",
             closed_at=(now - timedelta(seconds=1)).isoformat(),
         )
+        # compute_portfolio() only enters the exchange-account path when
+        # paper_execution_mode != "paper_internal" (uses_external_exchange=True).
+        # The new config default is "paper_internal", so we must override it
+        # to "okx_demo" to make get_cached_state() be called and Row 2 written.
+        import aletheia.config.loader as loader
+        config = loader.load_config()
+        config.exchange.paper_execution_mode = "okx_demo"
+        monkeypatch.setattr(loader, "load_config", lambda: config)
         # Inject fake exchange cache so Row 2 is written
         import aletheia.portfolio.exchange_sync as es
         fake_state = {
@@ -299,11 +308,14 @@ class TestEquityCurveEndpoint:
     async def test_filters_by_days(self, client):
         c, _ = client
         now = datetime.now(timezone.utc)
+        pre_clean_window = (
+            datetime.fromisoformat(CLEAN_WINDOW_ANCHOR_ISO) - timedelta(minutes=1)
+        )
         _insert_verified_closed_position(
             position_id="curve-days-old", symbol="BTC/USDT",
             entry_price=100.0, realized_pnl=5.0,
             execution_mode="paper_internal",
-            closed_at=(now - timedelta(days=10)).isoformat(),
+            closed_at=pre_clean_window.isoformat(),
             expected_outcome_eligible=False,
         )
         _insert_verified_closed_position(

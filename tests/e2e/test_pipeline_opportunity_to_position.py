@@ -7,7 +7,14 @@ and a valid opportunity can actually flow through to become a position.
 import pytest
 from datetime import datetime, timezone
 
-from aletheia.storage.models import Opportunity, Position, TradeProposal, RiskDecision, Order
+from aletheia.storage.models import (
+    MarketSnapshot,
+    Opportunity,
+    Position,
+    TradeProposal,
+    RiskDecision,
+    Order,
+)
 from aletheia.storage import repositories as repo
 
 
@@ -75,6 +82,33 @@ class TestRiskEngineSeam:
 
     def test_proposal_approved_by_risk_engine(self, e2e_db, monkeypatch):
         """A well-formed proposal passes the risk engine."""
+        from aletheia.config.loader import load_config
+
+        # paper_internal + native proposals require:
+        #   1. a fresh market snapshot at cfg.market_data.ccxt_exchange ("binance")
+        #   2. a valid opportunity_id that matches symbol/market/direction
+        #   3. a complete entry plan (stop_price, take_profit, risk_reward)
+        cfg = load_config()
+        repo.insert_market_snapshot(MarketSnapshot(
+            id="risk-seam-snapshot",
+            symbol="ETH/USDT",
+            market_type="spot",
+            exchange=cfg.market_data.ccxt_exchange,
+            price=1740.0,
+            volume_24h=500_000_000.0,
+            snapshot_at=datetime.now(timezone.utc).isoformat(),
+        ))
+        opp = Opportunity(
+            symbol="ETH/USDT",
+            market="spot",
+            direction_bias="long",
+            confidence="high",
+            confidence_score=78,
+            source_agent="market_observer",
+            scanner_family="momentum",
+        )
+        repo.insert_opportunity(opp)
+
         proposal = TradeProposal(
             symbol="ETH/USDT",
             market_type="spot",
@@ -83,7 +117,10 @@ class TestRiskEngineSeam:
             quantity=0.01,
             price=1740.0,
             execution_mode="paper_internal",
-            stop_price=1740 * 0.98,
+            stop_price=round(1740 * 0.98, 4),
+            take_profit=round(1740 * 1.04, 4),
+            risk_reward=2.0,
+            opportunity_id=opp.id,
         )
         repo.insert_trade_proposal(proposal)
 

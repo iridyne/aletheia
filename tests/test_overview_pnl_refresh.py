@@ -15,7 +15,7 @@ def test_overview_portfolio_and_curve_poll_at_status_cadence() -> None:
     assert "refetchInterval: OVERVIEW_PNL_REFRESH_MS" in pnl_zone
     assert "AccountEquityChart" in pnl_zone
     assert "getAccountEquityHistory" in chart
-    assert "refetchInterval: 10_000" in chart
+    assert "refetchInterval: 60_000" in chart
 
 
 def test_overview_explains_unavailable_realized_pnl() -> None:

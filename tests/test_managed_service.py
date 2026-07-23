@@ -27,6 +27,9 @@ def test_macos_start_and_stop_register_only_for_the_running_session(tmp_path, mo
 
     monkeypatch.setattr(service, "get_data_dir", lambda: tmp_path)
     monkeypatch.setattr(service, "_runner_command", lambda **_kwargs: ["/venv/bin/python", "/app/_gateway_runner.py"])
+    # Simulate the macOS launchd domain without os.getuid() so this test is
+    # hermetic on Windows (#224).
+    monkeypatch.setattr(service, "_macos_domain", lambda: "gui/501")
     calls: list[list[str]] = []
     def launchctl(args):
         calls.append(args)
@@ -83,6 +86,25 @@ def test_windows_task_is_demand_only_without_a_schedule(monkeypatch):
     assert "<AllowStartOnDemand>true</AllowStartOnDemand>" in xml
     assert "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>" in xml
     assert "_gateway_runner.py --no-browser" in xml
+
+
+def test_windows_program_arguments_checks_windows_venv_config_as_filesystem_path(monkeypatch):
+    """Windows-style paths must not call ``exists`` on ``PureWindowsPath``."""
+    from aletheia.gateway import managed_service as service
+
+    monkeypatch.setattr(service.sys, "executable", r"C:\\venv\\Scripts\\python.exe")
+    monkeypatch.setattr(service, "_windows_python", lambda: r"C:\\Python\\pythonw.exe")
+    monkeypatch.setattr(service.Path, "exists", lambda _path: True)
+    monkeypatch.setattr(
+        service,
+        "_runner_command",
+        lambda **_kwargs: [r"C:\\venv\\Scripts\\python.exe", r"C:\\app\\_gateway_runner.py", "--no-browser"],
+    )
+
+    program, arguments = service._windows_program_and_arguments(no_browser=True)
+
+    assert program == r"C:\\Python\\pythonw.exe"
+    assert "site.addsitedir" in arguments
 
 
 def test_windows_start_then_stop_runs_and_removes_the_task(monkeypatch):

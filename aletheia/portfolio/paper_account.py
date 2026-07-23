@@ -99,12 +99,18 @@ def _reserved_margin_usdt(positions: list[dict]) -> float:
 
 def _write_event(*, action: str, amount_usdt: float, actor: str, source: str,
                  position_id: str | None = None, note: str = "") -> PaperAccountEvent:
+    if not math.isfinite(amount_usdt):
+        raise ValueError("paper account event amount must be finite")
     # SQLite is the single serialization authority for the ledger.  This helper
     # may be called from an existing Risk/entry/close transaction; transaction()
     # joins that writer instead of taking a process lock in the opposite order.
     with repo.transaction(immediate=True):
         before = repo.get_paper_account_cash_balance()
+        if not math.isfinite(before):
+            raise RuntimeError("paper account cash balance is not finite")
         after = round(before + amount_usdt, 8)
+        if not math.isfinite(after):
+            raise ValueError("paper account event balance must remain finite")
         if after < -1e-8:
             raise ValueError("paper account cash balance cannot be negative")
         event = PaperAccountEvent(
@@ -143,17 +149,14 @@ def get_paper_account(event_limit: int = 20) -> dict:
     return {
         "cash_balance_usdt": round(cash, 8),
         "reserved_margin_usdt": reserved,
-        # A missing close result makes the spendable account value unknown.
-        # Return zero availability so Risk fails closed until the economics are
-        # reconciled; keep the ledger cash visible but label its completeness.
-        "available_balance_usdt": (
-            round(max(0.0, cash - reserved), 8)
-            if economics_complete
-            else 0.0
-        ),
-        "equity_usdt": (
-            round(cash + unrealized, 8) if economics_complete else None
-        ),
+        # The current cash balance is authoritative even when a futures close has
+        # unsettled funding economics.  Only the *future* funding-cost delta is
+        # unknown; the ledger cash reflects what is actually in the account today.
+        # economics_complete=False is a monitoring signal — it must not zero out
+        # the spendable balance and trigger false account_equity_unavailable rejects
+        # in the Risk engine (#316).
+        "available_balance_usdt": round(max(0.0, cash - reserved), 8),
+        "equity_usdt": round(cash + unrealized, 8),
         "economics_complete": economics_complete,
         "unsettled_closed_positions_count": len(unsettled),
         "open_positions_count": len(positions),
@@ -163,6 +166,8 @@ def get_paper_account(event_limit: int = 20) -> dict:
 
 def adjust_cash(amount_usdt: float, *, note: str = "", actor: str = "human",
                 source: str = "dashboard") -> dict:
+    if not math.isfinite(amount_usdt):
+        raise ValueError("paper account adjustment must be finite")
     if amount_usdt == 0:
         raise ValueError("paper account adjustment must be non-zero")
     ensure_paper_account()
@@ -176,6 +181,8 @@ def adjust_cash(amount_usdt: float, *, note: str = "", actor: str = "human",
 
 def set_cash_balance(amount_usdt: float, *, note: str = "", actor: str = "human",
                      source: str = "dashboard") -> dict:
+    if not math.isfinite(amount_usdt):
+        raise ValueError("paper account cash balance must be finite")
     if amount_usdt < 0:
         raise ValueError("paper account cash balance must be non-negative")
     ensure_paper_account()
@@ -471,25 +478,6 @@ def materialize_position_economics(
     }
 
 
-def _update_position_economics(
-    position_id: str,
-    realized_pnl: float,
-    funding_cost: float,
-    outcome_eligible: bool,
-    outcome_exclusion_reason: str,
-) -> None:
-    from aletheia.storage.sqlite import get_db
-    with repo.transaction(immediate=True):
-        get_db().execute(
-            """UPDATE positions SET
-               realized_pnl=?, funding_cost=?, funding_source='local_simulation',
-               outcome_eligible=?, outcome_exclusion_reason=?
-               WHERE id=?""",
-            (realized_pnl, funding_cost, int(outcome_eligible),
-             outcome_exclusion_reason, position_id),
-        )
-
-
 async def _backfill_historical_funding_for_position(row: dict) -> int:
     """Fetch and store historical funding snapshots for a position's symbol+window.
 
@@ -573,8 +561,6 @@ async def settle_unsettled_paper_closes() -> dict:
             (FUNDING_PERMANENTLY_UNRECOVERABLE,),
         ).fetchall()
     ]
-    if not rows:
-        return {"settled": 0, "still_pending": 0, "errors": []}
 
     settled = 0
     still_pending = 0

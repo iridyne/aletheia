@@ -24,7 +24,7 @@ def test_r0_opportunity_id_flows_opportunity_to_decision(tmp_path, monkeypatch):
     opp = Opportunity(
         symbol="BTC/USDT", market="spot", direction_bias="long",
         scanner_family="momentum", confidence="high", confidence_score=80,
-        status="open", asset_class="crypto",
+        status="queued", asset_class="crypto",
     )
     insert_opportunity(opp)
     insert_pi_decision(PiDecision(

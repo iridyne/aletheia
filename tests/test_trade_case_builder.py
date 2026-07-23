@@ -338,3 +338,58 @@ def test_case_carries_market_type_for_perp_vs_spot():
 
     row2 = _make_row()  # default market_type="spot"
     assert _build_case_from_row(row2)["market_type"] == "spot"
+
+
+@patch("aletheia.analytics.trade_case_builder.create_guard_candidate")
+@patch("aletheia.analytics.trade_case_builder._get_existing_guard_ids")
+@patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
+def test_factor_guard_candidate_scoped_to_symbol_not_crypto(mock_rows, mock_guards, mock_create):
+    """Regression test for #193: _create_factor_guard_candidate must scope the
+    guard candidate to (symbol, scanner_family, direction), not asset_class=crypto.
+    A BTC loss pattern must not produce a guard matching ETH or SOL candidates."""
+    captured = {}
+
+    def fake_create(title, content, metadata):
+        captured.update(metadata)
+        return MagicMock(id="guard-item-1")
+
+    mock_create.side_effect = fake_create
+    mock_guards.return_value = set()
+    loss_rows = [
+        _make_row(
+            position_id=f"pos-{i}",
+            symbol="BTC/USDT",
+            direction="long",
+            scanner_family="momentum",
+            realized_pnl=-5.0,
+            realized_pnl_pct=-2.5,
+            late_entry_penalty=15,  # triggers late_entry_penalty predicate
+            close_reason="stop_loss",
+            opened_at=f"2026-06-0{i + 1}T10:00:00+00:00",
+        )
+        for i in range(4)
+    ]
+    mock_rows.return_value = loss_rows
+
+    result = detect_guard_candidates(min_losses=3)
+
+    assert result, "expected at least one guard candidate"
+    mock_create.assert_called_once()
+
+    applies_to = captured.get("applies_to", {})
+    # Must include concrete symbol scope — not a broad asset_class filter.
+    assert "symbol" in applies_to, f"applies_to must contain symbol scope, got: {applies_to}"
+    assert "BTC/USDT" in applies_to["symbol"], (
+        f"expected BTCUSDT or BTC/USDT in symbol scope, got: {applies_to['symbol']}"
+    )
+    assert "scanner_family" in applies_to, f"applies_to must contain scanner_family, got: {applies_to}"
+    assert "momentum" in applies_to["scanner_family"]
+    assert "direction" in applies_to, f"applies_to must contain direction, got: {applies_to}"
+    assert "long" in applies_to["direction"]
+    # Must NOT be a broad crypto scope.
+    assert "asset_class" not in applies_to or applies_to.get("asset_class") != ["crypto"], (
+        "applies_to must not fall back to asset_class=crypto when concrete scope is derivable"
+    )
+    # Candidate must still be shadow-only.
+    assert captured.get("shadow_only") is True
+    assert captured.get("block_candidate") is False

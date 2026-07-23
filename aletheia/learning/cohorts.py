@@ -24,35 +24,29 @@ from aletheia.storage.sqlite import get_db
 
 SUPPORTED_PATH_ID = "universe_family_calibration"
 # Consumer wiring is not causal measurement support. A path enters this set only
-# after its exact outcome and statistical-unit contracts are executable.
+# after its exact outcome and statistical-unit contracts are executable AND have
+# focused passing cohort tests that exercise the full round-trip.
 #
-# Outcome contract families:
-#   A — universe_forward_outcomes (universe-keyed, {learning_key}:{horizon}):
-#       universe_family_calibration, observer_advisory_bundle, ranker_factor_filter
-#   B — filter_candidate_outcomes + universe_forward_outcomes mirror (family-keyed,
-#       resolved via _filter_base_key strip of :{horizon}):
-#       operator_learning_bundle, ranker_case_score, ranker_memo_score
+# Currently only universe_family_calibration qualifies:
+#   - outcome contract: universe_forward_outcomes (universe-keyed, {learning_key}:{horizon})
+#   - allocation_selected: populated by universe/service._register_experiment_candidate_outcomes
+#   - statistical unit: full-arm Universe allocation member
 #
-# observer_advisory_bundle: candidate_key = observer-run key; outcome_candidate_key
-#   = u_member.learning_candidate_key:4h — resolves via universe_forward_outcomes.
-# operator_learning_bundle: uses the fixed_horizon_candidate outcome contract
-#   (opportunity:{id}:{horizon}) and the boolean-treatment exposure path (same as
-#   universe_family_calibration), so the existing cohort builder handles it without
-#   modification. Known measurement bias: serenity_opportunities appears in both
-#   arms (GAP-02, Phase 4); this produces a conservative underestimate of the
-#   bundle effect rather than a false positive.
-# ranker_case_score/memo_score: outcome_candidate_key = {learning_candidate_key}:4h
-#   (family-anchored, only truthy after opportunity metadata carries the key — see
-#   market_observer._analyze_symbol) — resolves via filter_candidate_outcomes (with
-#   allocation_selected populated by universe/service._register_experiment_candidate_outcomes)
-#   or via universe_forward_outcomes fallback.
+# The paths below are consumer_wired (the runtime reads their authority) but are
+# NOT measurement_supported — the cohort builder's _load_exact_outcomes requires
+# allocation_selected to be non-null, which their filter_candidate_outcomes rows
+# cannot supply by contract. Including them causes lifecycle to emit
+# "missing_allocation_result" → "invalid" for experiments whose outcomes are
+# still legitimately pending. See issue #324 for the full audit.
+#
+# Paths blocked from measurement until per-path cohort adapters are implemented:
+#   operator_learning_bundle:   emitted-opportunity observations, allocation_selected=NULL by contract
+#   observer_advisory_bundle:   needs path-specific statistical-unit/outcome contract
+#   ranker_case_score:          needs path-specific statistical-unit/outcome contract
+#   ranker_memo_score:          needs path-specific statistical-unit/outcome contract
+#   ranker_factor_filter:       needs path-specific statistical-unit/outcome contract
 SUPPORTED_PATH_IDS = frozenset({
     SUPPORTED_PATH_ID,
-    "operator_learning_bundle",
-    "observer_advisory_bundle",
-    "ranker_case_score",
-    "ranker_memo_score",
-    "ranker_factor_filter",
 })
 
 

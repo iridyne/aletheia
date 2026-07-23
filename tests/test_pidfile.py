@@ -124,6 +124,37 @@ def test_find_port_holders_posix_queries_listeners_only(monkeypatch):
     ]
 
 
+def test_find_port_holders_windows_decodes_bytes_lossily(monkeypatch):
+    """Windows netstat output with non-ASCII bytes must not raise; listener PID
+    is still parsed correctly from the ASCII port/PID fields (#232)."""
+    from types import SimpleNamespace
+    from aletheia.gateway import pidfile
+
+    seen: dict = {}
+    # Simulate netstat -ano output with a replacement-worthy byte sequence
+    # embedded before the real listener line.
+    netstat_bytes = (
+        b"  Proto  Local Address          Foreign Address        State           PID\n"
+        b"  \xff\xfe  garbled localized line\n"
+        b"  TCP    0.0.0.0:8787           0.0.0.0:0              LISTENING       5678\n"
+    )
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        seen["text"] = kwargs.get("text")
+        return SimpleNamespace(stdout=netstat_bytes)
+
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(pidfile.subprocess, "run", fake_run)
+    monkeypatch.setattr(pidfile.os, "getpid", lambda: 9999)
+    monkeypatch.setattr(pidfile, "_no_window_kwargs", lambda: {})
+
+    result = pidfile.find_port_holders(8787)
+    assert result == [5678]
+    assert seen["command"] == ["netstat", "-ano"]
+    assert seen.get("text") is None  # must NOT use text=True
+
+
 def test_kill_pid_tree_windows_uses_ctypes_not_subprocess(monkeypatch):
     """On Windows, kill_pid_tree uses pure ctypes (no taskkill spawn), so no
     console window flash during orphan cleanup or gateway stop."""

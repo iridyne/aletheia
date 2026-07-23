@@ -360,10 +360,13 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
     _report_only_gate(
         name="active_operator_carrier",
         stage="paper_trader_selection",
-        reason_codes=("active_operator_carrier",),
-        current_value="one unresolved carrier per symbol/direction/scanner-family setup",
+        reason_codes=("active_operator_carrier", "opposing_direction_queued"),
+        current_value="one unresolved carrier per symbol (any direction)",
         note="A newer snapshot generation remains analysis evidence but cannot create a "
-             "second queue carrier while the same setup is already awaiting Operator.",
+             "second queue carrier while the same setup is already awaiting Operator. "
+             "opposing_direction_queued fires when the opposing direction (long vs short) "
+             "is already in the queue — prevents both sides of the same symbol from "
+             "consuming evaluation slots simultaneously.",
         authority_class="attention_ranking",
     ),
     _report_only_gate(

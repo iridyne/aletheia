@@ -19,6 +19,7 @@ def test_openapi_export_script_writes_schema(tmp_path):
         capture_output=True,
         text=True,
         check=True,
+        timeout=60,
     )
 
     schema = json.loads(output.read_text(encoding="utf-8"))

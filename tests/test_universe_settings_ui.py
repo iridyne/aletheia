@@ -114,7 +114,7 @@ def test_p3_pages_use_shared_primitives_instead_of_ad_hoc_capsules_and_buttons()
         "NewsIntel.tsx",
         "Overview.tsx",
         "PredictionLens.tsx",
-        "Proposals.tsx",
+        "Blotter.tsx",
         "RiskControls.tsx",
         "SerenityLens.tsx",
         "TradesPositions.tsx",

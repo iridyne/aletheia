@@ -888,3 +888,187 @@ def test_volume_ranking_rows_preserve_instrument_identity():
     block = source[source.index("# Inject volume-ranking symbols"):source.index("features_list =")]
     assert "assets.sort" in block
     assert "upsert_universe_asset" not in block
+
+
+# ---------------------------------------------------------------------------
+# UP-27 — learning_candidate_key persists through universe_members round-trip
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "UP-27", "universe_pipeline", "§observer-learning outcome identity persistence", "L2b",
+        "learning_candidate_key written during universe refresh must survive the "
+        "insert→read-back cycle so market observer can carry the 4h outcome key "
+        "into learning exposures after a process restart (#323).",
+        status="implemented",
+    ),
+)
+def test_learning_candidate_key_persists_round_trip(tmp_path, monkeypatch):
+    """#323: universe_members.learning_candidate_key must be persisted.
+
+    Three-layer check (mirrors test_all_scores_persists_round_trip):
+      1. UniverseMember.model_fields contains learning_candidate_key
+      2. _ADDITIVE_COLUMNS registers (learning_candidate_key, universe_members)
+      3. insert → read-back: the key value survives the DB round-trip
+    """
+    import sqlite3
+
+    from aletheia.storage.models import UniverseMember
+    assert "learning_candidate_key" in UniverseMember.model_fields, (
+        "UniverseMember missing learning_candidate_key field"
+    )
+
+    from aletheia.storage.migrations import _ADDITIVE_COLUMNS
+    cols = {(c, t) for c, t, _ in _ADDITIVE_COLUMNS}
+    assert ("learning_candidate_key", "universe_members") in cols, (
+        "_ADDITIVE_COLUMNS does not register universe_members.learning_candidate_key "
+        "— column won't exist after migration, model_dump write will fail silently"
+    )
+
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    sq._db_conn = conn
+    run_migrations()
+
+    candidate_key = "BTC/USDT:spot:4h:2026-07-22T12:00:00+00:00"
+    member = UniverseMember(
+        snapshot_id="snap-323", asset_id="asset-btc", symbol="BTC/USDT",
+        rank=1, total_score=75.0, scanner_family="momentum",
+        learning_candidate_key=candidate_key,
+    )
+    repo.insert_universe_member(member)
+
+    row = conn.execute(
+        "SELECT learning_candidate_key FROM universe_members WHERE id=?", (member.id,)
+    ).fetchone()
+    assert row is not None, "member not persisted"
+    assert row["learning_candidate_key"] == candidate_key, (
+        f"learning_candidate_key not round-tripped: got {row['learning_candidate_key']!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# UP-26 — live-duplicate suppression prevents scanner flooding (#326)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "UP-26", "universe_pipeline", "§signal emission live-duplicate guard (#326)", "L2b",
+        "emit_deterministic_opportunities must suppress a new signal for symbol+direction "
+        "when a live (open/queued, non-expired) opportunity for the same symbol+direction+market "
+        "already exists in the evaluation queue. Without this, fast-signalling symbols emit "
+        "a new slot-stealing candidate every 10 min while prior ones are still pending (#326).",
+        status="implemented",
+    ),
+)
+def test_live_duplicate_suppressed_when_active_opportunity_exists(tmp_path, monkeypatch):
+    """#326: a second emission for the same symbol+direction must be suppressed.
+
+    Two calls to emit_deterministic_opportunities with identical symbol+direction:
+    - First call: no live opportunity exists → emits 1 opportunity.
+    - Second call (different snapshot_id): live opportunity still open → suppressed.
+    """
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sq
+    import aletheia.storage.repositories as repo
+    from aletheia.storage.migrations import run_migrations
+
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "live_dup_test.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    sq._db_conn = conn
+    run_migrations()
+
+    from aletheia.universe.signal_emitter import emit_deterministic_opportunities
+    from aletheia.storage.models import UniverseSnapshot, UniverseMember
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
+    cfg.universe.enabled = True
+    cfg.regime.enabled = False
+    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
+    cfg.market_data.ccxt_exchange = "binance"
+
+    now = datetime.now(timezone.utc)
+    expires_at = (now + timedelta(minutes=60)).isoformat()
+
+    def _make_member(snapshot_id: str) -> tuple[dict, dict]:
+        snap = UniverseSnapshot(
+            id=snapshot_id, exchange="binance", market_type="spot",
+            universe_size=1, created_at=now.isoformat(),
+        )
+        repo.insert_universe_snapshot(snap)
+        member = UniverseMember(
+            snapshot_id=snapshot_id, asset_id=f"asset-{snapshot_id}",
+            symbol="SNDK/USDT", rank=1, total_score=75.0,
+            scanner_family="momentum", expires_at=expires_at,
+        )
+        repo.insert_universe_member(member)
+        feat = {
+            "asset_id": f"asset-{snapshot_id}",
+            "symbol": "SNDK/USDT",
+            "venue": "binance",
+            "market_type": "spot",
+            "last_price": 50.0,
+            "quote_volume_24h": 100_000_000.0,
+            "spread_bps": 5.0,
+            "execution_eligible": True,
+            "scanner_family": "momentum",
+            "scanner_direction": "short",
+            "reasons": ["RS24h -6.0% vs BTC"],
+            "total_score": 75.0,
+            "return_4h": -4.0,
+            "relative_strength_24h": -6.0,
+        }
+        return [member.model_dump()], [feat]
+
+    monkeypatch.setattr(
+        "aletheia.universe.signal_emitter.lookup_factor_signal", lambda _: {}
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.signal_emitter.has_fresh_market_snapshot", lambda *a, **kw: True
+    )
+
+    members1, feats1 = _make_member("snap-flood-1")
+    created1 = emit_deterministic_opportunities(
+        members1, "snap-flood-1", feats1
+    )
+    assert created1 == 1, f"first emission should create 1 opportunity, got {created1}"
+
+    members2, feats2 = _make_member("snap-flood-2")
+    created2 = emit_deterministic_opportunities(
+        members2, "snap-flood-2", feats2
+    )
+    assert created2 == 0, (
+        f"second emission must be suppressed (live_duplicate_suppressed) — got {created2}; "
+        "the live-duplicate guard at signal_emitter.py is missing or bypassed"
+    )
+
+    # Confirm the suppression reason is recorded in filter_decisions.
+    rows = conn.execute(
+        "SELECT reason_code FROM filter_decisions "
+        "WHERE symbol='SNDK/USDT' AND filter_name='opportunity_emission' "
+        "AND decision='rejected' ORDER BY evaluated_at DESC LIMIT 5"
+    ).fetchall()
+    reason_codes = {r["reason_code"] for r in rows}
+    assert "live_duplicate_suppressed" in reason_codes, (
+        f"expected live_duplicate_suppressed in filter_decisions; got {reason_codes}"
+    )

@@ -40,6 +40,10 @@ def test_three_consecutive_collector_problems_emit_one_operator_warning(
     from aletheia.data import collector_health
     from aletheia.infra.events import clear_infra_events, list_infra_events
 
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.connectivity.get_status",
+        lambda: {"external_connectivity": {"state": "reachable"}},
+    )
     clear_infra_events()
     for tick in (1, 6, 11):
         collector_health.record_collector_status(
@@ -57,6 +61,30 @@ def test_three_consecutive_collector_problems_emit_one_operator_warning(
     assert len(warnings) == 1
     assert warnings[0]["entity_id"] == "defillama"
     assert "3 consecutive" in warnings[0]["message"]
+
+
+def test_connectivity_dependent_collector_problem_is_informational(
+    collector_db, monkeypatch
+):
+    from aletheia.data import collector_health
+    from aletheia.infra.events import clear_infra_events, list_infra_events
+
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.connectivity.get_status",
+        lambda: {"external_connectivity": {"state": "unavailable"}},
+    )
+    clear_infra_events()
+    for tick in (1, 6, 11):
+        collector_health.record_collector_status("defillama", "failed", tick=tick)
+
+    events = [
+        event
+        for event in list_infra_events()
+        if event["code"] == "collector_problem_dependent_connectivity"
+    ]
+    assert len(events) == 1
+    assert events[0]["severity"] == "info"
+    assert events[0]["metadata"]["dependent_on"] == "external_connectivity"
 
 
 def test_skipped_budget_does_not_count_toward_consecutive_problems(collector_db):
@@ -122,3 +150,151 @@ def test_result_classifier_distinguishes_empty_partial_and_not_configured():
     assert classify_collector_result({"snapshots": [object()], "errors": ["one"]}) == "partial"
     assert classify_collector_result({"snapshots": [], "errors": ["one"]}) == "failed"
     assert classify_collector_result({"errors": ["no_key"]}) == "not_configured"
+
+
+def test_report_attributes_cross_source_failures_to_external_connectivity(collector_db):
+    from aletheia.data.collector_health import (
+        get_collector_health_report,
+        record_collector_status,
+    )
+
+    now = datetime.now(timezone.utc)
+    occurred_at = (now - timedelta(seconds=20)).isoformat()
+    record_collector_status("microstructure", "failed", tick=1, occurred_at=occurred_at)
+    record_collector_status("coingecko_top", "timed_out", tick=1, occurred_at=occurred_at)
+
+    report = get_collector_health_report(
+        now=now,
+        connectivity_status={
+            "state": "unavailable",
+            "severity": "warning",
+            "priority": 1,
+            "observed_at": (now - timedelta(seconds=5)).timestamp(),
+            "outage_started_at": (now - timedelta(seconds=30)).timestamp(),
+            "last_recovery_at": None,
+            "stale_after_sec": 180,
+        },
+    )
+
+    incident = report["infrastructure_incident"]
+    assert incident["code"] == "external_connectivity_unavailable"
+    assert incident["status"] == "active"
+    assert incident["priority"] == 1
+    assert incident["affected_domains"] == ["microstructure", "coingecko_top"]
+    affected = {
+        row["domain"]: row
+        for row in report["domains"]
+        if row["domain"] in incident["affected_domains"]
+    }
+    assert {row["display_status"] for row in affected.values()} == {
+        "blocked_by_connectivity"
+    }
+    assert {row["attributed_cause"] for row in affected.values()} == {
+        "external_connectivity_unavailable"
+    }
+    assert {row["display_severity"] for row in affected.values()} == {"info"}
+
+
+def test_report_keeps_collector_warning_when_external_network_is_reachable(collector_db):
+    from aletheia.data.collector_health import (
+        get_collector_health_report,
+        record_collector_status,
+    )
+
+    now = datetime.now(timezone.utc)
+    occurred_at = (now - timedelta(seconds=20)).isoformat()
+    record_collector_status("microstructure", "failed", tick=1, occurred_at=occurred_at)
+    record_collector_status("derivatives", "failed", tick=1, occurred_at=occurred_at)
+
+    report = get_collector_health_report(
+        now=now,
+        connectivity_status={
+            "state": "reachable",
+            "severity": "ok",
+            "priority": 4,
+            "observed_at": (now - timedelta(seconds=5)).timestamp(),
+            "outage_started_at": None,
+            "last_recovery_at": None,
+            "stale_after_sec": 180,
+        },
+    )
+
+    assert report["infrastructure_incident"] is None
+    rows = {
+        row["domain"]: row
+        for row in report["domains"]
+        if row["domain"] in {"microstructure", "derivatives"}
+    }
+    assert {row["display_status"] for row in rows.values()} == {"failed"}
+    assert {row["attributed_cause"] for row in rows.values()} == {None}
+    assert {row["display_severity"] for row in rows.values()} == {"warning"}
+
+
+def test_report_does_not_attribute_failures_that_predate_current_outage(collector_db):
+    from aletheia.data.collector_health import (
+        get_collector_health_report,
+        record_collector_status,
+    )
+
+    now = datetime.now(timezone.utc)
+    old_failure = (now - timedelta(hours=1)).isoformat()
+    record_collector_status("microstructure", "failed", tick=1, occurred_at=old_failure)
+    record_collector_status("coingecko_top", "timed_out", tick=1, occurred_at=old_failure)
+
+    report = get_collector_health_report(
+        now=now,
+        connectivity_status={
+            "state": "unavailable",
+            "severity": "warning",
+            "priority": 1,
+            "observed_at": (now - timedelta(seconds=5)).timestamp(),
+            "outage_started_at": (now - timedelta(seconds=30)).timestamp(),
+            "last_recovery_at": None,
+            "stale_after_sec": 180,
+        },
+    )
+
+    assert report["infrastructure_incident"]["code"] == "external_connectivity_unavailable"
+    assert report["infrastructure_incident"]["affected_domains"] == []
+
+
+def test_report_keeps_pre_recovery_failures_under_one_recovery_notice(collector_db):
+    from aletheia.data.collector_health import (
+        get_collector_health_report,
+        record_collector_status,
+    )
+
+    now = datetime.now(timezone.utc)
+    failed_at = now - timedelta(minutes=2)
+    recovered_at = now - timedelta(seconds=30)
+    record_collector_status(
+        "coingecko_top", "timed_out", tick=1, occurred_at=failed_at.isoformat()
+    )
+    record_collector_status(
+        "macro", "timed_out", tick=1, occurred_at=failed_at.isoformat()
+    )
+
+    report = get_collector_health_report(
+        now=now,
+        connectivity_status={
+            "state": "recovering",
+            "severity": "info",
+            "priority": 2,
+            "observed_at": recovered_at.timestamp(),
+            "outage_started_at": (now - timedelta(minutes=10)).timestamp(),
+            "last_recovery_at": recovered_at.timestamp(),
+            "stale_after_sec": 180,
+        },
+    )
+
+    incident = report["infrastructure_incident"]
+    assert incident["code"] == "external_connectivity_recovering"
+    assert incident["status"] == "recovering"
+    assert incident["affected_domains"] == ["coingecko_top", "macro"]
+    rows = {
+        row["domain"]: row
+        for row in report["domains"]
+        if row["domain"] in incident["affected_domains"]
+    }
+    assert {row["display_status"] for row in rows.values()} == {"waiting_for_retry"}
+    assert {row["display_severity"] for row in rows.values()} == {"info"}

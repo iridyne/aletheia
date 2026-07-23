@@ -88,7 +88,7 @@ export const NAV: NavGroup[] = [
  * Topbar StatusBar — Bloomberg-style "instrument cluster" replacing the prior 5-pill row.
  *
  * Three semantic blocks (left → right):
- *   1. STATUS CLUSTER  — three dots (gateway / live / kill) + heartbeat + state word.
+ *   1. STATUS CLUSTER  — status dots (gateway / connectivity / live / kill) + heartbeat + state word.
  *      Hover → popover with the full status detail (gateway, scheduler, exchange, model,
  *      live-state, permission, kill-switch, last-run age). The popover replaces the
  *      former pills' diffuse hover-titles with one focused panel.
@@ -127,6 +127,16 @@ function parseIssue(raw: string): { label: string; value: string; tone: 'yellow'
 
 function eventTone(e: InfraEvent): 'yellow' | 'red' {
   return e.severity === 'critical' ? 'red' : 'yellow'
+}
+
+function eventPriority(e: InfraEvent, connectivityState: string): number {
+  if (e.code === 'external_connectivity_unavailable') {
+    return connectivityState === 'unavailable' ? 0 : 5
+  }
+  if (e.severity === 'critical') return 1
+  if (e.code === 'external_connectivity_restored') return 2
+  if (e.severity === 'warning') return 3
+  return 4
 }
 
 function fmtEventTime(iso: string): string {
@@ -192,7 +202,10 @@ function StatusBar() {
   const driftIssue = (health?.issues || []).find(i => i.startsWith('code_updated_pending_restart:')) || ''
   const driftRange = driftIssue ? driftIssue.replace('code_updated_pending_restart:', '') : ''
   const healthIssues = (health?.issues || []).filter(i => !i.startsWith('code_updated_pending_restart:'))
-  const recentInfraEvents = (infraEvents?.events || data?.infra_events || []).slice(0, 5)
+  const connectivityState = data?.external_connectivity?.state || 'unknown'
+  const recentInfraEvents = [...(infraEvents?.events || data?.infra_events || [])]
+    .sort((a, b) => eventPriority(a, connectivityState) - eventPriority(b, connectivityState) || Date.parse(b.created_at) - Date.parse(a.created_at))
+    .slice(0, 5)
 
   useEffect(() => {
     return () => {
@@ -284,6 +297,10 @@ function StatusBar() {
     ? !!data.scheduler_running
     : (!paused && !!data.scheduler_enabled)
   const killed = !!ks?.active
+  const connectivityLight = connectivityState === 'reachable' ? 'green'
+    : connectivityState === 'unavailable' ? 'red'
+    : connectivityState === 'recovering' ? 'yellow'
+    : 'muted'
 
   const latestRun = (runs as any[])[0]
   let heartbeatText = ''
@@ -329,6 +346,7 @@ function StatusBar() {
       <div className="status-cluster" tabIndex={0} aria-label="System status">
         <span className="status-cluster-lights" aria-hidden="true">
           <span className={`dot dot-${gwLight}`} />
+          <span className={`dot dot-${connectivityLight}`} />
           <span className={`dot dot-${liveLight}`} />
           <span className={`dot dot-${killLight}`} />
           {driftIssue && <span className="dot dot-yellow" title={`Code drift: ${driftRange} — restart needed`} />}
@@ -390,6 +408,11 @@ function StatusBar() {
           {/* Section 2: Infrastructure */}
           <div className="sp-section">
             <div className="sp-section-label">Infrastructure</div>
+            <div className="sp-row">
+              <span className={`dot dot-${connectivityLight}`} />
+              <span className="sp-label">Connectivity</span>
+              <span className="sp-value">{connectivityState}</span>
+            </div>
             <div className="sp-row">
               <span className="sp-label">Exchange</span>
               <span className="sp-value">{exchangeLabel}</span>

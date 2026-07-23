@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import asyncio
+from datetime import datetime, timedelta, timezone
 
 
 def _closed_position(
@@ -316,3 +317,96 @@ def test_orphaned_ledger_entry_is_inline_reconciled_and_does_not_block():
     assert snapshot.available is True, f"Expected available, got: {snapshot.reason}"
     assert snapshot.source == "paper_account_ledger"
     assert abs(snapshot.realized_pnl_usdt - (-5.0)) < 1e-6
+
+
+def test_funding_settler_repairs_orphan_when_no_unsettled_rows_exist():
+    from aletheia.portfolio.paper_account import (
+        ensure_paper_account,
+        settle_unsettled_paper_closes,
+    )
+    from aletheia.storage import repositories as repo
+
+    ensure_paper_account()
+    _orphaned_paper_close("orphan-only", -4.0)
+
+    result = asyncio.run(settle_unsettled_paper_closes())
+
+    event = repo.get_db().execute(
+        "SELECT amount_usdt FROM paper_account_events "
+        "WHERE action='position_closed' AND position_id=?",
+        ("orphan-only",),
+    ).fetchone()
+    assert event is not None
+    assert float(event["amount_usdt"]) == -4.0
+    assert result == {
+        "settled": 1,
+        "still_pending": 0,
+        "gave_up": 0,
+        "errors": [],
+    }
+
+
+def test_delayed_previous_day_settlement_is_not_today_phantom():
+    from aletheia.portfolio.account_loss import authoritative_account_realized_loss
+    from aletheia.portfolio.paper_account import (
+        ensure_paper_account,
+        settle_position_closed,
+    )
+    from aletheia.storage import repositories as repo
+
+    ensure_paper_account()
+    _orphaned_paper_close("delayed-settlement", -6.0)
+    repo.update_position(
+        "delayed-settlement",
+        closed_at=(datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+    )
+    settle_position_closed("delayed-settlement", -6.0)
+
+    snapshot = authoritative_account_realized_loss("paper_internal")
+
+    assert snapshot.available is True
+    assert snapshot.reason == "available"
+    assert snapshot.realized_pnl_usdt == 0.0
+    assert snapshot.loss_usdt == 0.0
+    assert snapshot.event_count == 0
+
+
+def test_delayed_previous_day_settlement_with_wrong_amount_remains_unavailable():
+    from aletheia.portfolio.account_loss import authoritative_account_realized_loss
+    from aletheia.portfolio.paper_account import (
+        ensure_paper_account,
+        settle_position_closed,
+    )
+    from aletheia.storage import repositories as repo
+
+    ensure_paper_account()
+    _orphaned_paper_close("delayed-corrupt-settlement", -6.0)
+    repo.update_position(
+        "delayed-corrupt-settlement",
+        closed_at=(datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+    )
+    settle_position_closed("delayed-corrupt-settlement", -6.0)
+    _corrupt_paper_close_event("delayed-corrupt-settlement", -5.0)
+
+    snapshot = authoritative_account_realized_loss("paper_internal")
+
+    assert snapshot.available is False
+    assert snapshot.reason == "paper_ledger_mismatch"
+    assert snapshot.realized_pnl_usdt is None
+
+
+def test_new_close_event_without_valid_paper_position_remains_unavailable():
+    from aletheia.portfolio.account_loss import authoritative_account_realized_loss
+    from aletheia.portfolio.paper_account import (
+        ensure_paper_account,
+        settle_position_closed,
+    )
+
+    ensure_paper_account()
+    settle_position_closed("missing-position", -1.0)
+
+    snapshot = authoritative_account_realized_loss("paper_internal")
+
+    assert snapshot.available is False
+    assert snapshot.reason == "paper_ledger_mismatch"
+    assert snapshot.realized_pnl_usdt is None

@@ -1,5 +1,6 @@
 """B1.1 regression: Ranker supply drought cannot permanently seal PI input."""
 
+import json
 from pathlib import Path
 from datetime import timedelta
 
@@ -79,7 +80,14 @@ def test_auto_tightened_confidence_recovers_when_ranker_starves_pi(tmp_path):
             "AND ended_at IS NULL"
         ).fetchone()
         assert epoch is not None
-        assert '"version": "b1.1"' in epoch[0]
+        # Assert recovery semantics, not a historical version label (#213).
+        effective = json.loads(epoch[0])
+        assert effective.get("auto_tightened_confidence_supply_recovery") is True, (
+            "recovery epoch must enable auto_tightened_confidence_supply_recovery"
+        )
+        assert effective.get("aggregate_signal_health_config_tightening") is False, (
+            "recovery epoch must disable retired aggregate_signal_health_config_tightening"
+        )
         assert_invariants(harness)
 
 

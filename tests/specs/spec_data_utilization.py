@@ -32,6 +32,7 @@ _LOCAL_FUNDING = _ROOT / "aletheia" / "portfolio" / "local_funding.py"
 _PAPER_ACCOUNT = _ROOT / "aletheia" / "portfolio" / "paper_account.py"
 _VERGEX_STRUCTURE = _ROOT / "aletheia" / "data" / "collectors" / "vergex_structure.py"
 _POSITION_X = _ROOT / "aletheia" / "data" / "position_x.py"
+_MARKET_DATA = _ROOT / "aletheia" / "trading" / "market_data.py"
 _DATA_UTILIZATION_DOC = _ROOT / "docs" / "design" / "data" / "data_utilization.md"
 _API_REFERENCE_DOC = _ROOT / "docs" / "design" / "api" / "api_reference.md"
 
@@ -40,7 +41,7 @@ _CONTRACT = "data_utilization_contract"
 
 @spec_claim(
     SpecClaim(
-        "DU-S23", _CONTRACT, "§3 primary funding delayed recovery", "L2c",
+        "DU-S24", _CONTRACT, "§3 primary funding delayed recovery", "L2c",
         "Persisted primary-venue funding history is explicitly consumed by the "
         "local-paper historical-ledger settler without being represented as a "
         "broker account ledger.",
@@ -72,6 +73,27 @@ def test_operator_evaluation_observation_is_registered_and_consumed_read_only():
     assert "observation-only" in doc
     assert "operator_evaluation_events" in doctor
     assert "def _probe_skip_halt" in doctor
+
+
+@spec_claim(
+    SpecClaim(
+        "DU-S23", _CONTRACT, "§3 xStock listing status", "L2a",
+        "The venue-specific xStock listing source is registered, bounded, fail-open for "
+        "configured intent, and its confirmed-removal consumer writes a system audit.",
+        status="implemented",
+    ),
+)
+def test_xstock_listing_source_is_registered_and_bounded():
+    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
+    source = _MARKET_DATA.read_text(encoding="utf-8")
+
+    assert "xStock 上市状态" in doc and "DU-S23" in doc
+    assert "native_ccxt=True" in source
+    assert "fallback_exchange=exchange_name" in source
+    assert "_XSTOCK_LISTING_TIMEOUT_SEC" in source
+    assert "listing_cache" in source
+    assert "xstock_observation_config_auto_removed" in source
+    assert '"actor": "system"' in source
 
 
 # ---------------------------------------------------------------------------

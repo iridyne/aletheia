@@ -292,6 +292,225 @@ def test_xstock_consecutive_failures_trigger_infra_event(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# PL-MD-08  L2b  xstock_auto_remove: delist error removes symbol from config
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-MD-08", "pipeline_market_data", "§4 xstock_auto_remove", "L2b",
+        "When xStock fetch fails and live market-list check confirms symbol absent "
+        "on the responsible exchange, remove it from current and legacy config fields, "
+        "audit the mutation, and reuse one venue listing per collection cycle",
+        status="implemented",
+    ),
+)
+def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monkeypatch):
+    """Confirmed absence clears both config fields and records the system mutation.
+
+    The check uses the exchange responsible for this specific token (instrument.exchange),
+    not a substitute venue. Two failures on that venue still load its listing only once.
+    """
+    import asyncio
+    import aletheia.trading.market_data as md_mod
+    import aletheia.config.loader as loader_mod
+    import aletheia.data.ccxt_provider as ccxt_mod
+
+    _setup_db(tmp_path, monkeypatch)
+
+    md_mod._xstock_failure_counts.clear()
+
+    from aletheia.config.schema import AletheiaConfig, MarketDataConfig
+    cfg = AletheiaConfig()
+    cfg.market_data = MarketDataConfig(
+        observed_symbols=[],
+        observed_stock_tokens=["AAPLON/USDT", "TSLAON/USDT"],
+        observed_xstocks=["AAPLON/USDT", "TSLAON/USDT"],
+        ccxt_exchange="binance",
+    )
+
+    monkeypatch.setattr(md_mod, "load_config", lambda: cfg)
+    monkeypatch.setattr(loader_mod, "load_config", lambda: cfg)
+
+    saved_configs: list = []
+    monkeypatch.setattr(loader_mod, "save_config", lambda c: saved_configs.append(c))
+
+    import aletheia.files.jsonl as jsonl_mod
+    audit_events: list[dict] = []
+    monkeypatch.setattr(jsonl_mod, "write_audit", lambda event: audit_events.append(event))
+
+    try:
+        import aletheia.infra.events as events_mod
+        monkeypatch.setattr(events_mod, "emit_infra_event", lambda **kwargs: None)
+    except (ImportError, AttributeError):
+        pass
+
+    monkeypatch.setattr(md_mod, "_build_dynamic_instruments", lambda cfg: [])
+
+    listing_calls: list[str] = []
+
+    async def _no_listed_symbols(exchange_name):
+        listing_calls.append(exchange_name)
+        assert exchange_name == "bitget", (
+            f"Must query the responsible exchange (bitget), got '{exchange_name}'"
+        )
+        return frozenset()
+
+    monkeypatch.setattr(md_mod, "_listed_symbols_on_exchange", _no_listed_symbols)
+
+    class _FailingProvider:
+        async def get_ticker(self, instrument):
+            raise RuntimeError("fetch failed")
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(ccxt_mod, "CCXTProvider", lambda **kwargs: _FailingProvider())
+    monkeypatch.setattr(ccxt_mod, "get_market_data_provider", lambda: _FailingProvider())
+
+    asyncio.run(md_mod.collect_market_snapshots())
+
+    assert saved_configs, (
+        "save_config was not called after confirmed-absent listing verification"
+    )
+    from aletheia.data.symbols import to_canonical
+    removed = {"AAPLON/USDT", "TSLAON/USDT"}
+    for field in ("observed_stock_tokens", "observed_xstocks"):
+        tokens = list(getattr(saved_configs[-1].market_data, field) or [])
+        assert not removed.intersection({to_canonical(t) for t in tokens}), (
+            f"confirmed-absent tokens remain in {field}: {tokens}"
+        )
+    assert listing_calls == ["bitget"]
+    assert {event["entity_id"] for event in audit_events} == removed
+    assert all(event["actor"] == "system" for event in audit_events)
+    assert all(event["source"] == "market_data" for event in audit_events)
+    assert all(event["before"] != event["after"] for event in audit_events)
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-MD-08b", "pipeline_market_data", "§4 xstock_auto_remove_safe_default", "L2b",
+        "When the exchange listing check is indeterminate, the symbol must NOT be removed",
+        status="implemented",
+    ),
+)
+def test_xstock_listing_check_failure_does_not_remove(tmp_path, monkeypatch):
+    """An indeterminate listing check preserves configured intent.
+
+    A transient network error must never trigger auto-removal.
+    """
+    import asyncio
+    import aletheia.trading.market_data as md_mod
+    import aletheia.config.loader as loader_mod
+    import aletheia.data.ccxt_provider as ccxt_mod
+
+    _setup_db(tmp_path, monkeypatch)
+
+    md_mod._xstock_failure_counts.clear()
+
+    from aletheia.config.schema import AletheiaConfig, MarketDataConfig
+    cfg = AletheiaConfig()
+    cfg.market_data = MarketDataConfig(
+        observed_symbols=[],
+        observed_stock_tokens=["AAPLON/USDT"],
+        ccxt_exchange="binance",
+    )
+
+    monkeypatch.setattr(md_mod, "load_config", lambda: cfg)
+    monkeypatch.setattr(loader_mod, "load_config", lambda: cfg)
+
+    saved_configs: list = []
+    monkeypatch.setattr(loader_mod, "save_config", lambda c: saved_configs.append(c))
+
+    monkeypatch.setattr(md_mod, "_build_dynamic_instruments", lambda cfg: [])
+
+    async def _indeterminate(exchange_name):
+        return None
+
+    monkeypatch.setattr(md_mod, "_listed_symbols_on_exchange", _indeterminate)
+
+    class _FailingProvider:
+        async def get_ticker(self, instrument):
+            raise RuntimeError("connection timeout")
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(ccxt_mod, "CCXTProvider", lambda **kwargs: _FailingProvider())
+    monkeypatch.setattr(ccxt_mod, "get_market_data_provider", lambda: _FailingProvider())
+
+    asyncio.run(md_mod.collect_market_snapshots())
+
+    assert not saved_configs, (
+        "save_config was called despite an indeterminate listing check. "
+        "A transient outage must never trigger config auto-removal."
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-MD-08c", "pipeline_market_data", "§4 xstock_listing_deadline", "L2b",
+        "A cancellation-resistant exchange listing call returns indeterminate at the "
+        "hard deadline and still closes its provider eventually",
+        status="implemented",
+    ),
+)
+async def test_xstock_listing_check_has_hard_deadline_and_eventual_cleanup(monkeypatch):
+    import asyncio
+    import time
+
+    import aletheia.data.ccxt_provider as ccxt_mod
+    import aletheia.trading.market_data as md_mod
+
+    cancellation_seen = asyncio.Event()
+    cleanup_seen = asyncio.Event()
+    factory_calls: list[dict] = []
+
+    class _CancellationResistantExchange:
+        def __init__(self):
+            self.options = {}
+
+        async def load_markets(self):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancellation_seen.set()
+                await asyncio.sleep(0.15)
+                return {"AAPLON/USDT": {"spot": True, "active": True}}
+
+    class _Provider:
+        def __init__(self):
+            self.exchange = _CancellationResistantExchange()
+
+        def _ensure_primary(self):
+            return self.exchange
+
+        async def close(self):
+            cleanup_seen.set()
+
+    def _provider_factory(**kwargs):
+        factory_calls.append(kwargs)
+        return _Provider()
+
+    monkeypatch.setattr(ccxt_mod, "get_market_data_provider", _provider_factory)
+    monkeypatch.setattr(md_mod, "_XSTOCK_LISTING_TIMEOUT_SEC", 0.01)
+
+    started = time.monotonic()
+    listed = await md_mod._listed_symbols_on_exchange("bitget")
+    elapsed = time.monotonic() - started
+
+    assert listed is None
+    assert elapsed < 0.1, f"listing deadline drained cancellation for {elapsed:.3f}s"
+    assert factory_calls == [{
+        "exchange": "bitget",
+        "native_ccxt": True,
+        "fallback_exchange": "bitget",
+    }]
+    await asyncio.wait_for(cancellation_seen.wait(), timeout=0.1)
+    await asyncio.wait_for(cleanup_seen.wait(), timeout=1.0)
+
+
+# ---------------------------------------------------------------------------
 # PL-MD-06  L2b  typed_freshness: futures freshness prefers the perp snapshot
 # ---------------------------------------------------------------------------
 

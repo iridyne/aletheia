@@ -145,9 +145,15 @@ def test_operator_prompt_bundle_manifest_is_one_durable_unit(monkeypatch):
         "proposal_id": "proposal-1",
         "learning_manifest": manifest,
     })
+    # Select the finalized decision (action='skip') for this exact opportunity.
+    # A signal_pending carrier with proposal_id=NULL may be present for the same
+    # opportunity; querying only by created_at order is non-deterministic (#212).
     row = get_db().execute(
         "SELECT opportunity_id, proposal_id, learning_manifest_json "
-        "FROM pi_decisions ORDER BY created_at DESC LIMIT 1"
+        "FROM pi_decisions "
+        "WHERE opportunity_id=? AND action='skip' "
+        "ORDER BY created_at DESC LIMIT 1",
+        (opportunity_id,),
     ).fetchone()
     stored = json.loads(row["learning_manifest_json"])
     assert row["opportunity_id"] == opportunity_id
@@ -161,8 +167,10 @@ def test_operator_prompt_bundle_manifest_is_one_durable_unit(monkeypatch):
 
 @spec_claim(SpecClaim(
     "LE-B19", "learning_evolution", "§9.7 automatic block routing", "L2b",
-    "Automatic block recommendations become non-blocking guard shadow candidates and are not "
-    "coerced into category=risk lessons.",
+    "Automatic block recommendations become non-blocking guard shadow candidates with "
+    "evidence-backed source scope (symbol + scanner_family). Candidates without "
+    "derivable scope fail closed. Scoped guards are not coerced into category=risk "
+    "lessons and are never promoted while carrying the shadow-only tag (#197).",
     status="implemented",
 ))
 def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
@@ -175,9 +183,16 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
         return SimpleNamespace(id="candidate-item")
 
     monkeypatch.setattr(guard_routing, "create_guard_candidate", fake_create)
+    # Evidence must include factor_keys encoding symbol so scope can be derived (#197).
+    evidence_with_scope = {
+        "case_count": 12,
+        "outcome_counts": {"loss": 9},
+        "factor_keys": ["momentum:BTCUSDT:long:medium_confidence:not_late"],
+        "scanner_families": ["momentum"],
+    }
     routed = guard_routing.route_automatic_block_recommendation(
         {"action": "block_scanner", "scanner": "momentum"},
-        evidence={"case_count": 12, "outcome_counts": {"loss": 9}},
+        evidence=evidence_with_scope,
         source_id="case-1",
     )
 
@@ -190,6 +205,12 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     assert captured["proposed_block_candidate"] is True
     assert captured["proposed_score_penalty"] == 0
     assert "shadow-only" in captured["tags"]
+    # Scope must carry specific symbol and scanner family, not a global crypto scope (#197).
+    applies_to = captured["applies_to"]
+    assert "symbol" in applies_to, "applies_to must contain symbol scope"
+    assert "BTCUSDT" in applies_to["symbol"]
+    assert "scanner_family" in applies_to, "applies_to must contain scanner_family scope"
+    assert "momentum" in applies_to["scanner_family"]
     from pathlib import Path
     dreaming_source = Path("aletheia/agents/dreaming_agent.py").read_text(encoding="utf-8")
     assert "route_automatic_block_recommendation" in dreaming_source
@@ -219,6 +240,35 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     )
     result = guard_promotion.run_promotion_check()
     assert result["promotions"] == 0
+
+
+@spec_claim(SpecClaim(
+    "LE-B19b", "learning_evolution", "§9.7 automatic block routing fail-closed", "L2b",
+    "Automatic block recommendations without derivable symbol/scanner scope fail "
+    "closed: route_automatic_block_recommendation returns guard_shadow_unavailable / "
+    "invalid_block_scope without writing a guard candidate (#197).",
+    status="implemented",
+))
+def test_automatic_block_recommendation_fails_closed_without_scope(monkeypatch):
+    from aletheia.learning import guard_routing
+
+    create_called = []
+
+    def fake_create(**_):
+        create_called.append(True)
+        return SimpleNamespace(id="should-not-be-called")
+
+    monkeypatch.setattr(guard_routing, "create_guard_candidate", fake_create)
+    # Evidence has no factor_keys, so symbol scope cannot be derived.
+    result = guard_routing.route_automatic_block_recommendation(
+        {"action": "block_scanner", "scanner": "momentum"},
+        evidence={"case_count": 5, "outcome_counts": {"loss": 4}},
+        source_id="case-no-scope",
+    )
+
+    assert result["action"] == "guard_shadow_unavailable"
+    assert result["reason"] == "invalid_block_scope"
+    assert not create_called, "create_guard_candidate must not be called when scope is missing"
 
 
 @spec_claim(SpecClaim(

@@ -786,6 +786,7 @@ async def _analyze_symbol(
     member_entry_price_usd: float | None = None,
     member_spread_bps: float | None = None,
     venue: str | None = None,
+    member_expires_at: str | None = None,
     force_full: bool = False,
     prediction_context_enabled: bool = False,
     prediction_context_cutoff: str | None = None,
@@ -1352,6 +1353,14 @@ async def _analyze_symbol(
         pre_filter=pre_filter,
         pre_filter_evidence_id=evidence_id,
     )
+    # Resolve valid_until: prefer exact member expiry; fall back to family-TTL clock.
+    if member_expires_at is not None:
+        valid_until = member_expires_at
+    else:
+        from aletheia.universe.allocator import _FAMILY_TTL
+        ttl_sec = _FAMILY_TTL.get(effective_scanner_family or "", 3600)
+        valid_until = (datetime.now(timezone.utc) + timedelta(seconds=ttl_sec)).isoformat()
+
     opp = Opportunity(
         symbol=symbol,
         market=instrument_market_to_db_market(market_type),
@@ -1366,6 +1375,7 @@ async def _analyze_symbol(
         universe_snapshot_id=universe_snapshot_id,
         universe_member_id=universe_member_id,
         scanner_family=effective_scanner_family,
+        valid_until=valid_until,
         key_observations=json.dumps(observations) if observations else "",
         funding_rate=funding_rate_val,
         open_interest=open_interest_val,
@@ -1705,6 +1715,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 scanner_direction=u_member.get("scanner_direction") if u_member else None,
                 member_entry_price_usd=u_member.get("entry_price_usd") if u_member else None,
                 member_spread_bps=u_member.get("spread_bps") if u_member else None,
+                member_expires_at=u_member.get("expires_at") if u_member else None,
                 venue=_venue,
                 force_full=_force_full,
                 prediction_context_enabled=prediction_context_enabled,

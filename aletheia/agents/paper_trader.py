@@ -20,6 +20,7 @@ closes positions itself.
 from __future__ import annotations
 
 import logging
+import dataclasses
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -33,8 +34,10 @@ from aletheia.storage.repositories import (
     count_unresolved_signal_pending,
     expire_stale_queued_opportunities,
     list_all_open_positions,
+    list_pending_signal_queue,
     prune_signal_pending_stale,
     transition_open_opportunity_to_queued,
+    transition_queued_opportunity_to_open,
 )
 
 logger = logging.getLogger("aletheia.agents.paper_trader")
@@ -50,6 +53,7 @@ _PENDING_SIGNAL_QUEUE_CAPACITY = 5
 class SignalBatchPlan:
     selected: list[dict]
     decisions: dict[str, tuple[str, str]]
+    evictions: list[str] = dataclasses.field(default_factory=list)
 
 
 _EXCHANGE_CRED_KEYS: dict[str, str] = {
@@ -264,13 +268,29 @@ def _plan_signal_batch(
     operator_evaluated_opportunity_ids: set[str] | None = None,
     limit: int = 3,
     available_queue_slots: int | None = None,
+    current_queue: list[dict] | None = None,
 ) -> SignalBatchPlan:
-    """Apply occupancy/cooldown/backpressure before the per-run batch cap."""
+    """Apply occupancy/cooldown/backpressure before the per-run batch cap.
+
+    When available_queue_slots is 0 and current_queue is provided, priority
+    replacement is attempted: a new candidate whose effective conviction exceeds
+    the minimum-conviction occupant evicts that occupant and takes its slot.
+    This converts FIFO allocation to score-priority allocation with no capacity
+    change required.
+    """
     selected: list[dict] = []
     decisions: dict[str, tuple[str, str]] = {}
+    evictions: list[str] = []
     seen_symbols: set[str] = set()
     evaluated_ids = operator_evaluated_opportunity_ids or set()
     active_setups = active_signal_setups or set()
+    # Symbol-level index used to catch opposing-direction carriers: if LONG is
+    # already in the queue, SHORT for the same symbol is rejected too, and vice
+    # versa.  Extracted once here rather than scanning the full set per candidate.
+    active_symbols: set[str] = {s for (s, _, _) in active_setups}
+    # Mutable view of current queue for priority-replacement bookkeeping.
+    # Sorted ascending by conviction so index 0 is always the weakest occupant.
+    queue_occupants: list[dict] = sorted(current_queue or [], key=lambda x: x["conviction"])
     for candidate in candidates:
         opp_id = str(candidate.get("opportunity_id") or "")
         symbol = candidate.get("symbol")
@@ -287,25 +307,36 @@ def _plan_signal_batch(
         if symbol in open_symbols:
             decisions[opp_id] = ("open_position_duplicate", "rejected")
             continue
-        if (
-            symbol,
-            direction,
-            str(candidate.get("scanner_family") or ""),
-        ) in active_setups:
-            decisions[opp_id] = ("active_operator_carrier", "rejected")
+        if symbol in active_symbols:
+            scanner_family_str = str(candidate.get("scanner_family") or "")
+            if (symbol, direction, scanner_family_str) in active_setups:
+                decisions[opp_id] = ("active_operator_carrier", "rejected")
+            else:
+                decisions[opp_id] = ("opposing_direction_queued", "rejected")
             continue
         if (symbol, direction) in recent_signal_pairs:
             decisions[opp_id] = ("signal_cooldown", "rejected")
             continue
-        if available_queue_slots is not None and len(selected) >= max(available_queue_slots, 0):
-            decisions[opp_id] = ("signal_queue_capacity", "rejected")
+        slots_limit = max(available_queue_slots, 0) if available_queue_slots is not None else None
+        if slots_limit is not None and len(selected) >= slots_limit:
+            # Priority replacement: evict the weakest occupant when the new
+            # candidate scores strictly higher than it.
+            candidate_conviction = min(int(candidate.get("trade_score") or 0), 95)
+            if queue_occupants and candidate_conviction > queue_occupants[0]["conviction"]:
+                evicted = queue_occupants.pop(0)
+                evictions.append(evicted["opportunity_id"])
+                decisions[evicted["opportunity_id"]] = ("signal_queue_evicted", "evicted")
+                selected.append(candidate)
+                decisions[opp_id] = ("signal_batch_limit", "passed")
+            else:
+                decisions[opp_id] = ("signal_queue_capacity", "rejected")
             continue
         if len(selected) >= limit:
             decisions[opp_id] = ("signal_batch_limit", "rejected")
             continue
         selected.append(candidate)
         decisions[opp_id] = ("signal_batch_limit", "passed")
-    return SignalBatchPlan(selected=selected, decisions=decisions)
+    return SignalBatchPlan(selected=selected, decisions=decisions, evictions=evictions)
 
 
 @register_agent("paper_trader")
@@ -434,9 +465,11 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     try:
         queue_depth = count_unresolved_signal_pending(_PENDING_SIGNAL_MAX_AGE_MINUTES)
         available_queue_slots = max(_PENDING_SIGNAL_QUEUE_CAPACITY - queue_depth, 0)
+        current_queue = list_pending_signal_queue(_PENDING_SIGNAL_MAX_AGE_MINUTES)
     except Exception as exc:
         queue_depth = None
         available_queue_slots = 0
+        current_queue = []
         errors.append("signal_queue_capacity_unavailable")
         logger.warning("pending queue capacity unavailable: %s", type(exc).__name__)
 
@@ -448,6 +481,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         operator_evaluated_opportunity_ids=_operator_evaluated_opportunity_ids(),
         limit=_PENDING_SIGNAL_QUEUE_CAPACITY,
         available_queue_slots=available_queue_slots,
+        current_queue=current_queue,
     )
 
     evidence_persisted = _persist_filter_evidence(
@@ -503,6 +537,28 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                 f"{queue_depth if queue_depth is not None else 'unknown'}/"
                 f"{_PENDING_SIGNAL_QUEUE_CAPACITY}"
             )
+
+    # Execute priority-replacement evictions before writing the new signals.
+    # Each evicted opportunity is released back to open so the next run can
+    # re-score it; the signal_pending pi_decision is superseded by the eviction row.
+    for evicted_opp_id in plan.evictions:
+        try:
+            from aletheia.storage.models import PiDecision
+            from aletheia.storage.repositories import insert_pi_decision, transaction
+
+            eviction_dec = PiDecision(
+                opportunity_id=evicted_opp_id,
+                action="signal_queue_evicted",
+                conviction=0,
+                reasoning="evicted: lower-priority occupant replaced by higher-score candidate",
+            )
+            with transaction():
+                transition_queued_opportunity_to_open(evicted_opp_id)
+                insert_pi_decision(eviction_dec)
+            outputs.append(f"evicted_low_priority:{evicted_opp_id}")
+        except Exception as exc:
+            errors.append(f"eviction_failed:{evicted_opp_id}")
+            logger.warning("signal_pending eviction failed for %s: %s", evicted_opp_id, type(exc).__name__)
 
     # Write up to 3 candidates after occupancy/cooldown rejects have been removed.
     signals_written = 0

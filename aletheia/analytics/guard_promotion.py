@@ -28,6 +28,48 @@ def _notify_ranker_guard_change() -> None:
         logger.debug("Failed to notify Ranker after guard-set change", exc_info=True)
 
 
+def _deprecate_expired_learned_guards() -> int:
+    """Soft-deprecate learned guards (candidate + active) past their expires_at (#195).
+
+    Only learned guards are touched. Seed and manual guards remain persistent.
+    Returns the count of guards deprecated in this pass.
+    """
+    from aletheia.knowledge.guards import guard_origin, _learned_guard_is_expired
+
+    deprecated = 0
+    for guards_dir in [
+        get_data_dir() / "knowledge" / "guards",
+        get_data_dir() / "knowledge" / "guard_candidates",
+    ]:
+        if not guards_dir.exists():
+            continue
+        for path in sorted(guards_dir.glob("*.md")):
+            try:
+                meta, body = parse_frontmatter(path)
+                if not meta:
+                    continue
+                if meta.get("status") == "deprecated":
+                    continue
+                if guard_origin(meta) != "learned":
+                    continue
+                if not _learned_guard_is_expired(meta):
+                    continue
+                gid = str(meta.get("guard_id") or path.stem)
+                new_meta = dict(meta)
+                new_meta["status"] = "deprecated"
+                new_meta.setdefault("deprecated_reason", "ttl_expired")
+                path.write_text(render_frontmatter(new_meta, body), encoding="utf-8")
+                _update_candidate_row_status(path)
+                _record_guard_candidate_deprecated_event(gid, str(path))
+                deprecated += 1
+                logger.info(
+                    "_deprecate_expired_learned_guards: deprecated expired guard %s", gid
+                )
+            except Exception as e:
+                logger.warning("Failed to deprecate expired guard at %s: %s", path, e)
+    return deprecated
+
+
 def run_promotion_check() -> dict:
     """Check candidate guards for promotion eligibility.
 
@@ -37,7 +79,12 @@ def run_promotion_check() -> dict:
     cfg = load_config()
     guard_cfg = getattr(cfg, "guard", None)
     if not guard_cfg or not guard_cfg.auto_promote_enabled:
-        return {"skipped": True, "reason": "auto_promote_enabled is False"}
+        # Expiry deprecation is independent of the auto-promote gate — run it always.
+        expired_deprecated = _deprecate_expired_learned_guards()
+        return {
+            "skipped": True, "reason": "auto_promote_enabled is False",
+            "expired_deprecated": expired_deprecated,
+        }
 
     min_trades = guard_cfg.min_matching_trades
     candidates = load_trading_guards(status="candidate")
@@ -107,12 +154,18 @@ def run_promotion_check() -> dict:
                 logger.info("guard_promotion: %s meets loss threshold but lacks experiment "
                             "authority — kept observe-only (fail-closed)", guard.guard_id)
 
+    # Expiry deprecation pass: soft-deprecate any learned candidate/active guard that
+    # has passed its effective expires_at deadline (#195). This is separate from the
+    # loss-rate deprecation above and runs regardless of auto_promote_enabled state.
+    expired_deprecated = _deprecate_expired_learned_guards()
+
     return {
         "promotions": promotions,
         "deprecations": deprecations,
         "candidates_checked": len(candidates),
         "skipped_non_learned": skipped_non_learned,
         "skipped_unauthorized": skipped_unauthorized,
+        "expired_deprecated": expired_deprecated,
     }
 
 
@@ -128,7 +181,11 @@ def promote_guard_candidate_to_active(
 
     score_penalty=10.0 / enforcement=hard_block are written so ranker
     evaluate_guards actually penalizes matching opportunities (断口G fix).
+
+    Refuses promotion of expired learned candidates (#195).
     """
+    from aletheia.knowledge.guards import guard_origin, _learned_guard_is_expired
+
     guards_dir = get_data_dir() / "knowledge" / "guards"
     candidates_dir = get_data_dir() / "knowledge" / "guard_candidates"
     active_existing = any(g.guard_id == guard_id for g in load_trading_guards(status="active"))
@@ -141,6 +198,13 @@ def promote_guard_candidate_to_active(
                 meta, body = parse_frontmatter(path)
                 if not meta or meta.get("guard_id") != guard_id:
                     continue
+                # Refuse promotion of expired learned candidates (#195).
+                if guard_origin(meta) == "learned" and _learned_guard_is_expired(meta):
+                    logger.info(
+                        "promote_guard_candidate_to_active: refusing expired learned guard %s",
+                        guard_id,
+                    )
+                    return False
 
                 source_meta = dict(meta)
                 active_meta = dict(meta)

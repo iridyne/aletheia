@@ -33,7 +33,12 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     """
     from aletheia.config.loader import load_config, save_config
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import MarketSnapshot, Opportunity
+    from aletheia.storage.models import (
+        MarketSnapshot,
+        Opportunity,
+        UniverseAsset,
+        UniverseFeatureSnapshot,
+    )
 
     from aletheia.agent_runtime import runtime_session as rs
 
@@ -184,6 +189,27 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     from aletheia.agent_shell import reflection
 
     monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json")
+
+    # Operator judgment requires a fresh exact-instrument technical snapshot;
+    # a market price row alone is execution price authority, not technical
+    # context authority.  Without this seed evaluate_trading_opportunity returns
+    # evaluation_deferred with reason candidate_technical_snapshot_unavailable.
+    repo.upsert_universe_asset(UniverseAsset(
+        id="golden-path-asset",
+        venue="fixture",
+        market_type="spot",
+        symbol="BTC/USDT",
+    ))
+    repo.insert_universe_feature_snapshots_batch([UniverseFeatureSnapshot(
+        id="golden-path-feature",
+        asset_id="golden-path-asset",
+        ts=datetime.now(timezone.utc).isoformat(),
+        rsi_14=68.0,
+        return_1h=3.2,
+        return_4h=4.0,
+        return_24h=6.0,
+        data_freshness_sec=0,
+    )])
 
     from aletheia.agent_shell.commands import evaluate_trading_opportunity
 

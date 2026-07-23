@@ -111,6 +111,8 @@ def test_relative_strength_rank_handles_none_returns():
 # === Market context builder ===
 
 class _FakeCandle:
+    is_closed = True
+
     def __init__(self, ts, o, h, l, c, v):
         self.timestamp = ts
         self.open = o

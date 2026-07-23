@@ -4,6 +4,7 @@ Runs without credentials (public market endpoints via CCXT).
 Degrades gracefully if the exchange is unreachable.
 """
 
+import asyncio
 import logging
 
 from aletheia.config.loader import load_config
@@ -59,6 +60,160 @@ def _instrument_market_from_row(mt: str | None) -> str:
 # Triggers infra_event after XSTOCK_FAILURE_THRESHOLD consecutive failures.
 _xstock_failure_counts: dict[str, int] = {}
 _XSTOCK_FAILURE_THRESHOLD = 3
+_XSTOCK_LISTING_TIMEOUT_SEC = 10.0
+
+
+def _consume_detached_task(task: asyncio.Future) -> None:
+    """Consume a deadline-detached task result so late failures are not leaked."""
+    try:
+        task.exception()
+    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+        pass
+
+
+async def _wait_without_cancel_drain(awaitable, *, timeout: float):
+    """Enforce a wall-clock deadline without awaiting cancellation-resistant I/O."""
+    task = asyncio.ensure_future(awaitable)
+    try:
+        done, _pending = await asyncio.wait({task}, timeout=timeout)
+    except asyncio.CancelledError:
+        task.add_done_callback(_consume_detached_task)
+        task.cancel()
+        raise
+    if task not in done:
+        task.add_done_callback(_consume_detached_task)
+        task.cancel()
+        raise asyncio.TimeoutError
+    return task.result()
+
+
+async def _listed_symbols_on_exchange(exchange_name: str) -> frozenset[str] | None:
+    """Return active spot symbols, or None when listing status is indeterminate.
+
+    The complete provider lifecycle runs in the deadline-owned task. If CCXT resists
+    cancellation, the caller returns at the deadline while that task finishes cleanup.
+    """
+
+    async def _load_and_close() -> frozenset[str]:
+        from aletheia.data.ccxt_provider import get_market_data_provider
+
+        provider = get_market_data_provider(
+            exchange=exchange_name,
+            native_ccxt=True,
+            fallback_exchange=exchange_name,
+        )
+        try:
+            exchange = provider._ensure_primary()
+            exchange.options["defaultType"] = "spot"
+            markets = await exchange.load_markets()
+            if not isinstance(markets, dict):
+                raise TypeError("exchange market list is not a mapping")
+            listed = frozenset(
+                to_canonical(str(symbol))
+                for symbol, market in markets.items()
+                if isinstance(market, dict)
+                and market.get("spot") is True
+                and market.get("active") is not False
+            )
+            if not listed:
+                raise ValueError("exchange returned no active spot markets")
+            return listed
+        finally:
+            await provider.close()
+
+    try:
+        return await _wait_without_cancel_drain(
+            _load_and_close(), timeout=_XSTOCK_LISTING_TIMEOUT_SEC
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.debug(
+            "Could not load listing status from %s (%s); keeping configured symbols",
+            exchange_name,
+            e,
+        )
+        return None
+
+
+def _auto_remove_xstock(sym: str, exchange_name: str, consecutive: int) -> bool:
+    """Remove a stock token from config after live market-list verification confirms it is absent.
+
+    consecutive is the current failure count, used only for logging context.
+    """
+    try:
+        from aletheia.config.loader import load_config, save_config
+        from aletheia.infra.events import emit_infra_event
+
+        cfg = load_config()
+        canon = to_canonical(sym)
+        tokens = list(cfg.market_data.observed_stock_tokens or [])
+        legacy_tokens = list(cfg.market_data.observed_xstocks or [])
+        filtered_tokens = [t for t in tokens if to_canonical(t) != canon]
+        filtered_legacy = [t for t in legacy_tokens if to_canonical(t) != canon]
+        if filtered_tokens == tokens and filtered_legacy == legacy_tokens:
+            return False
+        before = {
+            "observed_stock_tokens": tokens,
+            "observed_xstocks": legacy_tokens,
+        }
+        after = {
+            "observed_stock_tokens": filtered_tokens,
+            "observed_xstocks": filtered_legacy,
+        }
+        cfg.market_data.observed_stock_tokens = filtered_tokens
+        cfg.market_data.observed_xstocks = filtered_legacy
+        save_config(cfg)
+        logger.warning(
+            "Auto-removed xStock %s from config (confirmed not listed on exchange, "
+            "failure count=%d)",
+            sym, consecutive,
+        )
+        try:
+            from aletheia.files.jsonl import write_audit
+
+            write_audit({
+                "actor": "system",
+                "source": "market_data",
+                "event_type": "xstock_observation_config_auto_removed",
+                "entity_type": "market_data_config",
+                "entity_id": canon,
+                "before": before,
+                "after": after,
+                "exchange": exchange_name,
+                "consecutive_failures": consecutive,
+                "message": (
+                    f"Removed {canon} from xStock observation config after "
+                    f"{exchange_name} confirmed it absent"
+                ),
+            })
+        except Exception:  # noqa: BLE001
+            logger.error(
+                "xStock %s config removal persisted without an audit record",
+                canon,
+                exc_info=True,
+            )
+        try:
+            emit_infra_event(
+                severity="warning",
+                source="market_data",
+                code=f"xstock_auto_removed:{canon}",
+                message=(
+                    f"xStock {canon} auto-removed from config after {exchange_name} "
+                    f"confirmed it absent (failure count={consecutive})"
+                ),
+                action=(
+                    "Review observed_stock_tokens and observed_xstocks in config "
+                    "to confirm removal"
+                ),
+                dedupe_sec=0,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to emit xStock removal event for %s", canon, exc_info=True)
+        return True
+    except Exception:
+        logger.debug("Failed to auto-remove xStock %s from config", sym, exc_info=True)
+        return False
 
 
 def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
@@ -186,6 +341,7 @@ async def collect_market_snapshots() -> dict:
     # factory would force the config fallback (bybit), which doesn't list these tokens.
     if xstocks:
         xprovider = CCXTProvider(exchange="bitget", fallback_exchange="bitget")
+        listing_cache: dict[str, frozenset[str] | None] = {}
         try:
             for instrument in xstocks:
                 try:
@@ -196,7 +352,8 @@ async def collect_market_snapshots() -> dict:
                     logger.warning("Failed to fetch xStocks ticker %s: %s", instrument, e)
                     sym = instrument.symbol
                     _xstock_failure_counts[sym] = _xstock_failure_counts.get(sym, 0) + 1
-                    if _xstock_failure_counts[sym] >= _XSTOCK_FAILURE_THRESHOLD:
+                    consecutive = _xstock_failure_counts[sym]
+                    if consecutive >= _XSTOCK_FAILURE_THRESHOLD:
                         from aletheia.files.jsonl import write_audit
                         write_audit({
                             "actor": "system",
@@ -204,13 +361,24 @@ async def collect_market_snapshots() -> dict:
                             "event_type": "infra_event",
                             "entity_id": sym,
                             "message": (
-                                f"xStock {sym} fetch failed {_xstock_failure_counts[sym]} "
+                                f"xStock {sym} fetch failed {consecutive} "
                                 "consecutive times — provider may be degraded"
                             ),
                             "severity": "warning",
-                            "consecutive_failures": _xstock_failure_counts[sym],
+                            "consecutive_failures": consecutive,
                             "last_error": str(e)[:200],
                         })
+                    # Load each responsible venue once per collection cycle. None means
+                    # indeterminate and fails open by preserving configured intent.
+                    exchange_name = instrument.exchange
+                    if exchange_name not in listing_cache:
+                        listing_cache[exchange_name] = await _listed_symbols_on_exchange(
+                            exchange_name
+                        )
+                    listed = listing_cache[exchange_name]
+                    if listed is not None and to_canonical(sym) not in listed:
+                        if _auto_remove_xstock(sym, exchange_name, consecutive):
+                            _xstock_failure_counts.pop(sym, None)
         finally:
             await xprovider.close()
 

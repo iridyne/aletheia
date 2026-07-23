@@ -1,18 +1,6 @@
 name: Build Dogfood Release Bundle
 
 on:
-  pull_request:
-    branches: [master]
-    paths:
-      - "aletheia/**"
-      - "frontend/**"
-      - "scripts/release/**"
-      - "scripts/runtime/**"
-      - "tests/test_release_bundle.py"
-      - "tests/test_release_data_dir.py"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".github/workflows/build-dogfood-release.yml"
   workflow_dispatch:
     inputs:
       ref:

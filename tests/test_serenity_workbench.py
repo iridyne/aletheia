@@ -20,7 +20,9 @@ async def client(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    cfg_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(loader, "CONFIG_PATH", cfg_path)
+    cfg_path.write_text("serenity:\n  enabled: true\n", encoding="utf-8")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
     reset_db()
     sq._db_conn = None

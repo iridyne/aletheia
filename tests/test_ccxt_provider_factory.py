@@ -82,6 +82,35 @@ async def test_client_session_trusts_env():
     await client.close()
 
 
+async def test_autouse_fixture_permits_ccxt_provider_close():
+    """#238: the _no_network_market_data autouse fixture must NOT noop close().
+
+    CCXTProvider.close() is idempotent and session-safe when no real CCXT client
+    was constructed (the fake get_ticker/get_ohlcv patches create no sessions).
+    Patching close() to a no-op prevented legitimate cleanup of any provider that
+    DID open a session through an unguarded path.
+
+    This test injects fake sessions so close() has real work to do and verifies
+    that close() runs to completion under the normal pytest fixture stack.
+    """
+    from unittest.mock import AsyncMock
+
+    provider = CCXTProvider(exchange="binance", fallback_exchange="bybit")
+
+    # Inject two fake owned sessions so close() has real resources to clear.
+    fake_session_a = AsyncMock()
+    fake_session_b = AsyncMock()
+    provider._sessions = [fake_session_a, fake_session_b]
+
+    await provider.close()
+
+    # Both sessions must have been closed
+    fake_session_a.close.assert_awaited_once()
+    fake_session_b.close.assert_awaited_once()
+    # And the sessions list must be cleared (idempotent)
+    assert provider._sessions == []
+
+
 def test_market_id_guard_drops_malformed_ccxt_rows():
     class _FakeExchange:
         def __init__(self):

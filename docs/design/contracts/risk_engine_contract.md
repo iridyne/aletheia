@@ -215,3 +215,8 @@ Tripwire：`D2-S02`（spec_risk_engine.py）——文件出现时自动变红提
 - 不存在绕过 risk engine 直接下单的代码路径
 
 spec：`D2-C01`（L2c，spec_risk_engine.py）持续锁住此不变式。
+For paper_internal daily membership, the linked Position.closed_at defines the
+UTC accounting day, not the later cash-event append time. A delayed settlement
+for an older valid close is excluded from today only when its amount matches the
+Position realized_pnl; a newly appended event without valid matching economics
+remains an unavailable ledger mismatch.

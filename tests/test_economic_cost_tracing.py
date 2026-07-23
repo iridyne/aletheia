@@ -321,6 +321,11 @@ def test_tool_cost_profile_can_explicitly_price_local_or_external_tool():
 
 def test_first_schema_install_refuses_to_commit_an_active_transaction():
     db = get_db()
+    # get_db() / injected test connections always use isolation_level=None
+    # (autocommit). A plain INSERT commits immediately; in_transaction stays
+    # False. Issue an explicit BEGIN to open a real transaction so the
+    # ensure_economics_schema() guard can fire.
+    db.execute("BEGIN")
     db.execute("INSERT INTO settings(key,value) VALUES ('economics-tx-test','pending')")
     assert db.in_transaction is True
     with pytest.raises(RuntimeError, match="active transaction"):
@@ -333,6 +338,9 @@ def test_first_schema_install_refuses_to_commit_an_active_transaction():
 
 def test_initialized_schema_probe_does_not_commit_an_active_transaction():
     db = ensure_economics_schema()
+    # See note in test_first_schema_install_refuses_to_commit_an_active_transaction:
+    # autocommit connections require an explicit BEGIN before in_transaction is True.
+    db.execute("BEGIN")
     db.execute("INSERT INTO settings(key,value) VALUES ('economics-tx-ready','pending')")
     assert db.in_transaction is True
     assert ensure_economics_schema(db) is db

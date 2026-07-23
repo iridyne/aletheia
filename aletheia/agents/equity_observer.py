@@ -27,6 +27,7 @@ Design notes:
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -426,13 +427,15 @@ async def _analyze_equity(
         direction_bias=direction,
         thesis=thesis,
         confidence=confidence,
-        confidence_score=confidence_score,
+        confidence_score=confidence_score if confidence_score is not None else 0,
         source_agent="equity_observer",
         linked_strategy_id=linked_strategy_id,
         asset_class="equity",
         asset_subclass="equity_daily",
         canonical_ticker=ticker,
         execution_eligible=False,
+        scanner_family="equity_daily",
+        valid_until=(datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
         metadata=json.dumps(meta),
     )
     insert_opportunity(opp)

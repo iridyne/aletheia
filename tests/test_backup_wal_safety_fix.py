@@ -81,22 +81,22 @@ def test_backup_captures_wal_committed_rows(tmp_path):
     )
 
 
-def test_backup_still_handles_non_sqlite_app_db(tmp_path):
-    """Belt-and-suspenders: if data_dir/app.db isn't a valid SQLite file for
-    some reason (empty placeholder, stripped test fixture), the backup service
-    falls back to shutil.copy2 rather than raising — never worse than the pre-fix
-    behaviour."""
+def test_backup_fails_on_non_sqlite_app_db(tmp_path):
+    """#287: if data_dir/app.db is corrupt or not a SQLite file, backup must fail
+    and produce no archive. The old shutil.copy2 fallback silently archived corrupt
+    bytes; the new fail-closed behaviour propagates the DatabaseError."""
     (tmp_path / "backups").mkdir()
-    # A file that ISN'T a SQLite database.
     (tmp_path / "app.db").write_bytes(b"not a sqlite file at all")
 
+    import sqlite3
     from aletheia.backup.service import BackupService
-    archive = BackupService(data_dir=tmp_path).create_backup(label="not-sqlite")
 
-    unpacked = tmp_path / "unpacked"
-    unpacked.mkdir()
-    with tarfile.open(archive, "r:gz") as tar:
-        tar.extractall(unpacked, filter="data")
-    bundle_root = next(d for d in unpacked.iterdir() if d.is_dir())
-    copied = (bundle_root / "app.db").read_bytes()
-    assert copied == b"not a sqlite file at all"
+    svc = BackupService(data_dir=tmp_path)
+    with pytest.raises(sqlite3.DatabaseError):
+        svc.create_backup(label="not-sqlite")
+
+    # No archive must exist — partial file is also cleaned up.
+    archives = list((tmp_path / "backups").glob("*.tar.gz"))
+    partials = list((tmp_path / "backups").glob("*.part"))
+    assert not archives, f"no archive must be left after failed backup, got {archives}"
+    assert not partials, f"no partial must be left after failed backup, got {partials}"

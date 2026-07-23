@@ -532,7 +532,7 @@ function FilterControllerPersistentCard() {
         title="Filter controller — persistent signals"
         meta={meta}
       />
-      <p className="text-muted text-sm" style={{ marginTop: 0, marginBottom: 8 }}>
+      <p className="text-muted text-sm mt-0 mb-2">
         Cells whose observational verdict has held across multiple consecutive
         controller runs. Human-review signal only — no live learning path
         consumes this. Any parameter change requires the normal change-control path.
@@ -555,8 +555,8 @@ function FilterControllerPersistentCard() {
               signal == null ? 'muted' : Math.abs(signal) >= 0.15 ? 'yellow' : 'blue'
             return (
               <li key={p.latest_run_id + p.filter_name + p.scanner_family} className="learn-item">
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
                     <span className="learn-item-title">
                       {p.filter_name} · {p.scanner_family}
                     </span>
@@ -569,14 +569,14 @@ function FilterControllerPersistentCard() {
                       </StatusText>
                     )}
                   </div>
-                  <span className="learn-item-meta mono" style={{ fontSize: 12 }}>
+                  <span className="learn-item-meta mono text-xs">
                     {cellParts}
                     {p.filter_version ? ` · v=${p.filter_version}` : ''}
                     {' · last '}
                     {fmtTimestamp(p.last_suspect_at)}
                   </span>
                   {p.latest_reasoning && (
-                    <span className="text-muted text-sm" style={{ marginTop: 2 }}>
+                    <span className="text-muted text-sm mt-0.5">
                       {p.latest_reasoning}
                     </span>
                   )}

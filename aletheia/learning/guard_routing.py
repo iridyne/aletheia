@@ -20,8 +20,18 @@ def route_automatic_block_recommendation(
     field, value = _predicate(action, recommendation)
     if not field or not value:
         return {"action": "guard_shadow_unavailable", "reason": "invalid_block_scope"}
+    # Derive source scope from evidence so the shadow is not a global crypto block.
+    # If the scope cannot be established, fail closed rather than write a broad guard.
+    scope = _derive_scope(action, recommendation, evidence)
+    if scope is None:
+        return {"action": "guard_shadow_unavailable", "reason": "invalid_block_scope"}
+    # Scope is part of the stable identity so two recommendations with the same
+    # action/value but different cohort evidence produce distinct guard shadows.
     identity = json.dumps(
-        {"action": action, "field": field, "value": value, "source_id": source_id},
+        {
+            "action": action, "field": field, "value": value,
+            "scope": scope, "source_id": source_id,
+        },
         sort_keys=True,
     )
     guard_id = f"auto_shadow_{hashlib.sha256(identity.encode()).hexdigest()[:16]}"
@@ -33,7 +43,7 @@ def route_automatic_block_recommendation(
         "shadow_only": True,
         "source_type": "automatic_lesson_recommendation", "source_id": source_id,
         "predicates": [{"field": field, "op": "eq", "value": value}],
-        "applies_to": {"asset_class": ["crypto"]}, "evidence_summary": evidence,
+        "applies_to": scope, "evidence_summary": evidence,
         "tags": ["auto-generated", "shadow-only", action],
     }
     try:
@@ -62,3 +72,59 @@ def _predicate(action: str, recommendation: dict) -> tuple[str | None, str | Non
     if action == "block_symbol":
         return "symbol", recommendation.get("symbol")
     return None, None
+
+
+def _derive_scope(action: str, recommendation: dict, evidence: dict) -> dict | None:
+    """Derive a non-global applies_to scope from evidence factor keys.
+
+    Returns None (fail-closed) if neither explicit evidence nor factor keys
+    supply the required symbol and scanner_family cohort (#197).
+
+    factor_key format: "{scanner}:{symbol}:{direction}:{conf}:{late}"
+    """
+    # Extract symbols and scanner families from factor_key evidence strings.
+    symbols: list[str] = []
+    scanners_from_keys: list[str] = []
+    for fk in (evidence.get("factor_keys") or []):
+        parts = str(fk).split(":")
+        if len(parts) >= 2:
+            sc, sym = parts[0], parts[1]
+            if sym and sym != "unknown":
+                symbols.append(sym)
+            if sc and sc != "unknown":
+                scanners_from_keys.append(sc)
+
+    # Deduplicate while preserving order.
+    symbols = list(dict.fromkeys(symbols))
+    scanners_from_keys = list(dict.fromkeys(scanners_from_keys))
+    scanners_from_evidence = [
+        s for s in (evidence.get("scanner_families") or []) if s
+    ]
+
+    if action == "block_symbol":
+        # The symbol is the recommendation value itself; scanner from evidence narrows scope.
+        sym = recommendation.get("symbol")
+        if not sym:
+            return None
+        sc_list = scanners_from_evidence or scanners_from_keys
+        if not sc_list:
+            return None
+        return {"symbol": [sym], "scanner_family": sc_list}
+
+    if action == "block_scanner":
+        scanner = recommendation.get("scanner")
+        if not scanner:
+            return None
+        if not symbols:
+            return None
+        return {"symbol": symbols, "scanner_family": [scanner]}
+
+    if action == "block_direction":
+        if not symbols:
+            return None
+        sc_list = scanners_from_evidence or scanners_from_keys
+        if not sc_list:
+            return None
+        return {"symbol": symbols, "scanner_family": sc_list}
+
+    return None

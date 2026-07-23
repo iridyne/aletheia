@@ -20,9 +20,11 @@ import logging
 
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
+    find_live_opportunity_by_symbol_direction,
     find_opportunity_by_symbol_snapshot,
     insert_opportunity_once_by_snapshot,
 )
+from aletheia.storage.sqlite import get_db
 from aletheia.trading.instruments import instrument_market_to_db_market
 from aletheia.analytics.factor_feedback import lookup_factor_signal
 from aletheia.analytics.filter_evidence import atomic_opportunity_evidence
@@ -30,6 +32,25 @@ from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
 from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
 
 logger = logging.getLogger("aletheia.universe.signal_emitter")
+
+
+def _find_live_universe_signal(symbol: str, direction: str, db_market: str) -> dict | None:
+    """Return the first live open universe_scanner signal for this symbol+direction+market.
+
+    A live signal is status='open' with valid_until still in the future (or absent).
+    Used to suppress cross-snapshot flooding when the same symbol+direction emits
+    faster than its own TTL. (#326)
+    """
+    row = get_db().execute(
+        "SELECT * FROM opportunities "
+        "WHERE symbol = ? AND direction_bias = ? AND market = ? "
+        "AND source_agent = 'universe_scanner' AND status = 'open' "
+        "AND (valid_until IS NULL OR valid_until > datetime('now')) "
+        "ORDER BY created_at DESC LIMIT 1",
+        (symbol, direction, db_market),
+    ).fetchone()
+    return dict(row) if row else None
+
 
 # Only emit for members that scored high enough to be worth trading
 _MIN_SCORE = 45.0
@@ -355,13 +376,44 @@ def emit_deterministic_opportunities(
             )
             continue
 
+        # Cross-snapshot live-duplicate guard (#326): suppress emission when a live
+        # (open/queued, non-expired) opportunity for the same symbol+direction already
+        # exists. The per-snapshot dedup below only covers the current refresh cycle;
+        # without this check, a fast-signalling symbol emits a new slot-stealing
+        # candidate every 10 min even while prior ones are still pending evaluation.
+        live_dup = find_live_opportunity_by_symbol_direction(
+            symbol, direction,
+            market=instrument_market_to_db_market(market_type),
+        )
+        if live_dup:
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=total_score,
+                short_enabled=short_enabled,
+                decision="rejected",
+                reason_code="live_duplicate_suppressed",
+                direction=direction,
+                regime_tag=regime.state if regime else None,
+                inputs={
+                    "live_opportunity_id": live_dup.get("id"),
+                    "live_opportunity_status": live_dup.get("status"),
+                    "live_valid_until": live_dup.get("valid_until"),
+                },
+            )
+            continue
+
         # De-duplicate across the whole lifecycle. A reviewed opportunity remains
         # the identity owner for this member/snapshot and must not be recreated by
         # a retry or a delayed producer. Same symbol on a different market remains
         # a distinct candidate. OD-S02 locks.
+        db_market = instrument_market_to_db_market(market_type)
         existing = find_opportunity_by_symbol_snapshot(
             symbol, snapshot_id,
-            market=instrument_market_to_db_market(market_type),
+            market=db_market,
         )
         if existing:
             _record_emission_decision(
@@ -378,6 +430,33 @@ def emit_deterministic_opportunities(
                 opportunity_id=existing.get("id"),
                 regime_tag=regime.state if regime else None,
                 inputs={"existing_status": existing.get("status")},
+            )
+            continue
+
+        # Cross-snapshot dedup: suppress a new signal if a live open signal from
+        # this scanner already exists for the same symbol+direction+market. Some
+        # symbols (e.g. derivatives with 240-min TTL) emit every ~10 min and pack
+        # the admission queue with 18-24 self-competing candidates. (#326)
+        live_signal = _find_live_universe_signal(symbol, direction, db_market)
+        if live_signal:
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=total_score,
+                short_enabled=short_enabled,
+                decision="passed",
+                reason_code="live_signal_exists",
+                direction=direction,
+                opportunity_id=live_signal.get("id"),
+                regime_tag=regime.state if regime else None,
+                inputs={
+                    "live_snapshot_id": live_signal.get("universe_snapshot_id"),
+                    "live_valid_until": live_signal.get("valid_until"),
+                    "live_status": live_signal.get("status"),
+                },
             )
             continue
 
@@ -410,7 +489,7 @@ def emit_deterministic_opportunities(
 
         opp = Opportunity(
             symbol=symbol,
-            market=instrument_market_to_db_market(market_type),
+            market=db_market,
             direction_bias=direction,
             thesis=thesis,
             confidence=confidence,

@@ -1,26 +1,6 @@
 name: Build Packaged Tray CLI Runtime
 
 on:
-  pull_request:
-    branches: [master]
-    paths:
-      - "aletheia/**"
-      - "frontend/**"
-      - "native/aletheia-host/**"
-      - "packaging/pyinstaller/**"
-      - "scripts/release/build_packaged_runtime.py"
-      - "scripts/release/build_macos_app.py"
-      - "scripts/release/local_release_session.py"
-      - "scripts/release/pyinstaller_entry.py"
-      - "scripts/release/sign_update_feed.py"
-      - "tests/test_packaged_*.py"
-      - "tests/test_macos_packaged_app.py"
-      - "tests/test_local_release_session.py"
-      - "docs/plans/packaged_tray_cli_runtime.md"
-      - "docs/operations/PACKAGED_RUNTIME.md"
-      - ".github/workflows/build-packaged-runtime.yml"
-      - "pyproject.toml"
-      - "uv.lock"
   workflow_dispatch:
     inputs:
       publish:
@@ -249,13 +229,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Test locked host release/update core
+      - name: Test locked host release/update core (tray feature enabled for macOS)
         working-directory: native/aletheia-host
-        run: cargo test --locked --all-targets
+        run: cargo test --locked --all-targets --features tray
 
       - name: Build stable CLI and tray binaries
         working-directory: native/aletheia-host
-        run: cargo build --locked --release --bins
+        run: cargo build --locked --release --bins --features tray
 
       - name: Exercise stable CLI selection and direct tray smoke
         id: host_smoke

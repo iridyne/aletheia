@@ -282,3 +282,452 @@ def test_import_identical_duplicate_still_counted_as_skipped(tmp_path, monkeypat
 
     assert result.conflicts == []
     assert result.skipped_duplicates == 1
+
+
+# ---------------------------------------------------------------------------
+# #271 — import fail-closed: verification errors abort before any mutation
+# ---------------------------------------------------------------------------
+
+
+def _build_bundle_with_db_row_and_checksums(
+    tmp_path: Path,
+    archive_name: str,
+    *,
+    checksums_content: str | None = None,
+    include_checksums: bool = True,
+    extra_files: dict[str, str] | None = None,
+) -> Path:
+    """Build a minimal valid bundle with one ps_lessons row.
+
+    ``checksums_content`` overrides the auto-generated checksums.txt.
+    ``extra_files`` adds additional files (path-relative-to-bundle-root → content).
+    ``include_checksums=False`` omits checksums.txt entirely.
+    """
+    from aletheia.storage.hashing import sha256_file
+
+    staging = tmp_path / f"staging_{archive_name}"
+    staging.mkdir(parents=True)
+    db_dir = staging / "db"
+    db_dir.mkdir()
+
+    row = {
+        "lesson_id": f"lesson-{archive_name}",
+        "source_type": "test",
+        "source_id": "s1",
+        "category": "risk",
+        "severity": "medium",
+        "status": "accepted",
+        "summary": "hello",
+        "evidence_json": "{}",
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    jsonl_path = db_dir / "ps_lessons.jsonl"
+    jsonl_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    if extra_files:
+        for rel, content in extra_files.items():
+            p = staging / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+
+    if include_checksums:
+        if checksums_content is not None:
+            (staging / "checksums.txt").write_text(checksums_content, encoding="utf-8")
+        else:
+            good_hash = sha256_file(jsonl_path)
+            lines = [f"{good_hash}  db/ps_lessons.jsonl"]
+            if extra_files:
+                for rel in extra_files:
+                    lines.append(f"{sha256_file(staging / rel)}  {rel}")
+            (staging / "checksums.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    archive = tmp_path / f"{archive_name}.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname=archive_name)
+    return archive
+
+
+def _count_lessons(tmp_path: Path, lesson_id: str) -> int:
+    conn = sqlite3.connect(str(tmp_path / "test.db"))
+    row = conn.execute(
+        "SELECT COUNT(*) FROM ps_lessons WHERE lesson_id=?", (lesson_id,)
+    ).fetchone()
+    conn.close()
+    return row[0]
+
+
+def test_import_missing_checksums_aborts_without_mutation(tmp_path, monkeypatch):
+    """#271: merge with no checksums.txt must report error and leave DB unchanged."""
+    _setup_env(tmp_path, monkeypatch)
+    archive = _build_bundle_with_db_row_and_checksums(
+        tmp_path, "no_checksums", include_checksums=False
+    )
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert result.errors, "missing checksums.txt must report an error"
+    assert "checksums" in result.errors[0].lower()
+    assert _count_lessons(tmp_path, "lesson-no_checksums") == 0, (
+        "no rows must be inserted when checksums.txt is missing"
+    )
+
+
+def test_import_checksum_mismatch_aborts_without_mutation(tmp_path, monkeypatch):
+    """#271: merge with wrong hash must report error and leave DB unchanged."""
+    _setup_env(tmp_path, monkeypatch)
+    bad_checksums = "0" * 64 + "  db/ps_lessons.jsonl\n"
+    archive = _build_bundle_with_db_row_and_checksums(
+        tmp_path, "bad_hash", checksums_content=bad_checksums
+    )
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert any("mismatch" in e.lower() for e in result.errors), (
+        f"checksum mismatch must be reported; got {result.errors}"
+    )
+    assert _count_lessons(tmp_path, "lesson-bad_hash") == 0, (
+        "no rows must be inserted when checksum mismatch is detected"
+    )
+
+
+def test_import_unlisted_payload_aborts_without_mutation(tmp_path, monkeypatch):
+    """#271: merge with an extra db file not in checksums must error and not insert."""
+    _setup_env(tmp_path, monkeypatch)
+    # Build a bundle where checksums only covers ps_lessons.jsonl, but there's
+    # an extra unlisted db file that would otherwise be imported.
+    from aletheia.storage.hashing import sha256_file
+
+    staging = tmp_path / "staging_unlisted"
+    staging.mkdir()
+    db_dir = staging / "db"
+    db_dir.mkdir()
+
+    row = {
+        "lesson_id": "lesson-unlisted",
+        "source_type": "test", "source_id": "s1",
+        "category": "risk", "severity": "medium", "status": "accepted",
+        "summary": "hi", "evidence_json": "{}", "created_at": "2026-01-01T00:00:00Z",
+    }
+    jsonl_path = db_dir / "ps_lessons.jsonl"
+    jsonl_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    # An extra file that is NOT listed in checksums.txt
+    extra_path = db_dir / "unknown_table.jsonl"
+    extra_path.write_text('{"id":"x"}\n', encoding="utf-8")
+
+    # Only list the main file, not the extra
+    good_hash = sha256_file(jsonl_path)
+    (staging / "checksums.txt").write_text(
+        f"{good_hash}  db/ps_lessons.jsonl\n", encoding="utf-8"
+    )
+    archive = tmp_path / "unlisted.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname="unlisted")
+
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert any("unlisted" in e.lower() for e in result.errors), (
+        f"unlisted payload must be reported; got {result.errors}"
+    )
+    assert _count_lessons(tmp_path, "lesson-unlisted") == 0, (
+        "no rows must be inserted when unlisted payload is detected"
+    )
+
+
+def test_import_malformed_checksum_line_aborts_without_mutation(tmp_path, monkeypatch):
+    """#271: malformed checksums.txt lines must error and prevent import."""
+    _setup_env(tmp_path, monkeypatch)
+    archive = _build_bundle_with_db_row_and_checksums(
+        tmp_path, "malformed", checksums_content="not-a-valid-checksum-line\n"
+    )
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert result.errors, "malformed checksum line must produce an error"
+    assert _count_lessons(tmp_path, "lesson-malformed") == 0, (
+        "no rows must be inserted when checksums.txt is malformed"
+    )
+
+
+# ---------------------------------------------------------------------------
+# #273 — import table allowlist and identifier quoting
+# ---------------------------------------------------------------------------
+
+
+def _build_bundle_with_arbitrary_table(
+    tmp_path: Path, archive_name: str, table_name: str, row: dict
+) -> Path:
+    """Bundle containing db/<table_name>.jsonl with one row, checksums correct."""
+    from aletheia.storage.hashing import sha256_file
+
+    staging = tmp_path / f"staging_{archive_name}"
+    staging.mkdir(parents=True)
+    db_dir = staging / "db"
+    db_dir.mkdir()
+    jsonl_path = db_dir / f"{table_name}.jsonl"
+    jsonl_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    (staging / "checksums.txt").write_text(
+        f"{sha256_file(jsonl_path)}  db/{table_name}.jsonl\n", encoding="utf-8"
+    )
+    archive = tmp_path / f"{archive_name}.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname=archive_name)
+    return archive
+
+
+def test_import_rejects_unauthorized_table(tmp_path, monkeypatch):
+    """#273: a checksum-valid bundle targeting an unlisted table must be rejected."""
+    _setup_env(tmp_path, monkeypatch)
+    archive = _build_bundle_with_arbitrary_table(
+        tmp_path, "unauth", "risk_decisions",
+        {"id": "rd-1", "decision": "kill", "created_at": "2026-01-01T00:00:00Z"},
+    )
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert any("authorized" in e.lower() or "rejected" in e.lower() for e in result.errors), (
+        f"unauthorized table must be rejected; got {result.errors}"
+    )
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    count = db.execute("SELECT COUNT(*) FROM risk_decisions WHERE id='rd-1'").fetchone()[0]
+    assert count == 0, "unauthorized table row must not be inserted"
+
+
+def test_import_mixed_bundle_writes_nothing_on_unauthorized_table(tmp_path, monkeypatch):
+    """#273: a bundle with one valid + one unauthorized table must write neither."""
+    from aletheia.storage.hashing import sha256_file
+
+    _setup_env(tmp_path, monkeypatch)
+
+    staging = tmp_path / "staging_mixed"
+    staging.mkdir()
+    db_dir = staging / "db"
+    db_dir.mkdir()
+
+    good_row = {
+        "lesson_id": "lesson-mixed-ok",
+        "source_type": "test", "source_id": "s1",
+        "category": "risk", "severity": "medium", "status": "accepted",
+        "summary": "good", "evidence_json": "{}", "created_at": "2026-01-01T00:00:00Z",
+    }
+    bad_row = {"id": "settings-poison", "key": "admin", "value": "evil"}
+
+    good_file = db_dir / "ps_lessons.jsonl"
+    bad_file = db_dir / "settings.jsonl"
+    good_file.write_text(json.dumps(good_row) + "\n", encoding="utf-8")
+    bad_file.write_text(json.dumps(bad_row) + "\n", encoding="utf-8")
+
+    lines = [
+        f"{sha256_file(good_file)}  db/ps_lessons.jsonl",
+        f"{sha256_file(bad_file)}  db/settings.jsonl",
+    ]
+    (staging / "checksums.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    archive = tmp_path / "mixed.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname="mixed")
+
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert result.errors, "mixed bundle with unauthorized table must report errors"
+    assert _count_lessons(tmp_path, "lesson-mixed-ok") == 0, (
+        "valid-table rows must not be inserted when a sibling table is unauthorized"
+    )
+
+
+def test_import_rejects_row_with_unknown_column(tmp_path, monkeypatch):
+    """#273: a row in an allowed table with an unknown column is rejected."""
+    _setup_env(tmp_path, monkeypatch)
+
+    row_with_extra = {
+        "lesson_id": "lesson-badcol",
+        "source_type": "test", "source_id": "s1",
+        "category": "risk", "severity": "medium", "status": "accepted",
+        "summary": "ok", "evidence_json": "{}", "created_at": "2026-01-01T00:00:00Z",
+        "injected_column": "DROP TABLE ps_lessons",
+    }
+    archive = _build_bundle_with_arbitrary_table(
+        tmp_path, "badcol", "ps_lessons", row_with_extra
+    )
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert any("schema" in e.lower() or "column" in e.lower() for e in result.errors), (
+        f"unknown column must be rejected; got {result.errors}"
+    )
+    assert _count_lessons(tmp_path, "lesson-badcol") == 0, (
+        "no rows must be inserted when an unknown column is present"
+    )
+
+
+# ---------------------------------------------------------------------------
+# #275 — import merge uses atomic transaction; partial failure rolls back all
+# ---------------------------------------------------------------------------
+
+
+def test_import_transaction_rolls_back_on_constraint_failure(tmp_path, monkeypatch):
+    """#275: a bundle with one valid row followed by a PK-duplicate row (different
+    content, no idempotency) must leave neither row committed.
+
+    We seed a row in ps_lessons, then import a bundle where the first row
+    has a fresh ID (would insert fine) but the second has the SAME ID as the
+    seeded row BUT different content — causing a conflict classification.
+    After the conflict path the first row should NOT be persisted because the
+    entire import runs inside a single transaction.
+
+    NOTE: The conflict detection path skips the INSERT for conflicting rows,
+    so we force a raw constraint failure: we insert a bundle whose SECOND row
+    has the same lesson_id as the first (intra-bundle PK clash not detected by
+    PK pre-check). That forces INSERT to fail mid-transaction.
+    """
+    from aletheia.storage.hashing import sha256_file
+
+    _setup_env(tmp_path, monkeypatch)
+
+    staging = tmp_path / "staging_tx_rollback"
+    staging.mkdir()
+    db_dir = staging / "db"
+    db_dir.mkdir()
+
+    base_row = {
+        "lesson_id": "tx-lesson-A",
+        "source_type": "test", "source_id": "s1",
+        "category": "risk", "severity": "medium", "status": "accepted",
+        "summary": "first", "evidence_json": "{}", "created_at": "2026-01-01T00:00:00Z",
+    }
+    dup_row = dict(base_row, summary="duplicate PK — will fail constraint")
+
+    jsonl_path = db_dir / "ps_lessons.jsonl"
+    jsonl_path.write_text(
+        json.dumps(base_row) + "\n" + json.dumps(dup_row) + "\n",
+        encoding="utf-8",
+    )
+    (staging / "checksums.txt").write_text(
+        f"{sha256_file(jsonl_path)}  db/ps_lessons.jsonl\n", encoding="utf-8"
+    )
+    archive = tmp_path / "tx_rollback.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname="tx_rollback")
+
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert result.errors, (
+        "duplicate intra-bundle PK must produce an error (transaction rolled back)"
+    )
+    assert _count_lessons(tmp_path, "tx-lesson-A") == 0, (
+        "the first row must not be committed when the transaction was rolled back"
+    )
+    assert not result.new_rows, (
+        "new_rows must be empty after a rolled-back transaction"
+    )
+
+
+def test_import_valid_bundle_commits_all_rows(tmp_path, monkeypatch):
+    """#275: a fully valid bundle must still commit all rows and report new_rows."""
+    _setup_env(tmp_path, monkeypatch)
+
+    rows = [
+        {
+            "lesson_id": f"lesson-tx-{i}",
+            "source_type": "test", "source_id": f"s{i}",
+            "category": "risk", "severity": "medium", "status": "accepted",
+            "summary": f"row {i}", "evidence_json": "{}", "created_at": "2026-01-01T00:00:00Z",
+        }
+        for i in range(3)
+    ]
+    from aletheia.storage.hashing import sha256_file
+
+    staging = tmp_path / "staging_valid_commit"
+    staging.mkdir()
+    db_dir = staging / "db"
+    db_dir.mkdir()
+    jsonl_path = db_dir / "ps_lessons.jsonl"
+    jsonl_path.write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+    (staging / "checksums.txt").write_text(
+        f"{sha256_file(jsonl_path)}  db/ps_lessons.jsonl\n", encoding="utf-8"
+    )
+    archive = tmp_path / "valid_commit.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname="valid_commit")
+
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert not result.errors, f"valid bundle must not error; got {result.errors}"
+    assert result.new_rows.get("ps_lessons") == 3, (
+        f"expected 3 new ps_lessons rows; got {result.new_rows}"
+    )
+    for row in rows:
+        assert _count_lessons(tmp_path, row["lesson_id"]) == 1, (
+            f"row {row['lesson_id']} must be committed"
+        )
+
+
+# ---------------------------------------------------------------------------
+# #277 — concurrent imports use distinct staging directories
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_imports_use_distinct_staging_dirs(tmp_path, monkeypatch):
+    """#277: two ImportService calls must use distinct staging directories."""
+    import threading
+
+    _setup_env(tmp_path, monkeypatch)
+
+    archive = _build_bundle_with_db_row_and_checksums(tmp_path, "dist277")
+
+    from aletheia.sync.importer import ImportService
+    staging_dirs: list[Path] = []
+    original_open = tarfile.open
+
+    import contextlib
+
+    @contextlib.contextmanager
+    def patched_open(path, mode):
+        nonlocal staging_dirs
+        # Capture the extract_dir by monkeypatching tarfile.extractall
+        with original_open(path, mode) as tar:
+            orig_extractall = tar.extractall
+
+            def capture_extractall(dest, filter=None):
+                staging_dirs.append(Path(dest))
+                return orig_extractall(dest, filter=filter)
+
+            tar.extractall = capture_extractall
+            yield tar
+
+    monkeypatch.setattr(tarfile, "open", patched_open)
+
+    results = []
+    errors = []
+
+    def run_import():
+        try:
+            svc = ImportService(data_dir=tmp_path)
+            results.append(svc.dry_run(archive))
+        except Exception as exc:
+            errors.append(exc)
+
+    t1 = threading.Thread(target=run_import)
+    t2 = threading.Thread(target=run_import)
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+
+    assert not errors, f"import threads raised: {errors}"
+    assert len(staging_dirs) == 2, f"expected 2 staging dirs captured, got {staging_dirs}"
+    assert staging_dirs[0] != staging_dirs[1], (
+        f"concurrent imports must use different staging directories; "
+        f"both used {staging_dirs[0]}"
+    )
+    # Both must be under <data_dir>/tmp
+    tmp_base = tmp_path / "tmp"
+    for d in staging_dirs:
+        assert d.parent.resolve() == tmp_base.resolve(), (
+            f"staging dir {d} is not directly under <data_dir>/tmp"
+        )

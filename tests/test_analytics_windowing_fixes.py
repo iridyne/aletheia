@@ -302,3 +302,195 @@ def test_overview_funnels_share_the_same_parsed_iso_window(tmp_path, monkeypatch
     assert opportunity["emitted_count"] == 1
     assert opportunity["reviewed_count"] == 1
     assert opportunity["proposed_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# #322 — learning-contribution verdict column fix
+# ---------------------------------------------------------------------------
+
+
+def _insert_verdict(conn, verdict_id: str, verdict: str, experiment_id: str = "exp-1") -> None:
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO learning_contribution_verdicts "
+        "(verdict_id, experiment_id, hypothesis_id, window_start, window_end, "
+        "unique_treatment_n, unique_control_n, verdict, reason, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (verdict_id, experiment_id, "hyp-1", now, now, 5, 5, verdict, "test", now),
+    )
+    conn.commit()
+
+
+def test_learning_contribution_verdict_counts_use_verdict_column(tmp_path, monkeypatch):
+    """#322: route queried 'classification' (non-existent) — fixed to 'verdict'."""
+    _setup_env(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sq
+
+    conn = sq._db_conn
+    _insert_verdict(conn, "v-1", "invalid")
+    _insert_verdict(conn, "v-2", "invalid")
+    _insert_verdict(conn, "v-3", "insufficient_data")
+
+    from aletheia.server.routes.analytics import get_learning_contribution
+
+    result = get_learning_contribution()
+
+    assert result["verdicts"]["total"] == 3
+    assert "error" not in result["verdicts"]
+    by_verdict = {row["verdict"]: row["n"] for row in result["verdicts"]["by_verdict"]}
+    assert by_verdict["invalid"] == 2
+    assert by_verdict["insufficient_data"] == 1
+
+
+def test_learning_contribution_verdict_db_error_surfaces_error_not_zero(tmp_path, monkeypatch):
+    """#322: a schema/read failure must not silently return total=0."""
+    _setup_env(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sq
+
+    # Drop the table to simulate a schema error.
+    sq._db_conn.execute("DROP TABLE learning_contribution_verdicts")
+    sq._db_conn.commit()
+
+    from aletheia.server.routes.analytics import get_learning_contribution
+
+    result = get_learning_contribution()
+
+    # total stays 0 because no rows were read — but an explicit error key is present
+    assert result["verdicts"]["total"] == 0
+    assert "error" in result["verdicts"]
+    assert result["verdicts"]["error"]  # non-empty error string
+
+
+# ---------------------------------------------------------------------------
+# #327 — conviction_defer decisions visible in operator-decisions API
+# ---------------------------------------------------------------------------
+
+
+def test_conviction_defer_appears_in_operator_decisions(tmp_path, monkeypatch):
+    """#327: operator_evaluation_events with event_kind='operator_decision_deferred_low_conviction'
+    must appear as outcome='conviction_defer' in get_operator_decisions — previously
+    invisible because the API only queried pi_decisions (which has no row for these)."""
+    import json
+    from datetime import datetime, timezone
+
+    _setup_env(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sq
+
+    conn = sq._db_conn
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Insert the opportunity so the JOIN resolves symbol/direction/market_type.
+    conn.execute(
+        "INSERT INTO opportunities "
+        "(id, symbol, market, direction_bias, confidence, created_at, status) "
+        "VALUES (?, 'ETH/USDT', 'usdt_futures', 'long', 'medium_confidence', ?, 'reviewed')",
+        ("opp-conviction-327", now),
+    )
+    snap = json.dumps({
+        "opportunity_id": "opp-conviction-327",
+        "defer_reason": "operator_low_conviction",
+        "defer_until": now,
+        "context_fingerprint": "fp-327",
+    })
+    conn.execute(
+        "INSERT INTO operator_evaluation_events "
+        "(id, dedup_key, event_kind, trigger, pending_unresolved_total, "
+        "pending_visible_count, queue_snapshot_json, data_health_json, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        ("oee-327", "dk-327", "operator_decision_deferred_low_conviction",
+         "material_change", 1, 1, snap, "{}", now),
+    )
+    conn.commit()
+
+    from aletheia.server.routes.analytics import get_operator_decisions
+
+    result = get_operator_decisions(hours=24, limit=50)
+
+    assert result["counts"]["conviction_defer"] == 1
+    defer_items = [it for it in result["items"] if it["outcome"] == "conviction_defer"]
+    assert len(defer_items) == 1
+    item = defer_items[0]
+    assert item["opportunity_id"] == "opp-conviction-327"
+    assert item["symbol"] == "ETH/USDT"
+    assert item["direction"] == "long"
+    assert item["market_type"] == "usdt_futures"
+    assert item["defer_reason"] == "operator_low_conviction"
+
+
+# ---------------------------------------------------------------------------
+# #330 — direction_bias_brake rejection → portfolio_guard_reject, not operator_skip
+# ---------------------------------------------------------------------------
+
+
+def test_direction_bias_brake_skip_classified_as_portfolio_guard_reject(tmp_path, monkeypatch):
+    """#330: when direction_bias_brake rejects a trade after operator_action_assessment
+    passed, the pi_decisions.action='skip' row must surface as portfolio_guard_reject,
+    not operator_skip — the LLM approved the trade; a portfolio guard blocked it."""
+    from datetime import datetime, timezone
+
+    _setup_env(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sq
+
+    conn = sq._db_conn
+    now = datetime.now(timezone.utc).isoformat()
+
+    # pi_decisions row: LLM said trade, but direction_bias_brake overrode to skip.
+    conn.execute(
+        "INSERT INTO pi_decisions "
+        "(id, symbol, direction, market_type, action, conviction, reasoning, "
+        "opportunity_id, signal_source, created_at) "
+        "VALUES (?, 'ACE/USDT', 'long', 'spot', 'skip', 72, "
+        "'operator approved; guard blocked', 'opp-guard-330', 'market_observer', ?)",
+        ("pid-guard-330", now),
+    )
+    # filter_decisions row: direction_bias_brake rejected this pi_decision.
+    conn.execute(
+        "INSERT INTO filter_decisions "
+        "(id, dedup_key, candidate_key, candidate_kind, symbol, market_type, "
+        "filter_name, stage, sequence_no, decision, reason_code, "
+        "input_snapshot, parameter_snapshot, filter_version, evaluated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "fd-guard-330", "fd-dedup-guard-330",
+            "pi_decision:pid-guard-330", "pi_decision",
+            "ACE/USDT", "spot",
+            "direction_bias_brake", "system_operator", 2, "rejected",
+            "proposal_direction_concentration",
+            "{}", "{}", "v1", now,
+        ),
+    )
+    # A regular skip with no guard trace — must stay operator_skip.
+    conn.execute(
+        "INSERT INTO pi_decisions "
+        "(id, symbol, direction, market_type, action, conviction, reasoning, "
+        "opportunity_id, signal_source, created_at) "
+        "VALUES (?, 'BTC/USDT', 'short', 'spot', 'skip', 55, "
+        "'llm decided to skip', 'opp-skip-330', 'market_observer', ?)",
+        ("pid-skip-330", now),
+    )
+    conn.commit()
+
+    from aletheia.server.routes.analytics import get_operator_decisions
+
+    result = get_operator_decisions(hours=24, limit=50)
+
+    assert result["counts"]["portfolio_guard_reject"] == 1, (
+        "direction_bias_brake skip should count as portfolio_guard_reject"
+    )
+    assert result["counts"]["operator_skip"] == 1, (
+        "regular skip must still count as operator_skip"
+    )
+
+    guard_items = [it for it in result["items"] if it["outcome"] == "portfolio_guard_reject"]
+    assert len(guard_items) == 1
+    g = guard_items[0]
+    assert g["decision_id"] == "pid-guard-330"
+    assert g["symbol"] == "ACE/USDT"
+    assert g["guard_filter"] == "direction_bias_brake"
+    assert g["guard_block_reason"] == "proposal_direction_concentration"
+
+    skip_items = [it for it in result["items"] if it["outcome"] == "operator_skip"]
+    assert len(skip_items) == 1
+    assert skip_items[0]["decision_id"] == "pid-skip-330"

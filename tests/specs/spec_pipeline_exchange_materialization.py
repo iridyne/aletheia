@@ -112,16 +112,29 @@ def _seed_native_chain(
     trade_school: str = "short_term",
 ):
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Opportunity, Order, RiskDecision, TradeProposal
-
-    opportunity = Opportunity(
-        symbol="BTC/USDT",
-        market=market_type,
-        direction_bias="long",
-        thesis="mocked private-fill materialization",
-        source_agent="spec",
+    from aletheia.storage.models import (
+        Opportunity, Order, RiskDecision, SerenityOpportunity, SerenityTheme, TradeProposal,
     )
-    repo.insert_opportunity(opportunity)
+
+    if trade_school == "serenity":
+        theme = SerenityTheme(name="spec-test-theme", status="active")
+        repo.insert_serenity_theme(theme)
+        opportunity = SerenityOpportunity(
+            theme_id=theme.id,
+            symbol="BTC/USDT",
+            direction="long",
+            thesis="mocked serenity private-fill materialization",
+        )
+        repo.insert_serenity_opportunity(opportunity)
+    else:
+        opportunity = Opportunity(
+            symbol="BTC/USDT",
+            market=market_type,
+            direction_bias="long",
+            thesis="mocked private-fill materialization",
+            source_agent="spec",
+        )
+        repo.insert_opportunity(opportunity)
     proposal = TradeProposal(
         opportunity_id=opportunity.id,
         symbol="BTC/USDT",
@@ -957,6 +970,7 @@ def _seed_pending_close(
         requested_price=100.0,
         order_status="filled",
         proposal_status="executed",
+        trade_school=trade_school,
     )
     repo.insert_fill(
         Fill(

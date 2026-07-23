@@ -665,7 +665,7 @@ function CandidateLedger() {
             const n = counts?.[o] ?? 0
             const active = outcomeFilter.has(o)
             return (
-              <button
+              <Button
                 key={o}
                 type="button"
                 className={`bl-facet bl-facet-${OUTCOME_TONE[o]}${active ? ' active' : ''}`}
@@ -675,14 +675,14 @@ function CandidateLedger() {
               >
                 {OUTCOME_LABEL[o]}
                 <span className="bl-facet-count mono">{n}</span>
-              </button>
+              </Button>
             )
           })}
         </div>
 
         <div className="bl-toolbar-side" role="group" aria-label="Filter by side">
           {(['all', 'l', 's'] as const).map(s => (
-            <button
+            <Button
               key={s}
               type="button"
               className={`bl-side-btn${sideFilter === s ? ' active' : ''}`}
@@ -690,13 +690,13 @@ function CandidateLedger() {
               aria-pressed={sideFilter === s}
             >
               {s === 'all' ? 'All' : s.toUpperCase()}
-            </button>
+            </Button>
           ))}
         </div>
 
         <div className="bl-toolbar-time" role="group" aria-label="Time window">
           {TIME_WINDOWS.map(w => (
-            <button
+            <Button
               key={w.hours}
               type="button"
               className={`bl-time-btn${hours === w.hours ? ' active' : ''}`}
@@ -704,14 +704,14 @@ function CandidateLedger() {
               aria-pressed={hours === w.hours}
             >
               {w.label}
-            </button>
+            </Button>
           ))}
         </div>
 
         {hasFilters && (
-          <button type="button" className="bl-reset-btn" onClick={reset}>
+          <Button type="button" className="bl-reset-btn" onClick={reset}>
             ✕ Reset
-          </button>
+          </Button>
         )}
       </div>
 

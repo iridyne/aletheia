@@ -111,7 +111,7 @@ def test_run_supervised_default_uses_frontdoor_and_internal_backend_port(tmp_pat
     monkeypatch.setattr(runner, "_stop_vite_watch", lambda proc: None)
     monkeypatch.setattr(runner, "kill_pid_tree", lambda pid: captured.setdefault("killed_frontdoor", pid))
 
-    def fake_spawn_server(cfg, *, port=None, frontdoor_holder=None):
+    def fake_spawn_server(cfg, *, port=None, frontdoor_holder=None, collector_holder=None):
         captured["backend_port"] = port
         captured["frontdoor_holder"] = frontdoor_holder
         captured["frontdoor_proc"] = frontdoor_holder[0] if frontdoor_holder else None

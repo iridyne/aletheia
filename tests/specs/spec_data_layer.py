@@ -275,7 +275,8 @@ def test_ohlcv_storage_uses_full_instrument_identity():
         "L2c",
         "Active Universe instruments with insufficient OHLCV are repaired by an "
         "independent bounded job using exact exchange + symbol + market_type identity, "
-        "durable retry state, and failure backoff.",
+        "durable retry state, failure backoff, and a wall-clock pair timeout that "
+        "does not wait for CCXT cancellation cleanup.",
         status="implemented",
     )
 )
@@ -283,11 +284,14 @@ def test_active_universe_ohlcv_catchup_is_bounded_and_durable():
     migrations = (_ROOT / "aletheia/storage/migrations.py").read_text(encoding="utf-8")
     scheduler = (_ROOT / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
     module = (_ROOT / "aletheia/data/active_ohlcv_backfill.py")
+    source = module.read_text(encoding="utf-8")
 
     assert module.exists()
     assert "ohlcv_backfill_state" in migrations
     assert "ohlcv_active_backfill" in scheduler
     assert "active_universe_backfill_max_pairs_per_run" in scheduler
+    assert "_wait_without_cancel_drain" in source
+    assert "asyncio.shield" in source
 
 
 # ---------------------------------------------------------------------------
