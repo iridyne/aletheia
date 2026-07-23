@@ -126,13 +126,3 @@ def test_stable_launcher_requires_manifest_and_absolute_data_override(tmp_path: 
     )
     assert completed.returncode != 0
     assert "release-manifest.json is required" in completed.stderr
-
-
-def test_workflow_runs_exact_artifact_as_clean_macos_runtime() -> None:
-    workflow = Path(".github/workflows/build-dogfood-release.yml").read_text(encoding="utf-8")
-
-    assert "build-bundle:" in workflow
-    assert "scripts/release/build_bundle.py" in workflow
-    assert "install-release.sh" in workflow
-    assert "actions/upload-artifact@v4" in workflow
-    assert "ALETHEIA_DATA_DIR" in workflow

@@ -106,10 +106,16 @@ jobs:
       - name: Synchronize locked dependencies
         run: uv sync --locked --all-groups
 
-      - name: Run review regression suite
-        run: >-
-          uv run pytest tests/
-          --ignore=tests/simulation
-          -n auto
-          -q --tb=short
-          --timeout=120
+      - name: Run isolated review regression tiers
+        shell: bash
+        run: |
+          set -euo pipefail
+          for tier in tier_spec tier_unit tier_integration tier_e2e; do
+            ALETHEIA_DATA_DIR="$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${tier}" \
+              uv run pytest tests/ \
+                --ignore=tests/simulation \
+                -m "$tier" \
+                -n auto \
+                -q --tb=short \
+                --timeout=120
+          done

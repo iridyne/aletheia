@@ -108,6 +108,7 @@ def test_python_regression_excludes_nightly_simulation_and_isolates_state() -> N
     job = _workflow()["jobs"]["tests"]
     commands = _run_commands(job)
 
+    assert "for tier in tier_spec tier_unit tier_integration tier_e2e" in commands
     assert "uv run pytest tests/" in commands
     assert "--ignore=tests/simulation" in commands
     assert "ALETHEIA_DATA_DIR=$RUNNER_TEMP" in commands

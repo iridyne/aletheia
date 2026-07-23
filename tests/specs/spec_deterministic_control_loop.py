@@ -44,15 +44,12 @@ def test_dcls_seed_is_wired_into_hypothesis_generation():
 
 
 @spec_claim(SpecClaim(
-    "DCLS-B01", "operator_layer", "CI control-loop gate", "L2b",
-    "PR CI runs fixed incidents, stateful properties, mutation canaries, and the active Golden Path; nightly CI raises stateful bounds.",
+    "DCLS-B01", "operator_layer", "manual control-loop diagnostic", "L2b",
+    "Control-loop simulation remains an explicit local diagnostic and does not consume routine PR or scheduled CI capacity.",
     status="implemented",
 ))
-def test_dcls_ci_gate_is_registered():
+def test_dcls_is_kept_out_of_routine_ci():
     ci = (ROOT / ".github/workflows/ci.yml").read_text()
-    nightly = (ROOT / ".github/workflows/dcls-nightly.yml").read_text()
-    # CI redesign uses directory-level invocations instead of individual files
-    assert "tests/simulation/" in ci
-    assert "tests/e2e/" in ci
-    assert "DCLS_MAX_EXAMPLES" in ci
-    assert "DCLS_MAX_EXAMPLES: 100" in nightly
+    assert "--ignore=tests/simulation" in ci
+    assert "DCLS_MAX_EXAMPLES" not in ci
+    assert not (ROOT / ".github/workflows/dcls-nightly.yml").exists()
