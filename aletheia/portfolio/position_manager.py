@@ -559,6 +559,12 @@ def _position_risk(position: dict, cfg):
     # always have cfg.risk and still resolve/fail closed by execution mode.
     if not hasattr(cfg, "risk"):
         return None
+    if not hasattr(cfg.risk, "demo") or not hasattr(cfg.risk, "live"):
+        # Legacy/unit callers may pass only the flat risk attributes exercised
+        # by this close-path helper. Treat that object as the compatibility
+        # view; it has no execution authority and is never used for proposal
+        # approval.
+        return cfg.risk
     from aletheia.risk.policy import (
         UnknownRiskExecutionMode,
         resolve_risk_policy,
