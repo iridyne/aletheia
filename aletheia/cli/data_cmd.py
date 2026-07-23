@@ -65,10 +65,10 @@ def reconcile_paper_funding(
     run_migrations()
     try:
         if apply:
-            if not position_ids:
-                raise typer.BadParameter("--apply requires at least one --position-id")
             if not expected_fingerprint:
                 raise typer.BadParameter("--apply requires --expected-fingerprint")
+            if not position_ids:
+                raise typer.BadParameter("--apply requires at least one --position-id")
             result = apply_paper_funding_reconciliation(
                 position_ids=position_ids,
                 expected_fingerprint=expected_fingerprint,
