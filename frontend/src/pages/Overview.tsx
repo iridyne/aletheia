@@ -81,6 +81,9 @@ export default function Overview() {
   const running = !!s.gateway_running
   const paused = !!s.paused
   const killed = !!killSwitch?.active
+  const bootCommit = String(s.boot_commit || '')
+  const currentCommit = String(s.current_commit || '')
+  const codeDrift = !!bootCommit && !!currentCommit && bootCommit !== currentCommit
 
   // Risk
   const riskState = String(riskStatus?.status || 'not_available')
@@ -173,6 +176,20 @@ export default function Overview() {
             <table className="status-board">
               <tbody>
                 <StatusRow label="Gateway" light={running ? 'green' : 'red'} value={running ? 'up' : 'down'} />
+                <StatusRow
+                  label="Code"
+                  light={!bootCommit ? 'muted' : codeDrift ? 'yellow' : 'green'}
+                  value={bootCommit ? bootCommit.slice(0, 12) : 'not available'}
+                  title={
+                    bootCommit
+                      ? codeDrift
+                        ? `Running commit: ${bootCommit}. Checked-out commit: ${currentCommit}. Restart the gateway to run the checked-out code.`
+                        : `Running backend commit: ${bootCommit}`
+                      : 'The responding backend could not determine its startup Git commit.'
+                  }
+                  onClick={() => navigate('/settings?tab=runtime')}
+                  externalLink
+                />
                 {/* #118 fix: previously the Scheduler light was green whenever
                     !paused, ignoring `scheduler_running` and `scheduler_state`
                     from /status — so a scheduler that had actually stopped
