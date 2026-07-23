@@ -1139,6 +1139,7 @@ class RiskConfigUpdate(SettingsRequest):
     max_live_limited_cap_usdt: Optional[float] = None
     starting_capital_usdt: Optional[float] = None
     max_demo_position_notional_usdt: Optional[float] = None
+    max_per_symbol_notional_usdt: Optional[float] = None
     max_demo_single_trade_risk_pct: Optional[float] = None
     max_futures_leverage_live: Optional[int] = None
     max_futures_leverage_demo: Optional[int] = None
@@ -1178,6 +1179,7 @@ _RISK_BOUNDS: dict[str, tuple[float, float]] = {
     "max_live_limited_cap_usdt": (1.0, 100_000.0),
     "starting_capital_usdt": (1.0, 100_000.0),
     "max_demo_position_notional_usdt": (1.0, 100_000.0),
+    "max_per_symbol_notional_usdt": (0.0, 100_000.0),
     "max_demo_single_trade_risk_pct": (0.01, 20.0),
     "max_futures_leverage_live": (1, 20),
     "max_futures_leverage_demo": (1, 125),

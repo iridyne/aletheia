@@ -326,6 +326,21 @@ async def test_settings_post_does_not_echo_secrets(client):
 
 
 @pytest.mark.anyio
+async def test_risk_config_saves_per_symbol_notional_cap(client):
+    """The Settings risk form must be able to round-trip its shared symbol cap."""
+    response = await client.post(
+        "/api/settings/risk",
+        json={"max_per_symbol_notional_usdt": 450.0},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["risk"]["max_per_symbol_notional_usdt"] == 450.0
+
+    settings = (await client.get("/api/settings")).json()
+    assert settings["risk"]["max_per_symbol_notional_usdt"] == 450.0
+
+
+@pytest.mark.anyio
 async def test_tunnel_guard_protects_risk_config_mutation(client):
     """Regression #137: with the tunnel enabled, POST /settings/risk requires the token."""
     from aletheia.config.loader import load_config, save_config
