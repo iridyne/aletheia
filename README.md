@@ -10,10 +10,18 @@ Local-first, file-based, Trading-as-Git, AI-native, self-learning agentic tradin
 ## Quick Start
 
 ```bash
-uv venv --python 3.12
-uv pip install -e ".[dev]"
-uv run aletheia gateway start      # opens dashboard at http://127.0.0.1:8787
+uv sync
+uv run aletheia-install
+aletheia gateway start      # opens dashboard at http://127.0.0.1:8787
 ```
+
+`aletheia-install` writes a small reroute command into
+[uv's tool bin](https://docs.astral.sh/uv/concepts/tools/). From any directory,
+`aletheia ...` then delegates to `uv run --project <this-clone> -- aletheia ...`,
+preserving this checkout's lockfile and virtual environment. Rerun the installer
+after moving the clone. If uv reports that its tool bin is not on `PATH`, run
+`uv tool update-shell` once and open a new shell. An unrelated existing command
+is preserved unless you explicitly rerun the installer with `--force`.
 
 Then configure everything **in the dashboard** (Settings page), OpenAlice-style:
 
