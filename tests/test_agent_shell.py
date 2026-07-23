@@ -659,7 +659,7 @@ async def test_trading_decision_records_debate_trace(tmp_path, monkeypatch):
 
     from aletheia.agent_shell.trading_decision import DecisionUnavailable
 
-    with pytest.raises(DecisionUnavailable) as exc_info:
+    with pytest.raises(DecisionUnavailable, match="debate_not_confirmed") as exc_info:
         await td.evaluate_trading_opportunity({"layer1": {"opportunities": []}})
 
     exc = exc_info.value
@@ -668,6 +668,7 @@ async def test_trading_decision_records_debate_trace(tmp_path, monkeypatch):
     debate_entry = next(
         e for e in exc.filter_trace if e.get("filter_name") == "debate_downgrade"
     )
+    assert debate_entry["decision"] == "rejected"
     assert debate_entry["inputs"]["initial_conviction"] == 60
     assert debate_entry["inputs"]["final_conviction"] == 48
     assert debate_entry["inputs"]["bull_confidence"] == 40
