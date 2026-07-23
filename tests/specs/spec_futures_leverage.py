@@ -22,13 +22,17 @@ def test_config_schema_futures_fields():
     from aletheia.config.schema import RiskConfig, ExchangeConfig
 
     risk = RiskConfig()
-    assert risk.max_leverage_major_demo == 5
+    assert risk.max_demo_position_notional_usdt == 100_000.0
+    assert risk.max_demo_single_trade_risk_pct == 20.0
+    assert risk.max_futures_leverage_demo == 125
+    assert risk.max_open_positions_demo == 200
+    assert risk.max_leverage_major_demo == 20
     assert risk.max_leverage_major_live == 3
-    assert risk.max_leverage_mid_demo == 3
+    assert risk.max_leverage_mid_demo == 10
     assert risk.max_leverage_mid_live == 2
-    assert risk.max_leverage_alt_demo == 2
+    assert risk.max_leverage_alt_demo == 5
     assert risk.max_leverage_alt_live == 1
-    assert risk.max_account_leverage_demo == 3.0
+    assert risk.max_account_leverage_demo == 10.0
     assert risk.max_account_leverage_live == 1.5
     assert risk.futures_margin_warning_ratio == 0.70
     assert risk.futures_margin_force_close_ratio == 0.85
@@ -65,9 +69,9 @@ def test_max_leverage_per_tier():
     cfg = AletheiaConfig()
 
     # Demo mode
-    assert get_max_leverage("BTC/USDT", is_live=False, cfg=cfg) == 5
-    assert get_max_leverage("SOL/USDT", is_live=False, cfg=cfg) == 3
-    assert get_max_leverage("SHIB/USDT", is_live=False, cfg=cfg) == 2
+    assert get_max_leverage("BTC/USDT", is_live=False, cfg=cfg) == 20
+    assert get_max_leverage("SOL/USDT", is_live=False, cfg=cfg) == 10
+    assert get_max_leverage("SHIB/USDT", is_live=False, cfg=cfg) == 5
 
     # Live mode
     assert get_max_leverage("BTC/USDT", is_live=True, cfg=cfg) == 2  # min(3, account_cap=2)
@@ -318,7 +322,7 @@ async def test_submit_decision_clamps_leverage(tmp_path, monkeypatch):
     monkeypatch.setattr("aletheia.trust.guard_chain.summarize",
                         lambda v: {"blocks": [], "details": ""})
 
-    # PI asks for 50x on BTC (major demo cap = 5) → must clamp to 5.
+    # PI asks for 50x on BTC (major demo cap = 20) → must clamp to 20.
     decision = td.TradingDecision(
         action="trade", symbol="BTC/USDT", direction="long",
         conviction=80, reasoning="strong", position_size_usdt=100.0,
@@ -326,7 +330,7 @@ async def test_submit_decision_clamps_leverage(tmp_path, monkeypatch):
     )
     await td.submit_decision_as_proposal(decision, execution_mode="paper_internal")
     assert captured["market_type"] == "usdt_futures"
-    assert captured["leverage"] == 5  # clamped to BTC demo tier cap
+    assert captured["leverage"] == 20  # clamped to BTC demo tier cap
 
 
 @spec_claim(
@@ -349,7 +353,7 @@ def test_futures_context_injection():
     fut = _build_futures_context(layer, cfg)
     limits = fut["leverage_limits"]
     assert limits["BTC/USDT"]["tier"] == "major"
-    assert limits["BTC/USDT"]["max_demo"] == 5
+    assert limits["BTC/USDT"]["max_demo"] == 20
     assert limits["SOL/USDT"]["tier"] == "mid"
     assert "account_leverage_ratio" in fut
     assert "available_margin_pct" in fut

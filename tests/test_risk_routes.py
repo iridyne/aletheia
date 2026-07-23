@@ -73,6 +73,34 @@ async def test_kill_switch_activate_and_release(client):
 
 
 @pytest.mark.anyio
+async def test_mode_brakes_are_independent_from_global_kill_switch(client):
+    engaged = await client.post(
+        "/api/risk/brakes/demo",
+        json={"active": True, "reason": "demo daily loss"},
+    )
+    assert engaged.status_code == 200
+    assert engaged.json() == {
+        "scope": "demo",
+        "active": True,
+        "global_active": False,
+        "demo_active": True,
+        "live_active": False,
+    }
+
+    brakes = (await client.get("/api/risk/brakes")).json()
+    assert brakes["global_active"] is False
+    assert brakes["demo_active"] is True
+    assert brakes["live_active"] is False
+
+    release = await client.post(
+        "/api/risk/brakes/demo",
+        json={"active": False, "confirm_release": True},
+    )
+    assert release.status_code == 200
+    assert release.json()["demo_active"] is False
+
+
+@pytest.mark.anyio
 async def test_risk_status_blocked_when_kill_switch_active(client):
     await client.post("/api/risk/kill-switch", json={"active": True, "reason": "panic"})
     resp = await client.get("/api/risk/status")
@@ -120,6 +148,11 @@ async def test_risk_status_keeps_latest_rejected_decision_as_history(client):
 
 @pytest.mark.anyio
 async def test_risk_summary_surfaces_due_boundary_change_after_repeated_adjustable_rejections(client):
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.risk.max_demo_position_notional_usdt = 200.0
+    save_config(cfg)
     first = TradeProposal(
         symbol="BTCUSDT",
         market_type="spot",

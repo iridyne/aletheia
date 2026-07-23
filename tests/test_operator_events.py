@@ -978,8 +978,13 @@ async def test_operator_recommendations_use_latest_portfolio_snapshot_not_oldest
 
 @pytest.mark.anyio
 async def test_operator_recommendations_include_risk_boundary_change_proposal_due_for_repeated_adjustable_rejections(client):
+    from aletheia.config.loader import load_config, save_config
     from aletheia.storage.models import RiskDecision, TradeProposal
     from aletheia.storage.repositories import insert_risk_decision, insert_trade_proposal
+
+    cfg = load_config()
+    cfg.risk.max_demo_position_notional_usdt = 200.0
+    save_config(cfg)
 
     first = TradeProposal(
         symbol="BTCUSDT",

@@ -185,22 +185,14 @@ def get_asset_tier(symbol: str) -> str:
 
 def get_max_leverage(symbol: str, is_live: bool, cfg) -> int:
     """Return the per-asset-tier maximum leverage from config."""
-    risk = cfg.risk
+    policy = cfg.risk.live if is_live else cfg.risk.demo
     tier = get_asset_tier(symbol)
-    if is_live:
-        account_cap = risk.max_futures_leverage_live
-        if tier == "major":
-            return min(risk.max_leverage_major_live, account_cap)
-        if tier == "mid":
-            return min(risk.max_leverage_mid_live, account_cap)
-        return min(risk.max_leverage_alt_live, account_cap)
-    else:
-        account_cap = risk.max_futures_leverage_demo
-        if tier == "major":
-            return min(risk.max_leverage_major_demo, account_cap)
-        if tier == "mid":
-            return min(risk.max_leverage_mid_demo, account_cap)
-        return min(risk.max_leverage_alt_demo, account_cap)
+    account_cap = policy.leverage.futures_cap
+    if tier == "major":
+        return min(policy.leverage.major_cap, account_cap)
+    if tier == "mid":
+        return min(policy.leverage.mid_cap, account_cap)
+    return min(policy.leverage.alt_cap, account_cap)
 
 
 def get_ct_val(symbol: str) -> float:

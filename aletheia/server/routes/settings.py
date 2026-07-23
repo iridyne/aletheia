@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, FiniteFloat, field_validator
 
 from aletheia.config.loader import load_config, save_config
+from aletheia.config.schema import ModeRiskPolicy, default_mode_risk_policy
+from aletheia.risk.policy import risk_policy_hash
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -1139,6 +1141,7 @@ class RiskConfigUpdate(SettingsRequest):
     max_live_limited_cap_usdt: Optional[float] = None
     starting_capital_usdt: Optional[float] = None
     max_demo_position_notional_usdt: Optional[float] = None
+    max_per_symbol_notional_usdt: Optional[float] = None
     max_demo_single_trade_risk_pct: Optional[float] = None
     max_futures_leverage_live: Optional[int] = None
     max_futures_leverage_demo: Optional[int] = None
@@ -1170,6 +1173,16 @@ class RiskConfigUpdate(SettingsRequest):
 # Fields that must never be changed via the dashboard (safety invariants).
 _RISK_IMMUTABLE = {"allowed_exchange", "require_risk_check_for_all_orders"}
 
+# Demo/paper capacity controls intentionally have no application-level maximum.
+# They remain positive, finite typed values and continue to pass through every
+# Risk Engine check; exchange-backed leverage retains venue-compatible bounds.
+_RISK_MINIMUMS: dict[str, float] = {
+    "max_demo_position_notional_usdt": 1.0,
+    "max_demo_single_trade_risk_pct": 0.01,
+    "max_account_leverage_demo": 1.0,
+    "max_open_positions_demo": 1.0,
+}
+
 _RISK_BOUNDS: dict[str, tuple[float, float]] = {
     "max_daily_loss_pct": (0.1, 20.0),
     "max_single_trade_risk_pct": (0.01, 10.0),
@@ -1177,8 +1190,7 @@ _RISK_BOUNDS: dict[str, tuple[float, float]] = {
     "max_live_position_notional_usdt": (1.0, 100_000.0),
     "max_live_limited_cap_usdt": (1.0, 100_000.0),
     "starting_capital_usdt": (1.0, 100_000.0),
-    "max_demo_position_notional_usdt": (1.0, 100_000.0),
-    "max_demo_single_trade_risk_pct": (0.01, 20.0),
+    "max_per_symbol_notional_usdt": (0.0, 100_000.0),
     "max_futures_leverage_live": (1, 20),
     "max_futures_leverage_demo": (1, 125),
     "max_leverage_major_demo": (1, 20),
@@ -1187,13 +1199,11 @@ _RISK_BOUNDS: dict[str, tuple[float, float]] = {
     "max_leverage_mid_live": (1, 5),
     "max_leverage_alt_demo": (1, 5),
     "max_leverage_alt_live": (1, 3),
-    "max_account_leverage_demo": (1.0, 10.0),
     "max_account_leverage_live": (1.0, 5.0),
     "futures_margin_warning_ratio": (0.3, 0.95),
     "futures_margin_force_close_ratio": (0.5, 0.99),
     "min_liquidation_buffer_pct": (1.0, 20.0),
     "max_open_positions_live": (1, 50),
-    "max_open_positions_demo": (1, 200),
     "max_sector_concentration_pct": (10.0, 100.0),
     "max_portfolio_beta": (0.5, 10.0),
     "live_family_min_samples": (1, 500),
@@ -1206,17 +1216,27 @@ async def update_risk_config(req: RiskConfigUpdate):
     """Update editable risk limits. Immutable fields are rejected."""
     cfg = load_config()
     old = cfg.risk.model_dump(mode="json")
+    old_policy_hashes = {
+        mode: risk_policy_hash(getattr(cfg.risk, mode))
+        for mode in ("demo", "live")
+    }
     updates = req.model_dump(exclude_none=True)
 
     for field, value in updates.items():
         if field in _RISK_IMMUTABLE:
             raise HTTPException(400, f"Field '{field}' cannot be modified via the dashboard")
+        if field in _RISK_MINIMUMS and value < _RISK_MINIMUMS[field]:
+            raise HTTPException(400, f"'{field}' must be at least {_RISK_MINIMUMS[field]}, got {value}")
         if field in _RISK_BOUNDS:
             lo, hi = _RISK_BOUNDS[field]
             if not (lo <= value <= hi):
                 raise HTTPException(400, f"'{field}' must be between {lo} and {hi}, got {value}")
         setattr(cfg.risk, field, value)
 
+    for mode in ("demo", "live"):
+        policy = getattr(cfg.risk, mode)
+        if risk_policy_hash(policy) != old_policy_hashes[mode]:
+            policy.revision += 1
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "risk_config_changed",
@@ -1224,6 +1244,225 @@ async def update_risk_config(req: RiskConfigUpdate):
                  "after": cfg.risk.model_dump(mode="json"),
                  "message": f"Risk config updated: {list(updates.keys())}"})
     return {"updated": updates, "risk": cfg.risk.model_dump(mode="json")}
+
+
+RiskMode = Literal["demo", "live"]
+
+
+def _policy_payload(cfg) -> dict:
+    return {
+        mode: {
+            **getattr(cfg.risk, mode).model_dump(mode="json"),
+            "policy_hash": risk_policy_hash(getattr(cfg.risk, mode)),
+        }
+        for mode in ("demo", "live")
+    }
+
+
+def _policy_diff(source: dict, target: dict, prefix: str = "") -> list[dict]:
+    rows: list[dict] = []
+    for key in sorted(set(source) | set(target)):
+        path = f"{prefix}.{key}" if prefix else key
+        left = source.get(key)
+        right = target.get(key)
+        if isinstance(left, dict) and isinstance(right, dict):
+            rows.extend(_policy_diff(left, right, path))
+        elif left != right:
+            rows.append({"path": path, "source": left, "target": right})
+    return rows
+
+
+def _validate_mode_policy(policy: ModeRiskPolicy) -> None:
+    import math
+
+    numeric = {
+        "capital.base_usdt": policy.capital.base_usdt,
+        "capital.max_position_notional_usdt": policy.capital.max_position_notional_usdt,
+        "capital.max_per_symbol_notional_usdt": policy.capital.max_per_symbol_notional_usdt,
+        "capital.max_total_exposure_pct": policy.capital.max_total_exposure_pct,
+        "loss.max_single_trade_risk_pct": policy.loss.max_single_trade_risk_pct,
+        "loss.max_daily_loss_pct": policy.loss.max_daily_loss_pct,
+        "positions.max_open_positions": policy.positions.max_open_positions,
+        "leverage.futures_cap": policy.leverage.futures_cap,
+        "leverage.major_cap": policy.leverage.major_cap,
+        "leverage.mid_cap": policy.leverage.mid_cap,
+        "leverage.alt_cap": policy.leverage.alt_cap,
+        "leverage.account_cap": policy.leverage.account_cap,
+        "margin.min_entry_liquidation_buffer_pct":
+            policy.margin.min_entry_liquidation_buffer_pct,
+        "margin.runtime_liquidation_buffer_pct":
+            policy.margin.runtime_liquidation_buffer_pct,
+        "correlation.max_sector_concentration_pct":
+            policy.correlation.max_sector_concentration_pct,
+        "correlation.max_portfolio_beta": policy.correlation.max_portfolio_beta,
+    }
+    invalid = [
+        path for path, value in numeric.items()
+        if not math.isfinite(float(value)) or float(value) < 0
+    ]
+    if policy.positions.max_open_positions < 1:
+        invalid.append("positions.max_open_positions")
+    if policy.capital.base_usdt <= 0:
+        invalid.append("capital.base_usdt")
+    if policy.capital.max_position_notional_usdt <= 0:
+        invalid.append("capital.max_position_notional_usdt")
+    if policy.capital.max_per_symbol_notional_usdt <= 0:
+        invalid.append("capital.max_per_symbol_notional_usdt")
+    if policy.loss.max_single_trade_risk_pct <= 0:
+        invalid.append("loss.max_single_trade_risk_pct")
+    if policy.loss.max_daily_loss_pct <= 0:
+        invalid.append("loss.max_daily_loss_pct")
+    for path, value in {
+        "leverage.futures_cap": policy.leverage.futures_cap,
+        "leverage.major_cap": policy.leverage.major_cap,
+        "leverage.mid_cap": policy.leverage.mid_cap,
+        "leverage.alt_cap": policy.leverage.alt_cap,
+        "leverage.account_cap": policy.leverage.account_cap,
+    }.items():
+        if value < 1:
+            invalid.append(path)
+    if invalid:
+        raise HTTPException(400, f"Invalid risk policy fields: {sorted(set(invalid))}")
+
+
+class RiskPolicyCopyRequest(SettingsRequest):
+    source: RiskMode
+    target: RiskMode
+    source_revision: int
+    target_revision: int
+    confirm_target_replacement: bool = False
+    reason: str
+
+
+class RiskPolicyReplaceRequest(SettingsRequest):
+    policy: ModeRiskPolicy
+    expected_revision: int
+    confirm_target_replacement: bool = False
+    reason: str
+
+
+class RiskPolicyResetRequest(SettingsRequest):
+    expected_revision: int
+    confirm_target_replacement: bool = False
+    reason: str
+
+
+@router.get("/risk-policies")
+async def get_risk_policies():
+    return _policy_payload(load_config())
+
+
+@router.post("/risk-policies/compare")
+async def compare_risk_policies(req: RiskPolicyCopyRequest):
+    cfg = load_config()
+    source = getattr(cfg.risk, req.source).model_dump(mode="json")
+    target = getattr(cfg.risk, req.target).model_dump(mode="json")
+    return {"source": req.source, "target": req.target, "diff": _policy_diff(source, target)}
+
+
+@router.post("/risk-policies/copy")
+async def copy_risk_policy(req: RiskPolicyCopyRequest):
+    if req.source == req.target:
+        raise HTTPException(400, "source and target policies must differ")
+    if not req.confirm_target_replacement:
+        raise HTTPException(422, "Policy replacement requires explicit confirmation")
+    cfg = load_config()
+    source = getattr(cfg.risk, req.source)
+    target = getattr(cfg.risk, req.target)
+    if source.revision != req.source_revision or target.revision != req.target_revision:
+        raise HTTPException(409, "policy_revision_conflict")
+
+    before = target.model_dump(mode="json")
+    common = source.model_dump(
+        mode="json",
+        exclude={"policy_id", "revision", "eligibility"},
+    )
+    replacement = ModeRiskPolicy.model_validate({
+        **target.model_dump(mode="json"),
+        **common,
+        "revision": target.revision + 1,
+    })
+    _validate_mode_policy(replacement)
+    setattr(cfg.risk, req.target, replacement)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({
+        "actor": "human",
+        "source": "dashboard",
+        "event_type": "risk_policy_copied",
+        "entity_type": "risk_policy",
+        "entity_id": req.target,
+        "before": before,
+        "after": replacement.model_dump(mode="json"),
+        "message": f"{req.source} policy copied to {req.target}: {req.reason}",
+    })
+    return _policy_payload(cfg)
+
+
+@router.put("/risk-policies/{mode}")
+async def replace_risk_policy(mode: RiskMode, req: RiskPolicyReplaceRequest):
+    if not req.confirm_target_replacement:
+        raise HTTPException(422, "Policy replacement requires explicit confirmation")
+    cfg = load_config()
+    current = getattr(cfg.risk, mode)
+    if current.revision != req.expected_revision:
+        raise HTTPException(409, "policy_revision_conflict")
+    replacement = req.policy.model_copy(
+        update={
+            "policy_id": current.policy_id,
+            "revision": current.revision + 1,
+            "eligibility": req.policy.eligibility if mode == "live" else None,
+        },
+        deep=True,
+    )
+    _validate_mode_policy(replacement)
+    setattr(cfg.risk, mode, replacement)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({
+        "actor": "human",
+        "source": "dashboard",
+        "event_type": "risk_policy_replaced",
+        "entity_type": "risk_policy",
+        "entity_id": mode,
+        "before": current.model_dump(mode="json"),
+        "after": replacement.model_dump(mode="json"),
+        "message": f"{mode} policy replaced: {req.reason}",
+    })
+    return _policy_payload(cfg)
+
+
+@router.post("/risk-policies/{mode}/reset-defaults")
+async def reset_risk_policy(mode: RiskMode, req: RiskPolicyResetRequest):
+    if not req.confirm_target_replacement:
+        raise HTTPException(422, "Policy replacement requires explicit confirmation")
+    cfg = load_config()
+    current = getattr(cfg.risk, mode)
+    if current.revision != req.expected_revision:
+        raise HTTPException(409, "policy_revision_conflict")
+    defaults = default_mode_risk_policy(mode)
+    replacement = defaults.model_copy(
+        update={
+            "policy_id": current.policy_id,
+            "revision": current.revision + 1,
+        },
+        deep=True,
+    )
+    _validate_mode_policy(replacement)
+    setattr(cfg.risk, mode, replacement)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({
+        "actor": "human",
+        "source": "dashboard",
+        "event_type": "risk_policy_reset_to_defaults",
+        "entity_type": "risk_policy",
+        "entity_id": mode,
+        "before": current.model_dump(mode="json"),
+        "after": replacement.model_dump(mode="json"),
+        "message": f"{mode} policy reset to defaults: {req.reason}",
+    })
+    return _policy_payload(cfg)
 
 
 # ---------------------------------------------------------------------------

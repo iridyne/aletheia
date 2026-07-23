@@ -64,4 +64,5 @@ def test_realized_losses_trip_breaker_via_close(tmp_path, monkeypatch):
     result = evaluate_proposal(p)
     assert result.approved is False
     assert any("max_daily_loss" in v for v in result.violations)
-    assert kill_switch.is_active() is True
+    assert kill_switch.is_active("demo") is True
+    assert kill_switch.is_active("global") is False

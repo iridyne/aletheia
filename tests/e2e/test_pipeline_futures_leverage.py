@@ -253,12 +253,17 @@ class TestFuturesLeverageAcceptance:
         assert result and result.get("status") == "executed", result
         proposal = repo.get_trade_proposal(result["proposal_id"])
         assert proposal["market_type"] == "usdt_futures"
-        # SOL is mid-tier → demo cap 3; the PI's request of 10 must be clamped to 3.
-        assert proposal["leverage"] == 3
+        # SOL is mid-tier; clamp against the independently configured Demo
+        # policy instead of hard-coding the former shared default.
+        expected_leverage = min(
+            decision.leverage,
+            local_paper_futures_config.risk.demo.leverage.mid_cap,
+        )
+        assert proposal["leverage"] == expected_leverage
         assert proposal["opportunity_id"] == opp.id
         order = repo.get_order(result["order_id"])
         position = repo._select_one("positions", result["position_id"])
         assert order["proposal_id"] == proposal["id"]
         assert order["position_id"] == position["id"]
-        assert position["leverage"] == 3
+        assert position["leverage"] == expected_leverage
         assert position["opportunity_id"] == opp.id

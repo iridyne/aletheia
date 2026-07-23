@@ -19,6 +19,18 @@
 
 **唯一入口不变式(RE-B17)**:执行网关 `_execute_proposal` 中每一条调用 broker 下单函数(`execute_paper_order` / `execute_live_order`)的代码路径,必须在 `risk_result.approved` 检查通过后才能到达——即 risk evaluation 必须前置且其结果被显式消费。不存在绕过 `evaluate_proposal` 直接触达 broker 的路径。可执行测试:spec `RE-B17`。
 
+### 1.1 Demo / Live policy identity（v2）
+
+Risk Engine 仍只有一个入口和一套检查实现，但参数由 Proposal 已验证的
+`execution_mode` 显式解析到 `risk.demo` 或 `risk.live`。未知 mode 必须
+`unregistered_risk_execution_mode` fail closed，不能按 Demo 默认处理。
+
+每条 RiskDecision 保存 `risk_mode/policy_id/policy_revision/policy_hash`；
+authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须重新评估，
+不得复用旧批准。Demo/Live policy 可由人类比较、复制或整体替换，但
+`require_risk_check_for_all_orders`、live unlock、permission、credentials 和
+运行时 brake 不属于可复制 policy。
+
 ---
 
 ## 2. 检查关卡(代码实际 20 个主关卡，另含本地纸面入场子关与 6b)
@@ -34,7 +46,7 @@
 
 | # | 关卡 | 判断 | config 字段 | 失败标签 | 位置 |
 |---|------|------|------------|---------|------|
-| 0 | Kill Switch | `runtime.kill_switch_active` | `runtime.kill_switch_active` | `kill_switch_active` | engine.py:80 |
+| 0 | Trading Brakes | global brake 阻断全部；demo/live mode brake 只阻断对应 pool | `runtime.kill_switch_active/demo_brake_active/live_brake_active` | `kill_switch_active` / `demo_brake_active` / `live_brake_active` | engine.py |
 | 1 | Symbol Filter | white/blacklist | `risk.symbol_filter_mode/symbol_list` | `symbol_blocked/not_allowed:{sym}` | :83 |
 | 1a | Local Paper Market Authority | authoritative `native + paper_internal` 只接受主数据 venue、canonical symbol、physical market 完全匹配的新鲜 mark（内存≤90s，SQLite≤120s）；Proposal.price 必须以极窄 `math.isclose` 容差等于该 mark，broker 只在批准后施加滑点；本地 limit 不受支持 | `market_data.ccxt_exchange` | `paper_market_data_unavailable:{venue}:{market}` / `proposal_price_not_current_mark` / `paper_internal_limit_not_supported` | engine.py local-paper authority block |
 | 1b | Local Paper Causal Identity | authoritative `native + paper_internal` 必须在 `opportunities` 与 `serenity_opportunities` 中恰有一个 durable carrier，且 canonical symbol、physical market、direction 完全一致 | —（始终启用） | `proposal_opportunity_required/not_found/ambiguous/symbol_mismatch/market_mismatch/direction_mismatch/check_error` | engine.py `_paper_opportunity_identity_violations` |
@@ -43,21 +55,21 @@
 | 2b | Complete Entry Plan | 每个 native 本地纸面 market 入场及 native exchange limit 入场必须在 Risk 前固定有限正数的 entry/stop/take-profit/risk_reward；多空几何正确，risk_reward 必须等于 `round(abs(tp-entry)/abs(entry-stop), 2)`。exchange market close/reduce 与 adopted chain 豁免 | —（Proposal immutable fields） | `incomplete_entry_plan:{fields}` / `entry_plan_geometry:*` / `entry_plan_risk_reward_mismatch` | engine.py check #2b/#2c |
 | 3 | Live State | 非 `live_disabled` | `live.state` | `live_disabled` | :99 |
 | 4 | Permission Mode | Observe 仅 paper_internal | `agent.permission_mode` | `permission_mode_insufficient:{mode}` | :104 |
-| 5 | Max Position Notional | live/demo 硬上限与对应账户的本地可用 USDT 取较小值，再应用回撤缩放；`paper_internal` 必须读取本地纸面账户账本，读取失败不可退回配置资金 | `risk.max_{live/demo}_position_notional_usdt` + local exchange-account cache / paper-account ledger | `exceeds_max_position_notional:{n}>{cap}` (live path); `exceeds_demo_position_notional:{n}>{cap}` (demo path); `paper_account_balance_unavailable` | :109 |
-| 6 | Max Open Positions | live/demo 持仓数 | `risk.max_open_positions_{live/demo}` | `max_{live/demo}_positions_reached:{n}` | :127 |
+| 5 | Max Position Notional | live/demo 配置上限与对应账户的本地可用 USDT 取较小值，再应用回撤缩放；`paper_internal` 必须读取本地纸面账户账本，读取失败不可退回配置资金。Demo 默认 100,000 USDT，设置 API 只保留正数下限、不施加应用层最大值；live 边界不变 | `risk.max_{live/demo}_position_notional_usdt` + local exchange-account cache / paper-account ledger | `exceeds_max_position_notional:{n}>{cap}` (live path); `exceeds_demo_position_notional:{n}>{cap}` (demo path); `paper_account_balance_unavailable` | :109 |
+| 6 | Max Open Positions | live/demo 持仓数；demo 默认 200，设置 API 只保留正整数下限 | `risk.max_open_positions_{live/demo}` | `max_{live/demo}_positions_reached:{n}` | :127 |
 | 6b | Cross-pool Symbol Dedup | 同 live/demo 池内同标的禁止重复开仓(防跨 broker 重复) | —(始终启用) | `symbol_already_open:{sym}` | :141 |
 | 7 | Short Allowed | 方向合法 | `risk.allow_short_{live/demo}` | `short_not_allowed_{live/demo}` | :138 |
 | 8 | Max Daily Loss | 只读 authoritative account snapshot；来源不可用→拒绝但不伪造 breach；真实日损突破→**自动触发 kill switch** | `risk.max_daily_loss_pct`, `kill_switch_enabled_{live/demo}` | `account_loss_unavailable:{reason}` / `max_daily_loss_exceeded:{r}<=-{lim}` | engine.py check #8 |
 | 9a | Exchange Allowlist | 交易所匹配(self-contained 豁免) | `risk.allowed_exchange` | `exchange_not_allowed:{a}!={e}` | :162 |
 | 9b | Account Mode Match | live↔mode=live / demo↔mode=demo | `exchange.mode` | `account_mode_mismatch:...` | :170 |
-| 10 | Max Leverage | 期货杠杆上限 | `risk.max_futures_leverage_{live/demo}` | `exceeds_max_leverage:{l}>{cap}` | :181 |
+| 10 | Max Leverage | 期货杠杆上限；demo 默认 125x，仍受设置 API 的可执行上界约束 | `risk.max_futures_leverage_{live/demo}` | `exceeds_max_leverage:{l}>{cap}` | :181 |
 | 11 | Data Freshness | live<120s / demo<1800s | `_MAX_DATA_AGE_SECONDS=120` | `stale_market_data:age={a}` (live path); `stale_market_data_demo:age={a}` (demo path for bitget_demo/okx_demo only, engine.py:238-241) | :188 |
 | 12 | Total Live Exposure | 敞口+新单<上限 | `risk.max_total_live_exposure_pct` | `max_total_live_exposure_exceeded:{p}>{cap}` | :194 |
-| 13 | Single Trade Risk | 止损距离×数量<上限 | `risk.max_{/demo_}single_trade_risk_pct` | `max_single_trade_risk_missing_stop_price` (live, no stop_price, engine.py:207); `exceeds_single_trade_risk:{r}>{max}` (live, over cap); `exceeds_demo_single_trade_risk:{r}>{max}` (demo) | :202 |
+| 13 | Single Trade Risk | 止损距离×数量<上限；demo 默认 20%，设置 API 只保留正数下限 | `risk.max_{/demo_}single_trade_risk_pct` | `max_single_trade_risk_missing_stop_price` (live, no stop_price, engine.py:207); `exceeds_single_trade_risk:{r}>{max}` (live, over cap); `exceeds_demo_single_trade_risk:{r}>{max}` (demo) | :202 |
 | 14 | Scanner-Family Evidence | live 需该单 `scanner_family`(经 opportunity 解析)在干净窗有 ≥N 已结算证据且方向胜率≥门槛(取代已删的策略 FSM 准入,Position C 2026-07-02;fail-closed:无 family/无证据/样本不足/胜率不足均拒) | `risk.live_family_min_samples`(30)/`risk.live_family_min_win_rate_pct`(50.0) + `repo.family_direction_edge` | `family_not_live_eligible:{unknown/family:no_evidence/family:samples=n<N/family:wr=w<T}` | :211 |
 | 15 | Lesson Constraints | 已接受且未过期的 manual/owner/human block 规则保持静态硬约束；自动来源默认 advisory，只有 exact `risk_lesson_constraint` prospective treatment 可阻断该 Proposal，control/default/error 不得阻断 | `LessonStore.recommendation_json` + Learning path authority | `lesson_block_{symbol/...}:{id}:{v}` / `lesson_check_error:internal_failure` | engine.py `_check_lesson_constraints` |
 | 16 | Portfolio Correlation | 部门集中度 + 组合 BTC beta | `risk.correlation_guard_enabled/max_sector_concentration_pct/max_portfolio_beta` | `sector_concentration/portfolio_beta:...` | :245,387 |
-| 17 | Account Leverage Ratio | 期货:同一账户池的 Position + 未决 entry Order + pre-Order reservation 的 Σ(notional×lev)/同账户 equity ≤ 上限；不同 demo broker 不混算；外部 equity 必须来自新鲜健康的具名缓存；相关 Position 的数量/入场价/杠杆非法时拒绝，不能当零敞口（spot 的 NULL leverage 按其结构语义计 1x，显式非 1x 反而拒绝） | `risk.max_account_leverage_{live(1.5)/demo(3.0)}` + named local cache | `account_leverage_ratio:{r}x>{cap}x` / `account_equity_unavailable:{mode}` / `account_leverage_check_error:{invalid_position_exposure/internal_failure}` | engine.py check #17 (RE-B23~27) |
+| 17 | Account Leverage Ratio | 期货:同一账户池的 Position + 未决 entry Order + pre-Order reservation 的 Σ(notional×lev)/同账户 equity ≤ 上限；不同 demo broker 不混算；外部 equity 必须来自新鲜健康的具名缓存；相关 Position 的数量/入场价/杠杆非法时拒绝，不能当零敞口（spot 的 NULL leverage 按其结构语义计 1x，显式非 1x 反而拒绝）。Demo 默认 10x，设置 API 只保留正数下限；live 保持 1.5x | `risk.max_account_leverage_{live/demo}` + named local cache | `account_leverage_ratio:{r}x>{cap}x` / `account_equity_unavailable:{mode}` / `account_leverage_check_error:{invalid_position_exposure/internal_failure}` | engine.py check #17 (RE-B23~27) |
 | 18 | Liquidation Buffer | 期货(lev>1):估算爆仓价距入场 ≥ buffer% | `risk.min_liquidation_buffer_pct`(5.0) | `liquidation_too_close:{g}%<{b}%` | :695 (FL-S09) |
 | 19 | Per-symbol Cumulative Notional | 同标的同池累计名义(含本单)≤ 上限(CUM-ADD 均价合并会绕过 #5 单仓上限) | `risk.max_per_symbol_notional_usdt` | `exceeds_per_symbol_notional:{sym}:{proj}>{cap}` | :285 |
 
