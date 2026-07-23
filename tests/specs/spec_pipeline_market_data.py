@@ -271,6 +271,8 @@ def test_xstock_consecutive_failures_trigger_infra_event(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ccxt_mod, "CCXTProvider", lambda **kwargs: _FailingCCXTProvider())
     # get_market_data_provider also needs to return something that can be closed
+    # The factory receives exact-venue kwargs even though this fake only drives
+    # the separately pinned xStock failure path.
     monkeypatch.setattr(
         ccxt_mod,
         "get_market_data_provider",
