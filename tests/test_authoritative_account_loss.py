@@ -412,3 +412,23 @@ def test_new_close_event_without_valid_paper_position_remains_unavailable():
     assert snapshot.available is False
     assert snapshot.reason == "paper_ledger_mismatch"
     assert snapshot.realized_pnl_usdt is None
+
+
+def test_invalid_exit_price_evidence_is_excluded_from_account_economics():
+    from aletheia.portfolio.account_loss import authoritative_account_realized_loss
+    from aletheia.portfolio.paper_account import INVALID_EXIT_PRICE_EVIDENCE
+    from aletheia.storage import repositories as repo
+
+    _closed_position("invalid-exit", 4326.3885071)
+    repo.update_position(
+        "invalid-exit",
+        realized_pnl=None,
+        outcome_eligible=False,
+        outcome_exclusion_reason=INVALID_EXIT_PRICE_EVIDENCE,
+    )
+
+    snapshot = authoritative_account_realized_loss("paper_internal")
+
+    assert snapshot.available is True
+    assert snapshot.realized_pnl_usdt == 0.0
+    assert snapshot.loss_usdt == 0.0

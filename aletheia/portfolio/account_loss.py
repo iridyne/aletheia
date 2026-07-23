@@ -53,7 +53,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from aletheia.analytics.outcome_integrity import assess_position_closure, raw_account_events
-from aletheia.portfolio.paper_account import FUNDING_PERMANENTLY_UNRECOVERABLE
+from aletheia.portfolio.paper_account import (
+    FUNDING_PERMANENTLY_UNRECOVERABLE,
+    INVALID_EXIT_PRICE_EVIDENCE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +183,13 @@ def authoritative_account_realized_loss(execution_mode: str) -> AccountLossSnaps
             "account_event_window_truncated",
             event_count=exact_event_count,
         )
+
+    rows = [
+        row
+        for row in rows
+        if str(row.get("outcome_exclusion_reason") or "")
+        != INVALID_EXIT_PRICE_EVIDENCE
+    ]
 
     settled_rows: list[dict] = []
     pending_rows: list[dict] = []  # paper_internal only: realized_pnl IS NULL
@@ -333,6 +343,7 @@ def _paper_ledger_snapshot(rows: list[dict], today_start: str) -> AccountLossSna
         "JOIN positions p ON p.id = pae.position_id "
         "WHERE pae.action = 'position_closed' "
         "AND p.status = 'closed' AND p.execution_mode = 'paper_internal' "
+        "AND COALESCE(p.outcome_exclusion_reason, '') != ? "
         "AND datetime(p.closed_at) >= datetime(?) "
         "ORDER BY datetime(p.closed_at) ASC, pae.rowid ASC"
     )
@@ -341,6 +352,7 @@ def _paper_ledger_snapshot(rows: list[dict], today_start: str) -> AccountLossSna
         "LEFT JOIN positions p ON p.id = pae.position_id "
         "WHERE pae.action = 'position_closed' "
         "AND datetime(pae.created_at) >= datetime(?) "
+        "AND COALESCE(p.outcome_exclusion_reason, '') != ? "
         "AND (p.id IS NULL "
         "OR COALESCE(p.status, '') != 'closed' "
         "OR COALESCE(p.execution_mode, '') != 'paper_internal' "
@@ -351,10 +363,15 @@ def _paper_ledger_snapshot(rows: list[dict], today_start: str) -> AccountLossSna
     )
 
     def _read_ledger():
-        return db.execute(_ledger_query, (today_start,)).fetchall()
+        return db.execute(
+            _ledger_query, (INVALID_EXIT_PRICE_EVIDENCE, today_start)
+        ).fetchall()
 
     def _has_new_invalid_event() -> bool:
-        return db.execute(_new_invalid_event_query, (today_start,)).fetchone() is not None
+        return db.execute(
+            _new_invalid_event_query,
+            (today_start, INVALID_EXIT_PRICE_EVIDENCE),
+        ).fetchone() is not None
 
     def _build_actual(lrows):
         result: dict[str, list[float]] = {}
