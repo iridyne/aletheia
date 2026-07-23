@@ -396,6 +396,27 @@ def _probe_code_sync(report: Report) -> None:
         report.add("code.sync", "ok", detail)
 
 
+def _probe_legacy_launchd(report: Report) -> None:
+    """Warn when a known superseded Aletheia LaunchAgent is still registered."""
+    if platform.system() != "Darwin":
+        return
+    try:
+        from aletheia.gateway.autostart import _legacy_launchd_present
+        found = _legacy_launchd_present()
+    except Exception:
+        return
+    if found:
+        labels = ", ".join(found)
+        report.add(
+            "process.legacy_launchd",
+            "warn",
+            f"legacy Aletheia lifecycle job(s) still loaded: {labels}",
+            "`aletheia gateway enable-autostart` migrates them automatically",
+        )
+    else:
+        report.add("process.legacy_launchd", "ok", "no legacy Aletheia lifecycle jobs")
+
+
 def _probe_process(report: Report) -> None:
     from aletheia.gateway.pidfile import is_running, read_pid, port_in_use
     from aletheia.config.loader import load_config
@@ -3290,6 +3311,7 @@ def build_report() -> Report:
     report = Report(generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
     for probe in (
         _probe_code_sync,
+        _probe_legacy_launchd,
         _probe_process,
         _probe_gateway_restart_history,
         _probe_config_gates,

@@ -666,6 +666,141 @@ def test_parse_launchctl_status_short_lived_success_is_primed():
     }
 
 
+# --- 19. macOS legacy label migration ---
+
+def test_macos_enable_boots_out_legacy_labels(tmp_path, monkeypatch):
+    """enable() must bootout and remove every known legacy label before installing."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import autostart
+
+    launch_agents, _ = _force_macos(monkeypatch, autostart, tmp_path)
+    launch_agents.mkdir(parents=True)
+
+    # Plant a legacy plist on disk.
+    legacy_label = autostart._LEGACY_LAUNCHD_LABELS[0]
+    legacy_plist = launch_agents / f"{legacy_label}.plist"
+    import plistlib as pl
+    legacy_plist.write_bytes(pl.dumps({"Label": legacy_label, "ProgramArguments": ["/old/uv"]}))
+
+    calls: list[list[str]] = []
+
+    def run(args, **kwargs):
+        calls.append(list(args))
+        cmd = args[1] if len(args) > 1 else ""
+        if cmd == "print":
+            return _FakeProc(stdout="state = not running\nruns = 1\nlast exit code = 0\n", returncode=0)
+        if cmd == "bootout":
+            return _FakeProc(returncode=0)
+        return _FakeProc(returncode=0)
+
+    monkeypatch.setattr(autostart.subprocess, "run", run)
+    monkeypatch.setattr(autostart, "_verify_after_prime", lambda **kw: {"verified": True})
+
+    result = autostart.enable(source="cli")
+
+    assert result["ok"] is True
+    booted_targets = [c[2] for c in calls if c[1] == "bootout"]
+    assert any(legacy_label in t for t in booted_targets), f"legacy bootout not called; calls={calls}"
+    assert not legacy_plist.exists(), "legacy plist must be removed"
+
+
+def test_macos_enable_legacy_absent_is_ok(tmp_path, monkeypatch):
+    """enable() succeeds cleanly when legacy labels are already absent."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import autostart
+
+    _force_macos(monkeypatch, autostart, tmp_path)
+
+    def run(args, **kwargs):
+        cmd = args[1] if len(args) > 1 else ""
+        if cmd == "print":
+            return _FakeProc(stdout="state = not running\nruns = 1\nlast exit code = 0\n", returncode=0)
+        if cmd == "bootout":
+            # legacy labels return not_found; current label also not found initially
+            return _FakeProc(returncode=113, stderr="Could not find service")
+        return _FakeProc(returncode=0)
+
+    monkeypatch.setattr(autostart.subprocess, "run", run)
+    monkeypatch.setattr(autostart, "_verify_after_prime", lambda **kw: {"verified": True})
+
+    result = autostart.enable(source="cli")
+    assert result["ok"] is True
+
+
+def test_macos_enable_legacy_permission_denied_is_honest(tmp_path, monkeypatch):
+    """If removing a legacy label is access-denied, enable() returns ok=False honestly."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import autostart
+
+    _force_macos(monkeypatch, autostart, tmp_path)
+    legacy_label = autostart._LEGACY_LAUNCHD_LABELS[0]
+
+    def run(args, **kwargs):
+        cmd = args[1] if len(args) > 1 else ""
+        if cmd == "bootout" and legacy_label in args[-1]:
+            return _FakeProc(returncode=1, stderr="Operation not permitted")
+        return _FakeProc(returncode=0)
+
+    monkeypatch.setattr(autostart.subprocess, "run", run)
+
+    result = autostart.enable(source="cli")
+    assert result["ok"] is False
+    assert result["reason"] == "access_denied"
+
+
+def test_macos_enable_idempotent_reenable(tmp_path, monkeypatch):
+    """Calling enable() twice in a row must succeed both times (idempotent)."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import autostart
+
+    _force_macos(monkeypatch, autostart, tmp_path)
+
+    def run(args, **kwargs):
+        cmd = args[1] if len(args) > 1 else ""
+        if cmd == "print":
+            return _FakeProc(stdout="state = not running\nruns = 1\nlast exit code = 0\n", returncode=0)
+        if cmd == "bootout":
+            return _FakeProc(returncode=113, stderr="Could not find service")
+        return _FakeProc(returncode=0)
+
+    monkeypatch.setattr(autostart.subprocess, "run", run)
+    monkeypatch.setattr(autostart, "_verify_after_prime", lambda **kw: {"verified": True})
+
+    r1 = autostart.enable(source="cli")
+    r2 = autostart.enable(source="cli")
+    assert r1["ok"] is True
+    assert r2["ok"] is True
+
+
+def test_macos_disable_also_removes_legacy_labels(tmp_path, monkeypatch):
+    """disable() must also bootout legacy labels so no stale watchdog remains."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import autostart
+
+    launch_agents, _ = _force_macos(monkeypatch, autostart, tmp_path)
+    launch_agents.mkdir(parents=True)
+
+    legacy_label = autostart._LEGACY_LAUNCHD_LABELS[0]
+    legacy_plist = launch_agents / f"{legacy_label}.plist"
+    import plistlib as pl
+    legacy_plist.write_bytes(pl.dumps({"Label": legacy_label}))
+
+    calls: list[list[str]] = []
+
+    def run(args, **kwargs):
+        calls.append(list(args))
+        return _FakeProc(returncode=0)
+
+    monkeypatch.setattr(autostart.subprocess, "run", run)
+
+    result = autostart.disable(source="api")
+
+    assert result["ok"] is True
+    booted_targets = [c[2] for c in calls if len(c) > 2 and c[1] == "bootout"]
+    assert any(legacy_label in t for t in booted_targets), f"legacy bootout missing; calls={calls}"
+    assert not legacy_plist.exists(), "legacy plist must be removed on disable"
+
+
 # --- 20. Governance guard: autostart must never be agent-callable ---
 
 def test_autostart_not_agent_callable(tmp_path, monkeypatch):
