@@ -204,19 +204,19 @@ def test_causal_integrity_fk_scan(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# PL-EC-03  L2b  atomicity: fill error → Order stays 'error', no Fill/Position leak
+# PL-EC-03  L2b  atomicity: fill error rolls back Order/Fill/Position
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
         "PL-EC-03", "pipeline_execution_chain", "§5 atomicity", "L2b",
-        "When fill simulation raises mid-execution, the Order remains in 'error' "
-        "status (NOT silently 'pending') AND no Fill/Position rows leak",
+        "When fill simulation raises mid-execution, the atomic local Order/Fill/Position "
+        "transaction rolls back completely and no causal-chain rows leak",
     ),
 )
 def test_execution_chain_atomicity_on_fill_error(tmp_path, monkeypatch):
-    """Force insert_fill to raise and verify Order is marked 'error', no Fill leaked."""
+    """A failed Fill rolls back the complete local execution chain."""
     _setup_db(tmp_path, monkeypatch)
 
     from aletheia.execution import paper_broker
