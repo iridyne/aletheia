@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import platform
+import signal
 import subprocess
 import sys
 import time
@@ -39,6 +40,14 @@ _SERVER_PORT_CHECK_INTERVAL_SEC = 1.0
 _BACKEND_PORT_OFFSET = 1
 _FRONTDOOR_STARTUP_GRACE_SEC = 20.0
 _WILDCARD_HOSTS = {"", "0.0.0.0", "::", "*"}
+
+# Signals that must trigger a controlled supervisor shutdown (unwind through
+# run_supervised's finally so every owned subprocess is torn down). SIGINT is
+# already KeyboardInterrupt by default; SIGTERM — the signal launchd/systemd send
+# on a managed stop — is NOT, and its default POSIX disposition kills the process
+# without unwinding Python frames, orphaning the collector/frontdoor/backend.
+_SHUTDOWN_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+_SIGNAL_NAMES = {int(signal.SIGTERM): "SIGTERM", int(signal.SIGINT): "SIGINT"}
 
 
 def _sleep(seconds: float) -> None:
@@ -185,7 +194,7 @@ def _ensure_frontdoor_running(cfg, backend_port: int, proc: subprocess.Popen | N
     return new_proc
 
 
-def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None = None, collector_holder: list | None = None) -> int:
+def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None = None, collector_holder: list | None = None, backend_holder: list | None = None) -> int:
     """Spawn the inner uvicorn server as a child process; return its exit code.
 
     frontdoor_holder is a 1-element mutable list owned by run_supervised holding
@@ -194,6 +203,10 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
     holder so run_supervised's finally + next loop iteration see the live one.
     The backend (`proc`) is NEVER killed for a frontdoor fault — that coupling
     was the §23→§24 cascade where a frontdoor hiccup also tore down the backend.
+
+    backend_holder is the analogous holder for the backend Popen: we publish the
+    live process into it so run_supervised's finally can tear the backend down on
+    a signal-triggered shutdown (SIGTERM), which would otherwise orphan it.
     """
     errors_log = get_data_dir() / "logs" / "errors.log"
     errors_log.parent.mkdir(parents=True, exist_ok=True)
@@ -231,6 +244,8 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
     with errors_log.open("a", encoding="utf-8") as ef:
         popen_kwargs["stderr"] = ef
         proc = subprocess.Popen(cmd, **popen_kwargs)
+        if backend_holder is not None:
+            backend_holder[0] = proc
         _publish_frontdoor_route(
             cfg,
             backend_port=runtime_context["port"],
@@ -380,25 +395,102 @@ def _record_collector_restart(pid: int) -> None:
         pass
 
 
+def _install_shutdown_handlers(state: dict) -> dict:
+    """Install SIGTERM/SIGINT handlers that route to run_supervised's cleanup.
+
+    On the first signal the handler records its number in ``state["num"]`` and
+    re-arms both signals to SIG_IGN — so neither the ensuing unwind nor the
+    finally-block teardown (which signals our own process group, see the finally
+    comment) can be aborted by a second delivery — then raises KeyboardInterrupt
+    to break out of the otherwise-blocking supervisor loop.
+
+    Returns the previous handlers so the caller restores them in its finally
+    block; this keeps in-process callers (tests) from leaking a SIG_IGN/handler.
+    Signal handlers can only be installed from the main thread — an off-main
+    caller gets an empty mapping and the default (non-intercepted) behavior.
+    """
+    def _handle(signum, _frame):
+        if state.get("num") is None:
+            state["num"] = signum
+            for s in _SHUTDOWN_SIGNALS:
+                try:
+                    signal.signal(s, signal.SIG_IGN)
+                except (ValueError, OSError):
+                    pass
+        raise KeyboardInterrupt
+
+    prev: dict = {}
+    for s in _SHUTDOWN_SIGNALS:
+        try:
+            prev[s] = signal.signal(s, _handle)
+        except (ValueError, OSError):
+            # Not the main thread (e.g. run_supervised invoked from a worker):
+            # leave the default disposition in place rather than crash.
+            pass
+    return prev
+
+
+def _restore_shutdown_handlers(prev: dict) -> None:
+    for s, handler in prev.items():
+        try:
+            signal.signal(s, handler)
+        except (ValueError, OSError):
+            pass
+
+
+def _record_signal_shutdown(signum: int) -> None:
+    """Record a durable event for a signal-triggered supervisor shutdown.
+
+    actor is ``system``: SIGTERM/SIGINT is a process-lifecycle signal (launchd,
+    a deploy, an operator's stop) and does not, on its own, identify a human — so
+    we must not fabricate a human actor. Best-effort; never raises.
+    """
+    try:
+        from aletheia.files.jsonl import write_audit, write_error
+        name = _SIGNAL_NAMES.get(int(signum), str(signum))
+        msg = (
+            f"Gateway supervisor received {name}; performing controlled shutdown "
+            "and tearing down owned subprocesses (frontdoor, backend, collector)"
+        )
+        write_audit({
+            "actor": "system", "source": "gateway",
+            "event_type": "gateway_signal_shutdown",
+            "entity_type": "gateway", "entity_id": str(os.getpid()),
+            "message": msg,
+        })
+        write_error({"source": "gateway_supervisor", "message": msg})
+    except Exception:
+        pass
+
+
 def run_supervised(spawn_fn=None) -> dict:
     """Supervise the inner server. Respawns on abnormal exit with backoff.
 
     spawn_fn() runs one server lifetime and returns its exit code (0 = clean
     shutdown → stop supervising). Injectable for tests.
+
+    SIGTERM/SIGINT (a managed stop, a deploy, Ctrl-C) unwinds the supervisor loop
+    through the finally block — the single, idempotent teardown path that kills
+    every owned subprocess, removes the pid file, and records a durable
+    signal-shutdown event — then returns cleanly, instead of letting the default
+    POSIX SIGTERM disposition kill the process and orphan its children.
     """
     cfg = bootstrap()
     write_pid()  # supervisor owns the pid file (written exactly once)
     frontdoor_enabled = spawn_fn is None
     backend_port = backend_port_for(cfg) if frontdoor_enabled else cfg.app.dashboard_port
-    # 1-element mutable holder so _spawn_server can restart the frontdoor in place
-    # (writing the new Popen back) without killing the backend. See _spawn_server.
+    # 1-element mutable holders so _spawn_server can restart the frontdoor in place
+    # (writing the new Popen back) without killing the backend, and so the finally
+    # block can tear down the live backend/collector on a signal. See _spawn_server.
     frontdoor_holder: list = [None]
     collector_holder: list = [None]
+    backend_holder: list = [None]
     if spawn_fn is None:
         spawn_fn = lambda: _spawn_server(
             cfg, port=backend_port,
             frontdoor_holder=frontdoor_holder,
             collector_holder=collector_holder,
+            backend_holder=backend_holder,
         )
     from aletheia.gateway.operator_shell import OperatorShellMonitor
     operator_monitor = OperatorShellMonitor(cfg)
@@ -412,62 +504,95 @@ def run_supervised(spawn_fn=None) -> dict:
 
     restarts = 0
     restart_times: list[float] = []
+    shutdown_signal: dict = {"num": None}
+    prev_handlers: dict = {}
     try:
-        if frontdoor_enabled:
-            # Tell the uvicorn child to skip APScheduler's data-collector jobs —
-            # this process owns the collection cadence via collector_holder.
-            os.environ["ALETHEIA_COLLECTOR_PROCESS"] = "1"
-            _cleanup_before_spawn(cfg)
-            _cleanup_backend_before_spawn(cfg, backend_port)
-            _publish_frontdoor_route(cfg, backend_port=backend_port, reason="supervisor_start")
-            frontdoor_holder[0] = _ensure_frontdoor_running(cfg, backend_port, frontdoor_holder[0])
-            collector_holder[0] = _spawn_collector_process(cfg)
-        while True:
-            code: int | None = None
-            try:
-                if frontdoor_enabled:
-                    frontdoor_holder[0] = _ensure_frontdoor_running(cfg, backend_port, frontdoor_holder[0])
-                    _cleanup_backend_before_spawn(cfg, backend_port)
-                else:
-                    _cleanup_before_spawn(cfg)
-                code = spawn_fn()
-            except (KeyboardInterrupt, SystemExit):
-                raise
-            except Exception as exc:
-                _record_supervisor_exception(exc)
-                code = 1
+        try:
+            # Route SIGTERM/SIGINT into this try so its finally tears down every
+            # owned subprocess. Installed here (not earlier) so the finally always
+            # restores the previous handlers.
+            prev_handlers = _install_shutdown_handlers(shutdown_signal)
+            if frontdoor_enabled:
+                # Tell the uvicorn child to skip APScheduler's data-collector jobs
+                # — this process owns the collection cadence via collector_holder.
+                os.environ["ALETHEIA_COLLECTOR_PROCESS"] = "1"
+                _cleanup_before_spawn(cfg)
+                _cleanup_backend_before_spawn(cfg, backend_port)
+                _publish_frontdoor_route(cfg, backend_port=backend_port, reason="supervisor_start")
+                frontdoor_holder[0] = _ensure_frontdoor_running(cfg, backend_port, frontdoor_holder[0])
+                collector_holder[0] = _spawn_collector_process(cfg)
+            while True:
+                code: int | None = None
+                try:
+                    if frontdoor_enabled:
+                        frontdoor_holder[0] = _ensure_frontdoor_running(cfg, backend_port, frontdoor_holder[0])
+                        _cleanup_backend_before_spawn(cfg, backend_port)
+                    else:
+                        _cleanup_before_spawn(cfg)
+                    code = spawn_fn()
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception as exc:
+                    _record_supervisor_exception(exc)
+                    code = 1
 
-            if code == 0:
-                return {"gave_up": False, "restarts": restarts}  # clean shutdown
+                if code == 0:
+                    return {"gave_up": False, "restarts": restarts}  # clean shutdown
 
-            # Abnormal exit — decide whether to respawn.
-            import time as _time
-            now = _time.monotonic()
-            restart_times.append(now)
-            recent = [t for t in restart_times if now - t <= window]
-            restart_times[:] = recent
-            if len(recent) >= max_restarts:
-                _record_give_up(restarts + 1)
-                return {"gave_up": True, "restarts": restarts + 1}
+                # Abnormal exit — decide whether to respawn.
+                import time as _time
+                now = _time.monotonic()
+                restart_times.append(now)
+                recent = [t for t in restart_times if now - t <= window]
+                restart_times[:] = recent
+                if len(recent) >= max_restarts:
+                    _record_give_up(restarts + 1)
+                    return {"gave_up": True, "restarts": restarts + 1}
 
-            restarts += 1
-            backoff = min(2 ** (restarts - 1), cap) if cap else 0
-            _sleep(backoff)
+                restarts += 1
+                backoff = min(2 ** (restarts - 1), cap) if cap else 0
+                _sleep(backoff)
+        except KeyboardInterrupt:
+            # A shutdown signal (our SIGTERM/SIGINT handler) or a genuine Ctrl-C
+            # unwound the loop. The finally below is the single cleanup path; here
+            # we only turn the unwind into a clean return so main() exits quietly.
+            return {"gave_up": False, "restarts": restarts, "stopped_by_signal": True}
     finally:
+        # Neutralize the shutdown signals FIRST: children share this supervisor's
+        # process group, so kill_pid_tree() below signals the group — which would
+        # re-deliver SIGTERM to us and abort the teardown mid-way (leaving the pid
+        # file and the durable event unwritten). Ignoring them makes the whole
+        # cleanup idempotent under repeated/racing signals; the original handlers
+        # are restored at the end.
+        for s in _SHUTDOWN_SIGNALS:
+            try:
+                signal.signal(s, signal.SIG_IGN)
+            except (ValueError, OSError):
+                pass
         _stop_vite_watch(vite_proc)
-        fp = frontdoor_holder[0]
-        if fp is not None:
-            try:
-                kill_pid_tree(fp.pid)
-            except Exception:
-                pass
-        cp = collector_holder[0]
-        if cp is not None:
-            try:
-                kill_pid_tree(cp.pid)
-            except Exception:
-                pass
+        # Tear down every owned child (backend, frontdoor, collector). Only these
+        # tracked descendants are targeted — never a foreign or sibling-worktree
+        # process. kill_pid_tree is best-effort and a no-op on an already-dead pid.
+        for holder in (backend_holder, frontdoor_holder, collector_holder):
+            proc = holder[0]
+            if proc is not None:
+                try:
+                    kill_pid_tree(proc.pid)
+                except Exception:
+                    pass
         operator_monitor.stop()
+        # Remove our own pid file so status/stop don't act on a stale live pid.
+        # Guard on ownership so a supervisor that already lost the pidfile to a
+        # newer instance (start/stop race) does not clear the new owner's pid.
+        try:
+            from aletheia.gateway.pidfile import read_pid, clear_pid
+            if read_pid() == os.getpid():
+                clear_pid()
+        except Exception:
+            pass
+        if shutdown_signal["num"] is not None:
+            _record_signal_shutdown(shutdown_signal["num"])
+        _restore_shutdown_handlers(prev_handlers)
 
 
 def _record_supervisor_exception(exc: Exception) -> None:
