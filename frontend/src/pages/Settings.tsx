@@ -371,7 +371,7 @@ export default function Settings() {
           {tab === 'execution' && <ExecutionTab          status={status} settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'risk'      && <RiskTab               settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'health'    && <HealthNotificationsTab settings={settings} qc={qc} />}
-          {tab === 'runtime'   && <RuntimeSystemTab      settings={settings} qc={qc} onDirty={registerDirty} />}
+          {tab === 'runtime'   && <RuntimeSystemTab      status={status} settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'signals'   && <SignalsTab            settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'advanced'  && <AdvancedTab           settings={settings} />}
         </div>
@@ -3253,11 +3253,11 @@ function SignalsTab({ settings, qc, onDirty }: any) {
 // RUNTIME & SYSTEM TAB — display, app, retention, updates, network
 // ─────────────────────────────────────────────────────────────────────────────
 
-function RuntimeSystemTab({ settings, qc, onDirty }: any) {
+function RuntimeSystemTab({ status, settings, qc, onDirty }: any) {
   return (
     <div>
       <Section title="App" description="Dashboard process settings.">
-        <AppRows settings={settings} qc={qc} />
+        <AppRows status={status} settings={settings} qc={qc} />
       </Section>
 
       <Section title="Data & Retention" description="Local OHLCV storage for backtesting and telemetry retention policy.">
@@ -3298,10 +3298,13 @@ function AdvancedTab({ settings }: { settings: any }) {
   )
 }
 
-function AppRows({ settings, qc }: any) {
+function AppRows({ status, settings, qc }: any) {
   const app = settings?.app as any || {}
   const runtime = settings?.runtime as any || {}
   const autoBrowser = app.auto_open_browser !== false
+  const bootCommit = status?.boot_commit as string | null | undefined
+  const currentCommit = status?.current_commit as string | null | undefined
+  const codeDrift = !!bootCommit && !!currentCommit && bootCommit !== currentCommit
 
   const appMut = useMutation({
     mutationFn: (body: any) => api.updateAppConfig(body),
@@ -3324,6 +3327,16 @@ function AppRows({ settings, qc }: any) {
     <>
       <Row label="App name" hint="Read-only product identity from config.yaml.">
         <span className="mono text-sm">{app.name || 'Aletheia Trading OS'}</span>
+      </Row>
+      <Row label="Running code commit" hint="Git commit loaded when this backend process started. Use this value to identify the code the current instance is actually running.">
+        <span className="mono text-sm break-all">{bootCommit || 'not available'}</span>
+        {codeDrift && <span className="text-xs text-warning">Disk HEAD has changed — restart the gateway to run the checked-out code.</span>}
+      </Row>
+      <Row label="Checked-out commit" hint="Current Git HEAD on disk. This can differ from the running code commit until the gateway restarts.">
+        <span className="mono text-sm break-all">{currentCommit || 'not available'}</span>
+      </Row>
+      <Row label="Backend release" hint="Application package version and operating-system process ID reported by the responding backend.">
+        <span className="mono text-sm">{status ? `${status.version || 'not available'} · PID ${status.pid ?? 'not available'}` : 'not available'}</span>
       </Row>
       <Row label="Dashboard port" hint={`Currently listening on :${app.dashboard_port || 8787}. Change requires gateway restart.`}>
         <span className="mono text-sm">{app.dashboard_port || 8787}</span>
