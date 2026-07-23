@@ -61,11 +61,26 @@ def _behavior_relevant(cfg) -> dict:
     exchange = g(cfg, "exchange")
     models = g(cfg, "models")
     learning = g(cfg, "learning")
+    risk = g(cfg, "risk")
     return {
         "permission_mode": g(agent, "permission_mode"),
         "autonomous_learning": g(agent, "autonomous_learning"),
         "paper_execution_mode": g(exchange, "paper_execution_mode"),
         "default_provider": g(models, "default_provider"),
+        "risk_policies": {
+            "demo": (
+                g(g(risk, "demo"), "model_dump", lambda **_: {})(
+                    mode="json"
+                )
+                if g(risk, "demo") is not None else None
+            ),
+            "live": (
+                g(g(risk, "live"), "model_dump", lambda **_: {})(
+                    mode="json"
+                )
+                if g(risk, "live") is not None else None
+            ),
+        },
         "learning": {
             "paper_influence_enabled": g(learning, "paper_influence_enabled"),
             "lifecycle_automation_enabled": g(learning, "lifecycle_automation_enabled"),

@@ -551,11 +551,29 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
                 logger.warning("exchange stop sync failed pos=%s: %s", position["id"], e)
 
 
+def _position_risk(position: dict, cfg):
+    from aletheia.risk.policy import (
+        UnknownRiskExecutionMode,
+        resolve_risk_policy,
+    )
+    try:
+        resolved = resolve_risk_policy(
+            cfg,
+            str(position.get("execution_mode") or ""),
+        )
+        return resolved.legacy_view(cfg.risk)
+    except UnknownRiskExecutionMode:
+        # Historical rows with unknown authority receive the conservative Live
+        # policy rather than silently falling into Demo.
+        from aletheia.risk.policy import RiskPolicyView
+        return RiskPolicyView(cfg.risk.live, cfg.risk)
+
+
 def _catastrophic_stop_pct(position: dict, cfg) -> float:
     """Max adverse move (%) beyond which a position is force-closed regardless of its
     own stop — the Layer-0 backstop that makes handing stop discretion to the System
     Operator safe (exit-intent plan M6/D4). School-aware. 0.0 when disabled."""
-    risk = getattr(cfg, "risk", None)
+    risk = _position_risk(position, cfg)
     if risk is None or not getattr(risk, "catastrophic_stop_enabled", True):
         return 0.0
     if position.get("trade_school") == "serenity":
@@ -582,7 +600,7 @@ def _layer0_safety_exit(position: dict, price: float, cfg) -> tuple[str, float] 
 
     # 2. Runtime liquidation proximity — leveraged positions only. Emergency de-risk
     #    when current price is within runtime_liquidation_buffer_pct of est. liq price.
-    risk = getattr(cfg, "risk", None)
+    risk = _position_risk(position, cfg)
     if getattr(risk, "runtime_liquidation_monitor_enabled", True):
         leverage = int(position.get("leverage") or 0)
         if leverage > 1:
@@ -634,7 +652,8 @@ def _decide_exit(position: dict, price: float, cfg) -> tuple[str, float] | None:
         school_max = cfg.trading.max_position_hold_hours
     horizon = plan.expected_horizon_hours
     if horizon and horizon > 0:
-        mult = getattr(getattr(cfg, "risk", None), "horizon_hard_backstop_mult", 3.0) or 3.0
+        risk = _position_risk(position, cfg)
+        mult = getattr(risk, "horizon_hard_backstop_mult", 3.0) or 3.0
         hard_hold = horizon * mult
         if school_max and school_max > 0:
             hard_hold = min(hard_hold, school_max)

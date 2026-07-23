@@ -1747,22 +1747,28 @@ def get_authoritative_risk_decision(
     proposal_id: str,
     proposal_commit_hash: str | None,
     evaluated_quantity: float | None,
+    policy_hash: str | None = None,
 ) -> dict | None:
     """Return the authoritative decision for one immutable evaluated snapshot."""
+    policy_clause = "AND policy_hash IS ?" if policy_hash is not None else ""
+    params = [proposal_id, proposal_commit_hash, evaluated_quantity]
+    if policy_hash is not None:
+        params.append(policy_hash)
     row = (
         get_db()
         .execute(
-            """
+            f"""
         SELECT *
         FROM risk_decisions
         WHERE proposal_id = ?
           AND decision_role = 'authoritative'
           AND proposal_commit_hash IS ?
           AND evaluated_quantity IS ?
+          {policy_clause}
         ORDER BY rowid ASC
         LIMIT 1
         """,
-            (proposal_id, proposal_commit_hash, evaluated_quantity),
+            tuple(params),
         )
         .fetchone()
     )
@@ -1784,6 +1790,7 @@ def insert_authoritative_risk_decision(d: RiskDecision) -> tuple[dict, bool]:
             d.proposal_id,
             d.proposal_commit_hash,
             d.evaluated_quantity,
+            d.policy_hash,
         )
         if existing is not None:
             return existing, False

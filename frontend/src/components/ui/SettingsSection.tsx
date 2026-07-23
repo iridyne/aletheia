@@ -6,7 +6,7 @@ export interface NumField {
   label: string
   unit: string
   min: number
-  max: number
+  max?: number
   step: number
   isInt?: boolean
 }
@@ -97,6 +97,8 @@ function NumInput({ field: f, value, set }: { field: NumField; value: unknown; s
       <span>{f.label}{f.unit ? ` (${f.unit})` : ''}</span>
       <input
         type="number"
+        min={f.min}
+        max={f.max}
         step={f.step}
         value={displayed}
         onChange={e => setDraft(e.target.value)}
@@ -156,4 +158,3 @@ export function SwitchGrid({
     </div>
   )
 }
-

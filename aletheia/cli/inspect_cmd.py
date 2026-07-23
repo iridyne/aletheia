@@ -444,11 +444,8 @@ def config(
             "paper_execution_mode": cfg.exchange.paper_execution_mode,
         },
         "risk": {
-            "max_daily_loss_pct": cfg.risk.max_daily_loss_pct,
-            "max_single_trade_risk_pct": cfg.risk.max_single_trade_risk_pct,
-            "max_open_positions_demo": cfg.risk.max_open_positions_demo,
-            "max_open_positions_live": cfg.risk.max_open_positions_live,
-            "starting_capital_usdt": cfg.risk.starting_capital_usdt,
+            "demo": cfg.risk.demo.model_dump(mode="json"),
+            "live": cfg.risk.live.model_dump(mode="json"),
         },
         "trading": {
             "min_confidence_to_trade": cfg.trading.min_confidence_to_trade,

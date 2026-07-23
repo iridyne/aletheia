@@ -13,42 +13,64 @@ from aletheia.config.loader import load_config, save_config
 from aletheia.files.jsonl import write_audit
 
 
-def is_active() -> bool:
-    """Return True if the kill switch is currently engaged."""
-    return load_config().runtime.kill_switch_active
+_SCOPES = {"global", "demo", "live"}
 
 
-def activate(reason: str = "", actor: str = "human") -> None:
+def _field(scope: str) -> str:
+    if scope not in _SCOPES:
+        raise ValueError(f"unknown brake scope: {scope!r}")
+    return {
+        "global": "kill_switch_active",
+        "demo": "demo_brake_active",
+        "live": "live_brake_active",
+    }[scope]
+
+
+def is_active(scope: str = "global") -> bool:
+    """Return whether the selected global or mode-scoped brake is engaged."""
+    return bool(getattr(load_config().runtime, _field(scope)))
+
+
+def activate(
+    reason: str = "",
+    actor: str = "human",
+    scope: str = "global",
+) -> None:
     """Engage the kill switch. Idempotent; always writes an audit event."""
     cfg = load_config()
-    was_active = cfg.runtime.kill_switch_active
-    cfg.runtime.kill_switch_active = True
+    field = _field(scope)
+    was_active = bool(getattr(cfg.runtime, field))
+    setattr(cfg.runtime, field, True)
     save_config(cfg)
     write_audit({
         "actor": actor,
         "source": "risk_engine" if actor == "system" else "dashboard",
-        "event_type": "kill_switch_activated",
-        "entity_type": "kill_switch",
-        "entity_id": "global",
+        "event_type": "trading_brake_activated",
+        "entity_type": "trading_brake",
+        "entity_id": scope,
         "before": {"active": was_active},
         "after": {"active": True},
-        "message": f"Kill switch activated: {reason}" if reason else "Kill switch activated",
+        "message": (
+            f"{scope} trading brake activated: {reason}"
+            if reason else f"{scope} trading brake activated"
+        ),
     })
 
 
-def deactivate(actor: str = "human") -> None:
+def deactivate(actor: str = "human", scope: str = "global") -> None:
     """Release the kill switch. Only human/system actors should call this."""
     cfg = load_config()
-    was_active = cfg.runtime.kill_switch_active
-    cfg.runtime.kill_switch_active = False
+    field = _field(scope)
+    was_active = bool(getattr(cfg.runtime, field))
+    setattr(cfg.runtime, field, False)
     save_config(cfg)
     write_audit({
         "actor": actor,
         "source": "dashboard",
-        "event_type": "kill_switch_deactivated",
-        "entity_type": "kill_switch",
-        "entity_id": "global",
+        "event_type": "trading_brake_deactivated",
+        "entity_type": "trading_brake",
+        "entity_id": scope,
         "before": {"active": was_active},
         "after": {"active": False},
-        "message": "Kill switch deactivated",
+        "message": f"{scope} trading brake deactivated",
     })

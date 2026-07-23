@@ -2997,10 +2997,10 @@ const RISK_LIVE: NumField[] = [
 ]
 
 const RISK_DEMO: NumField[] = [
-  { key: 'max_demo_position_notional_usdt', label: 'Max position notional', unit: 'USDT', min: 1,    max: 100000, step: 1 },
-  { key: 'max_demo_single_trade_risk_pct',  label: 'Max single trade risk', unit: '%',    min: 0.01, max: 20,     step: 0.01 },
+  { key: 'max_demo_position_notional_usdt', label: 'Max position notional', unit: 'USDT', min: 1,    step: 1 },
+  { key: 'max_demo_single_trade_risk_pct',  label: 'Max single trade risk', unit: '%',    min: 0.01, step: 0.01 },
   { key: 'max_futures_leverage_demo',       label: 'Max leverage',          unit: 'x',    min: 1,    max: 125,    step: 1, isInt: true },
-  { key: 'max_open_positions_demo',         label: 'Max open positions',    unit: '',     min: 1,    max: 200,    step: 1, isInt: true },
+  { key: 'max_open_positions_demo',         label: 'Max open positions',    unit: '',     min: 1,    step: 1, isInt: true },
 ]
 
 // Cross-mode guards (apply to both demo and live). Always visible.
@@ -3039,7 +3039,7 @@ const RISK_FUTURES_DEMO: NumField[] = [
   { key: 'max_leverage_major_demo', label: 'Major (BTC/ETH)',    unit: 'x', min: 1, max: 20, step: 1, isInt: true },
   { key: 'max_leverage_mid_demo',   label: 'Mid-cap',            unit: 'x', min: 1, max: 10, step: 1, isInt: true },
   { key: 'max_leverage_alt_demo',   label: 'Alt/Small',          unit: 'x', min: 1, max: 5,  step: 1, isInt: true },
-  { key: 'max_account_leverage_demo', label: 'Account leverage cap', unit: 'x', min: 1, max: 10, step: 0.1 },
+  { key: 'max_account_leverage_demo', label: 'Account leverage cap', unit: 'x', min: 1, step: 0.1 },
 ]
 
 const RISK_MARGIN: NumField[] = [
@@ -3047,6 +3047,168 @@ const RISK_MARGIN: NumField[] = [
   { key: 'futures_margin_force_close_ratio', label: 'Margin block at',         unit: '', min: 0.5, max: 0.99, step: 0.05 },
   { key: 'min_liquidation_buffer_pct',       label: 'Liquidation buffer min',  unit: '%', min: 1, max: 20, step: 0.5 },
 ]
+
+const POLICY_NUM_FIELDS: NumField[] = [
+  { key: 'capital.base_usdt', label: 'Capital base', unit: 'USDT', min: 1, step: 1 },
+  { key: 'capital.max_position_notional_usdt', label: 'Position notional cap', unit: 'USDT', min: 1, step: 1 },
+  { key: 'capital.max_per_symbol_notional_usdt', label: 'Per-symbol cumulative cap', unit: 'USDT', min: 0, step: 10 },
+  { key: 'capital.max_total_exposure_pct', label: 'Total exposure cap', unit: '%', min: 0, step: 0.5 },
+  { key: 'loss.max_single_trade_risk_pct', label: 'Single-trade risk', unit: '%', min: 0.01, step: 0.01 },
+  { key: 'loss.max_daily_loss_pct', label: 'Daily loss', unit: '%', min: 0.1, step: 0.1 },
+  { key: 'positions.max_open_positions', label: 'Open positions', unit: '', min: 1, step: 1, isInt: true },
+  { key: 'leverage.futures_cap', label: 'Futures leverage', unit: 'x', min: 1, step: 1, isInt: true },
+  { key: 'leverage.major_cap', label: 'Major leverage', unit: 'x', min: 1, step: 1, isInt: true },
+  { key: 'leverage.mid_cap', label: 'Mid-cap leverage', unit: 'x', min: 1, step: 1, isInt: true },
+  { key: 'leverage.alt_cap', label: 'Alt leverage', unit: 'x', min: 1, step: 1, isInt: true },
+  { key: 'leverage.account_cap', label: 'Account leverage', unit: 'x', min: 1, step: 0.1 },
+  { key: 'margin.min_entry_liquidation_buffer_pct', label: 'Entry liquidation buffer', unit: '%', min: 0, step: 0.5 },
+  { key: 'margin.runtime_liquidation_buffer_pct', label: 'Runtime liquidation buffer', unit: '%', min: 0, step: 0.5 },
+  { key: 'correlation.max_sector_concentration_pct', label: 'Sector concentration', unit: '%', min: 0, step: 1 },
+  { key: 'correlation.max_portfolio_beta', label: 'Portfolio BTC beta', unit: '', min: 0, step: 0.1 },
+  { key: 'exits.catastrophic_stop_pct', label: 'Catastrophic stop', unit: '%', min: 0, step: 0.5 },
+  { key: 'exits.catastrophic_stop_pct_serenity', label: 'Serenity catastrophic stop', unit: '%', min: 0, step: 0.5 },
+  { key: 'exits.horizon_hard_backstop_mult', label: 'Horizon hard backstop', unit: 'x', min: 1, step: 0.5 },
+]
+
+const POLICY_BOOLS: BoolField[] = [
+  { key: 'positions.allow_short', label: 'Allow short selling' },
+  { key: 'correlation.enabled', label: 'Correlation guard' },
+  { key: 'exits.catastrophic_stop_enabled', label: 'Catastrophic stop' },
+  { key: 'auto_trip_mode_brake_on_daily_loss', label: 'Auto-trip mode brake on daily loss' },
+]
+
+const LIVE_POLICY_FIELDS: NumField[] = [
+  { key: 'eligibility.family_min_samples', label: 'Family evidence samples', unit: '', min: 1, step: 1, isInt: true },
+  { key: 'eligibility.family_min_win_rate_pct', label: 'Family evidence win rate', unit: '%', min: 0, max: 100, step: 1 },
+]
+
+function readPolicyPath(value: any, path: string): any {
+  return path.split('.').reduce((current, key) => current?.[key], value)
+}
+
+function writePolicyPath(value: any, path: string, next: any): any {
+  const clone = structuredClone(value)
+  const parts = path.split('.')
+  let cursor = clone
+  for (const key of parts.slice(0, -1)) cursor = cursor[key]
+  cursor[parts[parts.length - 1]] = next
+  return clone
+}
+
+function RiskPolicyEditor({ mode, initial, qc }: { mode: 'demo' | 'live'; initial: any; qc: any }) {
+  const [policy, setPolicy] = useState<any>(initial)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  useEffect(() => setPolicy(initial), [initial])
+  const numFields = mode === 'live' ? [...POLICY_NUM_FIELDS, ...LIVE_POLICY_FIELDS] : POLICY_NUM_FIELDS
+  const vals = Object.fromEntries(
+    [...numFields, ...POLICY_BOOLS].map(field => [field.key, readPolicyPath(policy, field.key)])
+  )
+  const save = useMutation({
+    mutationFn: () => api.replaceRiskPolicy(
+      mode,
+      policy,
+      initial.revision,
+      `${mode} policy edited in Settings`,
+    ),
+    onSuccess: () => {
+      setMsg({ ok: true, text: '✓ policy saved with a new revision' })
+      qc.invalidateQueries({ queryKey: ['settings'] })
+      qc.invalidateQueries({ queryKey: ['risk-boundaries'] })
+    },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+  const reset = useMutation({
+    mutationFn: () => api.resetRiskPolicy(
+      mode,
+      initial.revision,
+      `${mode} policy reset to shipped defaults in Settings`,
+    ),
+    onSuccess: () => {
+      setMsg({ ok: true, text: '✓ policy reset with a new revision' })
+      qc.invalidateQueries({ queryKey: ['settings'] })
+      qc.invalidateQueries({ queryKey: ['risk-boundaries'] })
+    },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+  const set = (path: string, value: any) => {
+    setPolicy((current: any) => writePolicyPath(current, path, value))
+    setMsg(null)
+  }
+  const threshold = Number(policy.capital.base_usdt || 0) * Number(policy.loss.max_daily_loss_pct || 0) / 100
+  return (
+    <div style={{ flex: '1 1 420px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 'var(--space-4)' }}>
+      <div className="section-label">{mode === 'demo' ? 'Demo / Paper Policy' : 'Live Policy'}</div>
+      <p className="hint mono">{policy.policy_id} · revision {policy.revision}</p>
+      <NumGrid fields={numFields} vals={vals} set={set} />
+      <ToggleGrid fields={POLICY_BOOLS} vals={vals} set={set} />
+      <p className="hint">Daily-loss threshold: −{fmtNum(threshold)} USDT. A breach trips only the {mode} brake.</p>
+      <p className="hint">Margin warning/block ratios are retained for migration but are not enforced yet; entry/runtime liquidation buffers are enforced.</p>
+      {mode === 'live' && policy.eligibility && (
+        <p className="hint">Live evidence gate: ≥{policy.eligibility.family_min_samples} samples and ≥{policy.eligibility.family_min_win_rate_pct}% win rate. Copying Demo does not replace this gate.</p>
+      )}
+      <div className="settings-action-row">
+        <button
+          onClick={() => {
+            if (mode === 'live' && !window.confirm('Replace the Live risk policy with these values? Live remains locked, but future Live evaluations will use this revision.')) return
+            save.mutate()
+          }}
+          disabled={save.isPending}
+        >{save.isPending ? 'Saving…' : `Save ${mode} policy`}</button>
+        <button
+          onClick={() => {
+            if (!window.confirm(`Reset only the ${mode} policy to shipped defaults? The other policy and all runtime authority remain unchanged.`)) return
+            reset.mutate()
+          }}
+          disabled={reset.isPending}
+        >{reset.isPending ? 'Resetting…' : 'Reset defaults'}</button>
+      </div>
+      <SaveMsg msg={msg} />
+    </div>
+  )
+}
+
+function RiskPolicyProfiles({ risk, qc }: { risk: any; qc: any }) {
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const copy = useMutation({
+    mutationFn: ({ source, target }: { source: 'demo' | 'live'; target: 'demo' | 'live' }) =>
+      api.copyRiskPolicy(
+        source,
+        target,
+        risk[source].revision,
+        risk[target].revision,
+        `${source} policy copied to ${target} in Settings`,
+      ),
+    onSuccess: () => {
+      setMsg({ ok: true, text: '✓ policy copied with a new target revision' })
+      qc.invalidateQueries({ queryKey: ['settings'] })
+      qc.invalidateQueries({ queryKey: ['risk-boundaries'] })
+    },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+  const runCopy = (source: 'demo' | 'live', target: 'demo' | 'live') => {
+    const warning = target === 'live'
+      ? 'Copy all common Demo values into Live? Live eligibility, unlock, permissions, credentials and brake state are preserved. Review this as a multi-variable Live policy change.'
+      : 'Copy all common Live values into Demo? Demo runtime state and brake state are preserved.'
+    if (window.confirm(warning)) copy.mutate({ source, target })
+  }
+  return (
+    <div className="card mb-0">
+      <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', padding: '0.45rem 0.75rem', background: 'var(--bg)', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', marginBottom: '1.25rem' }}>
+        <span className="text-xs text-muted">Risk Engine: <span className="badge badge-green">shared and mandatory</span></span>
+        <span className="text-xs text-muted">Policies: independently versioned; runtime authority and credentials are never copied</span>
+      </div>
+      <div className="settings-action-row">
+        <button onClick={() => runCopy('demo', 'live')} disabled={copy.isPending}>Copy Demo → Live</button>
+        <button onClick={() => runCopy('live', 'demo')} disabled={copy.isPending}>Copy Live → Demo</button>
+      </div>
+      <SaveMsg msg={msg} />
+      <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <RiskPolicyEditor mode="demo" initial={risk.demo} qc={qc} />
+        <RiskPolicyEditor mode="live" initial={risk.live} qc={qc} />
+      </div>
+    </div>
+  )
+}
 
 function RiskCard({ settings, qc }: any) {
   const risk = settings?.risk as any
@@ -3073,7 +3235,7 @@ function RiskCard({ settings, qc }: any) {
       if (v == null || v === '') continue
       if (typeof v === 'number') {
         if (v < f.min) errs[f.key] = `Min ${f.min}`
-        else if (v > f.max) errs[f.key] = `Max ${f.max}`
+        else if (f.max != null && v > f.max) errs[f.key] = `Max ${f.max}`
       }
     }
     if (Object.keys(errs).length) {
@@ -3096,6 +3258,7 @@ function RiskCard({ settings, qc }: any) {
   })
 
   if (!risk) return null
+  if (risk.demo && risk.live) return <RiskPolicyProfiles risk={risk} qc={qc} />
 
   return (
     <div className="card mb-0">

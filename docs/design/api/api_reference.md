@@ -41,6 +41,8 @@ These endpoints cross a [trust boundary](../../governance/policies/trust_and_cha
 | `POST /risk/kill-switch` | body `{"active": true\|false, "confirm_release"?: bool}`; human-only. **Engage** (`active=true`): no extra confirm. **Release** (`active=false`): requires `confirm_release=true` — else the route returns 422. | [risk_engine_contract §4](../contracts/risk_engine_contract.md) |
 | `POST /settings/exchange-credentials` (+ binance/okx) | write-only; GET never returns raw secret | trust §6.3 secrets |
 | `POST /settings/permission-mode` · `/risk` | writes audit; cannot grant `FORBIDDEN_INTENTS` | [live_unlock_contract §6](../contracts/live_unlock_contract.md) |
+| `PUT /settings/risk-policies/{mode}` · `POST /settings/risk-policies/copy` | explicit confirmation, optimistic revision check and target-scoped audit; never copies live authority or runtime state | [risk_engine_contract §1.1](../contracts/risk_engine_contract.md) |
+| `POST /risk/brakes/{global\|demo\|live}` | engage is immediate; release requires `confirm_release=true`; mode brake never releases global brake | [risk_engine_contract §1.1](../contracts/risk_engine_contract.md) |
 | `POST /proposals/{id}/approve-paper` · `/reject` | must preserve original proposal ID (no duplicate row); paper approval accepts only a `pending` proposal whose stored mode is already `paper_internal` and never rewrites exchange intent; isolated preview API returns `403 preview_execution_blocked` before mutation | [execution_contract §1](../contracts/execution_contract.md) |
 | `POST /gateway/restart` · `/update/apply` · `/update/rollback` | May control machine-level gateway/code state only outside preview mode; preview returns a stable `403` before side effects | [Development preview](../../operations/development/DEVELOPMENT_PREVIEW.md) |
 
@@ -84,6 +86,18 @@ operators do not infer the real order target from the retained exchange preferen
 | POST | `/positions/reconcile` | Trigger position reconciliation |
 | GET | `/trades` | List completed trades (closed positions) |
 | GET | `/trades/export` | CSV export of trade history; incomplete legacy PnL is blank and labelled, never exported as a valid tax/PnL number |
+
+## Risk Policy and Brakes
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/settings/risk-policies` | Demo/Live policy values, revisions and canonical hashes |
+| POST | `/settings/risk-policies/compare` | Read-only field diff |
+| POST | `/settings/risk-policies/copy` | Copy common fields with source/target revision guards and explicit confirmation |
+| PUT | `/settings/risk-policies/{demo\|live}` | Replace one future-evaluation policy; target identity and Live eligibility remain target-owned |
+| POST | `/settings/risk-policies/{demo\|live}/reset-defaults` | Reset only the selected policy with a revision guard and explicit confirmation |
+| GET | `/risk/brakes` | Global, Demo and Live brake states |
+| POST | `/risk/brakes/{global\|demo\|live}` | Engage or explicitly confirmed release of one brake scope |
 
 ---
 

@@ -579,14 +579,25 @@ def evaluate_proposal(
             # serializes distinct Proposals across threads and processes before
             # either can observe the same last free slot.
             with transaction(immediate=True):
+                from aletheia.risk.policy import (
+                    UnknownRiskExecutionMode,
+                    resolve_risk_policy,
+                )
                 proposal_commit_hash = _verified_original_proposal_commit_hash(
                     proposal,
                     require_evaluated_snapshot_match=True,
                 )
+                try:
+                    current_policy_hash = resolve_risk_policy(
+                        load_config(), proposal.execution_mode
+                    ).policy_hash
+                except UnknownRiskExecutionMode:
+                    current_policy_hash = "__unknown_risk_mode__"
                 existing = get_authoritative_risk_decision(
                     proposal.id,
                     proposal_commit_hash,
                     proposal.quantity,
+                    current_policy_hash,
                 )
                 if existing is not None:
                     result = _risk_result_from_row(existing)
@@ -670,12 +681,34 @@ def _evaluate_proposal_locked(
         )
 
     cfg = load_config()
-    risk = cfg.risk
+    from aletheia.risk.policy import (
+        UnknownRiskExecutionMode,
+        resolve_risk_policy,
+    )
+    try:
+        resolved_policy = resolve_risk_policy(cfg, proposal.execution_mode)
+    except UnknownRiskExecutionMode:
+        return _persist_risk_result(
+            proposal,
+            [f"unregistered_risk_execution_mode:{proposal.execution_mode}"],
+            decision_role=decision_role,
+        )
+    risk = resolved_policy.legacy_view(cfg.risk)
+    # Downstream helpers receive the same mode-scoped view. This copy is local to
+    # the evaluation and never mutates the cached or persisted configuration.
+    cfg.risk = risk
     violations = []
 
     # 0. Kill switch — global brake, rejects everything when engaged.
     if cfg.runtime.kill_switch_active:
         violations.append("kill_switch_active")
+    mode_brake_active = (
+        cfg.runtime.live_brake_active
+        if resolved_policy.mode == "live"
+        else cfg.runtime.demo_brake_active
+    )
+    if mode_brake_active:
+        violations.append(f"{resolved_policy.mode}_brake_active")
 
     # 1. Symbol filter (whitelist or blacklist mode, single list)
     sym_canonical = to_canonical(proposal.symbol)
@@ -1010,9 +1043,13 @@ def _evaluate_proposal_locked(
         violations.append(f"max_daily_loss_exceeded:{realized}<=-{daily_loss_limit}")
         is_live = _is_live(proposal.execution_mode)
         ks_enabled = risk.kill_switch_enabled_live if is_live else risk.kill_switch_enabled_demo
-        if ks_enabled and not cfg.runtime.kill_switch_active:
+        if ks_enabled and not mode_brake_active:
             from aletheia.risk.kill_switch import activate as _trip
-            _trip(reason=f"daily loss {realized} breached limit -{daily_loss_limit}", actor="system")
+            _trip(
+                reason=f"daily loss {realized} breached limit -{daily_loss_limit}",
+                actor="system",
+                scope=resolved_policy.mode,
+            )
 
     # 9a. Exchange allowlist — reject if target exchange != allowed_exchange.
     # binance_testnet/binance_live_limited and okx_demo/okx_live_limited are self-contained
@@ -1315,6 +1352,14 @@ def _persist_risk_result(
         message="Approved" if approved else f"Rejected: {', '.join(violations)}",
     )
 
+    policy_identity = None
+    try:
+        from aletheia.risk.policy import resolve_risk_policy
+
+        policy_identity = resolve_risk_policy(load_config(), proposal.execution_mode)
+    except Exception:
+        policy_identity = None
+
     decision = RiskDecision(
         proposal_id=proposal.id,
         approved=approved,
@@ -1331,6 +1376,10 @@ def _persist_risk_result(
             proposal,
             require_evaluated_snapshot_match=(decision_role == "authoritative"),
         ),
+        risk_mode=policy_identity.mode if policy_identity else None,
+        policy_id=policy_identity.policy.policy_id if policy_identity else None,
+        policy_revision=policy_identity.policy.revision if policy_identity else None,
+        policy_hash=policy_identity.policy_hash if policy_identity else None,
         message=result.message,
     )
     created = True

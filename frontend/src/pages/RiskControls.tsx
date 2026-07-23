@@ -124,11 +124,12 @@ export default function RiskControls() {
   const exchangeMode = String(s.exchange_mode || 'demo').toLowerCase()
   const isLive = exchangeMode === 'live' || exchangeMode === 'bitget_live_limited'
   const b = (boundaries || {}) as Record<string, any>
+  const activePolicy = isLive ? b.live : b.demo
   const equity = Number((portfolio as any)?.exchange_equity_usdt) || Number((portfolio as any)?.total_value_usdt) || 0
   const positionsCount = Number((portfolio as any)?.positions_count) || (positions as any[]).length || 0
-  const posCap = Number(isLive ? b.max_open_positions_live : b.max_open_positions_demo) || null
-  const notionalCap = Number(isLive ? b.max_live_position_notional_usdt : b.max_demo_position_notional_usdt) || null
-  const dailyLossPct = Number(b.max_daily_loss_pct) || null
+  const posCap = Number(activePolicy?.positions?.max_open_positions) || null
+  const notionalCap = Number(activePolicy?.capital?.max_position_notional_usdt) || null
+  const dailyLossPct = Number(activePolicy?.loss?.max_daily_loss_pct) || null
   const dailyLossCapUsdt = (dailyLossPct != null && equity > 0) ? equity * dailyLossPct / 100 : null
   const todayPnlRaw = (portfolio as any)?.today_pnl
   const todayPnlParsed = todayPnlRaw == null ? null : Number(todayPnlRaw)
@@ -433,47 +434,48 @@ const LIMIT_GROUPS: LimitGroup[] = [
   {
     title: 'Position sizing',
     rows: [
-      { label: 'Position notional cap', pair: ['max_live_position_notional_usdt', 'max_demo_position_notional_usdt'] },
-      { label: 'Single-trade risk', pair: ['max_single_trade_risk_pct', 'max_demo_single_trade_risk_pct'] },
-      { label: 'Max open positions', pair: ['max_open_positions_live', 'max_open_positions_demo'] },
+      { label: 'Position notional cap', pair: ['live.capital.max_position_notional_usdt', 'demo.capital.max_position_notional_usdt'] },
+      { label: 'Per-symbol cumulative cap', pair: ['live.capital.max_per_symbol_notional_usdt', 'demo.capital.max_per_symbol_notional_usdt'] },
+      { label: 'Single-trade risk', pair: ['live.loss.max_single_trade_risk_pct', 'demo.loss.max_single_trade_risk_pct'] },
+      { label: 'Max open positions', pair: ['live.positions.max_open_positions', 'demo.positions.max_open_positions'] },
     ],
   },
   {
     title: 'Leverage',
     rows: [
-      { label: 'Futures leverage', pair: ['max_futures_leverage_live', 'max_futures_leverage_demo'] },
-      { label: 'Major (BTC/ETH)', pair: ['max_leverage_major_live', 'max_leverage_major_demo'] },
-      { label: 'Mid (SOL/BNB/XRP)', pair: ['max_leverage_mid_live', 'max_leverage_mid_demo'] },
-      { label: 'Alt', pair: ['max_leverage_alt_live', 'max_leverage_alt_demo'] },
-      { label: 'Account aggregate', pair: ['max_account_leverage_live', 'max_account_leverage_demo'] },
+      { label: 'Futures leverage', pair: ['live.leverage.futures_cap', 'demo.leverage.futures_cap'] },
+      { label: 'Major (BTC/ETH)', pair: ['live.leverage.major_cap', 'demo.leverage.major_cap'] },
+      { label: 'Mid (SOL/BNB/XRP)', pair: ['live.leverage.mid_cap', 'demo.leverage.mid_cap'] },
+      { label: 'Alt', pair: ['live.leverage.alt_cap', 'demo.leverage.alt_cap'] },
+      { label: 'Account aggregate', pair: ['live.leverage.account_cap', 'demo.leverage.account_cap'] },
     ],
   },
   {
     title: 'Loss & margin',
     rows: [
-      { label: 'Max daily loss', single: 'max_daily_loss_pct' },
-      { label: 'Margin warning', single: 'futures_margin_warning_ratio' },
-      { label: 'Force-close', single: 'futures_margin_force_close_ratio' },
-      { label: 'Min liquidation buffer', single: 'min_liquidation_buffer_pct' },
+      { label: 'Max daily loss', pair: ['live.loss.max_daily_loss_pct', 'demo.loss.max_daily_loss_pct'] },
+      { label: 'Margin warning', pair: ['live.margin.warning_ratio', 'demo.margin.warning_ratio'] },
+      { label: 'Force-close', pair: ['live.margin.block_ratio', 'demo.margin.block_ratio'] },
+      { label: 'Entry liquidation buffer', pair: ['live.margin.min_entry_liquidation_buffer_pct', 'demo.margin.min_entry_liquidation_buffer_pct'] },
+      { label: 'Runtime liquidation buffer', pair: ['live.margin.runtime_liquidation_buffer_pct', 'demo.margin.runtime_liquidation_buffer_pct'] },
     ],
   },
   {
     title: 'Exposure & capital',
     rows: [
-      { label: 'Total live exposure', single: 'max_total_live_exposure_pct' },
-      { label: 'Live limited cap', single: 'max_live_limited_cap_usdt' },
-      { label: 'Starting capital', single: 'starting_capital_usdt' },
-      { label: 'Sector concentration', single: 'max_sector_concentration_pct' },
-      { label: 'Max portfolio beta', single: 'max_portfolio_beta' },
+      { label: 'Total exposure', pair: ['live.capital.max_total_exposure_pct', 'demo.capital.max_total_exposure_pct'] },
+      { label: 'Policy capital base', pair: ['live.capital.base_usdt', 'demo.capital.base_usdt'] },
+      { label: 'Sector concentration', pair: ['live.correlation.max_sector_concentration_pct', 'demo.correlation.max_sector_concentration_pct'] },
+      { label: 'Max portfolio beta', pair: ['live.correlation.max_portfolio_beta', 'demo.correlation.max_portfolio_beta'] },
     ],
   },
   {
     title: 'Controls & flags',
     rows: [
-      { label: 'Kill switch auto-trip', pair: ['kill_switch_enabled_live', 'kill_switch_enabled_demo'] },
-      { label: 'Allow short', pair: ['allow_short_live', 'allow_short_demo'] },
+      { label: 'Mode brake auto-trip', pair: ['live.auto_trip_mode_brake_on_daily_loss', 'demo.auto_trip_mode_brake_on_daily_loss'] },
+      { label: 'Allow short', pair: ['live.positions.allow_short', 'demo.positions.allow_short'] },
       { label: 'Risk-check all orders', single: 'require_risk_check_for_all_orders' },
-      { label: 'Correlation guard', single: 'correlation_guard_enabled' },
+      { label: 'Correlation guard', pair: ['live.correlation.enabled', 'demo.correlation.enabled'] },
     ],
   },
 ]
@@ -483,17 +485,22 @@ function rowKeys(r: LimitRow): string[] {
 }
 
 function LimitsView({ boundaries }: { boundaries: Record<string, any> }) {
+  const at = (path: string) => path.split('.').reduce((value, key) => value?.[key], boundaries)
   const consumed = new Set<string>()
   const groups = LIMIT_GROUPS
     .map(g => {
       // Only keep rows whose keys actually exist in this config payload.
-      const rows = g.rows.filter(r => rowKeys(r).some(k => boundaries[k] !== undefined))
+      const rows = g.rows.filter(r => rowKeys(r).some(k => at(k) !== undefined))
       rows.forEach(r => rowKeys(r).forEach(k => consumed.add(k)))
       return { title: g.title, rows }
     })
     .filter(g => g.rows.length > 0)
 
-  const others = Object.keys(boundaries).filter(k => !consumed.has(k))
+  // v2 keeps flat compatibility fields for one release. Showing those beside
+  // the authoritative profiles would falsely imply that limits are shared.
+  const others = boundaries.demo && boundaries.live
+    ? []
+    : Object.keys(boundaries).filter(k => !consumed.has(k))
 
   return (
     <div className="limits-groups">
@@ -507,15 +514,15 @@ function LimitsView({ boundaries }: { boundaries: Record<string, any> }) {
                 <span className="limit-pair">
                   <span className="limit-seg live">
                     <span className="limit-seg-tag">LIVE</span>
-                    <span className="limit-seg-val">{fmtLimit(r.pair[0], boundaries[r.pair[0]])}</span>
+                    <span className="limit-seg-val">{fmtLimit(r.pair[0], at(r.pair[0]))}</span>
                   </span>
                   <span className="limit-seg">
                     <span className="limit-seg-tag">DEMO</span>
-                    <span className="limit-seg-val">{fmtLimit(r.pair[1], boundaries[r.pair[1]])}</span>
+                    <span className="limit-seg-val">{fmtLimit(r.pair[1], at(r.pair[1]))}</span>
                   </span>
                 </span>
               ) : (
-                <span className="limit-single">{fmtLimit(r.single, boundaries[r.single])}</span>
+                <span className="limit-single">{fmtLimit(r.single, at(r.single))}</span>
               )}
             </div>
           ))}

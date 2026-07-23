@@ -48,7 +48,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `trade_proposals` | Actionable trade candidates | symbol, direction, entry_price, stop_price, target_price, **`agent_rationale.entry_parameters`** (final entry/stop/target/notional/leverage reasons + value sources), **commit_hash**, **parent_hash** (TaG, P0-1) | paper_trader / System Operator |
 | `proposal_execution_claims` | One durable, expiring execution owner per Proposal; kept outside the hash-covered Proposal intent and removed only by owner-token compare-and-set | proposal_id, owner_token, claimed_at, lease_expires_at | execution gateway |
 | `entry_risk_reservations` | Durable pre-Order allowance acquired atomically with authoritative Risk; retained after a worker crash and superseded by the first durable Order | proposal_id, proposal_commit_hash, symbol, market_type, execution_mode, quantity, price, leverage | risk engine / execution gateway |
-| `risk_decisions` | Risk engine approval/rejection | proposal_id, approved, reasons (JSON), decision_role, evaluated_quantity, proposal_commit_hash | risk engine |
+| `risk_decisions` | Risk engine approval/rejection | proposal_id, approved, reasons (JSON), decision_role, evaluated_quantity, proposal_commit_hash, risk_mode, policy_id, policy_revision, policy_hash | risk engine |
 | `approvals` | Human approval records | proposal_id, decision, decided_by | frontend |
 | `orders` | Execution orders; native exchange entry `pending` is an unresolved Risk reservation, not zero exposure | symbol, side, quantity, order_type, status | execution gateway |
 | `fills` | Order fill confirmations | order_id, fill_price, fill_quantity, fee | broker adapter |
@@ -619,4 +619,3 @@ rows even when no NULL-PnL close remains.
 Every paper cash delta and resulting cash balance must be finite. The HTTP
 schema and central ledger writer reject NaN, both infinities, and finite-input
 arithmetic overflow before any append or audit event.
-

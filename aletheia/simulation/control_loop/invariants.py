@@ -25,7 +25,7 @@ _CONTROL_ACTIONS = {
 def assert_parameter_bounds(harness: Any) -> None:
     cfg = harness.load_config()
     confidence = cfg.trading.min_confidence_to_trade
-    sizing = float(cfg.risk.max_demo_position_notional_usdt)
+    sizing = float(cfg.risk.demo.capital.max_position_notional_usdt)
     if confidence not in {"speculative", "medium", "high"}:
         raise ControlLoopInvariantError(f"confidence escaped its ladder: {confidence!r}")
     if not 20.0 <= sizing <= 500.0:
