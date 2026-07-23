@@ -2801,8 +2801,9 @@ async def _async_paper_funding_settler():
     from aletheia.portfolio.paper_account import settle_unsettled_paper_closes
     result = await settle_unsettled_paper_closes()
     logger.debug(
-        "paper_funding_settler: settled=%d still_pending=%d errors=%d",
-        result["settled"], result["still_pending"], len(result["errors"]),
+        "paper_funding_settler: settled=%d revived=%d still_pending=%d errors=%d",
+        result["settled"], result.get("revived", 0),
+        result["still_pending"], len(result["errors"]),
     )
 
 

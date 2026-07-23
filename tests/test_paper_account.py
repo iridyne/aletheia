@@ -180,6 +180,7 @@ def test_invalid_exit_price_is_terminal_not_unsettled_funding(tmp_path, monkeypa
     )
     assert result == {
         "settled": 0,
+        "revived": 0,
         "still_pending": 0,
         "gave_up": 0,
         "errors": [],

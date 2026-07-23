@@ -41,6 +41,13 @@ TASK_NAME = "Aletheia Trading OS Gateway"
 LAUNCHD_LABEL = "com.aletheia.trading-os.gateway"
 LAUNCHD_INTERVAL_SEC = 60
 
+# Exact historical Aletheia labels superseded by LAUNCHD_LABEL.
+# Migration removes these on enable/disable to eliminate the second lifecycle controller.
+# Never enumerate arbitrary user LaunchAgents — only these known project-owned labels.
+_LEGACY_LAUNCHD_LABELS: tuple[str, ...] = (
+    "com.aletheia.gateway.watchdog",
+)
+
 # How often the task re-checks the gateway (and resurrects a dead supervisor).
 # Windows Task Scheduler enforces a minimum repetition interval of PT1M;
 # PT30S is rejected with "Interval value out of range" on registration.
@@ -353,6 +360,57 @@ def _classify_launchctl_error(stderr: str) -> str:
     return "launchctl_error"
 
 
+def _bootout_legacy_macos() -> list[str]:
+    """Bootout and remove plists for known historical Aletheia LaunchAgent labels.
+
+    Tolerates not_found (already gone) on every label — the call is idempotent.
+    Returns the list of labels that were actually found and removed.
+    Stops on access_denied to surface the error to the caller without swallowing it.
+    Raises on unexpected launchctl errors so _enable_macos/_disable_macos can decide.
+    """
+    removed: list[str] = []
+    uid = os.getuid()
+    for label in _LEGACY_LAUNCHD_LABELS:
+        target = f"gui/{uid}/{label}"
+        try:
+            proc = _launchctl(["bootout", target])
+        except FileNotFoundError:
+            break  # launchctl unavailable — nothing to clean up
+        if proc.returncode != 0:
+            reason = _classify_launchctl_error(proc.stderr)
+            if reason == "not_found":
+                pass  # already gone — still check for orphan plist below
+            elif reason == "access_denied":
+                raise PermissionError(f"launchctl bootout {target}: access denied")
+            # ignore other transient errors; still attempt plist removal
+        plist = _launch_agents_dir() / f"{label}.plist"
+        try:
+            plist.unlink(missing_ok=True)
+        except OSError:
+            pass
+        if proc.returncode == 0:
+            removed.append(label)
+    return removed
+
+
+def _legacy_launchd_present() -> list[str]:
+    """Return legacy Aletheia labels that are currently loaded in launchd."""
+    uid = os.getuid()
+    present: list[str] = []
+    for label in _LEGACY_LAUNCHD_LABELS:
+        target = f"gui/{uid}/{label}"
+        try:
+            proc = _launchctl(["print", target])
+        except FileNotFoundError:
+            break
+        if proc.returncode == 0:
+            present.append(label)
+        # also flag an orphan plist with no loaded job
+        elif (_launch_agents_dir() / f"{label}.plist").exists():
+            present.append(label)
+    return present
+
+
 def _parse_launchctl_status(output: str) -> dict:
     """Parse stable `launchctl print` keys for a short-lived periodic job."""
     result: dict = {}
@@ -513,6 +571,19 @@ def _enable_macos(source: str) -> dict:
             "reason": "plist_install_error", "detail": type(exc).__name__,
         }
 
+    # Remove known legacy labels before installing the current one so there is
+    # never more than one Aletheia lifecycle controller active at the same time.
+    try:
+        _bootout_legacy_macos()
+    except PermissionError as exc:
+        path.unlink(missing_ok=True)
+        return {
+            "supported": True, "enabled": None, "ok": False,
+            "installed": False, "platform": "launchd",
+            "task_name": LAUNCHD_LABEL, "reason": "access_denied",
+            "detail": str(exc)[:200],
+        }
+
     # Replace an already loaded definition so path/interpreter drift is repaired.
     try:
         old = _launchctl(["bootout", _launchd_target()])
@@ -643,6 +714,12 @@ def _disable_macos(source: str) -> dict:
             "platform": "launchd", "reason": "plist_remove_error",
             "detail": type(exc).__name__,
         }
+
+    # Best-effort: also remove legacy labels so no stale watchdog remains.
+    try:
+        _bootout_legacy_macos()
+    except (PermissionError, Exception):
+        pass  # disable still succeeds; doctor probe will surface lingering legacy jobs
 
     write_audit({
         "actor": "human", "source": source, "event_type": "autostart_disabled",
