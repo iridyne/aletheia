@@ -212,7 +212,7 @@ def test_paper_funding_cli_and_doctor_expose_guarded_reconciliation(
     )
     unguarded = runner.invoke(
         data_app,
-        ["reconcile-paper-funding", "--apply", "--position-id", position_id],
+        ["reconcile-paper-funding", "--apply"],
     )
     report = Report()
     _probe_paper_funding_accounting(report)

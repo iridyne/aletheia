@@ -56,6 +56,14 @@ def reconcile_paper_funding(
     ),
 ):
     """Inspect or apply fingerprint-guarded paper funding reconciliation."""
+    if apply:
+        if not expected_fingerprint:
+            raise typer.BadParameter("--apply requires --expected-fingerprint")
+        if not position_ids:
+            raise typer.BadParameter("--apply requires at least one --position-id")
+    elif expected_fingerprint:
+        raise typer.BadParameter("--expected-fingerprint is valid only with --apply")
+
     from aletheia.maintenance.paper_funding_reconciliation import (
         apply_paper_funding_reconciliation,
         inspect_paper_funding_reconciliation,
@@ -65,19 +73,11 @@ def reconcile_paper_funding(
     run_migrations()
     try:
         if apply:
-            if not expected_fingerprint:
-                raise typer.BadParameter("--apply requires --expected-fingerprint")
-            if not position_ids:
-                raise typer.BadParameter("--apply requires at least one --position-id")
             result = apply_paper_funding_reconciliation(
                 position_ids=position_ids,
                 expected_fingerprint=expected_fingerprint,
             )
         else:
-            if expected_fingerprint:
-                raise typer.BadParameter(
-                    "--expected-fingerprint is valid only with --apply",
-                )
             result = inspect_paper_funding_reconciliation(position_ids=position_ids)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
