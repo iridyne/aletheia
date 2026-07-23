@@ -3,378 +3,29 @@ name: Aletheia CI
 on:
   pull_request:
     branches: [master]
-  push:
-    branches: [master]
-  workflow_dispatch:
-    inputs:
-      full_regression:
-        description: Run the full Python regression audit
-        required: false
-        default: false
-        type: boolean
+  merge_group:
 
 permissions:
   contents: read
-  pull-requests: read
 
-# Superseded commits on the same PR may cancel their older run. Every master push
-# uses its own event-and-SHA-scoped group so a later push cannot erase the only
-# completed integrity check for an earlier commit range, and a duplicate push of
-# the same SHA cannot replace a pending manual full-regression run.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('ci-{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('ci-{0}-{1}-{2}', github.workflow, github.event_name, github.sha) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  # ── Path change detection ─────────────────────────────────────────────────
-  # Detects which surface areas changed so downstream jobs can skip themselves
-  # when unrelated. Python jobs always run. Non-Python surfaces (native,
-  # frontend, operator-shell) only run when their paths appear in the diff.
-  # On master push and workflow_dispatch every surface is forced to true.
-  changes:
-    name: Detect path changes
+  review:
+    name: Review checks
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 2
-    outputs:
-      native: ${{ steps.detect.outputs.native }}
-      frontend: ${{ steps.detect.outputs.frontend }}
-      operator_shell: ${{ steps.detect.outputs.operator_shell }}
+    timeout-minutes: 15
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
-      - name: Detect changed path areas
-        id: detect
-        run: |
-          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
-            # Master push and manual dispatch: run every surface
-            echo "native=true"          >> "$GITHUB_OUTPUT"
-            echo "frontend=true"        >> "$GITHUB_OUTPUT"
-            echo "operator_shell=true"  >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          BASE="${{ github.event.pull_request.base.sha }}"
-          CHANGED=$(git diff --name-only "$BASE" HEAD)
-          echo "native=$(echo "$CHANGED"        | grep -qE '^native/'          && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "frontend=$(echo "$CHANGED"      | grep -qE '^frontend/'        && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "operator_shell=$(echo "$CHANGED"| grep -qE '^operator-shell/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
-
-  # ── End-to-end pipeline ───────────────────────────────────────────────────
-  # Listed first so it gets a runner slot on the first dispatch wave.
-  # Covers: ALL tests in tests/e2e/ (15 files — previously only 7 ran).
-  # Uses -n auto; each xdist worker gets its own SQLite session with
-  # SAVEPOINT-based per-test isolation (see tests/e2e/conftest.py).
-  e2e:
-    name: End-to-end pipeline
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 25
-
-    steps:
-      - name: Isolate Aletheia runtime state
-        run: echo "ALETHEIA_DATA_DIR=$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_JOB}" >> "$GITHUB_ENV"
-
-      - name: Check out source
-        uses: actions/checkout@v4
-
       - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.12"
-          enable-cache: false
-
-      - name: Synchronize locked dependencies
-        run: uv sync --locked --all-groups
-
-      - name: Prepare test report directory
-        run: mkdir -p test-results
-
-      - name: Run end-to-end pipeline tests
-        run: uv run pytest tests/e2e/ -n auto -q --tb=short --junitxml=test-results/e2e.xml
-
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-results
-          path: test-results/
-          if-no-files-found: ignore
-          retention-days: 14
-
-  # ── Unit tests ────────────────────────────────────────────────────────────
-  # Covers: all tier_unit tests — tests/test_*.py + tests/filter_eval/
-  #         Explicitly excludes tests/simulation/ (owned by the simulation job).
-  #         Includes slow unit tests (test_doctor*, etc.) that were previously
-  #         only reachable via full-regression.
-  unit:
-    name: Unit tests
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 30
-
-    steps:
-      - name: Isolate Aletheia runtime state
-        run: echo "ALETHEIA_DATA_DIR=$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_JOB}" >> "$GITHUB_ENV"
-
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.12"
-          enable-cache: false
-
-      - name: Synchronize locked dependencies
-        run: uv sync --locked --all-groups
-
-      - name: Prepare test report directory
-        run: mkdir -p test-results
-
-      - name: Run unit tests
-        run: >-
-          uv run pytest tests/
-          -m tier_unit
-          --ignore=tests/simulation
-          -n auto
-          -q --tb=short
-          --timeout=120
-          --junitxml=test-results/unit.xml
-
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: unit-results
-          path: test-results/
-          if-no-files-found: ignore
-          retention-days: 14
-
-  # ── Integration tests ─────────────────────────────────────────────────────
-  # Covers: all tier_integration tests — route/runtime/storage/service layer
-  #         boundaries. Includes test_runtime_replay_pack.py (tier_integration
-  #         via "runtime" token) which was previously duplicated in backend.
-  integration:
-    name: Integration tests
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 20
-
-    steps:
-      - name: Isolate Aletheia runtime state
-        run: echo "ALETHEIA_DATA_DIR=$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_JOB}" >> "$GITHUB_ENV"
-
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.12"
-          enable-cache: false
-
-      - name: Synchronize locked dependencies
-        run: uv sync --locked --all-groups
-
-      - name: Prepare test report directory
-        run: mkdir -p test-results
-
-      - name: Run integration tests
-        run: uv run pytest -m integration -n auto -q --tb=short --junitxml=test-results/integration.xml
-
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: integration-results
-          path: test-results/
-          if-no-files-found: ignore
-          retention-days: 14
-
-  # ── Deterministic control-loop simulation ────────────────────────────────
-  # Covers: ALL tests in tests/simulation/ (8 files — previously only 5 ran).
-  # Runs with constrained DCLS settings so hypothesis uses a fixed seed and
-  # a small example budget for deterministic, fast CI results.
-  # The nightly job (dcls-nightly.yml) re-runs the same suite with full budgets.
-  simulation:
-    name: Deterministic control-loop simulation
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 15
-    env:
-      DCLS_MAX_EXAMPLES: 8
-      DCLS_STATEFUL_STEPS: 8
-      DCLS_SEED: 20260713
-
-    steps:
-      - name: Isolate Aletheia runtime state
-        run: echo "ALETHEIA_DATA_DIR=$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_JOB}" >> "$GITHUB_ENV"
-
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.12"
-          enable-cache: false
-
-      - name: Synchronize locked dependencies
-        run: uv sync --locked --all-groups
-
-      - name: Prepare test report directory
-        run: mkdir -p test-results
-
-      - name: Run control-loop simulation
-        run: uv run pytest tests/simulation/ -q --tb=short --junitxml=test-results/simulation.xml
-
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: simulation-results
-          path: test-results/
-          if-no-files-found: ignore
-          retention-days: 14
-
-  # ── Executable specifications (SDD contracts) ────────────────────────────
-  # Covers: all tier_spec tests — tests/specs/ (101 files, ~1135 tests)
-  #         + tests/test_spec_conformance.py (gets tier_spec via conftest).
-  # Uses -n auto because specs are independent and purely in-memory.
-  specs:
-    name: Executable specifications
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 15
-
-    steps:
-      - name: Isolate Aletheia runtime state
-        run: echo "ALETHEIA_DATA_DIR=$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_JOB}" >> "$GITHUB_ENV"
-
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.12"
-          enable-cache: false
-
-      - name: Synchronize locked dependencies
-        run: uv sync --locked --all-groups
-
-      - name: Prepare test report directory
-        run: mkdir -p test-results
-
-      - name: Run executable specifications
-        run: uv run pytest -m tier_spec -n auto -q --tb=short --junitxml=test-results/specs.xml
-
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: specs-results
-          path: test-results/
-          if-no-files-found: ignore
-          retention-days: 14
-
-  # ── Operator Shell ────────────────────────────────────────────────────────
-  # Path-gated: only runs when operator-shell/ changes (or on master / manual).
-  operator-shell:
-    name: Operator Shell test and build
-    needs: [changes]
-    if: ${{ needs.changes.outputs.operator_shell == 'true' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 10
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: operator-shell/package-lock.json
-
-      - name: Install locked Operator Shell dependencies
-        working-directory: operator-shell
-        run: npm ci
-
-      - name: Test Operator Shell
-        working-directory: operator-shell
-        run: npm test
-
-      - name: Type-check Operator Shell
-        working-directory: operator-shell
-        run: npm run build
-
-  # ── Native host (Rust) ────────────────────────────────────────────────────
-  # Path-gated: only runs when native/ changes (or on master / manual).
-  # Covers: unit tests in native/aletheia-host (bootstrap, update, host logic).
-  native:
-    name: Native host
-    needs: [changes]
-    if: ${{ needs.changes.outputs.native == 'true' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 10
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Run Rust unit tests
-        working-directory: native/aletheia-host
-        run: cargo test --locked --all-targets
-
-  # ── Frontend ──────────────────────────────────────────────────────────────
-  # Path-gated: only runs when frontend/ changes (or on master / manual).
-  frontend:
-    name: Dashboard build
-    needs: [changes]
-    if: ${{ needs.changes.outputs.frontend == 'true' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 10
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install locked dashboard dependencies
-        working-directory: frontend
-        run: npm ci
-
-      - name: Lint dashboard
-        working-directory: frontend
-        run: npm run lint
-
-      - name: Type-check and build dashboard
-        working-directory: frontend
-        run: npm run build
-
-  # ── Static analysis ───────────────────────────────────────────────────────
-  # Covers: ruff lint  +  AST/import-graph architecture invariants.
-  # No test execution — pure static, fails fast before any test runner spins up.
-  static-checks:
-    name: Static analysis
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 5
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.12"
           enable-cache: false
@@ -385,95 +36,70 @@ jobs:
       - name: Lint Python
         run: uv run ruff check aletheia/ tests/
 
-      - name: Verify architecture invariants
-        run: uv run pytest tests/test_architecture_fitness.py -q --tb=short
+      - name: Verify architecture and CI invariants
+        run: uv run pytest tests/test_architecture_fitness.py tests/test_ci_workflow_contract.py -q --tb=short
 
-      - name: Verify CI workflow contract
-        run: uv run pytest tests/test_ci_workflow_contract.py -q --tb=short
+      - name: Scan the pull-request commit range for leaked secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=8.24.3
+          expected=9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          install_dir="$RUNNER_TEMP/gitleaks-$version"
+          curl --fail --location --silent --show-error \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$expected" "$archive" | sha256sum --check -
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" gitleaks
+          "$install_dir/gitleaks" git --redact --log-opts="${{ github.event.pull_request.base.sha || 'HEAD^' }}..HEAD"
 
-  # ── Secrets ──────────────────────────────────────────────────────────────
-  secrets-scan:
-    name: Secrets scan
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 5
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          fetch-depth: 0
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            operator-shell/package-lock.json
 
-      - name: Scan for leaked secrets
+      - name: Check dashboard
+        working-directory: frontend
         run: |
-          VERSION=8.24.3
-          DEST="$RUNNER_TEMP/gitleaks-${VERSION}"
-          if [ ! -x "$DEST/gitleaks" ]; then
-            mkdir -p "$DEST"
-            curl -sSfL \
-              "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
-              | tar xz -C "$DEST"
-          fi
-          # Match gitleaks-action v2 behaviour: scan only the latest commit, not the full history.
-          "$DEST/gitleaks" detect --source . --exit-code 2 --log-level warn --log-opts="HEAD^..HEAD"
+          npm ci
+          npm run lint
+          npm test
+          npx tsc -b --pretty false
 
-  # ── Gate ──────────────────────────────────────────────────────────────────
-  ci-gate:
-    name: CI gate
-    if: ${{ always() && (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/master')) }}
-    needs:
-      - changes
-      - e2e
-      - unit
-      - integration
-      - simulation
-      - specs
-      - operator-shell
-      - native
-      - frontend
-      - static-checks
-      - secrets-scan
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 5
-
-    steps:
-      - name: Require all CI surfaces
+      - name: Check Operator Shell
+        working-directory: operator-shell
         run: |
-          # Python surfaces always required
-          test "${{ needs.e2e.result }}" = "success"
-          test "${{ needs.unit.result }}" = "success"
-          test "${{ needs.integration.result }}" = "success"
-          test "${{ needs.simulation.result }}" = "success"
-          test "${{ needs.specs.result }}" = "success"
-          test "${{ needs.static-checks.result }}" = "success"
-          test "${{ needs.secrets-scan.result }}" = "success"
-          # Path-gated surfaces: skipped is acceptable when path filter excluded them
-          r="${{ needs.operator-shell.result }}"
-          [ "$r" = "success" ] || [ "$r" = "skipped" ] || (echo "operator-shell: $r" && false)
-          r="${{ needs.native.result }}"
-          [ "$r" = "success" ] || [ "$r" = "skipped" ] || (echo "native: $r" && false)
-          r="${{ needs.frontend.result }}"
-          [ "$r" = "success" ] || [ "$r" = "skipped" ] || (echo "frontend: $r" && false)
-          echo "All required CI surfaces passed."
+          npm ci
+          npm test
+          npm run build
 
-  # ── Manual: full regression ───────────────────────────────────────────────
-  # Triggered manually via workflow_dispatch. Runs the complete test suite
-  # without marker filtering — catches anything the per-category jobs miss
-  # (e.g. simulation tests with default hypothesis settings).
-  full-regression:
-    name: Full Python regression audit
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_regression }}
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+
+      - name: Test the platform-neutral native host
+        working-directory: native/aletheia-host
+        run: cargo test --locked --all-targets
+
+  tests:
+    name: Python regression
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 45
+    timeout-minutes: 25
 
     steps:
       - name: Isolate Aletheia runtime state
-        run: echo "ALETHEIA_DATA_DIR=$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_JOB}" >> "$GITHUB_ENV"
+        run: echo "ALETHEIA_DATA_DIR=$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-tests" >> "$GITHUB_ENV"
 
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.12"
           enable-cache: false
@@ -481,17 +107,16 @@ jobs:
       - name: Synchronize locked dependencies
         run: uv sync --locked --all-groups
 
-      - name: Prepare test report directory
-        run: mkdir -p test-results
-
-      - name: Run full regression audit
-        run: uv run pytest tests/ -q --tb=line --junitxml=test-results/full.xml
-
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: full-regression-results
-          path: test-results/
-          if-no-files-found: ignore
-          retention-days: 14
+      - name: Run isolated review regression tiers
+        shell: bash
+        run: |
+          set -euo pipefail
+          for tier in tier_spec tier_unit tier_integration tier_e2e; do
+            ALETHEIA_DATA_DIR="$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${tier}" \
+              uv run pytest tests/ \
+                --ignore=tests/simulation \
+                -m "$tier" \
+                -n auto \
+                -q --tb=short \
+                --timeout=120
+          done
