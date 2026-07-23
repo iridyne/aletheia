@@ -141,6 +141,37 @@ def test_local_close_settles_realized_pnl_once(tmp_path, monkeypatch):
     assert get_paper_account()["cash_balance_usdt"] == pytest.approx(settled["cash_balance_usdt"])
 
 
+def test_invalid_exit_price_is_terminal_not_unsettled_funding(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio.paper_account import (
+        INVALID_EXIT_PRICE_EVIDENCE,
+        get_paper_account,
+    )
+
+    repo.insert_position(Position(
+        symbol="ON/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=47.916202,
+        entry_price=0.17956974,
+        current_price=90.524715,
+        realized_pnl=None,
+        execution_mode="paper_internal",
+        status="closed",
+        entry_fee=0.00516258,
+        exit_fee=2.60256032,
+        funding_cost=0.0,
+        funding_source="local_simulation",
+        outcome_eligible=False,
+        outcome_exclusion_reason=INVALID_EXIT_PRICE_EVIDENCE,
+    ))
+
+    account = get_paper_account()
+
+    assert account["economics_complete"] is True
+    assert account["unsettled_closed_positions_count"] == 0
+
+
 def test_local_paper_available_balance_tightens_risk_without_affecting_external(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config

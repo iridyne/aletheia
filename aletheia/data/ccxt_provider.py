@@ -282,6 +282,18 @@ def _opt_float(value) -> float | None:
         return None
 
 
+def require_exact_ticker_venue(ticker: Ticker, venue: str) -> Ticker:
+    """Reject a ticker whose physical provider differs from the requested venue."""
+    expected = str(venue or "").strip().lower()
+    actual = str(ticker.provider or "").strip().lower()
+    if not expected or actual != expected:
+        raise ValueError(
+            f"ticker provider {actual or 'unknown'} does not match venue "
+            f"{expected or 'unknown'}"
+        )
+    return ticker
+
+
 def get_market_data_provider(
     exchange: str | None = None,
     *,

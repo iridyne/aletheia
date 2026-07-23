@@ -48,6 +48,12 @@ _FUNDING_GIVE_UP_HOURS = 24.0
 # economics" (which reads as "still trying"). Not a whitelist for
 # validated_funding_economics — that layer still returns (None, "unavailable").
 FUNDING_PERMANENTLY_UNRECOVERABLE = "funding_permanently_unrecoverable"
+INVALID_EXIT_PRICE_EVIDENCE = "invalid_exit_price_evidence"
+
+_TERMINAL_ECONOMICS_EXCLUSIONS = frozenset({
+    FUNDING_PERMANENTLY_UNRECOVERABLE,
+    INVALID_EXIT_PRICE_EVIDENCE,
+})
 
 INITIAL_PAPER_CASH_USDT = 200.0
 
@@ -62,9 +68,8 @@ def _open_local_positions() -> list[dict]:
 def _unsettled_local_closes() -> list[dict]:
     """Closed local positions whose net account result is still in flight.
 
-    A row that the settler has terminally given up on
-    (outcome_exclusion_reason=FUNDING_PERMANENTLY_UNRECOVERABLE) is NOT
-    in flight — it is a durable, distinct outcome. Excluding it here lets
+    A row with a terminal exclusion reason is NOT in flight — it is a durable,
+    distinct outcome. Excluding it here lets
     `get_paper_account().economics_complete` return True once every
     remaining unsettled row is either settled or terminally excluded,
     which in turn unblocks `total_value_usdt` / `available_balance_usdt` /
@@ -85,7 +90,7 @@ def _unsettled_local_closes() -> list[dict]:
         for position in [dict(row)]
         if _realized_economics_value(position) is None
         and str(position.get("outcome_exclusion_reason") or "")
-            != FUNDING_PERMANENTLY_UNRECOVERABLE
+            not in _TERMINAL_ECONOMICS_EXCLUSIONS
     ]
 
 
