@@ -348,88 +348,35 @@ def test_shadow_cohort_is_not_causally_eligible():
 
 
 @spec_claim(SpecClaim(
-    "LE-B29", _CONTRACT, "§measurement-support gate: non-Universe paths excluded (#324)", "L2b",
-    "operator_learning_bundle and other non-Universe paths must not appear in "
-    "SUPPORTED_PATH_IDS — their filter_candidate_outcomes rows have allocation_selected=NULL "
-    "by contract, which causes the cohort builder to emit missing_allocation_result and "
-    "lifecycle to invalidate still-pending experiments. Excluded paths are consumer_wired "
-    "but not measurement_supported until per-path cohort adapters ship.",
+    "LE-B29", _CONTRACT, "§measurement-support gate: paths without cohort adapters excluded (#324)", "L2b",
+    "observer_advisory_bundle and ranker paths must not appear in SUPPORTED_PATH_IDS — "
+    "their filter_candidate_outcomes rows have allocation_selected=NULL by contract "
+    "with no cohort adapter to handle it, so the cohort builder would emit "
+    "missing_allocation_result for pending outcomes. operator_learning_bundle is exempt: "
+    "it has the _OPPORTUNITY_KEYED_PATHS implicit-allocation adapter (#324 follow-up).",
     status="implemented",
 ))
-def test_non_universe_paths_excluded_from_supported_path_ids(tmp_path, monkeypatch):
-    """#324: non-Universe paths must not be in SUPPORTED_PATH_IDS.
+def test_paths_without_cohort_adapters_excluded_from_supported_path_ids():
+    """Paths without cohort adapters must remain out of SUPPORTED_PATH_IDS.
 
-    Two-layer check:
-      1. Model: the four non-Universe paths are not in SUPPORTED_PATH_IDS
-      2. Behavioral: build_experiment_cohorts returns [] for an operator_learning_bundle
-         experiment so the contribution evaluator never emits missing_allocation_result
+    operator_learning_bundle is now admitted via the _OPPORTUNITY_KEYED_PATHS
+    implicit-allocation adapter (allocation_selected=NULL → True). The remaining
+    paths (observer_advisory_bundle, ranker_*) still lack adapters and must
+    stay out.
     """
-    import sqlite3
-
     from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
 
-    _NON_UNIVERSE_PATHS = {
-        "operator_learning_bundle",
+    _PATHS_WITHOUT_ADAPTERS = {
         "observer_advisory_bundle",
         "ranker_case_score",
         "ranker_memo_score",
         "ranker_factor_filter",
     }
-    leaked = _NON_UNIVERSE_PATHS & SUPPORTED_PATH_IDS
+    leaked = _PATHS_WITHOUT_ADAPTERS & SUPPORTED_PATH_IDS
     assert not leaked, (
-        f"Non-Universe path(s) {leaked} are in SUPPORTED_PATH_IDS — their "
-        "filter_candidate_outcomes rows have allocation_selected=NULL by contract, "
+        f"Path(s) {leaked} are in SUPPORTED_PATH_IDS without a cohort adapter — "
+        "their filter_candidate_outcomes rows have allocation_selected=NULL by contract, "
         "so the cohort builder would emit missing_allocation_result for pending outcomes"
-    )
-
-    import aletheia.config.loader as loader
-    import aletheia.storage.sqlite as sq
-    from aletheia.storage.migrations import run_migrations
-    from aletheia.learning.ledger import insert_experiment, insert_hypothesis
-    from aletheia.learning.models import LearningExperiment, LearningHypothesis
-    from aletheia.learning.cohorts import build_experiment_cohorts
-
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
-    sq._db_conn = None
-    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    sq._db_conn = conn
-    run_migrations()
-
-    now = datetime.now(timezone.utc).isoformat()
-    hyp = LearningHypothesis(
-        hypothesis_id="hyp-op-324",
-        fingerprint="fp-op-324",
-        cohort_id="op-cohort",
-        path_id="operator_learning_bundle",
-        overlap_group="operator",
-        source_type="fixed_horizon_candidate",
-        scope_json="{}",
-        action_json='{"type":"prompt_advisory"}',
-        consumer="System Operator",
-        target_horizon="4h",
-        status="shadow",
-    )
-    insert_hypothesis(hyp)
-    exp = LearningExperiment(
-        experiment_id="exp-op-324",
-        hypothesis_id=hyp.hypothesis_id,
-        stage="shadow",
-        assignment_salt="salt-op-324",
-        allocation_pct=0.5,
-        status="active",
-        started_at=now,
-        stage_generation=0,
-    )
-    insert_experiment(exp)
-
-    cohorts = build_experiment_cohorts(exp.experiment_id)
-    assert cohorts == [], (
-        "build_experiment_cohorts must return [] for operator_learning_bundle — "
-        "the unsupported-path guard at cohorts.py:150 is missing or bypassed"
     )
 
 
