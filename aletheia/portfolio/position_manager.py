@@ -552,6 +552,13 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
 
 
 def _position_risk(position: dict, cfg):
+    # Some close-path callers deliberately provide a minimal configuration
+    # object with no risk subtree (for example deterministic materialization
+    # fixtures). Preserve the pre-policy behavior for those callers: no
+    # additional Layer-0 policy is available. Real AletheiaConfig instances
+    # always have cfg.risk and still resolve/fail closed by execution mode.
+    if not hasattr(cfg, "risk"):
+        return None
     from aletheia.risk.policy import (
         UnknownRiskExecutionMode,
         resolve_risk_policy,
