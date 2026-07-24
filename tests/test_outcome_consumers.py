@@ -140,6 +140,34 @@ def test_trade_stats_resolves_eligible_outcomes_through_source_module(monkeypatc
     assert ts.outcome_integrity.eligible_strategy_outcomes is oi.eligible_strategy_outcomes
 
 
+def test_family_scorecard_resolves_eligible_outcomes_through_source_module(monkeypatch):
+    """Regression (sibling of the trade_stats case): compute_family_scorecard is
+    reached via build_trade_stats inside performance_report._collect, so the same
+    report tests that patch outcome_integrity.eligible_strategy_outcomes used to
+    leak a stub into family_scorecard's private copy — surfacing later as
+    ``test_family_pi_context... trade_count == 2`` (the leaked 2-row stub) under
+    xdist. Resolving through the module keeps the patch honored and undone.
+    """
+    import aletheia.analytics.outcome_integrity as oi
+    import aletheia.analytics.family_scorecard as fsc
+
+    # family_scorecard must not hold its own copy of the name.
+    assert not hasattr(fsc, "eligible_strategy_outcomes")
+
+    seen: dict = {}
+
+    def _stub(**filters):
+        seen["called"] = True
+        return []
+
+    monkeypatch.setattr(oi, "eligible_strategy_outcomes", _stub)
+    fsc.compute_family_scorecard()
+    assert seen.get("called")  # patch on the source is honored at call time
+
+    monkeypatch.undo()
+    assert fsc.outcome_integrity.eligible_strategy_outcomes is oi.eligible_strategy_outcomes
+
+
 def test_operator_strategy_performance_ignores_administrative_rows():
     from aletheia.agent_shell.operator_loop import _get_strategy_performance
 

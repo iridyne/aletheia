@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+from aletheia.analytics import outcome_integrity
 from aletheia.analytics.learning_window import outcome_window_metadata
 
 logger = logging.getLogger("aletheia.analytics.family_scorecard")
@@ -31,7 +31,7 @@ def compute_family_scorecard() -> list[dict]:
 
     # Metadata joins do not decide eligibility; the central read model does.
     rows = []
-    for position in eligible_strategy_outcomes():
+    for position in outcome_integrity.eligible_strategy_outcomes():
         scanner_family = "unknown"
         proposal_id = position.get("proposal_id")
         if proposal_id:
