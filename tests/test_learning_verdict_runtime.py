@@ -422,6 +422,83 @@ def test_conflicting_universe_fallback_duplicates_fail_closed_in_any_insertion_o
     assert verdict.unique_treatment_n == 0
 
 
+def test_conflicting_allocation_result_excludes_sample_without_invalidating_cohort():
+    """A stale/backfilled allocation flag must not invalidate the whole cohort.
+
+    ``conflicting_allocation_result`` fires when the filter ``allocation_selected``
+    flag (largely a ``_backfill_fco_allocation_selected`` NULL→0 artifact) disagrees
+    with an authoritative universe_forward_outcomes mirror. This is a missing/ambiguous
+    *allocation identity*, not a genuine economic value conflict, so per #323/#324 it
+    must fail closed as a benign exclusion — the one ambiguous sample is dropped, but
+    the cohort is not branded corrupt and refrozen. (issues #160/#323/#324)
+    """
+    from aletheia.learning.cohorts import build_experiment_cohorts
+
+    hypothesis, experiment = _experiment()
+    _exposure(
+        experiment, hypothesis, candidate="amb", assignment="treatment",
+        outcome_key="amb:4h",
+    )
+    _exposure(
+        experiment, hypothesis, candidate="clean", assignment="control",
+        outcome_key="clean:4h",
+    )
+    # Filter says NOT selected while an authoritative universe mirror exists.
+    _filter_outcome("amb", net=0.0, allocation_selected=False, status="pending")
+    _outcome("amb:4h", net=0.5)
+    _filter_outcome("clean", net=0.0)
+
+    cohort = build_experiment_cohorts(experiment.experiment_id)[0]
+
+    assert "conflicting_allocation_result" not in cohort.invalid_reasons
+    assert cohort.exclusion_reasons["conflicting_allocation_result"] == 1
+    assert not cohort.invalid_reasons
+
+    verdict = _run(experiment.experiment_id)[0]
+    assert verdict.verdict != "invalid"
+
+
+def test_missing_allocation_result_is_excluded_not_invalid():
+    """A pending outcome with unknown allocation stays unsettled, not invalid (#324)."""
+    from aletheia.learning.cohorts import build_experiment_cohorts
+
+    hypothesis, experiment = _experiment()
+    _exposure(
+        experiment, hypothesis, candidate="pend", assignment="treatment",
+        outcome_key="pend:4h",
+    )
+    # allocation_selected NULL, no universe mirror, non-opportunity path → unknown.
+    _filter_outcome("pend", net=0.0, allocation_selected=None, status="pending")
+
+    cohort = build_experiment_cohorts(experiment.experiment_id)[0]
+
+    assert "missing_allocation_result" not in cohort.invalid_reasons
+    assert cohort.exclusion_reasons["missing_allocation_result"] == 1
+    assert not cohort.invalid_reasons
+
+
+def test_missing_outcome_candidate_key_excludes_only_that_exposure():
+    """One keyless exposure must not invalidate a cohort of otherwise-clean samples (#323)."""
+    from aletheia.learning.cohorts import build_experiment_cohorts
+
+    hypothesis, experiment = _experiment()
+    _exposure(
+        experiment, hypothesis, candidate="keyless", assignment="treatment",
+        outcome_key="",
+    )
+    _exposure(
+        experiment, hypothesis, candidate="good", assignment="control",
+        outcome_key="good:4h",
+    )
+    _filter_outcome("good", net=0.0)
+
+    cohort = build_experiment_cohorts(experiment.experiment_id)[0]
+
+    assert "missing_outcome_candidate_key" not in cohort.invalid_reasons
+    assert cohort.exclusion_reasons["missing_outcome_candidate_key"] == 1
+    assert not cohort.invalid_reasons
+
+
 def test_groups_treatment_and_control_and_reports_cost_aware_means():
     hypothesis, experiment = _experiment()
     _exposure(experiment, hypothesis, candidate="treatment", assignment="treatment")

@@ -10,6 +10,11 @@
 > concurrent operator controls, shared outcome truth, and non-authoritative analytics.
 > Product stage: MVP trust hardening; no new exchange, database service, vector store,
 > reinforcement-learning framework, or live authority.
+> Focused execution plan (2026-07-24):
+> [`universe_family_calibration_execution_plan_2026-07-24`](universe_family_calibration_execution_plan_2026-07-24.md)
+> is the reverse-audited, four-batch path for the first measurable contribution experiment.
+> It is subordinate to the L2 contracts and this total plan; it does not create a parallel
+> architecture or claim that paper contribution has already been demonstrated.
 > Phase 3 update (2026-07-12): retrospective factor/family findings now create neutral
 > shadow experiments. Paper influence requires stable treatment/control assignment,
 > minimum time, unique linked cost-aware outcomes, and a positive verdict; negative or

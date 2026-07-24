@@ -1130,3 +1130,66 @@ def test_concurrent_promotion_attempts_create_one_durable_successor(tmp_path, mo
     assert len(successor_ids) == 1
     assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 1
     assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 2
+
+
+def test_contribution_evaluator_isolates_a_failing_experiment(monkeypatch):
+    """One dirty experiment row must not abort the whole scheduled cycle (issue #160).
+
+    The previous ``sum(evaluate_experiment(...) for row in rows)`` let the first
+    failing experiment propagate out, mark the job failed, and skip every
+    remaining experiment — and the next cycle crashed on the same first row,
+    starving verdict production permanently.
+    """
+    from aletheia.learning import lifecycle
+    from aletheia.learning import contribution_runner
+
+    _good_hyp, good_exp = _experiment(stage="paper_10", allocation=0.10)
+    _bad_hyp, bad_exp = _experiment(stage="paper_10", allocation=0.25)
+
+    monkeypatch.setattr(lifecycle, "load_config", lambda: _settings())
+
+    calls: list[str] = []
+
+    def fake_evaluate(experiment_id):
+        calls.append(experiment_id)
+        if experiment_id == bad_exp.experiment_id:
+            raise RuntimeError("dirty hypothesis row")
+        return ["verdict"]
+
+    monkeypatch.setattr(contribution_runner, "evaluate_experiment", fake_evaluate)
+
+    result = lifecycle.run_contribution_evaluator()
+
+    assert result["status"] == "healthy"
+    assert result["failed_experiments"] == 1
+    # Both were attempted; the good one still evaluated despite the bad one raising.
+    assert good_exp.experiment_id in calls
+    assert bad_exp.experiment_id in calls
+    assert result["verdicts"] >= 1
+
+
+def test_lifecycle_controller_isolates_a_failing_experiment(monkeypatch):
+    """The controller loop had no exception guard — one raise aborted the cycle (issue #160)."""
+    from aletheia.learning import lifecycle
+    from aletheia.learning.lifecycle import LifecycleResult
+
+    _good_hyp, good_exp = _experiment(stage="paper_10", allocation=0.10)
+    _bad_hyp, bad_exp = _experiment(stage="paper_10", allocation=0.25)
+
+    seen: list[str] = []
+
+    def fake_process(experiment_id, *, current_policy_epoch):
+        seen.append(experiment_id)
+        if experiment_id == bad_exp.experiment_id:
+            raise RuntimeError("boom")
+        return LifecycleResult("hold", "hold", "test", experiment_id)
+
+    monkeypatch.setattr(lifecycle, "process_lifecycle", fake_process)
+
+    result = lifecycle.run_lifecycle_controller()
+
+    assert result["failed_experiments"] == 1
+    assert good_exp.experiment_id in seen
+    assert bad_exp.experiment_id in seen
+    # Only the good experiment produced a lifecycle result.
+    assert result["experiments"] == 1

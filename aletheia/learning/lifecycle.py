@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import logging
 from typing import Any
 
 from aletheia.config.loader import load_config
@@ -33,6 +34,8 @@ from aletheia.learning.experiments import _code_fingerprint, _policy_epoch
 from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
+
+logger = logging.getLogger("aletheia.learning.lifecycle")
 
 
 STAGE_SUCCESSOR = {
@@ -620,9 +623,33 @@ def run_contribution_evaluator() -> dict[str, int | str]:
                 if row["experiment_id"] not in seen:
                     seen.add(row["experiment_id"])
                     experiment_rows.append(row)
-        verdicts = sum(len(evaluate_experiment(row["experiment_id"])) for row in experiment_rows)
+        # Per-experiment isolation: a single dirty experiment row must not abort
+        # the whole scheduled cycle. The previous ``sum(... for row in rows)`` let
+        # the first failing experiment propagate to the outer handler, which marked
+        # the job failed and skipped every remaining experiment; the next cycle then
+        # hit the same first-failing row and crashed again — permanent verdict
+        # starvation. Mirror the per-experiment ``try`` that run_verdict_cycle
+        # already uses so a bad row is recorded and skipped, not fatal. (issue #160)
+        verdicts = 0
+        failed_experiments = 0
+        for row in experiment_rows:
+            experiment_id = str(row["experiment_id"])
+            try:
+                verdicts += len(evaluate_experiment(experiment_id))
+            except Exception:
+                failed_experiments += 1
+                logger.warning(
+                    "contribution_evaluator: experiment %s failed to evaluate; "
+                    "skipping and continuing the cycle",
+                    experiment_id, exc_info=True,
+                )
         record_measurement_job_success(job_id)
-        return {"status": "healthy", "experiments": len(experiment_rows), "verdicts": verdicts}
+        return {
+            "status": "healthy",
+            "experiments": len(experiment_rows),
+            "verdicts": verdicts,
+            "failed_experiments": failed_experiments,
+        }
     except Exception as exc:
         record_measurement_job_failure(job_id, str(exc))
         raise
@@ -631,6 +658,7 @@ def run_contribution_evaluator() -> dict[str, int | str]:
 def run_lifecycle_controller() -> dict[str, int]:
     """Evaluate current-stage actions; scheduler gating supplies autonomy safety."""
     results = []
+    failed_experiments = 0
     seen: set[str] = set()
     for pid in SUPPORTED_PATH_IDS:
         for row in list_open_experiments(path_id=pid):
@@ -638,13 +666,26 @@ def run_lifecycle_controller() -> dict[str, int]:
             if experiment_id in seen:
                 continue
             seen.add(experiment_id)
-            epoch = _latest_exposure_policy_epoch(experiment_id)
-            results.append(process_lifecycle(experiment_id, current_policy_epoch=epoch))
+            # Per-experiment isolation: this loop had no exception guard at all, so a
+            # single experiment whose lifecycle evaluation raised aborted the entire
+            # controller cycle and left every subsequent experiment unprocessed.
+            # Contain the failure to the offending experiment. (issue #160)
+            try:
+                epoch = _latest_exposure_policy_epoch(experiment_id)
+                results.append(process_lifecycle(experiment_id, current_policy_epoch=epoch))
+            except Exception:
+                failed_experiments += 1
+                logger.warning(
+                    "lifecycle_controller: experiment %s failed; skipping and "
+                    "continuing the cycle",
+                    experiment_id, exc_info=True,
+                )
     return {
         "experiments": len(results),
         "promoted": sum(result.action == "promote_stage" for result in results),
         "refrozen": sum(result.action in {"refreeze", "invalidate"} for result in results),
         "admitted": sum(result.action == "admit_trial" for result in results),
+        "failed_experiments": failed_experiments,
     }
 
 
