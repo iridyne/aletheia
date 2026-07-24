@@ -101,6 +101,73 @@ def test_trade_and_strategy_stats_ignore_administrative_rows():
     assert strategy["outcome_semantics_version"] == "oi-v1"
 
 
+def test_trade_stats_resolves_eligible_outcomes_through_source_module(monkeypatch):
+    """Regression: trade_stats must call eligible_strategy_outcomes through the
+    outcome_integrity module, so a test patching the source is both honored and
+    cleanly undone.
+
+    A bare ``from outcome_integrity import eligible_strategy_outcomes`` binds a
+    private copy in trade_stats. When another test (test_temporal) patched the
+    source module and, in the same process, triggered the first lazy import of
+    trade_stats, that copy captured the stub — which monkeypatch could not
+    restore — and leaked into this file under xdist (TypeError: unexpected kwarg
+    'closed_after').
+    """
+    import aletheia.analytics.outcome_integrity as oi
+    import aletheia.analytics.trade_stats as ts
+
+    # trade_stats must not hold its own copy of the name.
+    assert not hasattr(ts, "eligible_strategy_outcomes")
+
+    seen: dict = {}
+
+    def _stub(**filters):
+        seen.update(filters)
+        return [{
+            "symbol": "BTC/USDT", "realized_pnl": 3.0,
+            "entry_price": 100.0, "quantity": 1.0,
+            "opened_at": "2026-07-20T09:00:00+00:00",
+            "closed_at": "2026-07-20T10:00:00+00:00",
+        }]
+
+    monkeypatch.setattr(oi, "eligible_strategy_outcomes", _stub)
+    rolling = ts.compute_rolling_trade_stats(days=7)
+    assert rolling["total_trades"] == 1          # patch on the source is honored
+    assert "closed_after" in seen                # called with kwargs, via the module
+
+    monkeypatch.undo()
+    # After undo the live function is restored — no stale stub lingers.
+    assert ts.outcome_integrity.eligible_strategy_outcomes is oi.eligible_strategy_outcomes
+
+
+def test_family_scorecard_resolves_eligible_outcomes_through_source_module(monkeypatch):
+    """Regression (sibling of the trade_stats case): compute_family_scorecard is
+    reached via build_trade_stats inside performance_report._collect, so the same
+    report tests that patch outcome_integrity.eligible_strategy_outcomes used to
+    leak a stub into family_scorecard's private copy — surfacing later as
+    ``test_family_pi_context... trade_count == 2`` (the leaked 2-row stub) under
+    xdist. Resolving through the module keeps the patch honored and undone.
+    """
+    import aletheia.analytics.outcome_integrity as oi
+    import aletheia.analytics.family_scorecard as fsc
+
+    # family_scorecard must not hold its own copy of the name.
+    assert not hasattr(fsc, "eligible_strategy_outcomes")
+
+    seen: dict = {}
+
+    def _stub(**filters):
+        seen["called"] = True
+        return []
+
+    monkeypatch.setattr(oi, "eligible_strategy_outcomes", _stub)
+    fsc.compute_family_scorecard()
+    assert seen.get("called")  # patch on the source is honored at call time
+
+    monkeypatch.undo()
+    assert fsc.outcome_integrity.eligible_strategy_outcomes is oi.eligible_strategy_outcomes
+
+
 def test_operator_strategy_performance_ignores_administrative_rows():
     from aletheia.agent_shell.operator_loop import _get_strategy_performance
 
