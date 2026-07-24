@@ -33,6 +33,7 @@ when a later fetch fails; persistence failures never propagate.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -210,7 +211,18 @@ class CCXTProvider:
                     tf_ms = _TF_MS.get(timeframe, 0)
                     if tf_ms > 0 and candles[-1].timestamp + tf_ms > int(time.time() * 1000):
                         candles[-1].is_closed = False
-                self._persist(canon, timeframe, candles, name, market_type=mkt)
+                # SQLite's writer lane is synchronous by contract. Waiting for it
+                # on the scheduler event loop stalls unrelated async jobs and API
+                # work during bursty OHLCV refreshes, so keep the write awaited but
+                # move the blocking wait to a worker thread.
+                await asyncio.to_thread(
+                    self._persist,
+                    canon,
+                    timeframe,
+                    candles,
+                    name,
+                    market_type=mkt,
+                )
                 if since is None and candles:
                     cache.set(
                         canon, timeframe, limit, candles,

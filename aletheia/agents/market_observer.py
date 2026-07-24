@@ -47,6 +47,7 @@ _MARKET_OBSERVER_TEARDOWN_MARGIN_SEC = 40.0
 _MARKET_OBSERVER_LOOP_BUDGET_SEC = (
     _MARKET_OBSERVER_JOB_TIMEOUT_S - _MARKET_OBSERVER_TEARDOWN_MARGIN_SEC
 )
+_MARKET_OBSERVER_PREFETCH_CONCURRENCY = 4
 _PREDICTION_CONTEXT_MAX_AGE_HOURS = 6
 _ROUND_ROBIN_STATE_KEY = "agent.market_observer.round_robin.v1"
 _RETRYABLE_EVIDENCE_ERROR_PREFIX = "observer_pre_filter_evidence_failed:"
@@ -142,8 +143,16 @@ def _advance_completed_round_robin_prefix(
     return next_unprocessed_index
 
 
+def _consume_detached_prefetch(task: asyncio.Future) -> None:
+    """Consume a deadline-detached prefetch result without leaking warnings."""
+    try:
+        task.exception()
+    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+        pass
+
+
 async def _gather_prefetch_with_deadline(awaitables, *, deadline: float) -> list:
-    """Gather context prefetches inside the remaining observer run budget."""
+    """Gather prefetches without draining cancellation-resistant provider I/O."""
     remaining = deadline - _monotonic()
     if remaining <= 0:
         # Coroutines were constructed by the caller but never scheduled.  Close
@@ -153,10 +162,20 @@ async def _gather_prefetch_with_deadline(awaitables, *, deadline: float) -> list
             if callable(close):
                 close()
         raise TimeoutError("market_observer prefetch has no remaining run budget")
-    return await asyncio.wait_for(
+    task = asyncio.ensure_future(
         asyncio.gather(*awaitables, return_exceptions=True),
-        timeout=remaining,
     )
+    try:
+        done, _pending = await asyncio.wait({task}, timeout=remaining)
+    except asyncio.CancelledError:
+        task.add_done_callback(_consume_detached_prefetch)
+        task.cancel()
+        raise
+    if task not in done:
+        task.add_done_callback(_consume_detached_prefetch)
+        task.cancel()
+        raise TimeoutError
+    return task.result()
 
 
 class MarketRead(BaseModel):
@@ -768,6 +787,41 @@ async def _prefetch_symbol(
         rendered_sources=_bounded_rendered_sources(rendered_sources),
         failed=False,
     )
+
+
+async def _prefetch_instruments(
+    instruments,
+    *,
+    venue: str,
+    prediction_context_enabled: bool,
+    prediction_context_cutoff: str | None,
+    db_cache: _DbCache,
+    concurrency: int = _MARKET_OBSERVER_PREFETCH_CONCURRENCY,
+) -> list:
+    """Build all symbol contexts with one run-scoped provider and bounded fan-out."""
+    from aletheia.data.ccxt_provider import get_market_data_provider
+
+    provider = get_market_data_provider(exchange=venue)
+    semaphore = asyncio.Semaphore(max(1, concurrency))
+
+    async def _bounded(instrument):
+        async with semaphore:
+            return await _prefetch_symbol(
+                instrument,
+                venue=venue,
+                provider=provider,
+                prediction_context_enabled=prediction_context_enabled,
+                prediction_context_cutoff=prediction_context_cutoff,
+                db_cache=db_cache,
+            )
+
+    try:
+        return await asyncio.gather(
+            *(_bounded(instrument) for instrument in instruments),
+            return_exceptions=True,
+        )
+    finally:
+        await provider.close()
 
 
 async def _analyze_symbol(
@@ -1606,26 +1660,26 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
         )
 
-    # ── Phase 2: parallel async context build + pre-filter ───────────────────────────
-    # asyncio.gather fires all build_market_context() exchange HTTP calls concurrently.
-    # 16 serial calls (~3-5s each) → parallel: wall-clock limited by the slowest single
-    # symbol (~5s) rather than 16 × 5s = 80s.
+    # ── Phase 2: bounded async context build + pre-filter ────────────────────────────
+    # One fresh run-scoped provider coordinates exchange rate limiting/session reuse.
+    # Bounded symbol fan-out avoids the former 24-26-provider / 72-78-request stampede.
     _t_prefetch_start = _time.monotonic()
-    _prefetch_coros = [
-        _prefetch_symbol(
-            instr,
-            venue=_venue,
-            provider=None,
-            prediction_context_enabled=prediction_context_enabled,
-            prediction_context_cutoff=prediction_context_cutoff,
-            db_cache=_db_cache,
-        )
-        for instr in instruments
-    ]
     try:
-        _prefetch_raw = await _gather_prefetch_with_deadline(
-            _prefetch_coros, deadline=_run_deadline,
+        _prefetch_batch = await _gather_prefetch_with_deadline(
+            [
+                _prefetch_instruments(
+                    instruments,
+                    venue=_venue,
+                    prediction_context_enabled=prediction_context_enabled,
+                    prediction_context_cutoff=prediction_context_cutoff,
+                    db_cache=_db_cache,
+                )
+            ],
+            deadline=_run_deadline,
         )
+        if isinstance(_prefetch_batch[0], Exception):
+            raise _prefetch_batch[0]
+        _prefetch_raw = _prefetch_batch[0]
     except TimeoutError:
         errors.append(
             "prefetch_budget_exceeded: parallel context build consumed the "
@@ -1637,6 +1691,10 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             _MARKET_OBSERVER_LOOP_BUDGET_SEC,
             _MARKET_OBSERVER_JOB_TIMEOUT_S,
         )
+        return {"outputs": outputs, "errors": errors}
+    except Exception as exc:
+        errors.append(f"prefetch_failed:{type(exc).__name__}")
+        logger.warning("market_observer prefetch batch failed: %s", exc)
         return {"outputs": outputs, "errors": errors}
     _prefetch_wall = _time.monotonic() - _t_prefetch_start
     logger.warning("[MO DIAG] parallel prefetch done: %.1fs for %d symbols",
