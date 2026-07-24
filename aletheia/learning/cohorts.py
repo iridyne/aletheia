@@ -35,9 +35,10 @@ SUPPORTED_PATH_ID = "universe_family_calibration"
 # The paths below are consumer_wired (the runtime reads their authority) but are
 # NOT measurement_supported — the cohort builder's _load_exact_outcomes requires
 # allocation_selected to be non-null, which their filter_candidate_outcomes rows
-# cannot supply by contract. Including them causes lifecycle to emit
-# "missing_allocation_result" → "invalid" for experiments whose outcomes are
-# still legitimately pending. See issue #324 for the full audit.
+# cannot supply by contract. Including them would leave every such outcome
+# permanently unmeasured ("missing_allocation_result", now a benign exclusion —
+# see _IDENTITY_EXCLUSION_REASONS) rather than measured, so keep them out until a
+# per-path cohort adapter exists. See issue #324 for the full audit.
 #
 # operator_learning_bundle is now measurement_supported via the _OPPORTUNITY_KEYED_PATHS
 # implicit-allocation adapter (allocation_selected=NULL treated as True). See #324.
@@ -60,6 +61,45 @@ SUPPORTED_PATH_IDS = frozenset({
 # allocated (True) rather than invalidating the experiment. (issue #324)
 _OPPORTUNITY_KEYED_PATHS = frozenset({
     "operator_learning_bundle",
+})
+
+# Outcome-resolution reasons that mean "the outcome is still developing" — the
+# next cycle re-evaluates once real samples (or terminal signal) land.
+_TRANSIENT_EXCLUSION_REASONS = frozenset({
+    "unsettled",
+    "missing_exact_outcome",
+    "wrong_horizon",
+})
+
+# Identity/allocation-resolution failures that mean we cannot determine WHICH
+# outcome (or WHETHER it was allocated) an exposure maps to — as opposed to a
+# genuine economic value conflict between two real settled outcomes for one
+# identity, which stays ``invalid`` and refreezes (spec LE-B28:
+# ``conflicting_mirrored_outcome`` / ``ambiguous_duplicate_outcome``).
+#
+# These fail closed as benign EXCLUSIONS rather than corrupt INVALIDs:
+#   - conflicting_allocation_result: filter ``allocation_selected`` disagrees
+#     with an authoritative universe_forward_outcomes mirror. That flag is
+#     unreliable here — it is largely a ``_backfill_fco_allocation_selected``
+#     artifact (NULL→0 for rows whose True-write was blocked by an earlier
+#     INSERT OR IGNORE). Per issue #324 we must NOT default the unknown
+#     allocation to True (that would silently rewrite ITT economics), and per
+#     issue #323 missing/ambiguous identity must fail closed — so we exclude the
+#     one ambiguous sample instead of invalidating the whole cohort.
+#   - missing_allocation_result: allocation is unknown/pending. Issue #324's
+#     acceptance is explicit — "a pending outcome remains unsettled, not
+#     invalid:missing_allocation_result".
+#
+# Crucial invariant this preserves: one ambiguous-identity sample must not
+# invalidate and refreeze an entire cohort of otherwise-clean samples (the
+# blast-radius that produced the mass ``invalid_measurement_refreeze`` cascade).
+# The excluded sample never contributes to the measured means either way; only
+# the cohort-level verdict changes from destructive ``invalid`` to honest
+# ``insufficient_data`` (or a real verdict from the surviving clean samples).
+# (issues #160, #323, #324)
+_IDENTITY_EXCLUSION_REASONS = frozenset({
+    "conflicting_allocation_result",
+    "missing_allocation_result",
 })
 
 
@@ -211,7 +251,11 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
             continue
         outcome_key = str(exposure.get("outcome_candidate_key") or "")
         if not outcome_key:
-            cohort.invalid_reasons["missing_outcome_candidate_key"] += 1
+            # A keyless exposure carries no identity to measure. Fail closed as a
+            # benign exclusion (issue #323): the write side must persist the exact
+            # candidate key, and one legacy/edge keyless exposure must not
+            # invalidate and refreeze an entire cohort of otherwise-clean samples.
+            cohort.exclusion_reasons["missing_outcome_candidate_key"] += 1
             continue
         assignment_unit_key = str(exposure.get("assignment_unit_key") or "")
         if not assignment_unit_key:
@@ -242,9 +286,13 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
             cohort.duplicate_outcome_n += duplicate_outcomes
             seen_duplicate_outcomes.add((key, outcome_key))
         if outcome_reason:
-            if outcome_reason in {"unsettled", "missing_exact_outcome", "wrong_horizon"}:
+            if outcome_reason in _TRANSIENT_EXCLUSION_REASONS:
                 if outcome_reason != "wrong_horizon" or not wrong_horizon_n:
                     cohort.exclusion_reasons[outcome_reason] += 1
+            elif outcome_reason in _IDENTITY_EXCLUSION_REASONS:
+                # Missing/ambiguous allocation identity → fail closed as a benign
+                # exclusion, not a cohort-invalidating corruption. (issues #323/#324)
+                cohort.exclusion_reasons[outcome_reason] += 1
             else:
                 cohort.invalid_reasons[outcome_reason] += 1
             continue
