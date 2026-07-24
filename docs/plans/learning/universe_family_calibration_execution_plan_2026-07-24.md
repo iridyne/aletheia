@@ -1,13 +1,13 @@
 # Universe Family Calibration 正向贡献执行计划
 
-> 日期：2026-07-24  
-> 状态：已完成反向评估，等待按批实施  
-> 范围：仅 `universe_family_calibration` 的测量、owner 可观测性、准入与 paper 实验  
-> 分类：测量/契约漂移修复为 A 类；任何改变候选分配的 paper treatment 为 B 类  
+> 日期：2026-07-24
+> 状态：已完成反向评估，等待按批实施
+> 范围：仅 `universe_family_calibration` 的测量、owner 可观测性、准入与 paper 实验
+> 分类：测量/契约漂移修复为 A 类；任何改变候选分配的 paper treatment 为 B 类
 > 上位契约：
 > [`learning_contract`](../../design/contracts/learning_contract.md)、
 > [`learning_evolution_contract`](../../design/contracts/learning_evolution_contract.md)、
-> [`learning_observability_contract`](../../design/contracts/learning_observability_contract.md)  
+> [`learning_observability_contract`](../../design/contracts/learning_observability_contract.md)
 > 总体交付序列：
 > [`learning_positive_contribution_implementation_plan_2026-07-12`](learning_positive_contribution_implementation_plan_2026-07-12.md)
 
