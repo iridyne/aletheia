@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createColumnHelper } from '@tanstack/react-table'
-import { api } from '../api/client'
+import { api, type LearningContributionProjection } from '../api/client'
 import type { KnowledgeItem, StrategyRecord } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
@@ -10,12 +10,14 @@ import PnLChart from '../charts/PnLChart'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, CardHeader, Meter, StatusText } from '../components/ui'
 import type { StatusTone } from '../components/ui'
-import { fmtNum, humanize, fmtTimestamp } from '../lib/format'
+import { fmtNum, fmtSigned, humanize, fmtTimestamp } from '../lib/format'
+import { deriveContributionViewState } from '../lib/learningContribution'
 
 /**
- * Learning — the memory & evolution surface (Evolve · §23.5/23.6, three sources MERGED).
+ * Learning — measured contribution first, then the memory & evolution surfaces.
  *
- * The page answers three human questions, one per tab:
+ * The page answers four human questions, one per tab:
+ *   CONTRIBUTION — "Has Learning measurably improved a current experiment?"
  *   DREAMING  — "What did the AI just figure out?"  Each dreaming run is rendered as a
  *               cognition session (tools it called, how long it thought, what it produced),
  *               then this cycle's outputs grouped by kind. This narrative IS the signature.
@@ -33,11 +35,12 @@ export default function Learning() {
     <div>
       <PageHeader
         title="Learning"
-        role="Evolve · the memory surface. Dreaming = what was just consolidated; Knowledge Base = the searchable library by type; Reports = performance and strategy progress."
+        role="Measure first, then evolve. Contribution separates current experiment evidence from Learning activity, memory and portfolio performance."
       />
       <LearningPulse />
       <Tabs
         tabs={[
+          { id: 'contribution', label: 'Measured contribution', render: () => <ContributionTab /> },
           { id: 'dreaming', label: 'Dreaming', render: () => <DreamingTab /> },
           { id: 'knowledge', label: 'Knowledge Base', render: () => <KnowledgeTab /> },
           { id: 'reports', label: 'Reports', render: () => <ReportsTab /> },
@@ -69,15 +72,208 @@ function LearningPulse() {
   return (
     <section className="learn-pulse">
       <PulseStat
-        label="Last consolidation"
+        label="Activity · last consolidation"
         value={lastRun ? fmtRelative(lastRun.started_at) : 'Never'}
         tone={runTone(lastRun?.status)}
       />
-      <PulseStat label="New knowledge · 24h" value={new24h} tone={new24h > 0 ? 'green' : 'muted'} />
-      <PulseStat label="Strategies in paper" value={active.length} tone={active.length > 0 ? 'blue' : 'muted'} />
-      <PulseStat label="Lessons logged" value={lessonCount} tone={lessonCount > 0 ? 'yellow' : 'muted'} />
+      <PulseStat label="Activity · new knowledge 24h" value={new24h} tone={new24h > 0 ? 'blue' : 'muted'} />
+      <PulseStat label="Activity · strategies in paper" value={active.length} tone={active.length > 0 ? 'blue' : 'muted'} />
+      <PulseStat label="Activity · lessons logged" value={lessonCount} tone={lessonCount > 0 ? 'yellow' : 'muted'} />
     </section>
   )
+}
+
+/* ======================= MEASURED CONTRIBUTION ======================= */
+function ContributionTab() {
+  const query = useQuery({
+    queryKey: ['learning-contribution', 'lco-v1'],
+    queryFn: api.getLearningContribution,
+  })
+  const viewState = deriveContributionViewState({
+    loading: query.isLoading,
+    failed: query.isError,
+    data: query.data,
+  })
+
+  if (viewState === 'loading') {
+    return <ContributionMessage tone="blue" title="Loading measured contribution" detail="Reading persisted experiment evidence. No evaluation or lifecycle action is being run." />
+  }
+  if (viewState === 'unavailable' && !query.data) {
+    return <ContributionMessage tone="red" title="Contribution unavailable" detail="The contribution read failed. This is not an empty cohort or a zero result." />
+  }
+
+  const data = query.data
+  if (!data || viewState === 'unavailable') {
+    return <ContributionMessage tone="red" title="Contribution unavailable" detail={humanize(data?.unavailable_reason || 'projection unavailable')} />
+  }
+  if (viewState === 'empty') {
+    return <ContributionMessage tone="muted" title="No open Learning experiment" detail="The projection succeeded, but there is no current experiment to measure." />
+  }
+
+  const item =
+    data.items.find(candidate => candidate.path_id === 'universe_family_calibration') ??
+    data.items[0]
+  const freshness = data.data_freshness
+  const measurement = item.measurement
+  const integrity = item.integrity
+  const lifecycle = item.lifecycle
+  const evaluator = data.operations?.evaluator
+  const required = Math.max(item.samples.required_per_arm, 1)
+  const treatmentPct = item.samples.treatment_assignment_units / required * 100
+  const controlPct = item.samples.control_assignment_units / required * 100
+  const excluded = sumCounts(integrity.exclusion_reasons)
+  const invalid = sumCounts(integrity.invalid_reasons)
+  const partial = viewState === 'partial' || viewState === 'stale'
+
+  return (
+    <section className="lco-stack" aria-label="Learning measured contribution">
+      {partial && (
+        <ContributionMessage
+          tone="yellow"
+          title={freshness.state === 'stale' ? 'Measurement is stale' : 'Measurement is partial'}
+          detail="The evidence below is preserved, but it must not be treated as a current effectiveness claim."
+        />
+      )}
+
+      <Card>
+        <CardHeader
+          title={humanize(item.path_id)}
+          meta={`${humanize(item.stage)} experiment · ${item.experiment_id}`}
+          actions={<StatusText tone={measurementTone(measurement.state)}>{humanize(measurement.state)}</StatusText>}
+        />
+        <div className="lco-summary-grid">
+          <ContributionFact label="Measured delta" value={fmtSigned(measurement.delta)} note="Backend verdict fact; not portfolio PnL" />
+          <ContributionFact label="Treatment" value={`${item.samples.treatment_assignment_units} / ${item.samples.required_per_arm}`} note="Complete assignment units" />
+          <ContributionFact label="Control" value={`${item.samples.control_assignment_units} / ${item.samples.required_per_arm}`} note="Complete assignment units" />
+          <ContributionFact
+            label="Current identity"
+            value={item.current_identity.matches_running_cohort ? 'Matched' : 'Not matched'}
+            note={humanize(item.current_identity.mismatch_reason || item.current_identity.policy_epoch || 'current')}
+          />
+        </div>
+        <p className="lco-reason">
+          <strong>Verdict reason:</strong> {humanize(measurement.reason || 'not available')}
+        </p>
+      </Card>
+
+      <div className="lco-grid">
+        <Card>
+          <CardHeader title="Cohort maturity" meta="Treatment and control remain separate" />
+          <CohortProgress label="Treatment" value={item.samples.treatment_assignment_units} required={item.samples.required_per_arm} pct={treatmentPct} />
+          <CohortProgress label="Control" value={item.samples.control_assignment_units} required={item.samples.required_per_arm} pct={controlPct} />
+          <div className="lco-facts">
+            <ContributionRow label="Raw exposures" value={item.samples.raw_exposures} />
+            <ContributionRow label="Complete assignment units" value={item.samples.complete_assignment_units} />
+            <ContributionRow label="Cluster members" value={item.samples.cluster_members} />
+            <ContributionRow label="Selected members" value={item.samples.selected_members} />
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader title="Evidence integrity" meta="No silent zero or conflict collapse" />
+          <div className="lco-facts">
+            <ContributionRow label="Excluded" value={excluded} />
+            <ContributionRow label="Invalid" value={invalid} />
+            <ContributionRow label="Proven conflicts" value={integrity.conflict_count} />
+            <ContributionRow label="Matching mirror rows" value={integrity.matching_mirror_rows} />
+            <ContributionRow label="Harm boundary" value={integrity.harm_breached ? 'Breached' : 'Not breached'} />
+          </div>
+          {(excluded > 0 || invalid > 0 || integrity.conflict_count > 0) && (
+            <p className="lco-note">
+              Exclusions: {formatCounts(integrity.exclusion_reasons)} · Invalid: {formatCounts(integrity.invalid_reasons)}
+            </p>
+          )}
+        </Card>
+      </div>
+
+      <div className="lco-grid">
+        <Card>
+          <CardHeader title="Evaluator continuity" meta="Operational health is not effectiveness" />
+          <div className="lco-facts">
+            <ContributionRow label="Current status" value={humanize(evaluator?.current_status || 'not available')} />
+            <ContributionRow label="Last success" value={fmtTimestamp(evaluator?.last_succeeded_at)} />
+            <ContributionRow label="Next due" value={fmtTimestamp(evaluator?.next_due_at)} />
+            <ContributionRow label="Backlog" value={evaluator?.backlog_count ?? '—'} />
+            <ContributionRow label="Catch-up due" value={evaluator?.catchup_due == null ? '—' : evaluator.catchup_due ? 'Yes' : 'No'} />
+            <ContributionRow label="Last failure" value={humanize(evaluator?.last_failure_code || 'none recorded')} />
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader title="Lifecycle boundary" meta="Recommendation only · no mutation authority" />
+          <div className="lco-facts">
+            <ContributionRow label="Recommendation" value={humanize(lifecycle.recommended_action)} />
+            <ContributionRow label="Paper influence" value={data.operations?.config.paper_influence_enabled ? 'Enabled' : 'Disabled'} />
+            <ContributionRow label="Authority" value={lifecycle.authority_enabled ? 'Enabled' : 'Read only'} />
+            <ContributionRow label="Mutation available" value={lifecycle.mutation_available ? 'Yes' : 'No'} />
+          </div>
+          <p className="lco-note">
+            {humanize(lifecycle.mutation_unavailable_reason)}. A recommendation cannot change allocation or admit a trial from this page.
+          </p>
+        </Card>
+      </div>
+
+      <p className="lco-footnote">
+        Activity counts above show that Learning is producing artifacts. Only this identity-matched treatment/control measurement can claim contribution.
+      </p>
+    </section>
+  )
+}
+
+function ContributionMessage({ tone, title, detail }: { tone: StatusTone; title: string; detail: string }) {
+  return (
+    <Card className="lco-message" role="status">
+      <StatusText tone={tone}>{title}</StatusText>
+      <p>{detail}</p>
+    </Card>
+  )
+}
+
+function ContributionFact({ label, value, note }: { label: string; value: ReactNode; note: string }) {
+  return (
+    <div className="lco-summary-fact">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{note}</small>
+    </div>
+  )
+}
+
+function ContributionRow({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="lco-row">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  )
+}
+
+function CohortProgress({ label, value, required, pct }: { label: string; value: number; required: number; pct: number }) {
+  return (
+    <div className="lco-progress">
+      <div><span>{label}</span><strong>{value} / {required}</strong></div>
+      <div className="lco-progress-track"><Meter pct={pct} className="lco-progress-fill" /></div>
+    </div>
+  )
+}
+
+function measurementTone(state: LearningContributionProjection['items'][number]['measurement']['state']): StatusTone {
+  if (state === 'positive') return 'green'
+  if (state === 'negative' || state === 'invalid') return 'red'
+  if (state === 'insufficient_data') return 'yellow'
+  if (state === 'neutral') return 'blue'
+  return 'muted'
+}
+
+function sumCounts(counts: Record<string, number>): number {
+  return Object.values(counts).reduce((total, value) => total + value, 0)
+}
+
+function formatCounts(counts: Record<string, number>): string {
+  const entries = Object.entries(counts)
+  return entries.length === 0
+    ? 'none'
+    : entries.map(([reason, count]) => `${humanize(reason)} ${fmtNum(count)}`).join(', ')
 }
 
 /** Pulse-band read-out: label over a toned value. Uses the shared .stat CSS structure. */

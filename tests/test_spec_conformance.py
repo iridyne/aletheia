@@ -303,10 +303,11 @@ class TestConformanceStructure:
         # confirmation, broker-neutral verified exit, and verified/admin accounting
         # split, behavior consumers, and authoritative Risk loss. Three OI
         # reporting/history claims remain missing.
-        # 2026-07-19: Learning Contribution Observability adds thirteen deliberate
-        # strict-xfail LCO-* target claims. This records the design gap; it does
-        # not represent the API/UI as implemented.
-        MAX_MISSING = 18
+        # 2026-07-24: the first bounded Learning Contribution Observability slice
+        # implements six claims (cohort projection, identity/history, job-health
+        # sanitization, recommendation-only authority, trust-boundary imports and
+        # independent path capabilities). Seven LCO target claims remain explicit.
+        MAX_MISSING = 12
         # #153: 5 self-heal specs moved to partial (OL-C08, OL-S13, SH-S01, SH-C02, SH-B03).
         # TASK-2026-022 adds six explicitly bounded Learning-evolution claims whose
         # Phase-0 cores are implemented but whose consumer-wide persistence/UI/

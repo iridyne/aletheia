@@ -3169,6 +3169,63 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 .tab-active .tab-badge { background: var(--accent-dim); color: var(--text); }
 
+/* ---------- Learning measured contribution (lco-v1) ---------- */
+.lco-stack { display: flex; flex-direction: column; gap: var(--space-3); }
+.lco-stack > .card, .lco-grid > .card { margin-bottom: 0; }
+.lco-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3); align-items: start;
+}
+.lco-summary-grid {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.lco-summary-fact {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0;
+  padding: var(--space-3); background: var(--c-surface-raised);
+  border: 1px solid var(--border-2); border-radius: var(--r-sm);
+}
+.lco-summary-fact > span {
+  color: var(--muted); font-size: 0.68rem; text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.lco-summary-fact > strong { font-family: var(--mono); font-size: 0.92rem; overflow-wrap: anywhere; }
+.lco-summary-fact > small { color: var(--faint); font-size: 0.68rem; line-height: 1.35; }
+.lco-reason, .lco-note, .lco-footnote {
+  margin: var(--space-3) 0 0; color: var(--muted); font-size: 0.75rem;
+  line-height: 1.5;
+}
+.lco-footnote { margin: 0; }
+.lco-facts { display: flex; flex-direction: column; }
+.lco-row {
+  display: flex; justify-content: space-between; gap: var(--space-3);
+  padding: 6px 0; border-bottom: 1px solid var(--border-2); font-size: 0.76rem;
+}
+.lco-row:last-child { border-bottom: 0; }
+.lco-row > span { color: var(--muted); }
+.lco-row > strong { font-family: var(--mono); text-align: right; overflow-wrap: anywhere; }
+.lco-progress { margin-bottom: var(--space-3); }
+.lco-progress > div:first-child {
+  display: flex; justify-content: space-between; margin-bottom: 5px;
+  color: var(--muted); font-size: 0.74rem;
+}
+.lco-progress > div:first-child strong { color: var(--text); font-family: var(--mono); }
+.lco-progress-track {
+  height: 8px; overflow: hidden; background: var(--c-surface-raised);
+  border-radius: 999px;
+}
+.lco-progress-fill { display: block; height: 100%; background: var(--c-accent); border-radius: inherit; }
+.lco-message { display: flex; flex-direction: column; gap: var(--space-2); }
+.lco-message p { margin: 0; color: var(--muted); font-size: 0.78rem; }
+@media (max-width: 900px) {
+  .lco-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .tab-bar { overflow-x: auto; }
+  .tab { flex: 0 0 auto; }
+  .lco-grid, .lco-summary-grid { grid-template-columns: 1fr; }
+}
+
 /* ---------- Drawer shared bits (lists/tables/thesis) ---------- */
 .drawer-list { padding-left: 1rem; font-size: 0.8rem; }
 .drawer-list-error { color: var(--red); }
