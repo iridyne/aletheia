@@ -142,24 +142,34 @@ def infra_events(limit: int = 20, min_severity: str | None = None):
 
 
 @router.get("/ready")
-def ready():
+async def ready():
     """Cheap liveness probe for the dashboard reconnect guard.
 
     This intentionally avoids DB/config reads: if this route responds, the HTTP
-    worker is alive even if deeper health is degraded.
+    event loop is alive even if deeper health or the sync-worker pool is degraded.
     """
-    return _liveness_payload()
+    from aletheia.server.responsiveness import responsiveness_snapshot
+
+    return {
+        **_liveness_payload(),
+        "responsiveness": responsiveness_snapshot(),
+    }
 
 
 @infra_router.get("/livez")
-def infra_livez():
+async def infra_livez():
     """Infra liveness probe: process + HTTP loop are alive.
 
     No DB/config/health rollup is read here. This endpoint is deliberately safe
     to use from watchdogs, future front-door routing, and frontend reconnect
     guards without conflating degraded business health with process death.
     """
-    return _liveness_payload()
+    from aletheia.server.responsiveness import responsiveness_snapshot
+
+    return {
+        **_liveness_payload(),
+        "responsiveness": responsiveness_snapshot(),
+    }
 
 
 @infra_router.get("/readyz")
