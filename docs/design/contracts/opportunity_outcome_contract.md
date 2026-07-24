@@ -76,6 +76,18 @@ MFE/MAE 是毛路径指标，用来区分方向错误与出入场表达错误；
 - 任何按方向或市场聚合的消费者必须至少按 `scanner_family + direction + market_type + horizon` 区分；若上层暂时不能消费该粒度，应保持中性而不是合并相反经济含义。
 - Alpha 对照组在拥有同口径成本前必须明确标为 gross comparison，不得声称是净盈利证据。
 - 新 shadow/control 行必须通过 `outcome_candidate_key` 读取共享 net 结果；历史 gross-only 行仍可解释，但不进入 ranker/System Operator alpha 基线。
+- 过滤器 pass/reject 对照按 `filter_name + stage + filter_version +
+  outcome_candidate_key` 的首次持久化 exposure 唯一归因；后续 retry 不得把同一
+  outcome 同时放入 pass 和 reject。
+- `observer_pre_filter` 的诊断必须使用事发时持久化的 `matched_rules`、RSI、
+  ATR 和 parameter snapshot，拆分 `rsi_only` / `atr_only` /
+  `rsi_and_atr` / `neither`；不得用当前代码重跑历史输入后改写归因。
+- persistent recommendation 的 `filter_version` 与当前生产版本不一致时，只能
+  标记 `production_filter_version_changed` 并保留为历史假说；不得触发 replay、
+  shadow experiment 或参数建议。
+- Observer RSI/ATR 回放必须使用事前固定的有限网格、候选上限、当前 exact
+  filter version 和完整净结果。历史回放即使达门，也只授权前瞻 shadow，不授权
+  修改生产阈值。
 
 ## 8. 安全边界
 

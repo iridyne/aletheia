@@ -211,3 +211,22 @@ benefits:
 - ❌ Not touch `SUPPORTED_PATH_IDS`, `paper_influence_paths` allowlist, or any live
   code path
 - ❌ Not enable auto-hypothesis generation
+
+## 7. 2026-07-24 Observer pre-filter pilot boundary
+
+The first mature persistent signal concerns `observer_pre_filter`, whose
+production decision is a two-dimensional hardcoded OR rule rather than one
+scalar TTL. Do not use that finding to wire this entire generic learning path.
+
+The pilot defined in
+`docs/plans/trading-pipeline/observer_prefilter_alpha_repair_2026-07-24.md`
+must proceed through:
+
+1. read-only matched-rule attribution;
+2. a fixed and bounded RSI/ATR replay grid;
+3. one exact-cell prospective shadow;
+4. a separately authorized paper-only canary.
+
+Until those gates pass, `filter_parameter_tune` remains
+`consumer_wired=False`, no override table is read by Market Observer, and no
+controller recommendation may mutate the production pre-filter.
