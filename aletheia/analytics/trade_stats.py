@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+# Reference eligible_strategy_outcomes through the module (not a copied name) so
+# monkeypatching aletheia.analytics.outcome_integrity.eligible_strategy_outcomes
+# is honored — and, crucially, undone — at call time. A bare `from ... import`
+# binds a private copy that a test patching the source module cannot restore,
+# which under xdist can leak a stub into a later test (see test_outcome_consumers).
+from aletheia.analytics import outcome_integrity
 from aletheia.analytics.learning_window import outcome_window_metadata
 
 
@@ -15,7 +20,7 @@ def compute_rolling_trade_stats(days: int = 7) -> dict:
               best_win, worst_loss, per_symbol: [{symbol, trades, wins, pnl}]}
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    recent = eligible_strategy_outcomes(closed_after=cutoff)
+    recent = outcome_integrity.eligible_strategy_outcomes(closed_after=cutoff)
 
     if not recent:
         return {
@@ -113,7 +118,7 @@ def build_trade_stats() -> dict:
 
     strategies = {str(row["id"]): row for row in repo.list_strategies(limit=10_000)}
     rows = []
-    for position in eligible_strategy_outcomes():
+    for position in outcome_integrity.eligible_strategy_outcomes():
         strategy = strategies.get(str(position.get("strategy_id") or ""), {})
         try:
             parameters = json.loads(strategy.get("parameters") or "{}")
@@ -238,7 +243,7 @@ def build_strategy_kpis() -> dict[str, dict]:
     Returns a dict keyed by strategy_id.
     """
     grouped: dict[str, list[dict]] = {}
-    for row in eligible_strategy_outcomes():
+    for row in outcome_integrity.eligible_strategy_outcomes():
         strategy_id = row.get("strategy_id")
         if strategy_id:
             grouped.setdefault(str(strategy_id), []).append(row)
