@@ -184,7 +184,14 @@ def _status_macos() -> dict:
     }
 
 
+def _is_bootstrap_eio(stderr: str) -> bool:
+    """Return True if stderr is the transient EIO race from a recent bootout."""
+    return "bootstrap failed: 5" in (stderr or "").lower()
+
+
 def _start_macos(*, no_browser: bool) -> dict:
+    import time
+
     path = None
     try:
         path = _write_macos_plist(no_browser=no_browser)
@@ -192,7 +199,20 @@ def _start_macos(*, no_browser: bool) -> dict:
         if old.returncode != 0 and not _is_not_found(old.stderr):
             path.unlink(missing_ok=True)
             return {"supported": True, "managed": None, "ok": False, "platform": "launchd", "reason": "launchctl_error", "detail": (old.stderr or "").strip()[:200]}
-        loaded = _launchctl(["bootstrap", _macos_domain(), str(path)])
+        # launchctl bootout is async on macOS: launchd may still be cleaning up
+        # the prior service entry when bootstrap is called immediately after a
+        # restart. Retry up to 3 times on the transient EIO (error 5) before
+        # giving up — each retry waits 1 s for the prior bootout to settle.
+        _bootstrap_attempts = 3
+        loaded = None
+        for _attempt in range(_bootstrap_attempts):
+            loaded = _launchctl(["bootstrap", _macos_domain(), str(path)])
+            if loaded.returncode == 0:
+                break
+            if _attempt < _bootstrap_attempts - 1 and _is_bootstrap_eio(loaded.stderr):
+                time.sleep(1.0)
+            else:
+                break
         if loaded.returncode != 0:
             path.unlink(missing_ok=True)
             return {"supported": True, "managed": False, "ok": False, "platform": "launchd", "reason": "launchctl_error", "detail": (loaded.stderr or "").strip()[:200]}
