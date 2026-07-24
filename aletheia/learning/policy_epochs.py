@@ -163,6 +163,19 @@ def persist_policy_epoch(epoch: PolicyEpoch) -> str:
         return record.epoch_id
 
 
+def find_open_policy_epoch(epoch: PolicyEpoch) -> str | None:
+    """Return the matching open epoch id without mutating epoch state."""
+    from aletheia.storage.sqlite import get_db
+
+    row = get_db().execute(
+        "SELECT epoch_id FROM learning_policy_epochs "
+        "WHERE epoch_kind=? AND effective_values_hash=? AND ended_at IS NULL "
+        "ORDER BY started_at DESC, rowid DESC LIMIT 1",
+        (epoch.epoch_kind, epoch.epoch_hash),
+    ).fetchone()
+    return str(row["epoch_id"]) if row else None
+
+
 def _without_secrets(value: Any) -> Any:
     if isinstance(value, dict):
         return {

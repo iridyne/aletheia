@@ -503,6 +503,174 @@ def test_owner_string_cannot_replace_an_authenticated_admission_boundary(monkeyp
     assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 1
 
 
+def test_protected_trial_admission_rejects_stale_expected_epoch(monkeypatch):
+    hypothesis, experiment = _experiment()
+    verdict = _measurement(
+        hypothesis,
+        experiment,
+        "insufficient_data",
+        reason="no_actual_intervention",
+    )
+    _configure(monkeypatch, _settings(
+        automation=True, paper=True, paths=[hypothesis.path_id],
+    ))
+    import aletheia.learning.lifecycle as lifecycle
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(lifecycle, "_policy_epoch", lambda _path_id: "epoch-current")
+    result = lifecycle._execute_trial_admission(
+        experiment.experiment_id,
+        verdict_id=verdict.verdict_id,
+        expected_policy_epoch="epoch-stale",
+        reason="begin bounded paper trial",
+    )
+
+    assert result.action == "hold"
+    assert result.reason == "policy_epoch_changed"
+    assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 0
+    assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected_reason"),
+    [
+        (_settings(automation=False, paper=True, paths=["universe_family_calibration"]),
+         "lifecycle_automation_disabled"),
+        (_settings(automation=True, paper=False, paths=["universe_family_calibration"]),
+         "paper_influence_disabled"),
+        (_settings(automation=True, paper=True, paths=[]), "path_not_allowlisted"),
+        (
+            SimpleNamespace(
+                agent=SimpleNamespace(autonomous_learning=True),
+                runtime=SimpleNamespace(paused=False),
+                learning=SimpleNamespace(
+                    contribution_evaluation_enabled=False,
+                    lifecycle_automation_enabled=True,
+                    paper_influence_enabled=True,
+                    paper_influence_paths=["universe_family_calibration"],
+                    auto_refreeze=True,
+                    evaluation_interval_minutes=60,
+                    paper_active_allocation_pct=0.80,
+                ),
+            ),
+            "contribution_evaluation_disabled",
+        ),
+    ],
+)
+def test_protected_trial_admission_requires_every_paper_gate(
+    monkeypatch,
+    settings,
+    expected_reason,
+):
+    hypothesis, experiment = _experiment()
+    verdict = _measurement(
+        hypothesis,
+        experiment,
+        "insufficient_data",
+        reason="no_actual_intervention",
+    )
+    _configure(monkeypatch, settings)
+    import aletheia.learning.lifecycle as lifecycle
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(lifecycle, "_policy_epoch", lambda _path_id: "epoch-a")
+    result = lifecycle._execute_trial_admission(
+        experiment.experiment_id,
+        verdict_id=verdict.verdict_id,
+        expected_policy_epoch="epoch-a",
+        reason="begin bounded paper trial",
+    )
+
+    assert result.action == "hold"
+    assert result.reason == expected_reason
+    assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 0
+
+
+def test_protected_trial_admission_is_idempotent_and_audits_owner(monkeypatch):
+    hypothesis, experiment = _experiment()
+    verdict = _measurement(
+        hypothesis,
+        experiment,
+        "insufficient_data",
+        reason="no_actual_intervention",
+    )
+    _configure(monkeypatch, _settings(
+        automation=True, paper=True, paths=[hypothesis.path_id],
+    ))
+    import aletheia.learning.lifecycle as lifecycle
+    from aletheia.storage.sqlite import get_db
+
+    audits = []
+    monkeypatch.setattr(lifecycle, "_policy_epoch", lambda _path_id: "epoch-a")
+    monkeypatch.setattr(
+        lifecycle,
+        "_write_lifecycle_audit",
+        lambda event, **identity: audits.append((event, identity)),
+    )
+    first = lifecycle._execute_trial_admission(
+        experiment.experiment_id,
+        verdict_id=verdict.verdict_id,
+        expected_policy_epoch="epoch-a",
+        reason="begin bounded paper trial",
+    )
+    second = lifecycle._execute_trial_admission(
+        experiment.experiment_id,
+        verdict_id=verdict.verdict_id,
+        expected_policy_epoch="epoch-a",
+        reason="retry after response loss",
+    )
+
+    assert first.action == second.action == "admit_trial"
+    assert first.successor_experiment_id == second.successor_experiment_id
+    assert second.reason == "already_transitioned"
+    assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 1
+    assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 2
+    assert len(audits) == 1
+    assert audits[0][1] == {"actor": "human", "source": "dashboard"}
+    event = get_db().execute("SELECT * FROM learning_lifecycle_events").fetchone()
+    assert "begin bounded paper trial" in event["reason"]
+
+
+def test_admission_retry_cannot_rebind_existing_verdict_to_another_experiment(
+    monkeypatch,
+):
+    hypothesis, experiment = _experiment()
+    other_hypothesis, other = _experiment(allocation=0.4)
+    verdict = _measurement(
+        hypothesis,
+        experiment,
+        "insufficient_data",
+        reason="no_actual_intervention",
+    )
+    _configure(monkeypatch, _settings(
+        automation=True,
+        paper=True,
+        paths=[hypothesis.path_id, other_hypothesis.path_id],
+    ))
+    import aletheia.learning.lifecycle as lifecycle
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(lifecycle, "_policy_epoch", lambda _path_id: "epoch-a")
+    first = lifecycle._execute_trial_admission(
+        experiment.experiment_id,
+        verdict_id=verdict.verdict_id,
+        expected_policy_epoch="epoch-a",
+        reason="begin bounded paper trial",
+    )
+    rebound = lifecycle._execute_trial_admission(
+        other.experiment_id,
+        verdict_id=verdict.verdict_id,
+        expected_policy_epoch="epoch-a",
+        reason="attempt to rebind verdict",
+    )
+
+    assert first.action == "admit_trial"
+    assert rebound.action == "hold"
+    assert rebound.reason == "verdict_experiment_mismatch"
+    assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 1
+    assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 3
+
+
 def test_successor_needs_its_own_measurement_before_it_can_promote_again(monkeypatch):
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     _measurement(hypothesis, experiment, "positive")

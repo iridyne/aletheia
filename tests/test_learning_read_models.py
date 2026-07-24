@@ -161,6 +161,30 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     assert item["lifecycle"]["authority_enabled"] is False
 
 
+def test_lco_projection_reports_protected_admission_readiness(
+    tmp_path,
+    monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+    import aletheia.learning.lifecycle as lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "trial_admission_gate_reason",
+        lambda _path_id: None,
+    )
+    from aletheia.learning.read_models import (
+        build_learning_contribution_projection,
+    )
+
+    lifecycle_view = build_learning_contribution_projection()["items"][0]["lifecycle"]
+    assert lifecycle_view["recommended_action"] == "admit_trial"
+    assert lifecycle_view["authority_enabled"] is False
+    assert lifecycle_view["mutation_available"] is True
+    assert lifecycle_view["mutation_unavailable_reason"] is None
+
+
 def test_lco_projection_keeps_stale_verdict_historical(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     _, experiment_id = _seed_current_experiment(monkeypatch)
@@ -195,11 +219,19 @@ def test_lco_projection_sanitizes_failure_and_is_side_effect_free(
     tables = (
         "learning_hypotheses",
         "learning_experiments",
+        "learning_exposures",
         "learning_contribution_verdicts",
+        "learning_lifecycle_events",
         "learning_job_health",
+        "learning_policy_epochs",
     )
     before = {
-        table: get_db().execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        table: [
+            dict(row)
+            for row in get_db().execute(
+                f"SELECT * FROM {table} ORDER BY rowid"
+            ).fetchall()
+        ]
         for table in tables
     }
     from aletheia.learning.read_models import (
@@ -208,7 +240,12 @@ def test_lco_projection_sanitizes_failure_and_is_side_effect_free(
 
     result = build_learning_contribution_projection()
     after = {
-        table: get_db().execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        table: [
+            dict(row)
+            for row in get_db().execute(
+                f"SELECT * FROM {table} ORDER BY rowid"
+            ).fetchall()
+        ]
         for table in tables
     }
     assert after == before

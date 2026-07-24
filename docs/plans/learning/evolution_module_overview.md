@@ -147,8 +147,11 @@ the outcome contract, override table, and consumer wiring land as separate PRs.
 1. **Shadow lock (root cause)** — no experiment has reached `paper_10`. Path forward:
    `POST /api/settings/learning/experiments/{id}/admit-trial` → paper_10 → accumulate
    50 samples/arm × positive verdict → auto-promote.
-2. **admit_shadow_trial stub** — `authenticated_owner_admission_unavailable`. Real
-   authenticated owner-mutation route not yet built. Blocks all paths from paper_10+.
+2. **Owner admission prerequisites** — the protected owner-mutation route now
+   exists, while the public `admit_shadow_trial` stub remains fail closed.
+   Admission still requires a current identity-matched shadow verdict and every
+   default-closed paper gate; until those runtime facts are true, no path can
+   enter `paper_10`.
 3. **exact_market_candidate scope** for `operator_learning_bundle` — multi-signal
    operator queues gate the bundle to disabled. Working as designed for experiment
    purity; may need broader-scope variant if data volume proves insufficient.

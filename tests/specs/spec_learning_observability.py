@@ -129,8 +129,8 @@ def test_lco_scheduler_recovery_projection_is_sanitized(tmp_path, monkeypatch):
 
 @spec_claim(SpecClaim(
     "LCO-C01", _CONTRACT, "§1 authority boundary", "L2c",
-    "admit_trial is exposed only as a read-only recommendation with mutation_available=false and "
-    "never implies readiness or owner authentication.",
+    "The observability UI remains read-only; admission readiness is true only when the separately "
+    "protected owner route and every default-closed paper gate are ready.",
     status="implemented",
 ))
 def test_lco_admission_recommendation_is_read_only(tmp_path, monkeypatch):
@@ -144,9 +144,7 @@ def test_lco_admission_recommendation_is_read_only(tmp_path, monkeypatch):
     assert lifecycle["authority_enabled"] is False
     assert lifecycle["authority_block_reason"] == "read_only_projection"
     assert lifecycle["mutation_available"] is False
-    assert lifecycle["mutation_unavailable_reason"] == (
-        "authenticated_owner_admission_unavailable"
-    )
+    assert lifecycle["mutation_unavailable_reason"] == "lifecycle_automation_disabled"
 
 
 @_missing("LCO-C02")

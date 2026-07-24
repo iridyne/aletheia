@@ -763,21 +763,45 @@ async def list_learning_experiments(limit: int = 100):
 async def get_learning_experiment(experiment_id: str):
     """Read-only lifecycle/operator view for one experiment."""
     from aletheia.learning.lifecycle import inspect_learning_experiment
-    from aletheia.learning.experiments import _policy_epoch
+    from aletheia.learning.experiments import (
+        current_policy_epoch as resolve_current_policy_epoch,
+    )
     from aletheia.learning.ledger import get_record
     row = get_record("learning_experiments", experiment_id)
     if row is None:
         raise HTTPException(404, f"experiment not found: {experiment_id}")
     hypothesis_row = get_record("learning_hypotheses", str(row.get("hypothesis_id") or ""))
     path_id = str((hypothesis_row or {}).get("path_id") or "")
-    current_policy_epoch = _policy_epoch(path_id) if path_id else ""
-    return inspect_learning_experiment(experiment_id, current_policy_epoch=current_policy_epoch)
+    policy_epoch = resolve_current_policy_epoch(path_id) if path_id else None
+    if policy_epoch is None:
+        raise HTTPException(409, "current policy epoch is not available")
+    return inspect_learning_experiment(
+        experiment_id,
+        current_policy_epoch=policy_epoch,
+    )
 
 
 class AdmitTrialRequest(SettingsRequest):
     verdict_id: str
-    policy_epoch: str
+    expected_policy_epoch: str
     reason: str
+    confirm_admission: Literal[True]
+
+    @field_validator("verdict_id", "expected_policy_epoch")
+    @classmethod
+    def _non_empty_admission_evidence(cls, value: str) -> str:
+        normalized = str(value).strip()
+        if not normalized:
+            raise ValueError("admission evidence must not be empty")
+        return normalized
+
+    @field_validator("reason")
+    @classmethod
+    def _bounded_admission_reason(cls, value: str) -> str:
+        normalized = " ".join(str(value).split())
+        if len(normalized) < 8:
+            raise ValueError("admission reason must be at least 8 characters")
+        return normalized[:200]
 
 
 @router.post("/learning/experiments/{experiment_id}/admit-trial")
@@ -787,9 +811,8 @@ async def admit_learning_trial(experiment_id: str, req: AdmitTrialRequest):
     result = _execute_trial_admission(
         experiment_id,
         verdict_id=req.verdict_id,
-        current_policy_epoch=req.policy_epoch,
-        admitted_by="authenticated_dashboard_operator",
-        reason=req.reason[:200],
+        expected_policy_epoch=req.expected_policy_epoch,
+        reason=req.reason,
     )
     if result.action == "hold":
         raise HTTPException(409, {"action": result.action, "reason": result.reason})

@@ -24,7 +24,8 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
     SpecClaim(
         "LE-L04", "learning_evolution", "§7.1 trial admission", "L2c",
         "Shadow measurement never auto-promotes into paper authority, and caller-provided actor "
-        "text cannot cross the unavailable authenticated-owner admission boundary.",
+        "text cannot cross the public fail-closed API; the separate owner route requires tunnel "
+        "protection, explicit confirmation, server-derived epoch identity and every paper gate.",
         status="implemented",
     ),
     SpecClaim(

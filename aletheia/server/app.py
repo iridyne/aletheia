@@ -620,6 +620,7 @@ _PROTECTED_PATHS = {
     # permission mode), so they must require the tunnel token too — otherwise the
     # protection on /api/risk/kill-switch is trivially bypassed via /settings/risk.
     "/api/settings/risk", "/api/settings/exchange-mode", "/api/settings/permission-mode",
+    "/api/settings/learning",
     "/api/gateway/restart", "/api/gateway/stop",
     # #42 completion: operator command surfaces can trigger the AI to execute trades
     # (even under permission-gate #40, the gate only checks the configured mode —
@@ -643,6 +644,10 @@ _PROTECTED_PATH_PREFIXES = (
     "/api/operator/internal/",
 )
 
+_PROTECTED_MUTATION_PATHS = (
+    ("/api/settings/learning/experiments/", "/admit-trial"),
+)
+
 
 @app.middleware("http")
 async def _tunnel_auth_guard(request, call_next):
@@ -656,7 +661,14 @@ async def _tunnel_auth_guard(request, call_next):
     """
     path = request.url.path
     _matches_prefix = any(path.startswith(p) for p in _PROTECTED_PATH_PREFIXES)
-    if path in _PROTECTED_PATHS or _matches_prefix:
+    _matches_mutation = (
+        request.method.upper() == "POST"
+        and any(
+            path.startswith(prefix) and path.endswith(suffix)
+            for prefix, suffix in _PROTECTED_MUTATION_PATHS
+        )
+    )
+    if path in _PROTECTED_PATHS or _matches_prefix or _matches_mutation:
         cfg = load_config()
         if getattr(cfg, "tunnel", None) and getattr(cfg.tunnel, "enabled", False):
             from aletheia.config.secrets import get_secret
