@@ -327,6 +327,9 @@ Ranker 的 `limit=50` 只限制进入打分/入队选择的执行短名单，不
 - 一般观察证据写入失败不能改变原交易决定，但必须记 warning/doctor coverage，不得沉默当成完整证据。
   若某条证据正是 Opportunity 进入永久终态的唯一原因，则证据与状态必须同成同败；失败时保留 `open`。
 - outcome 取价失败保持 `failed`/NULL，不用同名现货或过晚价格补齐。
+- `outcome_settler` 在处理较大的 `universe_forward_outcomes` mirror 队列前，必须为
+  canonical `filter_candidate_outcomes` 保留有界的 row/time capacity；mirror backlog
+  不得让已经到期的 Learning/filter 权威结果永久饥饿。
 - `doctor` 分开报告：记录覆盖率、可结算比例、到期未结算数、各 filter 是否达到最小对照样本。
 - `outcome_settler` 每 15 分钟运行；刚到期的 filter outcome 在 20 分钟宽限内标为
   `awaiting_cadence`，不算故障。超过宽限的 `stale_overdue` 才参与积压告警，口径与主 forward

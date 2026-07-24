@@ -1,5 +1,7 @@
 """Executable claims for docs/design/filter_evidence_contract.md."""
 
+import asyncio
+
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
@@ -155,19 +157,39 @@ def test_directionless_filter_candidate_creates_gross_only_outcomes():
 @spec_claim(
     SpecClaim(
         "FE-B04", _CONTRACT, "§4 fixed-horizon settlement", "L2b",
-        "Due filter candidate outcomes settle through the shared exact-instrument Stage-D economics path.",
+        "Due canonical filter outcomes settle through the shared exact-instrument Stage-D "
+        "economics path and receive bounded capacity before the larger Universe mirror queue.",
         status="implemented",
     )
 )
-def test_filter_outcome_settler_is_wired_into_universe_settlement():
-    from pathlib import Path
-    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+def test_filter_outcome_settler_has_capacity_before_universe_mirror_backlog(
+    monkeypatch,
+):
+    from aletheia.universe import filter_outcome_recorder, outcome_recorder
 
-    source = (
-        Path(__file__).parents[2] / "aletheia" / "universe" / "outcome_recorder.py"
-    ).read_text(encoding="utf-8")
-    assert callable(settle_due_filter_outcomes)
-    assert "settle_due_filter_outcomes" in source
+    calls = []
+
+    async def settle_filters(*, max_rows, time_budget_sec):
+        calls.append(("filter", max_rows, time_budget_sec))
+        return 1
+
+    monkeypatch.setattr(
+        filter_outcome_recorder,
+        "settle_due_filter_outcomes",
+        settle_filters,
+    )
+    monkeypatch.setattr(
+        outcome_recorder.repo,
+        "list_pending_forward_outcomes",
+        lambda **kwargs: calls.append(("forward", kwargs["limit"], None)) or [],
+    )
+
+    assert asyncio.run(
+        outcome_recorder.settle_due(max_rows=20, time_budget_sec=8.0)
+    ) == 1
+    assert [call[0] for call in calls[:2]] == ["filter", "forward"]
+    assert calls[0][1] > 0
+    assert 0 < calls[0][2] < 8.0
 
 
 @spec_claim(

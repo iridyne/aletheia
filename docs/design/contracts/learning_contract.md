@@ -96,7 +96,9 @@ loop contributes positively. Current behavior has these contract-relevant limita
   intent-to-treat allocation utility: selected members contribute net return and dropped members
   contribute zero, with worst selected-member MAE. The immutable `allocation_selected` fact is
   required. Incomplete clusters contribute no survivor-only sample, and legacy exposures without a
-  stored assignment unit remain auditable but excluded;
+  stored assignment unit remain auditable but excluded. Production candidate identity includes
+  scanner-run plus feature-snapshot identity so change-suppressed features cannot merge distinct
+  entry-price windows;
 - contribution metric version
   `universe_family_calibration_cluster_allocation_utility_v2` applies only to new verdicts. Earlier
   metric verdict rows remain immutable history. A verdict's `created_at` is evaluation time, while
