@@ -142,6 +142,115 @@ def test_frontdoor_websocket_scope_rejected_without_assertion_error(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_frontdoor_proxies_websocket_bidirectionally(tmp_path, monkeypatch):
+    import asyncio
+
+    from aletheia.gateway import frontdoor
+
+    captured: dict[str, object] = {}
+
+    class FakeUpstream:
+        close_code = 1000
+
+        def __init__(self):
+            self.sent: list[str | bytes] = []
+            self.send_seen = asyncio.Event()
+            self._messages = iter(['{"type":"update","changed":["positions"]}'])
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._messages)
+            except StopIteration:
+                await self.send_seen.wait()
+                raise StopAsyncIteration
+
+        async def send(self, message):
+            self.sent.append(message)
+            self.send_seen.set()
+
+        async def close(self, code=1000):
+            self.close_code = code
+
+    upstream = FakeUpstream()
+
+    def fake_connect(url, headers):
+        captured["url"] = url
+        captured["headers"] = headers
+        return upstream
+
+    monkeypatch.setattr(frontdoor, "_connect_backend_websocket", fake_connect)
+    app = frontdoor.create_app(
+        static_dir=_static_fixture(tmp_path),
+        backend_url="http://127.0.0.1:8788",
+    )
+
+    outgoing: list[dict] = []
+    downstream_sent = asyncio.Event()
+    receive_count = 0
+
+    async def receive():
+        nonlocal receive_count
+        receive_count += 1
+        if receive_count == 1:
+            return {"type": "websocket.connect"}
+        if receive_count == 2:
+            return {"type": "websocket.receive", "text": "ping"}
+        await downstream_sent.wait()
+        return {"type": "websocket.disconnect", "code": 1000}
+
+    async def send(message):
+        outgoing.append(message)
+        if message["type"] == "websocket.send":
+            downstream_sent.set()
+
+    await app(
+        {
+            "type": "websocket",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "scheme": "ws",
+            "path": "/api/ws",
+            "raw_path": b"/api/ws",
+            "query_string": b"client=test",
+            "root_path": "",
+            "headers": [
+                (b"host", b"frontdoor"),
+                (b"authorization", b"Bearer fixture"),
+                (b"sec-websocket-key", b"drop-me"),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("127.0.0.1", 8787),
+            "subprotocols": [],
+            "state": {},
+        },
+        receive,
+        send,
+    )
+
+    assert captured["url"] == "ws://127.0.0.1:8788/api/ws?client=test"
+    assert upstream.sent == ["ping"]
+    assert captured["headers"]["authorization"] == "Bearer fixture"
+    assert not any(
+        key.lower().startswith("sec-websocket-")
+        for key in captured["headers"]
+    )
+    assert {"type": "websocket.accept", "subprotocol": None, "headers": []} in outgoing
+    assert {
+        "type": "websocket.send",
+        "text": '{"type":"update","changed":["positions"]}',
+    } in outgoing
+
+
+@pytest.mark.anyio
 async def test_proxy_stream_interrupted_ends_cleanly(tmp_path, monkeypatch):
     """A mid-stream backend reset must NOT crash the frontdoor response.
 

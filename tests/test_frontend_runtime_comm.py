@@ -14,6 +14,7 @@ def test_backend_connection_guard_uses_lightweight_ready_probe():
     assert "queryFn: api.getReady" in src
     assert "queryFn: api.getStatus" not in src
     assert "const POLL_MS = 10000" in src
+    assert "refetchIntervalInBackground: true" not in src
     assert "const FAILURES_BEFORE_ALERT = 3" in src
     assert "failureCount >= FAILURES_BEFORE_ALERT" in src
 
@@ -29,3 +30,19 @@ def test_market_ticker_marks_symbol_queries_as_background():
     src = _read("components/MarketTicker.tsx")
 
     assert "meta: { background: true }" in src
+
+
+def test_realtime_updates_pause_while_tab_is_hidden():
+    src = _read("lib/useRealtimeUpdates.ts")
+
+    assert "document.visibilityState === 'hidden'" in src
+    assert "document.addEventListener('visibilitychange', handleVisibilityChange)" in src
+    assert "document.removeEventListener('visibilitychange', handleVisibilityChange)" in src
+
+
+def test_source_install_stops_packaged_update_poll_after_mode_detection():
+    src = _read("components/PackagedUpdateBanner.tsx")
+
+    assert "packagedRuntime = false" in src
+    assert "packagedRuntime !== false" in src
+    assert "activeRef.current ? 1000 : 30000" in src

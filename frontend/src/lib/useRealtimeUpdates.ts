@@ -131,15 +131,16 @@ export function useRealtimeUpdates(): void {
     let dead = false
 
     function connect() {
-      if (dead) return
+      if (dead || document.visibilityState === 'hidden' || ws) return
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      ws = new WebSocket(`${proto}//${window.location.host}/api/ws`)
+      const socket = new WebSocket(`${proto}//${window.location.host}/api/ws`)
+      ws = socket
 
-      ws.onopen = () => {
+      socket.onopen = () => {
         retryDelay = WS_RETRY_BASE_MS  // reset backoff on success
       }
 
-      ws.onmessage = (e: MessageEvent) => {
+      socket.onmessage = (e: MessageEvent) => {
         try {
           const msg = JSON.parse(e.data as string) as { type: string; changed: string[] }
           if ((msg.type !== 'update' && msg.type !== 'alert') || !Array.isArray(msg.changed)) return
@@ -153,9 +154,11 @@ export function useRealtimeUpdates(): void {
         }
       }
 
-      ws.onclose = () => {
+      socket.onclose = () => {
+        // A hidden→visible transition may already have installed a replacement.
+        if (ws !== socket) return
         ws = null
-        if (!dead) {
+        if (!dead && document.visibilityState !== 'hidden') {
           retryTimer = setTimeout(() => {
             retryDelay = Math.min(retryDelay * 1.5, WS_RETRY_MAX_MS)
             connect()
@@ -163,13 +166,29 @@ export function useRealtimeUpdates(): void {
         }
       }
 
-      ws.onerror = () => ws?.close()
+      socket.onerror = () => socket.close()
     }
 
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'hidden') {
+        if (retryTimer) {
+          clearTimeout(retryTimer)
+          retryTimer = null
+        }
+        ws?.close()
+        ws = null
+        return
+      }
+      retryDelay = WS_RETRY_BASE_MS
+      connect()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
     connect()
 
     return () => {
       dead = true
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
       if (retryTimer) clearTimeout(retryTimer)
       ws?.close()
     }

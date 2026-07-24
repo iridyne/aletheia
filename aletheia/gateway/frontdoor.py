@@ -8,6 +8,7 @@ agent runtime. `/api/*` is proxied to the supervised backend worker.
 
 from __future__ import annotations
 
+import asyncio
 # Windows: enforce SelectorEventLoop process-wide before uvicorn creates the
 # front-door server loop — eliminates the IOCP AcceptEx WinError 64 crash (§23).
 # See aletheia/async_utils.py for the CLI-provider incompatibility constraint.
@@ -21,7 +22,7 @@ from pathlib import Path
 from typing import AsyncIterator, Iterable
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
@@ -124,6 +125,29 @@ def _get_proxy_client() -> httpx.AsyncClient:
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
         )
     return _proxy_client
+
+
+def _connect_backend_websocket(url: str, headers: dict[str, str]):
+    """Open one local upstream WebSocket without consulting proxy environment."""
+    from websockets.asyncio.client import connect
+
+    return connect(
+        url,
+        additional_headers=headers,
+        proxy=None,
+        open_timeout=_PROXY_CONNECT_TIMEOUT,
+        close_timeout=2.0,
+    )
+
+
+def _websocket_forward_headers(headers: Iterable[tuple[str, str]]) -> dict[str, str]:
+    """Forward application identity only; the client library owns WS handshake headers."""
+    allowed = {"authorization", "cookie", "x-aletheia-token", "user-agent"}
+    return {
+        key: value
+        for key, value in headers
+        if key.lower() in allowed
+    }
 
 
 async def _close_proxy_response(upstream: httpx.Response) -> None:
@@ -310,6 +334,80 @@ def create_app(
             headers=response_headers,
             background=BackgroundTask(_close_proxy_response, upstream),
         )
+
+    @app.websocket("/api/{path:path}")
+    async def proxy_api_websocket(path: str, websocket: WebSocket):
+        backend = _backend_url()
+        websocket_backend = backend.replace("http://", "ws://", 1)
+        query = f"?{websocket.url.query}" if websocket.url.query else ""
+        target = f"{websocket_backend}/api/{path}{query}"
+        headers = _websocket_forward_headers(websocket.headers.items())
+
+        try:
+            async with _connect_backend_websocket(target, headers) as upstream:
+                await websocket.accept()
+
+                async def client_to_backend() -> None:
+                    while True:
+                        message = await websocket.receive()
+                        message_type = message.get("type")
+                        if message_type == "websocket.disconnect":
+                            await upstream.close(
+                                code=int(message.get("code") or 1000),
+                            )
+                            return
+                        if message.get("text") is not None:
+                            await upstream.send(message["text"])
+                        elif message.get("bytes") is not None:
+                            await upstream.send(message["bytes"])
+
+                async def backend_to_client() -> None:
+                    async for message in upstream:
+                        if isinstance(message, str):
+                            await websocket.send_text(message)
+                        else:
+                            await websocket.send_bytes(message)
+
+                directions = {
+                    asyncio.create_task(client_to_backend()),
+                    asyncio.create_task(backend_to_client()),
+                }
+                done, pending = await asyncio.wait(
+                    directions,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+                for task in done:
+                    if task.cancelled():
+                        continue
+                    error = task.exception()
+                    if error is not None:
+                        raise error
+                try:
+                    await websocket.close(code=int(upstream.close_code or 1000))
+                except Exception:
+                    pass
+        except Exception as exc:  # noqa: BLE001 - handshake must fail closed
+            emit_infra_event(
+                severity="warning",
+                source="frontdoor",
+                code="websocket_proxy_unavailable",
+                entity_id=backend,
+                message=f"WebSocket proxy failed for /api/{path}",
+                action="gateway_recovering",
+                metadata={
+                    "path": f"/api/{path}",
+                    "backend_base_url": backend,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+                dedupe_sec=10,
+            )
+            try:
+                await websocket.close(code=1013)
+            except Exception:
+                pass
 
     if effective_static_dir.exists() and (effective_static_dir / "index.html").exists():
 

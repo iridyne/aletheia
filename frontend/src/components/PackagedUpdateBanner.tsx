@@ -79,6 +79,7 @@ export default function PackagedUpdateBanner() {
   useEffect(() => {
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
+    let packagedRuntime: boolean | null = null
 
     const poll = async () => {
       try {
@@ -88,10 +89,12 @@ export default function PackagedUpdateBanner() {
         if (cancelled) return
 
         if (next.mode !== 'packaged') {
+          packagedRuntime = false
           setState(null)
           activeRef.current = false
           setTemporarilyOffline(false)
         } else {
+          packagedRuntime = true
           const phase = String(next.phase || 'idle')
           const active = ACTIVE_PHASES.has(phase)
           activeRef.current = active
@@ -118,7 +121,12 @@ export default function PackagedUpdateBanner() {
         // the last truthful state visible rather than replacing it with a generic error.
         if (activeRef.current) setTemporarilyOffline(true)
       } finally {
-        if (!cancelled) timer = setTimeout(poll, activeRef.current ? 1000 : 5000)
+        // Source/dev installs cannot become packaged without loading a different
+        // frontend bundle, so one truthful mode response is enough. Packaged but
+        // idle installs retain a low-frequency recovery check.
+        if (!cancelled && packagedRuntime !== false) {
+          timer = setTimeout(poll, activeRef.current ? 1000 : 30000)
+        }
       }
     }
 
