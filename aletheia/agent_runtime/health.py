@@ -410,6 +410,137 @@ def _heal_port_cleanup() -> bool:
     return True
 
 
+# --- Ranker admission-starvation detector ---
+# Fires when the scheduler is producing opportunities but Ranker is consistently
+# returning 0 admitted candidates across a sustained window. "0 proposal" is
+# indistinguishable from "system down" on the outside (see issue #329); these
+# constants define when that silence becomes signal-worthy.
+_RANKER_STARVATION_WINDOW_HOURS = 3
+_RANKER_STARVATION_MIN_RUNS = 6       # ≥ ~30 min of actual Ranker activity
+_RANKER_STARVATION_MIN_OPPS = 20      # enough eligible supply to make 0 admissions meaningful
+_RANKER_ONLINE_COVERAGE_MIN = 0.60    # skip if machine was offline most of the window
+
+
+def _ranker_session_coverage(window_hours: float) -> float:
+    """Fraction of the past `window_hours` covered by an active runtime_session.
+
+    Returns 0.0 on any error (fail-closed: if we can't tell we're online, don't
+    suppress the starvation check).
+    """
+    try:
+        from datetime import datetime, timezone, timedelta
+        from aletheia.storage.sqlite import get_db
+        now = datetime.now(timezone.utc)
+        cutoff = (now - timedelta(hours=window_hours)).isoformat()
+        rows = get_db().execute(
+            "SELECT started_at, ended_at FROM runtime_sessions"
+            " WHERE COALESCE(ended_at, datetime('now')) >= ? ORDER BY started_at",
+            (cutoff,),
+        ).fetchall()
+        if not rows:
+            return 0.0
+        window_sec = window_hours * 3600.0
+        covered = 0.0
+        for row in rows:
+            s_raw = row[0] if isinstance(row, (list, tuple)) else row["started_at"]
+            e_raw = row[1] if isinstance(row, (list, tuple)) else row["ended_at"]
+            try:
+                s = datetime.fromisoformat(str(s_raw).replace("Z", "+00:00"))
+                if s.tzinfo is None:
+                    s = s.replace(tzinfo=timezone.utc)
+                s = max(s, now - timedelta(hours=window_hours))
+                e = (
+                    datetime.fromisoformat(str(e_raw).replace("Z", "+00:00"))
+                    if e_raw
+                    else now
+                )
+                if e.tzinfo is None:
+                    e = e.replace(tzinfo=timezone.utc)
+                e = min(e, now)
+                if e > s:
+                    covered += (e - s).total_seconds()
+            except (ValueError, TypeError):
+                continue
+        return min(covered / window_sec, 1.0)
+    except Exception as exc:
+        logger.debug("_ranker_session_coverage failed: %s", exc)
+        return 0.0
+
+
+def _check_ranker_admission_starvation() -> None:
+    """Emit an infra_event when Ranker has been running but admitting 0 candidates.
+
+    Guards (all must pass before emitting):
+    1. Machine was online ≥ 60 % of the window — avoids nightly-shutdown false positives.
+    2. Ranker completed ≥ MIN_RUNS in the window.
+    3. Zero of those runs emitted a 'signals_pending:' output (0 admissions).
+    4. ≥ MIN_OPPS execution-eligible opportunities existed in the window.
+
+    Purely read-only. Never modifies state.
+    """
+    try:
+        from datetime import datetime, timezone, timedelta
+        import json as _json
+        from aletheia.storage.sqlite import get_db
+        from aletheia.infra.events import emit_infra_event
+
+        coverage = _ranker_session_coverage(_RANKER_STARVATION_WINDOW_HOURS)
+        if coverage < _RANKER_ONLINE_COVERAGE_MIN:
+            return
+
+        now = datetime.now(timezone.utc)
+        cutoff = (now - timedelta(hours=_RANKER_STARVATION_WINDOW_HOURS)).isoformat()
+        db = get_db()
+
+        runs = db.execute(
+            "SELECT outputs_created FROM agent_runs"
+            " WHERE agent_name = 'paper_trader'"
+            "   AND status IN ('completed', 'completed_with_errors')"
+            "   AND started_at >= ?",
+            (cutoff,),
+        ).fetchall()
+        if len(runs) < _RANKER_STARVATION_MIN_RUNS:
+            return
+
+        admitted = 0
+        for row in runs:
+            raw = row[0] if isinstance(row, (list, tuple)) else row["outputs_created"]
+            try:
+                outputs = _json.loads(raw) if raw else []
+            except (ValueError, TypeError):
+                outputs = []
+            if any(str(o).startswith("signals_pending:") for o in outputs):
+                admitted += 1
+
+        if admitted > 0:
+            return
+
+        opp_count = db.execute(
+            "SELECT COUNT(*) FROM opportunities"
+            " WHERE execution_eligible = 1 AND created_at >= ?",
+            (cutoff,),
+        ).fetchone()
+        eligible = (opp_count[0] if isinstance(opp_count, (list, tuple)) else opp_count[0]) if opp_count else 0
+        if eligible < _RANKER_STARVATION_MIN_OPPS:
+            return
+
+        emit_infra_event(
+            severity="warning",
+            source="ranker",
+            code="ranker_admission_starvation",
+            message=(
+                f"Ranker completed {len(runs)} run(s) in the past "
+                f"{_RANKER_STARVATION_WINDOW_HOURS}h but admitted 0 candidates "
+                f"from {eligible} eligible opportunities — pipeline may be "
+                "stalled upstream of signal_pending"
+            ),
+            action="Check filter decisions, admission slot state, and opportunity valid_until",
+            dedupe_sec=3600,
+        )
+    except Exception as exc:
+        logger.debug("_check_ranker_admission_starvation failed: %s", exc)
+
+
 def run_health_check() -> dict:
     """Evaluate health; alert on transition into unhealthy, then self-heal.
 
@@ -418,6 +549,9 @@ def run_health_check() -> dict:
     feed) trigger a guarded, rate-limited exit(42) respawn; orphan PIDs get cleaned;
     everything else (LLM down, kill switch, bad strategy runs) is alert-only."""
     global _last_alerted_unhealthy, _self_heal_suppressed_alerted
+    cfg = load_config()
+    if not cfg.runtime.paused and cfg.runtime.scheduler_enabled:
+        _check_ranker_admission_starvation()
     h = compute_health()
     if not h["healthy"]:
         if not _last_alerted_unhealthy:
@@ -433,8 +567,6 @@ def run_health_check() -> dict:
         _last_alerted_unhealthy = False
         _self_heal_suppressed_alerted = False
         return h
-
-    cfg = load_config()
     if not cfg.health.self_heal_enabled:
         return h  # legacy alert-only behavior
 
