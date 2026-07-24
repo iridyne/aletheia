@@ -2,12 +2,33 @@
 
 from __future__ import annotations
 
+import os
+
 from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
+
+
+# Operational kill switch (env). When set truthy, skip_policy_context() forces
+# every symbol-level material-dedup consumer flag back OFF at read time, so the
+# whole #321 feature set reverts to prior per-opportunity behavior WITHOUT a
+# redeploy. The persisted policy epoch still records the configured values; this
+# only overrides the live read. (#321)
+_MATERIAL_DEDUP_KILL_ENV = "ALETHEIA_DISABLE_MATERIAL_DEDUP"
+_MATERIAL_DEDUP_CONSUMER_FLAGS = (
+    "emit_active_defer_suppression",
+    "symbol_level_defer_suppression",
+    "reuse_recent_skip_validation",
+)
+
+
+def _material_dedup_killed() -> bool:
+    return os.environ.get(_MATERIAL_DEDUP_KILL_ENV, "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
 
 _EPOCH_KIND = "system_operator_skip_remediation"
 _EFFECTIVE_VALUES = {
-    "version": "b1.5",
+    "version": "b1.6",
     "aggregate_signal_health_candidate_veto": False,
     "zero_pending_heartbeat_trading_evaluation": False,
     "aggregate_signal_health_config_tightening": False,
@@ -55,6 +76,23 @@ _EFFECTIVE_VALUES = {
     "debate_not_confirmed_terminal_skip": False,
     "conviction_derived_from_candidate_specific_evidence_only": True,
     "conviction_bypass_reasons_forbidden": True,
+    # B1.6 (#321): symbol-level material de-duplication. universe refresh mints a
+    # fresh opportunity_id for the same symbol every ~10 min, defeating the
+    # per-opportunity fast-path and re-burning LLM calls on a symbol already
+    # judged direct_skip. The shared safety key is operator_decision_material_fingerprint
+    # (symbol-level, snapshot-id-free): a real market move flips it and reopens.
+    # Emergency revert: set ALETHEIA_DISABLE_MATERIAL_DEDUP=1 (no redeploy needed).
+    # Emit-source suppression: don't mint a new open row for a symbol with an
+    # active direct_skip defer whose material fingerprint is unchanged.
+    "emit_active_defer_suppression": True,
+    # LLM fast-path: match the market-quiet suppression by symbol+direction+
+    # market_type (+ material fingerprint guard) instead of opportunity_id.
+    "symbol_level_defer_suppression": True,
+    # Reassess reuse: skip the second (counterfactual) LLM call when a recent
+    # validated adverse skip exists for the same setup at an unchanged material
+    # fingerprint.
+    "reuse_recent_skip_validation": True,
+    "reuse_skip_validation_window_minutes": 30,
 }
 _AFFECTED_PATHS = (
     "system_operator_candidate_context",
@@ -73,6 +111,10 @@ _AFFECTED_PATHS = (
     "operator_low_conviction_defer_semantics",
     "operator_debate_not_confirmed_defer_semantics",
     "operator_conviction_bypass_reason_ban",
+    # B1.6 additions (#321)
+    "emit_active_defer_material_suppression",
+    "operator_symbol_level_defer_suppression",
+    "operator_reuse_recent_skip_validation",
 )
 
 
@@ -88,5 +130,14 @@ def ensure_skip_remediation_policy_epoch() -> str:
 
 
 def skip_policy_context() -> dict:
-    """Return the exact non-secret effective values used by the decision path."""
-    return dict(_EFFECTIVE_VALUES)
+    """Return the exact non-secret effective values used by the decision path.
+
+    Applies the ALETHEIA_DISABLE_MATERIAL_DEDUP kill switch at read time: when
+    set, every #321 material-dedup consumer flag is forced OFF regardless of the
+    configured epoch value, so operators can instantly revert to prior behavior.
+    """
+    values = dict(_EFFECTIVE_VALUES)
+    if _material_dedup_killed():
+        for flag in _MATERIAL_DEDUP_CONSUMER_FLAGS:
+            values[flag] = False
+    return values

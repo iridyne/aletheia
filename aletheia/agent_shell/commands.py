@@ -1756,6 +1756,11 @@ def _existing_deferred_context_observation(
     opportunity_id: str,
     policy_epoch_id: str,
     window_minutes: int,
+    symbol: str | None = None,
+    direction: str | None = None,
+    market_type: str | None = None,
+    material_fingerprint: str | None = None,
+    symbol_level: bool = False,
 ) -> dict | None:
     """Return the most recent defer event in this fingerprint window, any kind.
 
@@ -1783,25 +1788,59 @@ def _existing_deferred_context_observation(
     from aletheia.storage.sqlite import get_db
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    # Market-quiet fast-path: check by opportunity_id regardless of fingerprint.
-    # For conviction/debate reasons, defer_until guards the re-evaluation window.
-    # For direct_skip_not_confirmed reasons the model already decided the evidence
-    # is not actionable; re-evaluating on every expired-defer cycle causes churn
-    # without a genuine judgment change. Suppress regardless of defer_until.
-    market_quiet_row = get_db().execute(
-        "SELECT * FROM operator_evaluation_events "
-        "WHERE json_extract(queue_snapshot_json, '$.opportunity_id') = ? "
-        "AND event_kind LIKE 'operator_decision_deferred_%' "
-        "AND ("
-        "    (json_extract(queue_snapshot_json, '$.defer_until') > ? "
-        "     AND json_extract(queue_snapshot_json, '$.defer_reason') IN "
-        "             ('operator_low_conviction', 'debate_not_confirmed')) "
-        "    OR json_extract(queue_snapshot_json, '$.defer_reason') LIKE "
-        "             'direct_skip_not_confirmed%'"
-        ") "
-        "ORDER BY created_at DESC LIMIT 1",
-        (opportunity_id, now_iso),
-    ).fetchone()
+    # Market-quiet fast-path: for market-judgment defer reasons the operator's
+    # decision does not improve when features refresh, so we suppress re-eval
+    # without recomputing the (churny) context fingerprint.
+    #
+    # #321 symbol-level mode: universe refresh mints a fresh opportunity_id for the
+    # same symbol every ~10 min, so opportunity_id matching misses the prior defer
+    # and re-burns an LLM re-eval. When enabled AND the material fingerprint is
+    # available, match by symbol+direction+market_type GUARDED by the material
+    # fingerprint on EVERY branch — a fresh opportunity_id for an unchanged setup
+    # is recognised and suppressed, while any real market move flips the
+    # fingerprint, fails the guard, and reopens evaluation (DL-INV-23). Legacy
+    # opportunity_id matching is retained when the flag is off or the fingerprint
+    # is unavailable (fail open = evaluate).
+    if symbol_level and material_fingerprint and symbol:
+        from aletheia.agent_shell.trading_context import (
+            _normalize_direction as _nd,
+            _normalize_market_type as _nm,
+        )
+
+        market_quiet_row = get_db().execute(
+            "SELECT * FROM operator_evaluation_events "
+            "WHERE json_extract(queue_snapshot_json, '$.symbol') = ? "
+            "AND json_extract(queue_snapshot_json, '$.direction') = ? "
+            "AND json_extract(queue_snapshot_json, '$.market_type') = ? "
+            "AND json_extract(queue_snapshot_json, '$.material_fingerprint') = ? "
+            "AND event_kind LIKE 'operator_decision_deferred_%' "
+            "AND ("
+            "    (json_extract(queue_snapshot_json, '$.defer_until') > ? "
+            "     AND json_extract(queue_snapshot_json, '$.defer_reason') IN "
+            "             ('operator_low_conviction', 'debate_not_confirmed')) "
+            "    OR json_extract(queue_snapshot_json, '$.defer_reason') LIKE "
+            "             'direct_skip_not_confirmed%'"
+            ") "
+            "ORDER BY created_at DESC LIMIT 1",
+            (symbol, _nd(direction), _nm(market_type), material_fingerprint, now_iso),
+        ).fetchone()
+    else:
+        # Legacy per-opportunity match. direct_skip suppresses regardless of
+        # defer_until; conviction/debate honor the defer_until window.
+        market_quiet_row = get_db().execute(
+            "SELECT * FROM operator_evaluation_events "
+            "WHERE json_extract(queue_snapshot_json, '$.opportunity_id') = ? "
+            "AND event_kind LIKE 'operator_decision_deferred_%' "
+            "AND ("
+            "    (json_extract(queue_snapshot_json, '$.defer_until') > ? "
+            "     AND json_extract(queue_snapshot_json, '$.defer_reason') IN "
+            "             ('operator_low_conviction', 'debate_not_confirmed')) "
+            "    OR json_extract(queue_snapshot_json, '$.defer_reason') LIKE "
+            "             'direct_skip_not_confirmed%'"
+            ") "
+            "ORDER BY created_at DESC LIMIT 1",
+            (opportunity_id, now_iso),
+        ).fetchone()
     if market_quiet_row is not None:
         return dict(market_quiet_row)
 
@@ -1886,8 +1925,28 @@ def _record_deferred_context_observation(
     extended_valid_until = (
         defer_deadline + timedelta(seconds=_DEFER_VALID_UNTIL_MARGIN_SEC)
     ).isoformat()
+    # #321: persist the symbol-level material fingerprint + normalized identity so
+    # emit-source suppression and the symbol-level LLM fast-path can recognize
+    # "same setup, market unchanged" across the fresh opportunity_id that universe
+    # refresh mints each cycle. Normalized here so writer/reader match exactly.
+    # Always written (data-harmless); consumers gate on skip_policy flags.
+    from aletheia.agent_shell.trading_context import (
+        material_fingerprint_from_candidate_ctx,
+        _normalize_direction,
+        _normalize_market_type,
+    )
+    material_fingerprint = material_fingerprint_from_candidate_ctx(ctx, opportunity_id)
+    sel = selected or {}
     snapshot = {
         "context_fingerprint": context_fingerprint,
+        "material_fingerprint": material_fingerprint,
+        "symbol": sel.get("symbol"),
+        "direction": _normalize_direction(
+            sel.get("direction") or sel.get("direction_bias")
+        ),
+        "market_type": _normalize_market_type(
+            sel.get("market_type") or sel.get("market")
+        ),
         "opportunity_id": opportunity_id,
         "observation_window_start": window_start,
         "defer_until": defer_until,
@@ -1996,6 +2055,91 @@ def _record_deferred_context_observation(
     return event_row
 
 
+def _record_skip_validated_observation(
+    ctx: dict,
+    *,
+    opportunity_id: str,
+    policy_epoch_id: str,
+    decision,
+    window_minutes: int = 30,
+    trigger: str = "manual",
+) -> dict | None:
+    """Cache a terminal validated-adverse-skip as a symbol-level reuse record (#321).
+
+    A later cycle that re-emits the SAME symbol+direction at an UNCHANGED material
+    fingerprint can reuse this instead of burning the second (counterfactual) LLM
+    call in ``_reassess_direct_skip`` (gated by ``reuse_recent_skip_validation``).
+
+    Stores the full validated adverse judgment so the reuse path can reconstruct a
+    ``confirmed_raw`` without re-invoking the model. No ``defer_until`` is set, so
+    ``active_defer_opportunity_ids`` never counts it — it neither occupies an
+    admission slot nor masquerades as an active defer (DL §2.3b). Best-effort:
+    callers wrap in try/except so a cache-write failure never blocks the decision.
+    """
+    from aletheia.storage.models import OperatorEvaluationEvent
+    from aletheia.storage.repositories import record_operator_evaluation_event
+    from aletheia.agent_shell.trading_context import (
+        material_fingerprint_from_candidate_ctx,
+        _normalize_direction,
+        _normalize_market_type,
+    )
+
+    material_fingerprint = material_fingerprint_from_candidate_ctx(ctx, opportunity_id)
+    if not material_fingerprint:
+        return None
+    symbol = decision.symbol
+    direction = _normalize_direction(decision.direction)
+    market_type = _normalize_market_type(decision.market_type)
+    now = datetime.now(timezone.utc)
+    window_seconds = max(int(window_minutes), 1) * 60
+    window_epoch = int(now.timestamp()) // window_seconds * window_seconds
+    window_start = datetime.fromtimestamp(window_epoch, timezone.utc).isoformat()
+    dedup_key = hashlib.sha256(
+        json.dumps(
+            {
+                "event_kind": "operator_skip_validated",
+                "symbol": symbol,
+                "direction": direction,
+                "market_type": market_type,
+                "material_fingerprint": material_fingerprint,
+                "policy_epoch_id": policy_epoch_id,
+                "window_start": window_start,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    snapshot = {
+        "event_kind": "operator_skip_validated",
+        "material_fingerprint": material_fingerprint,
+        "symbol": symbol,
+        "direction": direction,
+        "market_type": market_type,
+        "opportunity_id": opportunity_id,
+        "validated": True,
+        "skip_kind": decision.skip_kind,
+        "adverse_reason_codes": list(decision.adverse_reason_codes or []),
+        "adverse_evidence": decision.adverse_evidence,
+        "validated_adverse_claims": decision.validated_adverse_claims,
+        "reasoning": decision.reasoning,
+        "conviction": decision.conviction,
+        "observation_window_start": window_start,
+    }
+    return record_operator_evaluation_event(OperatorEvaluationEvent(
+        dedup_key=dedup_key,
+        event_kind="operator_skip_validated",
+        trigger=str(trigger or "manual"),
+        pending_unresolved_total=0,
+        pending_visible_count=0,
+        pending_oldest_created_at=None,
+        queue_snapshot_json=json.dumps(
+            snapshot, sort_keys=True, separators=(",", ":"), default=str
+        ),
+        data_health_json="{}",
+        policy_epoch_id=policy_epoch_id,
+    ))
+
+
 async def evaluate_trading_opportunity(params: dict) -> dict:
     """System Operator evaluates market state and submits a paper proposal if conviction >= 55."""
     from aletheia.agent_shell.trading_context import build_enriched_trading_context
@@ -2066,11 +2210,15 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
 
     from aletheia.agent_shell.trading_context import (
         operator_decision_context_fingerprint,
+        material_fingerprint_from_candidate_ctx,
         scope_operator_context_to_candidate,
     )
 
     defer_window_minutes = int(
         ctx["skip_policy"].get("unchanged_context_defer_window_minutes") or 120
+    )
+    symbol_level_suppression = bool(
+        ctx["skip_policy"].get("symbol_level_defer_suppression")
     )
     selected_opportunity_id = None
     context_fingerprint = None
@@ -2082,11 +2230,19 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             continue
         candidate_ctx = scope_operator_context_to_candidate(ctx, opportunity_id)
         candidate_fingerprint = operator_decision_context_fingerprint(candidate_ctx)
+        candidate_material_fp = material_fingerprint_from_candidate_ctx(
+            candidate_ctx, opportunity_id
+        )
         existing_defer = _existing_deferred_context_observation(
             candidate_fingerprint,
             opportunity_id=opportunity_id,
             policy_epoch_id=policy_epoch_id,
             window_minutes=defer_window_minutes,
+            symbol=candidate.get("symbol"),
+            direction=candidate.get("direction") or candidate.get("direction_bias"),
+            market_type=candidate.get("market_type") or candidate.get("market"),
+            material_fingerprint=candidate_material_fp,
+            symbol_level=symbol_level_suppression,
         )
         if existing_defer is None:
             ctx = candidate_ctx
@@ -2605,6 +2761,35 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         result["proposal_reason"] = settled_final.get("proposal_reason")
     else:
         _apply_claim_to_result(settled_final, replay=True)
+
+    # #321: cache a freshly-created, validated adverse skip so a later cycle that
+    # re-emits the same symbol at an unchanged material fingerprint can skip the
+    # second counterfactual LLM confirmation. Written always (data-harmless);
+    # only consumed when reuse_recent_skip_validation is enabled.
+    if (
+        claim_created
+        and result.get("action") == "skip"
+        and getattr(decision, "skip_kind", None) == "adverse_candidate_evidence"
+        and getattr(decision, "adverse_reason_codes", None)
+        and selected_opportunity_id
+    ):
+        try:
+            _record_skip_validated_observation(
+                ctx,
+                opportunity_id=selected_opportunity_id,
+                policy_epoch_id=policy_epoch_id,
+                decision=decision,
+                window_minutes=int(
+                    ctx["skip_policy"].get("reuse_skip_validation_window_minutes") or 30
+                ),
+                trigger=str(params.get("_trigger") or "manual"),
+            )
+        except Exception:
+            logger.debug(
+                "skip_validated cache write failed for %s",
+                selected_opportunity_id,
+                exc_info=True,
+            )
 
     # Data completeness can trigger a maintenance request. Aggregate signal
     # quality is deliberately observation-only under B1: it must not create an

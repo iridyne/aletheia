@@ -318,6 +318,52 @@ _BEAR_SCHEMA = {
 
 # ── main entry point ──────────────────────────────────────────────────────────
 
+def _reuse_recent_skip_validation(trading_context: dict, decision) -> dict | None:
+    """Recent validated-skip cache for this setup at an UNCHANGED material fp.
+
+    Returns the cached ``operator_skip_validated`` snapshot (carrying the prior
+    validated adverse judgment) when the model again judges the same
+    symbol+direction a skip and the material fingerprint is unchanged, else None.
+    Lets the caller skip the second (counterfactual) LLM call. Gated by
+    ``reuse_recent_skip_validation``; any error or miss returns None so the caller
+    falls back to a live reassessment (fail open). (#321)
+    """
+    try:
+        policy = trading_context.get("skip_policy") or {}
+        if not policy.get("reuse_recent_skip_validation"):
+            return None
+        if not getattr(decision, "opportunity_id", None) or not getattr(
+            decision, "symbol", None
+        ):
+            return None
+        from aletheia.agent_shell.trading_context import (
+            material_fingerprint_from_candidate_ctx,
+            _normalize_direction,
+            _normalize_market_type,
+        )
+        from aletheia.storage.repositories import latest_skip_validation_for_setup
+
+        current_fp = material_fingerprint_from_candidate_ctx(
+            trading_context, decision.opportunity_id
+        )
+        if not current_fp:
+            return None
+        window = int(policy.get("reuse_skip_validation_window_minutes") or 30)
+        cached = latest_skip_validation_for_setup(
+            decision.symbol,
+            _normalize_direction(decision.direction),
+            _normalize_market_type(decision.market_type),
+            window_minutes=window,
+        )
+        if not cached or not cached.get("skip_kind"):
+            return None
+        if cached.get("material_fingerprint") != current_fp:
+            return None
+        return cached
+    except Exception:
+        return None
+
+
 async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision:
     """System Operator trading decision loop.
 
@@ -369,26 +415,48 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
         )
         initial_opportunity_id = decision.opportunity_id
         confirmation_attempts = 1
-        confirmed_raw = await _reassess_direct_skip(
-            trading_context, decision_raw, validation_reason
-        )
-        try:
-            decision = _parse_decision(confirmed_raw or {})
-        except DecisionUnavailable as exc:
-            raise DecisionUnavailable(
-                f"direct_skip_not_confirmed:{exc.reason}",
-                stage="operator_skip_validation",
-            ) from exc
-        _attach_opportunity_context(decision, trading_context)
-        if (
-            decision.action == "skip"
-            and initial_opportunity_id
-            and decision.opportunity_id != initial_opportunity_id
-        ):
-            raise DecisionUnavailable(
-                "direct_skip_not_confirmed:candidate_changed",
-                stage="operator_skip_validation",
+        reused_validation = _reuse_recent_skip_validation(trading_context, decision)
+        if reused_validation is not None:
+            # #321: an identical-material skip for this setup was counterfactually
+            # confirmed recently. Overlay its validated adverse judgment instead of
+            # re-invoking the model, then fall through to the SAME validation block
+            # below. If the overlay fails to re-validate against the current ctx,
+            # that block raises direct_skip_not_confirmed exactly as a live reassess
+            # failure would — the reuse can save an LLM call but never manufacture a
+            # trade or a wrongly-confirmed skip.
+            decision.skip_kind = reused_validation.get("skip_kind") or decision.skip_kind
+            decision.adverse_reason_codes = (
+                reused_validation.get("adverse_reason_codes")
+                or decision.adverse_reason_codes
             )
+            decision.adverse_evidence = (
+                reused_validation.get("adverse_evidence") or decision.adverse_evidence
+            )
+            decision.validated_adverse_claims = (
+                reused_validation.get("validated_adverse_claims")
+                or decision.validated_adverse_claims
+            )
+        else:
+            confirmed_raw = await _reassess_direct_skip(
+                trading_context, decision_raw, validation_reason
+            )
+            try:
+                decision = _parse_decision(confirmed_raw or {})
+            except DecisionUnavailable as exc:
+                raise DecisionUnavailable(
+                    f"direct_skip_not_confirmed:{exc.reason}",
+                    stage="operator_skip_validation",
+                ) from exc
+            _attach_opportunity_context(decision, trading_context)
+            if (
+                decision.action == "skip"
+                and initial_opportunity_id
+                and decision.opportunity_id != initial_opportunity_id
+            ):
+                raise DecisionUnavailable(
+                    "direct_skip_not_confirmed:candidate_changed",
+                    stage="operator_skip_validation",
+                )
 
     if decision.action == "skip" and skip_confirmation_required:
         invalid_skip_reason = _direct_skip_validation_reason(decision, trading_context)

@@ -937,6 +937,85 @@ def active_defer_opportunity_ids(now_iso: str | None = None) -> set[str]:
     return {str(row["opportunity_id"]) for row in rows if row["opportunity_id"]}
 
 
+def latest_direct_skip_defer_for_setup(
+    symbol: str,
+    direction: str,
+    market_type: str,
+    *,
+    window_minutes: int = 120,
+) -> dict | None:
+    """Most recent ``direct_skip_not_confirmed`` defer for a symbol+direction setup.
+
+    Returns the parsed ``queue_snapshot_json`` (carrying ``material_fingerprint``)
+    of the latest such defer within ``window_minutes``, or ``None``. Only defer
+    events recorded after #321 carry the symbol/direction/market_type + material
+    fingerprint keys, so older rows simply never match (callers fail open = emit).
+
+    Used by emit-source suppression (#321): if the latest direct-skip judgment for
+    this setup shares the current material fingerprint, universe refresh must not
+    mint yet another fresh-opportunity_id carrier that re-burns an LLM re-eval.
+    The caller compares fingerprints — this only bounds the lookback by time so a
+    stale skip cannot suppress a setup forever.
+    """
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(minutes=max(int(window_minutes), 1))
+    ).isoformat()
+    row = get_db().execute(
+        "SELECT queue_snapshot_json FROM operator_evaluation_events "
+        "WHERE event_kind LIKE 'operator_decision_deferred_%' "
+        "AND json_extract(queue_snapshot_json,'$.defer_reason') LIKE 'direct_skip_not_confirmed%' "
+        "AND json_extract(queue_snapshot_json,'$.symbol') = ? "
+        "AND json_extract(queue_snapshot_json,'$.direction') = ? "
+        "AND json_extract(queue_snapshot_json,'$.market_type') = ? "
+        "AND created_at >= ? "
+        "ORDER BY created_at DESC LIMIT 1",
+        (symbol, direction, market_type, cutoff),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        return json.loads(row["queue_snapshot_json"])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def latest_skip_validation_for_setup(
+    symbol: str,
+    direction: str,
+    market_type: str,
+    *,
+    window_minutes: int = 30,
+) -> dict | None:
+    """Most recent ``operator_skip_validated`` cache row for a symbol+direction setup.
+
+    Returns the parsed ``queue_snapshot_json`` (carrying ``material_fingerprint``
+    plus the full validated adverse judgment) within ``window_minutes``, else None.
+
+    Used by reassess reuse (#321): when the model again judges the same setup a
+    skip at an unchanged material fingerprint, this lets the caller reuse the prior
+    counterfactual confirmation instead of a second LLM call.
+    """
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(minutes=max(int(window_minutes), 1))
+    ).isoformat()
+    row = get_db().execute(
+        "SELECT queue_snapshot_json FROM operator_evaluation_events "
+        "WHERE event_kind = 'operator_skip_validated' "
+        "AND json_extract(queue_snapshot_json,'$.symbol') = ? "
+        "AND json_extract(queue_snapshot_json,'$.direction') = ? "
+        "AND json_extract(queue_snapshot_json,'$.market_type') = ? "
+        "AND created_at >= ? "
+        "ORDER BY created_at DESC LIMIT 1",
+        (symbol, direction, market_type, cutoff),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        return json.loads(row["queue_snapshot_json"])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
 def extend_opportunity_valid_until_forward_only(
     opportunity_id: str, new_valid_until_iso: str
 ) -> int:

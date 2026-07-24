@@ -2353,10 +2353,10 @@ def test_direct_skip_b14_rotates_a_distinct_policy_epoch(tmp_path, monkeypatch):
 
     assert row["epoch_kind"] == "system_operator_skip_remediation"
     assert values == skip_policy_context()
-    # b1.5 (2026-07-18) supersedes b1.4 by adding the non-terminal
-    # low-conviction / debate-not-confirmed defer semantics; every b1.4 field
-    # below is preserved (b1.5 is a superset), so those assertions still hold.
-    assert values["version"] == "b1.5"
+    # b1.6 (#321) supersedes b1.5 by adding the symbol-level material-dedup
+    # consumer flags (all default OFF); every prior field below is preserved
+    # (b1.6 is a superset), so those assertions still hold.
+    assert values["version"] == "b1.6"
     assert values["direct_skip_confirmation_required"] is True
     assert values["insufficient_evidence_terminal_skip"] is False
     assert values["deterministic_adverse_fact_validation"] is True
@@ -2370,6 +2370,11 @@ def test_direct_skip_b14_rotates_a_distinct_policy_epoch(tmp_path, monkeypatch):
     assert values["debate_not_confirmed_terminal_skip"] is False
     assert values["conviction_derived_from_candidate_specific_evidence_only"] is True
     assert values["conviction_bypass_reasons_forbidden"] is True
+    # b1.6 additions (#321): all three material-dedup flags default ON.
+    assert values["emit_active_defer_suppression"] is True
+    assert values["symbol_level_defer_suppression"] is True
+    assert values["reuse_recent_skip_validation"] is True
+    assert values["reuse_skip_validation_window_minutes"] == 30
 
 
 def test_neutral_skip_defers_but_adjacent_qualified_negative_becomes_terminal(

@@ -147,11 +147,13 @@ def test_prompt_bundles_use_exact_paper_authority(monkeypatch):
     ).fetchone()
     assert operator_epoch is not None
     operator_policy = json.loads(operator_epoch["effective_values_json"])
-    # Superset check: skip_policy is now b1.5 (Phase C, 2026-07-18 — non-terminal
-    # low-conviction/debate-not-confirmed defer). b1.4 is a valid predecessor
-    # snapshot for pre-Phase-C learning bundles; any version >= b1.4 keeps this
-    # test locking authority attribution rather than a specific policy revision.
-    assert operator_policy["operator_decision_context"]["version"] in {"b1.4", "b1.5"}
+    # Superset check: skip_policy generations are backward-compatible supersets
+    # (b1.4 → b1.5 Phase C defer semantics → b1.6 #321 material-dedup flags). Any
+    # of these is a valid predecessor snapshot for a learning bundle; this test
+    # locks authority attribution, not a specific policy revision.
+    assert operator_policy["operator_decision_context"]["version"] in {
+        "b1.4", "b1.5", "b1.6",
+    }
     assert operator_policy["operator_decision_context"][
         "candidate_feature_refresh_wakes_operator"
     ] is True
