@@ -7,6 +7,8 @@ Covers:
 - _prefetch_symbol() error isolation (one failing symbol doesn't kill others)
 """
 
+import asyncio
+
 import pytest
 
 
@@ -245,17 +247,113 @@ async def test_prefetch_wait_uses_only_remaining_run_budget(monkeypatch):
     async def _value():
         return "ready"
 
-    async def fake_wait_for(awaitable, timeout):
+    async def fake_wait(tasks, timeout):
         captured["timeout"] = timeout
-        return await awaitable
+        await asyncio.gather(*tasks)
+        return set(tasks), set()
 
     monkeypatch.setattr(mo, "_monotonic", lambda: 140.0)
-    monkeypatch.setattr(mo.asyncio, "wait_for", fake_wait_for)
+    monkeypatch.setattr(mo.asyncio, "wait", fake_wait)
 
     result = await mo._gather_prefetch_with_deadline([_value()], deadline=500.0)
 
     assert result == ["ready"]
     assert captured["timeout"] == pytest.approx(360.0)
+
+
+@pytest.mark.asyncio
+async def test_prefetch_deadline_does_not_drain_cancellation_resistant_io(monkeypatch):
+    from aletheia.agents import market_observer as mo
+
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    async def cancellation_resistant():
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cleanup_started.set()
+            await release_cleanup.wait()
+        finally:
+            cleanup_finished.set()
+
+    monkeypatch.setattr(mo, "_monotonic", lambda: 0.0)
+
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(TimeoutError):
+        await mo._gather_prefetch_with_deadline(
+            [cancellation_resistant()],
+            deadline=0.02,
+        )
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert elapsed < 0.1
+    await asyncio.wait_for(cleanup_started.wait(), timeout=0.5)
+    release_cleanup.set()
+    await asyncio.wait_for(cleanup_finished.wait(), timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_prefetch_batch_reuses_one_provider_and_bounds_concurrency(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.agents import market_observer as mo
+    from aletheia.data import ccxt_provider
+
+    class FakeProvider:
+        def __init__(self):
+            self.close_calls = 0
+
+        async def close(self):
+            self.close_calls += 1
+
+    provider = FakeProvider()
+    monkeypatch.setattr(
+        ccxt_provider,
+        "get_market_data_provider",
+        lambda **_kwargs: provider,
+    )
+
+    active = 0
+    max_active = 0
+    seen_providers = []
+
+    async def fake_prefetch(instrument, *, provider, **_kwargs):
+        nonlocal active, max_active
+        seen_providers.append(provider)
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return instrument.symbol
+
+    monkeypatch.setattr(mo, "_prefetch_symbol", fake_prefetch)
+    instruments = [
+        SimpleNamespace(symbol=f"S{i}/USDT", market_type="spot")
+        for i in range(10)
+    ]
+    db_cache = mo._DbCache(
+        perp_structures={},
+        funding_hl={},
+        funding_hl_pred={},
+        news={},
+        onchain_rows=[],
+    )
+
+    results = await mo._prefetch_instruments(
+        instruments,
+        venue="fixture",
+        prediction_context_enabled=False,
+        prediction_context_cutoff=None,
+        db_cache=db_cache,
+        concurrency=3,
+    )
+
+    assert results == [instrument.symbol for instrument in instruments]
+    assert max_active == 3
+    assert seen_providers == [provider] * len(instruments)
+    assert provider.close_calls == 1
 
 
 @pytest.mark.asyncio
