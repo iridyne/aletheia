@@ -141,7 +141,33 @@ async def settle_due(max_rows: int = 2000, time_budget_sec: float = 100.0) -> in
 
     cfg = load_config()
 
-    while total_processed < max_rows:
+    # Canonical filter outcomes are the authority for Learning contribution and
+    # filter feedback.  They used to run only after the (often much larger)
+    # Universe mirror queue, so a busy/slow forward queue could consume the whole
+    # wall-clock budget and leave already-due canonical rows pending forever.
+    # Reserve a bounded quarter of both caps before draining mirrors.  This is
+    # measurement scheduling only; it does not alter candidate selection.
+    # Tiny explicit calls are commonly used to settle one forward row in tests
+    # and maintenance probes; preserve that contract. Scheduled production calls
+    # use a large cap and therefore receive the reserved canonical quota.
+    filter_row_budget = min(500, max_rows // 4) if max_rows >= 4 else 0
+    filter_time_budget = min(30.0, max(0.0, time_budget_sec * 0.25))
+    filter_settled = 0
+    if filter_row_budget and filter_time_budget > 0:
+        try:
+            from aletheia.universe.filter_outcome_recorder import (
+                settle_due_filter_outcomes,
+            )
+
+            filter_settled = await settle_due_filter_outcomes(
+                max_rows=filter_row_budget,
+                time_budget_sec=filter_time_budget,
+            )
+        except Exception as exc:
+            logger.warning("filter outcome settlement failed (non-fatal): %s", exc)
+
+    forward_row_budget = max(0, max_rows - filter_row_budget)
+    while total_processed < forward_row_budget:
         if _time.monotonic() >= deadline:
             logger.info(
                 "outcome_settler: time budget (%.0fs) reached — %d processed, %d settled; "
@@ -291,23 +317,7 @@ async def settle_due(max_rows: int = 2000, time_budget_sec: float = 100.0) -> in
     if all_settled_rows:
         _maybe_generate_guard_candidates(all_settled_rows)
 
-    # Use the same remaining scheduler budget to settle filter pass/reject
-    # counterfactuals. They share this module's exact-instrument OHLCV fetch path
-    # and the Stage-D economics formula; no second shadow-return definition.
-    remaining_sec = max(0.0, deadline - _time.monotonic())
-    remaining_rows = max(0, max_rows - total_processed)
-    if remaining_rows and remaining_sec > 1.0:
-        try:
-            from aletheia.universe.filter_outcome_recorder import (
-                settle_due_filter_outcomes,
-            )
-
-            total_settled += await settle_due_filter_outcomes(
-                max_rows=remaining_rows,
-                time_budget_sec=remaining_sec,
-            )
-        except Exception as exc:
-            logger.warning("filter outcome settlement failed (non-fatal): %s", exc)
+    total_settled += filter_settled
 
     # Position X rows are a separate, observation-only cohort. They reuse the
     # exact-instrument price path but never enter scanner or Operator ranking.

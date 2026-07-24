@@ -322,7 +322,11 @@ def test_universe_calibration_is_neutral_shadow_before_authority(monkeypatch):
     neutral = compute_total_score(dict(feat), scanner, UniverseConfig(), calibration=None)
     proposed_feat = dict(feat)
     proposed = compute_total_score(
-        proposed_feat, scanner, UniverseConfig(), calibration={"momentum:long:perp": 1.4},
+        proposed_feat,
+        scanner,
+        UniverseConfig(),
+        calibration={"momentum:long:perp": 1.4},
+        scoring_cohort_key="scanner-run-1",
     )
 
     assert proposed == neutral
@@ -332,6 +336,9 @@ def test_universe_calibration_is_neutral_shadow_before_authority(monkeypatch):
     assert row is not None
     assert row["assignment"] in {"control", "treatment"}
     assert '"proposed_multiplier": 1.1' in row["manifest_json"]
+    assert proposed_feat["learning_candidate_key"] == (
+        "universe:scanner-run-1:feature-1:momentum:long:perp"
+    )
 
     from aletheia.universe import outcome_recorder
     captured = []

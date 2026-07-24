@@ -169,9 +169,21 @@ def compute_total_score(
             direction = scanner_result.get("scanner_direction") or scanner_result.get("direction") or "unknown"
             market_type = feat.get("market_type", "spot")
             feature_id = feat.get("feature_snapshot_id")
+            # A feature snapshot may be intentionally reused for up to 30 minutes,
+            # while each scanner run creates a distinct prospective allocation
+            # decision and entry-price window.  Include both identities so later
+            # runs cannot upsert into one canonical outcome or accumulate multiple
+            # Universe mirrors under the same candidate key.
             candidate_key = (
-                f"universe:{feature_id}:{family}:{direction}:{market_type}"
-                if feature_id else None
+                (
+                    f"universe:{scoring_cohort_key}:{feature_id}:"
+                    f"{family}:{direction}:{market_type}"
+                )
+                if feature_id and scoring_cohort_key
+                else (
+                    f"universe:{feature_id}:{family}:{direction}:{market_type}"
+                    if feature_id else None
+                )
             )
             cluster_key = (
                 f"universe:cluster:{scoring_cohort_key}:{family}:{direction}:{market_type}"

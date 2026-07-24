@@ -1,8 +1,8 @@
 """Build exact, prospective contribution cohorts for supported Learning paths.
 
-The first runtime slice deliberately supports one path only.  It never searches
-by symbol or time proximity: an exposure can contribute only through the exact
-``outcome_candidate_key`` it recorded before the outcome entered its horizon.
+Each path must provide an explicit outcome/statistical-unit adapter.  Cohorts
+never search by symbol or time proximity: an exposure can contribute only
+through the exact ``outcome_candidate_key`` recorded before its horizon.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ SUPPORTED_PATH_ID = "universe_family_calibration"
 # after its exact outcome and statistical-unit contracts are executable AND have
 # focused passing cohort tests that exercise the full round-trip.
 #
-# Currently only universe_family_calibration qualifies:
+# Universe full-arm support:
 #   - outcome contract: universe_forward_outcomes (universe-keyed, {learning_key}:{horizon})
 #   - allocation_selected: populated by universe/service._register_experiment_candidate_outcomes
 #   - statistical unit: full-arm Universe allocation member

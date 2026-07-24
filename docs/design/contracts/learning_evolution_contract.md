@@ -224,7 +224,10 @@ assignment-unit key, never wall-clock randomness. Safety gates apply identically
 For `universe_family_calibration`, the randomization unit is the persisted
 `assignment_unit_key` cluster (the scoring cohort plus family, direction, and market type), so all
 members of that cluster receive the same arm. The candidate key still identifies each exact member
-outcome; it is not the statistical assignment unit.
+outcome; it is not the statistical assignment unit. Its production identity contains both the
+scanner-run id and feature-snapshot id. Feature snapshots may be intentionally reused during
+change suppression, but a later scanner run is a new entry-price/outcome window and must never
+upsert into or share mirrors with the earlier candidate outcome.
 
 The current universe evaluator requires every persisted member of a cluster to resolve cleanly.
 One complete cluster is one intent-to-treat sample: selected members contribute net return, dropped
