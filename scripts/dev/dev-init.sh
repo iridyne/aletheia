@@ -21,21 +21,21 @@ fail() { printf '[dev-init] ERROR: %s\n' "$*" >&2; exit 1; }
 
 command -v uv >/dev/null 2>&1 || fail "uv not found on PATH. Install uv first."
 
-log "1/4  Disabling OS autostart (LaunchAgent) — dev must never be respawned by OS."
+log "1/5  Disabling OS autostart (LaunchAgent) — dev must never be respawned by OS."
 if uv run aletheia gateway disable-autostart 2>&1 | sed 's/^/    /'; then
   :
 else
   warn "disable-autostart returned non-zero. Continuing — inspect above output."
 fi
 
-log "2/4  Checking frontend/node_modules."
+log "2/5  Checking frontend/node_modules."
 if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
   warn "frontend/node_modules missing. Run: cd frontend && npm install"
   warn "Then re-run this script."
   exit 1
 fi
 
-log "3/4  Checking dashboard_static/index.html."
+log "3/5  Checking dashboard_static/index.html."
 if [[ ! -f "$STATIC_DIR/index.html" ]]; then
   log "     Missing. Building frontend (this may take ~30s)..."
   (cd "$FRONTEND_DIR" && npm run build) || fail "Frontend build failed."
@@ -44,7 +44,11 @@ else
   log "     Present."
 fi
 
-log "4/4  Current gateway state:"
+log "4/5  Installing local git hooks."
+git -C "$REPO_ROOT" config core.hooksPath scripts/hooks
+log "     pre-commit hook active (secret/env scanner)."
+
+log "5/5  Current gateway state:"
 uv run aletheia gateway status 2>&1 | sed 's/^/    /' || true
 
 log "Done. Data dir: $DATA_DIR"

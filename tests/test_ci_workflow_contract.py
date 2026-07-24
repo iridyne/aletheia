@@ -22,8 +22,13 @@ def _run_commands(job: dict) -> str:
     )
 
 
-def test_ci_is_the_only_active_workflow() -> None:
-    assert sorted(path.name for path in WORKFLOW_DIR.glob("*.yml")) == ["ci.yml"]
+def test_ci_workflows_are_exactly_the_known_set() -> None:
+    assert sorted(path.name for path in WORKFLOW_DIR.glob("*.yml")) == [
+        "auto-merge.yml",
+        "ci.yml",
+        "nightly.yml",
+        "release.yml",
+    ]
 
 
 def test_ci_only_validates_pull_requests_and_merge_queue_entries() -> None:

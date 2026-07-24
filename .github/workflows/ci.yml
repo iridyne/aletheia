@@ -36,6 +36,11 @@ jobs:
       - name: Lint Python
         run: uv run ruff check aletheia/ tests/
 
+      - name: Verify OpenAPI schema is up to date
+        run: |
+          uv run python scripts/export_openapi_schema.py
+          git diff --exit-code -- docs/_generated/openapi.json || { echo "::error::OpenAPI schema is stale — run: uv run python scripts/export_openapi_schema.py"; exit 1; }
+
       - name: Verify architecture and CI invariants
         run: uv run pytest tests/test_architecture_fitness.py tests/test_ci_workflow_contract.py -q --tb=short
 
