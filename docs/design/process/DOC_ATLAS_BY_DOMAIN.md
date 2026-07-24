@@ -87,15 +87,18 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
   `spec_learning_observability` (`LCO-*`, strict xfail/missing). The direct conformance matrix must
   import this complete family; do not rely on incidental collection order.
 - **L3 plan**：[`learning_positive_contribution_implementation_plan_2026-07-12`](../../plans/learning/learning_positive_contribution_implementation_plan_2026-07-12.md)
-  is the delivery sequence; `self_evolution_plan` and older repair plans are historical/adjacent,
-  not authority over the L2 contracts.
+  is the total delivery sequence; the focused
+  [`universe_family_calibration_execution_plan_2026-07-24`](../../plans/learning/universe_family_calibration_execution_plan_2026-07-24.md)
+  is its reverse-audited four-batch first-path runbook. `self_evolution_plan` and older repair
+  plans are historical/adjacent, not authority over the L2 contracts.
 - **Issue**：`LCO-BE-01` / `LCO-FE-01` are the current owner-projection gaps; older
   `LEARNING_LOOP_AUDIT` remains historical evidence.
 - **Current state**：A1 has permanent ledger, full-arm exact-key complete-cluster measurement,
   append-only metric history, lifecycle recommendation, one evaluator + catch-up and durable
   failure identity. Public UI/API still shows artifacts/activity rather than those measured facts.
-  `paper_influence_enabled` and lifecycle automation remain default-off; authenticated owner trial
-  admission remains unavailable.
+  `paper_influence_enabled` and lifecycle automation remain default-off. A POST admission route
+  exists in code, but it is not yet aligned with the authenticated-owner contract/spec boundary;
+  it remains unavailable for an authorized experiment until that drift is repaired and proven.
 
 ## D7 · 系统监管 / Operator
 
