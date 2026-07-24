@@ -1,7 +1,7 @@
 """
 WebSocket endpoint for real-time frontend push.
 
-Two polling tiers run concurrently per connection:
+Two process-wide polling tiers feed every connected dashboard:
 
   ALERT tier  (100 ms) — highest priority
     • In-memory infra events: warning + critical (no DB — must poll the deque directly)
@@ -13,6 +13,7 @@ Two polling tiers run concurrently per connection:
   REGULAR tier (500 ms) — all other DB-backed data categories
     Pushes  {"type": "update", "changed": [...]}
 
+Fingerprint queries run once per backend process, not once per connection.
 Frontend reacts to both by calling queryClient.invalidateQueries() for the
 relevant React Query cache keys.  Actual data is still fetched via REST.
 
@@ -104,7 +105,59 @@ def _get_latest_infra_ts() -> str:
     return events[0]["created_at"] if events else ""
 
 
-async def _alert_loop(ws: WebSocket, loop: asyncio.AbstractEventLoop) -> None:
+class _RealtimeHub:
+    """Share one fingerprint sampler across every connected dashboard."""
+
+    def __init__(self) -> None:
+        self.clients: set[WebSocket] = set()
+        self.alert_task: asyncio.Task | None = None
+        self.regular_task: asyncio.Task | None = None
+        self.send_lock = asyncio.Lock()
+
+    async def add(self, ws: WebSocket) -> None:
+        self.clients.add(ws)
+        if self.alert_task is None or self.alert_task.done():
+            self.alert_task = asyncio.create_task(
+                _alert_loop(self, asyncio.get_running_loop()),
+                name="ws-alert-fingerprints",
+            )
+        if self.regular_task is None or self.regular_task.done():
+            self.regular_task = asyncio.create_task(
+                _regular_loop(self, asyncio.get_running_loop()),
+                name="ws-regular-fingerprints",
+            )
+
+    async def remove(self, ws: WebSocket) -> None:
+        self.clients.discard(ws)
+        if self.clients:
+            return
+        tasks = [
+            task
+            for task in (self.alert_task, self.regular_task)
+            if task is not None
+        ]
+        self.alert_task = None
+        self.regular_task = None
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def broadcast(self, payload: dict) -> None:
+        async with self.send_lock:
+            disconnected: list[WebSocket] = []
+            for client in tuple(self.clients):
+                try:
+                    await client.send_json(payload)
+                except Exception:  # noqa: BLE001 - disconnect is handled by route
+                    disconnected.append(client)
+            for client in disconnected:
+                self.clients.discard(client)
+
+
+_hub = _RealtimeHub()
+
+
+async def _alert_loop(hub: _RealtimeHub, loop: asyncio.AbstractEventLoop) -> None:
     """
     100 ms tier: infra events (in-memory) + collector failures (DB).
     Pushes {"type": "alert", "changed": [...]} immediately on new errors.
@@ -133,10 +186,10 @@ async def _alert_loop(ws: WebSocket, loop: asyncio.AbstractEventLoop) -> None:
             changed.append("infra_events")
         changed.extend(db_changed)
         if changed:
-            await ws.send_json({"type": "alert", "changed": changed})
+            await hub.broadcast({"type": "alert", "changed": changed})
 
 
-async def _regular_loop(ws: WebSocket, loop: asyncio.AbstractEventLoop) -> None:
+async def _regular_loop(hub: _RealtimeHub, loop: asyncio.AbstractEventLoop) -> None:
     """
     500 ms tier: all DB-backed data categories.
     Pushes {"type": "update", "changed": [...]} when fingerprints change.
@@ -147,7 +200,7 @@ async def _regular_loop(ws: WebSocket, loop: asyncio.AbstractEventLoop) -> None:
         current = await loop.run_in_executor(None, lambda: _run_fingerprints(_REGULAR_QUERIES))
         changed = [k for k in current if current[k] != last.get(k)]
         if changed:
-            await ws.send_json({"type": "update", "changed": changed})
+            await hub.broadcast({"type": "update", "changed": changed})
             last = dict(current)
 
 
@@ -165,12 +218,9 @@ async def ws_realtime(ws: WebSocket) -> None:
         current = await loop.run_in_executor(None, lambda: _run_fingerprints(_REGULAR_QUERIES))
         all_keys = list(current.keys()) + list(_ALERT_DB_QUERIES.keys()) + ["infra_events"]
         await ws.send_json({"type": "update", "changed": all_keys})
-
-        # ── Run both tiers concurrently until the client disconnects ──────────
-        await asyncio.gather(
-            _alert_loop(ws, loop),
-            _regular_loop(ws, loop),
-        )
+        await _hub.add(ws)
+        while True:
+            await ws.receive()
 
     except WebSocketDisconnect:
         pass
@@ -180,3 +230,5 @@ async def ws_realtime(ws: WebSocket) -> None:
             await ws.close()
         except Exception:
             pass
+    finally:
+        await _hub.remove(ws)

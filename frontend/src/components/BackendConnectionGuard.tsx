@@ -27,7 +27,6 @@ export default function BackendConnectionGuard() {
     queryKey: ['backend-ready'],
     queryFn: api.getReady,
     refetchInterval: POLL_MS,
-    refetchIntervalInBackground: true,
     retry: 1,
     staleTime: 0,
     meta: { background: true },
