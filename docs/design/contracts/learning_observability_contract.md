@@ -5,8 +5,10 @@
 > Projection schema: `lco-v1`.
 > Executable claim namespace: `LCO-*` in
 > `tests/specs/spec_learning_observability.py`.
-> Status: designed, not implemented. Every `LCO-*` claim is `missing` until a
-> behavior test proves the corresponding backend or frontend slice.
+> Status: partially implemented. The bounded, GET-only
+> `/api/analytics/learning-contribution` owner summary and its default Learning
+> tab are implemented; the remaining drill-down APIs, caching/performance
+> contract and complete accessibility proof remain targets.
 > Historical sequencing alias: "Learning A2 Observability". Current normative
 > documents must use the canonical name above because `A2` has unrelated meanings
 > elsewhere in the repository.
@@ -214,24 +216,34 @@ Rules:
   secrets are never returned wholesale. Projection fields use an explicit
   allowlist.
 
-## 6. Target Read APIs
+## 6. Read APIs
 
-All endpoints below are **target/not implemented** until `LCO-S01` is GREEN and
-the endpoint moves into the current endpoint index in `api_reference.md`.
+Only §6.1 has a current implementation. Sections §6.2 onward remain
+**target/not implemented** until their individual behavior is proved and the
+endpoint moves into the current endpoint index in `api_reference.md`.
 
 ### 6.1 `GET /api/analytics/learning-contribution`
 
 Purpose: bounded summary by path/current experiment, suitable for the default
 Contribution tab.
 
-Query parameters:
+Current minimal slice:
 
-| Parameter | Contract |
-| --- | --- |
-| `path_id` | optional exact registry path |
-| `status` | optional experiment status enum |
-| `limit` | default 20, maximum 100 |
-| `offset` | default 0, maximum 10,000 |
+- returns additive `lco-v1` fields while preserving the legacy activity fields
+  for compatible consumers;
+- reads at most 20 current open experiments and projects registry path
+  capabilities, current identity, the latest historical verdict, cohort
+  integrity, evaluator health and recommendation-only lifecycle state;
+- performs no evaluation, lifecycle transition, admission or config mutation;
+- returns an honest `availability=unavailable` envelope when the new projection
+  fails rather than converting failure into an empty/zero contribution;
+- keeps `mutation_available=false`; there is no owner mutation route or action
+  in this slice.
+
+The optional `path_id`, `status`, `limit` and `offset` query contract, TTL cache
+and `Server-Timing` proof remain target work under `LCO-S01`, `LCO-C03` and
+`LCO-C06`. The current server-side bound is fixed and cannot be enlarged by a
+client.
 
 Each item contains:
 
@@ -638,24 +650,24 @@ states. This is adjacent UI honesty work, not contribution authority.
 
 ## 11. Executable Claims
 
-| Claim | Level | Requirement | Initial status |
+| Claim | Level | Requirement | Current status |
 | --- | --- | --- | --- |
 | LCO-S01 | L2a | Typed GET-only `lco-v1` routes are indexed; no LCO mutation exists | missing |
-| LCO-B01 | L2b | Cohorts expose raw exposures, complete treatment/control assignment units, member/selected counts and stable exclusion/invalid reasons | missing |
+| LCO-B01 | L2b | Cohorts expose raw exposures, complete treatment/control assignment units, member/selected counts and stable exclusion/invalid reasons | implemented |
 | LCO-B02 | L2b | Canonical, fallback, matching mirror, allocation inference and proven disagreement are distinct; conflicts never become evidence | missing |
-| LCO-B03 | L2b | Current metric/cohort identity is separate from append-only historical verdict versions | missing |
-| LCO-B04 | L2b | Current job status, last success, next due, sanitized durable last failure, watermark and catch-up due state remain distinct; raw stored errors never leave the backend | missing |
-| LCO-C01 | L2c | `admit_trial` is recommendation-only with `mutation_available=false` | missing |
+| LCO-B03 | L2b | Current metric/cohort identity is separate from append-only historical verdict versions | implemented |
+| LCO-B04 | L2b | Current job status, last success, next due, sanitized durable last failure, watermark and catch-up due state remain distinct; raw stored errors never leave the backend | implemented |
+| LCO-C01 | L2c | `admit_trial` is recommendation-only with `mutation_available=false` | implemented |
 | LCO-C02 | L2c | UI contribution state comes only from backend measurement facts; counts and PnL cannot imply effectiveness | missing |
 | LCO-C03 | L2c | Reads perform no writes/evaluation/lifecycle/authority action and blocking work stays off the event loop | missing |
-| LCO-S02 | L2a | LCO projection/routes have no Risk, Execution, exchange, secrets, permission or live imports | missing |
-| LCO-B05 | L2b | consumer-wired, Settings-supported and measurement-supported remain separate path capabilities | missing |
+| LCO-S02 | L2a | LCO projection/routes have no Risk, Execution, exchange, secrets, permission or live imports | implemented |
+| LCO-B05 | L2b | consumer-wired, Settings-supported and measurement-supported remain separate path capabilities | implemented |
 | LCO-C04 | L2c | loading, genuine empty, unavailable, stale and partial states remain distinct; fetch failure never becomes zero/empty | missing |
 | LCO-C05 | L2c | desktop/mobile layouts and keyboard/ARIA behavior preserve access to tables, tabs and drawers | missing |
 | LCO-C06 | L2c | server caps, monotonic TTL, `Server-Timing` and direct cold/warm latency evidence enforce the performance contract | missing |
 
-Every claim begins as strict xfail. Implementation replaces the placeholder with a
-real behavior test before changing status to `implemented`. Source-string presence
+Unimplemented claims remain strict xfail. A claim changes to `implemented` only
+after its placeholder is replaced by a behavioral test. Source-string presence
 alone cannot make a behavioral claim GREEN.
 
 ## 12. Acceptance Matrix

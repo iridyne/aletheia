@@ -1,17 +1,22 @@
-"""Executable target claims for Learning Contribution Observability.
+"""Executable claims for Learning Contribution Observability.
 
 The target contract is
-docs/design/contracts/learning_observability_contract.md. These strict-xfail
-placeholders keep the unimplemented owner-facing projection visible in the SDD
-matrix. An implementation must replace each placeholder with a real behavioral
-test before changing its status to implemented.
+docs/design/contracts/learning_observability_contract.md. Implemented slices use
+behavioral tests; remaining target slices stay strict-xfail so a partial owner
+projection cannot be mistaken for the full workbench.
 """
 
 from __future__ import annotations
 
+import ast
+import inspect
+import json
+import textwrap
+
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
+from tests.test_learning_read_models import _seed_current_experiment, _setup_env
 
 
 _CONTRACT = "learning_observability"
@@ -34,15 +39,30 @@ def test_lco_get_only_projection_is_not_implemented():
     pytest.fail("LCO-S01 target behavior is intentionally missing")
 
 
-@_missing("LCO-B01")
 @spec_claim(SpecClaim(
     "LCO-B01", _CONTRACT, "§6.1 cohort integrity", "L2b",
     "The projection distinguishes raw exposures, complete treatment/control assignment units, "
     "member and selected counts, exclusions, and invalid reasons.",
-    status="missing",
+    status="implemented",
 ))
-def test_lco_cluster_integrity_projection_is_not_implemented():
-    pytest.fail("LCO-B01 target behavior is intentionally missing")
+def test_lco_cluster_integrity_projection_is_distinct(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    item = build_learning_contribution_projection()["items"][0]
+    assert item["samples"] == {
+        "raw_exposures": 18,
+        "treatment_assignment_units": 4,
+        "control_assignment_units": 5,
+        "required_per_arm": 10,
+        "complete_assignment_units": 9,
+        "cluster_members": 27,
+        "selected_members": 7,
+    }
+    assert item["integrity"]["exclusion_reasons"] == {"unsettled": 2}
+    assert item["integrity"]["invalid_reasons"] == {}
 
 
 @_missing("LCO-B02")
@@ -56,37 +76,77 @@ def test_lco_outcome_provenance_projection_is_not_implemented():
     pytest.fail("LCO-B02 target behavior is intentionally missing")
 
 
-@_missing("LCO-B03")
 @spec_claim(SpecClaim(
     "LCO-B03", _CONTRACT, "§3.3 measurement identity", "L2b",
     "The current identity-matched metric/cohort verdict is separate from append-only historical "
     "metric, epoch, stage, horizon, outcome-contract and build versions.",
-    status="missing",
+    status="implemented",
 ))
-def test_lco_current_and_historical_verdicts_are_not_implemented():
-    pytest.fail("LCO-B03 target behavior is intentionally missing")
+def test_lco_current_and_historical_verdicts_are_separate(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+
+    from aletheia.learning.read_models import build_learning_contribution_projection
+    from aletheia.storage.sqlite import get_db
+
+    get_db().execute(
+        "UPDATE learning_contribution_verdicts SET code_commit='old-commit' "
+        "WHERE experiment_id=?",
+        (experiment_id,),
+    )
+    get_db().commit()
+    item = build_learning_contribution_projection()["items"][0]
+    assert item["measurement"]["state"] == "not_measured"
+    assert item["measurement"]["reason"] == "code_commit_mismatch"
+    assert item["measurement"]["delta"] is None
+    assert item["latest_historical_measurement"]["state"] == "insufficient_data"
+    assert item["latest_historical_measurement"]["code_commit"] == "old-commit"
+    assert item["latest_historical_measurement"]["current"] is False
 
 
-@_missing("LCO-B04")
 @spec_claim(SpecClaim(
     "LCO-B04", _CONTRACT, "§6.6 operational health", "L2b",
     "Current job state, last success, next due, sanitized durable last failure, input watermark and "
     "catch-up due state are projected independently; raw stored error text never leaves the backend.",
-    status="missing",
+    status="implemented",
 ))
-def test_lco_scheduler_recovery_projection_is_not_implemented():
-    pytest.fail("LCO-B04 target behavior is intentionally missing")
+def test_lco_scheduler_recovery_projection_is_sanitized(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    result = build_learning_contribution_projection()
+    evaluator = result["operations"]["evaluator"]
+    assert evaluator["current_status"] == "healthy"
+    assert evaluator["last_succeeded_at"] == "2026-07-24T01:00:00+00:00"
+    assert evaluator["input_watermark"] == "old-window"
+    assert evaluator["last_failure_code"] == "database_unavailable"
+    assert "last_error" not in evaluator
+    assert "last_failure_reason" not in evaluator
+    assert "/private/local/path" not in json.dumps(result)
 
 
-@_missing("LCO-C01")
 @spec_claim(SpecClaim(
     "LCO-C01", _CONTRACT, "§1 authority boundary", "L2c",
     "admit_trial is exposed only as a read-only recommendation with mutation_available=false and "
     "never implies readiness or owner authentication.",
-    status="missing",
+    status="implemented",
 ))
-def test_lco_admission_recommendation_boundary_is_not_implemented():
-    pytest.fail("LCO-C01 target behavior is intentionally missing")
+def test_lco_admission_recommendation_is_read_only(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    lifecycle = build_learning_contribution_projection()["items"][0]["lifecycle"]
+    assert lifecycle["recommended_action"] == "admit_trial"
+    assert lifecycle["authority_enabled"] is False
+    assert lifecycle["authority_block_reason"] == "read_only_projection"
+    assert lifecycle["mutation_available"] is False
+    assert lifecycle["mutation_unavailable_reason"] == (
+        "authenticated_owner_admission_unavailable"
+    )
 
 
 @_missing("LCO-C02")
@@ -111,26 +171,70 @@ def test_lco_bounded_side_effect_free_reads_are_not_implemented():
     pytest.fail("LCO-C03 target behavior is intentionally missing")
 
 
-@_missing("LCO-S02")
 @spec_claim(SpecClaim(
     "LCO-S02", _CONTRACT, "§1 excluded trust boundaries", "L2a",
     "The observability projection and routes import no Risk, Execution, exchange, secrets, "
     "permission or live modules.",
-    status="missing",
+    status="implemented",
 ))
-def test_lco_forbidden_import_boundary_is_not_implemented():
-    pytest.fail("LCO-S02 target behavior is intentionally missing")
+def test_lco_forbidden_import_boundary():
+    import aletheia.learning.read_models as read_models
+    from aletheia.server.routes.analytics import get_learning_contribution
+
+    forbidden = (
+        "aletheia.risk",
+        "aletheia.execution",
+        "aletheia.exchanges",
+        "aletheia.config.secrets",
+        "aletheia.agent_runtime.permissions",
+        "aletheia.server.routes.live",
+    )
+    trees = (
+        ast.parse(inspect.getsource(read_models)),
+        ast.parse(textwrap.dedent(inspect.getsource(get_learning_contribution))),
+    )
+    imported: set[str] = set()
+    for tree in trees:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+    assert not {
+        module
+        for module in imported
+        if any(module == root or module.startswith(f"{root}.") for root in forbidden)
+    }
 
 
-@_missing("LCO-B05")
 @spec_claim(SpecClaim(
     "LCO-B05", _CONTRACT, "§6.2 path capability", "L2b",
     "Consumer wiring, Settings support and measurement support are independently projected and "
     "cannot collapse into one supported flag.",
-    status="missing",
+    status="implemented",
 ))
-def test_lco_path_capability_projection_is_not_implemented():
-    pytest.fail("LCO-B05 target behavior is intentionally missing")
+def test_lco_path_capabilities_remain_independent(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    paths = {
+        path["path_id"]: path
+        for path in build_learning_contribution_projection()["paths"]
+    }
+    universe = paths["universe_family_calibration"]
+    assert universe["consumer_wired"] is True
+    assert universe["settings_supported"] is True
+    assert universe["measurement_supported"] is True
+    assert any(
+        len({
+            path["consumer_wired"],
+            path["settings_supported"],
+            path["measurement_supported"],
+        }) > 1
+        for path in paths.values()
+    )
 
 
 @_missing("LCO-C04")

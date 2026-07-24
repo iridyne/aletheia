@@ -1754,10 +1754,11 @@ def get_learning_funnel():
 
 @router.get("/learning-contribution")
 def get_learning_contribution():
-    """Read-only A/B pipeline observability: exposure counts, verdict distribution, job health.
+    """Read-only measured contribution plus compatibility activity aggregates.
 
-    Does not affect AI decisions. Surfaces the data needed to assess whether the
-    Learning contribution measurement pipeline is healthy end-to-end.
+    The ``lco-v1`` fields distinguish current measurement, integrity, operations
+    and authority. Legacy aggregate fields remain temporarily for existing
+    consumers and are activity context, not evidence of contribution.
     """
     from aletheia.storage.sqlite import get_db
     from aletheia.learning.control import get_learning_job_health
@@ -1799,8 +1800,8 @@ def get_learning_contribution():
                 "latest_at": r["latest_at"],
             })
             total_verdicts += int(r["n"])
-    except Exception as e:
-        verdicts_error = str(e)
+    except Exception:
+        verdicts_error = "read_failed"
         total_verdicts = None  # type: ignore[assignment]
 
     # Experiment stage distribution
@@ -1852,11 +1853,14 @@ def get_learning_contribution():
     ):
         try:
             h = get_learning_job_health(job_id)
-            job_health[job_id] = h.model_dump()
+            health = h.model_dump()
+            health.pop("last_error", None)
+            health.pop("last_failure_reason", None)
+            job_health[job_id] = health
         except Exception:
             job_health[job_id] = {"status": "unknown"}
 
-    return {
+    legacy = {
         "exposures_by_path": exposures_by_path,
         "verdicts": {
             "total": total_verdicts,
@@ -1872,3 +1876,18 @@ def get_learning_contribution():
         },
         "job_health": job_health,
     }
+    try:
+        from aletheia.learning.read_models import (
+            build_learning_contribution_projection,
+        )
+
+        projection = build_learning_contribution_projection()
+    except Exception:
+        from aletheia.learning.read_models import (
+            unavailable_learning_contribution_projection,
+        )
+
+        projection = unavailable_learning_contribution_projection(
+            "projection_read_failed"
+        )
+    return {**legacy, **projection}

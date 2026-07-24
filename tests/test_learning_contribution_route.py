@@ -6,7 +6,7 @@ into total=0 via `except Exception: pass`.
 
 Assertions:
 - Persisted verdict counts are returned by stored `verdict` value.
-- A schema/read failure cannot produce total=0 (it raises, not degrades silently).
+- A schema/read failure cannot produce total=0 and exposes only a stable code.
 - GET causes no Learning table mutation.
 """
 
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def _setup_env(tmp_path: Path, monkeypatch) -> None:
@@ -98,15 +99,57 @@ async def test_db_error_is_not_silently_zero(tmp_path, monkeypatch):
     from httpx import ASGITransport, AsyncClient
     from aletheia.server.app import app
 
-    # The route must not swallow DB errors — the error should appear in the response
-    # so the dashboard can show it rather than silently displaying total=0.
+    # The route must not turn DB errors into zero. It exposes a stable code rather
+    # than returning raw exception text or local paths.
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/api/analytics/learning-contribution")
     assert resp.status_code == 200
     body = resp.json()
     assert body["verdicts"]["total"] is None
-    assert "query_error" in body["verdicts"]
-    assert "simulated schema error" in body["verdicts"]["query_error"]
+    assert body["verdicts"]["query_error"] == "read_failed"
+    assert "simulated schema error" not in str(body)
+
+
+@pytest.mark.anyio
+async def test_legacy_job_health_does_not_leak_raw_errors(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    import aletheia.learning.control as control
+    import aletheia.learning.read_models as read_models
+
+    raw = "/private/local/path: sqlite OperationalError"
+    monkeypatch.setattr(
+        control,
+        "get_learning_job_health",
+        lambda _job_id: SimpleNamespace(model_dump=lambda: {
+            "status": "degraded",
+            "last_error": raw,
+            "last_failure_reason": raw,
+        }),
+    )
+    monkeypatch.setattr(
+        read_models,
+        "build_learning_contribution_projection",
+        lambda: read_models.unavailable_learning_contribution_projection(
+            "projection_read_failed"
+        ),
+    )
+
+    from httpx import ASGITransport, AsyncClient
+    from aletheia.server.app import app
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/api/analytics/learning-contribution")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert raw not in str(body)
+    assert all(
+        "last_error" not in health and "last_failure_reason" not in health
+        for health in body["job_health"].values()
+    )
 
 
 @pytest.fixture

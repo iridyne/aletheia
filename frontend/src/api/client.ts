@@ -2,6 +2,122 @@ import type { InfraEvent, SystemStatus, ThesisLineageRecord } from '../types'
 
 const BASE = '/api'
 
+export interface LearningContributionProjection {
+  schema_version: 'lco-v1'
+  generated_at: string
+  availability: 'available' | 'partial' | 'unavailable'
+  unavailable_reason: string | null
+  data_freshness: {
+    last_evaluated_at: string | null
+    age_sec: number | null
+    stale_after_sec: number
+    state: 'fresh' | 'stale' | 'not_available' | 'unavailable'
+  }
+  paths: Array<{
+    path_id: string
+    producer: string
+    consumer: string
+    consumer_wired: boolean
+    settings_supported: boolean
+    measurement_supported: boolean
+    authority: string
+    allowed_effects: string[]
+    fallback: string
+    outcome_source: string
+  }>
+  items: Array<{
+    path_id: string
+    hypothesis_id: string
+    experiment_id: string
+    stage: string
+    experiment_status: string
+    allocation_pct: number
+    current_identity: {
+      policy_epoch: string | null
+      target_horizon: string
+      outcome_contract_version: string
+      metric_version: string
+      code_commit: string | null
+      matches_running_cohort: boolean
+      mismatch_reason: string | null
+    }
+    measurement: {
+      state: 'not_measured' | 'insufficient_data' | 'neutral' | 'positive' | 'negative' | 'invalid'
+      reason: string | null
+      baseline: number | null
+      observed: number | null
+      delta: number | null
+      confidence_low: number | null
+      confidence_high: number | null
+      evaluated_at: string | null
+      window_start: string | null
+      window_end: string | null
+    }
+    samples: {
+      raw_exposures: number
+      treatment_assignment_units: number
+      control_assignment_units: number
+      required_per_arm: number
+      complete_assignment_units: number
+      cluster_members: number
+      selected_members: number
+    }
+    integrity: {
+      outcome_source_member_counts: Record<string, number>
+      allocation_selection_source_member_counts: Record<string, number>
+      matching_mirror_rows: number
+      exclusion_reasons: Record<string, number>
+      invalid_reasons: Record<string, number>
+      conflict_count: number
+      harm_breached: boolean
+      breach_reasons: string[]
+    }
+    lifecycle: {
+      recommended_action: string
+      recommendation_reason: string | null
+      authority_enabled: boolean
+      authority_block_reason: string | null
+      mutation_available: false
+      mutation_unavailable_reason: string
+    }
+    latest_historical_measurement: {
+      verdict_id: string
+      state: string
+      reason: string | null
+      policy_epoch: string | null
+      stage: string | null
+      target_horizon: string | null
+      outcome_contract_version: string | null
+      metric_version: string | null
+      code_commit: string | null
+      current: boolean
+      mismatch_reason: string | null
+    } | null
+  }>
+  operations: {
+    config: {
+      contribution_evaluation_enabled: boolean
+      autonomous_learning_enabled: boolean
+      lifecycle_automation_enabled: boolean
+      paper_influence_enabled: boolean
+    }
+    evaluator: {
+      job_id: string
+      current_status: string
+      last_started_at: string | null
+      last_succeeded_at: string | null
+      next_due_at: string | null
+      input_watermark: string | null
+      backlog_count: number
+      oldest_backlog_at: string | null
+      consecutive_failures: number
+      last_failed_at: string | null
+      last_failure_code: string | null
+      catchup_due: boolean
+    }
+  } | null
+}
+
 function cleanErrorText(value: unknown): string | null {
   if (value == null) return null
   const text = String(value).trim()
@@ -710,6 +826,8 @@ export const api = {
     serenity_opportunities_active: number
     contradictions: { checked: boolean; count: number; items: any[]; note: string }
   }>('/analytics/learning-funnel'),
+  getLearningContribution: () =>
+    fetchJson<LearningContributionProjection>('/analytics/learning-contribution'),
   getKillSwitch: () => fetchJson<{ active: boolean }>('/risk/kill-switch'),
   // Releasing the brake requires confirm_release=true (backend returns 422 otherwise).
   setKillSwitch: (active: boolean, reason = '', confirmRelease = false) =>

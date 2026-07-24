@@ -111,21 +111,20 @@ def test_learning_contribution_route_returns_verdict_counts(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# LE-V05 — DB read failure produces query_error, not silent total=0
+# LE-V05 — DB read failure produces stable query_error, not silent total=0
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
         "LE-V05", "learning_evolution", "§7 learning-contribution route error honesty", "L2b",
-        "A SQLite read failure on the verdicts query must surface as query_error in the "
-        "response and must NOT produce total=0, which would be indistinguishable from "
-        "'no verdicts exist'. Fixes the silent false-zero fallback from issue #322.",
+        "A SQLite read failure on the verdicts query must surface as a stable query_error "
+        "code, must NOT produce total=0 and must not return raw exception text.",
         status="implemented",
     ),
 )
 def test_learning_contribution_route_error_is_not_silent_zero():
-    """LE-V05: a DB error in the verdicts query produces query_error=..., total=None.
+    """LE-V05: a DB error produces query_error=read_failed and total=None.
 
     Calls the route function directly with a DB whose verdicts table is intentionally
     absent to simulate a schema/read failure.
@@ -161,3 +160,5 @@ def test_learning_contribution_route_error_is_not_silent_zero():
         f"Expected 'query_error' key when DB read fails — silent false-zero must be gone. "
         f"Got verdicts={verdicts}"
     )
+    assert verdicts["query_error"] == "read_failed"
+    assert "no such table" not in str(result)
