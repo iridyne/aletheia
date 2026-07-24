@@ -29,7 +29,7 @@ This is the main implementation authority after governance and product scope. Re
 | API route behavior | `api/api_reference.md` |
 | SQLite tables or persistence semantics | `data/data_model.md` and `contracts/persistence_recovery_contract.md` |
 | Opportunity → Ranker → Operator → Proposal lifecycle | `contracts/decision_lifecycle_contract.md`, then `contracts/filter_evidence_contract.md` and `api/api_reference.md` |
-| Learning or knowledge behavior | `contracts/learning_contract.md`, `contracts/learning_evolution_contract.md`, `contracts/learning_observability_contract.md`, `contracts/knowledge_contract.md`; delivery sequence in `../plans/learning/learning_positive_contribution_implementation_plan_2026-07-12.md` |
+| Learning or knowledge behavior | `contracts/learning_contract.md`, `contracts/learning_evolution_contract.md`, `contracts/learning_observability_contract.md`, `contracts/knowledge_contract.md`; total delivery sequence in `../plans/learning/learning_positive_contribution_implementation_plan_2026-07-12.md`; first-path runbook in `../plans/learning/universe_family_calibration_execution_plan_2026-07-24.md` |
 | Scheduler behavior | `contracts/scheduler_contract.md` |
 | Frontend structure | `frontend/ui_design_system.md`, `frontend/webui_page_map.md` |
 
