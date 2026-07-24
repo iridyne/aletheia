@@ -484,6 +484,96 @@ async def test_tunnel_guard_protects_operator_command_surfaces(client):
         assert r.status_code != 401, f"{path} should pass auth guard with token, got {r.status_code}"
 
 
+@pytest.mark.anyio
+async def test_tunnel_guard_protects_learning_authority_mutations_only(client):
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.secrets import set_secret
+
+    cfg = load_config()
+    cfg.tunnel.enabled = True
+    save_config(cfg)
+    set_secret("tunnel_api_token", "LEARNINGOWNER42")
+
+    config = await client.post("/api/settings/learning", json={})
+    admission = await client.post(
+        "/api/settings/learning/experiments/example/admit-trial",
+        json={},
+    )
+    assert config.status_code == 401
+    assert admission.status_code == 401
+
+    headers = {"X-Aletheia-Token": "LEARNINGOWNER42"}
+    assert (await client.post(
+        "/api/settings/learning",
+        json={},
+        headers=headers,
+    )).status_code != 401
+    assert (await client.post(
+        "/api/settings/learning/experiments/example/admit-trial",
+        json={},
+        headers=headers,
+    )).status_code != 401
+
+    # Read-only experiment inspection is not an authority mutation and remains
+    # accessible without the tunnel credential.
+    read = await client.get("/api/settings/learning/experiments/example")
+    assert read.status_code != 401
+
+
+@pytest.mark.anyio
+async def test_trial_admission_requires_explicit_confirmation(client):
+    base = "/api/settings/learning/experiments/example/admit-trial"
+    payload = {
+        "verdict_id": "verdict",
+        "expected_policy_epoch": "epoch",
+        "reason": "begin bounded paper trial",
+    }
+    missing = await client.post(base, json=payload)
+    denied = await client.post(base, json={**payload, "confirm_admission": False})
+    assert missing.status_code == 422
+    assert denied.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_trial_admission_route_passes_expected_epoch_not_owner_text(
+    client,
+    monkeypatch,
+):
+    import aletheia.learning.lifecycle as lifecycle
+
+    captured = {}
+
+    def admit(experiment_id, **kwargs):
+        captured.update({"experiment_id": experiment_id, **kwargs})
+        return lifecycle.LifecycleResult(
+            "admit_trial",
+            "admit_trial",
+            "owner_admitted:test",
+            experiment_id,
+            successor_experiment_id="successor",
+            verdict_id=kwargs["verdict_id"],
+        )
+
+    monkeypatch.setattr(lifecycle, "_execute_trial_admission", admit)
+    response = await client.post(
+        "/api/settings/learning/experiments/experiment/admit-trial",
+        json={
+            "verdict_id": "verdict",
+            "expected_policy_epoch": "epoch-current",
+            "reason": "begin bounded paper trial",
+            "confirm_admission": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured == {
+        "experiment_id": "experiment",
+        "verdict_id": "verdict",
+        "expected_policy_epoch": "epoch-current",
+        "reason": "begin bounded paper trial",
+    }
+
+
 def test_restart_audit_actor_source_maps_automated_triggers():
     """Regression #132: automated restart triggers are not recorded as actor='human'."""
     from aletheia.server.routes.gateway import _restart_audit_actor_source

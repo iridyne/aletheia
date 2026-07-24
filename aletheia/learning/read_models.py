@@ -7,7 +7,7 @@ import json
 from typing import Any
 
 from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
-from aletheia.learning.experiments import _policy_epoch
+from aletheia.learning.experiments import current_policy_epoch
 from aletheia.learning.registry import LEARNING_PATHS
 from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.storage.sqlite import get_db
@@ -134,11 +134,13 @@ def _project_experiment(
 ) -> dict[str, Any]:
     path_id = str(row.get("path_id") or "")
     try:
-        policy_epoch = _policy_epoch(path_id)
-        policy_reason = None
+        policy_epoch = current_policy_epoch(path_id)
+        policy_reason = (
+            None if policy_epoch is not None else "current_policy_epoch_unavailable"
+        )
     except Exception:
         policy_epoch = None
-        policy_reason = "policy_epoch_unavailable"
+        policy_reason = "current_policy_epoch_unavailable"
 
     mismatch = policy_reason or _identity_mismatch(
         row,
@@ -162,6 +164,13 @@ def _project_experiment(
         measurement_reason,
         stage=str(row.get("stage") or ""),
     )
+    mutation_reason = "admission_not_recommended"
+    mutation_available = False
+    if recommended == "admit_trial" and current:
+        from aletheia.learning.lifecycle import trial_admission_gate_reason
+
+        mutation_reason = trial_admission_gate_reason(path_id)
+        mutation_available = mutation_reason is None
 
     source_counts = _safe_int_dict(metrics.get("outcome_source_member_counts"))
     allocation_sources = _safe_int_dict(
@@ -238,10 +247,8 @@ def _project_experiment(
             "recommendation_reason": measurement_reason,
             "authority_enabled": False,
             "authority_block_reason": "read_only_projection",
-            "mutation_available": False,
-            "mutation_unavailable_reason": (
-                "authenticated_owner_admission_unavailable"
-            ),
+            "mutation_available": mutation_available,
+            "mutation_unavailable_reason": mutation_reason,
         },
         "latest_historical_measurement": {
             "verdict_id": row.get("verdict_id"),

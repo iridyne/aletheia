@@ -235,6 +235,8 @@ Current minimal slice:
   capabilities, current identity, the latest historical verdict, cohort
   integrity, evaluator health and recommendation-only lifecycle state;
 - performs no evaluation, lifecycle transition, admission or config mutation;
+- resolves only an already-open matching policy epoch on GET; epoch creation or
+  rotation remains confined to behavior-producing and owner-mutation paths;
 - returns an honest `availability=unavailable` envelope when the new projection
   fails rather than converting failure into an empty/zero contribution;
 - keeps `mutation_available=false`; there is no owner mutation route or action
@@ -301,14 +303,20 @@ Each item contains:
     "recommendation_reason": "...",
     "authority_enabled": false,
     "authority_block_reason": "experiment_stage_not_paper",
-    "mutation_available": false,
-    "mutation_unavailable_reason": "authenticated_owner_admission_unavailable"
+    "mutation_available": true,
+    "mutation_unavailable_reason": null
   }
 }
 ```
 
 Counts are named by statistical unit. `raw_exposures` and `cluster_members` must
 never be displayed as treatment/control sample size.
+
+`mutation_available=true` is readiness information only. It requires a current
+identity-matched `admit_trial` recommendation plus all default-closed paper
+gates. This observability surface remains GET-only and renders no mutation
+button; the separately scoped protected Settings route owns the explicit owner
+action.
 
 `matching_mirror_rows` is the persisted count of Universe rows that matched a
 canonical outcome identity. It does not claim every row reached a settled
@@ -657,7 +665,7 @@ states. This is adjacent UI honesty work, not contribution authority.
 | LCO-B02 | L2b | Canonical, fallback, matching mirror, allocation inference and proven disagreement are distinct; conflicts never become evidence | missing |
 | LCO-B03 | L2b | Current metric/cohort identity is separate from append-only historical verdict versions | implemented |
 | LCO-B04 | L2b | Current job status, last success, next due, sanitized durable last failure, watermark and catch-up due state remain distinct; raw stored errors never leave the backend | implemented |
-| LCO-C01 | L2c | `admit_trial` is recommendation-only with `mutation_available=false` | implemented |
+| LCO-C01 | L2c | Observability remains read-only; protected owner admission readiness requires every paper gate | implemented |
 | LCO-C02 | L2c | UI contribution state comes only from backend measurement facts; counts and PnL cannot imply effectiveness | missing |
 | LCO-C03 | L2c | Reads perform no writes/evaluation/lifecycle/authority action and blocking work stays off the event loop | missing |
 | LCO-S02 | L2a | LCO projection/routes have no Risk, Execution, exchange, secrets, permission or live imports | implemented |

@@ -30,7 +30,7 @@ from aletheia.learning.models import (
     LearningHypothesis,
     LearningLifecycleEvent,
 )
-from aletheia.learning.experiments import _code_fingerprint
+from aletheia.learning.experiments import _code_fingerprint, _policy_epoch
 from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
@@ -181,24 +181,19 @@ def _execute_trial_admission(
     experiment_id: str,
     *,
     verdict_id: str,
-    current_policy_epoch: str,
-    admitted_by: str,
+    expected_policy_epoch: str,
     reason: str,
 ) -> LifecycleResult:
-    """Shadow-to-paper_10 transition callable only from the authenticated HTTP route.
+    """Shadow-to-paper_10 transition callable only from the protected owner route.
 
     admit_shadow_trial() remains fail-closed for all other callers (spec LE-L04).
+    The current epoch is derived server-side; caller input is optimistic
+    concurrency evidence only and can never define measurement identity.
     """
-    del reason  # reserved for audit log; not used in gate logic
     experiment_row = get_record("learning_experiments", experiment_id)
     if experiment_row is None:
         return LifecycleResult("hold", "admit_trial", "experiment_not_found", experiment_id, verdict_id=verdict_id)
     experiment = LearningExperiment(**experiment_row)
-    if experiment.stage != "shadow":
-        return LifecycleResult("hold", "admit_trial", "experiment_not_shadow_stage", experiment_id, verdict_id=verdict_id)
-    if experiment.status != "active":
-        return LifecycleResult("hold", "admit_trial", "experiment_not_active", experiment_id, verdict_id=verdict_id)
-
     hypothesis_row = get_record("learning_hypotheses", experiment.hypothesis_id)
     if hypothesis_row is None:
         return LifecycleResult("hold", "admit_trial", "hypothesis_not_found", experiment_id, verdict_id=verdict_id)
@@ -206,7 +201,40 @@ def _execute_trial_admission(
     if hypothesis.path_id not in SUPPORTED_PATH_IDS:
         return LifecycleResult("hold", "admit_trial", "unsupported_learning_path", experiment_id, verdict_id=verdict_id)
 
-    gate_reason = _safety_action_gate_reason()
+    dedup_key = f"{verdict_id}:shadow:admit_trial"
+    existing = get_lifecycle_event_by_dedup_key(dedup_key)
+    if existing is not None:
+        if str(existing.get("experiment_id") or "") != experiment_id:
+            return LifecycleResult(
+                "hold",
+                "admit_trial",
+                "verdict_experiment_mismatch",
+                experiment_id,
+                verdict_id=verdict_id,
+            )
+        return LifecycleResult(
+            "admit_trial",
+            "admit_trial",
+            "already_transitioned",
+            experiment.experiment_id,
+            existing.get("successor_experiment_id"),
+            verdict_id,
+        )
+    if experiment.stage != "shadow":
+        return LifecycleResult("hold", "admit_trial", "experiment_not_shadow_stage", experiment_id, verdict_id=verdict_id)
+    if experiment.status != "active":
+        return LifecycleResult("hold", "admit_trial", "experiment_not_active", experiment_id, verdict_id=verdict_id)
+
+    current_policy_epoch = _policy_epoch(hypothesis.path_id)
+    if expected_policy_epoch != current_policy_epoch:
+        return LifecycleResult(
+            "hold",
+            "admit_trial",
+            "policy_epoch_changed",
+            experiment_id,
+            verdict_id=verdict_id,
+        )
+    gate_reason = trial_admission_gate_reason(hypothesis.path_id)
     if gate_reason is not None:
         return LifecycleResult("hold", "admit_trial", gate_reason, experiment_id, verdict_id=verdict_id)
 
@@ -258,8 +286,7 @@ def _execute_trial_admission(
         stage_generation=int(experiment.stage_generation) + 1,
         started_at=now,
     )
-    admitted_reason = f"owner_admitted:{admitted_by[:40]}"
-    dedup_key = f"{verdict_id}:shadow:admit_trial"
+    admitted_reason = f"owner_admitted:{reason[:200]}"
     event = LearningLifecycleEvent(
         dedup_key=dedup_key,
         hypothesis_id=hypothesis.hypothesis_id,
@@ -287,7 +314,7 @@ def _execute_trial_admission(
             (now, experiment.experiment_id),
         )
         insert_experiment(successor)
-    _write_lifecycle_audit(event)
+    _write_lifecycle_audit(event, actor="human", source="dashboard")
     return LifecycleResult(
         "admit_trial", "admit_trial", admitted_reason,
         experiment.experiment_id, successor.experiment_id, verdict_id,
@@ -312,6 +339,19 @@ def _promotion_gate_reason(path_id: str) -> str | None:
         return "paper_influence_disabled"
     if path_id not in set(learning.paper_influence_paths or []):
         return "path_not_allowlisted"
+    return None
+
+
+def trial_admission_gate_reason(path_id: str) -> str | None:
+    """Return the first default-closed gate blocking owner trial admission."""
+    gate_reason = _promotion_gate_reason(path_id)
+    if gate_reason is not None:
+        return gate_reason
+    try:
+        if not bool(load_config().learning.contribution_evaluation_enabled):
+            return "contribution_evaluation_disabled"
+    except Exception:
+        return "learning_config_unavailable"
     return None
 
 
@@ -677,12 +717,17 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _write_lifecycle_audit(event: LearningLifecycleEvent) -> None:
+def _write_lifecycle_audit(
+    event: LearningLifecycleEvent,
+    *,
+    actor: str = "learning_lifecycle_controller",
+    source: str = "learning_lifecycle",
+) -> None:
     try:
         from aletheia.files.jsonl import write_audit
         write_audit({
-            "actor": "learning_lifecycle_controller",
-            "source": "learning_lifecycle",
+            "actor": actor,
+            "source": source,
             "event_type": "learning_lifecycle_transition",
             "entity_type": "learning_experiment",
             "entity_id": event.experiment_id,

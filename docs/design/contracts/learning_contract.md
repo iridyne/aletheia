@@ -139,12 +139,15 @@ loop contributes positively. Current behavior has these contract-relevant limita
   prompt without creating an unlinked exposure. Candidate-context contract changes are included in
   the Operator Learning policy epoch so pre-change and post-change contribution evidence cannot pool.
 - the scheduled lifecycle controller cannot admit a shadow experiment to `paper_10`; it can only
-  recommend a future authenticated owner admission. No authenticated owner mutation route exists
-  yet, so `admit_shadow_trial` fails closed even when passed the string `owner`. Lifecycle automation
-  and paper influence remain off by default.
-- the measured ledger, cohort inspection, lifecycle inspection and durable job health are not yet
-  exposed through a dedicated public Learning contribution API. The existing Learning UI and
-  `/analytics/learning-funnel` remain activity-oriented; they cannot establish contribution.
+  recommend an owner admission. The public `admit_shadow_trial` API remains fail
+  closed even when passed the string `owner`; the separately scoped protected
+  settings route requires explicit confirmation, server-derived current epoch
+  identity and every default-closed paper gate. Lifecycle automation and paper
+  influence remain off by default.
+- the bounded `lco-v1` owner projection exposes current measurement, cohort
+  integrity and sanitized job health on the default Learning tab. Legacy
+  artifact/funnel counts remain activity-oriented and cannot establish
+  contribution.
 
 The target lifecycle, registry, prospective experiments, overlap handling, and automatic fallback
 are normative in `learning_evolution_contract.md`. Phase 0 measurement claims are tracked below;

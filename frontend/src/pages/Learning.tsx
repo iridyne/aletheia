@@ -208,7 +208,9 @@ function ContributionTab() {
             <ContributionRow label="Mutation available" value={lifecycle.mutation_available ? 'Yes' : 'No'} />
           </div>
           <p className="lco-note">
-            {humanize(lifecycle.mutation_unavailable_reason)}. A recommendation cannot change allocation or admit a trial from this page.
+            {lifecycle.mutation_available
+              ? 'The protected owner admission route is ready. This observability page remains read only.'
+              : `${humanize(lifecycle.mutation_unavailable_reason || 'admission unavailable')}. A recommendation cannot change allocation or admit a trial from this page.`}
           </p>
         </Card>
       </div>

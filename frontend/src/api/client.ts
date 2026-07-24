@@ -77,8 +77,8 @@ export interface LearningContributionProjection {
       recommendation_reason: string | null
       authority_enabled: boolean
       authority_block_reason: string | null
-      mutation_available: false
-      mutation_unavailable_reason: string
+      mutation_available: boolean
+      mutation_unavailable_reason: string | null
     }
     latest_historical_measurement: {
       verdict_id: string

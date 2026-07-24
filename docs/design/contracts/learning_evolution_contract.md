@@ -330,15 +330,27 @@ rewrites a measurement verdict into `promote` or any other authority word. For t
 Stages are isolated experiments, not a mutable allocation counter:
 `shadow` → `paper_10` → `paper_25` → `paper_50` → `paper_active`.
 The automatic lifecycle controller never moves `shadow` to `paper_10`. It may only report
-`recommended_lifecycle_action=admit_trial`. The target boundary requires a separate authenticated
-owner action tied to the current complete `insufficient_data/no_actual_intervention` shadow
-measurement, authenticated principal, reason, policy epoch, and all default-closed paper gates.
-No authenticated owner mutation route currently exists: `admit_shadow_trial` always holds with
-`authenticated_owner_admission_unavailable`, and a caller-provided `"owner"` string grants no
-authority. A future implementation must close the shadow predecessor and create one `paper_10`
-successor with a fresh assignment salt. Later paper-stage promotions also close the predecessor,
-create one successor, and require fresh evidence before another promotion. Paper treatment is
-capped at 90%; the final-stage default is 80%, leaving a permanent control holdout. Lifecycle
+`recommended_lifecycle_action=admit_trial`. The protected owner mutation is
+`POST /api/settings/learning/experiments/{id}/admit-trial`. It requires an
+explicit `confirm_admission=true`, verdict id, expected policy epoch and bounded
+reason. When a tunnel is enabled it requires the tunnel owner token; local-only
+operation uses Aletheia's existing trusted-local-owner boundary. The server
+derives the current policy epoch itself and treats the submitted epoch only as
+an optimistic concurrency check. A stale epoch, mismatched verdict/build/stage,
+paused runtime, integrity incident, disabled contribution evaluation, disabled
+lifecycle automation, disabled paper influence or absent path allowlist fails
+closed without writing a successor.
+
+The public `admit_shadow_trial` function remains fail-closed with
+`authenticated_owner_admission_unavailable`, so a caller-provided `"owner"`
+string grants no authority. A successful protected admission atomically closes
+the shadow predecessor, creates one `paper_10` successor with a fresh assignment
+salt and writes one deduplicated lifecycle event; a retry returns that same
+successor. Its JSONL audit names `human`/`dashboard`, while scheduled transitions
+retain `learning_lifecycle_controller`/`learning_lifecycle`. Later paper-stage
+promotions also close the predecessor, create one successor, and require fresh
+evidence before another promotion. Paper treatment is capped at 90%; the
+final-stage default is 80%, leaving a permanent control holdout. Lifecycle
 automation and paper influence remain disabled by default.
 
 Before any paper influence is used, the authority check binds the requested path and successor to

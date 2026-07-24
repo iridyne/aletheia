@@ -29,7 +29,7 @@ from aletheia.learning.ledger import (
 )
 from aletheia.learning.models import LearningExperiment, LearningExposure, LearningHypothesis
 from aletheia.learning.registry import get_learning_path
-from aletheia.learning.policy_epochs import build_policy_epoch
+from aletheia.learning.policy_epochs import PolicyEpoch, build_policy_epoch
 
 
 @dataclass(frozen=True)
@@ -120,7 +120,7 @@ def _code_fingerprint() -> str | None:
         return None
 
 
-def _policy_epoch(path_id: str) -> str:
+def _policy_epoch_definition(path_id: str) -> PolicyEpoch:
     try:
         cfg = load_config()
         values = {
@@ -201,11 +201,23 @@ def _policy_epoch(path_id: str) -> str:
                 path_id, exc,
             )
             values = {"config": "unavailable", "path_id": path_id}
-    from aletheia.learning.policy_epochs import persist_policy_epoch
-    epoch = build_policy_epoch(
+    return build_policy_epoch(
         f"decision_policy:{path_id}", values, affected_path_ids=(path_id,)
     )
-    return persist_policy_epoch(epoch)
+
+
+def current_policy_epoch(path_id: str) -> str | None:
+    """Resolve the current persisted epoch without creating or rotating state."""
+    from aletheia.learning.policy_epochs import find_open_policy_epoch
+
+    return find_open_policy_epoch(_policy_epoch_definition(path_id))
+
+
+def _policy_epoch(path_id: str) -> str:
+    """Create/rotate the path epoch on a behavior-producing call."""
+    from aletheia.learning.policy_epochs import persist_policy_epoch
+
+    return persist_policy_epoch(_policy_epoch_definition(path_id))
 
 
 def apply_numeric_treatment(
