@@ -302,6 +302,7 @@ async def lifespan(app: FastAPI):
         _aletheia_logger.setLevel(logging.DEBUG)
 
     cfg = bootstrap()
+    event_loop_lag_task = None
     # Apply proxy config to process env before any HTTP client or scheduler runs.
     # Ensures watchdog-started processes (which inherit no session env vars) still
     # route through the proxy specified in config.yaml.
@@ -495,6 +496,12 @@ async def lifespan(app: FastAPI):
     # uvicorn loads app.py before Vite finishes its first build, so index.html is
     # missing and the mount never happens. Deferred mount fixes the issue.
     _mount_static_dashboard()
+    from aletheia.server.responsiveness import event_loop_lag_monitor
+
+    event_loop_lag_task = asyncio.create_task(
+        event_loop_lag_monitor.run(),
+        name="event_loop_lag_monitor",
+    )
     try:
         yield
     finally:
@@ -507,6 +514,7 @@ async def lifespan(app: FastAPI):
             await asyncio.to_thread(agent_job_manager.stop)
 
         await _cancel_background_task(llm_gate_task, "LLM startup gate")
+        await _cancel_background_task(event_loop_lag_task, "event-loop lag monitor")
         await _cancel_background_task(exchange_gate_task, "exchange startup gate")
         await _cancel_background_task(startup_sync_task, "startup exchange sync")
         await _cancel_background_task(behavior_gate_task, "startup behaviour gate")
