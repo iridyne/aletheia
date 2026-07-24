@@ -197,6 +197,173 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+# ── Material decision fingerprint (symbol-level, snapshot-id-free) ────────────
+# Unlike operator_decision_context_fingerprint (which mixes in feature_snapshot_id,
+# trade_score, reasoning prose and wake_context — all of which churn every cycle),
+# this fingerprint captures ONLY the materially-tradeable context for a
+# symbol+direction setup. It is the shared primitive that lets emit, the LLM
+# fast-path, and reassess all recognise "same setup, market has not materially
+# moved" across the fresh opportunity_id that universe refresh mints every cycle.
+# Any real market move flips the hash and reopens evaluation (DL-INV-23). (#321)
+#
+# Fields are the intersection present IDENTICALLY in both the emit-time
+# UniverseFeatureSnapshot (universe/features.py) and the ctx feature_index.
+# crowding_signal is deliberately EXCLUDED — it is derived ctx-side only, so
+# including it would make emit-side and ctx-side fingerprints never match.
+#
+# B2 evidence (directional_verdict/status) is also EXCLUDED, on purpose: emit-side
+# has only the universe total_score, not the ranker trade_score, so it cannot
+# reproduce the ctx-side B2 score-bucket cohort — including B2 would make the two
+# sides' hashes disagree and defeat emit suppression (fail-open, no dedup). B2 is
+# slow-moving historical-outcome evidence; the case "technicals byte-identical
+# while B2 flips" is negligible and is anyway re-checked within the bounded
+# suppression window. Technicals + regime are what a market move actually changes.
+_MATERIAL_FP_FEATURE_FIELDS: tuple[str, ...] = (
+    "rsi_15m", "return_15m", "last_candle_range_atr_15m",
+    "return_1h", "return_4h", "return_24h", "funding_rate",
+    "oi_delta_1h", "taker_buy_ratio", "vol_ratio",
+    "relative_strength_24h", "oi_price_divergence", "rsi_4h",
+    "bb_width_4h", "vol_ratio_4h", "bb_squeeze",
+)
+
+# Per-field rounding precision. Default is coarse enough to absorb float noise
+# but fine enough that a genuine move changes the hash. funding_rate lives at
+# ~1e-4, so a blanket round(2) would flatten real funding shifts to "unchanged"
+# and over-suppress (a DL-INV-23 violation). Err toward MORE precision: extra
+# digits at worst reopen an evaluation that could have been skipped (safe), while
+# too few silently swallow real changes (unsafe). bool/int kept as-is.
+_MATERIAL_FP_PRECISION: dict[str, int] = {
+    "funding_rate": 6,
+    "return_15m": 4, "return_1h": 4, "return_4h": 4, "return_24h": 4,
+    "relative_strength_24h": 4, "bb_width_4h": 4,
+    "taker_buy_ratio": 3,
+}
+_MATERIAL_FP_DEFAULT_PRECISION = 4
+
+
+def _normalize_direction(value: object) -> str | None:
+    """Canonicalize a direction across scanner_direction / direction / direction_bias."""
+    text = str(value or "").strip().lower()
+    if text in ("long", "buy", "bull", "bullish"):
+        return "long"
+    if text in ("short", "sell", "bear", "bearish"):
+        return "short"
+    return text or None
+
+
+def _material_feature_value(features: dict[str, Any], field: str) -> Any:
+    raw = features.get(field)
+    if raw is None or isinstance(raw, bool):
+        return raw
+    try:
+        return round(
+            float(raw),
+            _MATERIAL_FP_PRECISION.get(field, _MATERIAL_FP_DEFAULT_PRECISION),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def operator_decision_material_fingerprint(
+    *,
+    symbol: Any,
+    direction: Any,
+    market_type: Any,
+    scanner_family: Any,
+    features: dict[str, Any] | None,
+    regime: Any,
+) -> str:
+    """Hash the materially-tradeable context for one symbol+direction setup.
+
+    All normalization happens INSIDE this function so the emit-side and ctx-side
+    callers (which pass differently-shaped inputs) cannot drift apart. See the
+    module comment above for what is included/excluded and why. (#321)
+    """
+    projection = {
+        "version": "operator-decision-material-v1",
+        "symbol": str(symbol or ""),
+        "direction": _normalize_direction(direction),
+        "market_type": _normalize_market_type(market_type),
+        "scanner_family": str(scanner_family or ""),
+        "regime": None if regime is None else str(regime),
+        "features": {
+            field: _material_feature_value(features or {}, field)
+            for field in _MATERIAL_FP_FEATURE_FIELDS
+        },
+    }
+    encoded = json.dumps(
+        projection, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def material_fingerprint_from_candidate_ctx(
+    ctx: dict[str, Any], opportunity_id: str
+) -> str | None:
+    """Material fingerprint for one candidate resolved from a full operator ctx.
+
+    Used by the LLM fast-path (commands) and reassess reuse (trading_decision),
+    both of which hold the enriched ctx. Returns None when the candidate row is
+    not present, so callers fail open (evaluate) rather than suppress blindly.
+    """
+    layer1 = ctx.get("layer1") or {}
+    layer2 = ctx.get("layer2") or {}
+    target = str(opportunity_id or "")
+    candidate: dict[str, Any] | None = None
+    for bucket in ("pending_signals", "executable_candidates"):
+        for item in (layer2.get(bucket) or []):
+            if str(item.get("opportunity_id") or "") == target:
+                candidate = item
+                break
+        if candidate is not None:
+            break
+    if candidate is None:
+        return None
+    symbol = candidate.get("symbol")
+    market_type = candidate.get("market_type") or candidate.get("market")
+    want = (symbol, _normalize_market_type(market_type))
+    features: dict[str, Any] = {}
+    for feature in ((layer1.get("feature_index") or {}).values()):
+        if (
+            feature.get("symbol"),
+            _normalize_market_type(feature.get("market_type")),
+        ) == want:
+            features = feature
+            break
+    return operator_decision_material_fingerprint(
+        symbol=symbol,
+        direction=candidate.get("direction") or candidate.get("direction_bias"),
+        market_type=market_type,
+        scanner_family=candidate.get("scanner_family"),
+        features=features,
+        regime=layer1.get("regime") or layer1.get("market_regime"),
+    )
+
+
+def material_fingerprint_from_features(
+    *,
+    symbol: Any,
+    direction: Any,
+    market_type: Any,
+    scanner_family: Any,
+    features: dict[str, Any] | None,
+    regime: Any,
+) -> str:
+    """Emit-side adapter: caller supplies the per-member feature dict.
+
+    Thin forwarder to keep the emit call-site symmetric with the ctx adapter and
+    to centralise the primitive's signature in one place.
+    """
+    return operator_decision_material_fingerprint(
+        symbol=symbol,
+        direction=direction,
+        market_type=market_type,
+        scanner_family=scanner_family,
+        features=features or {},
+        regime=regime,
+    )
+
+
 def scope_operator_context_to_candidate(
     ctx: dict[str, Any], opportunity_id: str
 ) -> dict[str, Any]:

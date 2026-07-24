@@ -220,6 +220,31 @@ def emit_deterministic_opportunities(
     }
     created = 0
 
+    # #321 emit-source active-defer suppression (flag-gated; helpers hoisted once
+    # so the per-member loop pays nothing when the flag is off). If the latest
+    # Operator judgment for a setup was a direct_skip defer at the SAME material
+    # fingerprint, universe refresh must not mint yet another fresh-id carrier
+    # that re-burns an LLM re-eval. A real market move flips the fingerprint and
+    # this gate falls through to normal emission (DL-INV-23).
+    _emit_defer_suppression = False
+    try:
+        from aletheia.agent_shell.skip_policy import skip_policy_context
+
+        _emit_defer_suppression = bool(
+            skip_policy_context().get("emit_active_defer_suppression")
+        )
+    except Exception:
+        _emit_defer_suppression = False
+    if _emit_defer_suppression:
+        from aletheia.agent_shell.trading_context import (
+            material_fingerprint_from_features as _emit_material_fp,
+            _normalize_direction as _emit_norm_dir,
+            _normalize_market_type as _emit_norm_mkt,
+        )
+        from aletheia.storage.repositories import (
+            latest_direct_skip_defer_for_setup as _emit_latest_skip,
+        )
+
     for member_index, m in enumerate(members):
         symbol = m.get("symbol", "")
         member_id = m.get("id")
@@ -405,6 +430,43 @@ def emit_deterministic_opportunities(
                 },
             )
             continue
+
+        # Emit-source active-defer suppression (#321). See the hoisted setup above.
+        if _emit_defer_suppression:
+            _norm_dir = _emit_norm_dir(direction)
+            _norm_mkt = _emit_norm_mkt(market_type)
+            prior_skip = _emit_latest_skip(symbol, _norm_dir, _norm_mkt)
+            stored_fp = (prior_skip or {}).get("material_fingerprint")
+            if stored_fp:
+                current_fp = _emit_material_fp(
+                    symbol=symbol,
+                    direction=direction,
+                    market_type=market_type,
+                    scanner_family=family,
+                    features=feat,
+                    regime=regime.state if regime else None,
+                )
+                if current_fp == stored_fp:
+                    _record_emission_decision(
+                        member=m,
+                        snapshot_id=snapshot_id,
+                        member_index=member_index,
+                        symbol=symbol,
+                        market_type=market_type,
+                        total_score=total_score,
+                        short_enabled=short_enabled,
+                        decision="rejected",
+                        reason_code="active_defer_suppressed",
+                        direction=direction,
+                        regime_tag=regime.state if regime else None,
+                        inputs={
+                            "material_fingerprint": current_fp,
+                            "prior_defer_opportunity_id": (
+                                (prior_skip or {}).get("opportunity_id")
+                            ),
+                        },
+                    )
+                    continue
 
         # De-duplicate across the whole lifecycle. A reviewed opportunity remains
         # the identity owner for this member/snapshot and must not be recreated by
