@@ -423,7 +423,7 @@ cd frontend && npm run build
   blocker，但没有任何实验已取得 admission-compatible verdict。
 - 后续按 current-build admission identity 反查下一批 500 条时，发现它们仍全部属于
   旧 `a8c1b786` build：open-epoch 优先级内部的 oldest-first 仍会让可授权 build
-  饥饿。因此最终结算顺序必须是”当前 boot commit → 同 open epoch 旧 build →
+  饥饿。因此最终结算顺序必须是“当前 boot commit → 同 open epoch 旧 build →
   普通历史 FIFO”。该 A 类修复部署后会再开启一次、也是本轮计划中的最终
   current-build observation window；上面的 `2d53541c` 时间门随该部署作废，新的
   精确起点与最早七日门必须在部署后从 durable exposure 重新记录。此后除紧急安全
@@ -433,9 +433,10 @@ cd frontend && npm run build
   protected owner 无法看到或准入它。A 类修复：当 `cfg.learning.paper_influence_paths`
   非空时，`h.path_id` 在该列表中的实验优先排入前 20，其余按现有 newest-first 填充；
   空 allowlist 完全保留当前行为。该修复不改变测量、评分、assignment、经济公式、
-  阈值、authority、Risk、Execution 或 live trading。部署后该 build 的 observation
-  window 起点不会因本次代码变更重置（不新增 exposure）；时间门以首批 current-build
-  exposure 实际发生时刻为准，须在部署后从 durable exposure 重新读取精确起点。
+  阈值、authority、Risk、Execution 或 live trading。由于准入证据绑定运行 build
+  identity，这个可观测性修复部署后会开启最后一次新的 current-build observation
+  window；时间门以新 build 首批 durable exposure 的实际发生时刻为准，须在部署后
+  重新读取并冻结该 commit，旧 build 样本不得用于新 build 准入。
 
 当前安全状态是：
 
