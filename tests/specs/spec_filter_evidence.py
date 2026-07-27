@@ -285,11 +285,11 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
 
     assert asyncio.run(
         filter_outcome_recorder.settle_due_filter_outcomes(
-            max_rows=1,
+            max_rows=2,
             time_budget_sec=5.0,
         )
-    ) == 1
-    assert settled == ["current-ufc"]
+    ) == 2
+    assert settled == ["current-ufc", "historical-backlog"]
 
 
 @spec_claim(
