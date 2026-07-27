@@ -205,6 +205,13 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 
 同一候选经过多个关卡时只结算一份结果，避免把同一个价格路径当成多个独立样本。
 
+定时结算在既有 canonical 配额和时间预算内采用三层顺序：先处理当前运行
+`code_commit`、当前 open `universe_family_calibration` epoch 的 exact outcome，
+再处理同一 open epoch 的旧 build outcome，最后回到普通历史 FIFO。该顺序只保证
+当前可授权测量身份不会被旧 build backlog 饿死；不得改变候选选择、assignment、
+经济公式、阈值或行为 authority。无法取得 boot commit 时 fail closed 到 open-epoch
+优先级，不猜测当前 build。
+
 ## 5. 现行关卡与证据等级
 
 | 关卡 | 当时是否有方向 | 要记录的事实 | 可否用于净收益负反馈 |

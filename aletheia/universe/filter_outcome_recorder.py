@@ -31,14 +31,31 @@ async def settle_due_filter_outcomes(
     # canonical backlog: its exact outcomes are the evidence required by LCO.
     # This only changes settlement order inside the already-bounded canonical
     # quota; it does not change candidate selection, economics, or authority.
-    priority_keys = repo.list_open_learning_outcome_candidate_keys(
+    from aletheia.agent_runtime.build_info import get_boot_commit
+
+    current_code_commit = get_boot_commit()
+    current_build_keys = repo.list_open_learning_outcome_candidate_keys(
         ("universe_family_calibration",),
-    )
+        code_commit=current_code_commit,
+    ) if current_code_commit else set()
     priority_pending = repo.list_pending_filter_candidate_outcomes_for_keys(
         now_iso,
-        priority_keys,
+        current_build_keys,
         limit=max_rows,
     )
+    all_priority_keys = repo.list_open_learning_outcome_candidate_keys(
+        ("universe_family_calibration",),
+    )
+    older_build_keys = all_priority_keys - current_build_keys
+    remaining_priority_rows = max(0, max_rows - len(priority_pending))
+    if remaining_priority_rows and older_build_keys:
+        priority_pending.extend(
+            repo.list_pending_filter_candidate_outcomes_for_keys(
+                now_iso,
+                older_build_keys,
+                limit=remaining_priority_rows,
+            )
+        )
     priority_offset = 0
 
     while processed < max_rows and time.monotonic() < deadline:
