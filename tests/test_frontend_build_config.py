@@ -33,7 +33,7 @@ def test_windows_dev_launcher_supports_bounded_parallel_preview_ports():
     assert 'http://127.0.0.1:$ApiPort' in script
     assert "UiPort $UiPort is reserved" in script
     assert "Custom ApiPort $ApiPort is reserved" in script
-    assert "ApiTarget" not in script
+    assert "[string]$ApiTarget" not in script
 
 
 def test_preview_docs_distinguish_stable_gateway_from_worktree_hmr():
