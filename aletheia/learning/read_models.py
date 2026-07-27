@@ -38,11 +38,8 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
 
     cfg = load_config()
     boot_commit = get_boot_commit()
-    rows = _current_experiment_rows(bounded_limit)
-    items = [
-        _project_experiment(row, boot_commit=boot_commit)
-        for row in rows
-    ]
+    rows = _current_experiment_rows(bounded_limit, cfg.learning.paper_influence_paths)
+    items = [_project_experiment(row, boot_commit=boot_commit) for row in rows]
     evaluator = get_learning_job_health("learning_contribution_evaluator")
     last_success = evaluator.last_succeeded_at
     freshness = _freshness(last_success, generated_at)
@@ -57,24 +54,14 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
         "items": items,
         "operations": {
             "config": {
-                "contribution_evaluation_enabled": bool(
-                    cfg.learning.contribution_evaluation_enabled
-                ),
-                "autonomous_learning_enabled": bool(
-                    cfg.agent.autonomous_learning
-                ),
-                "lifecycle_automation_enabled": bool(
-                    cfg.learning.lifecycle_automation_enabled
-                ),
-                "paper_influence_enabled": bool(
-                    cfg.learning.paper_influence_enabled
-                ),
+                "contribution_evaluation_enabled": bool(cfg.learning.contribution_evaluation_enabled),
+                "autonomous_learning_enabled": bool(cfg.agent.autonomous_learning),
+                "lifecycle_automation_enabled": bool(cfg.learning.lifecycle_automation_enabled),
+                "paper_influence_enabled": bool(cfg.learning.paper_influence_enabled),
             },
             "evaluator": _project_health(
                 evaluator.model_dump(),
-                catchup_due=measurement_catchup_due(
-                    "learning_contribution_evaluator"
-                ),
+                catchup_due=measurement_catchup_due("learning_contribution_evaluator"),
             ),
         },
     }
@@ -99,8 +86,8 @@ def unavailable_learning_contribution_projection(reason: str) -> dict[str, Any]:
     }
 
 
-def _current_experiment_rows(limit: int) -> list[dict[str, Any]]:
-    rows = get_db().execute(
+def _current_experiment_rows(limit: int, priority_paths: list[str] | None = None) -> list[dict[str, Any]]:
+    base_sql = (
         "SELECT e.*, h.path_id, h.target_horizon, h.effect_threshold, "
         "v.verdict_id, v.verdict, v.reason AS verdict_reason, "
         "v.unique_treatment_n, v.unique_control_n, v.baseline, v.observed, "
@@ -121,9 +108,18 @@ def _current_experiment_rows(limit: int) -> list[dict[str, Any]]:
         " v2.verdict_id DESC LIMIT 1"
         ") "
         "WHERE e.ended_at IS NULL "
-        "ORDER BY datetime(e.created_at) DESC, e.experiment_id DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
+    )
+    if priority_paths:
+        placeholders = ", ".join("?" * len(priority_paths))
+        order_sql = (
+            f"ORDER BY CASE WHEN h.path_id IN ({placeholders}) THEN 0 ELSE 1 END ASC, "
+            "datetime(e.created_at) DESC, e.experiment_id DESC LIMIT ?"
+        )
+        params: tuple = tuple(priority_paths) + (limit,)
+    else:
+        order_sql = "ORDER BY datetime(e.created_at) DESC, e.experiment_id DESC LIMIT ?"
+        params = (limit,)
+    rows = get_db().execute(base_sql + order_sql, params).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -135,9 +131,7 @@ def _project_experiment(
     path_id = str(row.get("path_id") or "")
     try:
         policy_epoch = current_policy_epoch(path_id)
-        policy_reason = (
-            None if policy_epoch is not None else "current_policy_epoch_unavailable"
-        )
+        policy_reason = None if policy_epoch is not None else "current_policy_epoch_unavailable"
     except Exception:
         policy_epoch = None
         policy_reason = "current_policy_epoch_unavailable"
@@ -150,15 +144,9 @@ def _project_experiment(
     metrics = _safe_object(row.get("harm_metrics_json"))
     current = mismatch is None
     measurement_state = (
-        str(row.get("verdict"))
-        if current and str(row.get("verdict")) in _MEASUREMENT_STATES
-        else "not_measured"
+        str(row.get("verdict")) if current and str(row.get("verdict")) in _MEASUREMENT_STATES else "not_measured"
     )
-    measurement_reason = (
-        str(row.get("verdict_reason") or "") or None
-        if current
-        else mismatch
-    )
+    measurement_reason = str(row.get("verdict_reason") or "") or None if current else mismatch
     recommended = _recommended_action(
         measurement_state,
         measurement_reason,
@@ -173,9 +161,7 @@ def _project_experiment(
         mutation_available = mutation_reason is None
 
     source_counts = _safe_int_dict(metrics.get("outcome_source_member_counts"))
-    allocation_sources = _safe_int_dict(
-        metrics.get("allocation_selection_source_member_counts")
-    )
+    allocation_sources = _safe_int_dict(metrics.get("allocation_selection_source_member_counts"))
     invalid_reasons = _safe_int_dict(metrics.get("invalid_reasons"))
     conflict_fingerprints = metrics.get("evidence_conflict_fingerprints")
     if not isinstance(conflict_fingerprints, list):
@@ -211,36 +197,22 @@ def _project_experiment(
         },
         "samples": {
             "raw_exposures": _safe_int(metrics.get("raw_exposure_n")),
-            "treatment_assignment_units": (
-                _safe_int(row.get("unique_treatment_n")) if current else 0
-            ),
-            "control_assignment_units": (
-                _safe_int(row.get("unique_control_n")) if current else 0
-            ),
+            "treatment_assignment_units": (_safe_int(row.get("unique_treatment_n")) if current else 0),
+            "control_assignment_units": (_safe_int(row.get("unique_control_n")) if current else 0),
             "required_per_arm": _safe_int(row.get("min_samples_per_arm")),
-            "complete_assignment_units": _safe_int(
-                metrics.get("unique_assignment_unit_n")
-            ),
+            "complete_assignment_units": _safe_int(metrics.get("unique_assignment_unit_n")),
             "cluster_members": _safe_int(metrics.get("cluster_member_n")),
-            "selected_members": _safe_int(
-                metrics.get("allocation_selected_member_n")
-            ),
+            "selected_members": _safe_int(metrics.get("allocation_selected_member_n")),
         },
         "integrity": {
             "outcome_source_member_counts": source_counts,
             "allocation_selection_source_member_counts": allocation_sources,
-            "matching_mirror_rows": _safe_int(
-                metrics.get("mirrored_universe_row_n")
-            ),
+            "matching_mirror_rows": _safe_int(metrics.get("mirrored_universe_row_n")),
             "exclusion_reasons": _safe_int_dict(metrics.get("exclusion_reasons")),
             "invalid_reasons": invalid_reasons,
             "conflict_count": len(conflict_fingerprints),
             "harm_breached": bool(metrics.get("breached")),
-            "breach_reasons": [
-                str(value)
-                for value in metrics.get("breach_reasons", [])
-                if isinstance(value, str)
-            ],
+            "breach_reasons": [str(value) for value in metrics.get("breach_reasons", []) if isinstance(value, str)],
         },
         "lifecycle": {
             "recommended_action": recommended,
@@ -257,14 +229,14 @@ def _project_experiment(
             "policy_epoch": row.get("verdict_policy_epoch"),
             "stage": row.get("verdict_stage"),
             "target_horizon": row.get("verdict_target_horizon"),
-            "outcome_contract_version": row.get(
-                "verdict_outcome_contract_version"
-            ),
+            "outcome_contract_version": row.get("verdict_outcome_contract_version"),
             "metric_version": row.get("verdict_metric_version"),
             "code_commit": row.get("verdict_code_commit"),
             "current": current,
             "mismatch_reason": mismatch,
-        } if row.get("verdict_id") else None,
+        }
+        if row.get("verdict_id")
+        else None,
     }
 
 
@@ -334,9 +306,7 @@ def _project_health(row: dict[str, Any], *, catchup_due: bool) -> dict[str, Any]
         "oldest_backlog_at": row.get("oldest_backlog_at"),
         "consecutive_failures": _safe_int(row.get("consecutive_failures")),
         "last_failed_at": row.get("last_failed_at"),
-        "last_failure_code": _failure_code(
-            row.get("last_failure_reason") or row.get("last_error")
-        ),
+        "last_failure_code": _failure_code(row.get("last_failure_reason") or row.get("last_error")),
         "catchup_due": bool(catchup_due),
     }
 
@@ -359,9 +329,7 @@ def _freshness(last_evaluated_at: str | None, generated_at: str) -> dict[str, An
     state = "not_available"
     if last_evaluated_at:
         try:
-            evaluated = datetime.fromisoformat(
-                str(last_evaluated_at).replace("Z", "+00:00")
-            )
+            evaluated = datetime.fromisoformat(str(last_evaluated_at).replace("Z", "+00:00"))
             if evaluated.tzinfo is None:
                 evaluated = evaluated.replace(tzinfo=timezone.utc)
             generated = datetime.fromisoformat(generated_at)
@@ -390,10 +358,7 @@ def _safe_object(value: Any) -> dict[str, Any]:
 def _safe_int_dict(value: Any) -> dict[str, int]:
     if not isinstance(value, dict):
         return {}
-    return {
-        str(key): _safe_int(raw)
-        for key, raw in value.items()
-    }
+    return {str(key): _safe_int(raw) for key, raw in value.items()}
 
 
 def _safe_int(value: Any) -> int:
