@@ -27,10 +27,29 @@ async def settle_due_filter_outcomes(
     cfg = load_config()
     processed = 0
     settled = 0
+    # The current UFC observation window must not sit behind the historical
+    # canonical backlog: its exact outcomes are the evidence required by LCO.
+    # This only changes settlement order inside the already-bounded canonical
+    # quota; it does not change candidate selection, economics, or authority.
+    priority_keys = repo.list_open_learning_outcome_candidate_keys(
+        ("universe_family_calibration",),
+    )
+    priority_pending = repo.list_pending_filter_candidate_outcomes_for_keys(
+        now_iso,
+        priority_keys,
+        limit=max_rows,
+    )
+    priority_offset = 0
 
     while processed < max_rows and time.monotonic() < deadline:
         batch_limit = min(32, max_rows - processed)
-        pending = repo.list_pending_filter_candidate_outcomes(now_iso, limit=batch_limit)
+        pending = priority_pending[priority_offset:priority_offset + batch_limit]
+        priority_offset += len(pending)
+        if not pending:
+            pending = repo.list_pending_filter_candidate_outcomes(
+                now_iso,
+                limit=batch_limit,
+            )
         if not pending:
             break
         observations = await _batch_fetch_market_observations(pending, now=now)
