@@ -1,9 +1,39 @@
-# Worktree frontend HMR launcher. It never starts, stops, or restarts the main gateway.
-# Browser: http://127.0.0.1:5173; API defaults to read-only master http://127.0.0.1:8787.
-# To use an isolated API, first run `uv run aletheia dev api --port 8791`, then set
-# `$env:VITE_API_TARGET = 'http://127.0.0.1:8791'` before invoking this script.
+# Worktree frontend HMR launcher. It never starts, stops, restarts, or updates the stable gateway.
+#
+# Default browser: http://127.0.0.1:5173
+# Default API:     read-only stable gateway http://127.0.0.1:8787
+#
+# For an isolated backend Preview, start it separately:
+#   uv run aletheia dev api --port 8791
+# Then launch this Worktree UI with:
+#   .\scripts\dev.ps1 -UiPort 5173 -ApiPort 8791
+
+[CmdletBinding()]
+param(
+    [ValidateRange(1024, 65535)]
+    [int]$UiPort = 5173,
+
+    [int]$ApiPort = 0
+)
 
 $ErrorActionPreference = 'Stop'
+
+if ($UiPort -in @(8787, 8788)) {
+    throw "UiPort $UiPort is reserved for the stable Aletheia Runtime."
+}
+
+if ($ApiPort -eq 0) {
+    $ApiTarget = 'http://127.0.0.1:8787'
+} else {
+    if ($ApiPort -lt 1024 -or $ApiPort -gt 65535) {
+        throw "ApiPort must be 0 (unset) or between 1024 and 65535."
+    }
+    if ($ApiPort -in @(8787, 8788)) {
+        throw "Custom ApiPort $ApiPort is reserved. Omit -ApiPort for the read-only stable API, or choose an isolated Preview port such as 8791."
+    }
+    $ApiTarget = "http://127.0.0.1:$ApiPort"
+}
+
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot
 
@@ -22,12 +52,18 @@ if (-not (Test-Path $Vite)) {
     }
 }
 
-if (-not $env:VITE_API_TARGET) { $env:VITE_API_TARGET = 'http://127.0.0.1:8787' }
-Write-Host "[ok] Worktree HMR: http://127.0.0.1:5173" -ForegroundColor Green
-Write-Host "[ok] API target: $env:VITE_API_TARGET (writes to :8787 are blocked)" -ForegroundColor Green
+$env:VITE_API_TARGET = $ApiTarget
+Write-Host "[ok] Worktree HMR: http://127.0.0.1:$UiPort" -ForegroundColor Green
+Write-Host "[ok] API target: $ApiTarget" -ForegroundColor Green
+if ($ApiPort -eq 0) {
+    Write-Host "[ok] Stable API proxy is read-only; non-GET writes are blocked." -ForegroundColor Green
+} else {
+    Write-Host "[ok] Target must be the isolated 'aletheia dev api' Preview started for this Worktree." -ForegroundColor Yellow
+}
+
 Push-Location $Frontend
 try {
-    npm run dev -- --host 127.0.0.1 --port 5173
+    npm run dev -- --host 127.0.0.1 --port $UiPort
 } finally {
     Pop-Location
 }
