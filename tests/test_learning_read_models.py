@@ -79,26 +79,24 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
         delta=0.3,
         confidence_low=0.01,
         confidence_high=0.5,
-        harm_metrics_json=json.dumps(
-            {
-                "raw_exposure_n": 18,
-                "unique_assignment_unit_n": 9,
-                "cluster_member_n": 27,
-                "allocation_selected_member_n": 7,
-                "mirrored_universe_row_n": 7,
-                "outcome_source_member_counts": {
-                    "filter_candidate_outcomes": 27,
-                },
-                "allocation_selection_source_member_counts": {
-                    "filter_candidate_outcomes": 27,
-                },
-                "exclusion_reasons": {"unsettled": 2},
-                "invalid_reasons": {},
-                "evidence_conflict_fingerprints": [],
-                "breached": False,
-                "breach_reasons": [],
-            }
-        ),
+        harm_metrics_json=json.dumps({
+            "raw_exposure_n": 18,
+            "unique_assignment_unit_n": 9,
+            "cluster_member_n": 27,
+            "allocation_selected_member_n": 7,
+            "mirrored_universe_row_n": 7,
+            "outcome_source_member_counts": {
+                "filter_candidate_outcomes": 27,
+            },
+            "allocation_selection_source_member_counts": {
+                "filter_candidate_outcomes": 27,
+            },
+            "exclusion_reasons": {"unsettled": 2},
+            "invalid_reasons": {},
+            "evidence_conflict_fingerprints": [],
+            "breached": False,
+            "breach_reasons": [],
+        }),
         verdict="insufficient_data",
         reason="no_actual_intervention",
         policy_epoch=epoch,
@@ -118,7 +116,9 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
         status="healthy",
         last_succeeded_at="2026-07-24T01:00:00+00:00",
         last_failed_at="2026-07-23T23:00:00+00:00",
-        last_failure_reason=("sqlite OperationalError at /private/local/path: database unavailable"),
+        last_failure_reason=(
+            "sqlite OperationalError at /private/local/path: database unavailable"
+        ),
         input_watermark="old-window",
     )
     assert insert_record("learning_job_health", health, ignore_duplicates=True)
@@ -191,7 +191,8 @@ def test_lco_projection_keeps_stale_verdict_historical(tmp_path, monkeypatch):
     from aletheia.storage.sqlite import get_db
 
     get_db().execute(
-        "UPDATE learning_contribution_verdicts SET code_commit='old-commit' WHERE experiment_id=?",
+        "UPDATE learning_contribution_verdicts SET code_commit='old-commit' "
+        "WHERE experiment_id=?",
         (experiment_id,),
     )
     get_db().commit()
@@ -225,7 +226,12 @@ def test_lco_projection_sanitizes_failure_and_is_side_effect_free(
         "learning_policy_epochs",
     )
     before = {
-        table: [dict(row) for row in get_db().execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()]
+        table: [
+            dict(row)
+            for row in get_db().execute(
+                f"SELECT * FROM {table} ORDER BY rowid"
+            ).fetchall()
+        ]
         for table in tables
     }
     from aletheia.learning.read_models import (
@@ -234,7 +240,12 @@ def test_lco_projection_sanitizes_failure_and_is_side_effect_free(
 
     result = build_learning_contribution_projection()
     after = {
-        table: [dict(row) for row in get_db().execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()]
+        table: [
+            dict(row)
+            for row in get_db().execute(
+                f"SELECT * FROM {table} ORDER BY rowid"
+            ).fetchall()
+        ]
         for table in tables
     }
     assert after == before
@@ -243,7 +254,11 @@ def test_lco_projection_sanitizes_failure_and_is_side_effect_free(
     assert "last_error" not in evaluator
     assert "last_failure_reason" not in evaluator
     assert "/private/local/path" not in json.dumps(result)
-    universe = next(path for path in result["paths"] if path["path_id"] == "universe_family_calibration")
+    universe = next(
+        path
+        for path in result["paths"]
+        if path["path_id"] == "universe_family_calibration"
+    )
     assert universe["consumer_wired"] is True
     assert universe["settings_supported"] is True
     assert universe["measurement_supported"] is True
@@ -254,7 +269,9 @@ def test_unavailable_lco_envelope_does_not_invent_empty_success():
         unavailable_learning_contribution_projection,
     )
 
-    result = unavailable_learning_contribution_projection("projection_read_failed")
+    result = unavailable_learning_contribution_projection(
+        "projection_read_failed"
+    )
     assert result["availability"] == "unavailable"
     assert result["unavailable_reason"] == "projection_read_failed"
     assert result["data_freshness"]["state"] == "unavailable"
@@ -325,12 +342,15 @@ def test_lco_projection_prioritizes_influence_paths_when_window_is_full(
     assert len(result_default["items"]) == 20
 
     # Part B: paper_influence_paths=[universe_family_calibration] → UFC is prioritized.
-    influence_cfg = AletheiaConfig(learning=LearningConfig(paper_influence_paths=["universe_family_calibration"]))
+    influence_cfg = AletheiaConfig(
+        learning=LearningConfig(paper_influence_paths=["universe_family_calibration"])
+    )
     monkeypatch.setattr(loader_mod, "load_config", lambda: influence_cfg)
 
     result_influence = build_learning_contribution_projection(limit=20)
     returned_ids_influence = {item["experiment_id"] for item in result_influence["items"]}
     assert ufc_experiment_id in returned_ids_influence, (
-        "With paper_influence_paths=[universe_family_calibration], UFC must appear within the limit-20 window"
+        "With paper_influence_paths=[universe_family_calibration], "
+        "UFC must appear within the limit-20 window"
     )
     assert len(result_influence["items"]) == 20
