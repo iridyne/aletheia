@@ -13,9 +13,7 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$UiPort = 5173,
 
-    [int]$ApiPort = 0,
-
-    [string]$ApiTarget = ''
+    [int]$ApiPort = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,18 +22,16 @@ if ($UiPort -in @(8787, 8788)) {
     throw "UiPort $UiPort is reserved for the stable Aletheia Runtime."
 }
 
-if ($ApiPort -ne 0) {
+if ($ApiPort -eq 0) {
+    $ApiTarget = 'http://127.0.0.1:8787'
+} else {
     if ($ApiPort -lt 1024 -or $ApiPort -gt 65535) {
         throw "ApiPort must be 0 (unset) or between 1024 and 65535."
     }
-    if ($ApiTarget) {
-        throw "Specify either -ApiPort or -ApiTarget, not both."
+    if ($ApiPort -in @(8787, 8788)) {
+        throw "Custom ApiPort $ApiPort is reserved. Omit -ApiPort for the read-only stable API, or choose an isolated Preview port such as 8791."
     }
     $ApiTarget = "http://127.0.0.1:$ApiPort"
-}
-
-if (-not $ApiTarget) {
-    $ApiTarget = 'http://127.0.0.1:8787'
 }
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
@@ -59,10 +55,10 @@ if (-not (Test-Path $Vite)) {
 $env:VITE_API_TARGET = $ApiTarget
 Write-Host "[ok] Worktree HMR: http://127.0.0.1:$UiPort" -ForegroundColor Green
 Write-Host "[ok] API target: $ApiTarget" -ForegroundColor Green
-if ($ApiTarget -eq 'http://127.0.0.1:8787') {
+if ($ApiPort -eq 0) {
     Write-Host "[ok] Stable API proxy is read-only; non-GET writes are blocked." -ForegroundColor Green
 } else {
-    Write-Host "[ok] Verify the target is an isolated 'aletheia dev api' Preview." -ForegroundColor Yellow
+    Write-Host "[ok] Target must be the isolated 'aletheia dev api' Preview started for this Worktree." -ForegroundColor Yellow
 }
 
 Push-Location $Frontend
