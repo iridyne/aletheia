@@ -46,6 +46,13 @@ Do not copy `app.db`, `config.yaml`, secrets, positions, or outcome state betwee
 the stable Runtime and a Preview. A Preview is disposable development state,
 not a qualification cohort.
 
+The standard CLI is currently the authority for the exact checkout-id/port
+combination. The config loader enforces the broader Preview root, but does not
+yet independently prove that a hand-supplied Preview directory belongs to the
+current checkout and runtime port. Hand-setting `ALETHEIA_PREVIEW_*` is
+unsupported; exact identity validation is an open acceptance item in
+`DEV_PROTOCOL.md §12`.
+
 ## Fast frontend loop
 
 From the Worktree:
@@ -101,7 +108,7 @@ uv run aletheia dev api --port 8791
 The CLI sets Preview mode itself. Do not hand-set its environment variables to
 point at a normal data directory. Preview mode has these fail-closed properties:
 
-- secret reads return no value and secret writes are rejected;
+- Aletheia secret-store reads return no value and writes are rejected;
 - `submit_proposal` and `execute_existing_proposal` reject before creating or
   changing durable execution state;
 - the paper-approval route returns `403 preview_execution_blocked` before it
@@ -112,6 +119,31 @@ point at a normal data directory. Preview mode has these fail-closed properties:
 This is for UI and API development, not paper-trading simulation. Use focused
 tests or the stable gateway's explicitly authorized paper workflow for trading
 behavior verification.
+
+Background scheduler/operator services are disabled by the shadow runtime
+startup gate. A Preview therefore does not autonomously collect qualification
+evidence or invoke trading agents. Process-level environment variables and
+external CLI/OAuth sessions are not a general-purpose secret sandbox; do not
+expose an untrusted Preview or treat it as a security boundary for arbitrary
+code.
+
+### Status limitations before the next implementation pass
+
+The execution guards above are authoritative; current status projections are
+not yet sufficient to infer Preview authority:
+
+- `/api/status` can reflect fresh Preview config defaults such as `Paper` and
+  `scheduler_enabled=true` even though background services are off and
+  execution is blocked;
+- `/_infra/status` can report the configured stable dashboard port instead of
+  the Preview listener port;
+- an API-only Worktree without a built static dashboard can return `503` from
+  infra readiness while its API is serving requests.
+
+Keep the visible Vite Preview banner, startup log, isolated data path, and
+execution guards as the operational evidence for now. A follow-up implementation
+must make both status endpoints report runtime identity, actual port,
+`scheduler=disabled`, and `execution=blocked` before this limitation is removed.
 
 ## Parallel Windows previews
 
@@ -161,6 +193,10 @@ Use this convention unless a port is already occupied:
 The ranges are a human convention, not a dynamic allocator. The external
 orchestrator or developer must assign unique ports and include them in the
 session prompt.
+
+Do not add a repository-owned task database, worker lease, or port allocator to
+solve this convention. ORCA or another external development orchestrator owns
+ephemeral assignment; Aletheia only validates its own bounded runtime contract.
 
 ## Finish and release acceptance
 

@@ -119,9 +119,30 @@ dev-preview-b
 | 角色 | 数量 | 数据根 | 代码是否可热变 | Scheduler | Secrets | Execution | 用途 |
 |---|---:|---|---|---|---|---|---|
 | Stable/Qualification Runtime | 每台机器最多 1 个 owner | primary data root | 否 | 是 | 可按 owner 配置 | 仅批准模式 | 长期运行与正式验收 |
-| Dev Preview API | 多个 | checkout-id + API port 隔离 | 是，reload | 可启动但不得作为交易证明 | 禁止 | 强制阻断 | API/UI 开发 |
+| Dev Preview API | 多个 | checkout-id + API port 隔离 | 是，reload | 后台服务不启动 | Aletheia secret store 禁止 | 强制阻断 | API/UI 开发 |
 | Vite Preview | 多个 | 无独立交易状态 | 是，HMR | 否 | 否 | 对稳定 API 仅只读 | 前端反馈 |
 | CI/Test process | 多个临时 | tmp/test DB | 是 | 仅测试夹具 | 禁止真实凭证 | 禁止真实执行 | 回归与构建 |
+
+### 5.1 强制边界与操作边界
+
+“支持”不等于所有规则都已经由程序自动执行。当前边界必须按以下三类理解：
+
+| 合同 | 当前证据 | 强制级别 |
+|---|---|---|
+| Preview 拒绝 `8787`、`8788` | `aletheia dev api` 参数校验 | 程序强制 |
+| CLI 派生 checkout-id + API port 数据目录 | `runtime_paths.preview_instance_dir()` | 程序强制（仅标准 CLI 启动路径） |
+| Preview 不使用 primary `ALETHEIA_DATA_DIR` | config loader 优先选择 Preview data dir | 程序强制 |
+| Preview 不启动 scheduler/operator 等后台服务 | shadow runtime startup gate | 程序强制 |
+| Proposal execution 与 paper approval 阻断 | Execution Gateway 与 approval route 的 Preview guard | 程序强制 |
+| Preview API 的 Gateway/update 控制阻断 | 对应 HTTP route 的 Preview guard | 程序强制 |
+| Vite 指向稳定 `:8787` 时只允许读请求 | Vite development middleware | 程序强制 |
+| Worktree 不得直接运行 Gateway 生命周期 CLI | 本协议、Agent Guide 与 Worktree playbook | 操作规程；尚无通用 owner-checkout 强制器 |
+| 一台主机只运行一个稳定 Runtime owner | 本协议与部署所有权 | 操作规程；尚无多 Runtime manager |
+| 主机端口不冲突 | 人工/外部编排分配 | 操作规程；无动态 allocator |
+
+因此不得把“Preview HTTP route 会拒绝 Gateway 控制”扩大解释为“任意 Worktree shell
+都不可能运行 `aletheia gateway restart`”。在命名 Runtime、owner identity 和生命周期合同
+没有完成设计前，不通过零散 Git/worktree 检测伪造一个不完整的 owner guard。
 
 ## 6. 不可违反的所有权规则
 
@@ -277,3 +298,26 @@ uv run aletheia doctor
 这套形态允许高速开发与长期验证和谐共处，同时不新增仓库内任务数据库、worker lease 或实例编排
 平台。Agent/session/Worktree 的临时协调继续由 ORCA 等外部编排器负责，Git/PR/CI 和 Runtime
 provenance 分别承担代码事实与运行事实。
+
+## 12. Preview 实现验收门槛
+
+本协议定义目标拓扑，但不能替代可执行证据。任何后续 PR 若声称“远程多 Preview 已完整
+可用”，至少必须证明：
+
+1. 两个不同 Worktree 的 Preview 可在同一主机同时启动，runtime identity、API port 与
+   data dir 不相同；
+2. 同一 Worktree 的两个不同 API port 不共享数据库或配置；
+3. Preview data dir 必须与当前 checkout identity 和 runtime port 精确匹配，不能仅凭
+   “位于 dev-preview 根目录之下”就接受另一个 Preview 的目录；
+4. `/api/status` 与 `/_infra/status` 明确报告 Preview/shadow 身份、真实监听端口、
+   scheduler disabled 和 execution blocked，不能把默认 `Paper` 配置显示成执行权限；
+5. 未构建静态前端时，API-only Preview 的探活/就绪语义仍然诚实可用；
+6. stored trading credentials 不可读写，Proposal、Order、RiskDecision、Fill、Position
+   不因 Preview execution 请求发生变化；
+7. Gateway/update HTTP 控制仍在任何机器级副作用之前返回稳定 `403`；
+8. Windows launcher、POSIX 命令和 Vite read-only proxy 都有 focused executable tests；
+9. 两个 Preview 停止后不遗留稳定 Gateway PID、autostart、front-door 或 update 状态。
+
+截至 2026-07-27 对 `0ad6157` 的复核，双 API 并行启动、独立 CLI 派生目录、shadow
+后台服务禁用及 Gateway route `403` 已通过短时验证；第 3、4、5、8 项仍是后续实现/测试
+缺口。因此当前可称为“受约束的开发 Preview”，不可称为“完整的多 Runtime 平台”。
