@@ -800,11 +800,19 @@ def build_filter_controller_report(
         evaluated_since=evaluated_since,
     )
     try:
-        from aletheia.analytics.filter_evidence import filter_feedback_trajectory_summary
+        from aletheia.analytics.filter_evidence import (
+            filter_feedback_trajectory_summary,
+            filter_version_status,
+            observer_pre_filter_diagnostics,
+        )
 
         trajectory_summary = filter_feedback_trajectory_summary(
             evaluated_since=evaluated_since
         )
+        observer_diagnostics = observer_pre_filter_diagnostics(
+            evaluated_since=evaluated_since
+        )
+        observer_version_status = filter_version_status("observer_pre_filter")
     except Exception as exc:
         logger.warning("filter_controller: trajectory summary unavailable: %s", exc)
         trajectory_summary = {
@@ -812,6 +820,22 @@ def build_filter_controller_report(
             "candidate_trajectories": 0,
             "excluded_later_rows": 0,
             "decision_transition_candidates": 0,
+            "error": type(exc).__name__,
+        }
+        observer_diagnostics = {
+            "filter_name": "observer_pre_filter",
+            "assignment_policy": "first_exposure",
+            "read_only": True,
+            "evaluated_since": evaluated_since,
+            "row_count": 0,
+            "cohort_count": 0,
+            "cohorts": [],
+            "error": type(exc).__name__,
+        }
+        observer_version_status = {
+            "filter_name": "observer_pre_filter",
+            "current_filter_version": None,
+            "versions": [],
             "error": type(exc).__name__,
         }
     try:
@@ -825,7 +849,6 @@ def build_filter_controller_report(
     except Exception as exc:
         logger.warning("filter_controller: bounded replay unavailable: %s", exc)
         bounded_replays = []
-    replay_summary = _summarize_replays(bounded_replays)
     try:
         from aletheia.analytics.filter_shadow_experiments import (
             build_filter_shadow_experiment_report,
@@ -856,6 +879,71 @@ def build_filter_controller_report(
     except Exception as exc:
         logger.warning("filter_controller: persistent stability signal unavailable: %s", exc)
         persistent = []
+    # A bounded current-window report may be immature at 24h even when the same
+    # exact-version cell has been persistently suspect across scheduled runs.
+    # Surface its read-only replay without turning the persistent signal into an
+    # experiment or production mutation.
+    stale_persistent: list[dict[str, Any]] = []
+    try:
+        from aletheia.analytics.filter_replay import (
+            build_observer_pre_filter_replay,
+        )
+
+        current_observer_version = observer_version_status.get(
+            "current_filter_version"
+        )
+        replayed_scopes = {
+            (
+                replay.get("filter_name"),
+                replay.get("filter_version"),
+                replay.get("scanner_family"),
+                replay.get("direction"),
+                replay.get("market_type"),
+            )
+            for replay in bounded_replays
+        }
+        observer_replay_count = sum(
+            replay.get("filter_name") == "observer_pre_filter"
+            for replay in bounded_replays
+        )
+        for item in persistent:
+            scope = (
+                item.filter_name,
+                item.filter_version,
+                item.scanner_family,
+                item.direction,
+                item.market_type,
+            )
+            if (
+                item.filter_name != "observer_pre_filter"
+                or item.horizon != "24h"
+                or not item.filter_version
+                or not item.direction
+                or not item.market_type
+                or scope in replayed_scopes
+                or len(bounded_replays) >= 8
+                or observer_replay_count >= 3
+            ):
+                continue
+            if item.filter_version != current_observer_version:
+                stale_persistent.append({
+                    **asdict(item),
+                    "current_filter_version": current_observer_version,
+                    "replay_blocked_reason": "production_filter_version_changed",
+                })
+                continue
+            bounded_replays.append(build_observer_pre_filter_replay(
+                filter_version=item.filter_version,
+                scanner_family=item.scanner_family,
+                direction=item.direction,
+                market_type=item.market_type,
+                evaluated_since=evaluated_since,
+            ))
+            replayed_scopes.add(scope)
+            observer_replay_count += 1
+    except Exception as exc:
+        logger.warning("filter_controller: persistent Observer replay unavailable: %s", exc)
+    replay_summary = _summarize_replays(bounded_replays)
     return {
         "generated_at": _now_iso(),
         "window": {"hours": hours_i, "evaluated_since": evaluated_since},
@@ -868,6 +956,9 @@ def build_filter_controller_report(
             "later retries are excluded. Findings are observational and never mutate configuration."
         ),
         "trajectory_summary": trajectory_summary,
+        "observer_pre_filter_diagnostics": observer_diagnostics,
+        "observer_pre_filter_version_status": observer_version_status,
+        "stale_persistent_recommendations": stale_persistent,
         "bounded_replays": bounded_replays,
         "replay_summary": replay_summary,
         "shadow_experiments": shadow_experiments,
@@ -917,6 +1008,31 @@ def render_filter_controller_report(report: dict[str, Any]) -> str:
         f"Verdicts: overrestrictive_suspect={vc.get('overrestrictive_suspect',0)} "
         f"hold={vc.get('hold',0)} insufficient_data={vc.get('insufficient_data',0)}"
     )
+    observer_diagnostics = report.get("observer_pre_filter_diagnostics") or {}
+    observer_version = report.get("observer_pre_filter_version_status") or {}
+    observer_rows = [
+        row
+        for row in (observer_diagnostics.get("cohorts") or [])
+        if row.get("horizon") == "24h"
+        and int(row.get("n_net") or 0) >= int(report.get("min_samples") or 0)
+    ]
+    lines.append(
+        "Observer rule diagnostics: "
+        f"rows={observer_diagnostics.get('row_count', 0)} "
+        f"cohorts={observer_diagnostics.get('cohort_count', 0)} "
+        "(first exposure; read-only)"
+    )
+    lines.append(
+        "Observer production filter version: "
+        f"{observer_version.get('current_filter_version') or 'not available'}; "
+        "older-version suspects cannot authorize replay or experiment"
+    )
+    stale_persistent = report.get("stale_persistent_recommendations") or []
+    if stale_persistent:
+        lines.append(
+            f"Observer stale persistent suspects blocked: {len(stale_persistent)} "
+            "(production_filter_version_changed)"
+        )
     persistent = report.get("persistent_recommendations") or []
     persistent_cfg = report.get("persistent_config") or {}
     _min_streak = int(persistent_cfg.get("min_consecutive_runs", 3) or 3)
@@ -932,6 +1048,24 @@ def render_filter_controller_report(report: dict[str, Any]) -> str:
         f"insufficient_data={replay_summary.get('insufficient_data', 0)}"
     )
     lines.append("")
+
+    if observer_rows:
+        lines.append("Observer 24h matched-rule cohorts (diagnostic; NOT applied):")
+        for row in sorted(
+            observer_rows,
+            key=lambda item: float(item.get("shrunk_avg_net_pct") or 0.0),
+        )[:12]:
+            lines.append(
+                f"  {row.get('scanner_family')} {row.get('direction')} "
+                f"{row.get('market_type')} · {row.get('decision')} "
+                f"{row.get('rule_cohort')} "
+                f"RSI={row.get('rsi_deviation_bucket')} "
+                f"ATR={row.get('atr_pct_bucket')} "
+                f"n={row.get('n_net')}/{row.get('n_total')} "
+                f"coverage={float(row.get('outcome_coverage') or 0):.0%} "
+                f"shrunk_net={row.get('shrunk_avg_net_pct')}%"
+            )
+        lines.append("")
 
     recs = report.get("recommendations") or []
     actionable = [r for r in recs if r["verdict"] == "overrestrictive_suspect"]
@@ -983,6 +1117,35 @@ def render_filter_controller_report(report: dict[str, Any]) -> str:
     if replays:
         lines.append("Bounded gate-only replays (read-only; downstream gates not replayed):")
         for replay in replays:
+            if replay.get("filter_name") == "observer_pre_filter":
+                lines.append(
+                    f"  observer_pre_filter · {replay.get('scanner_family')} "
+                    f"{replay.get('direction')} {replay.get('market_type')} "
+                    f"version={replay.get('filter_version')}"
+                )
+                for alternative in replay.get("alternatives") or []:
+                    primary = (
+                        (alternative.get("horizon_metrics") or {})
+                        .get("24h", {})
+                        .get("treatment_union", {})
+                    )
+                    admitted = (
+                        (alternative.get("horizon_metrics") or {})
+                        .get("24h", {})
+                        .get("newly_admitted", {})
+                    )
+                    lines.append(
+                        "    "
+                        f"RSI>{alternative.get('rsi_deviation')} OR "
+                        f"ATR>{alternative.get('atr_pct')}: "
+                        f"new={alternative.get('newly_admitted_candidates')} "
+                        f"settled={admitted.get('settled_n')} "
+                        f"coverage={float(admitted.get('outcome_coverage') or 0):.0%} "
+                        f"union_delta={primary.get('delta_vs_control_pct')}pp "
+                        f"lcb={alternative.get('bootstrap_delta_lcb_pct')}pp "
+                        f"readiness={alternative.get('readiness')}"
+                    )
+                continue
             lines.append(
                 f"  {replay.get('filter_name')} · {replay.get('scanner_family')} "
                 f"{replay.get('direction')} {replay.get('market_type')} "
@@ -1079,7 +1242,10 @@ def _summarize_replays(replays: list[dict[str, Any]]) -> dict[str, int]:
             str(row.get("readiness") or "insufficient_data")
             for row in replay.get("alternatives") or []
         }
-        if "ready_for_controlled_experiment" in readiness:
+        if (
+            "ready_for_controlled_experiment" in readiness
+            or "ready_for_prospective_shadow" in readiness
+        ):
             summary["experiment_ready"] += 1
         elif "no_support" in readiness:
             summary["no_support"] += 1

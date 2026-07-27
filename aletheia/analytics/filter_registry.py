@@ -448,13 +448,13 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         stage="pre_persistence",
         drop_reason_codes=(),  # rejected symbols never become opportunity rows
         config_path="",
-        hardcoded_at="aletheia/agents/market_observer.py:178,187 "
-                     "(RSI dev >12, ATR >0.8%)",
+        hardcoded_at="aletheia/agents/market_observer.py:"
+                     "_PREFILTER_RSI_DEVIATION/_PREFILTER_ATR_PCT",
         current_value="rsi_deviation>12, atr_pct>0.8",
         loosen_direction="down",  # lower thresholds → more opportunities created
         neutral=12.0, floor=6.0, ceiling=20.0,
         feedback_source="forward_return",
-        family_keyed=False,
+        family_keyed=True,
         auto_tunable=True,
         feedback_ready=True,
         drop_share_hint=0.0,

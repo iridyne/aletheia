@@ -426,6 +426,210 @@ def filter_feedback_trajectory_summary(
     }
 
 
+def _observer_range_bucket(value: float | None, boundaries: tuple[float, ...]) -> str:
+    """Return a stable left-open/right-closed diagnostic bucket."""
+    if value is None:
+        return "unknown"
+    lower = 0.0
+    for upper in boundaries:
+        if value <= upper:
+            return f"{lower:g}_to_{upper:g}"
+        lower = upper
+    return f"gt_{boundaries[-1]:g}"
+
+
+def _observer_rule_cohort(input_snapshot: dict[str, Any]) -> str:
+    """Classify the persisted event-time rules without re-running current code."""
+    matched = {
+        str(item)
+        for item in (input_snapshot.get("matched_rules") or [])
+        if item is not None
+    }
+    has_rsi = "rsi_deviation" in matched
+    has_atr = "atr_pct" in matched
+    if has_rsi and has_atr:
+        return "rsi_and_atr"
+    if has_rsi:
+        return "rsi_only"
+    if has_atr:
+        return "atr_only"
+    return "neither"
+
+
+def observer_pre_filter_diagnostics(
+    *,
+    evaluated_since: str | None = None,
+    shrinkage_k: float = 20.0,
+) -> dict[str, Any]:
+    """Split Observer pass/reject economics by the exact persisted rule facts.
+
+    This is deliberately diagnostic-only. It uses first exposure, event-time
+    inputs and exact-version cost-aware outcomes; it never re-runs the current
+    filter and never writes configuration or experiment state.
+    """
+    from aletheia.storage.sqlite import get_db
+
+    time_clause = (
+        " AND datetime(fd.first_evaluated_at) >= datetime(?)"
+        if evaluated_since else ""
+    )
+    params = (evaluated_since,) if evaluated_since else ()
+    rows = get_db().execute(
+        FIRST_EXPOSURE_CTE_SQL
+        + "SELECT fd.filter_version, fd.decision, fd.scanner_family, "
+        "fd.direction, fd.market_type, fd.input_snapshot, "
+        "fo.horizon, fo.status, fo.net_return_pct "
+        "FROM ranked_filter_decisions fd "
+        "JOIN filter_candidate_outcomes fo "
+        "  ON fo.outcome_candidate_key = fd.outcome_candidate_key "
+        "WHERE fd.exposure_rank = 1 "
+        "  AND fd.filter_name = 'observer_pre_filter' "
+        f"{time_clause}",
+        params,
+    ).fetchall()
+
+    grouped: dict[tuple[Any, ...], dict[str, Any]] = {}
+    cell_priors: dict[tuple[Any, ...], list[float]] = {}
+    for raw_row in rows:
+        row = dict(raw_row)
+        try:
+            inputs = json.loads(row.get("input_snapshot") or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            inputs = {}
+        if not isinstance(inputs, dict):
+            inputs = {}
+        try:
+            rsi = float(inputs["rsi"]) if inputs.get("rsi") is not None else None
+        except (TypeError, ValueError):
+            rsi = None
+        try:
+            atr_pct = (
+                float(inputs["atr_pct"])
+                if inputs.get("atr_pct") is not None else None
+            )
+        except (TypeError, ValueError):
+            atr_pct = None
+        rsi_deviation = abs(rsi - 50.0) if rsi is not None else None
+        rule_cohort = _observer_rule_cohort(inputs)
+        rsi_bucket = _observer_range_bucket(
+            rsi_deviation, (6.0, 9.0, 12.0, 16.0)
+        )
+        atr_bucket = _observer_range_bucket(
+            atr_pct, (0.4, 0.6, 0.8, 1.2)
+        )
+        cell_key = (
+            row.get("filter_version"),
+            row.get("scanner_family") or "unknown",
+            row.get("direction"),
+            row.get("market_type"),
+            row.get("horizon"),
+        )
+        group_key = (
+            *cell_key,
+            row.get("decision"),
+            rule_cohort,
+            rsi_bucket,
+            atr_bucket,
+        )
+        group = grouped.setdefault(
+            group_key,
+            {
+                "filter_version": cell_key[0],
+                "scanner_family": cell_key[1],
+                "direction": cell_key[2],
+                "market_type": cell_key[3],
+                "horizon": cell_key[4],
+                "decision": row.get("decision"),
+                "rule_cohort": rule_cohort,
+                "rsi_deviation_bucket": rsi_bucket,
+                "atr_pct_bucket": atr_bucket,
+                "n_total": 0,
+                "n_net": 0,
+                "_net_sum": 0.0,
+            },
+        )
+        group["n_total"] += 1
+        net = (
+            float(row["net_return_pct"])
+            if row.get("status") == "settled"
+            and row.get("net_return_pct") is not None
+            else None
+        )
+        if net is not None:
+            group["n_net"] += 1
+            group["_net_sum"] += net
+            cell_priors.setdefault(cell_key, []).append(net)
+
+    cohorts: list[dict[str, Any]] = []
+    for group_key, group in grouped.items():
+        cell_key = group_key[:5]
+        prior_values = cell_priors.get(cell_key) or []
+        prior = sum(prior_values) / len(prior_values) if prior_values else 0.0
+        n_net = int(group["n_net"])
+        raw_avg = group["_net_sum"] / n_net if n_net else None
+        group.pop("_net_sum")
+        group["outcome_coverage"] = round(
+            n_net / int(group["n_total"]), 4
+        ) if group["n_total"] else 0.0
+        group["raw_avg_net_pct"] = (
+            round(raw_avg, 6) if raw_avg is not None else None
+        )
+        group["shrunk_avg_net_pct"] = (
+            round(
+                (n_net * raw_avg + float(shrinkage_k) * prior)
+                / (n_net + float(shrinkage_k)),
+                6,
+            )
+            if raw_avg is not None else None
+        )
+        cohorts.append(group)
+
+    cohorts.sort(
+        key=lambda row: (
+            str(row["scanner_family"]),
+            str(row["direction"]),
+            str(row["market_type"]),
+            str(row["horizon"]),
+            str(row["rule_cohort"]),
+            str(row["rsi_deviation_bucket"]),
+            str(row["atr_pct_bucket"]),
+        )
+    )
+    return {
+        "filter_name": "observer_pre_filter",
+        "assignment_policy": "first_exposure",
+        "read_only": True,
+        "evaluated_since": evaluated_since,
+        "rsi_deviation_boundaries": [6.0, 9.0, 12.0, 16.0],
+        "atr_pct_boundaries": [0.4, 0.6, 0.8, 1.2],
+        "row_count": len(rows),
+        "cohort_count": len(cohorts),
+        "cohorts": cohorts,
+    }
+
+
+def filter_version_status(filter_name: str) -> dict[str, Any]:
+    """Return the latest persisted version and bounded version history."""
+    from aletheia.storage.sqlite import get_db
+
+    rows = get_db().execute(
+        "SELECT filter_version, parameter_snapshot, MIN(evaluated_at) AS first_seen_at, "
+        "MAX(evaluated_at) AS last_seen_at, COUNT(*) AS decision_count "
+        "FROM filter_decisions WHERE filter_name=? "
+        "GROUP BY filter_version, parameter_snapshot "
+        "ORDER BY datetime(last_seen_at) DESC LIMIT 20",
+        (filter_name,),
+    ).fetchall()
+    versions = [dict(row) for row in rows]
+    return {
+        "filter_name": filter_name,
+        "current_filter_version": (
+            versions[0]["filter_version"] if versions else None
+        ),
+        "versions": versions,
+    }
+
+
 def record_candidate_filter_trace(
     candidate: dict[str, Any],
     *,

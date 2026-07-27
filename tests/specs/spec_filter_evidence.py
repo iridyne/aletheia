@@ -1174,6 +1174,40 @@ def test_filter_shadow_experiments_are_prospective_and_observe_only():
 
 @spec_claim(
     SpecClaim(
+        "FE-C12", _CONTRACT, "§6 Observer rule attribution and replay", "L2c",
+        "Observer diagnostics use persisted first-exposure rule facts, and the bounded "
+        "RSI/ATR replay cannot mutate production or cross a filter-version boundary.",
+        status="implemented",
+    )
+)
+def test_observer_diagnostics_and_replay_are_versioned_read_only_surfaces():
+    import inspect
+
+    from aletheia.analytics import (
+        filter_controller,
+        filter_evidence,
+        filter_registry,
+        filter_replay,
+    )
+
+    diagnostics = inspect.getsource(filter_evidence.observer_pre_filter_diagnostics)
+    replay = inspect.getsource(filter_replay.build_observer_pre_filter_replay)
+    controller = inspect.getsource(filter_controller.build_filter_controller_report)
+
+    assert "FIRST_EXPOSURE_CTE_SQL" in diagnostics
+    assert "_observer_rule_cohort" in diagnostics
+    assert filter_replay._OBSERVER_RSI_GRID == (12.0, 10.0, 8.0, 6.0)
+    assert filter_replay._OBSERVER_ATR_GRID == (0.8, 0.7, 0.6, 0.5)
+    assert filter_replay._OBSERVER_MIN_SAMPLES == 200
+    assert filter_replay._OBSERVER_MIN_COVERAGE == 0.80
+    assert filter_replay._MAX_OBSERVER_REPLAYS == 3
+    assert filter_registry.filter_by_name("observer_pre_filter").family_keyed is True
+    assert "save_config" not in replay
+    assert "production_filter_version_changed" in controller
+
+
+@spec_claim(
+    SpecClaim(
         "FE-C11", _CONTRACT, "§8 operations", "L2c",
         "Doctor distinguishes outcomes waiting inside the 15-minute settler cadence from genuinely stale settlement backlog.",
         status="implemented",

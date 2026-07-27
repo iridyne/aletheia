@@ -1091,6 +1091,8 @@ CR-EX-01 与 CR-EX-03 已在 TASK-2026-067 完成；本表仅剩 CR-AU-03 待后
 | OPR-H02 | ✅ | opportunity overview 的 200 条重建上限被显示成窗口机会总数；controller view 又忽略 `--hours`，近期 PR 效果可能混入全历史证据 | overview 分开输出窗口 DB 总数、实际重建数和过滤后显示数；controller 将 hours 转成 `filter_decisions.evaluated_at` cutoff，报告明确显示时间窗。调度器的长期 shadow controller 保持全历史，不改任何 filter 参数 |
 | OPR-H03 | ✅ | 同一候选可在新鲜时通过、后续重试时过期拒绝，旧 feedback 把同一净结果同时放进 pass/reject，伪增样本并污染对照 | 按 filter+stage+version+outcome candidate 采用首次暴露唯一归因，窗口在全历史排序后截断；controller 显示排除的后续重试和状态迁移。新增固定版本、最多 4 阈值/5000 候选的 gate-only TTL replay，样本/覆盖/5bp 经济门不满足时明确 no support/insufficient，不写配置 |
 | OPR-H04 | ✅ | direct model skip 可把 `insufficient_evidence`/rank score 当否决，且绕过对称挑战；无效 action/conviction 又会归一成终态 skip，重复 carrier 每约 50 分钟重新耗费模型，理由与结构化证据被截断 | `system_operator_skip_remediation/b1.2` 要求一次有界反事实确认和 typed candidate-specific adverse evidence；neutral/invalid 二次输出只写 defer observation、保留 pending，同物质上下文 120 分钟不重复调用。rank score 改称 ordering priority，PiDecision 保存完整 rationale bundle；不改 55、Ranker、Risk、Execution、Exchange 或 Live |
+| OPR-I01 | 🟠 A-class diagnostics | Observer 全局预过滤 `abs(1h RSI-50)>12 OR 1h ATR%>0.8` 的前任版本在成熟 24h 证据中出现稳定反向选择，但现有 controller 未拆分 RSI-only / ATR-only / both / neither，也未展示距阈值区间或阻止旧版本 suspect 触发新版本 replay | 先完成只读规则归因、版本失效门和有界二维回放；不得直接改阈值。验收与预承诺门见 `docs/plans/trading-pipeline/observer_prefilter_alpha_repair_2026-07-24.md` |
+| OPR-I02 | ⏳ blocked on current-version evidence | 前任 `v1-055855b95c26` 的 `short_bias/short/perp/24h` rejected cohort 连续 10 次优于 passed cohort；当前 `v1-5adde7c878b6` 在 2026-07-24 只有 2 个 rejected net outcome、2.27% coverage | 旧版本只保留为假说，不得登记当前实验。等待当前 exact version 达到 200 个 newly-admitted net outcome、80% coverage 和计划中的经济/集中度/伴随周期门后，才可登记 first-exposure 前瞻 shadow |
 
 ## §22 Gateway 无人值守运行（2026-07-11）
 
