@@ -234,6 +234,11 @@ Current minimal slice:
 - reads at most 20 current open experiments and projects registry path
   capabilities, current identity, the latest historical verdict, cohort
   integrity, evaluator health and recommendation-only lifecycle state;
+  open experiments whose `h.path_id` appears in
+  `cfg.learning.paper_influence_paths` are ranked first (priority 0) before
+  the global newest-first order so a protected path is never displaced by an
+  unrelated experiment; an empty allowlist preserves the existing newest-first
+  behavior;
 - performs no evaluation, lifecycle transition, admission or config mutation;
 - resolves only an already-open matching policy epoch on GET; epoch creation or
   rotation remains confined to behavior-producing and owner-mutation paths;

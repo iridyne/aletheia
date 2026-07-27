@@ -276,3 +276,81 @@ def test_unavailable_lco_envelope_does_not_invent_empty_success():
     assert result["unavailable_reason"] == "projection_read_failed"
     assert result["data_freshness"]["state"] == "unavailable"
     assert result["operations"] is None
+
+
+def test_lco_projection_prioritizes_influence_paths_when_window_is_full(
+    tmp_path,
+    monkeypatch,
+):
+    """UFC stays visible when paper_influence_paths fills the observation window.
+
+    Part A proves the current bug: 21 newer open experiments push the UFC
+    experiment out of the LIMIT 20 window.
+    Part B proves the fix: with paper_influence_paths configured, UFC is
+    guaranteed a slot regardless of how many newer experiments exist.
+    Empty allowlist (Part A) must preserve the existing newest-first order.
+    """
+    _setup_env(tmp_path, monkeypatch)
+    _, ufc_experiment_id = _seed_current_experiment(monkeypatch)
+
+    from aletheia.learning.ledger import insert_experiment, insert_hypothesis
+    from aletheia.learning.models import LearningExperiment, LearningHypothesis
+
+    # 21 newer open experiments with a different path_id fill the window.
+    newer_ts = "2099-01-01T00:00:00+00:00"
+    for i in range(21):
+        h = LearningHypothesis(
+            fingerprint=f"filler-fp-{i}",
+            cohort_id=f"filler-cohort-{i}",
+            path_id="filler_path",
+            overlap_group="filler",
+            source_type="filter_candidate_outcomes:clean_net:v1",
+            scope_json="{}",
+            action_json="{}",
+            consumer="universe_allocator",
+            target_horizon="1h",
+            status="shadow",
+            effect_threshold=0.2,
+            created_at=newer_ts,
+            updated_at=newer_ts,
+        )
+        e = LearningExperiment(
+            hypothesis_id=h.hypothesis_id,
+            assignment_salt=f"filler-salt-{i}",
+            status="active",
+            started_at=newer_ts,
+            min_samples_per_arm=10,
+            min_market_days=1,
+            created_at=newer_ts,
+        )
+        assert insert_hypothesis(h)
+        assert insert_experiment(e)
+
+    import aletheia.config.loader as loader_mod
+    from aletheia.config.schema import AletheiaConfig, LearningConfig
+
+    # Part A: empty paper_influence_paths → newest-first; UFC falls outside limit 20.
+    monkeypatch.setattr(loader_mod, "load_config", lambda: AletheiaConfig())
+
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    result_default = build_learning_contribution_projection(limit=20)
+    returned_ids_default = {item["experiment_id"] for item in result_default["items"]}
+    assert ufc_experiment_id not in returned_ids_default, (
+        "Without paper_influence_paths, UFC must be excluded by the limit-20 window"
+    )
+    assert len(result_default["items"]) == 20
+
+    # Part B: paper_influence_paths=[universe_family_calibration] → UFC is prioritized.
+    influence_cfg = AletheiaConfig(
+        learning=LearningConfig(paper_influence_paths=["universe_family_calibration"])
+    )
+    monkeypatch.setattr(loader_mod, "load_config", lambda: influence_cfg)
+
+    result_influence = build_learning_contribution_projection(limit=20)
+    returned_ids_influence = {item["experiment_id"] for item in result_influence["items"]}
+    assert ufc_experiment_id in returned_ids_influence, (
+        "With paper_influence_paths=[universe_family_calibration], "
+        "UFC must appear within the limit-20 window"
+    )
+    assert len(result_influence["items"]) == 20

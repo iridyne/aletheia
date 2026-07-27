@@ -38,7 +38,7 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
 
     cfg = load_config()
     boot_commit = get_boot_commit()
-    rows = _current_experiment_rows(bounded_limit)
+    rows = _current_experiment_rows(bounded_limit, cfg.learning.paper_influence_paths)
     items = [
         _project_experiment(row, boot_commit=boot_commit)
         for row in rows
@@ -99,8 +99,10 @@ def unavailable_learning_contribution_projection(reason: str) -> dict[str, Any]:
     }
 
 
-def _current_experiment_rows(limit: int) -> list[dict[str, Any]]:
-    rows = get_db().execute(
+def _current_experiment_rows(
+    limit: int, priority_paths: list[str] | None = None
+) -> list[dict[str, Any]]:
+    base_sql = (
         "SELECT e.*, h.path_id, h.target_horizon, h.effect_threshold, "
         "v.verdict_id, v.verdict, v.reason AS verdict_reason, "
         "v.unique_treatment_n, v.unique_control_n, v.baseline, v.observed, "
@@ -121,9 +123,20 @@ def _current_experiment_rows(limit: int) -> list[dict[str, Any]]:
         " v2.verdict_id DESC LIMIT 1"
         ") "
         "WHERE e.ended_at IS NULL "
-        "ORDER BY datetime(e.created_at) DESC, e.experiment_id DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
+    )
+    if priority_paths:
+        placeholders = ", ".join("?" * len(priority_paths))
+        order_sql = (
+            f"ORDER BY CASE WHEN h.path_id IN ({placeholders}) THEN 0 ELSE 1 END ASC, "
+            "datetime(e.created_at) DESC, e.experiment_id DESC LIMIT ?"
+        )
+        params: tuple = tuple(priority_paths) + (limit,)
+    else:
+        order_sql = (
+            "ORDER BY datetime(e.created_at) DESC, e.experiment_id DESC LIMIT ?"
+        )
+        params = (limit,)
+    rows = get_db().execute(base_sql + order_sql, params).fetchall()
     return [dict(row) for row in rows]
 
 
