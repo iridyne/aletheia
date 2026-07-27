@@ -1,7 +1,7 @@
 # Universe Family Calibration 正向贡献执行计划
 
 > 日期：2026-07-24
-> 状态：已完成反向评估，等待按批实施
+> 状态：Batch 1–3 已交付；单路径 shadow qualification 运行中，尚未准入 `paper_10`
 > 范围：仅 `universe_family_calibration` 的测量、owner 可观测性、准入与 paper 实验
 > 分类：测量/契约漂移修复为 A 类；任何改变候选分配的 paper treatment 为 B 类
 > 上位契约：
@@ -389,20 +389,43 @@ cd frontend && npm run build
 [x] 完整诊断与第一性原理反向评估
 [x] 发现 admission 实现与 SDD/auth 的关键漂移
 [x] 删除 stage/epoch 新唯一性框架等过度设计
-[ ] Batch 1：测量与契约完整性
-[ ] Batch 2：最小 owner 投影
-[ ] Batch 3：认证 owner admission
+[x] Batch 1：测量与契约完整性（PR #378）
+[x] Batch 2：最小 owner 投影（PR #382）
+[x] Batch 3：认证 owner admission（PR #383）
+[ ] Pre-Batch 4：当前 UFC shadow epoch 取得可执行 admission verdict
 [ ] Batch 4：启动并判决一个 paper_10 实验
 [ ] Level 2：具备 bitget_demo 前置条件后另开新窗口
 ```
 
-实施过程的默认安全状态始终是：
+### 2026-07-27 运行 checkpoint
+
+- 部署身份仍为 `a8c1b786`，UFC policy epoch 仍为 `2cea85ac734b`，
+  `live_disabled + paper_internal` 未变。
+- Learning 三个运行 gate 已开启，但 allowlist 仍只包含
+  `universe_family_calibration`；当前 exposure 的 `authority_applied` 仍为 0，
+  所以这仍是 fail-closed shadow qualification，不是 `paper_10`。
+- 当前 epoch 已积累数千条 4h canonical outcome，但它们全部排在约 16.6 万条
+  历史 overdue canonical backlog 后，LCO 因此持续得到 0 个 settled
+  treatment/control sample。单纯等待 7 天不能解决这个测量饥饿。
+- 当前修复只在既有 canonical settlement quota 内优先结算 open UFC epoch 的
+  exact outcome；不改变评分、assignment、经济公式、阈值、Risk、Execution 或
+  trading behavior，分类为 A。
+- 7 天只是一项必要条件。只有 settled sample、完整 assignment unit、identity、
+  confidence 与 harm gates 同时满足，owner 才能考虑 admission；服务中断或 backlog
+  造成的无数据时段不能被当作有效证据。
+
+当前安全状态是：
 
 ```text
-paper_influence_enabled = false
-lifecycle_automation_enabled = false
-Learning authority = shadow/read-only
+paper_influence_enabled = true
+lifecycle_automation_enabled = true
+paper_learning_paths = [universe_family_calibration]
+current stage = shadow
+authority_applied = 0
+owner admission = not yet eligible
 ```
 
-直到 Batch 1–3 各自证据完整、owner 明确执行 admission，才允许 Batch 4 的单路径
-10% paper treatment。任何无法证明的地方都保持 baseline，而不是猜测性修复。
+这里的两个 enabled gate 只让受保护的 lifecycle/authority 路径具备运行条件；
+它们不等于已经获得 treatment authority。直到当前 shadow cohort 取得 exact current
+admission verdict 且 owner 明确确认，才允许 Batch 4 的单路径 10% paper treatment。
+任何无法证明的地方都保持 baseline，而不是猜测性修复。

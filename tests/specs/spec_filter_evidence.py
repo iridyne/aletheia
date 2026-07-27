@@ -194,6 +194,106 @@ def test_filter_outcome_settler_has_capacity_before_universe_mirror_backlog(
 
 @spec_claim(
     SpecClaim(
+        "FE-B04a", _CONTRACT, "§4 fixed-horizon settlement", "L2b",
+        "Within the canonical settlement quota, due outcomes belonging to the "
+        "open Universe Learning epoch are processed before unrelated historical backlog.",
+        status="implemented",
+    )
+)
+def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
+    monkeypatch,
+):
+    from aletheia.universe import filter_outcome_recorder
+
+    now = "2026-07-27T03:00:00+00:00"
+    base = {
+        "symbol": "BTC/USDT",
+        "venue": "okx",
+        "market_type": "perp",
+        "direction": "long",
+        "horizon": "4h",
+        "entry_price_usd": 100.0,
+        "entry_ts": "2026-07-26T22:00:00+00:00",
+        "due_at": "2026-07-27T02:00:00+00:00",
+        "entry_spread_bps": 5.0,
+        "funding_rate_at_entry": 0.0,
+    }
+    historical = {
+        **base,
+        "id": "historical-backlog",
+        "outcome_candidate_key": "historical-candidate",
+    }
+    current = {
+        **base,
+        "id": "current-ufc",
+        "outcome_candidate_key": "current-ufc-candidate",
+    }
+    settled = []
+
+    async def observations(rows, now):
+        return {
+            row["id"]: {
+                "exit_price": 101.0,
+                "price_quality_ok": True,
+                "price_source": "test",
+                "settlement_lag_sec": 0.0,
+            }
+            for row in rows
+        }
+
+    monkeypatch.setattr(
+        filter_outcome_recorder.repo,
+        "list_open_learning_outcome_candidate_keys",
+        lambda path_ids: {"current-ufc-candidate:4h"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        filter_outcome_recorder.repo,
+        "list_pending_filter_candidate_outcomes_for_keys",
+        lambda before_ts, outcome_candidate_keys, limit: [current],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        filter_outcome_recorder.repo,
+        "list_pending_filter_candidate_outcomes",
+        lambda before_ts, limit: [historical],
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
+        observations,
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_economics.estimate_outcome_economics",
+        lambda **kwargs: {
+            "gross_return_pct": 1.0,
+            "directional_return_pct": 1.0,
+            "estimated_fee_pct": 0.0,
+            "estimated_spread_slippage_pct": 0.0,
+            "estimated_funding_pct": 0.0,
+            "net_return_pct": 1.0,
+            "min_tradable_edge_pct": 0.0,
+            "mfe_pct": 1.0,
+            "mae_pct": 0.0,
+            "cost_model_version": "test",
+        },
+    )
+    monkeypatch.setattr(
+        filter_outcome_recorder.repo,
+        "settle_filter_candidate_outcome",
+        lambda outcome_id, **kwargs: settled.append(outcome_id),
+    )
+
+    assert asyncio.run(
+        filter_outcome_recorder.settle_due_filter_outcomes(
+            max_rows=1,
+            time_budget_sec=5.0,
+        )
+    ) == 1
+    assert settled == ["current-ufc"]
+
+
+@spec_claim(
+    SpecClaim(
         "FE-B05", _CONTRACT, "§4 shadow projection", "L2b",
         "New shadow rows link to shared candidate outcomes and persist net economics separately from legacy gross PnL.",
         status="implemented",

@@ -4907,6 +4907,71 @@ def list_pending_filter_candidate_outcomes(
     )
 
 
+def list_open_learning_outcome_candidate_keys(
+    path_ids: tuple[str, ...],
+) -> set[str]:
+    """Return exact outcome keys attached to active experiments in open epochs."""
+    if not path_ids:
+        return set()
+    placeholders = ", ".join("?" for _ in path_ids)
+    rows = get_db().execute(
+        "SELECT DISTINCT le.outcome_candidate_key "
+        "FROM learning_exposures le "
+        "JOIN learning_experiments e "
+        "  ON e.experiment_id=le.experiment_id AND e.status='active' "
+        "JOIN learning_hypotheses h ON h.hypothesis_id=le.hypothesis_id "
+        "JOIN learning_policy_epochs pe "
+        "  ON pe.epoch_id=le.concurrent_policy_epoch AND pe.ended_at IS NULL "
+        f"WHERE h.path_id IN ({placeholders}) "
+        "AND pe.epoch_kind=('decision_policy:' || h.path_id) "
+        "AND le.outcome_candidate_key IS NOT NULL",
+        path_ids,
+    ).fetchall()
+    return {
+        str(row["outcome_candidate_key"])
+        for row in rows
+        if row["outcome_candidate_key"]
+    }
+
+
+def list_pending_filter_candidate_outcomes_for_keys(
+    before_ts: str,
+    outcome_candidate_keys: set[str],
+    limit: int = 200,
+) -> list[dict]:
+    """Return due canonical outcomes for exact horizon-suffixed Learning keys."""
+    if not outcome_candidate_keys or limit <= 0:
+        return []
+
+    by_horizon: dict[str, set[str]] = {}
+    for key in outcome_candidate_keys:
+        base, separator, horizon = str(key).rpartition(":")
+        if separator and horizon in {"15m", "1h", "4h", "24h"}:
+            by_horizon.setdefault(horizon, set()).add(base)
+
+    found: dict[str, dict] = {}
+    db = get_db()
+    chunk_size = 400
+    for horizon, base_keys in by_horizon.items():
+        ordered_keys = sorted(base_keys)
+        for offset in range(0, len(ordered_keys), chunk_size):
+            chunk = ordered_keys[offset:offset + chunk_size]
+            placeholders = ", ".join("?" for _ in chunk)
+            rows = db.execute(
+                "SELECT * FROM filter_candidate_outcomes "
+                "WHERE status='pending' AND due_at <= ? AND horizon=? "
+                f"AND outcome_candidate_key IN ({placeholders})",
+                (before_ts, horizon, *chunk),
+            ).fetchall()
+            for row in rows:
+                found[str(row["id"])] = dict(row)
+
+    return sorted(
+        found.values(),
+        key=lambda row: (str(row.get("due_at") or ""), str(row.get("id") or "")),
+    )[:limit]
+
+
 def settle_filter_candidate_outcome(
     outcome_id: str,
     *,
