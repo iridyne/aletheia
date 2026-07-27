@@ -399,20 +399,28 @@ cd frontend && npm run build
 
 ### 2026-07-27 运行 checkpoint
 
-- 部署身份仍为 `a8c1b786`，UFC policy epoch 仍为 `2cea85ac734b`，
+- canonical settlement 优先级修复已由 PR #420 合并并部署为
+  `2d53541cf791238060f46d93c659b049fb8c2c3e`。Gateway 的 boot/current
+  commit 与该版本一致；UFC policy epoch 仍为 `2cea85ac734b`，
   `live_disabled + paper_internal` 未变。
 - Learning 三个运行 gate 已开启，但 allowlist 仍只包含
   `universe_family_calibration`；当前 exposure 的 `authority_applied` 仍为 0，
   所以这仍是 fail-closed shadow qualification，不是 `paper_10`。
-- 当前 epoch 已积累数千条 4h canonical outcome，但它们全部排在约 16.6 万条
-  历史 overdue canonical backlog 后，LCO 因此持续得到 0 个 settled
-  treatment/control sample。单纯等待 7 天不能解决这个测量饥饿。
+- 部署后的两个自然调度周期分别结算 64 和 128 条当前 UFC canonical outcome；
+  旧 build cohort 首次从 0/0 增长到 5 个 treatment、9 个 control 的完整
+  assignment unit。3 个不满足完整性要求的 unit 被 typed invalid reason 排除，
+  没有进入贡献分母。这证明 starvation 修复有效，但旧 build 证据不能授权新 build。
+- admission 会把 verdict 严格绑定到当前 code commit。新 build cohort 于
+  `2026-07-27T04:04:42Z` 自然开始，首批产生 135 条 exposure、覆盖 9 个实验；
+  旧 `a8c1b786` cohort 保留为历史证据，不与 `2d53541c` cohort 混池。
+- 因此当前 build 的 7 天必要时间门最早约为
+  `2026-08-03T04:04:42Z`，不是旧 build 原先对应的 7 月 31 日。每个候选实验还必须
+  同时达到每臂至少 50 个完整 assignment unit、current-build verdict、完整 identity、
+  confidence 与 harm gates；无数据或服务中断时段不能冒充有效证据。
 - 当前修复只在既有 canonical settlement quota 内优先结算 open UFC epoch 的
   exact outcome；不改变评分、assignment、经济公式、阈值、Risk、Execution 或
-  trading behavior，分类为 A。
-- 7 天只是一项必要条件。只有 settled sample、完整 assignment unit、identity、
-  confidence 与 harm gates 同时满足，owner 才能考虑 admission；服务中断或 backlog
-  造成的无数据时段不能被当作有效证据。
+  trading behavior，分类为 A。当前 owner trial gate 本身无配置或全局 refreeze
+  blocker，但没有任何实验已取得 admission-compatible verdict。
 
 当前安全状态是：
 
