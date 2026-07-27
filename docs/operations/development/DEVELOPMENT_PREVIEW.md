@@ -1,8 +1,9 @@
-# Worktree development preview
+# Temporary checkout validation
 
-This document is the operational contract for previewing a Worktree change. It
-separates fast feedback from the stable local gateway; it is not a managed PR
-preview platform and does not create a second production runtime.
+This document is the operational contract for briefly running the current
+checkout to inspect a change while a stable version continues to run. “Preview”
+is shorthand for that temporary process, not a separate Aletheia product role,
+managed PR platform, or second production runtime.
 
 For machine roles, qualification freeze, deployment ownership, and the current
 multi-instance support boundary, read
@@ -45,13 +46,6 @@ Worktree path and the API port:
 Do not copy `app.db`, `config.yaml`, secrets, positions, or outcome state between
 the stable Runtime and a Preview. A Preview is disposable development state,
 not a qualification cohort.
-
-The standard CLI is currently the authority for the exact checkout-id/port
-combination. The config loader enforces the broader Preview root, but does not
-yet independently prove that a hand-supplied Preview directory belongs to the
-current checkout and runtime port. Hand-setting `ALETHEIA_PREVIEW_*` is
-unsupported; exact identity validation is an open acceptance item in
-`DEV_PROTOCOL.md §12`.
 
 ## Fast frontend loop
 
@@ -121,65 +115,31 @@ tests or the stable gateway's explicitly authorized paper workflow for trading
 behavior verification.
 
 Background scheduler/operator services are disabled by the shadow runtime
-startup gate. A Preview therefore does not autonomously collect qualification
-evidence or invoke trading agents. Process-level environment variables and
-external CLI/OAuth sessions are not a general-purpose secret sandbox; do not
-expose an untrusted Preview or treat it as a security boundary for arbitrary
-code.
+startup gate. The temporary process therefore does not autonomously collect
+qualification evidence or invoke trading agents.
 
-### Status limitations before the next implementation pass
+## Concurrent temporary validations
 
-The execution guards above are authoritative; current status projections are
-not yet sufficient to infer Preview authority:
+A qualification/CI host may briefly run one or more isolated test pairs while
+the stable gateway remains pinned on `8787`. Multiple pairs are optional, not
+the goal of the design. Each active pair must come from its own Worktree and use
+unique host ports.
 
-- `/api/status` can reflect fresh Preview config defaults such as `Paper` and
-  `scheduler_enabled=true` even though background services are off and
-  execution is blocked;
-- `/_infra/status` can report the configured stable dashboard port instead of
-  the Preview listener port;
-- an API-only Worktree without a built static dashboard can return `503` from
-  infra readiness while its API is serving requests.
-
-Keep the visible Vite Preview banner, startup log, isolated data path, and
-execution guards as the operational evidence for now. A follow-up implementation
-must make both status endpoints report runtime identity, actual port,
-`scheduler=disabled`, and `execution=blocked` before this limitation is removed.
-
-## Parallel Windows previews
-
-A Windows qualification/CI host may run several isolated Preview pairs while
-the stable gateway remains pinned on `8787`. Each pair must come from its own
-Worktree and use unique host ports.
-
-```text
-Stable qualification Runtime: 8787 / reserved 8788
-Worktree A: API 8791, Vite 5173
-Worktree B: API 8792, Vite 5174
-Worktree C: API 8793, Vite 5175
-```
-
-Example, from separate Worktrees and terminals:
+Typical case:
 
 ```powershell
-# Worktree A
+# Stable qualification Runtime remains on 8787 / reserved 8788.
+# Temporarily validate the current checkout:
 uv run aletheia dev api --port 8791
 .\scripts\dev.ps1 -UiPort 5173 -ApiPort 8791
-
-# Worktree B
-uv run aletheia dev api --port 8792
-.\scripts\dev.ps1 -UiPort 5174 -ApiPort 8792
-
-# Worktree C
-uv run aletheia dev api --port 8793
-.\scripts\dev.ps1 -UiPort 5175 -ApiPort 8793
 ```
 
-The two commands for each Worktree run in separate terminals. Do not start two
-processes on the same port, and do not treat a second manually configured full
-Gateway as a Preview. Multiple complete trading Runtimes are not currently a
-supported instance mode.
+The two commands run in separate terminals. If concurrent validations are
+occasionally useful, repeat the same pattern with another Worktree and unused
+ports. Do not treat a manually configured full Gateway as a temporary
+validation process.
 
-## Port allocation convention
+## Port convention
 
 Use this convention unless a port is already occupied:
 
@@ -190,9 +150,8 @@ Use this convention unless a port is already occupied:
 | Preview APIs | `8791`–`8799` |
 | Vite previews | `5173`–`5181` |
 
-The ranges are a human convention, not a dynamic allocator. The external
-orchestrator or developer must assign unique ports and include them in the
-session prompt.
+The ranges are a human convention, not a dynamic allocator. The developer or
+external orchestrator chooses an unused port only for the duration of the test.
 
 Do not add a repository-owned task database, worker lease, or port allocator to
 solve this convention. ORCA or another external development orchestrator owns

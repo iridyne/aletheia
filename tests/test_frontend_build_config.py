@@ -56,10 +56,10 @@ def test_multi_machine_protocol_separates_development_from_qualification():
     required_contracts = [
         "PR merge 与 Runtime deployment 分离",
         "一个 stable/qualification Runtime",
-        "多个隔离 Dev Preview",
+        "按需启动的临时验证进程",
         "外部交易账号单写者",
         "Qualification Runtime 不跟随 `master`",
-        "不得把多个手工",
+        "不得把临时进程",
     ]
     for contract in required_contracts:
         assert contract in protocol

@@ -1,6 +1,6 @@
-# 双机、多实例与 Qualification 开发协议
+# 稳定运行与临时验证开发协议
 
-> 意图进 Git，运行事实不进 Git；开发可以高速变化，Qualification 必须保持静止。
+> 意图进 Git，运行事实不进 Git；稳定版本长期运行，需要时短暂启动当前代码验证效果。
 >
 > 本文是跨机器开发、实例运行、部署与观察窗口的权威协议。Worktree 细节见
 > `GIT_WORKTREE_PLAYBOOK.md`，开发预览命令见
@@ -15,8 +15,17 @@ Aletheia 同时存在两种节奏：
 2. 验证节奏：固定代码身份、固定策略/成本/outcome contract，连续积累可比较证据。
 
 如果同一 Runtime 同时承担这两种职责，每次部署都会改变验证对象，旧 cohort 不能授权新
-build，观察窗口会反复重置。正确做法不是降低开发速度，而是把开发与 Qualification 分到
-不同实例和不同部署节奏中。
+build，观察窗口会反复重置。正确做法不是建立一套新的 Preview 产品层，而是把长期运行与
+短时验证分开：
+
+```text
+一个固定 SHA 的稳定/Qualification Runtime
++
+按需启动、验证后关闭的临时测试进程
+```
+
+临时进程可以来自当前 `master HEAD`、PR SHA 或 Worktree。它只是一次有时间边界的验证，
+不自动成为新的稳定 Runtime，也不产生可与稳定 cohort 混用的 Qualification 证据。
 
 ## 2. 事实与意图的边界
 
@@ -43,11 +52,13 @@ Tracked 文档可以记录一次历史 checkpoint，但必须写清时间与 com
 - 每个用户有一个 primary Runtime data root：`~/.aletheia`，或绝对路径
   `ALETHEIA_DATA_DIR`；
 - 稳定 Gateway 使用 `127.0.0.1:8787`，`8788` 同样保留给稳定 Runtime；
-- 多个开发 Preview API 可以在同一台机器并行运行；
-- Preview data dir 自动隔离为：
+- 需要 API/UI 验证时，可以短暂运行当前 checkout 的隔离测试进程；
+- 现有 `aletheia dev api` 是这个流程的一种安全启动方式，不是必须对外暴露的
+  Runtime 产品角色；
+- 该启动方式的数据目录自动隔离为：
   `~/.aletheia/instances/dev-preview/<checkout-id>/<api-port>`；
 - `checkout-id` 由 Worktree 绝对路径派生；
-- Preview 强制 shadow、无 secrets、无 proposal execution、无 Gateway/update 控制权；
+- 临时 API 强制 shadow、无 proposal execution、无 Gateway/update 控制权；
 - 不同 Agent 的非平凡修改通过独立 Git Worktree 隔离。
 
 ### 尚未支持
@@ -58,8 +69,8 @@ Tracked 文档可以记录一次历史 checkpoint，但必须写清时间与 com
 
 因此当前合同是：
 
-> 一台机器可以运行一个稳定/Qualification Runtime，加多个隔离 Preview；不得把多个手工
-> 启动的完整 Gateway 描述成受支持的并行 paper/live 实例。
+> 一台机器长期运行一个稳定/Qualification Runtime；需要时可以短暂启动隔离测试进程。
+> 不得把临时进程描述成受支持的并行 paper/live Runtime。
 
 需要多个长期 paper 实验时，应先单独设计命名 Runtime、独立生命周期、端口、数据根、账号
 scope 与 doctor 投影，不能仅靠复制目录或环境变量绕过。
@@ -119,30 +130,22 @@ dev-preview-b
 | 角色 | 数量 | 数据根 | 代码是否可热变 | Scheduler | Secrets | Execution | 用途 |
 |---|---:|---|---|---|---|---|---|
 | Stable/Qualification Runtime | 每台机器最多 1 个 owner | primary data root | 否 | 是 | 可按 owner 配置 | 仅批准模式 | 长期运行与正式验收 |
-| Dev Preview API | 多个 | checkout-id + API port 隔离 | 是，reload | 后台服务不启动 | Aletheia secret store 禁止 | 强制阻断 | API/UI 开发 |
-| Vite Preview | 多个 | 无独立交易状态 | 是，HMR | 否 | 否 | 对稳定 API 仅只读 | 前端反馈 |
+| 临时验证 API | 按需短时启动 | checkout-id + API port 隔离 | 是，reload | 后台服务不启动 | Aletheia secret store 禁止 | 强制阻断 | API/UI 开发 |
+| Vite 临时验证 | 按需短时启动 | 无独立交易状态 | 是，HMR | 否 | 否 | 对稳定 API 仅只读 | 前端反馈 |
 | CI/Test process | 多个临时 | tmp/test DB | 是 | 仅测试夹具 | 禁止真实凭证 | 禁止真实执行 | 回归与构建 |
 
-### 5.1 强制边界与操作边界
+### 5.1 临时验证的最小边界
 
-“支持”不等于所有规则都已经由程序自动执行。当前边界必须按以下三类理解：
+“临时启动一个版本”只需要证明修改效果，不需要引入新的实例管理抽象。最低边界是：
 
-| 合同 | 当前证据 | 强制级别 |
-|---|---|---|
-| Preview 拒绝 `8787`、`8788` | `aletheia dev api` 参数校验 | 程序强制 |
-| CLI 派生 checkout-id + API port 数据目录 | `runtime_paths.preview_instance_dir()` | 程序强制（仅标准 CLI 启动路径） |
-| Preview 不使用 primary `ALETHEIA_DATA_DIR` | config loader 优先选择 Preview data dir | 程序强制 |
-| Preview 不启动 scheduler/operator 等后台服务 | shadow runtime startup gate | 程序强制 |
-| Proposal execution 与 paper approval 阻断 | Execution Gateway 与 approval route 的 Preview guard | 程序强制 |
-| Preview API 的 Gateway/update 控制阻断 | 对应 HTTP route 的 Preview guard | 程序强制 |
-| Vite 指向稳定 `:8787` 时只允许读请求 | Vite development middleware | 程序强制 |
-| Worktree 不得直接运行 Gateway 生命周期 CLI | 本协议、Agent Guide 与 Worktree playbook | 操作规程；尚无通用 owner-checkout 强制器 |
-| 一台主机只运行一个稳定 Runtime owner | 本协议与部署所有权 | 操作规程；尚无多 Runtime manager |
-| 主机端口不冲突 | 人工/外部编排分配 | 操作规程；无动态 allocator |
+1. 不占用稳定 Runtime 的 `8787`、`8788`；
+2. 不读取或写入稳定 Runtime 的 primary data root；
+3. 不拥有 Proposal execution、Gateway lifecycle 或 update 权限；
+4. 不自动启动长期 scheduler/operator 工作；
+5. 验证结束后关闭进程，不把临时状态当成 Qualification 证据。
 
-因此不得把“Preview HTTP route 会拒绝 Gateway 控制”扩大解释为“任意 Worktree shell
-都不可能运行 `aletheia gateway restart`”。在命名 Runtime、owner identity 和生命周期合同
-没有完成设计前，不通过零散 Git/worktree 检测伪造一个不完整的 owner guard。
+现有 `aletheia dev api --port <port>` 已覆盖这些边界。除此之外，不新增命名 Runtime
+registry、动态端口 allocator、worker lease 或仓库内编排状态。
 
 ## 6. 不可违反的所有权规则
 
@@ -290,7 +293,7 @@ uv run aletheia doctor
 +
 多个 Worktree
 +
-多个隔离 Dev Preview
+按需启动的临时验证进程
 +
 多个临时 CI/Test process
 ```
@@ -299,25 +302,23 @@ uv run aletheia doctor
 平台。Agent/session/Worktree 的临时协调继续由 ORCA 等外部编排器负责，Git/PR/CI 和 Runtime
 provenance 分别承担代码事实与运行事实。
 
-## 12. Preview 实现验收门槛
+## 12. 什么时候临时启动当前版本
 
-本协议定义目标拓扑，但不能替代可执行证据。任何后续 PR 若声称“远程多 Preview 已完整
-可用”，至少必须证明：
+| 要验证的内容 | 使用方式 | 能证明什么 |
+|---|---|---|
+| 仅前端显示、读取接口 | Vite 指向稳定 API 的只读代理 | UI 与读取合同 |
+| 当前 master/PR 的 API 或写入形状 | `aletheia dev api --port 879x` + Vite | 当前代码的 UI/API 行为 |
+| focused 业务逻辑 | 对应 focused test | 代码合同与失败路径 |
+| 完整 scheduler、paper、Learning 经济表现 | 新的稳定 candidate + 新 observation window | 可归因的 Qualification 证据 |
 
-1. 两个不同 Worktree 的 Preview 可在同一主机同时启动，runtime identity、API port 与
-   data dir 不相同；
-2. 同一 Worktree 的两个不同 API port 不共享数据库或配置；
-3. Preview data dir 必须与当前 checkout identity 和 runtime port 精确匹配，不能仅凭
-   “位于 dev-preview 根目录之下”就接受另一个 Preview 的目录；
-4. `/api/status` 与 `/_infra/status` 明确报告 Preview/shadow 身份、真实监听端口、
-   scheduler disabled 和 execution blocked，不能把默认 `Paper` 配置显示成执行权限；
-5. 未构建静态前端时，API-only Preview 的探活/就绪语义仍然诚实可用；
-6. stored trading credentials 不可读写，Proposal、Order、RiskDecision、Fill、Position
-   不因 Preview execution 请求发生变化；
-7. Gateway/update HTTP 控制仍在任何机器级副作用之前返回稳定 `403`；
-8. Windows launcher、POSIX 命令和 Vite read-only proxy 都有 focused executable tests；
-9. 两个 Preview 停止后不遗留稳定 Gateway PID、autostart、front-door 或 update 状态。
+前三项都是短时验证，完成即停止。只有最后一项需要 owner 明确选择 exact commit、部署并开启
+新的观察窗口。不能因为临时启动的 master HEAD “看起来正常”，就替换长期运行的稳定版本。
 
-截至 2026-07-27 对 `0ad6157` 的复核，双 API 并行启动、独立 CLI 派生目录、shadow
-后台服务禁用及 Gateway route `403` 已通过短时验证；第 3、4、5、8 项仍是后续实现/测试
-缺口。因此当前可称为“受约束的开发 Preview”，不可称为“完整的多 Runtime 平台”。
+临时验证结束后只有三种合法结果：
+
+1. 发现问题：关闭临时进程，继续在开发分支修正；
+2. 证明当前改动的局部效果：关闭临时进程，保留 PR/CI 作为代码证据；
+3. 准备开始长期验证：由 stable owner 选择 exact SHA，按 Qualification 流程部署为新的
+   candidate，并从新的 code/policy identity 开始 observation window。
+
+不存在“临时进程继续放着，逐渐变成稳定 Runtime”的隐式晋级路径。
