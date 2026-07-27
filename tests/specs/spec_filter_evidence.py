@@ -196,7 +196,8 @@ def test_filter_outcome_settler_has_capacity_before_universe_mirror_backlog(
     SpecClaim(
         "FE-B04a", _CONTRACT, "§4 fixed-horizon settlement", "L2b",
         "Within the canonical settlement quota, due outcomes belonging to the "
-        "open Universe Learning epoch are processed before unrelated historical backlog.",
+        "running build of the open Universe Learning epoch are processed before "
+        "older-build rows and unrelated historical backlog.",
         status="implemented",
     )
 )
@@ -228,6 +229,11 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
         "id": "current-ufc",
         "outcome_candidate_key": "current-ufc-candidate",
     }
+    previous_build = {
+        **base,
+        "id": "previous-build-ufc",
+        "outcome_candidate_key": "previous-build-ufc-candidate",
+    }
     settled = []
 
     async def observations(rows, now):
@@ -241,17 +247,43 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
             for row in rows
         }
 
+    key_queries = []
+
+    def open_learning_keys(path_ids, code_commit=None):
+        key_queries.append(code_commit)
+        return (
+            {"current-ufc-candidate:4h"}
+            if code_commit == "current-build"
+            else {
+                "current-ufc-candidate:4h",
+                "previous-build-ufc-candidate:4h",
+            }
+        )
+
     monkeypatch.setattr(
         filter_outcome_recorder.repo,
         "list_open_learning_outcome_candidate_keys",
-        lambda path_ids: {"current-ufc-candidate:4h"},
+        open_learning_keys,
         raising=False,
     )
+
+    def pending_for_keys(before_ts, outcome_candidate_keys, limit):
+        rows = []
+        if "previous-build-ufc-candidate:4h" in outcome_candidate_keys:
+            rows.append(previous_build)
+        if "current-ufc-candidate:4h" in outcome_candidate_keys:
+            rows.append(current)
+        return rows[:limit]
+
     monkeypatch.setattr(
         filter_outcome_recorder.repo,
         "list_pending_filter_candidate_outcomes_for_keys",
-        lambda before_ts, outcome_candidate_keys, limit: [current],
+        pending_for_keys,
         raising=False,
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.build_info.get_boot_commit",
+        lambda: "current-build",
     )
     monkeypatch.setattr(
         filter_outcome_recorder.repo,
@@ -285,11 +317,16 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
 
     assert asyncio.run(
         filter_outcome_recorder.settle_due_filter_outcomes(
-            max_rows=2,
+            max_rows=3,
             time_budget_sec=5.0,
         )
-    ) == 2
-    assert settled == ["current-ufc", "historical-backlog"]
+    ) == 3
+    assert settled == [
+        "current-ufc",
+        "previous-build-ufc",
+        "historical-backlog",
+    ]
+    assert key_queries == ["current-build", None]
 
 
 @spec_claim(

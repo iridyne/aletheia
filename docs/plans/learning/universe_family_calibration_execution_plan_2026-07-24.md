@@ -421,6 +421,13 @@ cd frontend && npm run build
   exact outcome；不改变评分、assignment、经济公式、阈值、Risk、Execution 或
   trading behavior，分类为 A。当前 owner trial gate 本身无配置或全局 refreeze
   blocker，但没有任何实验已取得 admission-compatible verdict。
+- 后续按 current-build admission identity 反查下一批 500 条时，发现它们仍全部属于
+  旧 `a8c1b786` build：open-epoch 优先级内部的 oldest-first 仍会让可授权 build
+  饥饿。因此最终结算顺序必须是“当前 boot commit → 同 open epoch 旧 build →
+  普通历史 FIFO”。该 A 类修复部署后会再开启一次、也是本轮计划中的最终
+  current-build observation window；上面的 `2d53541c` 时间门随该部署作废，新的
+  精确起点与最早七日门必须在部署后从 durable exposure 重新记录。此后除紧急安全
+  收紧外冻结运行 commit，避免再次重置资格窗口。
 
 当前安全状态是：
 
