@@ -53,14 +53,16 @@ becomes unreachable during restart/self-heal, the page shows a fail-loud banner
 and, after a prolonged outage, an overlay with the recovery command. Browser
 notifications are opt-in from that banner because browsers require permission.
 
-## 2.5 Worktree frontend and backend preview
+## 2.5 Worktree frontend and isolated backend helper
 
 `http://127.0.0.1:8787/` remains the daily-use gateway. Worktree UI changes use
 Vite HMR on `http://127.0.0.1:5173`; its default proxy can read `:8787` but
 rejects writes. It does not restart the gateway. For a backend change, explicitly
-start an isolated API on an unused `879x` port; it uses separate data and blocks
-secrets and execution. Follow [Development preview](../development/DEVELOPMENT_PREVIEW.md) for
-the exact commands and safety contract.
+start the current isolated dev API helper on an unused `879x` port; it uses
+separate data and blocks secrets and execution. This helper is not a
+Production-grade managed instance. Follow
+[Multi-instance runtime](../development/MULTI_INSTANCE_RUNTIME.md) for the
+current commands, safety boundary, and target instance contract.
 
 When you're done iterating, run the normal production build once:
 

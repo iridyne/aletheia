@@ -44,7 +44,7 @@ These endpoints cross a [trust boundary](../../governance/policies/trust_and_cha
 | `PUT /settings/risk-policies/{mode}` · `POST /settings/risk-policies/copy` | explicit confirmation, optimistic revision check and target-scoped audit; never copies live authority or runtime state | [risk_engine_contract §1.1](../contracts/risk_engine_contract.md) |
 | `POST /risk/brakes/{global\|demo\|live}` | engage is immediate; release requires `confirm_release=true`; mode brake never releases global brake | [risk_engine_contract §1.1](../contracts/risk_engine_contract.md) |
 | `POST /proposals/{id}/approve-paper` · `/reject` | must preserve original proposal ID (no duplicate row); paper approval accepts only a `pending` proposal whose stored mode is already `paper_internal` and never rewrites exchange intent; isolated preview API returns `403 preview_execution_blocked` before mutation | [execution_contract §1](../contracts/execution_contract.md) |
-| `POST /gateway/restart` · `/update/apply` · `/update/rollback` | May control machine-level gateway/code state only outside preview mode; preview returns a stable `403` before side effects | [Development preview](../../operations/development/DEVELOPMENT_PREVIEW.md) |
+| `POST /gateway/restart` · `/update/apply` · `/update/rollback` | May control machine-level gateway/code state only outside the current isolated dev API mode; that helper returns a stable `403` before side effects | [Multi-instance runtime](../../operations/development/MULTI_INSTANCE_RUNTIME.md) |
 
 ---
 

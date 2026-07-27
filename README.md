@@ -66,9 +66,10 @@ cd frontend && npm run dev
 ```
 
 It can read from the stable `:8787` API but blocks writes. For an isolated
-backend preview, start `uv run aletheia dev api --port 8791` and set
+isolated backend development helper, start `uv run aletheia dev api --port 8791` and set
 `VITE_API_TARGET=http://127.0.0.1:8791`. The full safety contract and Windows
-commands are in [Development preview](docs/operations/development/DEVELOPMENT_PREVIEW.md).
+commands, plus the target Production-grade multi-instance model, are in
+[Multi-instance runtime](docs/operations/development/MULTI_INSTANCE_RUNTIME.md).
 
 ## Contributing
 

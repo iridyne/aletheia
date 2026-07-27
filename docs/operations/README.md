@@ -1,14 +1,14 @@
 
 # operations/ - Run, Recover, Develop
 
-Use this directory for procedural instructions: running the gateway, local development, preview worktrees, testing, deployment, and recovery.
+Use this directory for procedural instructions: running instances, local development, worktree validation, testing, deployment, and recovery.
 
 ## Subfolders
 
 | Folder | Use |
 |---|---|
 | `runbooks/` | Daily operations and SOPs |
-| `development/` | Local setup, tests, worktree preview, pytest optimization |
+| `development/` | Local setup, tests, multi-instance runtime contract, pytest optimization |
 | `deployment/` | [Gateway session service](deployment/GATEWAY_SESSION_SERVICE.md), legacy autostart, release/deployment notes |
 | `recovery/` | Data reload and outcome-history remediation |
 | `architecture/` | Stability target architecture for operations |

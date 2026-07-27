@@ -47,8 +47,9 @@ C:\Users\<user>\.aletheia\     durable state for the current user
 The release directory may be replaced or rolled back. The current user's
 `~/.aletheia` directory must never be deleted or included in a release archive.
 `ALETHEIA_DATA_DIR` may select a different absolute root explicitly; relative
-values fail closed. Preview instances remain isolated below
-`~/.aletheia/instances/dev-preview` and ignore the primary-runtime override.
+values fail closed. The current isolated dev API helper remains below
+`~/.aletheia/instances/dev-preview` and ignores the primary-runtime override;
+it is not yet a Production-grade managed instance.
 
 ## Bundle contract
 
@@ -145,7 +146,7 @@ The stable launcher refuses a Git checkout, requires `release-manifest.json`, an
 accepts only an absolute `--data-dir` override. Without an override it uses
 `~/.aletheia`.
 
-### Stable versus development commands
+### Current stable versus development commands
 
 Only the fixed release directory may control the primary gateway on port 8787:
 
@@ -154,9 +155,11 @@ stable release: gateway start / stop / restart / autostart
 Git checkout:   aletheia dev api --port 8791 (or another non-reserved port)
 ```
 
-The development preview receives its own state below
+The isolated dev API helper receives its own state below
 `~/.aletheia/instances/dev-preview/<checkout-id>/<port>` and runs in shadow mode.
-Do not run ordinary `gateway start` from the high-frequency development checkout.
+It is a migration-era development tool, not the target multi-instance Runtime.
+Do not run ordinary `gateway start` from the high-frequency development checkout
+until instance-scoped lifecycle is implemented.
 
 ## Run an extracted release on Windows
 

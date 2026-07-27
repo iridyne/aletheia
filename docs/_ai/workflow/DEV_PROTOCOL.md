@@ -1,324 +1,302 @@
-# 稳定运行与临时验证开发协议
+# Production-grade 多实例与 Qualification 开发协议
 
-> 意图进 Git，运行事实不进 Git；稳定版本长期运行，需要时短暂启动当前代码验证效果。
->
-> 本文是跨机器开发、实例运行、部署与观察窗口的权威协议。Worktree 细节见
-> `GIT_WORKTREE_PLAYBOOK.md`，开发预览命令见
-> `docs/operations/development/DEVELOPMENT_PREVIEW.md`，交易实验冻结规则见
-> `docs/product/experiments/EXPERIMENT_PROTOCOL.md`。
+> 所有启动实例都是同一种 Production-grade Runtime；用途和运行时长是 owner 意图，
+> 不是不同的软件模式。
 
-## 1. 解决什么问题
+本文是跨机器开发、多实例运行、部署与观察窗口的权威协议。Worktree 细节见
+`GIT_WORKTREE_PLAYBOOK.md`，实例运行合同见
+`docs/operations/development/MULTI_INSTANCE_RUNTIME.md`，交易实验冻结规则见
+`docs/product/experiments/EXPERIMENT_PROTOCOL.md`。
 
-Aletheia 同时存在两种节奏：
+## 1. 要同时满足的两个需求
 
-1. 开发节奏：多个 AI Agent、多个 Worktree、频繁 PR 与快速反馈；
-2. 验证节奏：固定代码身份、固定策略/成本/outcome contract，连续积累可比较证据。
+Aletheia 同时存在两种合理节奏：
 
-如果同一 Runtime 同时承担这两种职责，每次部署都会改变验证对象，旧 cohort 不能授权新
-build，观察窗口会反复重置。正确做法不是建立一套新的 Preview 产品层，而是把长期运行与
-短时验证分开：
+1. 高速开发：多个 Agent、Worktree 和 PR 持续推动 `master`；
+2. 稳定运行：一个或多个固定 SHA 的实例长期积累可比较的 paper、Learning 和稳定性证据。
 
-```text
-一个固定 SHA 的稳定/Qualification Runtime
-+
-按需启动、验证后关闭的临时测试进程
-```
-
-临时进程可以来自当前 `master HEAD`、PR SHA 或 Worktree。它只是一次有时间边界的验证，
-不自动成为新的稳定 Runtime，也不产生可与稳定 cohort 混用的 Qualification 证据。
-
-## 2. 事实与意图的边界
-
-Git 同步的是机器无关的意图：代码、设计、规范、决策、测试和历史变更。
-
-以下内容是每台机器的本地运行事实，不得作为“当前状态”写入 tracked 文档：
-
-| 运行事实 | 权威来源 | 是否进 Git |
-|---|---|---|
-| Gateway/Preview 是否在运行 | OS 进程、`aletheia gateway status`、`doctor` | 否 |
-| 当前部署 commit | Runtime provenance、`doctor`、`/_infra/status` | 否 |
-| `app.db`、订单、仓位、outcome | 对应实例的 data dir | 否 |
-| `config.yaml`、kill switch、permission | 对应实例的 data dir | 否 |
-| 凭证与账号状态 | Keyring/加密 secrets、私有 API preflight | 否 |
-| Observation window 已运行多久 | 当前实例数据库与 provenance 推导 | 否 |
-
-Tracked 文档可以记录一次历史 checkpoint，但必须写清时间与 commit；任何“现在”的判断都
-重新运行 `uv run aletheia doctor`，不得依据旧文档叙事。
-
-## 3. 当前实现支持到哪里
-
-### 已支持
-
-- 每个用户有一个 primary Runtime data root：`~/.aletheia`，或绝对路径
-  `ALETHEIA_DATA_DIR`；
-- 稳定 Gateway 使用 `127.0.0.1:8787`，`8788` 同样保留给稳定 Runtime；
-- 需要 API/UI 验证时，可以短暂运行当前 checkout 的隔离测试进程；
-- 现有 `aletheia dev api` 是这个流程的一种安全启动方式，不是必须对外暴露的
-  Runtime 产品角色；
-- 该启动方式的数据目录自动隔离为：
-  `~/.aletheia/instances/dev-preview/<checkout-id>/<api-port>`；
-- `checkout-id` 由 Worktree 绝对路径派生；
-- 临时 API 强制 shadow、无 proposal execution、无 Gateway/update 控制权；
-- 不同 Agent 的非平凡修改通过独立 Git Worktree 隔离。
-
-### 尚未支持
-
-当前没有一等公民的“多个完整稳定 Runtime”管理器。即使手工指定不同
-`ALETHEIA_DATA_DIR`，稳定 Gateway 的 front door、supervisor、autostart、Tray、CLI 生命周期
-和外部交易账号所有权仍按单一稳定 Runtime 设计。
-
-因此当前合同是：
-
-> 一台机器长期运行一个稳定/Qualification Runtime；需要时可以短暂启动隔离测试进程。
-> 不得把临时进程描述成受支持的并行 paper/live Runtime。
-
-需要多个长期 paper 实验时，应先单独设计命名 Runtime、独立生命周期、端口、数据根、账号
-scope 与 doctor 投影，不能仅靠复制目录或环境变量绕过。
-
-## 4. 推荐双机拓扑
-
-### MacBook Air：开发控制面
-
-负责：
-
-- ORCA、Claude Code、Codex 等外部 Agent 编排；
-- 创建 Worktree、分支、提交、PR 与代码审查；
-- 前端 HMR、短时 Preview API 和小范围 focused tests；
-- 观察 Windows Runtime、读取 doctor/日志/数据库只读结果；
-- macOS 专属打包与人工 release acceptance。
-
-约束：
-
-- 不在 Mac 上运行大规模 pytest；通过 SSH 或 CI 交给 Windows/self-hosted Runner；
-- Worktree 不得 restart/stop/update 稳定 Gateway；
-- 开发 checkout 不承担长期 Qualification observation window。
-
-### Windows：Qualification 与重型验证面
-
-负责：
-
-- 一个固定 SHA 的稳定 `qualification-main` Runtime；
-- 长时间 scheduler、paper loop、outcome settlement 与 Learning qualification；
-- self-hosted CI、完整测试、stability soak；
-- 必要时并行运行多个无执行权的 Preview API。
-
-Windows 上的参考布局：
+高速开发不能反复重启长期实例、改变它们的证据对象；长期实例也不能要求 `master` 停止前进。
+需要即时确认功能时，应从当前 `master HEAD`、PR SHA 或 Worktree 启动另一个完整实例，
+使用独立身份和资源进行短期验证。
 
 ```text
-qualification-main
-  stable front door: 8787
-  reserved backend:  8788
-  data:               ~/.aletheia 或明确的绝对 ALETHEIA_DATA_DIR
-  code:               固定 qualification commit
-  authority:          当前明确批准的 paper/shadow 权限
-
-dev-preview-a
-  API:                 8791
-  Vite:                5173
-  data:                ~/.aletheia/instances/dev-preview/<checkout-a>/8791
-  authority:           shadow-only；无 secrets、无 execution
-
-dev-preview-b
-  API:                 8792
-  Vite:                5174
-  data:                ~/.aletheia/instances/dev-preview/<checkout-b>/8792
-  authority:           shadow-only；无 secrets、无 execution
+fast-moving Git history
+        |
+        +--> instance A: long_running, pinned SHA, continuous evidence
+        |
+        +--> instance B: feature_validation, current master/PR SHA, short-lived
+        |
+        +--> instance C: another independent goal, short- or long-lived
 ```
 
-## 5. 实例角色合同
+这里没有 Preview Runtime。A、B、C 使用同一种 Runtime；差异只来自 owner 配置的用途、
+代码身份、数据、端口、权限和生命周期。
 
-| 角色 | 数量 | 数据根 | 代码是否可热变 | Scheduler | Secrets | Execution | 用途 |
-|---|---:|---|---|---|---|---|---|
-| Stable/Qualification Runtime | 每台机器最多 1 个 owner | primary data root | 否 | 是 | 可按 owner 配置 | 仅批准模式 | 长期运行与正式验收 |
-| 临时验证 API | 按需短时启动 | checkout-id + API port 隔离 | 是，reload | 后台服务不启动 | Aletheia secret store 禁止 | 强制阻断 | API/UI 开发 |
-| Vite 临时验证 | 按需短时启动 | 无独立交易状态 | 是，HMR | 否 | 否 | 对稳定 API 仅只读 | 前端反馈 |
-| CI/Test process | 多个临时 | tmp/test DB | 是 | 仅测试夹具 | 禁止真实凭证 | 禁止真实执行 | 回归与构建 |
+## 2. Production-grade 的含义
 
-### 5.1 临时验证的最小边界
+一个实例只有同时满足以下条件，才能称为 Production-grade：
 
-“临时启动一个版本”只需要证明修改效果，不需要引入新的实例管理抽象。最低边界是：
+- 使用正常 release/runtime 启动路径，而不是降级的 API-only 或 shadow-only 代码分支；
+- 拥有独立且可审计的 instance identity、exact commit、配置、数据根和日志；
+- 使用正常 Gateway、scheduler、storage、health、doctor 和 lifecycle 合同；
+- 启停、异常恢复、状态显示和审计不依赖另一个实例；
+- 通过与长期实例相同的配置验证、数据库迁移和 focused safety checks；
+- 权限和执行目标来自该实例的显式配置，不从“短期测试”目的推导；
+- 停止或失败时，不影响同机其他实例。
 
-1. 不占用稳定 Runtime 的 `8787`、`8788`；
-2. 不读取或写入稳定 Runtime 的 primary data root；
-3. 不拥有 Proposal execution、Gateway lifecycle 或 update 权限；
-4. 不自动启动长期 scheduler/operator 工作；
-5. 验证结束后关闭进程，不把临时状态当成 Qualification 证据。
+Production-grade 不等于 live-authorized。一个完整实例可以处于 shadow、`paper_internal`、
+Demo 或 Live；Risk approval、live unlock、credentials 和账户所有权仍按原合同生效。
 
-现有 `aletheia dev api --port <port>` 已覆盖这些边界。除此之外，不新增命名 Runtime
-registry、动态端口 allocator、worker lease 或仓库内编排状态。
+## 3. 运行意图不是 Runtime 类型
 
-## 6. 不可违反的所有权规则
+每个实例记录一个 owner intent，用于解释为什么它在运行，但不改变软件能力：
 
-### 6.1 Stable Gateway 单 owner
+| intent | 典型时长 | 代码策略 | 证据用途 |
+|---|---|---|---|
+| `long_running` | 天、周或更久 | 固定 exact SHA | 稳定性、paper、Learning、目标验证 |
+| `feature_validation` | 分钟到小时 | 当前 master/PR exact SHA | 验证一个功能是否符合预期 |
+| `qualification` | 明确 observation window | 固定 exact SHA + policy epoch | 可用于晋级判决的受控证据 |
 
-- 每台机器、每个 primary data root 只能有一个稳定 Gateway owner；
-- 只有 owner checkout/已安装 Runtime 可以执行 `gateway start|stop|restart|update`；
-- Agent Worktree 和 Preview 不得控制稳定 Gateway；
-- 端口 `8787`、`8788` 永远不得分配给 Preview。
+这些 intent 可以显式修改。`feature_validation` 实例如果值得保留，可以由 owner 改为
+`long_running` 或 `qualification`，无需更换 Runtime 类型；但：
 
-### 6.2 外部交易账号单写者
+- 必须记录转换时间、exact commit、config/policy identity；
+- Qualification window 从显式指定时开始；
+- 转换前的测试数据保留为历史，不能默认并入新 cohort；
+- 不允许因为进程“已经跑了一会儿”就隐式获得长期或 Qualification 身份。
 
-同一个 `exchange account + environment + execution mode` 在任一时刻最多有一个有执行权限的
-Runtime。禁止两个实例共享同一 Demo/Live 凭证并同时管理订单或仓位，否则会产生重复下单、
-错误 adoption/reconciliation、跨实例平仓和无法归因的 PnL。
+## 4. 每个实例的最小身份合同
 
-Preview 无权读取凭证，因此不参与该所有权竞争。
+机器本地的 instance manifest 至少包含：
 
-### 6.3 PR merge 与 Runtime deployment 分离
+| 字段 | 合同 |
+|---|---|
+| `instance_id` | 全局唯一、创建后不可变；人类名称只是 alias |
+| `intent` | owner 对运行目的的描述，不授予权限 |
+| `code_commit` | 启动时解析的 exact SHA，不能只写 `master` |
+| `artifact_or_checkout` | 实际启动的 release artifact 或 checkout |
+| `data_root` | 绝对路径，只属于该实例 |
+| `public_port` / `backend_port` | 主机内唯一的端口对 |
+| `execution_mode` | shadow、paper_internal、Demo 或 Live |
+| `account_scope` | 外部账户/环境/模式标识；无外部账户时为空 |
+| `lifecycle_owner` | 有权启停和变更该实例的 owner |
+| `created_at` / `started_at` | 本地运行事实 |
+| `qualification_started_at` | 仅 qualification intent 使用 |
 
-- 合并到 `master` 只表示代码进入主线，不表示 Qualification Runtime 自动升级；
-- Qualification host 必须由 owner 显式选择 exact commit 并部署；
-- 普通 PR 可以继续合并，但正在观察的 Runtime 保持 pinned；
-- 不得让 autostart、update、Worktree hook 或 Agent 自动把 qualification host 推到最新 master。
+manifest、PID、数据库、配置、凭证、当前健康和 observation 进度都是机器本地运行事实，
+不得作为“当前状态”写进 Git。Git 只保存实例合同、实现、测试和历史决策。
 
-## 7. 高速开发流程
+## 5. 资源隔离合同
 
-### 7.1 开始一个非平凡任务
+### 5.1 数据
 
-1. 从最新 `master` 创建独立 Worktree 与分支；
-2. Prompt 明确 goal、allowed paths、excluded paths、acceptance checks；
-3. 先做 focused reproduction/test，再做最小修改；
-4. 需要 UI/API 反馈时启动自己的 Preview，不触碰 stable Gateway；
-5. 完成 focused checks 后提交 PR；
-6. PR/CI 是代码证明，`doctor` 是机器运行事实。
+- 每个实例独占一个 data root、`app.db`、config、audit log、cache 和 artifact tree；
+- 两个实例不得同时读写同一个 SQLite 数据库；
+- 不复制另一个实例的 `app.db`、positions 或 outcome state 来创建测试实例；
+- 需要种子数据时，使用显式、只读、可追踪的 export/import 流程；
+- 删除实例数据必须先确认实例已停止，并使用显式 instance ID 和确认参数。
 
-### 7.2 同一 Windows 主机运行多个 Preview
+目标布局：
 
-同一主机的每个 Preview 必须使用唯一 API port 和唯一 Vite port：
-
-```powershell
-# Worktree A，terminal 1
-uv run aletheia dev api --port 8791
-
-# Worktree A，terminal 2
-.\scripts\dev.ps1 -UiPort 5173 -ApiPort 8791
-
-# Worktree B，terminal 1
-uv run aletheia dev api --port 8792
-
-# Worktree B，terminal 2
-.\scripts\dev.ps1 -UiPort 5174 -ApiPort 8792
+```text
+~/.aletheia/instances/
+  <instance-id>/
+    instance.yaml
+    app.db
+    config.yaml
+    logs/
 ```
 
-规则：
+现有 primary `~/.aletheia` 可以在迁移期映射为默认实例，不能因此继续把 lifecycle 设计成
+全局单例。
 
-- 同一主机不可复用已占用端口；
-- 同一 Worktree 若同时开两个 API，也必须使用不同 API port；
-- 不要手工设置 Preview 环境变量连接 primary data root；
-- Preview 只证明 UI/API 合同，不证明 paper trading 行为或经济表现；
-- 结束后停止对应前台进程；确认不再需要历史 Preview state 后才删除其 instance 目录。
+### 5.2 机器级协调面
 
-### 7.3 前端只读模式
+完全隔离的数据根无法单独判断主机端口和外部账户是否已被其他实例占用。因此主机需要一个
+最小、机器本地的 Runtime registry，只负责：
 
-前端-only 任务优先只运行 Vite。默认目标 `http://127.0.0.1:8787`，Vite proxy 只允许
-`GET/HEAD/OPTIONS`，写请求必须失败。需要 write-shaped API flow 时，改为指向隔离 Preview
-API，不得为方便而向稳定 Runtime 发写请求。
+- instance ID 与人类 alias；
+- active PID/service identity；
+- public/backend port reservation；
+- 本机 external account writer lease；
+- lifecycle owner 与最后一次状态。
 
-## 8. Qualification 流程
+registry 不保存交易状态、Agent 任务、Learning 数据或开发编排信息。写入必须原子化并带
+进程存活校验；陈旧 lease 的回收必须审计，不能只按时间静默抢占。
 
-### 8.1 建立 candidate
+### 5.3 端口与进程
 
-Owner 必须记录在本地运行事实中：
+- 每个实例拥有独立 public/front-door port 和 backend port；
+- `8787/8788` 可以保留给默认日常实例，但不代表其他实例是降级版本；
+- 端口分配必须在启动前原子检查；冲突时 fail closed，不杀死已有进程；
+- PID、supervisor、autostart/service name、logs 和 health target 都必须包含 instance ID；
+- `stop/restart/update` 必须显式解析目标实例，不能误操作同机其他实例；
+- Tray、CLI 和 WebUI 必须显示 instance ID、exact commit、intent、ports 和 data root。
 
-- exact code commit；
-- Runtime role=`qualification`；
-- data root；
-- config/policy epoch；
-- experiment/path allowlist；
-- outcome contract 与成本模型版本；
-- observation start time。
+### 5.4 主机容量
 
-这些事实由 Runtime provenance、数据库和 doctor 提供，不创建 tracked 的“当前实例状态文件”。
+每个实例仍遵守 SQLite writer lock、thread-local connection 和 scheduler `max_workers <= 3`
+等单实例约束。多实例带来的总 CPU、内存、磁盘、模型额度和外部 API 配额由主机容量门槛
+额外限制；“每个实例都安全”不等于“无限实例同时运行也安全”。
 
-### 8.2 冻结规则
+## 6. 权限与外部账户所有权
 
-Observation window 内：
+实例用途不能授予交易权限：
 
-- Qualification Runtime 不跟随 `master`；
-- 不改变 decision input、filter/ranker、prompt、sizing、guard、Risk policy、outcome
-  economics 或实验参数；
-- 不升级依赖，不替换数据根，不混入其他 build 的 cohort；
-- 文档/UI/其他代码可以继续在开发线上合并，但不部署到 qualification host；
-- 只有阻断 Startup → Scheduler → Outcome → Verdict 的 P0/P1，或造成错误交易事实/安全
-  风险的问题，才允许中断窗口并部署修复。
+- `feature_validation` 不自动等于 shadow，也不自动获得 Demo/Live；
+- 短期功能验证默认推荐 `paper_internal` 或无外部执行权；
+- 若测试必须访问外部账户，仍要经过正常 secrets、Risk、permission 和 execution 合同；
+- 同一个 `exchange account + environment + execution mode` 同一时刻最多一个 writer；
+- 第二个实例申请同一 account scope 的写权限时必须 fail closed；
+- 只读 market data provider 可以共享外部数据源，但每个实例独立记录 provenance 和限流状态；
+- Live 仍默认关闭，不能因为实例是 Production-grade 就跳过 live unlock。
 
-当前 admission 会把证据绑定到 code commit，因此即使 A-class 修复不改变经济语义，只要部署了
-新 commit，也必须按 current-build identity 重新建立可授权窗口。未来若实现经过审计的 behavior
-contract fingerprint，可另行放宽；当前不得自行假设等价。
+外部账户单写者是跨实例的硬安全边界，不是操作建议。
 
-### 8.3 Bug 分类与窗口影响
+机器级 registry 只能强制同一主机内的唯一写者，不能伪装成分布式锁。跨机器运行时，
+Production-grade 支持边界要求每个可写实例使用独立 exchange subaccount/credential scope；
+如果做不到，必须由外部 owner 明确指定唯一 writer，其他实例配置为无外部写权限。未来若
+引入跨机器 lease，需要单独的安全设计和故障模型，不能用共享文件或最终一致状态冒充。
+
+## 7. 多实例生命周期
+
+目标 CLI 语义以 instance ID 为中心：
+
+```text
+aletheia instance create <id> --commit <sha> --intent <intent> ...
+aletheia instance start <id>
+aletheia instance status <id>
+aletheia instance doctor <id>
+aletheia instance logs <id>
+aletheia instance stop <id>
+aletheia instance set-intent <id> ...
+aletheia instance remove <id> --confirm
+```
+
+具体命令尚未实现，以上是 SDD 合同，不是当前可执行说明。最终实现必须：
+
+- 对单一默认实例保留兼容入口；
+- 所有变更命令显式显示目标 instance ID；
+- 读命令可枚举实例，写命令不得默认广播；
+- `remove` 只接受已停止实例并保护默认/长期实例；
+- update 是“选择新 artifact/SHA 给某个实例”，不是全机所有实例跟随 `master`。
+
+外部开发编排器继续负责 Agent、Worktree、终端和临时任务；Aletheia 只管理自己的 Runtime
+实例，不在仓库中实现开发任务数据库或 worker lease。
+
+## 8. 高速开发与短期功能验证
+
+### 8.1 开发线
+
+1. 从最新 `master` 创建独立 Worktree；
+2. focused test 先行，完成最小修改；
+3. PR 和 CI 证明代码合同；
+4. PR merge 不部署或重启任何已运行实例。
+
+### 8.2 短期实例
+
+需要观察真实启动、scheduler、API/UI 或持久化行为时：
+
+1. 选择 current `master HEAD`、PR SHA 或 Worktree exact SHA；
+2. 创建独立 instance ID、data root、port pair 和配置；
+3. 通过同一 Production-grade lifecycle 启动；
+4. 仅授予测试所需的最小 execution/account scope；
+5. 运行预先写明的 acceptance checks；
+6. 验证结束后停止；数据是否保留由 owner 明确决定。
+
+短期实例有三种合法后续：
+
+1. 测试失败：停止并继续开发；
+2. 功能符合预期：停止并保留 PR/CI/测试记录；
+3. 值得长期运行：显式修改 intent、固定 identity，并按新的目标开始观察。
+
+## 9. 长期与 Qualification 实例
+
+长期实例可以分别服务不同目标，只要身份、数据、端口和账户 scope 独立。Qualification
+实例在 observation window 内必须：
+
+- 固定 exact commit、config/policy epoch、数据根和 outcome contract；
+- 不跟随 `master`，不因普通 PR merge 自动 update；
+- 不改变 decision input、filter/ranker、prompt、sizing、guard、Risk policy 或 economics；
+- 不混入其他 instance、commit 或 policy epoch 的 cohort；
+- 只有阻断 Startup → Scheduler → Outcome → Verdict 的 A-class 问题，或错误交易事实/安全
+  风险，才允许中断窗口部署修复；
+- 部署任何新 commit 后，按 current-build identity 重新建立可授权窗口。
+
+Bug 分类：
 
 - **A — 立即修复**：crash/hang、错误 persistence/accounting、身份或 outcome 失真、安全
-  bypass。开发线修复；只有其阻断当前 qualification 时才部署，并明确重开窗口。
-- **B — 新观察窗口**：任何可能让相同市场条件下产生不同选择、仓位、guard、quota、Risk
-  或 outcome 的改动。必须关闭旧 cohort，新建 policy epoch/window。
-- **C — 延后**：新 Agent、页面、市场、数据源和宽泛抽象。不得打断当前 qualification。
+  bypass；
+- **B — 新观察窗口**：任何可能改变选择、仓位、guard、quota、Risk 或 outcome 的改动；
+- **C — 延后**：新 Agent、页面、市场、数据源和宽泛抽象。
 
-## 9. 运行事实交接
+## 10. Learning 与证据边界
 
-跨机器或跨 Agent 交接时，tracked 文档只写：
+所有 Learning、paper 和 outcome 记录必须携带 instance/runtime session、producer commit 和
+policy identity。跨实例分析只能显式比较，不能默认合并。
 
-- 本次代码改了什么、为什么；
-- 哪些合同/测试被更新；
-- 哪些风险与后续动作仍存在。
+- `feature_validation` 数据可以用于功能诊断，不自动用于 Learning 晋级；
+- `long_running` 数据只有在合同完整时才可用于目标评估；
+- `qualification` 数据只在自身冻结窗口内授权判决；
+- instance intent 转换不回写历史记录的语义；
+- UI/analytics 必须按实例和 epoch 显示数据来源，不能给出跨实例混合净值或贡献结论。
 
-接手机器必须自行执行：
+这使高速开发可以继续，同时保证长期 Learning 证据不会被最新 master 或短期测试污染。
 
-```sh
-git pull --ff-only
-uv sync
-uv run aletheia doctor
-```
+## 11. 跨机器角色
 
-不得把另一台机器的 Gateway、凭证、数据库、窗口进度或健康状态当成本机事实。
+### 开发控制面
 
-## 10. 禁止模式
+- ORCA、Agent、Worktree、PR 和代码审查；
+- frontend HMR、focused tests 和短期实例操作；
+- 不在 Mac 上运行大规模 pytest；通过 SSH 或 self-hosted CI 执行；
+- 不从开发 Worktree 隐式重启其他实例。
 
-- 在 shared master checkout 中同时让多个 Agent 写文件；
-- 从 Worktree restart/update 稳定 Gateway；
-- 因 PR 已合并就自动升级 qualification host；
-- 把 Preview 指向 `~/.aletheia` primary data root；
-- 用 Preview 的 shadow 数据证明正式 paper/qualification 结果；
-- 两个 Runtime 同时拥有同一个外部交易账号的执行权；
-- 为了并行而复制 secrets、`app.db` 或 position state；
-- 把“运行第 N 天”“当前 healthy”作为无时间边界的 Git 事实；
-- 以“bug free”为无限扫描目标，持续打断已经满足入口条件的 observation window。
+### Runtime/Qualification 主机
 
-## 11. 当前唯一推荐形态
+- 同时承载一个或多个 Production-grade 实例；
+- 为每个实例提供独立 service、ports、data root 和 health target；
+- 承载 self-hosted CI、完整测试和 stability soak；
+- 不让 CI 或 `master` 更新正在观察的实例。
 
-在命名多 Runtime 管理尚未实现前，仓库支持并推荐：
+跨机器交接只在 Git 中记录代码和合同。接手机器重新运行 `git pull --ff-only`、`uv sync` 和
+目标 instance 的 doctor，不继承另一台机器的进程、凭证或健康叙事。
 
-```text
-一个 stable/qualification Runtime
-+
-多个 Worktree
-+
-按需启动的临时验证进程
-+
-多个临时 CI/Test process
-```
+## 12. 当前实现与目标差距
 
-这套形态允许高速开发与长期验证和谐共处，同时不新增仓库内任务数据库、worker lease 或实例编排
-平台。Agent/session/Worktree 的临时协调继续由 ORCA 等外部编排器负责，Git/PR/CI 和 Runtime
-provenance 分别承担代码事实与运行事实。
+截至 #425：
 
-## 12. 什么时候临时启动当前版本
+- 当前稳定 Gateway、front door、supervisor、autostart、Tray 和 lifecycle 仍主要按单例设计；
+- `aletheia dev api` 是 shadow/API 开发工具，不是本文定义的 Production-grade 实例；
+- checkout-derived preview data root 和 Vite read-only proxy 可以保留为开发工具，但不能
+  代表多实例目标已经实现；
+- 缺少 instance manifest、实例级 lifecycle、端口对、service identity、doctor 投影和
+  跨实例 account-writer guard；
+- 因此 #425 是 #422 的设计后继，不宣称多 Production-grade 实例已经可用。
 
-| 要验证的内容 | 使用方式 | 能证明什么 |
-|---|---|---|
-| 仅前端显示、读取接口 | Vite 指向稳定 API 的只读代理 | UI 与读取合同 |
-| 当前 master/PR 的 API 或写入形状 | `aletheia dev api --port 879x` + Vite | 当前代码的 UI/API 行为 |
-| focused 业务逻辑 | 对应 focused test | 代码合同与失败路径 |
-| 完整 scheduler、paper、Learning 经济表现 | 新的稳定 candidate + 新 observation window | 可归因的 Qualification 证据 |
+实现应分阶段进行：
 
-前三项都是短时验证，完成即停止。只有最后一项需要 owner 明确选择 exact commit、部署并开启
-新的观察窗口。不能因为临时启动的 master HEAD “看起来正常”，就替换长期运行的稳定版本。
+1. instance identity、manifest、data root 和端口合同；
+2. instance-scoped Gateway/supervisor/service/lifecycle；
+3. status、doctor、logs、Tray 和 UI 的实例投影；
+4. 跨实例外部账户单写者与 fail-closed 冲突检测；
+5. migration、故障隔离和 Windows/self-hosted soak。
 
-临时验证结束后只有三种合法结果：
+每一阶段都可独立停止和回滚；在对应验收完成前，不删除现有默认实例兼容路径。
 
-1. 发现问题：关闭临时进程，继续在开发分支修正；
-2. 证明当前改动的局部效果：关闭临时进程，保留 PR/CI 作为代码证据；
-3. 准备开始长期验证：由 stable owner 选择 exact SHA，按 Qualification 流程部署为新的
-   candidate，并从新的 code/policy identity 开始 observation window。
+## 13. 实现验收门槛
 
-不存在“临时进程继续放着，逐渐变成稳定 Runtime”的隐式晋级路径。
+未来实现至少必须证明：
+
+1. 同一主机两个实例走相同 Production-grade 启动路径并同时健康；
+2. 两者的 identity、exact commit、ports、data、config、logs 和 PID 完全隔离；
+3. 两者可独立运行 scheduler，停止/重启/更新一个不影响另一个；
+4. 端口或 instance ID 冲突 fail closed；
+5. 同一外部 account scope 的第二个 writer fail closed；
+6. `paper_internal` 实例各自维护独立 ledger 和净值；
+7. intent 转换是显式、审计化操作，不隐式改变权限；
+8. Qualification evidence 按 instance + commit + policy epoch 隔离；
+9. default single-instance 用户保持兼容；
+10. Windows/self-hosted 完整 CI 和多实例 soak 通过。
+
+在这些条件完成前，仓库只能声称“目标设计已定义”，不能声称“多 Production-grade 实例已支持”。

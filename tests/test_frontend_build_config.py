@@ -25,8 +25,8 @@ def test_worktree_dev_launcher_uses_vite_hmr_without_gateway_lifecycle():
     assert package["scripts"]["dev"] == "vite"
 
 
-def test_windows_dev_launcher_supports_bounded_parallel_preview_ports():
-    """Windows Worktrees may choose local ports without controlling stable Runtime ports."""
+def test_windows_dev_launcher_supports_bounded_isolated_helper_ports():
+    """The current dev helper may choose local ports without controlling Runtime ports."""
     script = Path("scripts/dev.ps1").read_text(encoding="utf-8")
     assert "[int]$UiPort = 5173" in script
     assert "[int]$ApiPort = 0" in script
@@ -36,13 +36,13 @@ def test_windows_dev_launcher_supports_bounded_parallel_preview_ports():
     assert "[string]$ApiTarget" not in script
 
 
-def test_preview_docs_distinguish_stable_gateway_from_worktree_hmr():
+def test_instance_docs_distinguish_runtime_from_worktree_hmr():
     docs = [
         Path("AGENTS.md"),
         Path("README.md"),
         Path("docs/operations/runbooks/RUNBOOK.md"),
         Path("docs/_ai/workflow/PROJECT_CONTEXT.md"),
-        Path("docs/operations/development/DEVELOPMENT_PREVIEW.md"),
+        Path("docs/operations/development/MULTI_INSTANCE_RUNTIME.md"),
     ]
     for path in docs:
         text = path.read_text(encoding="utf-8")
@@ -54,12 +54,12 @@ def test_multi_machine_protocol_separates_development_from_qualification():
     """The canonical protocol must prevent PR velocity from moving the evidence target."""
     protocol = Path("docs/_ai/workflow/DEV_PROTOCOL.md").read_text(encoding="utf-8")
     required_contracts = [
-        "PR merge 与 Runtime deployment 分离",
-        "一个 stable/qualification Runtime",
-        "按需启动的临时验证进程",
-        "外部交易账号单写者",
-        "Qualification Runtime 不跟随 `master`",
-        "不得把临时进程",
+        "所有启动实例都是同一种 Production-grade Runtime",
+        "运行意图不是 Runtime 类型",
+        "同一个 `exchange account + environment + execution mode`",
+        "不跟随 `master`",
+        "#425 是 #422 的设计后继",
+        "不能声称“多 Production-grade 实例已支持”",
     ]
     for contract in required_contracts:
         assert contract in protocol

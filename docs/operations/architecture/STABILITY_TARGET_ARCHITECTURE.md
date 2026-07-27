@@ -59,7 +59,7 @@ Implemented/required controls:
 - `vite build --watch` writes into `dashboard_static/` without emptying the
   served directory;
 - frontend uses `8787` as the maintained daily/release entrypoint; Worktree HMR
-  is isolated on `5173` and documented separately in `DEVELOPMENT_PREVIEW.md`;
+  is isolated on `5173` and documented separately in `MULTI_INSTANCE_RUNTIME.md`;
 - dashboard connection guard fails loud and offers browser notifications;
 - lifecycle failures emit audit/error records and Windows/Telegram notifications
   where configured;
@@ -114,8 +114,8 @@ Implemented controls:
   JSON instead of connection-refused when the worker is down;
 - startup verification waits for `/api/ready` through the front door before
   declaring the gateway started;
-- production dashboard remains single-port from the user's perspective; preview
-  HMR does not control the front door.
+- each Production-grade instance exposes one public/front-door port; the current
+  Worktree HMR helper does not control any instance front door.
 
 Exit checks:
 

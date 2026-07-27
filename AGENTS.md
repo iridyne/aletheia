@@ -77,7 +77,7 @@ network/I/O call — that would hold `_WRITE_LOCK` across I/O and block all othe
 `~/.aletheia/config.yaml`. After frontend changes run `cd frontend && npm run build`.
 `aletheia/dashboard_static/` is generated and untracked. For worktree UI HMR,
 use Vite on `http://127.0.0.1:5173`; it proxies the master `:8787` API as
-read-only by default. See `docs/operations/development/DEVELOPMENT_PREVIEW.md` before
+read-only by default. See `docs/operations/development/MULTI_INSTANCE_RUNTIME.md` before
 starting an isolated dev API.
 - An async FastAPI handler must not perform blocking I/O on the event loop. Read
 [the async performance checklist](docs/_ai/workflow/ASYNC_PERFORMANCE_LESSONS.md)
@@ -198,4 +198,4 @@ focused proof. For gateway operations use
 `uv run aletheia gateway <start|stop|restart|status|logs>` rather than manually
 killing processes. Use `http://127.0.0.1:8787/` for daily operation and release
 acceptance. Use Vite `:5173` only for worktree HMR as documented in
-`docs/operations/development/DEVELOPMENT_PREVIEW.md`.
+`docs/operations/development/MULTI_INSTANCE_RUNTIME.md`.

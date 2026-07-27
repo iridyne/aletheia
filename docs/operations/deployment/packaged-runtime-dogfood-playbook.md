@@ -45,7 +45,7 @@ Those paths bypass the Tray's migration, pointer-switch, health, and rollback co
 | --- | --- | --- |
 | Dogfood one exact commit on this Mac | Private one-shot local session | None beyond the local machine; temporary `127.0.0.1` Feed only |
 | Let installed Macs discover a signed update | Owner publication channel | GitHub Actions capacity, signing secret, GitHub Pages, temporary release Runner |
-| Develop an unfinished change | Development preview | Separate preview port and preview state; not an installed Runtime update |
+| Develop an unfinished change today | Isolated dev API helper | Separate port and state; not yet a Production-grade managed instance |
 
 For a new `0.5.1` commit, always use the private one-shot session first. Promote to the
 owner Feed only after that installed Runtime passes acceptance.
