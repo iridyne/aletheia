@@ -326,7 +326,7 @@ Proposal 的这一权限边界。
 
 **Spec claims**:`PL-PM-01~06`(mark/stop/TP/max_hold/ATR/audit) + `PL-PM-07`(paused 不挡保护性平仓) + `PL-PM-10~13`(fresh exact venue/market mark / 逐仓 close 与 market-aware 失败可见) + `PL-PCM-05/11~15`(dashboard 全量枚举、mark 预检、单仓 fallback 隔离与部分失败诚实返回)。
 
-## 11. Position 关闭与结果完整性（OI-S01/S02/B01 implemented；其余行为待实现）
+## 11. Position 关闭与结果完整性（OI-S01/S02、OI-B01～B05、OI-C01～C06 implemented；自然 Runtime soak 待补）
 
 `positions.status='closed'` 只表示本地状态生命周期结束，不自动证明发生了策略退出成交。系统必须把
 关闭分为两条不互相冒充的路径：
@@ -348,13 +348,12 @@ Proposal 的这一权限边界。
 stale、incomplete、缺 broker identity、wrong-account、分页不完整、网络错误和权限错误都是
 `inconclusive`，不能累计确认。candidate 必须跨进程重启保留，同一 observation 不得重复计数；仓位重新
 出现时把 candidate 结案为 `reappeared` 并留审计（不删除历史）。Live 的不确定消失保持
-alert-only/fail-closed，不借本合同扩大自动权限。OI-B01 已实现到“ready for verified exit”为止；
-ready 本身不触发关闭，等待 §11.2/§11.3 的后续任务。
+alert-only/fail-closed，不借本合同扩大自动权限。Demo ready candidate 会进入 §11.2 的三态直查，
+再由 §11.3 分流为 verified close、administrative close 或保持 inconclusive；ready 本身从不直接关闭。
 
 ### 11.2 Broker-neutral verified exit
 
-状态：RG-T06 / OI-B02 已实现只读 protocol 与三家 adapter；尚未触发关闭或结算，调用编排由
-RG-T07 接入。
+状态：RG-T06 / OI-B02 的只读 protocol 与三家 adapter、以及 RG-T07 的调用编排均已实现。
 
 Execution 层定义统一 verified-position-exit protocol；Bitget、OKX、Binance adapter 都返回结构化三态：
 
@@ -408,7 +407,8 @@ PnL 读取已拆出 `today_raw_closed_realized_pnl()` 与 `today_eligible_strate
 已知 synthetic reason 的分类优先于行上其他字段，不能用 `outcome_eligible=1` 覆盖
 `reconciled_gone` 或 maintenance reason。无结构化证据的旧行是 `legacy_unverified_close`，PnL 数值本身
 不能证明退出。现有 `analytics.close_reasons` 只是兼容 facade，reason registry 只在中央模块维护。
-当前交付的是语义和读取能力；Operator、KPI、Risk、API/UI 等迁移仍由 `OI-C02~C04` 约束。
+Operator、KPI、Risk、API/UI 等行为消费者已迁移并由 `OI-C02~C04` 的枚举式架构测试约束；
+新增消费者仍必须显式选择这三种读取口径之一。
 
 ### 11.5 持久事故断路器（OI-B04/C01 implemented）
 

@@ -2,7 +2,7 @@
 
 > **角色**:定义实盘解锁这一最不可逆操作的信任边界——谁能解锁、需什么前置、写什么审计、agent 如何被永久挡在门外。
 > 这是 [VISION](../../product/definition/VISION.md) "hard control = 试错许可证" 的最后一道门。
-> **基线**:代码为底(file:line),意图差距标 ⚠️;冲突时文档为准。
+> **基线**：以当前代码为底；本契约描述已实现边界，产品支持状态仍以 Capability Ground Truth 为准。
 > **不变式来源**:[trust §6.3 (live.py / permissions)](../../governance/policies/trust_and_change_control.md)。
 > Last updated: 2026-06-21 · 维护者:Aletheia Dev
 
@@ -36,7 +36,7 @@ class LiveConfig:
 - `live.py` 路由**不得**下单。
 - 测试须覆盖"默认 disabled"+"解锁审计"。
 
-> **[BACKLOG-LU-01] severity: moderate** — 解锁路由没有操作员 `permission_mode` 代码层检查,当前仅靠 dashboard HTTP 层隔离。目标态:解锁路由应在服务端显式校验 operator permission_mode。详见 [docs/issues/domain/BACKEND_ISSUES.md](../../issues/domain/BACKEND_ISSUES.md)。
+> `operator.permission_mode` 管理 Agent/Operator 自主权限，不是人类 Dashboard 解锁的授权门；把它加到此路由会混淆两个信任面，因此旧 `BACKLOG-LU-01` 已否决。Live Unlock 虽有确认、scorecard 与审计门，但当前 System Operator Proposal 仍不会路由到 `*_live_limited`，所以产品能力保持 Experimental，见 GitHub #418。
 
 ---
 

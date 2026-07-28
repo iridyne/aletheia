@@ -264,7 +264,7 @@ uv run pytest tests/specs/spec_pipeline_adopted_position.py -k "commit_hash" -q
 
 **可能根因**: `_exclusive_file_lock` 于后期引入；更早写入的若干记录在无锁并发条件下产生了 `_prev_hash` 冲突，其中少数不满足 Pattern 2（consecutive duplicate）的容忍条件。
 
-**前向链接**: → `docs/issues/domain/BACKEND_ISSUES.md §10.3`（audit hash chain 实施历史）
+**历史证据**：[`docs/archive/legacy/issues/domain/BACKEND_ISSUES.md`](../../archive/legacy/issues/domain/BACKEND_ISSUES.md)（audit hash chain 实施历史）
 
 **缓解状态**: 新记录自 file-lock 引入后不再产生竞态中断；历史断点为静态、已固定。未做 chain repair 工具。
 

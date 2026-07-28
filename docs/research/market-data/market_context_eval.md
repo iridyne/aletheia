@@ -69,8 +69,8 @@ clearly supports a directional read"*。**1 维输入 + 保守指令** → 输�
 
 ## 2. 业界对照 — 三个标杆怎么做
 
-> 详研报告:`docs/research/openalice_data_supply.md`(被本文吸纳)+
-> `docs/research/tradingagents_data_supply.md`(同)。VergeX **未公开**(技术细节
+> OpenAlice 与 TradingAgents 的详研源笔记已被本文吸纳，不再作为独立权威文件保留。
+> VergeX **未公开**(技术细节
 > 仅营销页,docs.vergex.ai 证书故障)→ 不可作为参考样本。
 
 ### 2.1 OpenAlice — 工具化按需拉取,不预填上下文
@@ -230,7 +230,7 @@ clearly supports a directional read"*。**1 维输入 + 保守指令** → 输�
 | `aletheia/trading/market_context.py`(新) | 多框架抓 + 指标计算 + 跨资产 RS + markdown 渲染 | 否 |
 | `aletheia/agents/market_observer.py` | 接 builder + 升级 schema + 调整 prompt + record_step | 否 |
 | `tests/test_market_context.py`(新) | 指标计算 + 渲染 + observer 集成 | 否 |
-| `docs/DEVLOG.md` / `docs/research/market-data/market_context_eval.md` | 文档落档 | 否 |
+| historical `docs/archive/legacy/ai-context/logs/DEVLOG.md` / `docs/research/market-data/market_context_eval.md` | 文档落档 | 否 |
 
 **0 个 change-controlled 模块改动**。
 

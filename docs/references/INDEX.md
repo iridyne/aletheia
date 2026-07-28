@@ -63,7 +63,7 @@
 | [INDEX.md](INDEX.md) | 入口 | 本文件——参考实现总览 |
 | [north_star.md](external-systems/north_star.md) | 方向地图 | 六系统全景 + 范式 vs 现状映射 + 排序（含 §10 nautilus-practice 深拆） |
 | [openalice_prism_review.md](external-systems/openalice_prism_review.md) | 深拆（2026-06-10） | OpenAlice（升级对照）vs prism（反面教材）逐项对照 + §5 施工蓝图；P0 borrow 状态见 ../research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md |
-| [../research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md](../research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md) | 深拆（2026-06-29，升级版） | 13-agent workflow 三层 ground truth（博客 + 真实 TS 源码 + Aletheia 对照）+ 5 镜头 + 5 轮对抗核查；含 Vibe Trading 帖交叉核查 §八点五；落地状态见 ../issues/TAG_BORROW_BACKLOG.md |
+| [../research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md](../research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md) | 深拆（2026-06-29，升级版） | 博客 + 真实 TS 源码 + Aletheia 对照；已采纳结论进入当前 data/audit/trust 契约，历史取舍见 [`TAG_BORROW_BACKLOG`](../archive/legacy/issues/backlog/TAG_BORROW_BACKLOG.md) |
 | [prism_extraction.md](external-systems/prism_extraction.md) | 代码清仓 | prism 删库前的工程片段留存（ProgressHub / TaskStore / WS endpoint 等） |
 | [agent_framework_research_2025_2026.md](papers-and-benchmarks/agent_framework_research_2025_2026.md) | 验证镜 | 外部综述报告对照——确认而非启发，显式拒绝其重型栈 |
 | [competitors_and_papers.md](papers-and-benchmarks/competitors_and_papers.md) | 竞品+论文 | 已克隆之外的同领域竞品（TradingAgents/RD-Agent/Qlib/FinRL…）与参考论文（arXiv 编号已核实） |
@@ -77,7 +77,7 @@
 
 | 优先级 | 借鉴点 | 来源 | 落位 | 红线 |
 |---|---|---|---|---|
-| **P0** | Guard 责任链 + 注册表（拆 `_evaluate_proposal_locked` 巨函数） | OpenAlice `guards/` | `risk/engine.py` 纯重构、行为不变 | violation token 字面量逐字保留（`strategy_lifecycle.py` 子串匹配依赖）。**未实施**，触 `risk/engine.py` 红线最严，详见 `../issues/TAG_BORROW_BACKLOG.md` |
+| **不采纳** | Guard 责任链 + 注册表（拆 `_evaluate_proposal_locked` 巨函数） | OpenAlice `guards/` | 纯结构重排不改善产品能力或 Alpha 证据链，当前不进入 roadmap | 如未来因真实维护故障必须重构，仍需保持 risk 行为与 violation token 不变；历史评估见 [`TAG_BORROW_BACKLOG`](../archive/legacy/issues/backlog/TAG_BORROW_BACKLOG.md) |
 | **P0** | proposal 引入 `commit_hash` + `state_after` 快照 + reject 作一等审计记录 | OpenAlice `TradingGit` | 现有 SQLite 列 + JSONL，不引新库 | ✅ `commit_hash` 链已落地（P0-1 `b8ed990` + P1-2 `31eb1a9`，2026-06-29，不触 trust）；`state_after` 快照 + reject 同构待 owner 批准（触 `execution/gateway.py`） |
 | **P1** | 决策 prompt 注入相关教训/复盘（已部分实现，扩展到更多 agent） | hermes-agent 三层 prompt | `market_observer`/`strategy_designer` 已通，扩展面 | 先证学习质量；注入"建议"非"指令"，不得改硬限/解锁 live |
 | **P1** | 金额统一 `Decimal` 不落 float | OpenAlice | notional/PnL 边界 | —— |
@@ -98,4 +98,4 @@
 
 - 新增参考系统：克隆到 `_refs/`（浅克隆优先）→ 在本 INDEX 第 1、2 节登记 → 视价值决定是否写独立深拆。
 - 论文类（无公开代码）：登记在第 1 节"未克隆"块，不强行找代码。
-- 本目录只承载**机器无关的意图/参考**；具体 bug/contract 偏移入 `docs/issues/domain/BACKEND_ISSUES.md`，不混进来。
+- 本目录只承载**机器无关的意图/参考**；当前 bug/contract 偏移进入 GitHub Issues，历史证据进入 `docs/archive/legacy/`，不在 references 中维护状态台账。

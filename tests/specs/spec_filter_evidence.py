@@ -1,4 +1,4 @@
-"""Executable claims for docs/design/filter_evidence_contract.md."""
+"""Executable claims for docs/design/contracts/filter_evidence_contract.md."""
 
 import asyncio
 

@@ -1129,8 +1129,8 @@ def try_seed_close_anchor_snapshot(
     correctness (network/proxy failure is possible), only for observability.
     ``attempts`` records every venue tried (primary + fallback) with a per-
     venue outcome so ``close_paper_position`` can persist the trail into
-    funding evidence (audit chain diagnostic; see FUND-Q2 in
-    docs/_ai/session).
+    funding evidence (audit chain diagnostic; historical FUND-Q2 context is
+    retained under docs/archive/legacy/ai-context/session/).
 
     Sync wrapper safe to call from `close_paper_position`. If an outer event
     loop is already running (async scheduler context) the helper no-ops

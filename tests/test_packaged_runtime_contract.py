@@ -265,7 +265,14 @@ def test_rust_host_contract_keeps_tray_cli_and_payload_separate():
 
 
 def test_plan_preserves_browser_only_ui_and_plain_cli():
-    plan = (ROOT / "docs" / "plans" / "packaged_tray_cli_runtime.md").read_text(encoding="utf-8")
+    plan = (
+        ROOT
+        / "docs"
+        / "archive"
+        / "legacy"
+        / "plans"
+        / "packaged_tray_cli_runtime.md"
+    ).read_text(encoding="utf-8")
     operations = (ROOT / "docs" / "operations" / "PACKAGED_RUNTIME.md").read_text(encoding="utf-8")
 
     assert "the only product UI is the dashboard" in plan

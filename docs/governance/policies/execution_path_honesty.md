@@ -122,7 +122,7 @@ LLM 幻觉的不是"策略代码"，而是"市场方向"，且没有确定性 ga
 
 ## 4. 与 Prism 教训的对照：我们是"反向 Prism"
 
-`docs/REFERENCE_openalice_prism_review.md` §三记录了 Prism 的反面教训：
+`docs/references/external-systems/openalice_prism_review.md` §三记录了 Prism 的反面教训：
 **Prism 搭了一整套漂亮的 LLM 多 agent 脚手架，后台实跑纯规则算术** → 死代码 + 语义不诚实。
 
 Aletheia 是**镜像的另一半**：
@@ -136,7 +136,7 @@ Aletheia 是**镜像的另一半**：
 
 → Prism 的病是"LLM 是摆设"；Aletheia 的病是"strategy 的规则是摆设"。
 两者都违反 **"语义诚实 > 能力"** 的优先级——都让一个声称做某事的组件实际什么都不做。
-`REFERENCE_openalice_prism_review.md` 的教训"要升级策略就让 LLM 真进决策回路（哪怕一个节点）"，
+`openalice_prism_review.md` 的教训"要升级策略就让 LLM 真进决策回路（哪怕一个节点）"，
 对 Aletheia 的对应版本是：**要么让 strategy 的 rule 真正驱动交易，要么诚实标注它是 advisory 而非 executed。**
 
 ---
@@ -146,7 +146,7 @@ Aletheia 是**镜像的另一半**：
 - ✅ append-only：`aletheia/files/jsonl.py:25-42` 只 append、rotate 时把旧文件改名为 `.1` 不删内容。
 - ❌ **无 hash 链**：每条 audit 记录独立（`write_audit` `jsonl.py:60-69`），**不引用前一条的 hash**，
   无法做防篡改的链式验证。
-- → 这正是 `REFERENCE_openalice_prism_review.md` **蓝图 B（commit-hash 审计链）** 要补的（对照 OpenAlice `TradingGit`），
+- → 这正是 `openalice_prism_review.md` **蓝图 B（commit-hash 审计链）** 要补的（对照 OpenAlice `TradingGit`），
   目前待授权。补上后才算名实相符的 "Trading-as-Git"。
 
 ---
@@ -159,7 +159,7 @@ Aletheia 是**镜像的另一半**：
 - ⚠️ **只影响 LLM 的"读"，不改任何确定性参数**：学到的 lesson 进 prompt 影响下一次 LLM 市场解读，
   但**不调 scanner 权重 / 不调 TTL / 不改 risk 限额**——与原始设计 §3.9 的"scanner weight updates / TTL tuning"
   这类**参数化反馈**有明确差距。当前是 advisory 文本注入，不是闭环控制。
-- 📌 **更正**：`docs/north_star_references.md` §6（2026-06-08 表述）称 "market_observer：LLM 只看 latest_snapshot，
+- 📌 **更正**：`docs/references/external-systems/north_star.md` §6（2026-06-08 表述）称 "market_observer：LLM 只看 latest_snapshot，
   不读任何历史/教训"——**已过时**。现在 market_observer 确实注入 memory block。该文件已同步更正。
 
 ---
@@ -207,5 +207,5 @@ Aletheia 是**镜像的另一半**：
 - `docs/references/external-systems/north_star.md` — 方向地图（§6 经验闭环主题已更正）
 - `docs/references/external-systems/openalice_prism_review.md` — OpenAlice/Prism 对照（蓝图 B = 审计链，与本文 §5 呼应）
 - `docs/references/papers-and-benchmarks/agent_framework_research_2025_2026.md` — 外部综述验证镜（"确定性优先 + LLM 影响最小"佐证）
-- `docs/issues/domain/BACKEND_ISSUES.md` — 冻结的历史问题证据
+- `docs/archive/legacy/issues/domain/BACKEND_ISSUES.md` — 冻结的历史问题证据；当前偏差只在 GitHub Issues 跟踪
 - `C:\Users\ollama\Downloads\Aletheia_Implementation_Plan_v1.md` — 原始设计蓝图（仓库外，§2 对照来源）

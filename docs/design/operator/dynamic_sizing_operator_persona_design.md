@@ -234,4 +234,4 @@ owner 拍板三项高风险数字,其余按下表编入 `_default_personas`(comm
 - sizing 代码:`trading/sizing.py`、`risk/engine.py:122-128`、`agent_shell/operator_loop.py:819-874`
 - 视图完整性证据:`portfolio/uta/manager.py`(errors/connected_brokers)、`portfolio/exchange_sync.py`
 - 自监管/自愈模式:`ENTRY_EXIT_ASYMMETRY_ANALYSIS` + `POSTMORTEM_reconciler_thrash_2026-07-01.md`
-- 自进化节奏:`docs/plans/learning/self_evolution_plan.md`([[aletheia-self-evolution]])
+- 自进化节奏:`docs/archive/legacy/plans/learning/self_evolution_plan.md`([[aletheia-self-evolution]])

@@ -145,7 +145,7 @@ synthesis 产出的 12 维 gap 表（7 个 blocker / 5 个 major）。这是"理
 synthesis 给出 3 个选项，从最小到最大。
 
 ### Option C —— 最小诚实化：先修谎言，推迟架构（effort: S，数小时）
-**做什么**：不建执行路径。修三个最严重的失真（死 promote 端点、误导性桶标签、污染的 methodology 模式），把哲学正式写进 VISION.md/agent_contracts.md，写 `spec_serenity_independence.py` 的 RED 声明（status='missing'），并写 `docs/plans/trading-pipeline/serenity_execution_path.md` 作为 Option B 的实现指南。
+**做什么**：不建执行路径。修三个最严重的失真（死 promote 端点、误导性桶标签、污染的 methodology 模式），把哲学正式写进 VISION.md/agent_contracts.md，写 `spec_serenity_independence.py` 的 RED 声明（status='missing'），并写 `docs/archive/legacy/plans/trading-pipeline/serenity_execution_path.md` 作为 Option B 的实现指南。
 - **信任影响**：无（不碰任何执行代码）。
 - **优点**：零风险；移除最伤人的架构谎言；产出让 Option B 变成有界、spec-first 实现的规格与计划工件；数小时完成。
 - **缺点**：Serenity 仍是观察台，理念完全没被体现——**这正是你明确不想停留的状态**。
@@ -242,7 +242,7 @@ Option C（数小时，零信任边界）：
   · 移除/隔离污染的 _ICT_METHODOLOGY_SYSTEM 模式
   · 哲学写进 VISION.md / agent_contracts.md（§1 的内容）
   · 新画 Path C 流程图
-  · 写 spec_serenity_independence.py RED 声明 + docs/plans/trading-pipeline/serenity_execution_path.md
+  · 写 spec_serenity_independence.py RED 声明 + docs/archive/legacy/plans/trading-pipeline/serenity_execution_path.md
               │
               ▼
 Option A（effort M，不碰信任边界、不加 agent）：

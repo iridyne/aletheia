@@ -4,12 +4,12 @@
 
 1. 读取 `CLAUDE.md`
 2. 读取 `AGENTS.md`
-3. 读取 `docs/_ai/PROJECT_CONTEXT.md`
-4. 读取 `docs/_ai/CURRENT_TASK.md`
-5. 读取 `docs/_ai/AI_HANDOFF.md`
-6. 读取 `docs/_ai/DECISIONS.md`
+3. 读取 `docs/README.md`
+4. 从外部编排器恢复当前任务、worktree 和交接状态
+5. 按当前任务只读取 `docs/README.md` 指向的最窄文档路线
+6. 仅在需要历史背景时读取 `docs/archive/` 中的具体证据
 7. 检查 `git status`
-8. 总结当前项目状态
+8. 用当前代码、测试和运行事实总结项目状态
 9. 等待或执行用户给出的下一步任务
 
 不要在未理解上下文前直接修改代码。

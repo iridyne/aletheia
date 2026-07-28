@@ -5,7 +5,7 @@ top-level decision agents to use a stronger model while bulk data-extraction
 agents use a cheaper/faster one.
 
 Contract authority:
-  docs/design/agent_contracts.md  (§model-routing)
+  docs/design/contracts/agent_contracts.md  (§model-routing)
 
 WARNING — CONFORMANCE COLLECTION TRAP:
 Add this file to _import_all_specs() in tests/test_spec_conformance.py.

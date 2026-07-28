@@ -321,7 +321,8 @@ def test_adopted_positions_carry_synthetic_chain(tmp_path, monkeypatch):
     """trust §1.1 amendment: an external position MAY enter the local table, but only
     via adopt_position, which must build a complete `source="adopted"` causal chain
     (proposal → order → position) with non-null back-links — keeping the chain honest
-    instead of forbidding entry. See docs/DECISIONS.md (2026-06-12)."""
+    instead of forbidding entry. See docs/governance/decisions/DECISIONS.md
+    (2026-06-12)."""
     setup_env(tmp_path, monkeypatch)
     # Schema defaults changed to paper_internal; set paper_execution_mode = "bitget_demo"
     # so that adopt_position("demo") maps to bitget_demo execution_mode, matching the

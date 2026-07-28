@@ -6,7 +6,7 @@ preview platform and does not create a second production runtime.
 
 For machine roles, qualification freeze, deployment ownership, and the current
 multi-instance support boundary, read
-[`DEV_PROTOCOL.md`](../../_ai/workflow/DEV_PROTOCOL.md).
+[`Qualification Development Protocol`](QUALIFICATION_DEVELOPMENT_PROTOCOL.md).
 
 ## Choose the smallest mode that proves the change
 
@@ -180,7 +180,8 @@ runtime checks.
 
 A merged PR is not a qualification deployment. The Windows qualification
 Runtime remains pinned until the owner explicitly selects a new candidate. See
-`DEV_PROTOCOL.md` for observation-window rules.
+[`Qualification Development Protocol`](QUALIFICATION_DEVELOPMENT_PROTOCOL.md)
+for observation-window rules.
 
 ## Cleanup
 

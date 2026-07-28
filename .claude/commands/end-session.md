@@ -2,12 +2,12 @@
 
 必须执行：
 
-1. 更新 `docs/_ai/AI_HANDOFF.md`
-2. 更新 `docs/_ai/CURRENT_TASK.md`
-3. 追加 `docs/_ai/DEVLOG.md`
-4. 如果有重大技术或产品决策，追加 `docs/_ai/DECISIONS.md`
-5. 总结本次修改过的文件
+1. 在外部编排器中记录当前任务状态、未完成事项和下一步最小行动
+2. 总结本次修改过的文件、提交和验证结果
+3. 如果形成了长期有效的技术或产品决定，更新 `docs/README.md` 路由下的对应权威文档
+4. 如果发现仍存在的缺陷或后续工作，更新或创建 GitHub Issue
+5. 历史证据只链接 `docs/archive/` 中的具体文件，不将其作为当前状态
 6. 给出下一台设备接手时的第一步动作
 7. 检查是否有敏感文件可能被提交
 
-不要提交 secrets、token、`.env` 或本机私有配置。
+不要创建 tracked 会话台账，也不要提交 secrets、token、`.env` 或本机私有配置。

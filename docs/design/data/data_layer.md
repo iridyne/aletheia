@@ -274,18 +274,18 @@ market_data:
 
 | # | 变更 | 文件 | 状态 |
 |---|---|---|---|
-| 3.1 | `instruments.py` 删除 `BITGET_GRANULARITY`，改为通用 `TIMEFRAME_MAP` | `aletheia/trading/instruments.py` | ⚠️ 未完成 (2026-06-23) |
+| 3.1 | `BITGET_GRANULARITY` 仅保留为 deprecated execution-context 常量；新数据路径使用 canonical timeframe | `aletheia/trading/instruments.py` | ✅ 当前无生产消费者，不作为能力缺口 |
 | 3.2 | `config/schema.py` — `ExchangeConfig.tradable_symbols` 改为仅控制交易白名单；行情观察改由 `MarketDataConfig.observed_symbols` 管控 | `aletheia/config/schema.py` | |
 | 3.3 | `RiskConfig.allowed_symbols` 改为 canonical 格式 | `aletheia/config/schema.py` | 需同步更新 risk engine 消费点 |
 | 3.4 | `BitgetClient` 删除 `get_ticker` / `get_ohlcv` 的公开行情路径的外部调用，注释标明"执行上下文内使用" | `aletheia/exchanges/bitget/client.py` | **change-controlled** |
 | 3.5 | 数据库迁移：`market_snapshots` 新增 `provider` 列，允许多源数据共存 | `aletheia/storage/migrations.py` | |
-| 3.6 | 更新 `instruments.py` 中 `tradable_symbols_from_config()` 返回 canonical 格式 | `aletheia/trading/instruments.py` | ⚠️ 未完成 (2026-06-23) |
+| 3.6 | 更新 `instruments.py` 中 `tradable_symbols_from_config()` 返回 canonical 格式 | `aletheia/trading/instruments.py` | ✅ 已实现 |
 
-**Phase 3 未完成项说明（截至 2026-06-23）：**
+**Phase 3 当前结论：**
 
-- **3.1 未完成**：`BITGET_GRANULARITY` 仍存在于 `aletheia/trading/instruments.py:21`，未替换为通用 `TIMEFRAME_MAP`。代码注释标注为 "execution-context only"，但尚未完成从 `instruments.py` 中删除的迁移。详见 [docs/issues/domain/BACKEND_ISSUES.md](../../issues/domain/BACKEND_ISSUES.md)。
+- **3.1 不再作为产品 backlog**：`BITGET_GRANULARITY` 仍存在，但当前没有生产消费者；为了删除常量而删除不会改善数据链或支持面。未来若触碰该模块可做有界清理。
 
-- **3.6 未完成**：`tradable_symbols_from_config()` (`aletheia/trading/instruments.py:30`) 的 docstring 声明返回 "Bitget format"（如 `"BTCUSDT"`），实现直接返回 `cfg.exchange.symbol_list`（该字段存储 Bitget 格式）。计划中的 canonical 格式迁移未执行。详见 [docs/issues/domain/BACKEND_ISSUES.md](../../issues/domain/BACKEND_ISSUES.md)。
+- **3.6 已完成**：`tradable_symbols_from_config()` 在源头对每个配置值调用 `to_canonical()`，消费者得到 `"BTC/USDT"` 形式。
 
 ---
 
@@ -367,7 +367,7 @@ derivatives 死清算 REST fallback；Glassnode 确认从不存在。
   折进 `render_enriched_context_md` 的 macro 块供 LLM 消费（填 Glassnode 链上缺口）。
 
 两源经 `_async_data_collectors` Phase B（~10min）调度，各 `enable_hyperliquid` / `enable_defillama` 门控。
-Coinalyze（跨所聚合）已在 `docs/plans/market-data/free_data_sources_implementation_plan.md` 设计，待免费 key，**不实现 stub**。
+Coinalyze（跨所聚合）已在 `docs/archive/legacy/plans/market-data/free_data_sources_implementation_plan.md` 设计，待免费 key，**不实现 stub**。
 
 ---
 

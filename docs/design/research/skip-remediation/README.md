@@ -11,25 +11,25 @@ PI prompt、conviction 门槛、Risk Engine、Execution Gateway、Live、额度�
 
 `skip` 是全框架因果／反事实方法的一个具体落点，而不是该方法的全部边界。对 universe
 generation、选币、ranker 与其他 filters 的适用条件及不可越过的用语边界，见
-[全框架应用指引](../subsystems/causal_counterfactual_research_guidance.md)。本分支仍严格只研究 PI
+[全框架应用指引](../../subsystems/causal_counterfactual_research_guidance.md)。本分支仍严格只研究 PI
 `skip`；不在这里提出或实施 universe 行为变更。
 
 ## 阅读阶梯
 
-1. [全框架应用指引](../subsystems/causal_counterfactual_research_guidance.md)：可复用的方法、
+1. [全框架应用指引](../../subsystems/causal_counterfactual_research_guidance.md)：可复用的方法、
    universe 等后续模块的适用条件，以及本分支边界。
-2. [00_current_state.md](../research/skip-remediation/00_current_state.md)：本次事故的已验证事实、推论和未知项。
-3. [01_research_basis.md](../research/skip-remediation/01_research_basis.md)：反事实、因果、回放与前瞻实验的
+2. [00_current_state.md](00_current_state.md)：本次事故的已验证事实、推论和未知项。
+3. [01_research_basis.md](01_research_basis.md)：反事实、因果、回放与前瞻实验的
    方法边界；避免把观察数据误称为因果结论。
-4. [04_comprehensive_skip_remediation_plan.md](../research/skip-remediation/04_comprehensive_skip_remediation_plan.md)：逐项覆盖
+4. [04_comprehensive_skip_remediation_plan.md](04_comprehensive_skip_remediation_plan.md)：逐项覆盖
    当前七个 Skip 问题的完整 SDD 工作包、B 类实验顺序、测试与验收；这是当前实现计划。
-5. [05_b2_debate_evidence_alignment_sdd.md](../research/skip-remediation/05_b2_debate_evidence_alignment_sdd.md)：B2 对
+5. [05_b2_debate_evidence_alignment_sdd.md](05_b2_debate_evidence_alignment_sdd.md)：B2 对
    initial assessment 与 Debate 的证据来源、对称性、epoch 与观察的专项 SDD；尚未授权行为变更。
 6. [06_runtime_skip_audit_2026-07-18.md](06_runtime_skip_audit_2026-07-18.md)：B1.1/B2 运行后的
    Overview 时间口径、skip-halt 成熟窗口与 direct-skip 分层结果；包含本次 A 类修复和下一 B treatment 入口。
-7. [03_decisions_to_resolve.md](../research/skip-remediation/03_decisions_to_resolve.md)：必须由 owner 明确决定的
+7. [03_decisions_to_resolve.md](03_decisions_to_resolve.md)：必须由 owner 明确决定的
    治理问题。没有这些决定不得进入行为变更。
-8. [02_implementation_plan.md](../research/skip-remediation/02_implementation_plan.md)：早期高层草案；其中关于新增
+8. [02_implementation_plan.md](02_implementation_plan.md)：早期高层草案；其中关于新增
    `decision_evidence_epochs` 的建议已被当前计划否决，保留仅用于追溯讨论。
 
 ## 术语与不变边界
@@ -49,9 +49,9 @@ generation、选币、ranker 与其他 filters 的适用条件及不可越过的
 
 本目录是这些现行契约的讨论前置层，不替代它们：
 
-- [机会筛选证据与负反馈契约](../contracts/filter_evidence_contract.md)
-- [机会固定时点结果契约](../contracts/opportunity_outcome_contract.md)
-- [决策生命周期契约](../contracts/decision_lifecycle_contract.md)
-- [Learning Contract](../contracts/learning_contract.md)
-- [Filter Feedback Assignment and Bounded Replay](../market-systems/filter_replay.md)
-- [Spec-Driven Development 方法论](../process/SDD_METHODOLOGY.md)
+- [机会筛选证据与负反馈契约](../../contracts/filter_evidence_contract.md)
+- [机会固定时点结果契约](../../contracts/opportunity_outcome_contract.md)
+- [决策生命周期契约](../../contracts/decision_lifecycle_contract.md)
+- [Learning Contract](../../contracts/learning_contract.md)
+- [Filter Feedback Assignment and Bounded Replay](../../market-systems/filter_replay.md)
+- [Spec-Driven Development 方法论](../../process/SDD_METHODOLOGY.md)

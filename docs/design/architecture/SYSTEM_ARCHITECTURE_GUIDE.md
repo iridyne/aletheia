@@ -214,43 +214,22 @@ Proposal → Order → Fill → Position → Exchange TPSL 挂单
 
 ---
 
-## 第八章：策略生命周期 — 从创意到退役
+## 第八章：策略生命周期 — 当前支持边界
 
 ![Strategy Lifecycle](../../diagrams/rendered/08_strategy_lifecycle.png)
 
-### 策略升阶路径
+本图和旧的 `draft → paper_candidate → paper_running` 流程属于历史规则引擎设计。
+RuleSet、Strategy Designer、backtest orchestrator 和 Optuna 策略变体路径已经删除，
+不属于当前产品能力。
 
-```
-draft → research_note → strategy_hypothesis → paper_candidate ⛔ STOP
-                                                      ↓
-                                        [System Operator 批准]
-                                                      ↓
-                                              paper_running ✅
-                                              (RuleSet 激活)
-```
+当前 System Operator 的受支持交易职责是：读取一个确切候选的三层上下文，产生
+`trade` 或 `skip`，并让完整 `trade` 进入不可变 Proposal、Risk 和 Execution Gateway。
+Python Operator assessment 只保留有界配置调整、通知和仍存在的一次性委派。
+历史 `recommend_promote` / `recommend_retire` / `recommend_demote` 没有可达的策略
+生命周期消费者，不得从表中存在旧记录推断功能仍可用。
 
-**自动阶段**（Strategy Designer 自行推进）：
-- `draft`：刚创建
-- `research_note`：有研究支撑
-- `strategy_hypothesis`：可被回测验证
-- `paper_candidate`：**强制止步！** 等 System Operator
-
-**System Operator 决策门**：
-- Designer 写 `recommend_promote` 到 `pi_decisions`
-- System Operator 评估后决定同意/拒绝
-
-### 策略退出路径
-
-- Operator Loop（每60min）评估策略表现
-- 表现差 → 写 `recommend_retire` 或 `recommend_demote`
-- System Operator 确认后执行
-- System Operator 也可以拒绝（"再观察"）
-
-### 策略变体（Param Sweep）
-
-- Optuna 优化参数后产生变体策略
-- 同样止步于 `paper_candidate`
-- 同样需要 System Operator 确认才能激活
+未来若重新引入策略生命周期，必须作为新的产品能力重新建立入口、审批、执行消费者、
+持久状态、回退和端到端证据，而不是复用历史图中的状态名。
 
 ---
 
@@ -264,11 +243,11 @@ draft → research_note → strategy_hypothesis → paper_candidate ⛔ STOP
 
 | 原则 | 实现 |
 |------|------|
-| **System Operator 是唯一决策者** | 所有 trade/promote/retire 动作必须经过 System Operator |
-| **其他组件只产出信号** | Observer 写 Opportunity, Paper Trader 写 signal_pending, Operator 写 recommend_* |
+| **System Operator 是入场决策者** | 当前候选只产生 `trade` / `skip`；Risk 与 Execution 仍是独立硬边界 |
+| **其他组件只产出信号** | Observer 写 Opportunity，Paper Trader 写 `signal_pending`，System Operator 写最终候选决策 |
 | **安全层自治** | 止损/止盈/追踪不等审批，秒级执行保护资金 |
 | **正反馈循环** | 每笔交易的结果在 5 分钟内影响下一个决策 |
-| **策略升阶有门禁** | 自动推进止于 paper_candidate，激活需 System Operator 确认 |
+| **策略生命周期不冒充能力** | 旧 RuleSet 升阶/退役链已删除；未来恢复必须重新证明完整链路 |
 | **Risk Engine 是硬墙** | 无论 System Operator 多有信心，5 关审批不通过就不下单 |
 
 ---
@@ -280,7 +259,7 @@ draft → research_note → strategy_hypothesis → paper_candidate ⛔ STOP
 | Market Data Collector | 5 min | 拉取价格/FR/OI/Taker/Liquidation |
 | Market Observer | 10 min | LLM 分析 → 写 Opportunity |
 | Paper Trader | 5 min | 信号收集 → 写 signal_pending |
-| System Operator | 5 min | 读 pending signals → 决策 → 执行 |
+| System Operator trading decision | event-driven + ~15 min fallback | 读确切 pending candidate → `trade` / `skip` |
 | Position Manager | 1 min | 追踪止损 / 检查平仓条件 |
-| Operator Loop | 60 min | 策略评估 → recommend_retire/demote |
-| Strategy Designer | 事件触发 | 创建/回测新策略 |
+| Python Operator assessment | 4 h | 有界 config 调整、通知和当前委派 |
+| TS operator-shell | continuous supervision | 状态监督、Command Registry 编排和受控自愈 |

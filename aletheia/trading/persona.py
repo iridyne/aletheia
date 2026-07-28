@@ -1,6 +1,7 @@
 """Trading-persona resolver — the single seam sizing/risk read effective params through.
 
-Design: docs/design/dynamic_sizing_operator_persona_design.md (three-layer decision box).
+Design: docs/design/operator/dynamic_sizing_operator_persona_design.md
+(three-layer decision box).
 
 - Persona provides bounds [min, init, max] per param.
 - P1 (this module): the effective value is the active persona's `init`.

@@ -3,8 +3,9 @@
 Owner directive (2026-06-28): negative-feedback learning must be HIGH-DIMENSIONAL
 (Agent reasons about WHY trades lost / fits error patterns — not low-level
 "block this symbol/direction") and SELF-EVOLVING (later evidence can OVERTURN an
-earlier judgment). The design is docs/plans/insight_feedback_loop.md +
-docs/plans/round2_negative_feedback_loop_closure.md.
+earlier judgment). Historical designs:
+docs/archive/legacy/plans/learning/insight_feedback_loop.md and
+docs/archive/legacy/plans/trading-pipeline/round2_negative_feedback_loop_closure.md.
 
 These claims guard the three defects found in the audit:
   ① regime dimension collapse (regime_tag never snapshotted at entry)   → IFL-S03 (A1)

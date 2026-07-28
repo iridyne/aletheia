@@ -51,7 +51,7 @@
   - PI system prompt 片段（中风险）：可修改
   - 风控阈值：暂不开放，Phase 2 后评估
 - **推翻机制**：方案1（置信度更新）× 方案2（时间衰减 half-life）× 方案3（PI 决策时主动过滤）三路融合，设计待深度研究后确定
-- **研究计划**：`docs/plans/learning/learning_mechanism_research_plan.md`
+- **研究计划**：`docs/archive/legacy/plans/learning/learning_mechanism_research_plan.md`
 
 ---
 
@@ -113,7 +113,7 @@
 
 | 事项 | 优先级 | 文档 |
 |------|--------|------|
-| 学习推翻机制深度研究（Phase 1-3） | 高 | `docs/plans/learning/learning_mechanism_research_plan.md` |
+| 学习推翻机制深度研究（Phase 1-3） | 高 | `docs/archive/legacy/plans/learning/learning_mechanism_research_plan.md` |
 | Command Center 心跳区域实现 | 中 | 本文档 §7 + `CommandCenter.tsx` |
 | 数据源替换（Coinalyze/DefiLlama/Hyperliquid） | 中 | 需先登记 `data_utilization.md` |
 | spot-parity 分支 owner 审核入 master | 中 | 分支 `worktree-demo-live-spot-parity-event` |

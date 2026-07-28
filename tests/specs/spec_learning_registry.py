@@ -66,7 +66,7 @@ def test_learning_behavior_paths_are_declared_with_safe_fallbacks():
     # auto-hypothesis generator against a stable named path. Every safety gate is
     # off in this declaration: no consumer reads overrides, cohorts.SUPPORTED_PATH_IDS
     # rejects any accidental exposures (is_learning_treatment=False), Settings does
-    # not surface it. See docs/plans/learning/filter_parameter_tune_design.md.
+    # not surface it. See docs/archive/legacy/plans/learning/filter_parameter_tune_design.md.
     assert "filter_parameter_tune" in by_id
     fpt = by_id["filter_parameter_tune"]
     assert fpt.is_learning_treatment is False

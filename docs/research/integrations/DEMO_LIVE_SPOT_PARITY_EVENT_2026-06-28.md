@@ -2,7 +2,7 @@
 
 > 2026-06-28 | 类型：研究 event（owner 触发）| 状态：**实测已坐实 OKX demo 支持现货 → 进入 SDD-first 实现**
 > 触发源：owner 提出「Demo 推演应无限向 Live 环境靠近——Live 有现货，Demo 也要有」
-> 关联：`docs/plans/market-data/futures_integration_plan.md`（永续侧已完成）、`aletheia-symbol-display-convention`、`aletheia-okx-contract-size-trap`
+> 关联：`docs/archive/legacy/plans/market-data/futures_integration_plan.md`（永续侧已完成）、`aletheia-symbol-display-convention`、`aletheia-okx-contract-size-trap`
 
 ---
 

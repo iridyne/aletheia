@@ -4,7 +4,7 @@
 > 源码克隆位置：`C:\Users\ollama\Projects\_refs\{OpenAlice, prism}`（在项目仓库之外，不污染 git）。
 > 结论先行：**OpenAlice 是理念同源、实现成熟的"成年版"，值得对照升级；Prism 架构同构但犯了和 Aletheia 同样的病（LLM agent 是死代码），是反面教材而非优点来源。**
 >
-> **2026-06-29 进展更新**：第四节 P0 借鉴清单的 **commit_hash 链**部分已实施落地（`b8ed990` P0-1 + `31eb1a9` P1-2，分支 `worktree-openalice-tag-research`）。本文蓝图 B 的 `state_after` 快照 + `reject 一等记录` 仍未实施（触 `execution/` trust boundary，待 owner 显式批准）。蓝图 A（Guard 责任链）也未实施（触 `risk/engine.py` 红线最严）。**深度版研究报告 + 状态卡见 `docs/research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md` + `docs/issues/backlog/TAG_BORROW_BACKLOG.md`**。
+> **当前取舍**：第四节的 **commit_hash 链**与 adopted-position 审计引用已实施，并由当前 data/audit/trust 契约维护。`state_after` 全账户快照会复制已有持久状态，reject 已有一等审计事件，Guard 责任链又只是高风险结构重排，三者均不进入当前 roadmap。深度研究见 `docs/research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md`，历史状态卡见 [`TAG_BORROW_BACKLOG`](../../archive/legacy/issues/backlog/TAG_BORROW_BACKLOG.md)。
 
 ---
 
@@ -86,7 +86,7 @@ OpenAlice 拆成两个长生命周期进程（README "Architecture" 节）：
 
 ### 6. 文档治理纪律（轻量可借）
 
-`_refs/OpenAlice/CLAUDE.md` 把 `TODO.md`（前瞻 backlog，完成即删，git log 才是历史）和 `README.md`（大改后才审计的定位文档）的**维护规则写进了 AI 协作约定**。Aletheia 已有类似的 BACKEND_ISSUES/FRONTEND_ISSUES 分离，可对照补强"完成即删 TODO、git log 为准"这条。
+`_refs/OpenAlice/CLAUDE.md` 把 `TODO.md`（前瞻 backlog，完成即删，git log 才是历史）和 `README.md`（大改后才审计的定位文档）的维护规则写进 AI 协作约定。Aletheia 现已采用更明确的分层：GitHub Issues 跟踪当前缺口，契约写当前事实，Archive 保存历史审计；不再维护 Backend/Frontend 本地 issue ledger。
 
 ---
 

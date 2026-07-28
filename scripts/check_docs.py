@@ -21,10 +21,10 @@ ALLOWED_PROPOSAL_STATUSES = {
     "superseded",
 }
 FROZEN_MARKERS = {
-    Path("docs/issues/README.md"): "FORENSIC-FROZEN",
-    Path("docs/plans/README.md"): "LEGACY-FROZEN",
-    Path("docs/status/README.md"): "SNAPSHOT-FROZEN",
-    Path("docs/_ai/README.md"): "HISTORICAL-NO-TRACKING",
+    Path("docs/archive/legacy/issues/README.md"): "FORENSIC-FROZEN",
+    Path("docs/archive/legacy/plans/README.md"): "LEGACY-FROZEN",
+    Path("docs/archive/legacy/status/README.md"): "SNAPSHOT-FROZEN",
+    Path("docs/archive/legacy/ai-context/README.md"): "HISTORICAL-NO-TRACKING",
 }
 REQUIRED_CURRENT_FILES = {
     Path("docs/governance/policies/documentation_governance.md"),

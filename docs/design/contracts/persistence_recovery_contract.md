@@ -44,6 +44,10 @@ order intent through a currently wired adapter uses its deterministic identity.
 - Artifact manifests identify immutable persisted content.
 - Secrets and dirty runtime state are excluded from sync/export artifacts.
 - A recovery class with no production caller is not a recovery guarantee.
+- Backup evidence has three distinct levels: archive created, archive integrity
+  verified, and an isolated restore successfully opened and passed the relevant
+  application checks. Only the third level proves recoverability. A checksum or
+  manifest check alone must not be reported as a successful recovery.
 
 ## Failure and recovery semantics
 
@@ -55,6 +59,11 @@ and does not enforce `SAFE_FREEZE` from the dormant recovery state machine.
 Those absent guarantees are a product gap, not current Contract behavior. Their
 approved target and rollback boundary are recorded in the Gateway Recovery
 Proposal.
+
+Managed SQLite backup/restore must be used for a live WAL database. Copying an
+active `app.db` file is not a supported backup or restore path. Restore rehearsal
+must target an isolated data root and must not overwrite the active runtime merely
+to test the archive.
 
 ## Executable evidence
 

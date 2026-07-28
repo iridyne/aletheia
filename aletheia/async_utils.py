@@ -1,7 +1,7 @@
 """Windows asyncio event loop policy — process-level selector enforcement.
 
 On Windows the default ProactorEventLoop causes two same-root failure classes,
-both tracked for days in docs/issues/RUNTIME_BEHAVIOR_ISSUES.md:
+both tracked for days in docs/archive/legacy/issues/incidents/RUNTIME_BEHAVIOR_ISSUES.md:
 
   §17  Bare asyncio.run() teardown hangs up to 255s in the IOCP drain (broker
        threads, exchange_sync, tpsl checks, backfill jobs). Executor threads get

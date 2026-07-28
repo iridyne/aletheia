@@ -505,7 +505,7 @@ reconciled.
 | GET | `/risk/kill-switch` | Kill switch current state `{"active": bool}` |
 | POST | `/risk/kill-switch` | Engage or release the global trading brake; body: `{"active": true\|false, "reason": "", "confirm_release": bool}`. Releasing (`active=false`) requires `confirm_release=true` — else 422 (see ⚠️ note below). |
 
-> ✅ **2026-07-07 更新（#32）**：release 路径的 confirm 要求已在代码里实现 —— `aletheia/server/routes/risk.py:85-101` 校验 `confirm_release=True` 才放行 release，否则 HTTP 422。旧的「已知缺陷」描述已过时；docs/issues/domain/BACKEND_ISSUES.md 里 `kill-switch-release-missing-confirm` 条目相应标记为已解决。
+> ✅ release 路径要求 `confirm_release=True`，否则返回 HTTP 422。旧缺陷记录仅保存在 [`BACKEND_ISSUES.md`](../../archive/legacy/issues/domain/BACKEND_ISSUES.md) 作为历史证据。
 
 ---
 

@@ -9,7 +9,7 @@
 
 ## 0. 实施状态与核实订正（2026-07-01，分支 `fix/scanner-observer-audit-fixes`）
 
-本报告 P0–P3 已按 `docs/plans/market-data/scanner_observer_audit_fix_plan_2026-07-01.md` 实施并通过 spec（UP-01~13）+ 回归测试。写报告后**逐条 grep + 读源码亲核**（宽 fan-out workflow 因 workspace rate-limit 全灭，反而逼出手动核实），发现以下根因偏差，特此订正：
+本报告 P0–P3 已按 `docs/archive/legacy/plans/market-data/scanner_observer_audit_fix_plan_2026-07-01.md` 实施并通过 spec（UP-01~13）+ 回归测试。写报告后**逐条 grep + 读源码亲核**（宽 fan-out workflow 因 workspace rate-limit 全灭，反而逼出手动核实），发现以下根因偏差，特此订正：
 
 - **4.1 `scanner_weights`**：非「无人读的死字段」。PI Operator 经 `_action_adjust_scanner_weight` 写入、`Settings.tsx` 展示、OL-C09 spec 锁定——**写入链完整，缺的是消费链**（`compute_total_score` 从不读它，只用自动 calibration）。已修（US-1：`opportunity *= scanner_weights.get(family, 1.0)`）。
 - **4.10 event scanner**：结论「永远被竞争压制」**有误**。`score_event` 门槛 `ret_1h>8%→+45`、`>4%→+25`，配 vol×4(+30)+taker(+15) 可达 90 分，真触发能赢。0 条 forward outcome 真因 = 事件稀有 + `_infer_direction` **无 event 分支** → 赢竞争后 direction=None。已修（US-4）。

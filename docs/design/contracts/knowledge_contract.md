@@ -73,14 +73,9 @@
 ### 2.1 类型→生产者映射细节
 
 `risk_critic` 使用 `create_research_note()` 写入，但在 metadata 中携带 `subtype: risk_lesson`
-(`agents/risk_critic.py:42-43`)。此条目在 `trust_and_change_control.md §4.1` 表中未单独列出——
+(`agents/risk_critic.py`)。此条目在 `trust_and_change_control.md §4.1` 表中未单独列出——
 `risk_lesson` 是 metadata 子类型，存储 `item_type` 实为 `research_note`。
-`agent_contracts.md:185` 将其记为 `item_type=risk_lesson` 属于描述层面简化。
-
-⚠️ **漂移**: `agent_contracts.md §D.risk_critic` 写"Outputs: knowledge_items (item_type=risk_lesson)"，
-但代码 `risk_critic.py:42` 实际调用 `create_research_note()`，存储 `item_type="research_note"`，
-`risk_lesson` 仅在 metadata.subtype 中。`trust_and_change_control.md §4.1` 表也未列 `risk_lesson`
-为独立 item_type。代码与治理文档一致；`agent_contracts.md` 行 185 需修正。
+`agent_contracts.md` 也使用同一 producer / subtype 表述；它不是独立 `item_type`。
 
 ### 2.2 新增 item_type 的同步义务
 
@@ -241,7 +236,7 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 **双轨说明**: `retrieve_lessons()` 只读 `knowledge_fts`，不读 `ps_lessons`。这不是缺陷：`knowledge_fts` 是自由文本检索，`ps_lessons` 是结构化 LessonStore。需要 guard timestamps、review status、recommendation_json 的消费者必须直接读 LessonStore。
 
-**前向链接**: `docs/issues/archive/audits/PIPELINE_GAPS.md §A1`
+**历史证据**: `docs/archive/legacy/issues/archive/audits/PIPELINE_GAPS.md §A1`
 
 ### Historical A2. ps_skills 有 draft 生产者（不自动启用）
 
@@ -254,7 +249,7 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 **边界**: draft skill 不会自动启用，不会 grant risk/execution/live/credential/order 权限；`FORBIDDEN_LAYERS` 仍拒绝风险、执行、凭证、live、下单相关层。人工审核后才可 activate。
 
-**前向链接**: `docs/issues/archive/audits/PIPELINE_GAPS.md §A2`
+**历史证据**: `docs/archive/legacy/issues/archive/audits/PIPELINE_GAPS.md §A2`
 
 ### B1. detect_contradictions() 已有保守实现
 
@@ -262,7 +257,7 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 **边界**: 该检测器不会自动裁决哪条知识正确，不会删除/降级任何知识；它只给 Learning UI/报告一个"需要复核"信号。没有命中只能说明当前保守规则未发现冲突，不能代表所有语义矛盾都已穷尽。
 
-**前向链接**: `docs/issues/archive/audits/PIPELINE_GAPS.md §B1`
+**历史证据**: `docs/archive/legacy/issues/archive/audits/PIPELINE_GAPS.md §B1`
 
 ### B2. guard_candidate → trading_guard 晋升
 
@@ -304,16 +299,6 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 ### 7.3 promotion_gates_contract 中的 knowledge 依赖
 
 `promotion_gates_contract.md §5.8` 要求至少一条 `item_type="post_trade_review"` 的 active knowledge_items 行通过 `post_trade_reviews_required` 门。这是 strategy lifecycle 中唯一对 knowledge_items 的强制依赖。
-
-### 7.4 trust_and_change_control.md §4 漂移汇总
-
-| 漂移点 | 现状 | 治理文档声称 |
-|--------|------|------------|
-| risk_critic 产出类型 | 代码写 `research_note`（metadata.subtype=risk_lesson） | `agent_contracts.md:185` 写 `item_type=risk_lesson` |
-
-以上为文档与代码之间的表述不一致；代码行为符合 `trust_and_change_control.md §4.1` 的枚举定义，需更新 `agent_contracts.md` 描述。
-
----
 
 ## §8 学习产出的可修改范围（产品定义 2026-06-30）
 
@@ -363,7 +348,7 @@ System Operator 的 system prompt 分为两层：
 memo tags。
 
 仍可扩展的部分：更完整的置信度更新模型，以及决策时更细粒度的主动过滤策略。
-研究计划：`docs/plans/learning/learning_mechanism_research_plan.md`。
+研究计划：`docs/archive/legacy/plans/learning/learning_mechanism_research_plan.md`。
 
 ---
 

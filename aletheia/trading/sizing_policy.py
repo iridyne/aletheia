@@ -1,6 +1,6 @@
 """Persona learning (P3): the Operator's sizing decision space as a learnable policy.
 
-Design: docs/design/dynamic_sizing_operator_persona_design.md §7/§8/§10-P3.
+Design: docs/design/operator/dynamic_sizing_operator_persona_design.md §7/§8/§10-P3.
 
 A deliberately SIMPLE, SAFE first learner (owner's "早期实验性阶段…温和策略"): per
 CONTEXT BUCKET (the market regime the position was opened in, `positions.regime_tag`)

@@ -1,16 +1,16 @@
-请审计当前项目的 AI 协作状态。
+请审计当前项目的文档治理与 AI 协作入口。
 
 检查：
 
 1. 是否存在 `CLAUDE.md`
 2. 是否存在 `AGENTS.md`
-3. 是否存在 `docs/_ai/AI_HANDOFF.md`
-4. 是否存在 `docs/_ai/CURRENT_TASK.md`
-5. 是否存在 `docs/_ai/DECISIONS.md`
-6. 是否存在 `docs/_ai/DEVLOG.md`
+3. `docs/README.md` 是否能把任务路由到唯一的当前权威文档
+4. 当前文档是否误把 `docs/archive/`、旧计划、旧审计或会话记录当成当前事实
+5. 当前缺陷是否使用 GitHub Issues 跟踪，而不是新建本地问题总账
+6. 当前任务、会话和 worktree 状态是否由外部编排器管理，而不是写入 tracked handoff 文件
 7. `.gitignore` 是否正确排除了 secrets、本机配置和缓存
 8. 是否有敏感文件被 Git 跟踪
-9. 是否有上下文文档明显过时
-10. 给出修复建议
+9. 是否有失效链接、重复权威来源或明显过时的当前文档
+10. 给出最小范围的修复建议
 
 不要擅自删除文件。

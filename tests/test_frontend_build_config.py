@@ -41,7 +41,7 @@ def test_preview_docs_distinguish_stable_gateway_from_worktree_hmr():
         Path("AGENTS.md"),
         Path("README.md"),
         Path("docs/operations/runbooks/RUNBOOK.md"),
-        Path("docs/_ai/workflow/PROJECT_CONTEXT.md"),
+        Path("docs/operations/development/QUALIFICATION_DEVELOPMENT_PROTOCOL.md"),
         Path("docs/operations/development/DEVELOPMENT_PREVIEW.md"),
     ]
     for path in docs:
@@ -52,7 +52,9 @@ def test_preview_docs_distinguish_stable_gateway_from_worktree_hmr():
 
 def test_multi_machine_protocol_separates_development_from_qualification():
     """The canonical protocol must prevent PR velocity from moving the evidence target."""
-    protocol = Path("docs/_ai/workflow/DEV_PROTOCOL.md").read_text(encoding="utf-8")
+    protocol = Path(
+        "docs/operations/development/QUALIFICATION_DEVELOPMENT_PROTOCOL.md"
+    ).read_text(encoding="utf-8")
     required_contracts = [
         "PR merge 与 Runtime deployment 分离",
         "一个 stable/qualification Runtime",

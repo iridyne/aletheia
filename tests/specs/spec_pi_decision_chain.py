@@ -1,7 +1,7 @@
 """Spec: System Operator decision-chain fixes (Round 2 PI-agent audit, 2026-06-28).
 
 Locks the two PI decision-chain fixes made during the PI-agent SDD audit
-(see docs/issues/PI_AGENT_SDD_AUDIT_2026-06-28.md):
+(see docs/archive/legacy/issues/audits/PI_AGENT_SDD_AUDIT_2026-06-28.md):
 
   PI-S01 (A5) — the pi_trading_decision scheduler job is a ~15min safety-net
   fallback, DECOUPLED from pi_daemon.heartbeat_sec. The old code computed its

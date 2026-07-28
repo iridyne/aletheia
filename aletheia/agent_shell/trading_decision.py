@@ -2413,7 +2413,8 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
 
     Best-effort and honest: if the pick maps to neither (e.g. it came from raw
     features/signals), the fields stay None rather than being fabricated. See
-    LEARNING_LOOP_AUDIT_2026-06-26 §R0 + docs/plans/serenity_execution_path.md §3.2.
+    LEARNING_LOOP_AUDIT_2026-06-26 §R0 +
+    docs/archive/legacy/plans/trading-pipeline/serenity_execution_path.md §3.2.
     """
     # M1: non-entry actions short-circuit — no opportunity context to attach
     if decision.action in {"close", "reduce", "adjust_position"}:

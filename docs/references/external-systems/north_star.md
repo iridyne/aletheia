@@ -62,7 +62,7 @@
 | 多空辩论 / 跨 agent 批评 | ❌ | agent 是独立定时任务，仅经共享 DB 单向写，无 inter-agent 数据流 |
 | dreaming / 整理 | ✅ | `dreaming_agent` 每天 2am + daily_review + Learning Ledger（含 activation_ratio / lessons_consulted 质量信号） |
 | skill from experience | 🟡 | `trading/playbooks.py` `load_playbooks()` 已接入；`strategy_designer` 在决策前读 playbook block（2026-06-07） |
-| 持久记忆**反哺决策** | 🟡 | `knowledge/retrieval.py:177-228` FTS5 + BM25×recency×importance；`market_observer.py:251-263` + `strategy_designer.py:60-70` 注入 memory block。**软闭环已通**（影响 LLM prompt），但不改确定性参数；仍只这两个 agent 接入。详见 [EXECUTION_PATH_HONESTY.md](EXECUTION_PATH_HONESTY.md) §6 |
+| 持久记忆**反哺决策** | 🟡 | `knowledge/retrieval.py:177-228` FTS5 + BM25×recency×importance；`market_observer.py:251-263` + `strategy_designer.py:60-70` 注入 memory block。**软闭环已通**（影响 LLM prompt），但不改确定性参数；仍只这两个 agent 接入。详见 [execution_path_honesty.md](../../governance/policies/execution_path_honesty.md) §6 |
 | 可检索记忆（FTS / 向量 / 关键词） | 🟡 | FTS5 virtual table + `retrieve_lessons()`（quality-gated：仅 high_confidence + active）；无向量/embedding |
 | 记忆 schema 进化 | ❌（固定） | Pydantic 模型 + 加列式迁移，无运行时进化 |
 | 从交易反馈优化策略（RL 式） | ❌ | 晋级门槛会算指标，但不回流改策略 |
@@ -182,7 +182,7 @@ Hermes 指向的闭环是我们的真缺口，但**正因为它会放大一切**
 > 收敛出的"赢家架构 = 最可审计 + 最确定性 + LLM 影响力最小 + 职责分解最彻底"，逐条对上我们
 > 的红线与原则——是对本地图方向的独立验证，**非新需求源**。该报告的 "Hermes" 与本文 §4 同源；
 > 其 §7 推荐的重型栈（Postgres / 向量库 / Redis / LangGraph）恰好命中我们写死的红线，已显式拒绝。
-> 完整对照见 [REFERENCE_agent_framework_research_2025_2026.md](REFERENCE_agent_framework_research_2025_2026.md)。
+> 完整对照见 [agent_framework_research_2025_2026.md](../papers-and-benchmarks/agent_framework_research_2025_2026.md)。
 
 ---
 
@@ -213,7 +213,7 @@ Hermes 指向的闭环是我们的真缺口，但**正因为它会放大一切**
 
 → 所以现状是：**经验闭环已闭合（advisory 文本注入），但反馈是"软"的（改 prompt）而非"硬"的（改参数）。**
 这与 **Hermes（记忆注入决策）/ ALMA（记忆影响检索）/ AlphaQuanter（从反馈优化）** 的差距已从
-"完全开环"收窄到"软闭环 vs 参数化闭环"。**另见 [EXECUTION_PATH_HONESTY.md](EXECUTION_PATH_HONESTY.md) §6——
+"完全开环"收窄到"软闭环 vs 参数化闭环"。**另见 [execution_path_honesty.md](../../governance/policies/execution_path_honesty.md) §6——
 它用 file:line 钉死了这一点，并揭示了一个更尖锐的相关事实：LLM 的 direction_bias 才是真正驱动交易方向的决策。**
 
 ---
@@ -250,9 +250,9 @@ Hermes 指向的闭环是我们的真缺口，但**正因为它会放大一切**
 - 最终目标（用户原话）：**一个本地运行、会交易、会复盘、会学习、会积累自我经验、
   但被 hard control 牢牢限制住的个人交易数字孪生**——先当稳定的实习生，再当交易员。
 
-> **代码层结构性问题清单**：与本文件的"范式差距"性质不同，已迁出至
-> `docs/issues/domain/BACKEND_ISSUES.md`。本文件保持为"方向地图"，不承载具体 bug/contract
-> 偏移条目；后者随代码状态变化频繁，应单独维护。
+> **代码层结构性问题清单**：与本文件的"范式差距"性质不同。当时的问题快照已归档至
+> `docs/archive/legacy/issues/domain/BACKEND_ISSUES.md`；仍然存在的当前问题以 GitHub
+> Issues 为准。本文件保持为"方向地图"，不承载会随代码状态变化的 bug/contract 偏移条目。
 
 ---
 

@@ -118,7 +118,7 @@ uv run aletheia doctor --bundle data/diagnostics/doctor.json
 
 - worktree 的 `data/` 目录为**空**，在 worktree 里 restart gateway 会让交易系统空跑
 - 前端上线必须 merge 回主仓，在主仓 restart，再做 HTTP 实测
-- 详见 [`docs/_ai/workflow/GIT_WORKTREE_PLAYBOOK.md`](../../_ai/workflow/GIT_WORKTREE_PLAYBOOK.md)
+- 详见 [`Git Worktree Playbook`](../development/GIT_WORKTREE_PLAYBOOK.md)
 
 ---
 

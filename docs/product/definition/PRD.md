@@ -152,7 +152,7 @@
 - 远期愿景：[North Star](../../references/external-systems/north_star.md)（方向参考，非施工授权）
 - 实施规则：[Implementation Guide](../../governance/policies/implementation_guide.md)
 - 系统架构：[SYSTEM_ARCHITECTURE_GUIDE](../../design/architecture/SYSTEM_ARCHITECTURE_GUIDE.md)
-- 路线图：[ROADMAP](../../status/roadmap/ROADMAP.md)
 - 阶段门控：[PHASE_GATES](../gates/PHASE_GATES.md)
+- 历史路线图：[ROADMAP](../../archive/legacy/status/roadmap/ROADMAP.md)（仅作出处证据）
 - 指标定义：[METRICS](../gates/METRICS.md)
 - 稳定产品取舍：[Product Direction](DIRECTION.md)

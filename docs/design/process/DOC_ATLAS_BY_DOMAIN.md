@@ -5,7 +5,7 @@
 > Truth, current Contracts, code, GitHub, and runtime facts.
 
 > **用途**：以**功能域**为切口索引全部文档——与 [README](../README.md)（按契约对象）、[SYSTEM_MAP](../architecture/SYSTEM_MAP.md)（按模块/管道）、[DOC_SYSTEM_PLAN](../../product/documentation/DOC_SYSTEM_PLAN.md)（按金字塔层 L0–L4）互补，是第四种导航视角。
-> **状态标记**：✅金标准 / 🟡契约(部分实现) / 🔄in-flight / ⏳planned / ⛔open-gap / 📦process-artifact。状态已并入 [REMAINING_WORK_2026-06-30](../../status/snapshots/REMAINING_WORK_2026-06-30.md) 的对账结论。
+> **状态标记**：✅金标准 / 🟡契约(部分实现) / 🔄in-flight / ⏳planned / ⛔open-gap / 📦process-artifact。历史状态对账见归档的 [REMAINING_WORK_2026-06-30](../../archive/legacy/status/snapshots/REMAINING_WORK_2026-06-30.md)。
 > Last synced for D2/D6/D10/D12: 2026-07-19. Other domain status remains point-in-time and must be verified against its contract and `aletheia doctor`.
 
 ---
@@ -63,8 +63,8 @@
 
 - **L2 契约**：[`risk_engine_contract`](../contracts/risk_engine_contract.md) ✅(本会话 16→20 关+guard 澄清) · [`execution_contract`](../contracts/execution_contract.md) ✅ · [`live_unlock_contract`](../contracts/live_unlock_contract.md) ✅ · [`audit_chain_contract`](../contracts/audit_chain_contract.md) ✅ · [governance/`trust_and_change_control`](../../governance/policies/trust_and_change_control.md)(权威红线) · [governance/`execution_path_honesty`](../../governance/policies/execution_path_honesty.md)(三分诚实)
 - **Spec**：`spec_risk_engine`(含 RE-S04) · `spec_execution`(含 EX-C03 guard 脱钩锁) · `spec_live_unlock` · `spec_audit_chain` · `spec_pipeline_risk_gate` · `spec_pipeline_execution_chain` · `spec_pipeline_live_unlock` · `spec_futures_leverage`(18,守 check#17/18) · `spec_pipeline_adopted_position`(含 TaG hash)
-- **L3 计划**：`futures_integration_plan`/`_groundwork`/`_round2_deferred` · `TAG_BORROW_BACKLOG`(P0-1/P1-2✅已合并；P0-2/P1-1/P0-3⏳待 owner，触信任边界)
-- **当前状态**：金标准最齐。⛔ CR-EX-01 OKX/Binance live 不对账(确认 open)；Phase 6 live 需 owner 显式授权。
+- **历史研究**：[`TAG_BORROW_BACKLOG`](../../archive/legacy/issues/backlog/TAG_BORROW_BACKLOG.md) 记录 OpenAlice TaG 借鉴取舍；已采纳的 Proposal hash chain 与 adopted-position 审计链以当前 data/audit/trust 契约为准，其余快照、reject 复制链和 Guard 结构重排不进入当前 roadmap。
+- **当前状态**：demo/paper 是当前支持面；OKX/Binance/Bitget 私有成交对账代码链已实现并有 focused tests，live execution 整体仍保持 Experimental，启用需 owner 显式授权。
 
 ## D5 · Legacy Strategy / Promotion
 
@@ -90,11 +90,12 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
   + `spec_learning_pipeline` + adjacent lesson/guard/factor/outcome specs. Owner projection is
   `spec_learning_observability` (`LCO-*`, strict xfail/missing). The direct conformance matrix must
   import this complete family; do not rely on incidental collection order.
-- **L3 plan**：[`learning_positive_contribution_implementation_plan_2026-07-12`](../../plans/learning/learning_positive_contribution_implementation_plan_2026-07-12.md)
-  is the total delivery sequence; the focused
-  [`universe_family_calibration_execution_plan_2026-07-24`](../../plans/learning/universe_family_calibration_execution_plan_2026-07-24.md)
-  is its reverse-audited four-batch first-path runbook. `self_evolution_plan` and older repair
-  plans are historical/adjacent, not authority over the L2 contracts.
+- **历史实施证据**：归档的
+  [`learning_positive_contribution_implementation_plan_2026-07-12`](../../archive/legacy/plans/learning/learning_positive_contribution_implementation_plan_2026-07-12.md)
+  与
+  [`universe_family_calibration_execution_plan_2026-07-24`](../../archive/legacy/plans/learning/universe_family_calibration_execution_plan_2026-07-24.md)
+  保存交付顺序和当时的运行 checkpoint；当前语义只由上述 contracts/proposals
+  决定。`self_evolution_plan` 和更早修复计划同样只是历史证据。
 - **Issue**：`LCO-BE-01` / `LCO-FE-01` are the current owner-projection gaps; older
   `LEARNING_LOOP_AUDIT` remains historical evidence.
 - **Current state**：A1 has permanent ledger, full-arm exact-key complete-cluster measurement,
@@ -110,9 +111,13 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
 
 - **L2 契约**：[`operator_layer`](../operator/operator_layer.md) 🟡(概念设计+3组件警告框) · [`PI_OPERATOR_DESIGN_DECISIONS`](../operator/PI_OPERATOR_DESIGN_DECISIONS.md) 🟡(本会话补 §问题2 action 命名空间不变式)
 - **Spec**：`spec_operator_loop`(含 OL-S12 两环判别锁) · `spec_operator_contract_parity` · `spec_operator_single_source` · `spec_pipeline_operator_loop`(1 partial claim)
-- **L3 计划**：`operator_self_supervision`(✅已合 master) · `aletheia_pi_agent_implementation_plan` · `ai_native_bugfix_path`(Phase1/2✅done，3/4⏳deferred)
+- **历史实施证据**：归档的 `operator_self_supervision`、
+  `aletheia_pi_agent_implementation_plan` 和 `ai_native_bugfix_path`；当前职责、命名和
+  安全边界只由 `operator_layer` 与可执行 specs 决定。
 - **design/specs/(冻结)**：`2026-06-10-pi-operator-agent-{design-audit,crosswalk,dual-process-design}` · `2026-06-07-merge-postmortem`
-- **issue**：`PI_AGENT_SDD_AUDIT`(A5 cadence/§C 两环本会话已 reconcile)
+- **历史审计**：归档的
+  [`PI_AGENT_SDD_AUDIT_2026-06-28`](../../archive/legacy/issues/audits/PI_AGENT_SDD_AUDIT_2026-06-28.md)
+  记录三组件误判及 cadence / Python 控制链收敛过程；不能作为当前 Issue 清单。
 - **当前状态**：TS operator-shell 是真正 apex(领先 Python 文档)；两环边界本会话已形式化。⚠️ TS 行为无 spec、Stage 1 未正式"完成"(更深 PI runtime 待补)。
 
 ## D8 · 持久化·同步·恢复
@@ -120,7 +125,10 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
 **Scope**：`gateway/`(state_machine/state_store/locks/session/reconciliation/recovery) + `storage/`(event_store/artifact_store) + `agents/checkpoints` + `sync/` + `backup/` + `policies/`。
 
 - **当前契约与未来设计**：[`persistence_recovery_contract`](../contracts/persistence_recovery_contract.md) 仅覆盖当前持久化行为 · [`gateway_recovery`](../proposals/gateway_recovery.md) 保存未接通恢复设计 · `audit_chain_contract` / `execution_contract §6` 覆盖相邻信任边界
-- **L3 计划**：[`Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN`](../../plans/engineering/Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN.md)(18 模块代码完成)
+- **历史实施证据**：归档的
+  [`Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN`](../../archive/legacy/plans/engineering/Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN.md)
+  保存早期总体设计；当前行为看 `persistence_recovery_contract`，尚未接通的安全目标看
+  `gateway_recovery`，不得从旧计划的模块清单推断完成。
 - **当前状态**：⛔ 底层(SQLite/JSONL/reconcile)实际在跑，但上层协调(RECOVERY_MODE 状态机/SAFE_FREEZE 禁开仓/Checkpoint 跨机迁移/Policy versioning)**未接进 gateway**，需显式授权。"文档比代码雄心大"。
 
 ## D9 · 运行时与稳定性
@@ -138,10 +146,9 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
 **Scope**：`frontend/`(React/Vite,单端口 8787) + Command Center(operator 交互面) + `config/schema` + Config↔UI 铁律。
 
 - **L2 契约**：[`ui_design_system`](../frontend/ui_design_system.md) ✅(设计语言/密度) · [`api_reference`](../api/api_reference.md) ✅(REST 端点/trust 义务)
-- **design 过程产物**📦：`overview_redesign` · `webui_page_map` · `webui_backend_handoff`
-- **L3 计划**：`frontend_ui_redesign_plan`
-- **issue**：`FRONTEND_ISSUES` · `P3_UI_GAPS` · `_ai/UX_AUDIT_FULLAPP` · `_ai/UX_AUDIT_LESSONS`
-- **当前状态**：Overview 的 “Why no position now” 已与 `/analytics/opportunity-funnel.current` 共用只读投影。Learning Contribution Observability 已完成 L2 设计但 `LCO-*` 仍 missing；当前 Learning Reports 不能被描述为 measured contribution。其他 UI 诚实性债和 Config↔UI 缺口仍按 `FRONTEND_ISSUES` 单独核验。
+- **历史设计证据**：旧 redesign/page-map/UX audit/本地 issue ledger 统一保存在 [`docs/archive/legacy/`](../../archive/legacy/)；不再作为当前 roadmap。
+- **当前问题跟踪**：UI honesty 与 Config↔Runtime 断链按单项进入 GitHub Issues（当前集中在 #393–#410），不维护第二套本地 backlog。
+- **当前状态**：Overview/Blotter 共用 current-entry read model；Learning Contribution 已有 bounded API、typed UI consumer 与 focused tests。共享 types、DataTable、DetailDrawer、状态人性化等基础设施已落地；具体页面能力仍以 Capability Ground Truth 与当前 Issue 为准。
 
 ## D11 · 子系统观察者
 
@@ -158,12 +165,12 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
 **Scope**：愿景/红线/度量/SDD 方法/金字塔/协作流程——统领其余 11 域。
 
 - **L0–L1**：[`product/VISION`](../../product/definition/VISION.md) · `PRD` · `METRICS` · `PHASE_GATES` · `EXPERIMENT_{PROTOCOL,MVP_GATE,BACKLOG}`；`DOC_SYSTEM_PLAN` 是已执行迁移计划，不是当前状态页
-- **L4 状态**：[`status/ROADMAP`](../../status/roadmap/ROADMAP.md) · `WORLD_MAP`(架构愿景) · `PIPELINE_STATUS` · `REMAINING_WORK_2026-06-30`；均为 point-in-time evidence
+- **历史状态证据**：[`ROADMAP`](../../archive/legacy/status/roadmap/ROADMAP.md) · `WORLD_MAP` · `PIPELINE_STATUS` · `REMAINING_WORK_2026-06-30`；均已归档为 point-in-time evidence
 - **方法/导航**：[`docs/README`](../../README.md)(总入口) · [`design/README`](../README.md)(契约索引) · [`SDD_METHODOLOGY`](SDD_METHODOLOGY.md) · [`SYSTEM_MAP`](../architecture/SYSTEM_MAP.md) · **本文(域索引)**
 - **治理**：[governance/`trust_and_change_control`](../../governance/policies/trust_and_change_control.md) · `implementation_guide`
-- **协作过程**📦：外部开发编排器持有当前 session/task/handoff/worktree 状态；仓库 `_ai/workflow/` 仅保留可复用 playbook，`_ai/session/` 等旧记录只作历史证据
+- **协作过程**📦：外部开发编排器持有当前 session/task/handoff/worktree 状态；可复用 playbook 位于 `governance/` 与 `operations/`，旧 Agent 记录统一归档在 `archive/legacy/ai-context/`
 - **参考系**：`references/`(north_star/competitors_and_papers/agent_framework_research/FRAMEWORK_MODULE_MAP/INDEX/prism_extraction/openalice_prism_review)
-- **issue 总账**：`issues/`(README/BACKEND/FRONTEND/HUMAN_ISSUES/LOW_VALUE_TESTS/FIX_PLAN/MASTER_FIX_LEDGER/_RAW_SWEEP_LEDGER + archive/)
+- **问题跟踪**：GitHub Issues 是唯一 live tracker；仓库内旧 Backend/Frontend/Human/Fix/Ledger 文档统一进入 `docs/archive/legacy/issues/`，只作历史证据
 - **当前状态**：权威链统一为 `AGENTS → governance/product → design contract → tests/specs → conformance`；运行事实独立由 `doctor`/日志/DB 提供，计划、issue、audit 和旧 agent ledger 不得覆盖当前契约或运行事实。
 
 ---

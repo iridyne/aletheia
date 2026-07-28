@@ -3,7 +3,7 @@
 > ⚠️ **本知识库是外部社区调研材料（方向参考），不是 Aletheia 的施工授权。**
 >
 > 它记录一个外部社区在「AI Agent + 合约交易」上的做法、信号格式与踩坑经验，用于**未来**决策时的对照参考——
-> 与 [`docs/north_star_references.md`](../../north_star_references.md) 同性质。遵循 `AGENTS.md` 与 `CLAUDE.md`：
+> 与 [`north_star.md`](../../../references/external-systems/north_star.md) 同性质。遵循 `AGENTS.md` 与 `CLAUDE.md`：
 > 这里的任何「可借鉴项」在动工前都需要单独的、显式的用户授权；优先补 MVP 现有缺口，而非照搬新增能力。
 > 本社区**多数人实盘亏损**（见 [09](09_实盘业绩与现实校准.md)），引用时务必带上现实校准。
 

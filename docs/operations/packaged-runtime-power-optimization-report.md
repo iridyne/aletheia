@@ -163,4 +163,4 @@
 
 1. 主分析文档：本文件。
 2. 托盘行为权责说明：`docs/operations/PACKAGED_RUNTIME.md`。
-3. 相关执行设计边界：`docs/plans/packaged_tray_cli_runtime.md`，其中约束了托盘只做进程/生命周期控制，不做交易语义。
+3. 相关执行设计边界：`docs/archive/legacy/plans/packaged_tray_cli_runtime.md`，其中约束了托盘只做进程/生命周期控制，不做交易语义。

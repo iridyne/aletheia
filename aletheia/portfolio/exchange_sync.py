@@ -10,7 +10,8 @@ Governance:
   never places orders. It also does not, by itself, write externals into the local
   positions table. Adoption of an external position into the local books (trust §1.1,
   AS AMENDED 2026-06-12) happens only via `position_reconciler.adopt_position`, which
-  builds a synthetic-but-honest `source="adopted"` causal chain — see docs/DECISIONS.md.
+  builds a synthetic-but-honest `source="adopted"` causal chain — see
+  docs/governance/decisions/DECISIONS.md.
   This module's job is purely to surface the truth so the reconciler can act on it.
 - DEGRADES HONESTLY. Missing creds → `unconfigured`. API error → `error` + last
   good cache stays available. Stale cache → `stale`. Never fakes a positive state.
@@ -475,4 +476,3 @@ def _store_unified(payload: dict) -> None:
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
         (key, data),
     )
-

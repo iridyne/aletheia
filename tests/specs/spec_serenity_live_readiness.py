@@ -1,6 +1,7 @@
 """Spec: Serenity live-readiness — Phase 5 (D4 structural live-prep only)
 
-Phase 5 of the Serenity execution path (docs/plans/serenity_execution_path.md §6).
+Phase 5 of the historical Serenity execution path
+(docs/archive/legacy/plans/trading-pipeline/serenity_execution_path.md §6).
 Goal: confirm that the trade_school discriminator threads through the LIVE
 execution paths exactly the way it threads through paper, so the system is
 ready to flip a single live unlock switch without any further model-layer

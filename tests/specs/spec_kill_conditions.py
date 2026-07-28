@@ -8,7 +8,7 @@
   K2: 连续 3 天零开仓        → trading loop dead
   K3: live unlock 须 scorecard composite_score >= 70
 
-关联契约: docs/design/kill_conditions_contract.md
+关联契约: docs/design/contracts/kill_conditions_contract.md
 """
 import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim

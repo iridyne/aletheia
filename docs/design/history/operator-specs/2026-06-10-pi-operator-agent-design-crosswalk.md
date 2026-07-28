@@ -62,7 +62,7 @@ Nothing in the reference plan is treated as implicitly understood.
 The reference file is now split into three local layers:
 
 1. **Conceptual product intent**
-   - `docs/OPERATOR_LAYER_DESIGN.md`
+   - `docs/design/operator/operator_layer.md`
    - why the operator exists, how it sits over the trading core, and why `Ctrl+K` is not the full product surface
 
 2. **Repo-specific dual-process architecture**

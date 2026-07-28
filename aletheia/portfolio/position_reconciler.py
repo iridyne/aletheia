@@ -231,7 +231,7 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
         # None so the guard below reports all-managed and bails — never infer
         # orphans from a wrong-broker cache. Live keeps the legacy path (live
         # reconcile is alert-only and Bitget-based today). See
-        # docs/research/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.
+        # docs/research/audits/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.
         # The legacy cache is Bitget-only. It is valid for Bitget demo/live, but
         # never for OKX/Binance or any future broker account.
         if (target_execution_mode or "").startswith("bitget"):
@@ -493,7 +493,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
 
     Builds a synthetic-but-honest causal chain — proposal → order(filled) → position
     — all tagged `source="adopted"`, in a single transaction. This is the deliberate
-    amendment to trust §1.1 (see docs/DECISIONS.md 2026-06-12): an external position
+    amendment to trust §1.1 (see docs/governance/decisions/DECISIONS.md 2026-06-12): an external position
     DOES enter the local table, but only with a complete, truthfully-labelled chain so
     the position→proposal→order links stay non-null and auditable. The synthetic
     proposal/order assert "Aletheia adopted a pre-existing position", NOT "Aletheia
@@ -663,7 +663,8 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
             # into the proposal hash chain. proposal.commit_hash + parent_hash
             # were filled in-place by insert_trade_proposal() inside the
             # transaction block above, so they're available verbatim here. See
-            # PL-ADOPT-09 and docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md.
+            # PL-ADOPT-09 and
+            # docs/research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md.
             "commit_hash": proposal.commit_hash,
             "parent_hash": proposal.parent_hash,
         },

@@ -87,7 +87,7 @@
 - **影响**：页面打开时每分钟执行 12 轮 Provider fan-out。多 Provider 或不支持模型目录
   的兼容网关会产生持续的远程 API、token、网络和功耗开销。
 - **契约偏差**：
-  [`ASYNC_PERFORMANCE_LESSONS.md`](../../_ai/workflow/ASYNC_PERFORMANCE_LESSONS.md)
+  [`Async API Performance`](../../operations/development/ASYNC_PERFORMANCE.md)
   已规定 LLM 结果类轮询最小 30 秒，当前实现为 5 秒。
 - **修复方向**：后端缓存健康结果 30–60 秒并 single-flight；前端只在可见页面启用
   30–60 秒轮询；周期 health 不执行 inference，真实 ping 仅由用户显式触发。

@@ -197,7 +197,7 @@ async def _llm_startup_gate(cfg) -> None:
     # we only flip `paused` and don't clobber any edit made during the probe
     # window (e.g. an operator changing settings via the dashboard, now reachable
     # because the port is already serving). Full elimination of the last-writer
-    # race would need a file lock — tracked in docs/BACKEND_ISSUES.md.
+    # race would need a file lock and is outside this startup safeguard's scope.
     from aletheia.config.loader import load_config as _load_config, save_config
     fresh = _load_config()
     fresh.runtime.paused = True

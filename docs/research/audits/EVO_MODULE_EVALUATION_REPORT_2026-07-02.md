@@ -172,7 +172,7 @@ uleset_never_evaluated 失败标记。但规则引擎已删除(PG-B06 注释本�
 |---|------|------|------|
 | P2-1 | 统一 ps_lessons DDL | letheia/storage/migrations.py | 将 activated_at/dry_run_until/expires_at 移入 CREATE TABLE,移除 _ADDITIVE_COLUMNS 中的对应条目。使 DDL 自洽 |
 | P2-2 | 清理 PSLesson.artifact_path / PSSkill.created_from_lessons_json | learning/lessons.py + learning/skills.py | 如 MVP 不需要则删除字段;如需要则补 create() 参数 |
-| P2-3 | 创建统一 EVO 模块设计概览 | docs/design/evolution_module_overview.md | 描述 Strategy/Serenity/Learning 三模块如何协作构成 evolution 系统。L3 计划层 |
+| P2-3 | 创建统一 EVO 模块设计概览 | historical `docs/archive/legacy/plans/learning/evolution_module_overview.md` | 描述 Strategy/Serenity/Learning 三模块如何协作构成 evolution 系统。L3 计划层 |
 | P2-4 | 补 DEFAULT_PROMOTION_GATES config 暴露 | config/schema.py + 前端 Settings | 按 CLAUDE.md Config↔UI 规则。需 owner 确认是否 MVP 范围 |
 
 ### P3 — 未来/预留 (暂不动)

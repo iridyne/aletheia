@@ -717,7 +717,7 @@ def test_operator_evaluation_event_carrier_and_schema_exist():
 # ---------------------------------------------------------------------------
 # TaG hash chain — P0-1 (2026-06-29): proposal-level commit_hash + parent_hash.
 # Borrowed from OpenAlice TaG (TradingGit.ts); design notes in
-# docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md §五 P0-1.
+# docs/research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md §五 P0-1.
 #
 # Hash content: canonical JSON SHA-256 over the proposal's IMMUTABLE fields
 # (everything except status + commit_hash itself) + parent_hash. 16-char prefix
@@ -741,11 +741,13 @@ def test_trade_proposal_has_hash_chain_fields():
     fields = TradeProposal.model_fields
     assert "commit_hash" in fields, (
         "TradeProposal must declare commit_hash (P0-1 TaG borrow). "
-        "See docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md §五 P0-1."
+        "See docs/research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md "
+        "§五 P0-1."
     )
     assert "parent_hash" in fields, (
         "TradeProposal must declare parent_hash (P0-1 TaG borrow). "
-        "See docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md §五 P0-1."
+        "See docs/research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md "
+        "§五 P0-1."
     )
     # Both must be optional (additive — legacy proposals have NULL).
     p = TradeProposal(

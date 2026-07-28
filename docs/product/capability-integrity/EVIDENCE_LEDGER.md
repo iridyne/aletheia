@@ -56,7 +56,7 @@ of functionality:
 | CLI | 129 Typer command declarations across 26 modules grouped by final outcome |
 | Scheduler | 44 registered jobs mapped to their producers, state, and consumers |
 | Agent contracts | Active Operator, Risk, live, pipeline, and Learning contracts inspected |
-| Active scope | `docs/product/definition/ACTIVE_RUNTIME_SCOPE.md` used as the core boundary |
+| Active scope | `docs/product/ACTIVE_RUNTIME_SCOPE.md` used as the core boundary |
 | Product/docs | README, product, operations, API, data, and current design contracts traversed |
 | Core modules | Runtime, data, universe, Operator, Risk, Execution, Position, Analytics, Learning |
 

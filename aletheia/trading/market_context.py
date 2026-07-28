@@ -1,6 +1,6 @@
 """Market context builder — fix the "all neutral / speculative" root cause.
 
-Diagnosis (`docs/research/market_context_eval.md`):
+Diagnosis (`docs/research/market-data/market_context_eval.md`):
   market_observer was feeding the LLM exactly one line per symbol —
   "BTCUSDT: price=X 24h_change=0.05%". With a 1-D input the model can only
   reply at the base rate, so every opportunity came back neutral / speculative.

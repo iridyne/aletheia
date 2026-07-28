@@ -1486,7 +1486,7 @@ def list_prediction_claims(
 # --- Trade Proposals ---
 
 # TaG hash chain (P0-1, 2026-06-29). See:
-#   docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md §五 P0-1
+#   docs/research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md §五 P0-1
 # Fields excluded from the hash because they mutate after insert:
 #   - status (pending → executed / rejected via update_trade_proposal)
 #   - commit_hash (the field being computed)
