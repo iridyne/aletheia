@@ -1,7 +1,7 @@
 # Prism 价值提取存档（删库前清仓）
 
 > **用途**：`iridite/prism`（AI Portfolio Analysis MVP, ~1770 行 Python/FastAPI + ~600 行有效前端）即将从 GitHub 删除。本文件在删库前把仓库里**所有有复用价值的部分原样保全**——删库后 GitHub 与 `_refs/prism` 克隆都可能不在，本文件成为唯一留存，故关键代码**整段内联**而非只给 file:line（引用会随删库失效）。
-> **配套**：架构层面的对照分析见 [REFERENCE_openalice_prism_review.md](REFERENCE_openalice_prism_review.md) 第三节（Prism 的反面教材价值 + 可借小模式的 file:line）。本文件聚焦"代码本体清仓"。
+> **配套**：架构层面的对照分析见 [openalice_prism_review.md](openalice_prism_review.md) 第三节（Prism 的反面教材价值 + 可借小模式的 file:line）。本文件聚焦"代码本体清仓"。
 > **日期**：2026-06-10。
 
 ---
@@ -307,7 +307,7 @@ class CacheManager:
 
 - ✅ 后端有价值代码：进度推送全链路（2.1-2.4）、degraded-quality（2.7）、TTL 缓存（2.8）—— 全部原样内联。
 - ✅ 前端有价值代码：WS 消费 + 进度条（2.5）、URL 推导 + 类型契约（2.6）—— 全部原样内联。
-- ✅ 架构/编排层面的反面教材与可借小模式 —— 已在 [REFERENCE_openalice_prism_review.md](REFERENCE_openalice_prism_review.md) 第三节记录（含 LLM 死代码的诊断、LangGraph 骨架、base_agent 契约）。
+- ✅ 架构/编排层面的反面教材与可借小模式 —— 已在 [openalice_prism_review.md](openalice_prism_review.md) 第三节记录（含 LLM 死代码的诊断、LangGraph 骨架、base_agent 契约）。
 - ✅ 前端设计语言 —— 第三节核实为"无成体系设计语言"，无可提取资产。
 - ✅ 死代码/空壳/反方向技术栈 —— 第一节明确标注，确认无提取价值。
 

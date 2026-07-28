@@ -59,12 +59,12 @@ def append_jsonl(filename: str, record: dict) -> None:
         Writing to ``audit.jsonl`` via this function is forbidden.  All audit
         records must go through :func:`write_audit` which maintains the
         SHA-256 hash chain.  Direct writes would silently break chain
-        integrity.  See ``docs/design/audit_chain_contract.md §8``.
+        integrity.  See ``docs/design/contracts/audit_chain_contract.md §8``.
     """
     if Path(filename).name == "audit.jsonl":
         raise ValueError(
             "Use write_audit() for audit.jsonl — direct append_jsonl bypasses "
-            "the hash chain. See docs/design/audit_chain_contract.md §8."
+            "the hash chain. See docs/design/contracts/audit_chain_contract.md §8."
         )
     path = _log_dir() / filename
     line = json.dumps(record, default=str, ensure_ascii=False)

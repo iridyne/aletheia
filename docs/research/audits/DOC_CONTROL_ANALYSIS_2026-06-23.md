@@ -604,4 +604,4 @@ uv run pytest tests/test_spec_conformance.py -v -s    # 打印Conformance Matrix
 这三条命令是 Implement 阶段 Checkpoint 的全部验证要求。特别注意：Conformance Matrix 中出现新的 `gap` 意味着你修改了某个有 spec_claim 的模块但没有同步更新 spec——这是文档与代码分叉的早期信号。
 
 **规则3：发现文档与代码不符时，永远先改文档（除非文档是过时失效标注）**
-本报告记录了若干"文档声称代码有问题，代码实际正确"的失效标注（如 risk_engine §7 的 logger NameError、promotion_gates §4 偏差2 的 PI 审批门"未实现"），以及"文档声称功能存在，代码确实有漏洞"的真实缺口（如 api_reference Kill Switch 路径分裂）。判断规则：用 grep 核实代码，如果代码已正确实现，改文档标注为"已解决"；如果代码确实缺失安全保证（如 Kill Switch 发布缺少确认），将其记录在 `docs/issues/domain/BACKEND_ISSUES.md` 并创建 `SpecClaim(status="missing")` 以追踪修复——绝不以"文档写了就当实现了"蒙混过关。
+本报告记录了若干"文档声称代码有问题，代码实际正确"的失效标注（如 risk_engine §7 的 logger NameError、promotion_gates §4 偏差2 的 PI 审批门"未实现"），以及"文档声称功能存在，代码确实有漏洞"的真实缺口（如 api_reference Kill Switch 路径分裂）。当时的判断规则是：用 grep 核实代码；代码已正确实现则改文档标注为"已解决"，确有安全缺口则写入问题总账并创建 `SpecClaim(status="missing")`。该问题总账现作为历史证据归档在 `docs/archive/legacy/issues/domain/BACKEND_ISSUES.md`；当前缺陷以 GitHub Issues 为准。绝不以"文档写了就当实现了"蒙混过关。

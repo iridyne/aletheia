@@ -336,7 +336,7 @@ def test_operator_loop_rate_limit_per_day(tmp_path, monkeypatch):
         # OL-2 partial fix (2026-06-23): function now returns status='not_implemented'
         # instead of the false 'executed'. Semantic honesty restored.
         # Full fix requires a durable optuna_jobs queue + background worker —
-        # tracked as OL-2 in docs/research/CODE_AUDIT_REPORT_2026-06-23.md.
+        # tracked as OL-2 in docs/research/audits/CODE_AUDIT_REPORT_2026-06-23.md.
         "trigger_optuna_sweep with a strategy_id actually enqueues an Optuna sweep — "
         "a row in optuna_jobs or similar side effect must exist after execution",
         status="partial",

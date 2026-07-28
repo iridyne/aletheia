@@ -849,7 +849,7 @@ class PersonaParam(BaseModel):
     Persona supplies the range; the System Operator decides the actual value WITHIN
     it (P2+, context-aware); the risk-engine hard caps remain the outer envelope the
     range can never exceed. For P1 the effective value is `init`.
-    See docs/design/dynamic_sizing_operator_persona_design.md.
+    See docs/design/operator/dynamic_sizing_operator_persona_design.md.
     """
     min: float
     init: float

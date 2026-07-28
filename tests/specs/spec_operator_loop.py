@@ -4,8 +4,8 @@ Executable claims covering the PI Operator Loop permission model,
 rate limits, PARAM_REGISTRY, and forbidden actions.
 
 Contract authority:
-  docs/design/operator_layer.md
-  docs/design/PI_OPERATOR_DESIGN_DECISIONS.md
+  docs/design/operator/operator_layer.md
+  docs/design/operator/PI_OPERATOR_DESIGN_DECISIONS.md
 """
 
 import ast

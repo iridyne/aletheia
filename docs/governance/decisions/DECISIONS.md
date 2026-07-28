@@ -227,7 +227,7 @@ helper 改变了返回类型（`frozenset` → `dict[str, frozenset]`），所�
 
 ### References
 - 研究报告：`docs/research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md`
-- 借鉴清单 + 状态：`docs/issues/backlog/TAG_BORROW_BACKLOG.md`
+- 历史借鉴清单 + 当时状态：`docs/archive/legacy/issues/backlog/TAG_BORROW_BACKLOG.md`
 - L2 契约同步：`docs/design/data/data_model.md` + `docs/design/contracts/audit_chain_contract.md §6.4` + `docs/governance/policies/trust_and_change_control.md §1.1`
 - Memory：`aletheia-tag-borrow-plan`、`aletheia-refs-openalice-prism`
 
@@ -458,7 +458,7 @@ Operator Layer 采用 **dual-process** 架构:
 ### Consequences
 
 - 本地设计 source of truth 收口为:
-  - `docs/OPERATOR_LAYER_DESIGN.md` = 概念层
+  - `docs/design/operator/operator_layer.md` = 概念层
   - `docs/design/history/operator-specs/2026-06-10-pi-operator-agent-dual-process-design.md` = repo-specific 双进程蓝图
   - `docs/design/history/operator-specs/2026-06-10-pi-operator-agent-design-crosswalk.md` = 参考文件覆盖矩阵
 - 后续 implementation plan 必须按 dual-process 拆 Track 0-9,不能回退成单进程 quick fix
@@ -657,7 +657,7 @@ Implementation guide §3.3 originally listed Polymarket as "roadmap only" under 
 - `aletheia/data/polymarket_provider.py` — new Gamma API provider
 - `aletheia/agents/stock_observer.py` — new US equity observer (Mon–Fri market hours)
 - Config expanded: `observed_stocks`, `observed_prediction_markets`
-- §3.3 is superseded; `docs/aletheia_trading_os_implementation_guide.md` remains as historical MVP reference, not as a current constraint.
+- §3.3 is superseded; `docs/governance/policies/implementation_guide.md` remains as historical MVP reference, not as a current constraint.
 
 ---
 
@@ -719,7 +719,7 @@ Keep `ace780a` as-is. None of the 18 local-only files (`LeftNav`, `RightInspecto
 
 - `frontend/src/` and `aletheia/dashboard_static/` stay byte-identical to origin.
 - Discarded local commits remain reachable through `02449f0` for archaeology.
-- `docs/AI_HANDOFF.md` Known Issues list is updated to surface the two unfixed north-star gaps that the previous "no remaining open items" line obscured.
+- The then-current AI handoff (now archived at `docs/archive/legacy/ai-context/session/AI_HANDOFF.md`) was updated to surface the two unfixed north-star gaps that the previous "no remaining open items" line obscured.
 - Full audit and 18-file judgement table archived at `docs/design/history/operator-specs/2026-06-07-merge-postmortem-design.md`.
 
 ### Alternatives Considered

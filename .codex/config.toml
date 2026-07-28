@@ -1,6 +1,7 @@
 # Codex project-level config
-# See AGENTS.md and docs/AI_HANDOFF.md for project context recovery.
+# Read AGENTS.md first, then use docs/README.md to select the narrowest authority lane.
+# Current task and worktree state belong to the external orchestrator, not tracked handoff files.
 # Do NOT put API keys, tokens, or provider auth in this file.
 
 [project]
-context_files = ["AGENTS.md", "docs/AI_HANDOFF.md", "docs/CURRENT_TASK.md"]
+context_files = ["AGENTS.md", "docs/README.md"]

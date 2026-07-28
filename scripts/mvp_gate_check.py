@@ -15,7 +15,7 @@ from pathlib import Path
 
 from aletheia.storage.sqlite import db_path
 
-PROTOCOL_PATH = Path("docs/product/EXPERIMENT_PROTOCOL.md")
+PROTOCOL_PATH = Path("docs/product/experiments/EXPERIMENT_PROTOCOL.md")
 CLAUDE_MD_PATH = Path("CLAUDE.md")
 
 

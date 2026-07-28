@@ -17,8 +17,8 @@
 |---|---|
 | `AGENTS.md::Preferred Direction` | 优先级 1.状态一致性 → 7.功能容量 → 自主；UI 外壳工作属功能容量层 |
 | `AGENTS.md::No Uncontrolled Expansion` | 不做"大重构、样式重写、广泛清理"；推翻 UI 外壳违反此条 |
-| `docs/north_star_references.md §7` | 当前在阶段 0（稳跑验证），阶段 2 才考虑经验闭环 |
-| `docs/issue_register.md::ISSUE-008` | News Intelligence 应隐藏/标记实验，不应再扩 news 面 |
+| historical north-star reference §7 (now `docs/references/external-systems/north_star.md`) | 当前在阶段 0（稳跑验证），阶段 2 才考虑经验闭环 |
+| historical `docs/archive/legacy/issues/archive/audits/issue_register_2026-06-06.md::ISSUE-008` | News Intelligence 应隐藏/标记实验，不应再扩 news 面 |
 | memory `aletheia-portfolio-sync-gap` | Portfolio 缺真实账户数据是**后端**缺 Exchange Account Sync 层，不是 UI 问题 |
 | memory `aletheia-stay-in-guide-scope` | 不做超出实现指南范围的扩张 |
 
@@ -47,7 +47,8 @@
 | 17 | `aletheia/dashboard_static/assets/index-HIfHPKiO.js` | 弃 | 编译产物，跟源码走 |
 | 18 | `frontend/tsconfig.tsbuildinfo` | 弃 | 构建中间文件 |
 
-附：`docs/issue_register.md` 在远程未改、本地新增，已正常保留在合并结果中——不是冲突项。
+附：当时名为 `issue_register.md` 的文件在远程未改、本地新增，已正常保留在合并结果中——不是冲突项；该快照现归档于
+`docs/archive/legacy/issues/archive/audits/issue_register_2026-06-06.md`。
 
 ## 4. 复审结论
 
@@ -64,11 +65,11 @@
 
 下面 3 个动作是本备忘录的**直接产出物**——把决策固化进项目档案，让下个会话不会再问"为什么本地 5 区不要了"。
 
-### 5.1 在 `docs/DECISIONS.md` 追加本次合并决策条目
+### 5.1 在决定记录中追加本次合并决策条目
 
 格式与现有 `2026-06-07 - Gateway: Pure ctypes` 条目一致：Context / Decision / Reasoning / Consequences / Alternatives。内容来自本备忘录第 1-4 节摘要。
 
-### 5.2 在 `docs/BACKEND_ISSUES.md` 立案 `portfolio-sync-gap`
+### 5.2 在当时的后端问题总账中立案 `portfolio-sync-gap`
 
 memory 条目应同时落地为可执行的后端 issue：
 
@@ -79,9 +80,9 @@ memory 条目应同时落地为可执行的后端 issue：
 - 修复方向：新增 Exchange Account Sync 服务（只读拉取 account equity/positions/orders），写入本地统一视图区分 `aletheia_managed` vs `external_positions`，Portfolio API merge 后返回。**触及受控模块 `aletheia/exchanges/bitget/client.py`，需显式授权后才能动工**。
 - UI 候选方案：参考 git `02449f0:frontend/src/pages/Portfolio.tsx`（合并版三标签 positions/trades/pnl）
 
-### 5.3 更新 `docs/AI_HANDOFF.md` 的 Known Issues
+### 5.3 更新当时 AI handoff 的 Known Issues
 
-当前 AI_HANDOFF.md::Known Issues 写"All documented issues … No remaining open items"，与 memory 中两条 north-star gap 矛盾。补两行：
+当时的 AI_HANDOFF.md::Known Issues 写"All documented issues … No remaining open items"，与 memory 中两条 north-star gap 矛盾。补两行：
 
 - `portfolio-sync-gap`（已立案到 BACKEND_ISSUES.md，见 §5.2）
 - `experience-loop-gap`（north-star 阶段 2 范畴，详见 `north_star_references.md §6`）
@@ -97,8 +98,8 @@ memory 条目应同时落地为可执行的后端 issue：
 
 ## 7. 验证
 
-文档落地后：
+文档落地后的历史验收标准：
 
-- `git diff --stat` 应只显示 3 个文件变更：`DECISIONS.md`、`BACKEND_ISSUES.md`、`AI_HANDOFF.md`，外加本备忘录新增。
+- `git diff --stat` 应只显示当时的 3 个文件变更：`DECISIONS.md`、`BACKEND_ISSUES.md`、`AI_HANDOFF.md`，外加本备忘录新增。
 - `git status` 工作树只在文档面有改动。
 - `pytest -q` 不需要重跑（无代码改动），但建议确认仍为 `352 passed`，证明合并基线未被本会话扰动。

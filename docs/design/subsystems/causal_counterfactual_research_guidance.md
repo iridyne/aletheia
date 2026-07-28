@@ -69,4 +69,4 @@ L5  人工治理：在风险与运行约束下决定是否另开 policy epoch。
 - [机会固定时点结果契约](../contracts/opportunity_outcome_contract.md)
 - [筛选证据契约](../contracts/filter_evidence_contract.md)
 - [Learning Contract](../contracts/learning_contract.md)
-- [PI Skip 反事实研究与恢复设计](../skip_research/README.md)
+- [PI Skip 反事实研究与恢复设计](../research/skip-remediation/README.md)

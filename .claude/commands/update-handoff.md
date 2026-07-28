@@ -1,9 +1,10 @@
-请只更新项目交接文档，不修改业务代码。
+请只整理本次工作的交接信息，不修改业务代码。
 
-需要更新：
+执行规则：
 
-- `docs/_ai/AI_HANDOFF.md`
-- `docs/_ai/CURRENT_TASK.md`
-- `docs/_ai/DEVLOG.md`
+- 当前任务、进度、worktree 和下一步写入外部编排器的任务交接，不在仓库中新建或恢复 tracked handoff、current-task 或 devlog 文件。
+- 只有可长期复用的产品决定、系统契约或操作流程发生变化时，才更新 `docs/README.md` 所指向的对应权威文档。
+- 当前缺陷和后续工作使用 GitHub Issues；提交和验证事实使用 commit、PR 与 CI。
+- 历史背景可链接 `docs/archive/` 中的具体证据，但不得把归档内容改写成当前状态。
 
-目标是让另一台电脑上的 AI 可以直接恢复当前进度。
+目标是让另一台电脑上的 AI 从外部任务交接恢复进度，并从仓库读取稳定事实。

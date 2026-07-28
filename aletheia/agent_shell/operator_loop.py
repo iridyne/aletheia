@@ -269,7 +269,7 @@ class OperatorAction:
 #     recommendation queued for review, not an immediate state change.
 #   - trigger_optuna_sweep: returns status='not_implemented' — no
 #     sweep-job queue exists (tracked as OL-2 in
-#     docs/research/CODE_AUDIT_REPORT_2026-06-23.md). Kept in the set so
+#     docs/research/audits/CODE_AUDIT_REPORT_2026-06-23.md). Kept in the set so
 #     the operator's rubric doesn't red-flag it as an unknown intent.
 # Owner should either wire the underlying queue or remove these before
 # claiming the action set is fully executable.
@@ -836,7 +836,7 @@ def _action_trigger_strategy_research(action: OperatorAction) -> dict:
 def _action_trigger_optuna_sweep(action: OperatorAction) -> dict:
     # TODO(backlog): Implement a durable sweep-job queue (optuna_jobs table +
     # background worker) so this action produces real enqueued work.
-    # Tracked as OL-2 in docs/research/CODE_AUDIT_REPORT_2026-06-23.md.
+    # Tracked as OL-2 in docs/research/audits/CODE_AUDIT_REPORT_2026-06-23.md.
     if _count_actions_today("trigger_optuna_sweep") >= _MAX_OPTUNA_TRIGGERS_PER_DAY:
         return {"action": "trigger_optuna_sweep", "status": "rate_limited",
                 "reason": f"already triggered {_MAX_OPTUNA_TRIGGERS_PER_DAY}x today"}

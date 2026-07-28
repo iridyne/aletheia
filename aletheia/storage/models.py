@@ -280,7 +280,8 @@ class TradeProposal(_Provenanced):
     status: str = "pending"
     # Provenance: "native" (Aletheia generated it) or "adopted" (synthetic chain the
     # reconciler built to bring a pre-existing/external exchange position under
-    # management). See docs/DECISIONS.md (2026-06-12) / position_reconciler.
+    # management). See docs/governance/decisions/DECISIONS.md (2026-06-12) /
+    # position_reconciler.
     source: str = "native"
     # Execution-level school discriminator (Phase 4): "short_term" (default) or
     # "serenity". Threaded from TradingDecision.signal_source so position_manager
@@ -294,7 +295,8 @@ class TradeProposal(_Provenanced):
     # (everything except status + commit_hash itself) + parent_hash, sliced to
     # 16 hex chars (64-bit collision space). parent_hash links to the previous
     # row's commit_hash forming a global single chain. Both NULL on legacy rows
-    # written before P0-1 landed. See docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md.
+    # written before P0-1 landed. See
+    # docs/research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md.
     commit_hash: str | None = None
     parent_hash: str | None = None
 

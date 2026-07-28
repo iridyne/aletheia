@@ -50,7 +50,7 @@ class OrderResponse:
 # ---------------------------------------------------------------------------
 
 # Market types this adapter can route to an OKX order. Both confirmed on demo
-# (docs/research/DEMO_LIVE_SPOT_PARITY_EVENT_2026-06-28.md).
+# (docs/research/integrations/DEMO_LIVE_SPOT_PARITY_EVENT_2026-06-28.md).
 SUPPORTED_MARKET_TYPES = frozenset({"spot", "usdt_futures"})
 
 

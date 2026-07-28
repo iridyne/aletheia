@@ -524,7 +524,8 @@ def test_demo_adopted_position_stop_fires(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # PL-ADOPT-09  L2b  reconcile audit event carries TaG commit_hash (P1-2)
 # Wires position_adopted audit events into the proposal hash chain established
-# by P0-1 (DM-S08/S09/B06/C02). See docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md
+# by P0-1 (DM-S08/S09/B06/C02). See
+# docs/research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md
 # §五 P1-2.
 # ---------------------------------------------------------------------------
 
@@ -622,7 +623,8 @@ def test_adopted_audit_carries_commit_hash(tmp_path, monkeypatch):
 # real position was classified `orphaned` → reconcile-close (local only) → the
 # position survives on the exchange → re-adopt next cycle → endless thrash.
 # 41% of positions closed reconciled_gone, 56% source=adopted, destroying
-# strategy attribution. See docs/research/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.
+# strategy attribution. See
+# docs/research/audits/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.
 # ===========================================================================
 
 
@@ -1100,7 +1102,7 @@ def test_run_reconcile_circuit_breaker_suspends(tmp_path, monkeypatch):
 # the unified view? A fresh unified cache can still be MISSING the active broker
 # (OKX 50001 → UTA drops okx, leaving only bitget) — the "fresh but incomplete"
 # variant the earlier stale-cache fix did not cover.
-# See docs/design/dynamic_sizing_operator_persona_design.md §4.1.
+# See docs/design/operator/dynamic_sizing_operator_persona_design.md §4.1.
 # ===========================================================================
 
 

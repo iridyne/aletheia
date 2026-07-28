@@ -1,4 +1,4 @@
-"""Spec: API Reference Contract (docs/design/api_reference.md)
+"""Spec: API Reference Contract (docs/design/api/api_reference.md)
 
 Executable claims covering the trust-boundary endpoint safety invariants
 documented in the REST API Reference.  These claims are intentionally

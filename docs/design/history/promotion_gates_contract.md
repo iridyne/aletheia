@@ -12,7 +12,7 @@
 > legacy 函数保留**(Option B),但**已无任何生产路径 wire 到晋级**:strategy_designer 已删、每日
 > backtest_orchestrator 已删、operator 的 create/promote 命令面已删、前端 StrategyLifecycle 页已删。
 > 实盘准入(风控 #14)也已从"策略处 live_candidate/live_limited"改为 **scanner_family 干净窗证据门**
-> (见 [risk_engine_contract §2 #14](risk_engine_contract.md))。本契约保留为历史归因 + 该批函数的行为规范;
+> (见 [risk_engine_contract §2 #14](../contracts/risk_engine_contract.md))。本契约保留为历史归因 + 该批函数的行为规范;
 > 不再是活的晋级机制。
 
 ---
@@ -85,7 +85,7 @@ post_trade_reviews_required = True
 
 **paper_passed→live_candidate([trust §5.9](../../governance/policies/trust_and_change_control.md)):** 当前状态恰为 paper_passed + §2 全门通过 + 写审计。**不得**仅凭状态名晋级。
 
-**live_candidate→live_limited([trust §5.10](../../governance/policies/trust_and_change_control.md)):** 额外要求 `live.state≠live_disabled` + `first_live_confirmation_done==true` + permission mode 允许 + Risk Engine 许可 live + 审计记录 actor/source。**首次 live 解锁必须人工**——见 [live_unlock_contract](live_unlock_contract.md)。
+**live_candidate→live_limited([trust §5.10](../../governance/policies/trust_and_change_control.md)):** 额外要求 `live.state≠live_disabled` + `first_live_confirmation_done==true` + permission mode 允许 + Risk Engine 许可 live + 审计记录 actor/source。**首次 live 解锁必须人工**——见 [live_unlock_contract](../contracts/live_unlock_contract.md)。
 
 ---
 
@@ -94,7 +94,7 @@ post_trade_reviews_required = True
 | 路径 | 实现 | 位置 |
 |------|------|------|
 | 自动退役 | 连续 3 次无数据回测→`promote_strategy(sid,retired)` | `strategy/orchestrator.py:130` |
-| Operator 推荐退役/降级 | **已收敛到 TS operator-shell（owner 决定 2026-06-28）**：策略退役/降级由 TS operator-shell 评估并经 command registry 执行。Python `operator_loop.decide_actions` **不再产生** `retire_strategy`/`demote_strategy`（旧机制写 `PiDecision(recommend_retire/demote)` 但无消费者，是死写——见 `docs/issues/audits/PI_AGENT_SDD_AUDIT_2026-06-28.md`）。`_action_retire/demote_strategy` 函数暂留供 PG-B05 + TS 收敛完成前引用，但不再被调度。收敛锁：`spec_pi_decision_chain.py::PI-S03`。 | TS `operator-shell/`；Python `operator_loop.py` 已停产生 |
+| Operator 推荐退役/降级 | **已收敛到 TS operator-shell（owner 决定 2026-06-28）**：策略退役/降级由 TS operator-shell 评估并经 command registry 执行。Python `operator_loop.decide_actions` **不再产生** `retire_strategy`/`demote_strategy`（旧机制写 `PiDecision(recommend_retire/demote)` 但无消费者，是死写——见 `docs/archive/legacy/issues/audits/PI_AGENT_SDD_AUDIT_2026-06-28.md`）。`_action_retire/demote_strategy` 函数暂留供 PG-B05 + TS 收敛完成前引用，但不再被调度。收敛锁：`spec_pi_decision_chain.py::PI-S03`。 | TS `operator-shell/`；Python `operator_loop.py` 已停产生 |
 
 > ⚠️ 门阈值当前**硬编码**(`DEFAULT_PROMOTION_GATES`),未在 config.yaml 暴露。按 [CLAUDE.md Config↔UI 规则](../../../CLAUDE.md),若要做成用户可调需同步加 schema 字段 + 前端控件。
 >

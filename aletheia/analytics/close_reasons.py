@@ -21,7 +21,8 @@ last-known / administrative price, not a strategy-driven fill:
                               exit — so its PnL is not a trade outcome.
 
 Including them in performance metrics (PF / win-rate / drawdown / trade volume)
-pollutes the signal — see docs/research/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.
+pollutes the signal — see
+docs/research/audits/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.
 Every consumer that reports trade PERFORMANCE must exclude them; consumers that
 report raw account state (equity, open positions) do not use this.
 """

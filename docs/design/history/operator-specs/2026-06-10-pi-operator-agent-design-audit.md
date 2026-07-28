@@ -2,10 +2,11 @@
 
 Purpose: prove that the **design phase** for the dual-process PI Operator Agent is complete in the current repo, without judging implementation completeness.
 
-> **2026-06-11 status note**: This file remains a design-phase audit artifact. Any statements below
-> about implementation not yet existing were true for the design checkpoint only and are now
-> superseded by current implementation status in `ROADMAP.md`, `CURRENT_TASK.md`, and
-> `AI_HANDOFF.md`.
+> **Current status note**: This file remains a design-phase audit artifact. Statements below
+> describe the 2026-06-10 checkpoint only. Current behavior is governed by the active product,
+> design, governance, code, test, and runtime sources routed from
+> [`docs/README.md`](../../../README.md); the old roadmap, task, and handoff records are historical
+> evidence under `docs/archive/legacy/`.
 
 Design scope only:
 
@@ -66,7 +67,7 @@ Required evidence:
 
 Evidence:
 
-- [../../OPERATOR_LAYER_DESIGN.md](../../OPERATOR_LAYER_DESIGN.md)
+- [operator_layer.md](../../operator/operator_layer.md)
 
 Status:
 
@@ -80,7 +81,7 @@ Required evidence:
 
 Evidence:
 
-- [../../DECISIONS.md](../../DECISIONS.md)
+- [DECISIONS.md](../../../governance/decisions/DECISIONS.md)
   - `2026-06-10 - Operator Layer 采用 dual-process: Python truth layer + Node Operator Shell`
 
 Status:
@@ -95,7 +96,7 @@ Required evidence:
 
 Evidence:
 
-- [../../ROADMAP.md](../../ROADMAP.md)
+- [historical ROADMAP.md](../../../archive/legacy/status/roadmap/ROADMAP.md)
 
 Status:
 
@@ -109,7 +110,7 @@ Required evidence:
 
 Evidence:
 
-- [../../CURRENT_TASK.md](../../CURRENT_TASK.md)
+- [historical CURRENT_TASK.md](../../../archive/legacy/ai-context/session/CURRENT_TASK.md)
 
 Status:
 
@@ -123,7 +124,7 @@ Required evidence:
 
 Evidence:
 
-- [../../AI_HANDOFF.md](../../AI_HANDOFF.md)
+- [historical AI_HANDOFF.md](../../../archive/legacy/ai-context/session/AI_HANDOFF.md)
 
 Status:
 
@@ -137,7 +138,7 @@ Required evidence:
 
 Evidence:
 
-- [../../PIPELINE_STATUS.md](../../PIPELINE_STATUS.md)
+- [historical PIPELINE_STATUS.md](../../../archive/legacy/status/roadmap/PIPELINE_STATUS.md)
 
 Status:
 
@@ -156,7 +157,7 @@ Required conclusion:
 Evidence:
 
 - dual-process spec `§1`, `§4`, `§5`, `§6`
-- decision record in [../../DECISIONS.md](../../DECISIONS.md)
+- decision record in [DECISIONS.md](../../../governance/decisions/DECISIONS.md)
 
 Status:
 
@@ -187,8 +188,8 @@ Required conclusion:
 Evidence:
 
 - dual-process spec `§14`
-- conceptual design additions in [../../OPERATOR_LAYER_DESIGN.md](../../OPERATOR_LAYER_DESIGN.md)
-- decision record in [../../DECISIONS.md](../../DECISIONS.md)
+- conceptual design additions in [operator_layer.md](../../operator/operator_layer.md)
+- decision record in [DECISIONS.md](../../../governance/decisions/DECISIONS.md)
 
 Status:
 

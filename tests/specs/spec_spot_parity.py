@@ -3,7 +3,7 @@
 Executable claims for wiring SPOT trading through the OKX adapter and letting the
 System Operator decide market_type per opportunity (no hardcoded perp default).
 
-Source event: docs/research/DEMO_LIVE_SPOT_PARITY_EVENT_2026-06-28.md (OKX demo
+Source event: docs/research/integrations/DEMO_LIVE_SPOT_PARITY_EVENT_2026-06-28.md (OKX demo
 spot support empirically confirmed). Owner principles: demo↗live convergence;
 exchange-agnostic core with per-adapter capability; no fixed instrument bias.
 """

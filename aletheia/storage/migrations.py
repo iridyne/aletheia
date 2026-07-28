@@ -1810,7 +1810,8 @@ _ADDITIVE_COLUMNS = [
     # Provenance of the causal-chain row: 'native' (Aletheia opened it normally) or
     # 'adopted' (reconciler adopted a pre-existing/external exchange position into the
     # local books with a synthetic-but-honest chain). Amends trust §1.1 — see
-    # docs/DECISIONS.md (2026-06-12) and position_reconciler.adopt_position.
+    # docs/governance/decisions/DECISIONS.md (2026-06-12) and
+    # position_reconciler.adopt_position.
     ("source", "positions", "TEXT DEFAULT 'native'"),
     ("source", "orders", "TEXT DEFAULT 'native'"),
     ("source", "trade_proposals", "TEXT DEFAULT 'native'"),
@@ -2107,7 +2108,7 @@ _ADDITIVE_COLUMNS = [
     # the process lifecycle (runtime_session) that PRODUCED it, the commit that
     # process booted on, and a fingerprint of the behaviour-affecting config.
     # Legacy rows stay NULL — history is never fabricated. See
-    # aletheia/agent_runtime/runtime_session.py + docs/design/data_model.md.
+    # aletheia/agent_runtime/runtime_session.py + docs/design/data/data_model.md.
     ("runtime_session_id", "opportunities", "TEXT"),
     ("producer_commit", "opportunities", "TEXT"),
     ("behavior_fingerprint", "opportunities", "TEXT"),

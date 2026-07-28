@@ -78,7 +78,7 @@ CR-DL-01（`aletheia/storage/repositories.py:1049`）：OHLCV 窗口默认 50,00
 ---
 
 ### CR-PG-01 — `_critical_risk_violations` dead branch 永久不可达
-- **契约锚点**: `docs/design/contracts/promotion_gates_contract.md §2 gate: Critical Risk Violations`
+- **历史契约锚点**: `docs/design/history/promotion_gates_contract.md §2 gate: Critical Risk Violations`
 - **代码锚点**: `aletheia/trading/strategy_lifecycle.py:395-408`
 - **现象**: 检查 `decision.get("allowed_execution_mode").startswith("live")` 的分支（line 400）因 CR-RE-01 根因永远返回 False，"任何 live 提案被拒即为 critical violation" 的意图未被执行。
 - **第一性原理为什么严重**: promotion gate 的 critical violations 计数结构性错误，策略生命周期闸门完整性不可信（trust invariant 失效）。
@@ -437,4 +437,3 @@ Consumers: risk_engine check #11 / pnl._latest_price / paper_broker._btc_price_n
    做一个决策：`_OHLCV_WINDOW_DEFAULT = 500` 还是 50,000？选定后同步更新 `data_layer.md §9` 与代码（选 500 时同步验证 `historical_data.max_bars_per_pair` 默认值）。同时将 `api_reference.md §Runtime` 的路径前缀从 `/runtime/` 改为 `/operator/runtime/`（纯文档，5 分钟）。两项合并为单次 doc-fix commit。
 
 > **冻结区说明（KL-3）**: Rank 9 的根修复在 `trading_context.py`（实验冻结区），当前 sprint **禁止触碰**。实验期结束后首要处理：将 `_build_layer3_wisdom` 类型过滤从 `('lesson','accepted_lesson')` 扩展到 `('post_trade_review','trade_case_study')`，并在 spec 中为该变更增加 E2E 验证。
-

@@ -1,4 +1,4 @@
-"""Executable claims for docs/design/opportunity_outcome_contract.md."""
+"""Executable claims for docs/design/contracts/opportunity_outcome_contract.md."""
 
 import pytest
 
