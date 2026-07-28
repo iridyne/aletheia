@@ -156,20 +156,22 @@ async def test_okx_test_connection_does_not_leak_exception_string(monkeypatch):
     from aletheia.server.routes.bitget import okx_test_connection, OkxTestRequest
 
     SECRET = "okx-secret-DEADBEEF-should-not-leak"
+    closed = []
 
     class _FakeOKX:
         def __init__(self, mode):
             pass
-        async def fetch_time(self):
+        async def fetch_balance(self):
             raise RuntimeError(f"OKX auth failed apiKey=KEY123 secret={SECRET}")
         async def close(self):
-            pass
+            closed.append(True)
 
     monkeypatch.setattr(okx_mod, "OKXClient", _FakeOKX)
     result = await okx_test_connection(OkxTestRequest(mode="demo"))
     assert result["connected"] is False
     assert SECRET not in str(result), f"secret leaked in response: {result}"
     assert result["error"] == "RuntimeError"  # class name only
+    assert closed == [True]
 
 
 async def test_binance_test_candidate_does_not_leak_exception_string(monkeypatch):
@@ -190,6 +192,64 @@ async def test_binance_test_candidate_does_not_leak_exception_string(monkeypatch
     assert result["connected"] is False
     assert SECRET not in str(result), f"secret leaked in response: {result}"
     assert result["error"] == "RuntimeError"
+
+
+async def test_exchange_candidate_checks_use_private_balance_endpoint(monkeypatch):
+    import aletheia.net as net
+    from aletheia.server.routes.bitget import (
+        BinanceCandidateRequest,
+        OkxCandidateRequest,
+        binance_test_candidate,
+        okx_test_candidate,
+    )
+
+    calls = []
+
+    class _FakeExchange:
+        def set_sandbox_mode(self, enabled):
+            calls.append(("sandbox", enabled))
+
+        async def fetch_balance(self):
+            calls.append(("private_balance", True))
+            return {"total": {"USDT": 1.0}}
+
+        async def fetch_time(self):
+            raise AssertionError("public time endpoint cannot verify credentials")
+
+        async def close(self):
+            calls.append(("exchange_closed", True))
+
+    class _FakeSession:
+        async def close(self):
+            calls.append(("session_closed", True))
+
+    monkeypatch.setattr(
+        net,
+        "make_ccxt",
+        lambda *args, **kwargs: (_FakeExchange(), _FakeSession()),
+    )
+
+    binance = await binance_test_candidate(
+        BinanceCandidateRequest(
+            mode="testnet",
+            api_key="candidate-key",
+            api_secret="candidate-secret",
+        )
+    )
+    okx = await okx_test_candidate(
+        OkxCandidateRequest(
+            mode="demo",
+            api_key="candidate-key",
+            api_secret="candidate-secret",
+            passphrase="candidate-passphrase",
+        )
+    )
+
+    assert binance["connected"] is True
+    assert okx["connected"] is True
+    assert calls.count(("private_balance", True)) == 2
+    assert calls.count(("exchange_closed", True)) == 2
+    assert calls.count(("session_closed", True)) == 2
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
-"""Tests for exchange partial reduce (exit-intent M3.5): the routed dispatcher +
-the OKX reduce-only reference. The exchange client is mocked (no keys/network); real
-reduce-only PARTIAL semantics are pending one demo sampling.
+"""Tests for the isolated OKX partial-reduce reference and fail-closed router.
+
+The exchange client is mocked (no keys/network). The helper does not constitute
+an authorized product path.
 """
 
 from types import SimpleNamespace
@@ -63,7 +64,8 @@ def test_router_rejects_paper_internal():
     from aletheia.storage.sqlite import get_db
     _insert(get_db(), "pi", mode="paper_internal")
     res = pm.reduce_position_routed("pi", 0.5)
-    assert res.get("error") == "partial_reduce_unsupported_on_paper_internal"
+    assert res.get("error") == "partial_reduce_not_production_authorized"
+    assert "Proposal" in res.get("hint", "")
 
 
 def test_router_full_exit_delegates_to_close(monkeypatch):
@@ -77,22 +79,26 @@ def test_router_full_exit_delegates_to_close(monkeypatch):
     assert calls == [("b1", "operator_reduce")]
 
 
-def test_router_dispatches_okx(monkeypatch):
+def test_router_rejects_okx_reference_path(monkeypatch):
     from aletheia.storage.sqlite import get_db
     import aletheia.execution.okx_broker as okxb
     _insert(get_db(), "ok2", mode="okx_demo", qty=2.0)
-    calls = []
     monkeypatch.setattr(okxb, "reduce_okx_position",
-                        lambda pid, rq, reason="": calls.append((pid, rq, reason)) or {"reduced": True})
+                        lambda *args, **kwargs: (_ for _ in ()).throw(
+                            AssertionError("router must not dispatch to isolated helper")
+                        ))
     res = pm.reduce_position_routed("ok2", 0.5, reason="scale out")
-    assert res == {"reduced": True}
-    assert calls == [("ok2", 0.5, "scale out")]
+    assert res.get("error") == "partial_reduce_not_production_authorized"
 
 
-def test_router_bitget_binance_pending_demo():
+def test_router_bitget_binance_fail_closed():
     from aletheia.storage.sqlite import get_db
     db = get_db()
     _insert(db, "b2", mode="bitget_demo", qty=2.0)
     _insert(db, "bn1", mode="binance_testnet", qty=2.0)
-    assert pm.reduce_position_routed("b2", 0.5).get("error") == "exchange_partial_reduce_pending_demo"
-    assert pm.reduce_position_routed("bn1", 0.5).get("error") == "exchange_partial_reduce_pending_demo"
+    assert pm.reduce_position_routed("b2", 0.5).get("error") == (
+        "partial_reduce_not_production_authorized"
+    )
+    assert pm.reduce_position_routed("bn1", 0.5).get("error") == (
+        "partial_reduce_not_production_authorized"
+    )

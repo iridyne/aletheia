@@ -62,10 +62,10 @@ def _seed_positions(days_ago_list: list[int], pnl: float = 1.0) -> None:
     from aletheia.storage.repositories import insert_position
     from tests.test_outcome_closure import _insert_entry_chain
 
-    now = datetime.fromisoformat("2026-07-12T08:00:00+00:00")
+    now = datetime.now(timezone.utc)
     for i, days_ago in enumerate(days_ago_list):
-        closed_at = (now + timedelta(minutes=i)).isoformat()
-        opened_at = (now + timedelta(minutes=i - 1)).isoformat()
+        closed_at = (now - timedelta(days=days_ago) + timedelta(minutes=i)).isoformat()
+        opened_at = (now - timedelta(days=days_ago) + timedelta(minutes=i - 1)).isoformat()
         position_id = f"window-position-{i}"
         symbol = f"SEED{i}/USDT"
         opportunity_id, proposal_id, order_id = _insert_entry_chain(

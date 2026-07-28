@@ -192,7 +192,11 @@ class TestMarketAwareExitIntegration:
         # M5: capture wakes — a counter-signal now wakes the Operator, not the stop.
         import aletheia.agent_runtime.pi_daemon as _pd
         wakes = []
-        monkeypatch.setattr(_pd, "notify_pi_daemon", lambda source="unknown", event=None: wakes.append(event))
+        monkeypatch.setattr(
+            _pd,
+            "notify_pi_daemon",
+            lambda source="unknown", event=None: wakes.append(event) or True,
+        )
 
         from aletheia.portfolio.position_manager import evaluate_open_positions
         result = evaluate_open_positions()

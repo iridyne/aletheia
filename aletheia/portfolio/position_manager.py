@@ -270,17 +270,11 @@ def close_position_routed(
 
 
 def reduce_position_routed(position_id: str, reduce_qty: float, reason: str = "operator_reduce") -> dict:
-    """Route a partial reduce to the correct execution path (exit-intent M3.5).
+    """Fail closed for partial reduce; retain full-exit delegation.
 
-    - paper_internal → rejected (function-limited to full closes, D11; use a demo exchange).
-    - reduce_qty >= open quantity → a full exit, delegated to close_position_routed.
-    - okx_demo / okx_live_limited → reduce_okx_position (reduce-only partial + reduce-in-place
-      accounting). Reference exchange implementation.
-    - bitget (hedge-mode, the default) / binance → same pattern, pending the demo session
-      (the broker order-placement + TP/SL bracket size resync is money-moving and its real
-      semantics must be written+verified against the exchange demo, not mock-only).
-
-    This router + its guards + the on-fill → reduce_position contract are done and tested.
+    The isolated OKX helper is a mock-tested reference, not an authorized product
+    path. It has no active Operator trigger, attributable Proposal/RiskDecision
+    chain, venue-confirmed partial-fill contract, or TP/SL bracket resync.
     """
     from aletheia.storage.repositories import _select_one
 
@@ -292,24 +286,18 @@ def reduce_position_routed(position_id: str, reduce_qty: float, reason: str = "o
     reduce_qty = float(reduce_qty)
     if reduce_qty <= 0:
         return {"error": "reduce_qty_must_be_positive", "position_id": position_id}
-    if mode == "paper_internal":
-        return {
-            "error": "partial_reduce_unsupported_on_paper_internal",
-            "position_id": position_id,
-            "hint": "use a demo exchange mode (bitget_demo / okx_demo / binance_testnet)",
-        }
     if reduce_qty >= qty:
         # A "reduce" that's actually a full exit → route through the normal close path.
         return close_position_routed(position_id, reason=reason)
-    if mode in ("okx_demo", "okx_live_limited"):
-        from aletheia.execution.okx_broker import reduce_okx_position
-        return reduce_okx_position(position_id, reduce_qty, reason=reason)
     return {
-        "error": "exchange_partial_reduce_pending_demo",
+        "error": "partial_reduce_not_production_authorized",
         "position_id": position_id,
         "execution_mode": mode,
         "reduce_qty": reduce_qty,
-        "hint": "bitget hedge-mode / binance partial reduce-only + bracket resync is the demo-session task",
+        "hint": (
+            "active product supports full closes only; partial reduce requires an "
+            "attributable Proposal, RiskDecision, confirmed fill, and TP/SL resync"
+        ),
     }
 
 
@@ -698,22 +686,35 @@ def _thesis_invalidated(position: dict) -> bool:
     return bool(opp and opp.get("status") != "active")
 
 
-def _emit_wake(position: dict, kind: str, payload: dict, source: str, priority: int = -1) -> None:
+def _emit_wake(
+    position: dict,
+    kind: str,
+    payload: dict,
+    source: str,
+    priority: int = -1,
+) -> bool:
     """Emit a per-position WakeEvent to the System Operator daemon (best-effort). The
-    daemon coalesces + rate-limits (M1.5); priority -1 → derived from the kind."""
+    daemon coalesces + rate-limits (M1.5); priority -1 → derived from the kind.
+    Return whether delivery to the daemon event loop was scheduled."""
     try:
         import time
         from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
         from aletheia.agent_runtime.wake_events import WakeEvent
-        notify_pi_daemon(
+        delivered = notify_pi_daemon(
             source=source,
             event=WakeEvent(
                 position_id=position["id"], kind=kind, ts=time.monotonic(),
                 payload=payload, priority=priority,
             ),
         )
+        if not delivered:
+            logger.warning(
+                "wake emit unavailable pos=%s kind=%s", position.get("id"), kind
+            )
+        return bool(delivered)
     except Exception as e:
         logger.warning("wake emit failed pos=%s kind=%s: %s", position.get("id"), kind, e)
+        return False
 
 
 def _maybe_wake_on_thesis(position: dict, cfg) -> bool:
@@ -724,13 +725,18 @@ def _maybe_wake_on_thesis(position: dict, cfg) -> bool:
     if not _thesis_invalidated(position):
         return False
     from aletheia.agent_runtime.wake_events import THESIS_INVALIDATED
-    _emit_wake(
+    delivered = _emit_wake(
         position, THESIS_INVALIDATED,
         {"symbol": position.get("symbol"), "opportunity_id": position.get("opportunity_id")},
         source="thesis_review",
     )
-    logger.info("thesis_review wake: %s opp=%s", position.get("symbol"), position.get("opportunity_id"))
-    return True
+    if delivered:
+        logger.info(
+            "thesis_review wake: %s opp=%s",
+            position.get("symbol"),
+            position.get("opportunity_id"),
+        )
+    return delivered
 
 
 def _maybe_wake_on_horizon(position: dict) -> bool:
@@ -786,10 +792,10 @@ def _maybe_wake_on_horizon(position: dict) -> bool:
     return True
 
 def evaluate_open_positions() -> dict:
-    """Evaluate all open paper positions and close any that hit an exit rule.
+    """Evaluate all open paper positions and manage triggered lifecycle rules.
 
-    Checks price-based rules (stop/TP/max-hold), RuleSet exit signals,
-    and market-aware exit intelligence (when enabled).
+    Price-based safety rules may close positions. Market-aware evaluation only
+    requests an Operator review and reports a failed request explicitly.
     """
     cfg = load_config()
     closed = 0
@@ -812,7 +818,7 @@ def evaluate_open_positions() -> dict:
         errors.append(item)
 
     # NOTE (P0 defuse, 2026-07-02): RuleSet exit signals no longer auto-close
-    # positions. Exit authority is SL/TP/max_hold/market-aware/PI only — a
+    # positions. Exit authority is SL/TP/max_hold/System Operator only — a
     # deterministic RuleSet must not override PI autonomy (PI-central, Option A).
     # The former ruleset exit-scan path had zero live effect (0/208 closes) but
     # was a wired-but-dormant bypass. Locked by spec PL-PM-08.
@@ -892,23 +898,34 @@ def evaluate_open_positions() -> dict:
                     action = evaluate_market_exit_rules(p, float(price), signal, cfg)
                     if action.action in ("urgent_exit", "tighten_stop"):
                         score = getattr(signal, "confidence_score", None)
-                        _emit_wake(
+                        delivered = _emit_wake(
                             p, ADVERSE_SIGNAL,
                             {"reason": action.reason, "score": score,
                              "suggested": action.action, "symbol": p.get("symbol")},
                             source="market_adverse_signal",
                             priority=adverse_signal_priority(score),
                         )
-                        market_signal_wakes += 1
                         from aletheia.storage.repositories import update_position
-                        update_position(
-                            p["id"],
-                            last_market_signal_action=f"wake:{action.action}",
-                            last_market_signal_reason=action.reason[:200],
-                            last_market_signal_at=datetime.now(timezone.utc).isoformat(),
-                        )
-                        logger.info("market_adverse_wake: %s action=%s reason=%s",
-                                    p["symbol"], action.action, action.reason)
+                        if delivered:
+                            market_signal_wakes += 1
+                            update_position(
+                                p["id"],
+                                last_market_signal_action=f"wake:{action.action}",
+                                last_market_signal_reason=action.reason[:200],
+                                last_market_signal_at=datetime.now(timezone.utc).isoformat(),
+                            )
+                            logger.info(
+                                "market_adverse_wake: %s action=%s reason=%s",
+                                p["symbol"], action.action, action.reason,
+                            )
+                        else:
+                            update_position(
+                                p["id"],
+                                last_market_signal_action=f"wake_failed:{action.action}",
+                                last_market_signal_reason="operator_daemon_unavailable",
+                                last_market_signal_at=datetime.now(timezone.utc).isoformat(),
+                            )
+                            record_error(p, "operator_wake_unavailable")
                 except Exception as e:
                     logger.warning("market_aware_exit failed %s: %s", p["id"], e)
                     record_error(p, "market_aware_evaluation_failed", e)

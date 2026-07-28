@@ -6,6 +6,11 @@
 >
 > 日期：2026-07-14 · 分支：master · 工作目录：`.claude/worktrees/exit-system-analysis`
 >
+> **2026-07-28 能力事实修正**：当前只有 OKX mock-tested 参考 helper，没有生产 Operator/API
+> 入口，也没有 Proposal → RiskDecision → Order → Fill → Position 的授权链。
+> `reduce_position_routed` 对所有严格部分减仓统一 fail-closed；不能把“demo 参考实现”
+> 表述为已提供的产品能力。
+>
 > 结论先行：**采用「原地按均价减 quantity + 累加已实现 PnL」(reduce-in-place) 模型**，这是全部 5 个主流开源机器人（在 netting 语义下）的一致做法，也与本项目现有 netting 单仓模型、加仓 (scale-in) 的加权均价记账天然对称。**但当前日损断路器与 paper 现金账本会在部分平仓下漏账/硬失败**，必须先改造它们的读取来源，否则减仓会打穿风控。
 
 ---
@@ -14,7 +19,7 @@
 
 在本报告基础上做出的产品边界决策（owner 拍板）：
 
-**`paper_internal`(本地模拟器)保持"功能受限"定位——只做整仓平仓、离线、基础出场;所有部分/高级出场(partial reduce、真·resting reduce-only 限价、原生 OCO)只在交易所 demo 模式(`bitget_demo` / `okx_demo` / `binance_testnet`)上提供。**
+**`paper_internal`(本地模拟器)保持"功能受限"定位——只做整仓平仓、离线、基础出场；部分/高级出场未来只考虑在交易所 demo 模式(`bitget_demo` / `okx_demo` / `binance_testnet`)提供，当前尚未形成产品能力。**
 
 理由：
 - **默认 paper 模式本来就是 `bitget_demo`**(`config/schema.py:87`),`paper_internal` 是离线次要模式;高级出场走交易所 demo 不是绕路,是回主路径。

@@ -63,3 +63,33 @@ def test_infra_doctor_endpoint_matches_contract(api_only_runtime):
     for c in d["checks"]:
         assert set(c) == {"name", "severity", "detail", "fix_hint"}
         assert c["severity"] in VALID_SEVERITIES
+
+
+def test_infra_doctor_attributes_process_to_serving_runtime(api_only_runtime, monkeypatch):
+    from fastapi.testclient import TestClient
+    from aletheia.server.app import app
+
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ID", "runtime-isolated-8791")
+    monkeypatch.setenv("ALETHEIA_RUNTIME_PORT", "8791")
+    with TestClient(app) as client:
+        response = client.get("/_infra/doctor")
+
+    assert response.status_code == 200
+    process = next(
+        check for check in response.json()["checks"]
+        if check["name"] == "process.gateway"
+    )
+    assert "runtime-isolated-8791" in process["detail"]
+    assert ":8791" in process["detail"]
+    assert ":8787" not in process["detail"]
+
+
+def test_infra_status_reports_effective_runtime_port(api_only_runtime, monkeypatch):
+    from fastapi.testclient import TestClient
+    from aletheia.server.app import app
+
+    monkeypatch.setenv("ALETHEIA_RUNTIME_PORT", "8791")
+    with TestClient(app) as client:
+        response = client.get("/_infra/status")
+
+    assert response.json()["port"] == 8791

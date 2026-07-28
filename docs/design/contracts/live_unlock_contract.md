@@ -82,18 +82,23 @@ D8-B02 / D8-C01 及负净收益回归 spec 锁定该门禁。
 
 ---
 
-## 4b. 开启 Live 后的 PI 全权模型
+## 4b. Live 权限准备态（Experimental）
 
-**产品定义（2026-06-30）**：Live 模式一旦由人类开启，PI Operator 在 `Auto(4)` 权限下对主赛道（perp + spot）享有全权操作能力——开仓、平仓、调仓，无需逐笔人工确认。
+**当前产品事实（2026-07-28）**：Live Unlock 会在人类确认及 scorecard
+门禁后持久化 `live.state=live_limited`，并把 PI Operator 设为 `Auto(4)`。
+这只是实验性的权限准备态，不代表新 Proposal 已能选择 `*_live_limited`
+执行模式。当前生产 Proposal 入口仍读取 `exchange.paper_execution_mode`，
+因此自动交易继续使用 paper/demo 通道。缺失的 proposal-mode join 由
+EX-04 / GitHub #418 跟踪。
 
 **UI 警示墙（强制）**：Dashboard 的 Live 解锁入口必须在人类确认前展示醒目警示，包含以下全部要素：
-- "System Operator 将完全自主执行交易，操作不可预测"
-- "真实资金损失可能发生"
-- "开启后所有操作由人类承担后果"
+- 此操作只记录 `live_limited` 权限前置状态，不会把新 Proposal 路由到实盘；
+- 当前自主 Proposal 仍使用已选择的 paper/demo 执行通道；
+- 只有未来独立完成并验证 live Proposal 路由后，真实资金风险才会出现。
 
 **不变式**：
-- PI 全权限于**主赛道**（perp/spot），第二赛道（xStocks/Serenity）由 serenity_executor 独立管辖
-- 全权 ≠ 宪法豁免：风控关卡（risk_engine 16→20 关）、FORBIDDEN_INTENTS、宪法文件（本契约 + risk_engine_contract）在 Live 全权下仍全部生效，PI 不能修改自身约束
+- Unlock 不得被解释为 live Proposal 路由已经存在，也不得在 Gateway 内把已提交的 demo Proposal 改写成 live
+- `Auto(4)` 仍受风控关卡、FORBIDDEN_INTENTS 和宪法文件约束，不能修改自身约束
 - Live 解锁仍须遵守 §2 的人工确认门，自动化流程不得绕过
 - **risk_engine.evaluate_proposal() 不读取 operator.permission_mode，Auto 模式不豁免任何风控关卡**（见 §4b-1）
 

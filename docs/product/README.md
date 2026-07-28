@@ -11,6 +11,10 @@ Use this directory to answer what Aletheia is for, what is in scope, and how suc
 | `gates/` | Metrics and phase gate criteria |
 | `experiments/` | Experiment protocol, backlog, MVP gates |
 | `documentation/` | Documentation-system plans and taxonomy decisions |
+| `capability-integrity/` | Evidence-first inventory, fact cards, and issue-ready product capability truth |
+
+The canonical implementation-status summary is
+[CAPABILITY_GROUND_TRUTH.md](CAPABILITY_GROUND_TRUTH.md).
 
 ## Agent Rule
 

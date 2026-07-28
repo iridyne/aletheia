@@ -147,7 +147,7 @@ def test_reduce_guards():
 
 def test_reduce_rejected_on_paper_internal():
     """Product boundary: paper_internal is limited to full closes — partial reduce is
-    honestly rejected and routed to a demo exchange mode."""
+    honestly rejected because no execution mode has an authorized product path."""
     from aletheia.storage.sqlite import get_db
     from aletheia.portfolio.pnl import reduce_position
     from aletheia.storage.repositories import list_position_close_events
@@ -156,7 +156,7 @@ def test_reduce_rejected_on_paper_internal():
     _insert_open_qty(db, "pi1", qty=2.0, mode="paper_internal")
     res = reduce_position("pi1", 0.5, 110.0)
     assert res.get("error") == "partial_reduce_unsupported_on_paper_internal"
-    assert "bitget_demo" in res.get("hint", "")
+    assert "not production-authorized" in res.get("hint", "")
     # rejected before any side effect: no ledger event, position unchanged
     assert list_position_close_events(position_id="pi1") == []
     assert _select_one("positions", "pi1")["quantity"] == 2.0

@@ -1,4 +1,4 @@
-"""Capital events API: deposit/withdraw tracking for equity curve baseline."""
+"""Capital events API: audited deposit/withdraw tracking and net-flow reporting."""
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -59,11 +59,11 @@ async def create_event(body: CapitalEventRequest):
     )
     repo.insert_capital_event(event)
 
-    # #87 fix: capital deposits/withdrawals shift the equity-curve baseline (they
-    # drive net_deposits which analytics/equity_curve subtracts before rendering
-    # returns). The row was persisted but no audit event was written — the change
-    # was invisible in the audit hash chain, so a later "why did the baseline
-    # jump?" investigation had no trace. Emit an audit event now.
+    # #87 fix: capital deposits/withdrawals are trust-bearing account cash-flow
+    # facts. The row was persisted but no audit event was written, so later
+    # reconstruction of the owner's capital history had no hash-chain trace.
+    # Emit an audit event now. Current performance curves do not consume this
+    # event; PF-03/#419 tracks the separate adjusted-performance projection.
     from aletheia.files.jsonl import write_audit
     write_audit({
         "actor": "human",

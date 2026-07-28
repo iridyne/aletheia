@@ -468,6 +468,9 @@ function ThemesTab() {
           </Button>
         ))}
       </div>
+      <p className="text-muted">
+        More/Less records owner feedback in theme history only; it does not change future research selection or prompts.
+      </p>
 
       {!themes.length && (
         <div className="lens-empty-state">

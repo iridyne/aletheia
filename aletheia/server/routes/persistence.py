@@ -337,6 +337,17 @@ async def list_policies():
     return {"policy_types": store.list_policy_types()}
 
 
+@router.get("/policies/diff")
+async def diff_policy(from_id: str = Query(...), to_id: str = Query(...)):
+    """Diff two policy versions by their IDs."""
+    from aletheia.policies.diff import diff_policy_versions
+
+    try:
+        return diff_policy_versions(from_id, to_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @router.get("/policies/{policy_type}")
 async def get_policy(policy_type: str):
     """Get current version of a policy type."""
@@ -357,14 +368,3 @@ async def list_policy_versions(policy_type: str):
     store = PolicyStore()
     versions = store.list_versions(policy_type)
     return [v.model_dump() for v in versions]
-
-
-@router.get("/policies/diff")
-async def diff_policy(from_id: str = Query(...), to_id: str = Query(...)):
-    """Diff two policy versions by their IDs."""
-    from aletheia.policies.diff import diff_policy_versions
-
-    try:
-        return diff_policy_versions(from_id, to_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))

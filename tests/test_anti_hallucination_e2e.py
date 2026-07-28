@@ -289,7 +289,7 @@ def test_layer3_guards_from_guard_candidate(tmp_path, monkeypatch):
 
 
 def test_ps_lessons_surface_to_pi_prompt(tmp_path, monkeypatch):
-    """L-Bug-B: dreaming ps_lessons must reach Layer3 AND the PI prompt.
+    """L-Bug-B: dreaming trade-case lessons must reach Layer3 AND the PI prompt.
     Layer3 reads status='applied' (evidence-reviewed lessons). Proposed/accepted
     are earlier pipeline stages and are intentionally excluded from PI context."""
     setup_env(tmp_path, monkeypatch)
@@ -297,7 +297,7 @@ def test_ps_lessons_surface_to_pi_prompt(tmp_path, monkeypatch):
     store = LessonStore()
     lesson = store.create(
         summary="Avoid chasing late breakouts in low-liquidity alts",
-        source_type="post_trade_review", source_id="ptr-1",
+        source_type="trade_case_study", source_id="case-1",
         category="entry_timing", severity="warn",
     )
     # Advance lesson to applied status (the only status visible to Layer3)

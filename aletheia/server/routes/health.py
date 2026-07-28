@@ -188,13 +188,18 @@ def infra_readyz():
 def infra_status():
     """Cheap infra snapshot for diagnostics and future stable front-door use."""
     cfg = load_config()
+    runtime_port = os.environ.get("ALETHEIA_RUNTIME_PORT")
+    try:
+        effective_port = int(runtime_port) if runtime_port else cfg.app.dashboard_port
+    except ValueError:
+        effective_port = cfg.app.dashboard_port
     status_code, readiness = _readiness_payload()
     return JSONResponse(
         status_code=status_code,
         content={
             **readiness,
             "host": cfg.app.bind_host,
-            "port": cfg.app.dashboard_port,
+            "port": effective_port,
             "runtime_mode": os.environ.get("ALETHEIA_RUNTIME_MODE", "current"),
             "runtime_state": os.environ.get("ALETHEIA_RUNTIME_STATE", "current"),
             "runtime_id": os.environ.get("ALETHEIA_RUNTIME_ID", "runtime-local-current"),

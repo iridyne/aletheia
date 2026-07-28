@@ -98,6 +98,41 @@ def test_report_severity_partitions():
     assert [c.name for c in r.warns] == ["b"]
 
 
+def test_process_probe_prefers_current_runtime_identity(monkeypatch):
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ID", "dev-preview-8791")
+    monkeypatch.setenv("ALETHEIA_RUNTIME_PORT", "8791")
+    monkeypatch.setattr(dx, "_probe_frontdoor_process", lambda *_args: None)
+
+    report = dx.Report()
+    dx._probe_process(report)
+
+    process = next(check for check in report.checks if check.name == "process.gateway")
+    assert process.severity == "ok"
+    assert "dev-preview-8791" in process.detail
+    assert ":8791" in process.detail
+    assert ":8787" not in process.detail
+
+
+def test_process_probe_keeps_two_runtime_contexts_independent(monkeypatch):
+    monkeypatch.setattr(dx, "_probe_frontdoor_process", lambda *_args: None)
+
+    details = []
+    for runtime_id, port in (
+        ("runtime-isolated-a", "8791"),
+        ("runtime-isolated-b", "8792"),
+    ):
+        monkeypatch.setenv("ALETHEIA_RUNTIME_ID", runtime_id)
+        monkeypatch.setenv("ALETHEIA_RUNTIME_PORT", port)
+        report = dx.Report()
+        dx._probe_process(report)
+        details.append(report.checks[0].detail)
+
+    assert "runtime-isolated-a" in details[0] and ":8791" in details[0]
+    assert "runtime-isolated-b" not in details[0] and ":8792" not in details[0]
+    assert "runtime-isolated-b" in details[1] and ":8792" in details[1]
+    assert "runtime-isolated-a" not in details[1] and ":8791" not in details[1]
+
+
 def test_git_hook_probe_reports_manual_lifecycle_when_legacy_hooks_are_absent(monkeypatch):
     from aletheia.gateway import git_hooks
 

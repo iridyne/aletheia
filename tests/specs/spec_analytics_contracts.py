@@ -356,3 +356,67 @@ def test_dreaming_summary_excludes_archived_from_recent(tmp_path, monkeypatch):
     # Active items do NOT appear in deprecated_memories
     assert "active-research" not in deprecated_ids
     assert "active-strategy" not in deprecated_ids
+
+
+# ---------------------------------------------------------------------------
+# AN-S06 / AN-C06 — capital-event analytics honesty
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "AN-S06",
+        "analytics_contract",
+        "§capital-event curve semantics",
+        "L2a",
+        "Capital Events is presented as audited cash-flow history; current Account "
+        "Equity is explicitly raw and Cumulative PnL is explicitly trading PnL, so "
+        "the UI does not claim a cash-flow adjustment that has no consumer.",
+        status="implemented",
+    )
+)
+def test_capital_events_ui_does_not_claim_current_curve_adjustment():
+    root = pathlib.Path(_project_root())
+    settings = (root / "frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
+    capital_route = (
+        root / "aletheia/server/routes/capital.py"
+    ).read_text(encoding="utf-8")
+
+    assert "no cash-flow-adjusted performance curve is available yet" in settings
+    assert "so the Cumulative PnL curve reflects true performance" not in settings
+    assert "analytics/equity_curve subtracts" not in capital_route
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="PF-03/#419 — no public cash-flow-adjusted performance consumer exists",
+)
+@spec_claim(
+    SpecClaim(
+        "AN-C06",
+        "analytics_contract",
+        "§capital-adjusted performance consumer",
+        "L2c",
+        "A public cash-flow-adjusted performance projection consumes scoped Capital "
+        "Events while leaving raw Account Equity and verified trading PnL distinct.",
+        status="missing",
+    )
+)
+def test_cash_flow_adjusted_performance_has_capital_event_consumer():
+    import inspect
+
+    from aletheia.server.routes.analytics import get_equity_curve
+    from aletheia.server.routes.data import get_account_equity_history
+
+    consumer_source = "\n".join(
+        (
+            inspect.getsource(get_equity_curve),
+            inspect.getsource(get_account_equity_history),
+        )
+    )
+    expected_consumer_markers = (
+        "get_net_deposits",
+        "list_capital_events",
+        "cash_flow_adjust",
+    )
+    assert any(marker in consumer_source for marker in expected_consumer_markers)

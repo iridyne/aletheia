@@ -62,7 +62,11 @@ def test_thesis_review_wake(monkeypatch):
     import aletheia.agent_runtime.pi_daemon as pd
     monkeypatch.setattr(repo, "get_serenity_opportunity", lambda oid: {"status": "dismissed"})
     captured = []
-    monkeypatch.setattr(pd, "notify_pi_daemon", lambda source="unknown", event=None: captured.append(event))
+    monkeypatch.setattr(
+        pd,
+        "notify_pi_daemon",
+        lambda source="unknown", event=None: captured.append(event) or True,
+    )
 
     # auto_close ON → no review wake (default path auto-closes)
     assert pm._maybe_wake_on_thesis(_serenity_pos(), _decide_cfg(thesis_auto_close=True)) is False
@@ -102,7 +106,11 @@ def test_market_aware_wakes_not_closes(monkeypatch):
     )
 
     wakes = []
-    monkeypatch.setattr(pd, "notify_pi_daemon", lambda source="unknown", event=None: wakes.append(event))
+    monkeypatch.setattr(
+        pd,
+        "notify_pi_daemon",
+        lambda source="unknown", event=None: wakes.append(event) or True,
+    )
     closes = []
     monkeypatch.setattr(pm, "close_position_routed", lambda pid, reason, **kw: closes.append((pid, reason)) or {"closed": True})
 
@@ -113,3 +121,51 @@ def test_market_aware_wakes_not_closes(monkeypatch):
     adverse = [w for w in wakes if getattr(w, "kind", None) == ADVERSE_SIGNAL]
     assert adverse and adverse[0].position_id == "mw1"
     assert adverse[0].priority == 1                        # score 85 → P1 (urgent)
+
+
+def test_market_aware_reports_operator_wake_unavailable(monkeypatch):
+    from aletheia.storage.repositories import _select_one
+    from aletheia.storage.sqlite import get_db
+    from aletheia.config.loader import load_config
+    import aletheia.agent_runtime.pi_daemon as pd
+    import aletheia.portfolio.exit_rules as exit_rules
+    import aletheia.portfolio.market_signal_reader as msr
+
+    get_db().execute(
+        "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
+        "execution_mode,status) VALUES "
+        "('mw-failed','BTC/USDT','usdt_futures','long',1.0,100.0,"
+        "'paper_internal','open')"
+    )
+    cfg = load_config()
+    cfg.trading.market_aware_exits.enabled = True
+    monkeypatch.setattr(pm, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        pm,
+        "get_fresh_price_for_protective_close",
+        lambda symbol, market_type, *, venue="": 100.0,
+    )
+    signal = SimpleNamespace(confidence_score=85, direction_bias="short")
+    monkeypatch.setattr(
+        msr,
+        "get_market_signals_for_positions",
+        lambda symbols, **kwargs: {"BTC/USDT": signal},
+    )
+    monkeypatch.setattr(
+        exit_rules,
+        "evaluate_market_exit_rules",
+        lambda position, price, current_signal, current_cfg: exit_rules.MarketExitAction(
+            action="urgent_exit",
+            reason="counter_signal_urgent: short score=85",
+            exit_price=price,
+        ),
+    )
+    monkeypatch.setattr(pd, "notify_pi_daemon", lambda **kwargs: False)
+
+    result = pm.evaluate_open_positions()
+
+    assert result["market_signal_wakes"] == 0
+    assert any(item["code"] == "operator_wake_unavailable" for item in result["errors"])
+    position = _select_one("positions", "mw-failed")
+    assert position["last_market_signal_action"] == "wake_failed:urgent_exit"
+    assert position["last_market_signal_reason"] == "operator_daemon_unavailable"

@@ -461,3 +461,19 @@ def test_research_worker_auto_promote_block_exists():
     assert "serenity_auto_promote" in src, (
         "research_worker auto-promote source tag missing — audit trail incomplete"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "SP-S07", _CONTRACT, "§theme feedback boundary", "L2a",
+        "Serenity More/Less is presented as durable theme history only and must not "
+        "claim to alter future research selection or prompts.",
+        status="implemented",
+    ),
+)
+def test_theme_feedback_ui_states_non_behavioral_boundary():
+    src = (
+        _ROOT / "frontend" / "src" / "pages" / "SerenityLens.tsx"
+    ).read_text(encoding="utf-8")
+    assert "records owner feedback in theme history only" in src
+    assert "does not change future research selection or prompts" in src

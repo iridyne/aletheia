@@ -1528,3 +1528,76 @@ def test_dreaming_summary_separates_active_and_deprecated_knowledge():
     deprecated_ids = {item["id"] for item in summary["deprecated_memories"]}
     assert inactive_ids <= deprecated_ids
     assert deprecated_ids.isdisjoint(active_ids)
+
+
+# ---------------------------------------------------------------------------
+# LP-S22 — static policy diff route must win over the dynamic detail route
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "LP-S22",
+        "learning_pipeline",
+        "api_reference §Policy history",
+        "L2b",
+        "GET /api/persistence/policies/diff reaches the policy-version diff "
+        "consumer while policy detail and version-history routes remain reachable.",
+        status="implemented",
+    ),
+)
+def test_policy_diff_route_is_reachable_without_shadowing(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sqlite_store
+    from aletheia.policies.store import PolicyStore
+    from aletheia.server.app import app
+    from aletheia.storage.migrations import run_migrations
+
+    # TestClient serves the async route on another thread. Use the production
+    # file-backed DB boundary so both threads see the same immutable versions.
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    sqlite_store.reset_db()
+    sqlite_store._db_conn = None
+    run_migrations()
+
+    store = PolicyStore()
+    first = store.create_version(
+        "entry_policy",
+        {"threshold": 60, "legacy": True},
+        created_by="spec",
+    )
+    second = store.create_version(
+        "entry_policy",
+        {"threshold": 70, "new_guard": "enabled"},
+        created_by="spec",
+        parent_version_id=first.policy_version_id,
+    )
+
+    client = TestClient(app)
+    diff_response = client.get(
+        "/api/persistence/policies/diff",
+        params={
+            "from_id": first.policy_version_id,
+            "to_id": second.policy_version_id,
+        },
+    )
+    assert diff_response.status_code == 200, diff_response.text
+    diff = diff_response.json()
+    assert diff["added"] == {"new_guard": "enabled"}
+    assert diff["removed"] == {"legacy": True}
+    assert diff["changed"] == {"threshold": {"from": 60, "to": 70}}
+
+    detail_response = client.get("/api/persistence/policies/entry_policy")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["policy_version_id"] == second.policy_version_id
+
+    versions_response = client.get(
+        "/api/persistence/policies/entry_policy/versions"
+    )
+    assert versions_response.status_code == 200
+    assert {
+        row["policy_version_id"] for row in versions_response.json()
+    } >= {first.policy_version_id, second.policy_version_id}
