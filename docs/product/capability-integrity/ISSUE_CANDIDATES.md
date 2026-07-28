@@ -309,7 +309,7 @@ remain available independently.
 
 ## CI-05 — Exchange closes lack private funding/bill evidence
 
-**Capability:** EX-14 Cost-complete close settlement
+**Capability:** EX-16 Exchange-backed cost-complete close settlement
 **Status:** Partial / Producer-missing outside local paper
 
 **Product promise**

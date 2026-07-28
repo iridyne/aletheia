@@ -60,9 +60,9 @@ of functionality:
 | Product/docs | README, product, operations, API, data, and current design contracts traversed |
 | Core modules | Runtime, data, universe, Operator, Risk, Execution, Position, Analytics, Learning |
 
-The resulting inventory has exactly 100 unique capability IDs. The same 100
-IDs appear exactly once in the Ground Truth status matrix and exactly once in
-the fact-card set.
+The current inventory uses unique capability IDs. The same IDs must appear
+exactly once in the Ground Truth status matrix and exactly once in the
+fact-card set; the inventory size itself is not a product invariant.
 
 ## Executable evidence
 
@@ -438,7 +438,7 @@ connection and older Windows monitor state remain operational context only.
 | Live-unlocked state → new proposal execution mode | Yes | No | EX-04 Broken |
 | Market-aware adverse signal → Operator position decision | Yes | No; the wake can trigger the entry evaluator, but its evidence is not prompt-visible and the active schema accepts only `trade`/`skip` | EX-09 Broken |
 | Persona leverage/loss/add parameters → production sizing/execution | Yes | Partial/no | Reference-only fields cannot progressively unlock; LN-17 pyramid remains Partial; LN-14 base sizing is Supported |
-| Exchange private funding bill → cost-complete outcome | No | Outcome verifier fails closed | EX-14 Partial |
+| Exchange private funding bill → cost-complete outcome | No | Outcome verifier fails closed | EX-16 Partial |
 | Pyramid plan → Risk/Gateway/position materialization | Yes | No | LN-17/EX-15 Partial |
 | Partial-reduce request → authorized broker/position materialization | Reference helper only | No; dispatcher fails closed before broker | EX-15 Partial |
 | Tunnel PID → owned cloudflared process → safe stop/recovery | PID exists/alive check only | No ownership verification or focused lifecycle acceptance | RT-14 Partial |
