@@ -14,7 +14,10 @@ supersedes: []
 > **角色**：定义未来 Gateway / Agent / Worker 重启后的恢复与冻结目标。
 > **当前权威**：[`persistence_recovery_contract.md`](../contracts/persistence_recovery_contract.md)
 > 仅描述已经接通的持久化行为；本 Proposal 保存尚未成为当前保证的恢复设计。
-> **不变式来源**：上游计划 [`Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN`](../../plans/engineering/Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN.md)；与 [`execution_contract §5/§6`](../contracts/execution_contract.md) + [`audit_chain_contract`](../contracts/audit_chain_contract.md) 边界互补。
+> **历史不变式来源**：归档计划
+> [`Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN`](../../archive/legacy/plans/engineering/Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN.md)；
+> 当前目标由本 Proposal 表达，并与 [`execution_contract §5/§6`](../contracts/execution_contract.md)
+> + [`audit_chain_contract`](../contracts/audit_chain_contract.md) 边界互补。
 > Last updated: 2026-06-30 · 状态：🟡 契约(构件已实现，恢复 FSM 未接 runtime)
 
 > ## ⚠️ 必看：招牌安全保证当前**未生效**

@@ -1,6 +1,7 @@
 # Phase Gate Criteria
 
-> Extracted from [ROADMAP.md](../../status/roadmap/ROADMAP.md) for standalone reference.
+> Current gate authority, originally extracted from the archived
+> [ROADMAP.md](../../archive/legacy/status/roadmap/ROADMAP.md).
 > Each gate is a measurable checklist. A phase is "passed" when ALL items are checked.
 > Phases may run in parallel except Phase 6 (Live) which requires explicit user authorization.
 > Last updated: 2026-06-21

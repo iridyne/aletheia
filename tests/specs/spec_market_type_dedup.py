@@ -1,6 +1,7 @@
 """Spec: Cross-Market-Type Opportunity Deduplication.
 
-Source: docs/plans/market_type_dedup_plan.md (code session 2026-07-02)
+The original 2026-07-02 planning note was not retained. This executable spec is
+the durable regression evidence for the behavior.
 
 When ``exchange.enabled_markets`` has both spot and usdt_futures enabled, the
 legacy path in ``observed_instruments_from_config`` must NOT emit two instruments

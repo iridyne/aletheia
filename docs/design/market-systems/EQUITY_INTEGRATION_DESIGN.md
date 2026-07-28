@@ -228,15 +228,14 @@ query = f"{ticker} earnings momentum sector rotation relative_strength"
 # 而不是 crypto 的 "funding volatility regime risk"
 ```
 
-### 6.3 equity 知识回流
+### 6.3 equity 知识回流（历史提案，不进入当前 roadmap）
 
-> ⚠️ **Phase 3，未实现（2026-06-23）**
->
-> 下面代码块是设计意图，**尚未在 `equity_observer.py` 中实现**。
-> `grep "research_note\|kb_write" aletheia/agents/equity_observer.py` 无匹配。
-> 已登记为待办：`docs/issues/domain/BACKEND_ISSUES.md`（equity KB write-back 缺失）。
+`equity_observer` 当前是 observation-only producer。仅凭高 confidence 把观察自动写成
+`research_note` 会让未经 outcome 验证的信号进入 Learning/Operator 检索面，扩大归因污染。
+因此旧 Phase 3 提案不作为“缺失能力”继续跟踪；只有建立了独立的 outcome、归因和 prospective
+evaluation 后，才应重新提出知识回流。
 
-设计意图（Phase 3 实施时参考）：
+历史设计草图：
 
 ```python
 # 类似 market_observer 的 experience loop

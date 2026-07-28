@@ -1,6 +1,7 @@
 """Spec: Serenity long-horizon holding (Phase 4 — execution-school discriminator)
 
-Phase 4 of the Serenity execution path (docs/plans/serenity_execution_path.md §5).
+Phase 4 of the historical Serenity execution path
+(docs/archive/legacy/plans/trading-pipeline/serenity_execution_path.md §5).
 Phase 2 stamped DECISION-level attribution via `pi_decisions.signal_source`.
 Phase 4 introduces an EXECUTION-level discriminator: `TradeProposal.trade_school`
 and `Position.trade_school` (both default 'short_term'). The trade_school controls

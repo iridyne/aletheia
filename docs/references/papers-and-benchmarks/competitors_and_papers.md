@@ -45,7 +45,7 @@
 
 | 关注点 | 来源 | 落位思路 | 红线 |
 |---|---|---|---|
-| **agent 提想法→实现→反馈闭环**（R&D 自动化） | RD-Agent(Q) | 对照我们 self-evolution Tier 2/3 设计（`docs/plans/learning/self_evolution_plan.md`），看其"因子/模型协同优化"如何受控 | 🔴 agent 产出**不得**到达 change-controlled 路径；最多优化受限参数，绝不写可执行代码落 strategy/DB |
+| **agent 提想法→实现→反馈闭环**（R&D 自动化） | RD-Agent(Q) | 对照我们 self-evolution Tier 2/3 设计（`docs/archive/legacy/plans/learning/self_evolution_plan.md`），看其"因子/模型协同优化"如何受控 | 🔴 agent 产出**不得**到达 change-controlled 路径；最多优化受限参数，绝不写可执行代码落 strategy/DB |
 | **分层记忆 + 可调认知跨度** | FinMem | 对照我们 FTS5 单层 + recency×importance 加权；评估是否需"短/中/长期"分层 | 🟡 注入决策的记忆仍须 quality-gated、advisory，不改硬限 |
 | **双层反思 + 多样化检索** | FinAgent | 对照 post_trade_reviewer / dreaming_agent 的反思深度 | 🟡 反思只产建议，不改风控 |
 | **交易前多空辩论** | TradingAgents | 让 risk_critic 输出在 paper_trader 决策前被读到（state-driven 编排） | 🔴 辩论不得绕过 Risk Engine；**不引入 LangGraph** |

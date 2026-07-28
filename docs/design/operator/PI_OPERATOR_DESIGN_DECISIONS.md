@@ -2,7 +2,8 @@
 
 > 2026-06-21 | 基于 codebase 约束 + 竞品分析 + 控制论原则
 > **命名更新（2026-07-01）**：原标题"PI Operator"已统一为"System Operator"。
-> 详见 `docs/_ai/decisions/DECISIONS.md §2026-07-01`。
+> 详见 [`Architecture Decision Log`](../../governance/decisions/DECISIONS.md) 的
+> `2026-07-01 — System Operator 命名统一` 条目。
 > **Position C 更新（2026-07-03）**：本文中涉及 `strategy_designer`、
 > `backtest_orchestrator`、Optuna/RuleSet 策略生成或策略晋级的内容均为历史设计背景。
 > 规则引擎已于 2026-07-02 删除；当前 System Operator 不再触发 strategy_designer、
@@ -118,9 +119,16 @@ agent_shell/operator_loop.py(4h config 调参)、agent_runtime/pi_daemon.py(交�
 |--------|-----------|------------|------|
 | `paper_trader` | `paper_trader.py:143/235` | `signal_pending` | 交易环(信号收集) |
 | System Operator(经 reflection) | `agent_shell/reflection.py:59` | `trade`/`skip`/`close`/`reduce`(= `TradingDecision.action`) | 交易环(决策记录) |
-| `operator_loop` | `operator_loop.py:597/628` | `recommend_retire` / `recommend_demote` | **监管环** |
+| `operator_loop` | `agent_shell/operator_loop.py` | bounded config adjustment / notification / current one-shot delegation audit | **监管环** |
 
-**不变式(INV-OPS-1)**:监管环写入方(`operator_loop`)**绝不**写交易动作(`signal_pending`/`trade`/`close`/...),只写 `recommend_*`;反之交易环写入方不写 `recommend_*`。下游(`trading_context` 读 `signal_pending`、PI 消费 `recommend_*`)**必须**按 `action` 命名空间区分,不得跨环误读。spec `OL-S12` 锁定。
+**不变式(INV-OPS-1)**：交易环只使用 `signal_pending` / `trade` / `skip`
+等交易动作；Python 监管环不得写这些动作。历史
+`recommend_retire` / `recommend_demote` 没有生产消费者，当前
+`operator_loop.decide_actions` 不再产生它们。策略生命周期命令若重新进入支持面，
+必须由 TS operator-shell 经 Command Registry 进入一条有审批、执行结果和审计证据的
+完整链路，不能复活共享表中的无消费者建议记录。现行边界由
+`spec_operator_loop`、`spec_operator_contract_parity` 和
+`spec_operator_single_source` 共同约束。
 
 > 这条不变式是"System Operator 三组件混称"问题(见本文顶部警告框)的**结构化根治**:把"哪个环写哪些 action"显式化后,审计不再需要靠语义猜测两环边界。
 
@@ -410,4 +418,3 @@ neutral funding、单笔近期结果、账户 equity、可选遥测缺失（如 
   `aletheia/agent_shell/skip_policy.py` 版本升级到 `b1.5`。
 - 契约：`docs/design/contracts/decision_lifecycle_contract.md` DL-INV-2 / DL-INV-24 与 DL-S47..50。
 - Spec：`tests/specs/spec_operator_low_conviction_defer.py`。
-

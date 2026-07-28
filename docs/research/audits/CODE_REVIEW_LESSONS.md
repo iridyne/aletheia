@@ -68,7 +68,7 @@
 **模式**：每个函数单独测试通过，但 A→B→C→D 的全链路从未被一个测试覆盖。
 
 **检查方法**：
-- 画出核心循环的数据流图（本项目见 docs/issues/archive/audits/MINIMUM_PROFIT_LOOP_AUDIT.md）
+- 画出核心循环的数据流图（历史示例见 `docs/archive/legacy/issues/archive/audits/MINIMUM_PROFIT_LOOP_AUDIT.md`）
 - 对图中每条边，确认存在一个测试验证"上游的输出能被下游正确消费"
 - 重点关注跨表/跨模块的 JOIN 路径
 
@@ -107,4 +107,4 @@
 
 ## 本次审计的具体发现索引
 
-详见 `docs/issues/archive/audits/MINIMUM_PROFIT_LOOP_AUDIT.md`（15 个问题的完整列表 + 修复状态）。
+历史审计实例见 `docs/archive/legacy/issues/archive/audits/MINIMUM_PROFIT_LOOP_AUDIT.md`（15 个问题的当时列表与修复快照；不作为当前状态）。

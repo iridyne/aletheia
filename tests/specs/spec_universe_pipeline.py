@@ -1,8 +1,9 @@
 """Spec: Universe Pipeline integrity (scanner → allocator → signal_emitter → outcomes)
 
 Executable claims for the Scanner/Observer audit fixes (2026-07-01).
-Source: docs/plans/scanner_observer_audit_fix_plan_2026-07-01.md
-        docs/research/UNIVERSE_SCANNER_AUDIT_2026-07-01.md
+Historical source:
+        docs/archive/legacy/plans/market-data/scanner_observer_audit_fix_plan_2026-07-01.md
+        docs/research/audits/UNIVERSE_SCANNER_AUDIT_2026-07-01.md
 
 Locks the highest-leverage fix (forward-outcome direction must come from the same
 source as the emitted opportunity) and the config-consumption / market_type /

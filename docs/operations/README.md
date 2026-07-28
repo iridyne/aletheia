@@ -14,6 +14,9 @@ Use this directory for procedural instructions: running the gateway, local devel
 | `architecture/` | Stability target architecture for operations |
 | `records/` | Dated operational recovery records |
 
+For read-only Alpha, opportunity-funnel, and sizing diagnosis, use
+[Trading Diagnostics](runbooks/TRADING_DIAGNOSTICS.md).
+
 ## Packaged Runtime release lane
 
 For the browser-first macOS installed product, start with

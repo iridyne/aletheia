@@ -126,7 +126,7 @@ Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_cou
 
 ---
 
-## 六、已确认的管道断裂（详见 [PIPELINE_GAPS](../../issues/archive/audits/PIPELINE_GAPS.md)）
+## 六、历史管道断裂的当前核准（历史证据见 [PIPELINE_GAPS](../../archive/legacy/issues/archive/audits/PIPELINE_GAPS.md)）
 
 | 级别 | 问题 | 影响 |
 |------|------|------|
@@ -138,4 +138,4 @@ Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_cou
 | C1 | 6个analytics端点无前端UI | 已有能力不可达 |
 | C2 | Regime/Guard Config 无前端控制(MarketAwareExits 已部分接入) | regime/guard 只能手编 yaml |
 
-> Historical A1/A2/B1 现状(双轨已澄清 / draft skill producer 已接入 / contradiction 保守检测已实现)详见 [knowledge_contract.md §6](../contracts/knowledge_contract.md)。这里的 historical A2 不是新的 Learning Contribution Observability feature。C1/A3 记录于 [BACKEND_ISSUES.md](../../issues/domain/BACKEND_ISSUES.md)。**Last reviewed 2026-07-19**。
+> Historical A1/A2/B1 现状（双轨已澄清 / draft skill producer 已接入 / contradiction 保守检测已实现）详见 [knowledge_contract.md §6](../contracts/knowledge_contract.md)。这里的 historical A2 不是新的 Learning Contribution Observability feature；旧 C1/A3 只作为 [`BACKEND_ISSUES.md`](../../archive/legacy/issues/domain/BACKEND_ISSUES.md) 历史证据保留。**Last reviewed 2026-07-28**。

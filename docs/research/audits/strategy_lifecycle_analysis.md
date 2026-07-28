@@ -6,8 +6,8 @@
 > scanner-family + PI-queue architecture. These 7 recommendations assume the
 > engine continues to exist and are **no longer applicable**.
 >
-> See: `docs/plans/trading-pipeline/strategy_module_position_b_refactor_2026-07-02.md`
-> See: `docs/plans/trading-pipeline/strategy_engine_deletion_position_c_2026-07-02.md`
+> See: `docs/archive/legacy/plans/trading-pipeline/strategy_module_position_b_refactor_2026-07-02.md`
+> See: `docs/archive/legacy/plans/trading-pipeline/strategy_engine_deletion_position_c_2026-07-02.md`
 
 ---
 

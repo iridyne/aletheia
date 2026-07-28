@@ -9,7 +9,7 @@
 
 ## 0. 实施状态与核实订正（2026-07-01，分支 `fix/scanner-observer-audit-fixes`）
 
-本报告 P0–P3 已按 `docs/plans/market-data/scanner_observer_audit_fix_plan_2026-07-01.md` 实施并通过 spec（UP-01~13）+ 回归测试。写报告后逐条读源码亲核，订正以下偏差：
+本报告 P0–P3 已按 `docs/archive/legacy/plans/market-data/scanner_observer_audit_fix_plan_2026-07-01.md` 实施并通过 spec（UP-01~13）+ 回归测试。写报告后逐条读源码亲核，订正以下偏差：
 
 - **3.1 `key_observations`**：确认 PI layer1 不读 + 渲染只用 `thesis[:150]`。**两处均已修**（MO-1：layer1 SQL 结果补 `key_observations`，`trading_decision` 渲染追加 obs，thesis 150→220）。
 - **3.2 guard advisory**：确认架构错误（循环外用 `symbols`(list) 缺 scanner_family → `_applies_to_context` 恒 False）。已修（MO-2：移入 `_analyze_symbol`，用 per-symbol `scanner_family` 经新 `build_guard_advisory` 构建，闭合学习回路断口 F）。

@@ -10,7 +10,7 @@
 > 金标准冲突裁决:**文档为准,代码追文档**(已实现部分的偏差记为"待修 issue")。
 > Created: 2026-06-21 · 基于一次全量审计(~100 份文件 / >1MB)
 
-> **✅ 进展更新 2026-06-30**：§3「明显缺失需新建」的 P1/P2 契约（Risk/Execution/Live/Promotion/Knowledge/Scheduler/Audit）**均已建为金标准**（批次 1/2/6）。此后再增两份本计划未预见的契约：**`design/decision_lifecycle_contract`**（横切脊柱 seam —— 新契约类别，补"按域竖切、子系统接缝无人管"的结构空白）+ **`design/persistence_recovery_contract`**（D8，🟡 构件已实现/恢复 FSM 未接 runtime）。新增第四种导航 **`design/DOC_ATLAS_BY_DOMAIN`**（按功能域）。**收口纪律**（契约漂移标注须落 BACKEND_ISSUES / 状态≠意图只看 doctor+conformance / 完工即收口）已落入 [design/README §用法](../../design/README.md)——直接修 §1 诊断里"ledger 只进不出"的病根。全景见 [status/REMAINING_WORK_2026-06-30](../../status/snapshots/REMAINING_WORK_2026-06-30.md)。
+> **✅ 进展更新 2026-07-28**：§3「明显缺失需新建」的 P1/P2 契约（Risk/Execution/Live/Promotion/Knowledge/Scheduler/Audit）均已建立。此后新增 `decision_lifecycle_contract`、`persistence_recovery_contract` 与按功能域导航的 `DOC_ATLAS_BY_DOMAIN`。当前收口纪律是：契约只写当前事实，能力状态进入 `CAPABILITY_GROUND_TRUTH`，可执行偏差进入 GitHub Issues，历史审计与施工台账进入 Archive；不再维护本地 Backend/Frontend issue ledger。历史全景见 [REMAINING_WORK_2026-06-30](../../archive/legacy/status/snapshots/REMAINING_WORK_2026-06-30.md)。
 
 > **当前定位（2026-07-18）**：本文是已经执行过的文档体系迁移计划，不是当前路径或
 > 实现状态的权威清单；其中旧文件位置、数量和完成比例只作历史证据。当前入口依次看
@@ -22,7 +22,7 @@
 
 ## 1. 核心诊断:问题不是"不够细",是"层次混淆"
 
-全量审计(product/design/plans/governance/status + 目测 references/research/issues/_ai/archive)
+全量审计(product/design/governance/operations + 目测 references/research/archive)
 得出的**真问题**不是文档不够详细——很多文档已经很细(agent_contracts 12KB、data_model 80 表、
 implementation_guide 44KB)。真问题是:
 
@@ -86,7 +86,7 @@ implementation_guide 44KB)。真问题是:
 | `status/ROADMAP.md` (62KB) | 混 Phase 定义(长期)+ Track 进度(易腐) | 拆:Phase 定义留 ROADMAP;Track 进度→PROGRESS 文件 |
 | `status/PIPELINE_STATUS.md` | 纯进度快照,已过时 10 天 | 降级为周更工作文件,移出金标准集 |
 | `status/WORLD_MAP.md` | 见 L2(目标态契约) | 标注"目标架构",建 Phase 映射 |
-| `_ai/` `archive/` `research/` `references/` | 协作日志/历史/外部参考 | 维持现状,明确非金标准 |
+| `archive/` `research/` `references/` | 历史证据/调查/外部参考 | 明确非金标准；旧 `_ai/` 已迁入 `archive/legacy/ai-context/` |
 | `issues/` | bug/contract drift 清单 | 维持;是"文档↔代码偏差"的落点 |
 
 ---

@@ -3,7 +3,9 @@
 > **命名说明（2026-07-01）**：本文档历史文件名 / 原标题含"Pi Agent"，现统一更名为
 > "System Operator"。代码层文件名（`pi_daemon.py`、`pi_runtime_adapter.ts`）因触 trust
 > boundary 保持不变，但在文档、注释、会话交流中一律使用"System Operator"。
-> earendil-works/pi（外部 npm 包）与本文无关——详见 `DECISIONS.md §2026-07-01`。
+> earendil-works/pi（外部 npm 包）与本文无关——详见
+> [`Architecture Decision Log`](../../governance/decisions/DECISIONS.md) 的
+> `2026-07-01 — System Operator 命名统一` 条目。
 
 **Version:** 0.2 (2026-07-01: 重命名 System Operator → System Operator)  
 **Purpose:** Define how Aletheia's System Operator layer works as the top-level system agent, so the product becomes a coherent self-managing Agentic Trading OS rather than a set of disconnected micro-agents and backend services.
@@ -45,15 +47,16 @@
 
 > ## 落锚说明（2026-06-10 — 治理对接）
 >
-> 本文是 **Operator Layer（顶层 LLM 操作员）** 的设计参考，**不是自动授权**。它已在
-> [ROADMAP.md](../../status/roadmap/ROADMAP.md) 挂为一条**贯穿性并行 track**（与 Phase 0–7 的交易成熟度轴正交）。
+> 本文是 **Operator Layer（顶层 LLM 操作员）** 的设计参考，**不是自动授权**。它曾在
+> 历史 [ROADMAP.md](../../archive/legacy/status/roadmap/ROADMAP.md) 中作为贯穿性并行 track 记录。
 >
 > **两条铁律先于本文一切内容：**
 > 1. **拆两层**：(A) 确定性自愈 supervisor（无 LLM，稳定性根基）= **已交付**（`8a6e008` + `abd7773`）;
->    (B) 本文描述的 **LLM Apex Agent Shell** = 尚未开始,前置依赖 = **Phase 0 观察门全绿**。
->    地基(稳跑证明)不稳前不动 (B)。见 [CURRENT_TASK.md](../../_ai/session/CURRENT_TASK.md) 战略冻结律。
+>    (B) 本文描述的 **LLM Apex Agent Shell** 是历史设计阶段的提案。其当时的
+>    Phase 0 前置约束见归档的
+>    [CURRENT_TASK.md](../../archive/legacy/ai-context/session/CURRENT_TASK.md)，不可作为当前实施状态。
 > 2. **编号防混淆**：本文内部的 `Stage 1–6`（§16）指 **Operator track 内部里程碑**，
->    与 [ROADMAP.md](../../status/roadmap/ROADMAP.md) 的 `Phase 0–7`（交易成熟度）是**两套独立编号**，不可互相映射。
+>    与历史 ROADMAP 的 `Phase 0–7`（交易成熟度）是**两套独立编号**，不可互相映射。
 >    引用时一律说 "Operator Stage N",不说裸 "Stage N"。
 >
 > 本文的安全边界（§6 Pi 无权限系统、§7 能/不能做、§10 Command Registry 禁令）与
@@ -558,15 +561,16 @@ Forbidden Direct Commands
 - hard_delete_knowledge
 ```
 
-### retire_strategy / demote_strategy — Phase 4d 间接执行
+### retire_strategy / demote_strategy — 当前不可用
 
-> ⚠️ **实际实现注意**：§9 的 Level 1 分类（Apex Agent Shell 直接自动操作）对
-> `retire_strategy` / `demote_strategy` 并不准确。
-> 代码中这两个动作均通过 `pi_decisions` 表**间接执行**（Phase 4d 模式）：
-> `_action_retire_strategy`（`operator_loop.py:552`）和
-> `_action_demote_strategy`（`operator_loop.py:583`）只向表中写入
-> `recommend_retire` / `recommend_demote` 记录，由 System Operator 消费后才真正执行策略生命周期变更。
-> 直接退出/降级不发生；`_execute_level1_action` 调用这两个函数时，返回 `status: "recommended"` 而非 `status: "executed"`。
+历史 Python handler 会向 `pi_decisions` 写
+`recommend_retire` / `recommend_demote`，但没有生产消费者，因此这些记录不能代表
+策略已退出或降级。当前 `operator_loop.decide_actions` 已停止产生这两类动作；残留
+handler 只用于兼容与测试，不是可达产品能力。
+
+规则引擎和旧 Strategy Designer 已删除。若未来重新支持策略生命周期变更，应由
+TS operator-shell 经 Command Registry 发起，并具备明确审批、执行消费者、结果状态和
+审计记录；不得把历史 `recommend_*` 写入恢复成另一条平行控制链。
 
 ### loosen_confidence — 有界自动恢复例外
 
@@ -1286,7 +1290,8 @@ Aletheia:
 ## 26. References
 
 > **[2026-07-01 注]** earendil-works/pi 是 coding CLI（与本项目无代码关联），列于此仅供历史参考。
-> 决策详见 `DECISIONS.md §2026-07-01`。
+> 决策详见 [`Architecture Decision Log`](../../governance/decisions/DECISIONS.md)
+> 的 `2026-07-01 — System Operator 命名统一` 条目。
 
 - earendil-works/pi (coding CLI, unrelated to Aletheia): https://github.com/earendil-works/pi
 - Pi project website: https://pi.dev/

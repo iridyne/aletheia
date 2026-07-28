@@ -207,5 +207,5 @@ Aletheia 是**镜像的另一半**：
 - `docs/references/external-systems/north_star.md` — 方向地图（§6 经验闭环主题已更正）
 - `docs/references/external-systems/openalice_prism_review.md` — OpenAlice/Prism 对照（蓝图 B = 审计链，与本文 §5 呼应）
 - `docs/references/papers-and-benchmarks/agent_framework_research_2025_2026.md` — 外部综述验证镜（"确定性优先 + LLM 影响最小"佐证）
-- `docs/issues/domain/BACKEND_ISSUES.md` — 冻结的历史问题证据
+- `docs/archive/legacy/issues/domain/BACKEND_ISSUES.md` — 冻结的历史问题证据；当前偏差只在 GitHub Issues 跟踪
 - `C:\Users\ollama\Downloads\Aletheia_Implementation_Plan_v1.md` — 原始设计蓝图（仓库外，§2 对照来源）

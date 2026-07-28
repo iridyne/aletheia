@@ -90,10 +90,28 @@ GitHub Issues                 ← 仅在偏差未当场修复时跟踪
 由 `docs/product/CAPABILITY_GROUND_TRUTH.md` 统一判定。Conformance Matrix 展示的是
 **claim conformance ratio**，不是产品能力实现率、覆盖率或支持率。
 
+### 可达性证据
+
+新增 scanner family、handler、scheduler job、route 分支或其他可插拔行为时，
+只证明函数、类、字符串或局部单元测试存在，不足以把 claim 标为 implemented。
+对应 spec 必须至少跨过真实注册点或生产调用者，证明该分支能被主线触发并产生其
+约定行为；若结果还需被下游消费，则继续证明到最终消费者。源码文本匹配只能作为
+结构提示，不能作为交付证据。无法跨过生产入口的实现按 dead code 或 Partial 处理。
+
 普通 `tests/test_*.py` 回归并不自动成为 SDD。契约行为必须在 `tests/specs/` 中有
 唯一 `claim_id`；`tests/test_spec_conformance.py` 自动发现全部 `spec_*.py`，并拒绝
 没有注册 claim 的 spec 模块。历史实现先于 spec 时，应把它作为一次明确的
 alignment repair：对齐当前权威契约、补 claim、证明主线行为，而不是改写历史计划。
+
+### 测试证据质量
+
+是否使用 mock 不是价值判断。mock 可以隔离外部网络、时钟、LLM 或交易所，但测试必须
+断言产品契约产生的结果：返回语义、持久状态、计算值、下游消费、失败/重试或审计事实。
+只断言 `called_once` / `not_called` 而不验证结果的测试，最多证明局部接线，不能单独支撑
+`implemented` claim；优先补成真实 DB、ASGI round-trip、生产注册点或最小跨模块行为测试。
+
+删除低价值测试也不是交付目标。若它守住了唯一分支或调用协议，先用更强证据替换，再删除；
+不要为了提高“测试质量”数字而减少实际回归覆盖。
 
 ---
 
@@ -191,6 +209,6 @@ frontdoor `:8787` → backend `:8788` 的两层结构，至少要先区分三类
 | Constitution | `AGENTS.md` / 治理文档 review | 无矛盾/无过时条目 |
 | Specify | 契约文档 diff review | 所有断言可验证 |
 | Clarify | 检查清单全勾 | 无"TODO"/"TBD" |
-| Plan | `docs/plans/` diff review | 替代方案、边界与验收已明确；耐久决策进入对应 design/decision 文档 |
+| Plan | PR description or qualifying `docs/design/proposals/` diff review | 替代方案、边界与验收已明确；耐久决策进入对应 contract/proposal，执行状态只留在 GitHub |
 | Tasks | 外部开发编排器 | 每条 1-4h、有验收标准；不在仓库内维护 task lease/state |
 | Implement | focused specs + `tests/test_spec_conformance.py` | claim 唯一、已注册、无新 gap；完整 specs 的既有基线失败单独对照 |

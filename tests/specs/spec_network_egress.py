@@ -1,6 +1,6 @@
 """Spec: Managed Network Egress (system proxy).
 
-Source: docs/plans/system_proxy_support_plan.md (code session 2026-07-04)
+Historical source: docs/archive/legacy/plans/market-data/system_proxy_support_plan.md
 
 First-principles goal (owner directive 2026-07-04, Option C): EVERY outbound
 network interaction — exchange trading, market data, news, LLM, webhooks — must

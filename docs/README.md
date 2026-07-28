@@ -9,7 +9,8 @@ This directory is organized for AI agents first: read the smallest routing file,
 2. Pick exactly one task lane below.
 3. Read that lane's `README.md` before opening individual documents.
 4. Prefer authoritative contracts and runbooks over old plans, audits, or session notes.
-5. Treat `archive/`, `research/`, `_ai/`, `issues/`, `plans/`, and `status/` as evidence, not current truth.
+5. Treat `archive/` and `research/` as evidence, not current truth. Legacy AI context,
+   issue, plan, and status collections are consolidated under `archive/legacy/`.
 6. Runtime truth still comes from `aletheia doctor`, logs, DB state, and code inspection.
 
 ## Authority Order
@@ -20,7 +21,7 @@ This directory is organized for AI agents first: read the smallest routing file,
 4. `design/contracts/`, `design/data/`, `design/api/`, `design/architecture/` - executable system intent.
 5. `operations/runbooks/`, `operations/development/`, `operations/recovery/` - how to operate or recover.
 6. `design/proposals/` - durable design proposals for substantial changes; never execution tracking.
-7. `research/`, `references/`, `_ai/`, `issues/`, `plans/`, `status/`, `archive/` - context and frozen evidence.
+7. `research/`, `references/`, and `archive/` - context and frozen evidence.
 
 ## Task Lanes
 
@@ -32,30 +33,26 @@ This directory is organized for AI agents first: read the smallest routing file,
 | API or schema work | `design/README.md` | `design/api/`, `design/data/`, `design/contracts/` |
 | Risk, execution, live unlock, audit chain | `governance/README.md` | `governance/policies/`, `design/contracts/` |
 | Local setup, preview, tests, deployment | `operations/README.md` | `operations/development/`, `operations/deployment/`, `operations/runbooks/` |
-| Bug triage or known problems | `governance/protocols/BUG_TRIAGE_PROTOCOL.md` | GitHub Issues; use `issues/` only for historical evidence |
+| Bug triage or known problems | `governance/protocols/BUG_TRIAGE_PROTOCOL.md` | GitHub Issues; use `archive/legacy/issues/` only for historical evidence |
 | Substantial design proposal | `design/proposals/README.md` | one proposal only when its threshold is met |
-| Historical implementation intent | `plans/README.md` | one frozen legacy plan; never use it as current authority |
+| Historical implementation intent | `archive/README.md` | one file under `archive/legacy/plans/`; never use it as current authority |
 | External inspiration or papers | `references/README.md` | `references/external-systems/`, `references/papers-and-benchmarks/` |
 | Research/audit evidence | `research/README.md` | one domain folder under `research/` |
-| Historical progress snapshot | `status/README.md` | `status/roadmap/`, `status/snapshots/`, `status/audits/` |
+| Historical progress snapshot | `archive/README.md` | `archive/legacy/status/` |
 | Diagrams | `diagrams/README.md` | `diagrams/source/`, `diagrams/rendered/` |
 
 ## Directory Map
 
 | Directory | Agent purpose | Write policy |
 |---|---|---|
-| `_ai/` | Reusable workflow lessons plus legacy agent-produced context | Do not create current task, handoff, lease, or external-orchestrator state here |
 | `product/` | Product identity, scope, metrics, experiment rules | Durable product decisions only |
 | `governance/` | Safety, trust boundaries, protocols | Rare; requires high confidence |
 | `design/` | System contracts and architecture | Update with executable specs when contract changes |
 | `operations/` | Runbooks, setup, deployment, recovery | Update when operator procedure changes |
-| `issues/` | Frozen defect, incident, and backlog evidence | Do not use for current ownership, priority, progress, or closure |
-| `plans/` | Frozen legacy implementation plans | Do not add or update plans; substantial future designs use `design/proposals/` |
 | `research/` | Audits, investigations, domain research | Evidence store; not a source of current truth by itself |
 | `references/` | External systems, papers, captured reference material | External reference only; never implementation authorization |
-| `status/` | Frozen roadmaps and point-in-time progress | Historical only; current work state belongs in GitHub |
 | `diagrams/` | Diagram sources and rendered assets | Keep source and rendered output paired |
-| `archive/` | Superseded project history | Read only for provenance |
+| `archive/` | Superseded project history and consolidated legacy AI context, issues, plans, and status | Read only for provenance |
 | `superpowers/` | Optional/experimental specialized specs | Do not treat as core contract unless linked from design |
 
 ## Naming Rules For New Docs

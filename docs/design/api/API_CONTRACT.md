@@ -65,6 +65,18 @@
 Response body 字段定义在 **代码的 Pydantic model** 里，不在 api_reference.md 里。
 `docs/design/api/api_reference.md` 只是端点索引，字段级真相以代码为准（防文档漂移）。
 
+### Offline OpenAPI export
+
+Export the current FastAPI schema without running or mutating a Runtime:
+
+```bash
+uv run python scripts/export_openapi_schema.py --output docs/_generated/openapi.json
+```
+
+The deterministic JSON can feed frontend type-generation tooling. Generated
+schema output is disposable build material; Python/FastAPI remains the route
+and response-model source of truth.
+
 ---
 
 ## 深度阅读

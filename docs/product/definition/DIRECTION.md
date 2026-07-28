@@ -135,7 +135,7 @@ not in this direction document.
 | Serenity research | [serenity_contract](../../design/contracts/serenity_contract.md) | evidence and promotion boundary |
 | UI layout, price-feed, loading, and navigation gaps | GitHub Issues | evidence-backed, actionable UI work |
 | Test-speed practice | [TESTING](../../operations/development/TESTING.md), [PYTEST_OPTIMIZATION_GUIDE](../../operations/development/PYTEST_OPTIMIZATION_GUIDE.md) | test tiers and profiling procedure |
-| Historical decomposition and completed work | `docs/_ai/DISCUSSION_*.md` | dated process evidence; not current product truth |
+| Historical decomposition and completed work | `docs/archive/legacy/ai-context/discussions/` | dated process evidence; not current product truth |
 
 When a statement is about the current machine, use `aletheia doctor` or a
 fresh measurement. Do not promote a historical report into a standing fact.

@@ -8,7 +8,7 @@ implementing task replaces it with a real GREEN behavioral test and updates the
 claim status.
 
 Issue mapping: RG-01 through RG-22 in
-docs/issues/RECONCILED_GONE_INTEGRITY_AUDIT_2026-07-12.md.
+docs/archive/legacy/issues/audits/RECONCILED_GONE_INTEGRITY_AUDIT_2026-07-12.md.
 """
 
 from __future__ import annotations
@@ -480,7 +480,9 @@ def test_cross_layer_outcome_lifecycle_has_final_e2e_inventory():
         source = _source(path)
         for test_name in tests:
             assert f"def {test_name}" in source, f"{path} missing {test_name}"
-    audit = _source("docs/status/audits/OUTCOME_INTEGRITY_FINAL_AUDIT_2026-07-12.md")
+    audit = _source(
+        "docs/archive/legacy/status/audits/OUTCOME_INTEGRITY_FINAL_AUDIT_2026-07-12.md"
+    )
     assert "not run" in audit.lower()
     assert "not approved and not applied" in audit.lower()
     assert "live remains disabled" in audit.lower()

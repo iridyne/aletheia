@@ -44,6 +44,32 @@ The stable architecture uses three layers of health signal:
 
 The legacy `/api/ready` remains as a cheap dashboard reconnect endpoint.
 
+## Incident evidence and attribution
+
+Runtime diagnosis must keep observation, recovery, and causal attribution
+separate:
+
+1. A probe transition, missing data bucket, restart cadence, or nearby external
+   error is an observation. Temporal correlation alone is not a root cause.
+2. Root-cause claims require direct evidence from the failing boundary: the
+   current structured/text error record, process ownership and launch
+   arguments, supervisor/audit transition, or a focused reproduction.
+3. If newer evidence contradicts an earlier diagnosis, the newer boundary
+   evidence wins and the old explanation remains historical only. Monitoring
+   must not keep classifying new incidents from a stale error template.
+4. A successful restart proves only that a process was replaced. Recovery is
+   established when the expected owner is unique, readiness returns, the
+   affected workload produces a fresh successful result, and durable state
+   remains consistent.
+5. Repeated automatic restart followed by brief readiness is a restart storm,
+   not a healthy or self-healed runtime. Recovery actions must be bounded,
+   rate-limited, visible, and must not kill an unrelated healthy process merely
+   because an adjacent component failed.
+
+These rules preserve the distinction between `livez`, `readyz`, and business
+health: no single green probe or uptime counter can establish end-to-end
+runtime integrity.
+
 ## Phase plan
 
 ### Phase 0 — Stabilize the current single-port MVP

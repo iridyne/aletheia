@@ -102,7 +102,7 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
         "audit facts", "no blocking effect",
         is_learning_treatment=False, settings_supported=False,
     ),
-    # ─── Skeleton placeholder — see docs/plans/learning/filter_parameter_tune_design.md
+    # ─── Skeleton placeholder — see docs/archive/legacy/plans/learning/filter_parameter_tune_design.md
     #
     # filter_parameter_tune: the future home for prospective A/B experiments that
     # would loosen a filter parameter (e.g. family_ttl_sec, ranker_confidence_gate)

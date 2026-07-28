@@ -416,7 +416,7 @@ def test_defer_extends_opportunity_valid_until_forward_only(tmp_path, monkeypatc
     and the underlying Opportunity's ``valid_until`` is CAS'd forward to
     ``defer_deadline + _DEFER_VALID_UNTIL_MARGIN_SEC`` (300s) so the promised
     re-evaluation is guaranteed to happen inside the Opportunity's lifecycle.
-    See ``docs/issues/audits/CANDIDATES_ADMISSION_GAP_AUDIT_2026-07-20.md``.
+    See ``docs/archive/legacy/issues/audits/CANDIDATES_ADMISSION_GAP_AUDIT_2026-07-20.md``.
     """
     conn = _setup_db(tmp_path, monkeypatch)
     now = datetime.now(timezone.utc)

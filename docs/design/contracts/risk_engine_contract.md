@@ -2,7 +2,7 @@
 
 > **角色**:定义 Risk Engine 作为"agent 不可绕过的硬墙"的完整决策契约。
 > 这是 trust 边界的核心——[VISION](../../product/definition/VISION.md) 把它定义为"给 AI 买到的犯错许可证"。
-> **基线**:以代码现状为底(file:line 可核),意图差距标 ⚠️;冲突时文档为准,偏差落 [issues](../../issues/domain/BACKEND_ISSUES.md)。
+> **基线**：以当前代码与可执行证据为底；本契约描述当前权威行为，偏差进入 GitHub Issues，历史问题证据见 [`BACKEND_ISSUES.md`](../../archive/legacy/issues/domain/BACKEND_ISSUES.md)。
 > **不变式来源**:[trust_and_change_control §6.3](../../governance/policies/trust_and_change_control.md)。
 > Last updated: 2026-07-14 · 维护者:Aletheia Dev
 

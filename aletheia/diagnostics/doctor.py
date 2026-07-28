@@ -1482,7 +1482,7 @@ def _probe_profit_loop(report: Report) -> None:
                        f"newest proposal {prop_desc}{attribution}",
                        "opportunities flow but produce no proposals — inspect "
                        "paper_trader_ranker scoring + System Operator decision inputs "
-                       "(see docs/issues/MINIMUM_PROFIT_LOOP_AUDIT.md)")
+                       "(see docs/archive/legacy/issues/archive/audits/MINIMUM_PROFIT_LOOP_AUDIT.md)")
     elif prop_age is not None and prop_age < PROPOSAL_STALL_MIN:
         report.add("loop.profit", "ok",
                    f"proposal flow healthy — newest proposal {_fmt_age(prop_age)}; "
@@ -1737,7 +1737,7 @@ def _probe_learning_retrieval(report: Report) -> None:
     """Learning retrieval-pool health — signal/noise + guard promotion stall.
 
     Two read-only checks surfaced by the 2026-06-26 full-lifecycle audit
-    (docs/issues/LEARNING_LOOP_AUDIT_2026-06-26.md):
+    (docs/archive/legacy/issues/audits/LEARNING_LOOP_AUDIT_2026-06-26.md):
 
     1. retrieval_pool: the eligible pool (high_confidence + active) that the
        FROZEN ranker scores via _lesson_penalty is dominated by
@@ -2288,7 +2288,7 @@ def _probe_git_hooks(report: Report) -> None:
 # / non-garbage" — exactly what a human used to find by eye in the Web UI's Evolve
 # module. Each is read-only and follows the probe-honesty rule (owner-acknowledged /
 # config-gated states report info with the numbers, not a false warn). See
-# docs/plans/ai_native_bugfix_path.md §3. They are deliberately NON-overlapping with
+# docs/archive/legacy/plans/engineering/ai_native_bugfix_path.md §3. They are deliberately NON-overlapping with
 # loop.knowledge_flood / loop.retrieval_pool / loop.reconciled_ratio / loop.concentration.
 
 def _probe_content_strategy_health(report: Report) -> None:

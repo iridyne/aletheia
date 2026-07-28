@@ -6,7 +6,7 @@ All six L-Bug fixes (A/A'/B/C/D) were applied in fix/round1-learning-fixes
 
 LP-S01..S04 (2026-06-24): consumption-side dead filters (Layer3 lessons/guards,
 ps_lessons no consumer). LP-S05..S06 (2026-06-27, from the full-lifecycle audit
-in docs/issues/LEARNING_LOOP_AUDIT_2026-06-26.md): the attribution-chain root
+in docs/archive/legacy/issues/audits/LEARNING_LOOP_AUDIT_2026-06-26.md): the attribution-chain root
 cause (opportunity_id hard-coded None) and the guard-promotion dead-end (promoter
 reads a different dir than where candidates are written).
 
@@ -344,7 +344,7 @@ def test_synthetic_closures_excluded_from_corpus():
     and that the same filter guards auto-generated guard candidates.
 
     Junk-data full sweep (Axis 2 — semantic toxicity), 2026-06-28:
-    docs/issues/JUNK_DATA_FULL_SWEEP_2026-06-28.md.
+    docs/archive/legacy/issues/audits/JUNK_DATA_FULL_SWEEP_2026-06-28.md.
     """
     from unittest.mock import patch, MagicMock
     from aletheia.analytics import trade_case_builder as tcb
