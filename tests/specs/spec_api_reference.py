@@ -15,6 +15,7 @@ Claim hierarchy
   API-S06  L2c  No GET handler under /api/.*/credentials returns plaintext value
   API-S07  L2a  _PROTECTED_PATHS in app.py includes live-unlock and kill-switch
   API-S08  L2b  Tunnel enabled + no token → protected paths return 401 (fail-closed)
+  API-S10  L2a  Exchange credential tests use private account endpoints
 """
 
 import ast
@@ -415,3 +416,35 @@ def test_tunnel_enabled_no_token_returns_401(tmp_path, monkeypatch):
             "Tunnel enabled + no token must be fail-closed to prevent unauthenticated "
             "public access to trust-boundary endpoints."
         )
+
+
+@spec_claim(
+    SpecClaim(
+        "API-S10",
+        "api_reference",
+        "§exchange credential verification",
+        "L2a",
+        "Binance and OKX candidate/stored credential checks call private account "
+        "endpoints; a public time endpoint cannot produce a verified result.",
+        status="implemented",
+    ),
+)
+def test_exchange_credential_checks_use_private_endpoints():
+    import inspect
+
+    from aletheia.server.routes.bitget import (
+        binance_test_candidate,
+        binance_test_connection,
+        okx_test_candidate,
+        okx_test_connection,
+    )
+
+    for handler in (
+        binance_test_candidate,
+        binance_test_connection,
+        okx_test_candidate,
+        okx_test_connection,
+    ):
+        source = inspect.getsource(handler)
+        assert "fetch_time(" not in source
+        assert "fetch_balance(" in source or "get_positions(" in source

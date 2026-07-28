@@ -7,8 +7,8 @@
        the orders table — no realized PnL, no fees, no closed_at. Now returns
        closed positions with the columns a tax export actually needs.
 - #87: POST /api/capital/events persisted the capital_events row but wrote no
-       audit record. The equity-curve baseline shift was invisible in the audit
-       hash chain, so investigating a baseline jump had no trace.
+       audit record. The account cash-flow fact was therefore absent from the
+       audit hash chain.
 """
 
 from __future__ import annotations
@@ -122,8 +122,8 @@ async def test_trades_export_returns_closed_positions_with_pnl_columns(tmp_path,
 
 @pytest.mark.anyio
 async def test_capital_deposit_writes_audit_event(tmp_path, monkeypatch):
-    """#87: a deposit call must land in audit.jsonl so the equity-curve baseline
-    jump has a trace. Previously the row went into capital_events with no audit."""
+    """#87: a deposit call must land in audit.jsonl so account cash-flow history
+    has a trace. Previously the row went into capital_events with no audit."""
     _setup_env(tmp_path, monkeypatch)
 
     from aletheia.server.app import app

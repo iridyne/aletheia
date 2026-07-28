@@ -8,8 +8,12 @@ zero behavior change. Claim prefix: PS.
 """
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from itertools import count
+from pathlib import Path
+
+import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -108,6 +112,81 @@ def test_vol_target_size_uses_persona_base(monkeypatch):
         f"roll persona (base 50) must size larger than legacy (base 25): "
         f"roll={roll_size} legacy={legacy_size}"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "PS-S14", "persona_sizing", "§6 persona sizing reaches Proposal quantity", "L2b",
+        "The active persona's notional and Kelly values cross the System Operator "
+        "sizing seam into the immutable TradeProposal quantity; non-sizing persona "
+        "ranges are not claimed by this capability.",
+    ),
+)
+def test_persona_notional_reaches_proposal_quantity(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell import trading_decision as td
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+
+    cfg = AletheiaConfig()
+    cfg.trading.vol_sizing_enabled = False
+    cfg.trading.persona_sizing_enabled = True
+    cfg.trading.active_persona = "roll"
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(td, "_proposal_direction_overheated", lambda *_args: None)
+    monkeypatch.setattr(
+        td,
+        "_latest_exact_entry_snapshot",
+        lambda *_args: {
+            "symbol": "BTC/USDT",
+            "market_type": "spot",
+            "exchange": cfg.market_data.ccxt_exchange,
+            "price": 100.0,
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda *_args, **_kwargs: 100.0,
+    )
+    monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda _ctx: [])
+    monkeypatch.setattr(
+        "aletheia.trust.guard_chain.summarize",
+        lambda _items: {"blocks": [], "details": []},
+    )
+    monkeypatch.setattr(
+        "aletheia.trading.entry_snapshot.capture_attribution_snapshot_json",
+        lambda _symbol: None,
+    )
+
+    decision = td.TradingDecision(
+        action="trade",
+        symbol="BTC/USDT",
+        direction="long",
+        conviction=70,
+        reasoning="persona sizing acceptance",
+        market_type="spot",
+    )
+    decision.position_size_usdt = td._compute_position_size(
+        decision.conviction,
+        symbol=decision.symbol,
+        direction=decision.direction,
+        paper_trade_count=50,
+    )
+
+    prepared = asyncio.run(
+        td.prepare_decision_as_proposal(decision, "paper_internal")
+    )
+    proposal = prepared["proposal"]
+    assert decision.position_size_usdt == 50.0
+    assert proposal.price == 100.0
+    assert proposal.quantity == 0.5
+
+    settings_src = (
+        Path(__file__).resolve().parents[2]
+        / "frontend" / "src" / "pages" / "Settings.tsx"
+    ).read_text(encoding="utf-8")
+    assert "Active entry consumers:" in settings_src
+    assert "Leverage, stop, and add parameters remain experimental/reference-only." in settings_src
 
 
 @spec_claim(
@@ -333,9 +412,9 @@ def test_sizing_policy_health(tmp_path, monkeypatch):
 
 @spec_claim(
     SpecClaim("PS-S10", "persona_sizing", "§8 progressive unlock ladder + distress refreeze", "L2b",
-              "effective_operator_decidable: OFF → static dict (P1-P3); ON → unlock the "
-              "persona ladder in order as clean closes accrue (step-gated); distress "
-              "(kill switch / drawdown) refreezes ALL. Zero unlock at zero samples."),
+              "effective_operator_decidable: OFF → static dict (P1-P3); ON → unlock only "
+              "production-consumed entry-sizing params in ladder order as eligible closes "
+              "accrue; reference-only params are ignored and distress refreezes ALL."),
 )
 def test_progressive_unlock_ladder(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
@@ -349,6 +428,7 @@ def test_progressive_unlock_ladder(tmp_path, monkeypatch):
     cfg.trading.persona_unlock_step_samples = 5
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
     roll = cfg.trading.personas["roll"]
+    assert roll.unlock_ladder == ["notional_usdt", "kelly_fraction"]
 
     # OFF → static (empty) regardless of samples.
     assert effective_operator_decidable(roll, cfg) == {}
@@ -357,23 +437,37 @@ def test_progressive_unlock_ladder(tmp_path, monkeypatch):
     # 0 clean closes → nothing unlocked.
     assert effective_operator_decidable(roll, cfg) == {}
 
-    # 12 clean closes, step 5 → floor(12/5)=2 ladder params unlocked (notional, leverage).
+    # Persisted/custom ladders may still contain old reference-only fields. Runtime
+    # must ignore those fields rather than granting authority without a consumer.
+    roll.unlock_ladder = [
+        "notional_usdt", "leverage_max", "per_trade_loss_pct",
+        "max_adds", "kelly_fraction",
+    ]
+
+    # 12 clean closes, step 5 → both production-consumed params unlock.
     for _ in range(12):
         _closed(repo, Position, "bull", pnl=1.0)
     dec = effective_operator_decidable(roll, cfg)
-    assert dec.get("notional_usdt") and dec.get("leverage_max"), f"first 2 ladder params unlocked: {dec}"
-    assert "per_trade_loss_pct" not in dec, "3rd ladder param not yet unlocked at 12/5"
+    assert dec == {"notional_usdt": True, "kelly_fraction": True}
 
     # Distress (kill switch) → refreeze ALL.
     cfg.runtime.kill_switch_active = True
     assert effective_operator_decidable(roll, cfg) == {}, "distress must refreeze all unlocked params"
 
+    settings_src = (
+        Path(__file__).resolve().parents[2]
+        / "frontend" / "src" / "pages" / "Settings.tsx"
+    ).read_text(encoding="utf-8")
+    assert "only active entry parameters" in settings_src
+    assert "counts eligible historical" in settings_src
+    assert "does not establish a fresh Persona-specific evidence window" in settings_src
+
 
 @spec_claim(
     SpecClaim("PS-S11", "persona_sizing", "§6.3 pyramid add-on policy (gated + hard-capped)", "L2b",
-              "pyramid_plan adds to a WINNER only when enabled + persona has adds; each "
-              "add = add_fraction of base; total is HARD-CAPPED by max_per_symbol_notional; "
-              "no add when disabled / not enough profit / max_adds reached / cap hit."),
+              "pyramid_plan is a bounded pure helper for winners; no production caller or "
+              "add-order materializer exists, so Settings/API block new enablement while "
+              "legacy configurations can switch off. Helper output remains hard-capped."),
 )
 def test_pyramid_plan(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
@@ -414,6 +508,48 @@ def test_pyramid_plan(tmp_path, monkeypatch):
     capped = sizing_policy.pyramid_plan(big, adds_done=0, cfg=cfg)
     assert capped["add_notional"] <= 10.0 + 1e-6, f"add must be clamped to per-symbol cap room: {capped}"
 
+    # Product boundary: the helper has no production trigger/materializer, so the
+    # API and Settings must not let a user newly enable a no-op capability.
+    from fastapi import HTTPException
+    from aletheia.server.routes import settings as settings_routes
+
+    saved_configs = []
+    monkeypatch.setattr(settings_routes, "load_config", lambda: cfg)
+    monkeypatch.setattr(settings_routes, "save_config", lambda c: saved_configs.append(c))
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *_a, **_k: None)
+
+    cfg.trading.persona_pyramid_enabled = False
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(settings_routes.update_trading_config(
+            settings_routes.TradingConfigUpdate(persona_pyramid_enabled=True)
+        ))
+    assert exc.value.status_code == 409
+    assert "no production trigger" in str(exc.value.detail)
+    assert saved_configs == []
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(settings_routes.update_trading_config(
+            settings_routes.TradingConfigUpdate(persona_auto_advance_enabled=True)
+        ))
+    assert exc.value.status_code == 409
+    assert "prospective" in str(exc.value.detail)
+
+    # Legacy enabled configurations retain an explicit off-ramp.
+    cfg.trading.persona_pyramid_enabled = True
+    result = asyncio.run(settings_routes.update_trading_config(
+        settings_routes.TradingConfigUpdate(persona_pyramid_enabled=False)
+    ))
+    assert result["trading"]["persona_pyramid_enabled"] is False
+    assert len(saved_configs) == 1
+
+    settings_src = (
+        Path(__file__).resolve().parents[2]
+        / "frontend" / "src" / "pages" / "Settings.tsx"
+    ).read_text(encoding="utf-8")
+    assert "Pyramid add-on policy helper (no runtime trigger)" in settings_src
+    assert "does not create a paper, demo, or live order" in settings_src
+    assert "new enablement is blocked" in settings_src
+
 
 @spec_claim(
     SpecClaim("PS-S12", "persona_sizing", "§4.2 risk envelope stays the outer bound", "L2c",
@@ -445,11 +581,11 @@ def test_pyramid_never_exceeds_exposure_cap(tmp_path, monkeypatch):
 
 
 @spec_claim(
-    SpecClaim("PS-S13", "persona_sizing", "§8 durable rollout auto-advance (health-gated)", "L2b",
-              "advance_persona_rollout advances the ladder ONE step per call when "
-              "healthy (sizing→unlock→learning), holds on distress / when complete, and "
-              "no-ops unless persona_auto_advance_enabled. NEVER touches owner-gated "
-              "items (leverage/roll/pyramid). This is the cross-session progression job."),
+    SpecClaim("PS-S13", "persona_sizing", "§8 rollout automation safety hold", "L2b",
+              "advance_persona_rollout is read-only: disabled unless explicitly configured, "
+              "retains specific distress/integrity hold reasons, and never changes Persona "
+              "flags without a prospective Persona/policy/step verdict. Settings blocks new "
+              "enablement while allowing legacy enabled configurations to be switched off."),
 )
 def test_advance_persona_rollout(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
@@ -471,22 +607,24 @@ def test_advance_persona_rollout(tmp_path, monkeypatch):
     cfg.trading.persona_auto_advance_enabled = True
     assert advance_persona_rollout()["action"] == "hold"
 
-    # sizing on, healthy → advance to progressive_unlock.
+    # Sizing on and broadly healthy is still not prospective rollout evidence.
     cfg.trading.persona_sizing_enabled = True
     r = advance_persona_rollout()
-    assert r["action"] == "advanced" and r["step"] == "progressive_unlock"
-    assert cfg.trading.persona_progressive_unlock_enabled is True
+    assert r == {
+        "action": "hold",
+        "reason": "prospective_persona_policy_step_verdict_unavailable",
+    }
+    assert cfg.trading.persona_progressive_unlock_enabled is False
+    assert cfg.trading.persona_learning_enabled is False
+    assert cfg.trading.persona_pyramid_enabled is False
+    assert cfg.trading.active_persona == "conservative"
+    assert saved == {}, "rollout safety probe must never persist config changes"
 
-    # next call → advance to learning.
-    r = advance_persona_rollout()
-    assert r["action"] == "advanced" and r["step"] == "learning"
-    assert cfg.trading.persona_learning_enabled is True
-
-    # both on → hold (rollout complete). Owner-gated flags never touched.
-    r = advance_persona_rollout()
-    assert r["action"] == "hold"
-    assert cfg.trading.persona_pyramid_enabled is False  # never auto-enabled
-    assert cfg.trading.active_persona == "conservative"   # never auto-switched to roll
+    # A legacy config with progressive unlock already on must not auto-enable Learning.
+    cfg.trading.persona_progressive_unlock_enabled = True
+    assert advance_persona_rollout()["action"] == "hold"
+    assert cfg.trading.persona_learning_enabled is False
+    assert saved == {}
 
     # distress → hold even mid-ladder.
     cfg2 = AletheiaConfig()
@@ -496,3 +634,11 @@ def test_advance_persona_rollout(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "load_config", lambda: cfg2)
     assert advance_persona_rollout()["action"] == "hold"
     assert cfg2.trading.persona_progressive_unlock_enabled is False  # not advanced under distress
+
+    settings_src = (
+        Path(__file__).resolve().parents[2]
+        / "frontend" / "src" / "pages" / "Settings.tsx"
+    ).read_text(encoding="utf-8")
+    assert "Auto-advance rollout (Experimental safety hold)" in settings_src
+    assert "The 8-hour job is currently read-only" in settings_src
+    assert "new enablement is blocked" in settings_src

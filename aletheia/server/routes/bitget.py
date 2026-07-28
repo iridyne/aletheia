@@ -192,11 +192,11 @@ async def binance_test_connection(req: BinanceTestRequest = BinanceTestRequest()
     """Test Binance Futures connectivity with stored credentials."""
     if req.mode not in ("testnet", "live"):
         raise HTTPException(400, "mode must be 'testnet' or 'live'")
+    client = None
     try:
         from aletheia.exchanges.binance.client import BinanceClient
         client = BinanceClient(mode=req.mode)
         positions = await client.get_positions()
-        await client.close()
         return {"connected": True, "mode": req.mode, "positions_count": len(positions)}
     except Exception as e:
         err_msg = str(e)
@@ -208,6 +208,12 @@ async def binance_test_connection(req: BinanceTestRequest = BinanceTestRequest()
         # request (incl. candidate api_key/secret) or internal URLs. The categorised
         # cases above cover the actionable ones; fall back to the exception class name.
         return {"connected": False, "error": type(e).__name__}
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:
+                pass
 
 
 # Legacy endpoint
@@ -224,7 +230,7 @@ class BinanceCandidateRequest(BaseModel):
 
 @router.post("/binance/test-candidate")
 async def binance_test_candidate(req: BinanceCandidateRequest):
-    """Test Binance connectivity with candidate (unsaved) credentials."""
+    """Verify candidate Binance credentials with a private read-only request."""
     if req.mode not in ("testnet", "live"):
         raise HTTPException(400, "mode must be 'testnet' or 'live'")
     try:
@@ -238,7 +244,7 @@ async def binance_test_candidate(req: BinanceCandidateRequest):
         try:
             if req.mode == "testnet":
                 exchange.set_sandbox_mode(True)
-            await exchange.fetch_time()
+            await exchange.fetch_balance()
         finally:
             await exchange.close()
             await session.close()
@@ -317,11 +323,11 @@ async def okx_test_connection(req: OkxTestRequest = OkxTestRequest()):
     """Test OKX connectivity with stored credentials."""
     if req.mode not in ("demo", "live"):
         raise HTTPException(400, "mode must be 'demo' or 'live'")
+    client = None
     try:
         from aletheia.exchanges.okx.client import OKXClient
         client = OKXClient(mode=req.mode)
-        await client.fetch_time()
-        await client.close()
+        await client.fetch_balance()
         return {"connected": True, "mode": req.mode}
     except Exception as e:
         err_msg = str(e)
@@ -333,6 +339,12 @@ async def okx_test_connection(req: OkxTestRequest = OkxTestRequest()):
         # request (incl. candidate api_key/secret) or internal URLs. The categorised
         # cases above cover the actionable ones; fall back to the exception class name.
         return {"connected": False, "error": type(e).__name__}
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:
+                pass
 
 
 class OkxCandidateRequest(BaseModel):
@@ -344,7 +356,7 @@ class OkxCandidateRequest(BaseModel):
 
 @router.post("/okx/test-candidate")
 async def okx_test_candidate(req: OkxCandidateRequest):
-    """Test OKX connectivity with candidate (unsaved) credentials."""
+    """Verify candidate OKX credentials with a private read-only request."""
     if req.mode not in ("demo", "live"):
         raise HTTPException(400, "mode must be 'demo' or 'live'")
     try:
@@ -358,7 +370,7 @@ async def okx_test_candidate(req: OkxCandidateRequest):
         try:
             if req.mode == "demo":
                 exchange.set_sandbox_mode(True)
-            await exchange.fetch_time()
+            await exchange.fetch_balance()
         finally:
             await exchange.close()
             await session.close()

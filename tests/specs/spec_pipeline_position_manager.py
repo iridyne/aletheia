@@ -849,3 +849,41 @@ def test_paused_does_not_block_stop_loss(tmp_path, monkeypatch):
     assert pos_row["close_reason"] == "stop_loss", (
         f"Expected close_reason='stop_loss', got {pos_row['close_reason']!r}"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PM-14",
+        "pipeline_position_manager",
+        "§2 market-aware owner-visible semantics",
+        "L2a",
+        "Settings describes market-aware handling as an Operator wake/review and "
+        "does not claim that the evaluator directly closes positions or mutates stops; "
+        "failed daemon delivery is recorded instead of counted as a successful wake.",
+        status="implemented",
+    ),
+)
+def test_market_aware_settings_describes_wake_only_authority():
+    from pathlib import Path
+
+    settings = (
+        Path(__file__).resolve().parents[2]
+        / "frontend"
+        / "src"
+        / "pages"
+        / "Settings.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "Market-Aware Position Review" in settings
+    assert "wakes the System Operator" in settings
+    assert "does not close positions or mutate stops" in settings
+    assert "may force-close losing positions early" not in settings
+
+    manager = (
+        Path(__file__).resolve().parents[2]
+        / "aletheia"
+        / "portfolio"
+        / "position_manager.py"
+    ).read_text(encoding="utf-8")
+    assert 'record_error(p, "operator_wake_unavailable")' in manager
+    assert 'last_market_signal_action=f"wake_failed:{action.action}"' in manager

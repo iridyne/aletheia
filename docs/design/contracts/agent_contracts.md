@@ -42,7 +42,7 @@
 | 28 | ohlcv_nightly_backfill | cron (configurable) CST | io | Historical OHLCV gap fill |
 | 29 | ohlcv_active_backfill | interval `historical_data.active_universe_backfill_interval_minutes` (optional) | io | Bounded exact-instrument repair for active members below the OHLCV minimum; durable backoff |
 | 30 | filter_controller_observe | interval `controller.observe_interval_hours` (optional) | io | Shadow-only pass/reject evidence report; never changes config |
-| 31 | persona_rollout | 8h | io | Advance dynamic-sizing rollout ladder one health-gated step (no-op unless persona_auto_advance_enabled) |
+| 31 | persona_rollout | 8h | io | Read-only safety hold; never changes Persona config without a prospective Persona/policy step verdict |
 | 32 | connectivity_monitor | interval `health.exchange_probe_interval_sec` | fast_io | Probe exchange connectivity; auto-pause on outage; auto-resume when recovered |
 | 33 | shadow_resolver | 6h | io | Resolve shadow trades against realised outcomes |
 | 34 | outcome_hook_replay | 1min | io | Replay durable eligible-close feedback jobs; revalidate the closed Position and retry incomplete shadow/Serenity delivery |
@@ -274,7 +274,7 @@ durably queued and independently retried by `outcome_hook_replay`.
 - **LLM**: No
 - **Outputs**: Position closes (status=closed, realized_pnl computed)
 - **Side effects**: Calls close_position(); updates exchange TP/SL orders; writes audit events
-- **Exit triggers**: stop_loss, take_profit, max_hold_time, trailing_stop, market_aware_exit. RuleSet exit auto-close is removed. System Operator exits run **independently** via `review_portfolio_state`, NOT inside this loop — see `execution_contract.md §10`.
+- **Exit triggers**: stop_loss, take_profit, max_hold_time, trailing_stop. Market-aware signals only wake System Operator for review; they do not directly close or tighten. RuleSet exit auto-close is removed. System Operator exits run **independently** via `review_portfolio_state`, NOT inside this loop — see `execution_contract.md §10`.
 - **Pause semantics**: runs even when `runtime.paused` (manages existing risk; never blocks protective close — aligned with kill_switch, see `execution_contract.md §10.3`)
 
 ---

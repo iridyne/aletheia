@@ -54,12 +54,13 @@ SpecClaim(id="XX-S01", status="missing", description="...")
 
 # 3. 更新 status="implemented"
 
-# 4. 加进 test_spec_conformance.py 的硬编码导入列表
+# 4. 运行 Conformance Matrix；它会自动发现 tests/specs/spec_*.py
 ```
 
 修改 risk/execution/trust 模块前必须先 `uv run pytest tests/specs/ -q` 确认现有 claims 全绿。
 
-**陷阱**：spec 文件必须显式导入进 `test_spec_conformance.py`，否则 pytest 收集 0 个（历史陷阱，见 aletheia-sdd-spec-collection-trap 记忆）。
+Conformance Matrix 会自动导入全部 `tests/specs/spec_*.py`。新 spec 文件如果没有
+任何 `@spec_claim`，结构检查会直接失败；不再维护手工导入列表。
 
 ---
 

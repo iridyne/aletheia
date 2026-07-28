@@ -827,19 +827,18 @@ def reduce_position(
         return {"error": "position_not_found", "position_id": position_id}
     if row.get("status") != "open":
         return {"error": "position_not_open", "position_id": position_id}
-    # Product boundary (2026-07): paper_internal is deliberately function-limited to
-    # full closes only. Partial reduce needs real reduce-only + partial-fill + cash
-    # semantics, which the local simulator only approximates — so it is routed to the
-    # demo EXCHANGE modes (bitget_demo / okx_demo / binance_testnet, which are the
-    # default paper_execution_mode) where behavior matches live. Reject honestly rather
-    # than settle a partial the local cash ledger can't represent. See
-    # docs/research/PARTIAL_REDUCE_RESEARCH.md (§Product decision).
+    # Product boundary (2026-07): the active product has no authorized partial-reduce
+    # entry in any execution mode. This accounting primitive remains for the isolated
+    # OKX reference helper and focused tests, but the production router fails closed.
+    # paper_internal additionally cannot represent partial settlement in its cash ledger.
     if row.get("execution_mode") == "paper_internal":
         return {
             "error": "partial_reduce_unsupported_on_paper_internal",
             "position_id": position_id,
-            "hint": "paper_internal supports full closes only; use a demo exchange mode "
-                    "(bitget_demo / okx_demo / binance_testnet) for partial reduce",
+            "hint": (
+                "active product supports full closes only; partial reduce is not "
+                "production-authorized"
+            ),
         }
     qty = float(row["quantity"])
     reduce_qty = float(reduce_qty)

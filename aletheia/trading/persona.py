@@ -31,6 +31,11 @@ _LEGACY_FALLBACK = {
     "add_fraction": (None, 0.0),
 }
 
+# Progressive unlock may only grant authority over parameters that have a
+# production entry-sizing consumer. Other persona fields remain reference-only
+# until their separate execution paths exist.
+_PROGRESSIVE_UNLOCKABLE = frozenset({"notional_usdt", "kelly_fraction"})
+
 
 def get_active_persona(cfg=None):
     """Return the active TradingPersona, or None when persona sizing is disabled /
@@ -159,7 +164,10 @@ def effective_operator_decidable(persona, cfg=None) -> dict:
         return static
     if not getattr(cfg.trading, "persona_progressive_unlock_enabled", False):
         return static
-    ladder = list(persona.unlock_ladder or [])
+    ladder = [
+        key for key in (persona.unlock_ladder or [])
+        if key in _PROGRESSIVE_UNLOCKABLE
+    ]
     if not ladder:
         return static
     from aletheia.trading.sizing_policy import clean_close_count, in_distress

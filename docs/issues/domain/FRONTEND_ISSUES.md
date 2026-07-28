@@ -23,7 +23,7 @@
 
 | ID | 状态 | 问题 | 当前安全边界 / 下一步 |
 |---|---|---|---|
-| LCO-FE-01 | 🔴 open | 当前 `/learning` 把 portfolio PnL 和 knowledge funnel/activity 放在 Reports，却不展示 A1 measured verdict、complete-cluster samples、source conflict、metric history、catch-up/recovery 或 read-only recommendation；多数 query failure 还会退化成 `[]`/`0`/`Never` | 按 `learning_observability_contract.md` 建 Contribution/Experiments/Operations，不从 counts/PnL 推断 effective。Loading、genuine empty、unavailable、stale、partial 必须分开；`admit_trial` 无按钮且 `mutation_available=false`。依赖 LCO-BE-01；`LCO-C02/C04/C05` 当前 strict-xfail/missing |
+| LCO-FE-01 | ✅ resolved on current code | `/learning` now has a Contribution view consuming the bounded learning-contribution API and displaying measured contribution state instead of inferring it from portfolio PnL or knowledge counts | No open Issue; reopen only on a current UI/API regression |
 
 现有 Dreaming/Knowledge taxonomy 和人工 lesson/guard actions 保留，但与只读 contribution panels
 视觉、语义分离。现有 `/analytics/learning-funnel` 必须标为 "Activity, not measured

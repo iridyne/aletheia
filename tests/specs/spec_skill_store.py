@@ -7,7 +7,8 @@ future Tier 2/3 activation starts from a known-good contract.
 
 import pytest
 
-from aletheia.learning.skills import SkillStore, SkillPermissionError, FORBIDDEN_LAYERS
+from aletheia.learning.skills import FORBIDDEN_LAYERS, SkillPermissionError, SkillStore
+from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
 class TestForbiddenLayers:
@@ -28,6 +29,15 @@ class TestForbiddenLayers:
     def test_order_submission_is_forbidden(self):
         assert "order_submission" in FORBIDDEN_LAYERS
 
+    @spec_claim(
+        SpecClaim(
+            "SS-S01",
+            "learning",
+            "§3.3 Forbidden Layers",
+            "L2a",
+            "The SkillStore trust-boundary layer set is immutable at runtime.",
+        )
+    )
     def test_forbidden_layers_is_frozenset(self):
         """Immutable — callers cannot mutate the trust boundary at runtime."""
         assert isinstance(FORBIDDEN_LAYERS, frozenset)
@@ -56,6 +66,15 @@ class TestSkillStoreRejection:
                 allowed_layers=["credentials"],
             )
 
+    @spec_claim(
+        SpecClaim(
+            "SS-B01",
+            "learning",
+            "§3.3 Forbidden Layers",
+            "L2b",
+            "SkillStore rejects candidates that request any forbidden trust-boundary layer.",
+        )
+    )
     def test_reject_skill_targeting_multiple_forbidden(self):
         store = SkillStore()
         with pytest.raises(SkillPermissionError):

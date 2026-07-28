@@ -1487,7 +1487,7 @@ function ExecutionTab({ status, settings, qc, onDirty }: any) {
         <ExchangeConnectionCard qc={qc} />
       </Section>
 
-      <Section title="Trading Mode — Advanced" description="Switch between demo (paper trading) and live execution. Live requires explicit unlock below. Individual overrides for data source and execution mode are available in Market Data Sources below.">
+      <Section title="Trading Mode — Advanced" description="Configure demo execution or inspect the experimental Live readiness controls. Live Unlock currently records an authority prerequisite; it does not route new proposals away from the paper/demo execution mode selected below.">
         <ExchangeModeRow status={status} qc={qc} settings={settings} />
         <ExchangeMarketsRow settings={settings} qc={qc} onDirty={onDirty} />
         <div className="danger-zone">
@@ -1505,7 +1505,7 @@ function ExecutionTab({ status, settings, qc, onDirty }: any) {
 
       <Section
         title="Capital Events"
-        description="Record deposits and withdrawals so the Cumulative PnL curve reflects true performance. Initial deposits are auto-recorded when a broker first syncs."
+        description="Record deposits and withdrawals as audited cash-flow history. Account Equity remains a raw balance series and Cumulative PnL remains verified trading PnL; no cash-flow-adjusted performance curve is available yet."
       >
         <CapitalEventsCard />
       </Section>
@@ -1937,10 +1937,10 @@ function ExchangeModeRow({ status, qc, settings }: any) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }),
   })
   return (
-    <Row label="Exchange mode" hint={`demo uses ${modeLabel[paperMode] ?? paperMode} for paper trading; live requires unlocking below and real credentials.`}>
+    <Row label="Exchange mode" hint={`demo uses ${modeLabel[paperMode] ?? paperMode} for paper trading. live is an experimental readiness intent only; new proposals still use ${modeLabel[paperMode] ?? paperMode}.`}>
       <select value={String(status.exchange_mode)} onChange={e => {
         const next = e.target.value
-        if (next === 'live' && !confirm('Switch to live mode? Real orders will execute against real funds.')) return
+        if (next === 'live' && !confirm('Select experimental live readiness? This does not route new proposals to real-fund execution.')) return
         mut.mutate(next)
       }} className="w-auto">
         <option value="demo">demo</option>
@@ -2022,10 +2022,8 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: any) {
 }
 
 // Live unlock warning wall — §4b of live_unlock_contract.md.
-// All three elements MUST be present (spec LU-S03):
-//   (1) "System Operator 将完全自主执行交易，操作不可预测"
-//   (2) "真实资金损失可能发生"
-//   (3) "开启后所有操作由人类承担后果"
+// This is an experimental authority-state prerequisite, not proof that the
+// new-Proposal path can select a live execution mode (EX-04 / GitHub #418).
 function LiveUnlockWarningWall({ credError, onConfirm, onCancel }: {
   credError?: string
   onConfirm: () => void
@@ -2033,11 +2031,11 @@ function LiveUnlockWarningWall({ credError, onConfirm, onCancel }: {
 }) {
   return (
     <div style={{ border: '2px solid var(--color-danger, #d9534f)', borderRadius: 6, padding: '16px', marginTop: 8, background: 'var(--color-danger-bg, #fff5f5)' }}>
-      <p style={{ fontWeight: 700, marginBottom: 8 }}>实盘解锁警示 — 请仔细阅读</p>
+      <p style={{ fontWeight: 700, marginBottom: 8 }}>实验性 Live 权限准备 — 请仔细阅读</p>
       <ul style={{ margin: '0 0 12px 18px', lineHeight: 1.7 }}>
-        <li>System Operator 将完全自主执行交易，操作不可预测</li>
-        <li>真实资金损失可能发生</li>
-        <li>开启后所有操作由人类承担后果</li>
+        <li>此操作只记录 live_limited 权限前置状态，不会把新 Proposal 路由到实盘</li>
+        <li>当前自主 Proposal 仍使用 Paper execution mode 中选择的模拟执行通道</li>
+        <li>只有未来独立完成并验证 live Proposal 路由后，真实资金风险才会出现</li>
       </ul>
       {credError && (
         <p style={{ color: 'var(--color-danger, #d9534f)', marginBottom: 10 }}>
@@ -2045,7 +2043,7 @@ function LiveUnlockWarningWall({ credError, onConfirm, onCancel }: {
         </p>
       )}
       <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={onConfirm}>确认解锁实盘</button>
+        <button onClick={onConfirm}>确认记录实验性权限状态</button>
         <button className="secondary" onClick={onCancel}>取消</button>
       </div>
     </div>
@@ -2085,7 +2083,7 @@ function LiveStateRow({ status, qc }: any) {
 
   return (
     <div>
-      <Row label="Live trading state" hint="Disabled by default. Unlocking runs a credential pre-flight, requires confirmation, and is audited. Use Kill Switch on Risk & Controls to halt immediately." danger={!isDisabled}>
+      <Row label="Experimental Live authority state" hint="Disabled by default. Unlocking runs a credential pre-flight, requires confirmation, and is audited, but does not change new-Proposal routing. New autonomous proposals remain paper/demo until EX-04 is implemented and verified." danger={!isDisabled}>
         <span className={`badge ${isDisabled ? 'badge-muted' : 'badge-yellow'}`}>{humanize(String(status.live_state))}</span>
         <button onClick={preflightUnlock} disabled={!isDisabled}>Unlock Live-Limited</button>
         <button className="secondary" onClick={() => lock.mutate()} disabled={isDisabled}>Lock</button>
@@ -2573,10 +2571,11 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
             onChange={v => { setPersonaEnabled(v); setMsg(null) }}
           />
           <p className="hint mt-1">
-            When ON, sizing reads the active persona's bounds instead of the flat fields above.
-            P1 uses each param's <code>init</code>; the System Operator picks values within range in
-            later phases. Default OFF = legacy sizing (zero change). Risk-engine hard caps always bound
-            the final size regardless of persona.
+            When ON, entry sizing reads the active persona's notional and Kelly bounds instead of
+            the flat fields above. Other displayed ranges are reference inputs for the separately
+            gated unlock/pyramid experiments below; they do not currently change base entry leverage,
+            stops, or add orders. Default OFF = legacy sizing (zero change). Risk-engine hard caps
+            always bound the final size regardless of persona.
           </p>
         {personaEnabled && (
           <>
@@ -2600,6 +2599,10 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
                       <div key={k} className="mono text-sm">{k}: {r.min} / <b>{r.init}</b> / {r.max}</div>
                     ))}
                   </div>
+                  <p className="hint mt-1">
+                    Active entry consumers: <code>notional_usdt</code> and <code>kelly_fraction</code>.
+                    Leverage, stop, and add parameters remain experimental/reference-only.
+                  </p>
                 </div>
               )
             })()}
@@ -2630,8 +2633,10 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
                 onChange={v => { setPersonaUnlockEnabled(v); setMsg(null) }}
               />
               <p className="hint mt-1">
-                P4: unfreezes the persona's ladder params one at a time as clean closes accrue;
-                account distress (drawdown / kill switch) refreezes ALL. Default OFF = static decidable set.
+                Experimental: only active entry parameters (<code>notional_usdt</code> and{' '}
+                <code>kelly_fraction</code>) can unlock. The current gate counts eligible historical
+                closes globally; it does not establish a fresh Persona-specific evidence window.
+                Account distress refreezes all. Default OFF.
               </p>
               {personaUnlockEnabled && (
                 <label className="mt-2">
@@ -2644,27 +2649,28 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
               <div className="mt-2">
                 <Toggle
                   checked={personaAutoAdvance}
-                  label="Auto-advance rollout (跨会话:每 8h 健康门控推进一步)"
-                  onChange={v => { setPersonaAutoAdvance(v); setMsg(null) }}
+                  disabled={!personaAutoAdvance}
+                  label="Auto-advance rollout (Experimental safety hold)"
+                  onChange={v => { if (!v) setPersonaAutoAdvance(false); setMsg(null) }}
                 />
                 <p className="hint mt-1">
-                  P4 ops: the <code>persona_rollout</code> scheduler job (in the gateway, watchdog-backed →
-                  cross-session/reboot) advances the ladder one health-gated step every 8h
-                  (progressive_unlock → learning). Holds on distress/thrash. NEVER auto-touches leverage /
-                  roll / pyramid live orders. Default OFF.
+                  The 8-hour job is currently read-only and does not change Persona settings.
+                  Time and broad health checks are not a prospective Persona/policy step verdict.
+                  Existing enabled configurations can be switched off; new enablement is blocked.
                 </p>
               </div>
             </div>
             <div className="mt-2">
               <Toggle
                 checked={personaPyramidEnabled}
-                label="Pyramid add-on (滚仓:盈利加仓,roll only)"
-                onChange={v => { setPersonaPyramidEnabled(v); setMsg(null) }}
+                disabled={!personaPyramidEnabled}
+                label="Pyramid add-on policy helper (no runtime trigger)"
+                onChange={v => { if (!v) setPersonaPyramidEnabled(false); setMsg(null) }}
               />
               <p className="hint mt-1">
-                P4: scale into winners up to the persona's max_adds, each add = add_fraction of base,
-                HARD-CAPPED by per-symbol exposure. Decision layer only; live scale-in order placement
-                is a separate owner-gated step. Default OFF.
+                The helper can calculate a bounded add plan, but no Scheduler or Operator path calls it
+                and it does not create a paper, demo, or live order. Existing enabled configurations can
+                be switched off; new enablement is blocked.
               </p>
               {personaPyramidEnabled && (
                 <label className="mt-2">
@@ -2679,16 +2685,17 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
         )}
       </div>
       </Collapsible>
-      <Collapsible title="Market-Aware Exits">
+      <Collapsible title="Market-Aware Position Review">
         <div className="settings-inline-note">
           <Toggle
             checked={maeEnabled}
-            label="Market-aware exits (urgent exit / tighten stop / confidence collapse)"
+            label="Market-aware review (urgent exit / tighten stop suggestions)"
             onChange={v => { setMaeEnabled(v); setMsg(null) }}
           />
           <p className="hint mt-1">
-            When ON, position_manager evaluates market signals and may force-close losing positions early,
-            tighten stops on rising risk, or exit when System Operator confidence drops below threshold.
+            When ON, position_manager evaluates adverse market signals and wakes the System Operator
+            with an urgent-exit or tighten-stop suggestion. It does not close positions or mutate stops
+            until a separate authorized decision is made.
           </p>
         </div>
         {maeEnabled && (

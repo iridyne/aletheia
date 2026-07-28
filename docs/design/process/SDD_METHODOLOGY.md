@@ -85,9 +85,14 @@ Conformance Matrix            ← claim_id → test → status 追踪
 docs/issues/                  ← 仅在偏差未当场修复时登记，不把历史 ledger 当当前真相
 ```
 
+`SpecClaim.status="implemented"` 只表示该条局部不变量有对应实现和测试，不能据此
+推导整项产品能力已经 `Supported`。入口、生产触发、最终消费者、用户可见结果和支持面
+由 `docs/product/CAPABILITY_GROUND_TRUTH.md` 统一判定。Conformance Matrix 展示的是
+**claim implementation ratio**，不是产品能力覆盖率或支持率。
+
 普通 `tests/test_*.py` 回归并不自动成为 SDD。契约行为必须在 `tests/specs/` 中有
-唯一 `claim_id`，并由 `tests/test_spec_conformance.py` 显式导入；否则测试即使绿色，
-Conformance Matrix 仍看不到该契约。历史实现先于 spec 时，应把它作为一次明确的
+唯一 `claim_id`；`tests/test_spec_conformance.py` 自动发现全部 `spec_*.py`，并拒绝
+没有注册 claim 的 spec 模块。历史实现先于 spec 时，应把它作为一次明确的
 alignment repair：对齐当前权威契约、补 claim、证明主线行为，而不是改写历史计划。
 
 ---

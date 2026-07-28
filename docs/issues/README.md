@@ -1,7 +1,10 @@
 
 # issues/ - Problem Registry
 
-This directory records defects, gaps, incidents, and fix ledgers. It is not runtime truth; verify against code and current runtime before claiming an item is fixed or still open.
+This directory records forensic sources, historical gaps, incidents, and fix
+ledgers. It is not runtime truth and it is no longer the live work tracker.
+Verify against current code/runtime, then use GitHub Issues for every problem
+that remains open.
 
 ## Subfolders
 
@@ -25,6 +28,11 @@ This directory records defects, gaps, incidents, and fix ledgers. It is not runt
 ## Agent Rule
 
 Do not trust old fixed/open labels without checking current code. For safety-sensitive issues, follow `../governance/protocols/BUG_TRIAGE_PROTOCOL.md`.
+
+An `open`, `pending`, or `待修` marker in a local document is historical unless
+the row links to an open GitHub Issue. GitHub is the sole source for current
+ownership, priority, progress, and closure. Local documents may preserve the
+evidence and decision context, but must not become a parallel status system.
 
 ---
 

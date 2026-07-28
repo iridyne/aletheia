@@ -1621,6 +1621,16 @@ _TRADING_BOUNDS: dict[str, tuple[float, float]] = {
     "persona_pyramid_add_trigger_pct": (0.1, 50.0),
 }
 _VALID_CONFIDENCE = {"high", "medium", "speculative"}
+_EXPERIMENTAL_ENABLEMENT_HOLDS = {
+    "persona_pyramid_enabled": (
+        "Persona pyramid is a policy helper with no production trigger or "
+        "risk-approved add-order materializer; new enablement is blocked"
+    ),
+    "persona_auto_advance_enabled": (
+        "Persona auto-advance is safety-held until a prospective "
+        "Persona/policy/step verdict exists; new enablement is blocked"
+    ),
+}
 
 
 @router.post("/trading")
@@ -1642,6 +1652,8 @@ async def update_trading_config(req: TradingConfigUpdate):
         elif field == "active_persona":
             if value not in (cfg.trading.personas or {}):
                 raise HTTPException(400, f"active_persona must be one of {sorted(cfg.trading.personas or {})}")
+        elif field in _EXPERIMENTAL_ENABLEMENT_HOLDS and value is True:
+            raise HTTPException(409, _EXPERIMENTAL_ENABLEMENT_HOLDS[field])
         elif field in _TRADING_BOUNDS:
             lo, hi = _TRADING_BOUNDS[field]
             if not (lo <= value <= hi):

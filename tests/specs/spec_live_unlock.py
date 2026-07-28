@@ -312,13 +312,13 @@ def test_restricted_tool_class_is_empty_set():
 
 
 # ---------------------------------------------------------------------------
-# GAP-LU-02: §4b — unlock must elevate operator.permission_mode to Auto
+# GAP-LU-02: §4b — unlock records the preparatory operator authority state
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
-        "LU-B07", "live_unlock_contract", "§4b pi full authority on unlock", "L2b",
+        "LU-B07", "live_unlock_contract", "§4b preparatory authority on unlock", "L2b",
         "POST /api/settings/live-unlock transitions operator.permission_mode to Auto",
     ),
 )
@@ -364,7 +364,7 @@ def test_live_unlock_sets_operator_auto(tmp_path, monkeypatch):
 
 @spec_claim(
     SpecClaim(
-        "LU-C04", "live_unlock_contract", "§4b pi authority invariant", "L2c",
+        "LU-C04", "live_unlock_contract", "§4b authority-state invariant", "L2c",
         "After live_unlock: live.state=live_limited AND operator.permission_mode=Auto (both must hold)",
     ),
 )
@@ -518,17 +518,15 @@ def test_live_lock_resets_operator_permission(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# GAP-LU-07: §4b — UI warning wall text elements (static source check)
+# GAP-LU-07: §4b — UI states the experimental boundary honestly
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
-        "LU-S03", "live_unlock_contract", "§4b ui warning wall", "L2a",
-        "Settings.tsx LiveUnlockWarningWall contains all three required elements: "
-        "(1) System Operator 将完全自主执行交易，操作不可预测 "
-        "(2) 真实资金损失可能发生 "
-        "(3) 开启后所有操作由人类承担后果",
+        "LU-S03", "live_unlock_contract", "§4b honest ui boundary", "L2a",
+        "Settings presents Live Unlock as an experimental authority prerequisite "
+        "and explicitly states that it does not route new Proposals to live execution.",
     ),
 )
 def test_ui_warning_wall_three_elements():
@@ -539,12 +537,48 @@ def test_ui_warning_wall_three_elements():
     source = settings_tsx.read_text(encoding="utf-8")
 
     required_phrases = [
-        "System Operator 将完全自主执行交易，操作不可预测",
-        "真实资金损失可能发生",
-        "开启后所有操作由人类承担后果",
+        "不会把新 Proposal 路由到实盘",
+        "当前自主 Proposal 仍使用 Paper execution mode",
+        "does not change new-Proposal routing",
     ]
     for phrase in required_phrases:
         assert phrase in source, (
-            f"§4b UI warning wall MISSING required element: '{phrase}' "
-            f"not found in Settings.tsx — all three consent elements must be present"
+            f"§4b honest-boundary text missing: '{phrase}'"
         )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "EX-04/#418 — unlocked state is not consumed by new-Proposal "
+        "execution-mode selection"
+    ),
+)
+@spec_claim(
+    SpecClaim(
+        "LU-C07",
+        "live_unlock_contract",
+        "§4b new-proposal live mode join",
+        "L2c",
+        "With live requested and live_limited authority present, the production "
+        "new-Proposal selector resolves the selected broker's exact "
+        "*_live_limited mode before Proposal persistence.",
+        status="missing",
+    ),
+)
+def test_unlocked_state_selects_live_mode_for_new_proposal(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.agent_shell import commands
+
+    cfg = SimpleNamespace(
+        exchange=SimpleNamespace(
+            mode="live",
+            name="okx",
+            paper_execution_mode="okx_demo",
+        ),
+        live=SimpleNamespace(state="live_limited"),
+    )
+    monkeypatch.setattr(commands.config_loader, "load_config", lambda: cfg)
+
+    assert commands._configured_paper_execution_mode() == "okx_live_limited"

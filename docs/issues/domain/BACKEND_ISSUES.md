@@ -17,13 +17,30 @@
 > **来源**：6 个并行 subagent 审计（agents+runtime / risk+execution / storage+knowledge /
 > server+config / lifecycle+gateway / model+telegram+update+cli）+ 早期对照表
 
+## 0g. 2026-07-28 current-code revalidation
+
+GitHub Issues is now the live tracker. Old `open`/`待修` markers below are
+forensic history unless they link to an open Issue.
+
+| Registry item | Current result | GitHub tracking |
+|---|---|---|
+| PFA-01 | ✅ Current code canonicalizes settlement timestamps and has reconciliation plus focused tests | None; resolved in current code |
+| LCO-BE-01 | ✅ `GET /api/analytics/learning-contribution`, typed read models, UI consumer, and focused tests exist | None; resolved in current code |
+| PERF-01..10 | ✅ The cited audit's own implementation table records all ten as implemented; do not reopen from this stale summary | None; re-open only on a current regression |
+| TC-X01 | Still open | [#386](https://github.com/iridite/aletheia/issues/386) |
+| TC-X02 | Dead helper confirmed; no user-facing defect or supported-path break demonstrated | No Issue; remove in a bounded cleanup if touched |
+| V1 | Still open: attempted repair IDs are not rebuilt during recovery | [#427](https://github.com/iridite/aletheia/issues/427) |
+| V2 | Existing artifact-backed `seedCompactedDates()` recovery is present | None; no current contradiction demonstrated |
+| V3 | Current `SessionRuntime.restore()` rebuilds persisted branch state | None; resolved in current code |
+| TST-A02 | ✅ Only one `GS-S03` remains in current specs | None; resolved in current code |
+
 ---
 
 ## 0f. Paper Funding Accounting Integrity（2026-07-21）
 
 | ID | 状态 | 问题 | 当前安全边界 / 下一步 |
 |---|---|---|---|
-| PFA-01 | 🔴 open | `paper_internal` 永续 funding 用原始时间戳完全相等作为结算身份；交易所历史时间常带 `1-4ms` 偏移，既会让已存在的历史 funding 无法接回，也会把同一结算点重复计费。至少一笔已完成仓位因此持久化了错误 PnL | 保持未知 funding 为 `NULL`，不得按 0 猜测或直接修库。完整证据、影响面、原子修复与防复发验收见 [`PAPER_FUNDING_ACCOUNTING_INTEGRITY_2026-07-21.md`](../audits/PAPER_FUNDING_ACCOUNTING_INTEGRITY_2026-07-21.md) 和 [`paper_funding_accounting_integrity_repair_2026-07-21.md`](../../plans/trading-pipeline/paper_funding_accounting_integrity_repair_2026-07-21.md) |
+| PFA-01 | ✅ resolved on current code | Historical defect: `paper_internal` funding settlement identity previously required exact raw timestamps. Current `local-paper-funding-v2` canonicalization, reconciliation tooling, and focused tests close the code gap; retain the audit as forensic evidence | No open Issue |
 
 该问题按 `BUG_TRIAGE_PROTOCOL.md` 归类为 A 类 accounting/outcome
 integrity repair，不改变策略、Risk、Execution Gateway、Live、凭据或硬限额。
@@ -35,7 +52,7 @@ integrity repair，不改变策略、Risk、Execution Gateway、Live、凭据或
 
 | ID | 状态 | 问题 | 当前安全边界 / 下一步 |
 |---|---|---|---|
-| LCO-BE-01 | 🟠 open | A1 已持久化 aggregate cluster/source/metric/lifecycle/job-health 事实和 exact exposure/outcome identities，但当前没有 bounded、cached、typed 的 owner-facing contribution API；部分细节需在单 experiment detail 中有界重建，persisted mirror count 也不能冒充 proven agreement | 以 `learning_observability_contract.md` 的 `lco-v1` 为唯一目标。GET 不得运行 evaluator/lifecycle/admission/config mutation；summary 读 persisted verdict，仅单 experiment detail 可有界重建 cohort。`LCO-S01/02`、`LCO-B01..05`、`LCO-C01/03/04/06` 目前 strict-xfail/missing |
+| LCO-BE-01 | ✅ resolved on current code | Current code exposes bounded `lco-v1` contribution reads through `/api/analytics/learning-contribution`, typed read models and a UI consumer, with focused route/read-model/spec tests | No open Issue |
 
 这不是新测量逻辑、schema、scheduler job 或 admission 授权。不得用
 `/analytics/alpha-attribution`、portfolio PnL 或 knowledge counts 代替 prospective contribution
@@ -50,9 +67,9 @@ verdict。实施分 `LCO-BE1/BE2`，需要 direct `:8788` 冷/热延迟和无写
 
 - [`PERFORMANCE_CONCURRENCY_SQLITE_AUDIT_2026-07-17.md`](../../research/audits/PERFORMANCE_CONCURRENCY_SQLITE_AUDIT_2026-07-17.md)
 
-该报告登记 PERF-01～PERF-10，并给出固定整改顺序和统一测量指标。它是开放问题和后续
-实施证据的引用入口，**不是提高并发、拆除 Universe 原子事务、修改交易安全边界或启动
-Live 的授权**。当前所有条目均为“待实施”；实现前仍需按工作包独立授权、回归和测量。
+该报告登记 PERF-01～PERF-10，并给出固定整改顺序和统一测量指标。报告当前实施状态表已
+将十项全部标记为“已实现”；本节旧的“待实施”描述不再是 live backlog。只有当前回归证据
+出现时才创建 GitHub Issue，不能从旧静态结论批量重开。
 
 ---
 
@@ -60,8 +77,8 @@ Live 的授权**。当前所有条目均为“待实施”；实现前仍需按�
 
 | ID | 状态 | 问题 | 当前安全边界 / 下一步 |
 |---|---|---|---|
-| TC-X01 | 🔴 待独立修复 | Exchange-backed futures 没有按 Position 归集真实账户 funding/bill 的生产写入器；`outcome_integrity.py` 只接受 `broker_ledger`，当前仓库只有校验和消费，没有对应正向采集链 | 当前会明确留下 `incomplete_funding_economics`，不会把不完整净 PnL 送进 Attribution/Learning。另开 exchange 任务接入私有账单、账户/合约/时间窗匹配和幂等归集，再补真实正向 E2E；不得用 local simulation 代替交易所账单 |
-| TC-X02 | 🟡 待裁决 | Bitget futures 入场的批准 SL/TP 已通过真实 create-order 的 preset 字段提交；但旧的 post-fill `_try_place_tpsl()` 只被测试调用，生产代码不调用，也没有对应动态 TPSL ID 生命周期 | 不把这个 dead helper 当作“preset 未提交”的 blocker。另开 exchange 任务决定删除死代码，或实现可核对的动态 TPSL 创建/更新/取消与持久身份；不要在本次 active-paper 修复中扩大范围 |
+| TC-X01 | 🔴 open | Exchange-backed futures 没有按 Position 归集真实账户 funding/bill 的生产写入器；`outcome_integrity.py` 只接受 `broker_ledger`，当前仓库只有校验和消费，没有对应正向采集链 | Tracked by [#386](https://github.com/iridite/aletheia/issues/386) |
+| TC-X02 | ⚪ no live issue | Bitget futures 入场已通过 preset 字段提交批准的 SL/TP；旧 `_try_place_tpsl()` 当前仍只有测试调用，但未证明 supported path 行为错误 | 不为 dead helper 单独扩建动态 TPSL 生命周期；触碰该代码时做有界删除/收口 |
 
 该 active `paper_internal` 断路修复曾提交在独立分支，但尚未在最新 `master`
 后代上跑全量、创建新 policy epoch/window 或完成主线 runtime soak，因此仍不具备
@@ -93,11 +110,11 @@ Live 的授权**。当前所有条目均为“待实施”；实现前仍需按�
 
 | # | 违例 | 位置 | 危害 | 修复方向 |
 |---|------|------|------|----------|
-| V1 | attemptedRepairDecisionIds 重启丢失->已尝试 repair 被重跑一次 | operator-shell/src/operator_loop.ts:69 | 低 | startup 从 operator_events 重建 Set |
-| V2 | compactedDates 重启依赖 artifacts 写回有竞态 | operator-shell/src/operator_loop.ts:68 | 低 | 已有 seedCompactedDates 兜底 |
-| V3 | SessionRuntime.branches in-flight summary 纯内存态 | operator-shell/src/session_runtime.ts:92 | 低 | summary 随 message/event 落 Python |
+| V1 | attemptedRepairDecisionIds 重启丢失->已尝试 repair 被重跑一次 | operator-shell/src/operator_loop.ts:69 | 低 | [#427](https://github.com/iridite/aletheia/issues/427) |
+| V2 | compactedDates 重启依赖 artifacts 写回有竞态 | operator-shell/src/operator_loop.ts:68 | 低 | 当前已有 artifact-backed `seedCompactedDates()`；无独立开放 Issue |
+| V3 | SessionRuntime.branches in-flight summary 纯内存态 | operator-shell/src/session_runtime.ts:92 | 低 | 当前 `SessionRuntime.restore()` 已从持久状态恢复；无独立开放 Issue |
 
-> 状态: V1-V3 已落档, 危害低, 暂未真修。
+> 当前状态：仅 V1 仍有可验证缺口，由 GitHub #427 跟踪。
 
 ## 0a. 当前状态与开放 backlog → 见 FIX_PLAN
 

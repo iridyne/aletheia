@@ -1,11 +1,15 @@
 # 设计：System-Operator 集成的动态仓位决策 + 交易 Persona + Learning 策略域
 
-> **STATUS: IMPLEMENTED P0–P4（2026-07-02,全部默认休眠 flag-gated,零行为变化直到 owner 开启)。**
-> 唯一未接的:P4b 金字塔的**实盘 scale-in 下单执行**(policy 已实现并测过,但真实下单是独立
-> owner-gated 步骤,会 place orders,需 owner 给定 max 数值 + 明确授权)。
+> **STATUS: P0–P2 已有生产消费者；P3–P4 为实验或 helper（2026-07-28 能力事实复核）。**
+> 金字塔当前只有经测试的纯 `pyramid_plan` helper，没有 Scheduler/Operator 生产调用者，也没有
+> paper/demo/live 的 Risk→Order→Fill→Position materializer。Settings/API 已阻止新开启。
 > 落地映射:P0=`3e8015f`(视图完整性门,修 #1/#2)· P1=`ad580a1`(persona 区间 schema+resolver)·
 > P2=`9c27dc4`(Operator 规则式上下文决策)· P3=`3fbdd79`(regime 干净窗学习)· P4=`884e035`
 > (渐进解冻+金字塔 policy)。specs:PS-S01..S12 + PL-ADOPT-19..21。所有 flag 默认 OFF。
+>
+> **2026-07-28 能力事实修正**:定时器间隔和宽泛健康检查不构成当前 Persona/策略步骤的前瞻证据。
+> `persona_rollout` 现为只读 safety hold，不再自动打开 progressive unlock 或 persona learning；
+> GitHub #409 跟踪真正的逐步授权证据缺口。
 >
 > **owner 开启顺序建议**:先 `persona_sizing_enabled`(选 persona,静态 init)→ 跑一段干净窗 →
 > 开 progressive_unlock(逐个解冻)→ 数据够了开 persona_learning → 最后(单独授权)接金字塔实盘。

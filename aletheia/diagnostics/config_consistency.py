@@ -151,7 +151,25 @@ def _check_live_state(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
         return ConfigInconsistency(
             field_path="live.state",
             severity="warning",
-            message="exchange.mode=live but live.state=live_disabled — live orders are blocked",
-            fix_hint="Set live.state to 'live_enabled' to allow live trading, or keep it disabled intentionally",
+            message=(
+                "exchange.mode=live requests experimental readiness, but "
+                "live.state=live_disabled; new proposals still use the configured "
+                "paper/demo execution mode"
+            ),
+            fix_hint=(
+                "Keep live disabled or use the audited Live Unlock prerequisite. "
+                "Unlocking does not enable live proposal routing (GitHub #418)"
+            ),
         )
-    return None
+    return ConfigInconsistency(
+        field_path="exchange.mode",
+        severity="warning",
+        message=(
+            "experimental Live authority is unlocked, but new proposals still use "
+            f"exchange.paper_execution_mode={cfg.exchange.paper_execution_mode}"
+        ),
+        fix_hint=(
+            "Use exchange.mode=demo for normal operation; keep live selected only "
+            "when evaluating readiness until GitHub #418 is implemented"
+        ),
+    )

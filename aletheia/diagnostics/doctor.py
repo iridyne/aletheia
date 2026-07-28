@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+import os
 import platform
 from pathlib import Path
 import sys
@@ -421,21 +422,40 @@ def _probe_process(report: Report) -> None:
     from aletheia.gateway.pidfile import is_running, read_pid, port_in_use
     from aletheia.config.loader import load_config
     cfg = load_config()
-    running = is_running()
-    pid = read_pid()
-    port = cfg.app.dashboard_port
     host = cfg.app.bind_host
+    runtime_port = os.environ.get("ALETHEIA_RUNTIME_PORT")
+    try:
+        port = int(runtime_port) if runtime_port else cfg.app.dashboard_port
+    except ValueError:
+        port = cfg.app.dashboard_port
 
-    if running:
-        report.add("process.gateway", "ok", f"running (PID {pid}) on {host}:{port}")
+    # An API Runtime knows its own process and bound port. Prefer that identity
+    # over the shared lifecycle pidfile, which belongs to the managed current
+    # Gateway and may describe another local instance.
+    if runtime_port:
+        pid = os.getpid()
+        runtime_id = os.environ.get("ALETHEIA_RUNTIME_ID", "runtime-local-current")
+        report.add(
+            "process.gateway",
+            "ok",
+            f"serving {runtime_id} (PID {pid}) on {host}:{port}",
+        )
         _probe_frontdoor_process(report, host, port)
-    elif port_in_use(port, host):
-        report.add("process.gateway", "warn",
-                   f"port {port} held but no tracked PID (orphan / ghost socket)",
-                   "`aletheia doctor --fix` (clears orphans) or `aletheia gateway stop`")
+        running = True
     else:
-        report.add("process.gateway", "info", "stopped",
-                   "`aletheia gateway start` (or `aletheia doctor --fix`)")
+        running = is_running()
+        pid = read_pid()
+
+        if running:
+            report.add("process.gateway", "ok", f"running (PID {pid}) on {host}:{port}")
+            _probe_frontdoor_process(report, host, port)
+        elif port_in_use(port, host):
+            report.add("process.gateway", "warn",
+                       f"port {port} held but no tracked PID (orphan / ghost socket)",
+                       "`aletheia doctor --fix` (clears orphans) or `aletheia gateway stop`")
+        else:
+            report.add("process.gateway", "info", "stopped",
+                       "`aletheia gateway start` (or `aletheia doctor --fix`)")
 
     # Only meaningful while running: is the live process on stale code?
     if running:
