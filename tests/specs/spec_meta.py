@@ -12,6 +12,9 @@ SpecLevel = Literal["L2a", "L2b", "L2c"]
 # time but the conformance matrix rendered it as "?" (unknown). Now the type reflects
 # reality: a claim can be superseded by a newer contract without being deleted, and the
 # matrix knows how to icon it.
+# Compatibility vocabulary for claim-level conformance only. The stored value
+# "implemented" means that this individual executable claim conforms; it is not
+# a product implementation or Product Support status.
 SpecStatus = Literal["implemented", "partial", "missing", "superseded"]
 
 _VALID_SPEC_STATUSES = frozenset({"implemented", "partial", "missing", "superseded"})
@@ -19,6 +22,12 @@ _VALID_SPEC_STATUSES = frozenset({"implemented", "partial", "missing", "supersed
 
 @dataclass(frozen=True)
 class SpecClaim:
+    """One executable-contract claim.
+
+    ``status`` is local claim conformance. It must never be used to infer that
+    a complete product capability is Implemented or Supported.
+    """
+
     claim_id: str
     contract: str
     section: str

@@ -28,7 +28,7 @@ logger = logging.getLogger("aletheia.runtime_session")
 
 _SCOPE_PATH = (
     Path(__file__).resolve().parents[2]
-    / "docs" / "product" / "definition" / "ACTIVE_RUNTIME_SCOPE.md"
+    / "docs" / "product" / "ACTIVE_RUNTIME_SCOPE.md"
 )
 
 # In-process pointer to the current session (a RuntimeSession.model_dump() dict),

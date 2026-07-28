@@ -124,7 +124,7 @@ def test_operator_loop_converged_actions_not_emitted():
 
 
 @spec_claim(
-    SpecClaim("PI-S04", "promotion_gates_contract", "§4 PI approval gate", "L2b",
+    SpecClaim("PI-S04", "legacy_promotion_gates", "historical §4 PI approval gate", "L2b",
               "promotion to paper_running requires a recommend_promote PiDecision: blocked when "
               "absent, allowed when present (the PI/operator approval gate is the single chokepoint)",
               status="superseded"),

@@ -1,6 +1,14 @@
-# Learning Contribution Observability Contract
+---
+id: learning-contribution-observability
+status: accepted
+related_contracts:
+  - ../contracts/learning_contract.md
+supersedes: []
+---
 
-> Contract level: L2 target contract.
+# Learning Contribution Observability Proposal
+
+> Proposal status: accepted design, partially implemented, not a support claim.
 > Feature id: `learning_contribution_observability`.
 > Projection schema: `lco-v1`.
 > Executable claim namespace: `LCO-*` in
@@ -14,9 +22,11 @@
 > elsewhere in the repository.
 > Last aligned with code: 2026-07-19, after Learning A1 integrity PR #135.
 
-This contract defines the owner-facing, read-only projection of the measured
-Learning loop. It extends `learning_contract.md` and
-`learning_evolution_contract.md`; it does not alter their measurement,
+This proposal defines the intended owner-facing, read-only projection of the measured
+Learning loop. Current behavior remains defined by
+[`learning_contract.md`](../contracts/learning_contract.md); the broader measured
+lifecycle is proposed in
+[`learning_evolution.md`](learning_evolution.md). This proposal does not alter current measurement,
 experiment, lifecycle, authority, or safety semantics.
 
 ## 1. Outcome And Boundary

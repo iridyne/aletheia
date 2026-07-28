@@ -1,5 +1,10 @@
 # 文档体系金标准化 — 覆盖度地图与细化计划
 
+> **Frozen migration history**: this plan has been executed and superseded by
+> [`documentation_governance.md`](../../governance/policies/documentation_governance.md).
+> Do not update its progress, counts, paths, or checklists. It is retained only
+> to explain the previous migration.
+
 > 目的:把 `docs/` 重构成"实现交易系统的金标准"金字塔——上层越宏观、下层越具体,
 > 任何实现都能在文档里找到金标准依据,任何文档条目都能追到代码。
 > 金标准冲突裁决:**文档为准,代码追文档**(已实现部分的偏差记为"待修 issue")。

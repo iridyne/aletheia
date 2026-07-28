@@ -143,8 +143,8 @@ catch-up due/current from the evaluator watermark; it does not invent a durable 
 one-shot catch-up job. A recovered current `healthy` state does not erase the durable most recent
 failure. Historical `learning_verdict_runner` rows remain explicitly unregistered history.
 
-The full target response and bounded/cache rules are in
-[`learning_observability_contract.md`](learning_observability_contract.md) §6.6-7 (`LCO-B04`,
+The full proposed response and bounded/cache rules are in
+[`learning_observability.md`](../proposals/learning_observability.md) §6.6-7 (`LCO-B04`,
 `LCO-C03`).
 
 **timeout 列说明**：`—` 表示该 job 没有在 `_ASYNC_JOB_TIMEOUT_SEC` 中声明超时，直接调用 `_guarded()` 包装，不经过 `_run_async_with_timeout` / `_run_sync_with_timeout` 的时间盒逻辑。

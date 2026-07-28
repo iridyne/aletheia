@@ -1,14 +1,23 @@
-# Learning Evolution Contract
+---
+id: learning-evolution
+status: accepted
+related_contracts:
+  - ../contracts/learning_contract.md
+supersedes: []
+---
 
-> Contract level: L2 target contract.
-> Status: proposed target; A1 measurement-integrity claims are implemented/partial as
+# Learning Evolution Proposal
+
+> Proposal status: accepted design, not a product implementation claim.
+> Current fact: A1 measurement-integrity claims are conforming/partial as
 > recorded in §12, behavior-changing experiment claims remain `missing`, and the owner-facing
 > `lco-v1` projection is specified separately but not implemented.
 > Scope: every Learning-adjacent producer, store, consumer, outcome source, scheduler,
 > report, learned ranker/filter, prompt channel, guard, advisory skill, sizing policy,
 > causal-attribution path, and automatic rollback.
-> This contract extends `learning_contract.md`; the existing contract remains the
-> authority for currently implemented behavior until each claim below becomes GREEN.
+> Current authority: [`learning_contract.md`](../contracts/learning_contract.md).
+> This proposal describes a future measured lifecycle. It does not become a
+> current contract as individual claims turn green.
 
 ## 1. Product Outcome
 
@@ -537,7 +546,7 @@ Hot read endpoints use cached/pre-aggregated data and must not scan Markdown, in
 or perform unbounded SQLite work inside an async handler.
 
 The complete owner-facing contract is
-[`learning_observability_contract.md`](learning_observability_contract.md). Its canonical name is
+[`learning_observability.md`](learning_observability.md). Its canonical name is
 **Learning Contribution Observability**, feature id `learning_contribution_observability`; bare
 "A2" is only a historical sequencing alias. The projection keeps activity, measurement,
 operations and authority as four independent dimensions and exposes no mutation route.

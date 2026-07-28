@@ -1,6 +1,8 @@
 
 # _ai/ - Reusable Agent Workflow And Historical Context
 
+<!-- HISTORICAL-NO-TRACKING -->
+
 This directory contains reusable engineering playbooks and historical agent-produced
 context. It is lower authority than `AGENTS.md`, governance policies, product docs,
 design contracts, code, and executable specs. The external development orchestrator owns
@@ -35,4 +37,5 @@ do not reconstruct those facts from this directory.
 Keep reusable workflow material navigational and concise. Do not store runtime facts such
 as local DB state, gateway process state, credentials, current task/handoff state, worker
 leases, verification ledgers, or external orchestrator session state. Do not update legacy
-`session/` files to coordinate active work.
+`session/`, `status/`, `logs/`, `decisions/`, or `discussions/` files to
+coordinate or report active work.

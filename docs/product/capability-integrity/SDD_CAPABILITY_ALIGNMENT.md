@@ -10,7 +10,7 @@ as `CAPABILITY_GROUND_TRUTH.md`.
 |---|---|---:|
 | Executable SDD | Discovered spec modules | 100 |
 | Executable SDD | Registered claims | 1,142 |
-| Executable SDD | Implemented / partial / missing / superseded claims | 1,115 / 12 / 14 / 1 |
+| Executable SDD | Conforming / partial / missing / superseded claims | 1,115 / 12 / 14 / 1 |
 | Capability Ground Truth | Product capabilities | 100 |
 | Capability Ground Truth | Supported / Implemented / Partial / Experimental / Broken | 68 / 4 / 6 / 21 / 1 |
 
@@ -25,8 +25,8 @@ product-support percentage.
 | Class | Capability examples | Finding |
 |---|---|---|
 | Correctly scoped local claims | Risk gates, paper execution, causal identity, persistence invariants | SDD is useful and prevents implementation drift. Ground Truth adds the product-level final-result and support-surface decision. |
-| Complete implementation outside support | EX-06, EX-12, EX-13 | Implemented claims are accurate, but external exchange execution is not part of `crypto-paper-mainline-v1`; the capabilities correctly remain `Implemented`. |
-| Intentional experiments | Serenity, shadow trades, Learning experiments, live preparation | Implemented subpaths do not make the experiments Supported. This is a product-scope decision, not an SDD failure. |
+| Complete implementation outside support | EX-06, EX-12, EX-13 | Conforming claims are accurate, but external exchange execution is not part of `crypto-paper-mainline-v1`; the capabilities correctly remain `Implemented`. |
+| Intentional experiments | Serenity, shadow trades, Learning experiments, live preparation | Conforming subpaths do not make the experiments Supported. This is a product-scope decision, not an SDD failure. |
 | Local implementation without a product consumer | LN-17, EX-15 | Persona pyramid and scale-in claims do not prove an add Order or Position update. These capabilities remain Partial. |
 | Honest safety experiment | LN-16, LN-18 | `PS-S10` proves consumer filtering and distress refreeze; `PS-S13` proves the scheduled rollout is read-only. Neither lifetime closes nor elapsed time become prospective evidence for the current Persona/policy, so both remain Experimental. |
 | Composite capability corrected by boundary | LN-14 | `PS-S03` proves persona notional changes sizing; `PS-S14` crosses the result into immutable Proposal quantity. Settings assigns leverage/stop/add ranges to separate experiments instead of treating them as base sizing. |
@@ -76,7 +76,7 @@ experiments. Their implemented subclaims are not product-support declarations.
 - that an implemented experimental path belongs to the supported product;
 - that the full capability produces the promised owner-visible result.
 
-The Conformance Matrix therefore reports a **claim implementation ratio**, not
+The Conformance Matrix therefore reports a **claim conformance ratio**, not
 “coverage.” Product status remains authoritative only in
 `CAPABILITY_GROUND_TRUTH.md`.
 

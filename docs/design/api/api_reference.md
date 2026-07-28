@@ -174,22 +174,12 @@ the same two completeness columns; it writes an empty realized-PnL cell rather t
 | GET | `/analytics/learning-funnel` | Learning write/consume visibility, lesson status counts, conservative contradiction count |
 | GET | `/analytics/learning-contribution` | Additive `lco-v1` bounded read-only owner summary for current Learning experiments, identity-matched measurement, cohort integrity, evaluator health and recommendation-only lifecycle state. Legacy activity aggregates remain for compatibility but are not contribution evidence. No evaluation or mutation is run. |
 
-### Remaining Learning Contribution Observability targets
+### Future Learning Contribution API
 
-The current endpoint index above contains the implemented minimal summary. The
-following additional routes remain the approved **target contract**, not current
-endpoint claims. They must not be presented in UI, OpenAPI expectations, or
-owner instructions until their implementation is proved. Field-level schema,
-bounds, cache behavior and honesty rules are normative in
-[`learning_observability_contract.md`](../contracts/learning_observability_contract.md).
-
-| Method | Target path | Purpose |
-|---|---|---|
-| GET | `/learning/paths` | Declared consumer/settings/measurement capability, authority ceiling and fallback |
-| GET | `/learning/hypotheses` | Paginated scoped hypothesis ledger |
-| GET | `/learning/experiments` | Paginated current/historical experiment and lifecycle summary |
-| GET | `/learning/experiments/{experiment_id}` | One bounded cluster, verdict and lifecycle drill-down |
-| GET | `/learning/health` | Effective switches, evaluator continuity, durable failure and catch-up state |
+Only the implemented endpoint indexed above is part of the current API
+reference. Additional routes are design proposals in
+[`learning_observability.md`](../proposals/learning_observability.md) and must
+not appear in current UI, OpenAPI expectations, or owner instructions.
 | GET | `/learning/exposures/{entity_id}` | Bounded indexed influence explanation for an explicit entity type |
 
 The targets are GET-only cached read projections. They run no evaluator or

@@ -99,6 +99,7 @@ def test_review_checks_cover_each_language_without_release_builds() -> None:
 
     assert "ruff check" in commands
     assert "test_architecture_fitness.py" in commands
+    assert "python scripts/check_docs.py" in commands
     assert "npm run lint" in commands
     assert "npm test" in commands
     assert "npx tsc -b" in commands

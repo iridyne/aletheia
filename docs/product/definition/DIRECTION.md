@@ -11,7 +11,7 @@
 > Last updated: 2026-07-12.
 
 The currently admitted executable subset is declared separately in
-[ACTIVE_RUNTIME_SCOPE](ACTIVE_RUNTIME_SCOPE.md). That file is machine checked and
+[ACTIVE_RUNTIME_SCOPE](../ACTIVE_RUNTIME_SCOPE.md). That file is machine checked and
 must stay smaller than, or equal to, this broader product direction.
 
 ---
@@ -32,7 +32,7 @@ market observation -> opportunity -> System Operator decision
 Counts, attractive UI states, and retrospective narratives are not proof that
 the loop improves trading. A path may influence behaviour only with its own
 causal record, outcome quality checks, and the measured contribution gates in
-[learning_evolution_contract](../../design/contracts/learning_evolution_contract.md).
+[learning_evolution_contract](../../design/proposals/learning_evolution.md).
 Round admission is governed by [EXPERIMENT_PROTOCOL](../experiments/EXPERIMENT_PROTOCOL.md),
 not by this document.
 
@@ -78,14 +78,14 @@ that influence helped.
 
 The current contract is [learning_contract](../../design/contracts/learning_contract.md).
 The measured promotion, control, attribution, and demotion target is
-[learning_evolution_contract](../../design/contracts/learning_evolution_contract.md).
+[learning_evolution_contract](../../design/proposals/learning_evolution.md).
 
 ## 4. Trade planning and execution honesty
 
 An entry is a planned risk decision, not a gambler-style market click. For a
 native limit entry, the product direction requires a usable entry price, stop
 loss, take profit, and expected reward-to-risk. The implementation contract and
-its issue ledger decide what is currently enforced and record any missing-field
+Product Ground Truth and current code decide what is currently enforced; GitHub records any missing-field
 or price-geometry gap. Every order still passes the Risk Engine and the single
 Execution Gateway, and exchange rules remain the final authority.
 
@@ -107,8 +107,8 @@ learning, and settings—rather than preserving obsolete module names. Existing
 legacy strategy records may remain visible for historical attribution, but the
 interface must not imply that a removed executable RuleSet/DSL strategy engine
 is driving trades. A broad navigation redesign remains an owner-approved
-information-architecture decision; concrete UI gaps belong in
-[FRONTEND_ISSUES](../../issues/domain/FRONTEND_ISSUES.md), not in this direction document.
+information-architecture decision; concrete UI gaps belong in GitHub Issues,
+not in this direction document.
 
 ## 6. Engineering choices
 
@@ -122,18 +122,18 @@ information-architecture decision; concrete UI gaps belong in
   coverage. See [TESTING](../../operations/development/TESTING.md) and
   [PYTEST_OPTIMIZATION_GUIDE](../../operations/development/PYTEST_OPTIMIZATION_GUIDE.md).
 - UI latency and missing price states are operational defects to measure and
-  record in the issue ledger. They are not evidence for a language migration.
+  track in GitHub Issues. They are not evidence for a language migration.
 
 ## 7. Source-to-home map
 
 | Original discussion theme | Canonical home | What belongs there |
 | --- | --- | --- |
 | Why the system must learn before the next evaluation | [VISION](VISION.md), [EXPERIMENT_PROTOCOL](../experiments/EXPERIMENT_PROTOCOL.md) | product bet and evaluation gates |
-| Learning, correction, attribution, and Universe diversity | [learning_contract](../../design/contracts/learning_contract.md), [learning_evolution_contract](../../design/contracts/learning_evolution_contract.md) | implementation obligations and measurable authority |
+| Learning, correction, attribution, and Universe diversity | [learning_contract](../../design/contracts/learning_contract.md), [learning_evolution_contract](../../design/proposals/learning_evolution.md) | implementation obligations and measurable authority |
 | System Operator responsibilities and naming | [operator_layer](../../design/operator/operator_layer.md), [agent_contracts](../../design/contracts/agent_contracts.md) | role, tools, cadence, and safety boundary |
 | Planned limit entries and four entry fields | [execution_contract](../../design/contracts/execution_contract.md), [risk_engine_contract](../../design/contracts/risk_engine_contract.md) | executable order/risk behaviour |
 | Serenity research | [serenity_contract](../../design/contracts/serenity_contract.md) | evidence and promotion boundary |
-| UI layout, price-feed, loading, and navigation gaps | [FRONTEND_ISSUES](../../issues/domain/FRONTEND_ISSUES.md) | evidence-backed, actionable UI work |
+| UI layout, price-feed, loading, and navigation gaps | GitHub Issues | evidence-backed, actionable UI work |
 | Test-speed practice | [TESTING](../../operations/development/TESTING.md), [PYTEST_OPTIMIZATION_GUIDE](../../operations/development/PYTEST_OPTIMIZATION_GUIDE.md) | test tiers and profiling procedure |
 | Historical decomposition and completed work | `docs/_ai/DISCUSSION_*.md` | dated process evidence; not current product truth |
 

@@ -1,0 +1,26 @@
+# Design Proposals
+
+Proposals describe substantial future behavior without claiming that behavior
+already exists.
+
+Create one only for a major new capability, a cross-domain change, or a
+trust-boundary change. Ordinary bugs, narrow refactors, and routine
+documentation or operations changes use a GitHub Issue when tracking is needed
+and a PR for review.
+
+## Lifecycle
+
+| State | Meaning |
+|---|---|
+| `draft` | Design is under review; no implementation claim |
+| `accepted` | Direction is approved; implementation may still be absent |
+| `rejected` | Direction will not be pursued |
+| `implemented` | Current normative behavior has moved to its Contract, Product Truth, Decision, or Operations owner |
+| `superseded` | A newer Proposal or Decision replaced this design |
+
+Proposal state is not work progress. Owners, priorities, checklists, issue
+status, and PR status stay in GitHub. Accepted does not mean implemented.
+
+Use [template.md](template.md). When a Proposal becomes current behavior,
+transfer the normative content to its permanent document role and leave the
+Proposal as stable decision history.

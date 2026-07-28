@@ -1,7 +1,11 @@
 
-# plans/ - Implementation Plans
+# plans/ - Frozen Legacy Plans
 
-Plans describe intended work. They do not override product, governance, or design contracts.
+<!-- LEGACY-FROZEN -->
+
+This entire tree is retained for provenance. Its checklists, status labels,
+dates, and sequencing are historical and must not be used as current work
+state. Do not add plans or update completion markers here.
 
 ## Subfolders
 
@@ -14,8 +18,12 @@ Plans describe intended work. They do not override product, governance, or desig
 | `product-ui/` | Frontend and product definition plans |
 | `trading-pipeline/` | Strategy, Serenity, trade rationale, opportunity lifecycle, paper controls |
 | `strategy-research/` | Research-oriented and exploratory implementation plans |
-| `archive/` | Superseded plans |
+| `archive/` | Plans that were already explicitly archived |
 
 ## Agent Rule
 
-When a plan is implemented or superseded, update its status or move it to `archive/`. Do not leave active-looking plans that are no longer valid.
+Existing plans never override product truth, governance, current contracts,
+code, or GitHub work state. A future major capability, cross-domain change, or
+trust-boundary change belongs in `design/proposals/`. Ordinary bugs belong in a
+GitHub Issue and PR. Implementation ownership, priority, progress, and
+completion remain outside documentation.

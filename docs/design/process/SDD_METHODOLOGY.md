@@ -20,9 +20,9 @@ SDD 通过**前置精确 spec** 消除 ambiguity tax（模糊性导致的幻觉+
 Phase           产出物                     本项目对应                    检查点
 ─────────────────────────────────────────────────────────────────────────────
 1. Constitution 不变的项目宪法             AGENTS.md                     团队对齐
-2. Specify      需求/验收标准              docs/design/*_contract.md     产品审核
+2. Specify      当前契约或重大设计          contracts/ 或 proposals/      产品审核
 3. Clarify      消歧记录(边缘/错误/空态)   docs/research/audits/ + issue  开发者验证
-4. Plan         技术蓝图                   docs/plans/*.md               架构审核
+4. Plan         实施分解                   GitHub Issue + PR              架构审核
 5. Tasks        原子任务分解(1-4h/PR)      外部开发编排器                 依赖+范围审核
 6. Implement    AI 生成 + 人验证           代码 + tests/specs/ claims    双重验证后 commit
 ```
@@ -44,7 +44,7 @@ Phase           产出物                     本项目对应                   
 | System Integration | 集成点写进 spec | agent_contracts + data_layer |
 | Living Specs | spec 随反馈迭代 | "文档为准代码追文档" |
 | Structured Organization | constitution 保证一致性 | 根 `AGENTS.md` + topic-specific guide |
-| Systematic Decomposition | 大功能拆原子 | `docs/plans/` + 外部开发编排器 |
+| Systematic Decomposition | 大功能拆原子 | GitHub Issues/PRs + 外部开发编排器 |
 | Human Orchestration | 人=编排+审核 | checkpoint 制度 |
 | Explicitness | 高具体性驱动安全 | FORBIDDEN_INTENTS, RESTRICTED_TOOLS |
 | Executable Intent | spec 可被 AI 直接执行 | SpecClaim decorator → conformance matrix |
@@ -76,19 +76,19 @@ spec 产出代码/测试/文档 → spec 变更触发重新验证 → 自动一�
 ### 本项目的技术实现
 
 ```
-docs/design/*_contract.md     ← 人类可读 spec（source of truth）
+docs/design/contracts/*.md    ← 当前行为 Contract
         ↓ 提取 claims
 tests/specs/spec_*.py         ← 可执行 spec（@spec_claim decorator）
         ↓ pytest 运行
-Conformance Matrix            ← claim_id → test → status 追踪
+Conformance Matrix            ← claim_id → test → 局部一致性
         ↓ 失败 = drift
-docs/issues/                  ← 仅在偏差未当场修复时登记，不把历史 ledger 当当前真相
+GitHub Issues                 ← 仅在偏差未当场修复时跟踪
 ```
 
 `SpecClaim.status="implemented"` 只表示该条局部不变量有对应实现和测试，不能据此
 推导整项产品能力已经 `Supported`。入口、生产触发、最终消费者、用户可见结果和支持面
 由 `docs/product/CAPABILITY_GROUND_TRUTH.md` 统一判定。Conformance Matrix 展示的是
-**claim implementation ratio**，不是产品能力覆盖率或支持率。
+**claim conformance ratio**，不是产品能力实现率、覆盖率或支持率。
 
 普通 `tests/test_*.py` 回归并不自动成为 SDD。契约行为必须在 `tests/specs/` 中有
 唯一 `claim_id`；`tests/test_spec_conformance.py` 自动发现全部 `spec_*.py`，并拒绝

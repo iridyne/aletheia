@@ -352,10 +352,10 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 - **Time semantics**: verdict `created_at` is evaluation time; window fields are observation bounds
 - **Authority**: measurement only; cannot change experiment stage, multiplier, paper authority,
   Risk, Execution, exchange, or live state
-- **Owner projection target**: the evaluator's persisted output is consumed by the read-only
-  `lco-v1` Learning Contribution Observability projection. That projection is not an agent, adds no
-  scheduler row, and cannot invoke this evaluator or lifecycle control from a GET request. See
-  `learning_observability_contract.md`; `LCO-*` remains missing.
+- **Current owner projection**: the implemented bounded summary is read-only and
+  cannot invoke this evaluator or lifecycle control from a GET request. The
+  broader `lco-v1` design remains the
+  [`learning_observability`](../proposals/learning_observability.md) Proposal.
 
 ---
 
