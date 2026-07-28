@@ -169,7 +169,7 @@ Relock, disable automatic live selection, and return to the current
 ## CI-03 — Market-aware exits promise automatic action but only wake Operator
 
 **Capability:** EX-09 Market-aware position management
-**Status:** Partial / automatic action intentionally absent
+**Status:** Broken / wake producer has no position-decision consumer
 
 **Original product promise**
 
@@ -192,9 +192,12 @@ market_aware_exits enabled
 → Position Manager reads current market signals
 → exit_rules evaluates urgent_exit / tighten_stop / confidence collapse
 → daemon accepts event: wake:urgent_exit or wake:tighten_stop
-→ System Operator reevaluation
+→ entry-opportunity evaluator runs
+→ with no pending entry candidate, returns before attaching wake context
+→ otherwise wake changes the decision fingerprint but is not rendered into the prompt
+→ active decision schema accepts only trade / skip
   OR daemon unavailable: wake_failed + explicit cycle error
-→ no automatic close or stop mutation
+→ no wake-driven hold / adjust / close result
 ```
 
 `aletheia/portfolio/position_manager.py` explicitly preserves Operator
@@ -204,29 +207,35 @@ assert this exact behavior and the failed-delivery path.
 **User impact**
 
 The earlier configuration surface promised automatic protection that was not
-performed. That mismatch is repaired. The remaining limitation is liveness:
-the accepted wake queue is process-local and is not durable across daemon or
-process loss.
+performed. The copy mismatch is repaired, but the narrower review promise is
+still not implemented end to end: the adverse-position evidence cannot produce
+an Operator position decision. Process-local delivery is a secondary liveness
+limitation, not the primary broken join.
 
 **Target state**
 
-Keep the current authority model and describe this capability as
-market-aware Operator wake/review, unless a separate approved design changes
-the execution authority.
+Keep the current authority model. A successful wake must place the exact
+position and adverse evidence in the existing Operator decision input and end
+in one explicit hold, adjust, or close result without granting the evaluator
+direct mutation authority.
 
 **Minimum repair**
 
-The honest naming and failed-delivery result are implemented. Do not add
-autonomous exit authority or a new queue framework under this issue. A durable
-carrier is only justified if observed runtime loss shows the existing
-heartbeat/re-evaluation path is insufficient.
+Reuse the existing daemon, Operator decision record, position adjustment, and
+proactive-close paths. Add the smallest typed position-review branch that
+consumes the wake and records its final result. Do not add autonomous evaluator
+authority, a second Operator, or a new queue framework. Durable delivery remains
+a later decision only if runtime evidence justifies it.
 
 **Acceptance path**
 
 1. Enable the setting and inject an urgent adverse signal for an open position.
-2. Assert a running daemon accepts the urgent wake.
-3. Assert no position/order is mutated before an Operator decision.
-4. Stop the daemon and assert the next attempt records `wake_failed` and an
+2. Assert a running daemon accepts the urgent wake and the Operator receives
+   the exact position id, suggested action, and adverse evidence.
+3. Assert the Operator records one hold, adjust, or close result causally linked
+   to that wake; adjustment/close must use the existing authorized paths.
+4. Assert no position/order is mutated before that Operator decision.
+5. Stop the daemon and assert the next attempt records `wake_failed` and an
    explicit error rather than a successful wake.
 
 **Failure/rollback**

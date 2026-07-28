@@ -20,7 +20,7 @@ mandatory support gate, and it does not authorize implementation.
 | DC-09 Manual agent triggering | Partial | Supported | POST returns a job identity; bounded queue persists queued/running/final states and rejects overload. |
 | EX-04 New-proposal live mode | Broken | Broken | Live unlock is still not consumed at proposal-mode selection; Settings/contract/diagnostics now state the experimental authority-only boundary, `LU-C07` records the missing join, and #418 remains open. |
 | EX-07 Exchange-native TP/SL | Partial | Experimental | Broker/private-fill paths are tested, but external venue behavior is intentionally outside the supported product surface. |
-| EX-09 Market-aware position management | Broken | Partial | Settings names the implemented wake/review behavior; successful delivery and `wake_failed` are now distinguished, but the wake queue remains process-local. |
+| EX-09 Market-aware position management | Broken | Broken | Settings and delivery reporting are honest, but the wake terminates on an empty entry queue; its evidence is not rendered into the Operator prompt; and the active schema rejects hold/adjust/close. |
 | EX-14 Cost-complete exchange close | Partial | Partial | Local paper is complete; external funding/bill producer remains absent; #386. |
 | EX-15 Partial reduce and scale-in | Partial | Partial | Active Operator rejects reduce/scale-in and the dispatcher now fails closed before any broker call; the OKX helper remains an isolated reference without Proposal/Risk authorization. |
 | PF-03 Capital-adjusted curve | Broken | Partial | Capital events remain unconsumed, but Settings now states that adjusted performance is unavailable; #419 remains open for the optional projection. |
@@ -63,8 +63,10 @@ route-order defect was found.
 Subsequent current-state adjustments do not rewrite that historical pass:
 DC-13 first moved from Experimental to Partial when its missing feedback
 consumer was confirmed, then returned to Experimental after the UI explicitly
-bounded More/Less to history-only behavior. PF-03 and EX-09 moved from Broken
-to Partial after false owner-facing promises were removed; LN-19 moved from
+bounded More/Less to history-only behavior. PF-03 moved from Broken to Partial
+after its false owner-facing promise was removed. EX-09 remains Broken after a
+deeper consumer review showed that honest wake-only copy did not create an
+Operator position-decision consumer. LN-19 moved from
 Broken to Supported after its route and endpoint acceptance were repaired.
 LN-03 moved from Partial to Supported after its existing
 `trade_case_study`-lesson consumer was executed with the correct durable source

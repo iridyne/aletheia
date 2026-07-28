@@ -436,7 +436,7 @@ connection and older Windows monitor state remain operational context only.
 |---|---:|---:|---|
 | Capital events → adjusted performance curve | Yes | No | PF-03 Partial; current UI is explicit |
 | Live-unlocked state → new proposal execution mode | Yes | No | EX-04 Broken |
-| Market-aware adverse signal → Operator review wake | Yes | Best-effort in-memory delivery; false delivery is now recorded, no automatic mutation promised | EX-09 Partial |
+| Market-aware adverse signal → Operator position decision | Yes | No; the wake can trigger the entry evaluator, but its evidence is not prompt-visible and the active schema accepts only `trade`/`skip` | EX-09 Broken |
 | Persona leverage/loss/add parameters → production sizing/execution | Yes | Partial/no | Reference-only fields cannot progressively unlock; LN-17 pyramid remains Partial; LN-14 base sizing is Supported |
 | Exchange private funding bill → cost-complete outcome | No | Outcome verifier fails closed | EX-14 Partial |
 | Pyramid plan → Risk/Gateway/position materialization | Yes | No | LN-17/EX-15 Partial |
@@ -454,3 +454,23 @@ connection and older Windows monitor state remain operational context only.
   product-support boundary.
 - E3 observations are optional operational confidence and do not determine the
   product support status.
+
+### Run P — Market-aware position-review consumer audit
+
+Result: **48 passed** across the focused market-wake, daemon, wake-event,
+position-to-close, and Position Manager contract suites at
+`963e441983e23eda2f67304cd153c9125f713692`.
+
+The tests prove adverse detection, best-effort wake delivery, explicit delivery
+failure, and independent Operator adjustment/close helpers. They do not join
+those facts. Current source shows three blocking facts:
+
+1. an empty pending entry queue returns before wake context is attached;
+2. attached wake context affects the decision fingerprint but
+   `_build_assessment_prompt()` does not render it for the model;
+3. `_DECISION_SCHEMA` and `_parse_decision()` accept only `trade`/`skip`, while
+   the later `adjust_position`/`close` dispatch branches are unreachable from
+   the active model contract.
+
+EX-09 is therefore `Broken`, not `Partial`. This correction adds no runtime
+state or trading authority.
