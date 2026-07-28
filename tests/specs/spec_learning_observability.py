@@ -1,7 +1,7 @@
 """Executable claims for Learning Contribution Observability.
 
 The target contract is
-docs/design/contracts/learning_observability_contract.md. Implemented slices use
+docs/design/proposals/learning_observability.md. Implemented slices use
 behavioral tests; remaining target slices stay strict-xfail so a partial owner
 projection cannot be mistaken for the full workbench.
 """

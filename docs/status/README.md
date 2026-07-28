@@ -1,7 +1,11 @@
 
-# status/ - Roadmaps And Snapshots
+# status/ - Frozen Roadmaps And Snapshots
 
-Status docs are point-in-time views. They are useful for orientation but can drift.
+<!-- SNAPSHOT-FROZEN -->
+
+Status docs are historical point-in-time views. They are retained for
+provenance and must not be updated as a live roadmap, progress report, or
+remaining-work list.
 
 ## Subfolders
 
@@ -13,4 +17,6 @@ Status docs are point-in-time views. They are useful for orientation but can dri
 
 ## Agent Rule
 
-Before acting on status, verify with current code, current branch, and runtime diagnostics when relevant.
+Before acting, verify current product truth, code, GitHub work state, and runtime
+diagnostics when relevant. Long-lived direction belongs in `product/`; current
+work belongs in GitHub Issues and PRs.

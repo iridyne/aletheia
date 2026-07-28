@@ -1,12 +1,12 @@
 # Learning Subsystem Contract
 
 > Contract level: L2. This file is normative for the Learning subsystem.
-> Last aligned: 2026-07-19 A1 contribution-measurement integrity and the
-> target Learning Contribution Observability handoff.
+> Last aligned: 2026-07-19 A1 contribution-measurement integrity.
 > Reference intent: [Product Direction §3](../../product/definition/DIRECTION.md#3-learning-is-an-evidence-pipeline-not-a-page).
-> Target extensions: `learning_evolution_contract.md` defines the measured
-> self-improvement lifecycle; `learning_observability_contract.md` defines its
-> owner-facing, read-only projection. Each tracks implemented and missing claims.
+> Future designs:
+> [`learning_evolution.md`](../proposals/learning_evolution.md) and
+> [`learning_observability.md`](../proposals/learning_observability.md).
+> They are Proposals, not current guarantees.
 
 Learning is not a dashboard-only feature. Its product role is to turn market
 observations, trade decisions, closed trades, reviews, and later corrections into
@@ -149,9 +149,12 @@ loop contributes positively. Current behavior has these contract-relevant limita
   artifact/funnel counts remain activity-oriented and cannot establish
   contribution.
 
-The target lifecycle, registry, prospective experiments, overlap handling, and automatic fallback
-are normative in `learning_evolution_contract.md`. Phase 0 measurement claims are tracked below;
-behavior-changing claims remain unavailable until their executable status turns GREEN.
+The broader lifecycle, prospective experiments, overlap handling, and automatic
+fallback are proposed in
+[`learning_evolution.md`](../proposals/learning_evolution.md). They are not
+normative current behavior. The current Phase 0 measurement facts are recorded
+below; behavior-changing paths remain unavailable unless promoted into this
+Contract and Product Truth.
 
 ### 1.3 Phase 0 measurement-integrity baseline
 
@@ -375,9 +378,11 @@ This implements the discussion requirement that newer evidence can repair or
 reduce the influence of older rules instead of letting old memories remain
 equally authoritative forever.
 
-Time decay and contradiction handling limit stale influence; they do not establish causal
-positive contribution. The target contract requires separate observer/ranker/operator exposures
-and prevents the same later trade from being counted as independent proof for all three.
+Time decay and contradiction handling limit stale influence; they do not
+establish causal positive contribution. Separate observer/ranker/operator
+exposures are proposed in
+[`learning_evolution.md`](../proposals/learning_evolution.md); they are not
+current Contract behavior.
 
 ---
 
@@ -398,9 +403,11 @@ Promotion must preserve auditability:
 - The source candidate is deprecated, not hard-deleted.
 - A `TRADING_GUARD_PROMOTED` event is written.
 
-The present promotion gate is evidence-gated but retrospective. Under the target contract,
-historical evidence may nominate a shadow experiment only; active authority requires prospective
-blocked-candidate outcomes, supply-harm checks, continual holdout, and automatic demotion.
+The present promotion gate is evidence-gated but retrospective. Prospective
+blocked-candidate outcomes, supply-harm checks, continual holdout, and automatic
+demotion remain part of the
+[`learning_evolution.md`](../proposals/learning_evolution.md) design, not this
+current Contract.
 
 Ranker enforcement keeps two authority classes separate:
 
@@ -446,8 +453,8 @@ must not be rendered as a genuine empty list or zero.
 
 ### 8.2 Target owner projection
 
-The canonical target is
-[`learning_observability_contract.md`](learning_observability_contract.md), feature id
+The proposed target is
+[`learning_observability.md`](../proposals/learning_observability.md), feature id
 `learning_contribution_observability`, projection schema `lco-v1`. It defines:
 
 - current versus historical measurement identity;
@@ -457,7 +464,7 @@ The canonical target is
 - read-only lifecycle recommendations with `mutation_available=false`;
 - bounded cached GET endpoints and an honest responsive Learning workbench.
 
-That contract adds no admission mutation, paper influence, lifecycle automation, schema, config,
+That Proposal adds no admission mutation, paper influence, lifecycle automation, schema, config,
 scheduler job, Risk, Execution, exchange or live authority. Its `LCO-*` claims remain `missing`
 until implementation tests turn them GREEN.
 
@@ -533,7 +540,7 @@ The global classifier/read model, behavior-consumer migration, owner-facing dual
 versioned clean-window gate are delivered. Risk account loss remains deliberately separate from
 strategy performance.
 
-The target contract is `learning_evolution_contract.md §14` plus
+The future design is `../proposals/learning_evolution.md §14`; current executable evidence includes
 `tests/specs/spec_outcome_integrity.py`. OI-C01 is now GREEN: an active persisted incident is read by
 the scheduler gate, experiment authority, Operator prompt bundle, market-observer memory, learned
 ranker guards, persona sizing/unlock and persona rollout. Read-only settlement and shadow outcome

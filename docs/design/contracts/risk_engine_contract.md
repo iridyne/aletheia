@@ -151,7 +151,7 @@ class RiskCheckResult:
 | 恢复 | 仅 `deactivate(actor="human")`,**actor 硬编码 human,agent 无路径** | `kill_switch.py:39` |
 | 审计 | 激活/恢复均写 JSONL | `kill_switch.py:27,45` |
 
-**不变式**:kill switch 是 §2 第 0 关,激活后任何 proposal 必被拒;恢复是不可被 agent 触达的人工操作。详见 [daily-loss killswitch UTC 陷阱](../../记忆 aletheia-daily-loss-killswitch-utc)。
+**不变式**:kill switch 是 §2 第 0 关,激活后任何 proposal 必被拒;恢复是不可被 agent 触达的人工操作。历史事故教训：daily-loss kill switch 的 UTC 日期边界不可按本地日期推断。
 
 ---
 
@@ -196,27 +196,19 @@ config:`trading.default_notional_usdt=25`, `vol_kelly_cap_fraction=0.25`, `vol_s
 
 ---
 
-## serenity_isolation — Serenity 双赛道隔离现状与计划
-
-> 产品定义(2026-06-30):采用 Option A PI-central,serenity 不建独立 executor;促进赛道隔离是 Phase defer 工作项。
+## serenity_isolation — Serenity 当前隔离边界
 
 ### 当前现状
 
-| 维度 | 当前实现 | 意图目标 | 差距 |
-|------|---------|---------|------|
-| 执行模块 | `serenity_executor.py` **不存在**；所有提案均通过主赛道 PI/gateway | serenity 有独立评估入口 | tripwire D2-S02 守护 |
-| 头寸池 | check #5/#6 共用同一个池（serenity 占用主赛道配额） | 独立风险池 | ⚠️ 意图差距，defer；D2-C02 守护 |
-| PnL 归因 | `analytics/` 和 `portfolio/` 中无 `trade_school` GROUP BY；serenity/主赛道 PnL 混合计算 | PnL 按 trade_school 分组隔离 | ⚠️ D2-S03/D2-B02 tripwire |
+| 维度 | 当前实现 |
+|------|---------|
+| 执行模块 | `serenity_executor.py` 不存在；所有提案均通过主赛道 System Operator / Gateway |
+| 头寸池 | check #5/#6 共用同一个池，Serenity 占用主赛道配额 |
+| PnL 归因 | `analytics/` 和 `portfolio/` 不按 `trade_school` 提供隔离的权威 PnL |
 
-### Serenity 尚未实现声明（defer）
-
-`serenity_executor.py` 尚未创建。**在创建该文件之前**，必须：
-
-1. 补充完整的 L2b/L2c spec（D2-B01/C01 升级版）覆盖新执行路径
-2. 更新本节 §serenity_isolation 的现状表
-3. 决策 check #5/#6 是共用池还是独立池，并在 engine.py check #5/#6 附近用注释声明
-
-Tripwire：`D2-S02`（spec_risk_engine.py）——文件出现时自动变红提示 review。
+`D2-S02` 保持负向 tripwire，防止独立执行器在没有信任边界审查时
+出现。任何独立执行入口、风险池或权威 PnL 隔离都是跨域且触及信任
+边界的变化，必须先建立 Proposal；它们不是本 Contract 的未来待办。
 
 ### evaluate_proposal 唯一入口不变式
 

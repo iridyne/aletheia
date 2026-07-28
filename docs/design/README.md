@@ -8,6 +8,7 @@ This is the main implementation authority after governance and product scope. Re
 |---|---|
 | `contracts/` | Gold-standard behavioral contracts: risk, execution, learning, scheduler, audit, persistence |
 | `decisions/` | Durable architectural decisions: why long-lived choices were made and how they evolved |
+| `proposals/` | Substantial future designs before they become current contracts |
 | `data/` | Data model, data utilization, market data observability, collectors, source alignment |
 | `api/` | API reference and API compatibility rules |
 | `architecture/` | System map and architecture guides |
@@ -29,10 +30,16 @@ This is the main implementation authority after governance and product scope. Re
 | API route behavior | `api/api_reference.md` |
 | SQLite tables or persistence semantics | `data/data_model.md` and `contracts/persistence_recovery_contract.md` |
 | Opportunity → Ranker → Operator → Proposal lifecycle | `contracts/decision_lifecycle_contract.md`, then `contracts/filter_evidence_contract.md` and `api/api_reference.md` |
-| Learning or knowledge behavior | `contracts/learning_contract.md`, `contracts/learning_evolution_contract.md`, `contracts/learning_observability_contract.md`, `contracts/knowledge_contract.md`; total delivery sequence in `../plans/learning/learning_positive_contribution_implementation_plan_2026-07-12.md`; first-path runbook in `../plans/learning/universe_family_calibration_execution_plan_2026-07-24.md` |
+| Learning or knowledge behavior | `contracts/learning_contract.md`, `contracts/knowledge_contract.md`, then any accepted learning proposal under `proposals/` |
 | Scheduler behavior | `contracts/scheduler_contract.md` |
 | Frontend structure | `frontend/ui_design_system.md`, `frontend/webui_page_map.md` |
 
 ## Agent Rule
 
-Contracts describe what the system should do. Decisions describe why the system chose its current direction. If code and contract differ, file or update an issue unless the task explicitly asks to revise the contract.
+Contracts describe current approved behavior. Decisions describe why the system
+chose its current direction. Proposals describe a substantial future change
+without claiming it exists. A Proposal is required only for a major new
+capability, a cross-domain change, or a trust-boundary change. Ordinary bugs use
+a GitHub Issue and PR. If code and contract differ, verify the current behavior
+and file or update a GitHub Issue unless the task explicitly changes the
+contract.

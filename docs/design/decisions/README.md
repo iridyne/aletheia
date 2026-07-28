@@ -11,8 +11,9 @@ This is not a replacement for contracts:
 
 - `decisions/` answers **why this direction was chosen**.
 - `contracts/` defines **what the system must do now**.
-- `plans/` describes **how to move from current state to target state**.
-- Code and executable specs prove **what is implemented**.
+- `proposals/` describes a substantial future design without claiming it exists.
+- GitHub Issues and PRs carry implementation progress.
+- Code and executable specs prove local behavior; Product Ground Truth decides support.
 
 ## When to create a decision
 

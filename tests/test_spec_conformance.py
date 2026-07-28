@@ -101,7 +101,7 @@ class TestConformanceStructure:
                 f"{contract} has no L2a (structural) claims"
             )
 
-    def test_non_implemented_claim_budget(self):
+    def test_non_conforming_claim_budget(self):
         """#75 fix: `test_print_conformance_matrix` is informational-only
         and passes green even when the matrix contains missing/partial/
         superseded claims. An owner reading "green tests" then believes the
@@ -111,7 +111,8 @@ class TestConformanceStructure:
         contracts were paused or new claims added without wiring.
 
         If this test fails, either:
-          - flip the newly-broken claim's status to 'implemented' (the fix), OR
+          - restore the claim and set its compatibility status to
+            'implemented' (meaning locally conforming), OR
           - if the gap is intentional, update the counts below and note why.
         """
         counts: dict[str, int] = {}
@@ -177,7 +178,7 @@ class TestConformanceStructure:
 def test_print_conformance_matrix(capsys):
     """Print the full matrix (always passes — informational output)."""
     lines = ["\n{'='*60}", "  SPEC CONFORMANCE MATRIX", f"{'='*60}\n"]
-    total = implemented = 0
+    total = conforming = 0
 
     for contract in sorted(SPEC_REGISTRY.keys()):
         entries = SPEC_REGISTRY[contract]
@@ -195,7 +196,7 @@ def test_print_conformance_matrix(capsys):
                 "superseded": "s",
             }.get(claim.status, "?")
             if claim.status == "implemented":
-                implemented += 1
+                conforming += 1
             invariant_short = claim.invariant[:55]
             lines.append(
                 f"    [{icon}] {claim.level} {claim.claim_id}: "
@@ -203,9 +204,9 @@ def test_print_conformance_matrix(capsys):
                 f"\n        -> {test_fn.__name__}"
             )
 
-    implementation_ratio = (implemented / total * 100) if total else 0
-    lines.append(f"\n  Total: {total} | Implemented: {implemented} | "
-                 f"Claim implementation ratio: {implementation_ratio:.0f}%")
+    conformance_ratio = (conforming / total * 100) if total else 0
+    lines.append(f"\n  Total: {total} | Conforming: {conforming} | "
+                 f"Claim conformance ratio: {conformance_ratio:.0f}%")
     lines.append(f"{'='*60}\n")
 
     with capsys.disabled():

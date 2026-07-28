@@ -1,9 +1,9 @@
-"""Spec: Persistence / Recovery Contract (persistence_recovery_contract.md)
+"""Spec: current Persistence Contract and dormant recovery boundary.
 
-A code-ahead-of-wiring domain: the persistence PRIMITIVES (event/artifact stores,
-deterministic client_order_id, the recovery state machine class) are implemented, but
-the recovery FSM is NOT yet wired into gateway startup. These claims lock the implemented
-surface AND document the wiring gap honestly (PR-C01 is a self-correcting tripwire).
+The current Contract covers durable stores and deterministic order identity.
+Recovery components exist but are not wired into Gateway startup; PR-C01 keeps
+that absence explicit while the future design lives in the Gateway Recovery
+Proposal.
 
 Contract: persistence_recovery_contract
 Claim prefix: PR
@@ -25,7 +25,8 @@ _ROOT = Path(__file__).parents[2]
 
 @spec_claim(
     SpecClaim(
-        "PR-S01", "persistence_recovery_contract", "§4 recovery FSM", "L2a",
+        "PR-S01", "persistence_recovery_contract",
+        "Failure semantics — dormant recovery component", "L2a",
         "GatewayStatus enum carries the recovery states (STARTING/RECOVERY_MODE/RUNNING/"
         "SAFE_FREEZE) and GatewayStateMachine + FreezeBlockedError exist",
     ),
@@ -44,7 +45,8 @@ def test_gateway_state_machine_surface():
 
 @spec_claim(
     SpecClaim(
-        "PR-S02", "persistence_recovery_contract", "§3 idempotency", "L2a",
+        "PR-S02", "persistence_recovery_contract",
+        "Invariants — deterministic order identity", "L2a",
         "Deterministic order identity generators make_client_order_id + "
         "make_idempotency_key exist (§1.2 — orders must be idempotent across restart)",
     ),
@@ -58,7 +60,8 @@ def test_idempotency_generators_exist():
 
 @spec_claim(
     SpecClaim(
-        "PR-S03", "persistence_recovery_contract", "§2 stores", "L2a",
+        "PR-S03", "persistence_recovery_contract",
+        "Durable state and consumers", "L2a",
         "Append-only EventStore and ArtifactStore are implemented with accessors "
         "(get_event_store / get_artifact_store) — the non-memory sources of truth",
     ),
@@ -80,9 +83,10 @@ def test_event_and_artifact_stores_exist():
 
 @spec_claim(
     SpecClaim(
-        "PR-S04", "persistence_recovery_contract", "§3 idempotency wired", "L2b",
-        "bitget broker submits orders with a deterministic client_oid (idempotency key "
-        "reaches the exchange boundary so restart cannot double-submit)",
+        "PR-S04", "persistence_recovery_contract",
+        "Entry points — deterministic adapter identity", "L2b",
+        "bitget broker submits orders with a deterministic client_oid so the "
+        "identity reaches the supported adapter boundary",
     ),
 )
 def test_bitget_broker_uses_client_oid():
@@ -99,11 +103,12 @@ def test_bitget_broker_uses_client_oid():
 
 @spec_claim(
     SpecClaim(
-        "PR-C01", "persistence_recovery_contract", "§6 wiring gap (tripwire)", "L2c",
-        "Documented AS-BUILT gap: gateway/lifecycle.py does NOT yet drive the recovery "
+        "PR-C01", "persistence_recovery_contract",
+        "Failure semantics — recovery is not a current guarantee", "L2c",
+        "Current boundary: gateway/lifecycle.py does NOT yet drive the recovery "
         "FSM (no RECOVERY_MODE / GatewayRecoveryService reference). When this is wired, "
-        "this test FAILS — that is the signal to flip persistence §1.3/§1.4/§6 to "
-        "'enforced' and re-scope as a live prerequisite.",
+        "this test FAILS — that is the signal to verify the Proposal and promote "
+        "proved behavior into the current Contract.",
         status="implemented",
     ),
 )
@@ -118,8 +123,8 @@ def test_recovery_fsm_not_yet_wired_into_lifecycle():
     found = [m for m in wired_markers if m in text]
     assert not found, (
         f"gateway/lifecycle.py now references {found} — the recovery FSM appears WIRED. "
-        "Update persistence_recovery_contract §1.3/§1.4/§4/§6 to 'enforced' and remove "
-        "this tripwire (the safety net is now active)."
+        "Verify gateway_recovery.md, add executable recovery acceptance, and update "
+        "the current persistence Contract before claiming the safety net is active."
     )
 
 
@@ -131,7 +136,7 @@ def test_recovery_fsm_not_yet_wired_into_lifecycle():
 @spec_claim(
     SpecClaim(
         "PR-S05", "persistence_recovery_contract",
-        "§2.1 EventStore idempotency — single append", "L2b",
+        "Durable state — EventStore single append", "L2b",
         "Repeating append() with the same idempotency_key must: return the original "
         "persisted event_id (not a new phantom), leave exactly one SQLite row, and write "
         "exactly one JSONL line.  Non-idempotency IntegrityError must propagate (#247).",
@@ -193,7 +198,7 @@ def test_event_store_idempotency_single_append(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "PR-S06", "persistence_recovery_contract",
-        "§2.2 EventStore idempotency — batch append + non-idempotency error", "L2b",
+        "Durable state — EventStore batch append and error visibility", "L2b",
         "append_many() with duplicate idempotency_keys must return existing events and "
         "write JSONL only for newly inserted rows.  A PK clash without an idempotency_key "
         "must raise IntegrityError and must not write a JSONL mirror entry (#247).",

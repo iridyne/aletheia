@@ -193,12 +193,12 @@ Aletheia 是**镜像的另一半**：
 
 ## 8. 治理红线（本文件专项）
 
-- 🟢 本文件是**事实记录 + 方向**，可安全引用作为"Aletheia LLM 决策定位"的权威说明。
+- 🟢 本文件保存长期执行诚实边界；其中 dated file:line 证据须按当前代码复核。
 - 🔴 不因本文件揭示的差距就擅自改交易决策路径（§7 的 B/C 是 change-controlled，需显式授权）。
 - 🟡 引用本文件结论时，务必保留"确定性 / LLM / 悬空"三类的区分——
   **不要**再简化成"LLM 不在执行路径"（半假）或"LLM 直接交易"（也不准确）。
-- 区分"声称 vs 已证实"：本文件所有 file:line 断言均来自 2026-06-13 通读当前代码，
-  与 `docs/issues/domain/BACKEND_ISSUES.md`（2026-06-08 快照，部分条目已过时）相比是更新的一手事实。
+- 区分"声称 vs 已证实"：本文 file:line 断言来自 2026-06-13 的代码快照，
+  不是当前运行事实；当前偏差通过 GitHub Issues 跟踪。
 
 ---
 
@@ -207,5 +207,5 @@ Aletheia 是**镜像的另一半**：
 - `docs/references/external-systems/north_star.md` — 方向地图（§6 经验闭环主题已更正）
 - `docs/references/external-systems/openalice_prism_review.md` — OpenAlice/Prism 对照（蓝图 B = 审计链，与本文 §5 呼应）
 - `docs/references/papers-and-benchmarks/agent_framework_research_2025_2026.md` — 外部综述验证镜（"确定性优先 + LLM 影响最小"佐证）
-- `docs/issues/domain/BACKEND_ISSUES.md` — 代码层问题清单（本文 §1.3 / §3 的发现已追加）
+- `docs/issues/domain/BACKEND_ISSUES.md` — 冻结的历史问题证据
 - `C:\Users\ollama\Downloads\Aletheia_Implementation_Plan_v1.md` — 原始设计蓝图（仓库外，§2 对照来源）

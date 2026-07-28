@@ -105,8 +105,8 @@ top tabs scroll horizontally, toolbars wrap and the drawer becomes full width. U
 Every query has distinct loading, genuine-empty, unavailable, stale and partial states. A failed
 request must not default to `[]`, `0`, `Never`, or a healthy token. Activity panels carry the label
 "Activity, not measured contribution"; portfolio PnL carries "Portfolio context, not Learning
-attribution". Full information architecture and response semantics are normative in
-[`learning_observability_contract.md`](../contracts/learning_observability_contract.md) §8.
+attribution". Future information architecture and response semantics are
+proposed in [`learning_observability`](../proposals/learning_observability.md) §8.
 
 ### Settings Shell — Section + Row
 

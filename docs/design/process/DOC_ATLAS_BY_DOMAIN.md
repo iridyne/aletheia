@@ -1,5 +1,9 @@
 # 文档地图（按功能域）— Documentation Atlas by Functional Domain
 
+> **Frozen evidence**: this is a point-in-time documentation snapshot, not a
+> current status map or work queue. Verify current behavior through Product
+> Truth, current Contracts, code, GitHub, and runtime facts.
+
 > **用途**：以**功能域**为切口索引全部文档——与 [README](../README.md)（按契约对象）、[SYSTEM_MAP](../architecture/SYSTEM_MAP.md)（按模块/管道）、[DOC_SYSTEM_PLAN](../../product/documentation/DOC_SYSTEM_PLAN.md)（按金字塔层 L0–L4）互补，是第四种导航视角。
 > **状态标记**：✅金标准 / 🟡契约(部分实现) / 🔄in-flight / ⏳planned / ⛔open-gap / 📦process-artifact。状态已并入 [REMAINING_WORK_2026-06-30](../../status/snapshots/REMAINING_WORK_2026-06-30.md) 的对账结论。
 > Last synced for D2/D6/D10/D12: 2026-07-19. Other domain status remains point-in-time and must be verified against its contract and `aletheia doctor`.
@@ -66,7 +70,7 @@
 
 **Scope**：legacy `strategy_records` / `backtest_*` 表、promotion gate 文档和历史归因展示。规则引擎、`strategy_designer`、`backtest_orchestrator`、RuleSet 扫描均已删除(Position C, 2026-07-02)。
 
-- **L2 契约**：[`promotion_gates_contract`](../contracts/promotion_gates_contract.md) ✅(legacy-only；无生产路径 wire 到晋级)
+- **历史契约**：[`promotion_gates_contract`](../history/promotion_gates_contract.md)（legacy-only；无生产路径 wire 到晋级）
 - **Spec**：`spec_promotion_gates` · `spec_strategy_pool`(Position C 后保留 legacy/negative tripwires)
 - **L3 计划**：历史 `PLAN_REGIME_STRATEGY_SHORT` / `strategy_lifecycle_analysis` 仅作背景，不代表当前开发方向
 - **当前状态**：规则引擎删除后，交易方向来自 System Operator 对 opportunity 的决策；`strategy_id` 只作可空历史归因标签。不要恢复策略 DSL/backtest/RuleSet 路径，除非 owner 明确开启新设计。
@@ -77,10 +81,10 @@
 hypothesis/experiment/exposure/verdict/lifecycle/health paths + canonical candidate outcomes +
 observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
 
-- **L2 契约**：[`learning_contract`](../contracts/learning_contract.md) ✅ current behavior ·
-  [`learning_evolution_contract`](../contracts/learning_evolution_contract.md) 🟡 full measured
-  lifecycle target · [`learning_observability_contract`](../contracts/learning_observability_contract.md)
-  ⛔ `lco-v1` target not implemented · [`knowledge_contract`](../contracts/knowledge_contract.md) ✅
+- **当前契约与未来设计**：[`learning_contract`](../contracts/learning_contract.md) current behavior ·
+  [`learning_evolution`](../proposals/learning_evolution.md) Proposal ·
+  [`learning_observability`](../proposals/learning_observability.md) Proposal ·
+  [`knowledge_contract`](../contracts/knowledge_contract.md)
   artifact taxonomy/FTS/two-store paths.
 - **Spec**：`spec_learning_{registry,attribution,ledger,contribution,authority,lifecycle,continuity,verdict_runtime,final_consumers}`
   + `spec_learning_pipeline` + adjacent lesson/guard/factor/outcome specs. Owner projection is
@@ -115,7 +119,7 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
 
 **Scope**：`gateway/`(state_machine/state_store/locks/session/reconciliation/recovery) + `storage/`(event_store/artifact_store) + `agents/checkpoints` + `sync/` + `backup/` + `policies/`。
 
-- **L2 契约**：[`persistence_recovery_contract`](../contracts/persistence_recovery_contract.md) 🟡（底层构件已实现；恢复 FSM 未接 runtime） · `audit_chain_contract` / `execution_contract §6` 覆盖相邻信任边界
+- **当前契约与未来设计**：[`persistence_recovery_contract`](../contracts/persistence_recovery_contract.md) 仅覆盖当前持久化行为 · [`gateway_recovery`](../proposals/gateway_recovery.md) 保存未接通恢复设计 · `audit_chain_contract` / `execution_contract §6` 覆盖相邻信任边界
 - **L3 计划**：[`Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN`](../../plans/engineering/Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN.md)(18 模块代码完成)
 - **当前状态**：⛔ 底层(SQLite/JSONL/reconcile)实际在跑，但上层协调(RECOVERY_MODE 状态机/SAFE_FREEZE 禁开仓/Checkpoint 跨机迁移/Policy versioning)**未接进 gateway**，需显式授权。"文档比代码雄心大"。
 

@@ -86,9 +86,9 @@ ledger, 7/5 current-cohort/read-only-recommendation band, append-only verdict hi
 detail drawer. Operations separates evaluator health, catch-up and durable last failure. Existing
 knowledge taxonomy and actions remain under Knowledge; they do not appear as contribution authority.
 Legacy `/dreaming`, `/knowledge` and `/reports` must select a deliberate tab rather than all opening
-Dreaming. Full API/UI, responsive and error-state contract:
-[`learning_observability_contract.md`](../contracts/learning_observability_contract.md). Status:
-designed, not implemented (`LCO-*` missing).
+Dreaming. The broader API/UI, responsive, and error-state design is the
+[`learning_observability`](../proposals/learning_observability.md) Proposal,
+not current UI behavior.
 
 ### Strategy Lifecycle (/strategies) — KEEP ✅ (standalone)
 Role: lifecycle (§23.11). Distinct pipeline view (draft→…→live_limited) with promotion gates.
