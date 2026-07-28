@@ -102,8 +102,9 @@ Discovery surfaces:
 | EX-11 | External demo-position adoption | Adopt supported external demo positions into managed lifecycle when enabled | Settings, reconciliation scheduler | `portfolio/position_reconciler.py` |
 | EX-12 | Exchange order/position reconciliation | Detect and converge local/exchange drift without fabricating fills | Scheduler, Positions, API | `execution/reconciliation.py`, `position_reconciler.py` |
 | EX-13 | Stale order and disappearance handling | Resolve stale/missing exchange orders and positions with durable evidence | Scheduler, execution | `stale_order_cleanup.py`, `disappearance_settlement.py` |
-| EX-14 | Cost-complete close settlement | Persist fees, slippage, realized PnL, and paper ledger settlement on close | Positions, Analytics, Learning | `portfolio/outcome_closure.py`, `paper_account.py` |
+| EX-14 | Local paper cost-complete close settlement | Persist exact fills, fees, slippage, funding, realized PnL, and paper ledger settlement on close | Positions, Analytics, Learning | `portfolio/outcome_closure.py`, `paper_account.py`, `local_funding.py` |
 | EX-15 | Partial reduce and scale-in lifecycle | Support declared reduce/scale behavior without duplicating position identity | Operator, Position lifecycle | decision actions, execution/position services |
+| EX-16 | Exchange-backed cost-complete close settlement | Settle exchange-backed futures only when private funding/bill evidence is attributable | Positions, Analytics, Learning | `portfolio/outcome_closure.py`, exchange private-ledger producers |
 
 ## Portfolio, performance, and attribution
 

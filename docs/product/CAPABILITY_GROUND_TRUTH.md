@@ -32,13 +32,13 @@ Outside these canonical tables, use the full capability name.
 
 | Status | Count |
 |---|---:|
-| Supported | 68 |
+| Supported | 69 |
 | Implemented | 4 |
-| Partial | 6 |
+| Partial | 5 |
 | Experimental | 21 |
-| Broken | 1 |
+| Broken | 2 |
 | Deprecated | 0 |
-| **Total** | **100** |
+| **Total** | **101** |
 
 ## Status matrix
 
@@ -128,8 +128,9 @@ Outside these canonical tables, use the full capability name.
 | EX-11 | External demo-position adoption | E1+E2 | Experimental | Opt-in reconciliation path outside core | No |
 | EX-12 | Exchange order/position reconciliation | E1+E2 | Implemented | No owner-selected external execution mode in supported profile | No |
 | EX-13 | Stale order and disappearance handling | E1+E2 | Implemented | No owner-selected external execution mode in supported profile | No |
-| EX-14 | Cost-complete close settlement | E1+E2 | Partial | Local paper complete; exchange funding/bill evidence writer absent | Yes |
+| EX-14 | Local paper cost-complete close settlement | E1+E2 | Supported | None in tested paper contract | Yes |
 | EX-15 | Partial reduce and scale-in lifecycle | E1 | Partial | Active actions reject reduce/scale-in; the dispatcher fails closed and the OKX helper remains isolated without Proposal/Risk authorization | No |
+| EX-16 | Exchange-backed cost-complete close settlement | E1+E2 | Partial | Private exchange funding/bill evidence writer absent; verifier fails closed | No |
 
 ### Portfolio, performance, and attribution
 

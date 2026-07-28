@@ -101,8 +101,9 @@ Notation:
 | EX-11 | reconciliation job → external position classifier → adoption record → manager/reconciler → managed lifecycle | Positions; opt-in/refusal | E1+E2, Experimental | External adoption remains optional and outside core. |
 | EX-12 | scheduler/API → local/exchange readers → reconciliation state/events → repair/classification → converged view | Positions; stale/error | E1+E2, Implemented | Tests assert no fabricated fills. |
 | EX-13 | cleanup/reconcile jobs → stale/disappearance evidence → order/position state → settlement path → resolved status | Positions/audit; retry | E1+E2, Implemented | Administrative close remains outcome-ineligible when economics absent. |
-| EX-14 | close → fill/fee/slippage/funding verification → position/outcome state → analytics/Learning → genuine result | Positions/Analytics; explicit incomplete | E1+E2, Partial, CI-05 | Local paper is complete; exchange private funding producer is absent. |
+| EX-14 | local paper close → exact fills/fees + local funding evidence → atomic position/cash/outcome settlement → analytics/Learning | Positions/Analytics; explicit incomplete and recovery state | E1+E2, Supported | Futures fail closed when the local funding window is incomplete; recovery materializes settlement exactly once. |
 | EX-15 | Operator rejects reduce/scale-in; partial-reduce dispatcher fails closed → isolated OKX helper has **no Proposal/Risk-authorized production materializer** | settings/action surface | E1, Partial, CI-06 | Pure helper/action vocabulary and a broker reference helper are not a lifecycle. |
+| EX-16 | exchange close/reconciliation → exact fill/fee verification → private funding/bill lookup → position/outcome settlement | Positions/Analytics; explicit incomplete | E1+E2, Partial, CI-05 | The verifier fails closed, but no private exchange funding/bill producer exists. |
 
 ## Portfolio, performance, and attribution
 

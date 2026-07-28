@@ -460,8 +460,9 @@ exchange-backed futures 仍只接受对应账户私有账单的 `broker_ledger`�
 - 不写 `paper_account_events.position_closed`，不创建 eligible Outcome hook，也不进入 Attribution、
   Feedback 或 Learning。
 
-因此本地 paper 账户继续显示原始现金账本，但这笔现金尚未完成结算，不能当成可花余额：
-`economics_complete=false`、`equity_usdt=NULL`、`available_balance_usdt=0`，直到 funding/关闭成本补齐并
-完成现金账本结算。Portfolio 的相关 realized 汇总同样返回 `NULL` 并附未完成数量，而不是用 0 提供
-一个看似完整的数字。spot 不产生 funding，关闭时明确写 `funding_cost=0`、
+因此本地 paper 账户继续以已结算的现金账本为权威，并明确返回
+`economics_complete=false` 和 `unsettled_closed_positions_count`。`available_balance_usdt` 仍反映
+已确认现金减预留资金，`equity_usdt` 仍反映已确认现金加未实现损益；两者都不补入这笔未完成的
+关闭损益，也不得被解释为完整经济结果。Portfolio 的相关 realized 汇总同样返回 `NULL` 并附未完成
+数量，而不是用 0 提供一个看似完整的数字。spot 不产生 funding，关闭时明确写 `funding_cost=0`、
 `funding_source='not_applicable'`，不受此冻结影响。

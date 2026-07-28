@@ -21,7 +21,7 @@ mandatory support gate, and it does not authorize implementation.
 | EX-04 New-proposal live mode | Broken | Broken | Live unlock is still not consumed at proposal-mode selection; Settings/contract/diagnostics now state the experimental authority-only boundary, `LU-C07` records the missing join, and #418 remains open. |
 | EX-07 Exchange-native TP/SL | Partial | Experimental | Broker/private-fill paths are tested, but external venue behavior is intentionally outside the supported product surface. |
 | EX-09 Market-aware position management | Broken | Broken | Settings and delivery reporting are honest, but the wake terminates on an empty entry queue; its evidence is not rendered into the Operator prompt; and the active schema rejects hold/adjust/close. |
-| EX-14 Cost-complete exchange close | Partial | Partial | Local paper is complete; external funding/bill producer remains absent; #386. |
+| EX-16 Exchange-backed cost-complete close | Partial | Partial | Local paper is separately classified as EX-14 Supported; external funding/bill producer remains absent; #386. |
 | EX-15 Partial reduce and scale-in | Partial | Partial | Active Operator rejects reduce/scale-in and the dispatcher now fails closed before any broker call; the OKX helper remains an isolated reference without Proposal/Risk authorization. |
 | PF-03 Capital-adjusted curve | Broken | Partial | Capital events remain unconsumed, but Settings now states that adjusted performance is unavailable; #419 remains open for the optional projection. |
 | LN-03 Dreaming consolidation | Partial | Supported | Daily scheduler/agent output is executable; extracted `trade_case_study` lessons cross review into the applied Layer3/Operator-prompt consumer. |
