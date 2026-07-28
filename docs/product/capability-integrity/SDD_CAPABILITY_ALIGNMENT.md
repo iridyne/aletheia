@@ -34,7 +34,7 @@ product-support percentage.
 | Existing producer/consumer join | LN-03 Dreaming | Dreaming emits `trade_case_study` lessons; review marks qualified lessons applied; focused acceptance crosses that exact durable population into Layer3 and the Operator prompt. |
 | Known gap represented explicitly | PF-03 | `AN-S06` protects honest current semantics and `AN-C06` remains a missing tripwire until a separate cash-flow-adjusted projection has a real consumer. |
 | Known gap represented explicitly | EX-04 | `LU-S03` protects the experimental authority-only UI semantics and `LU-C07` remains a missing tripwire until live state participates in new-Proposal mode selection. |
-| Honest bounded behavior | EX-09 | `execution_contract.md`, Settings, `PL-PM-14`, and runtime tests now agree: market-aware evaluation emits an Operator wake and never directly closes or mutates stops. |
+| Honest but incomplete boundary | EX-09 | `execution_contract.md`, Settings, `PL-PM-14`, and runtime tests agree that market-aware evaluation emits a best-effort wake and never directly mutates positions. They do not establish a wake-driven Operator position decision. |
 
 ## Current non-experimental delivery cross-check
 
@@ -47,7 +47,7 @@ contracts.
 | RT-10 Health, readiness, Doctor, stability | Supported | Health/Doctor invariants, serving-Runtime attribution, two-context isolation, and API contracts are executable. | Default-branch delivery resolves #426; no missing capability link remains. |
 | RT-14 Tunnel lifecycle | Partial | `API-S08` proves protected routes fail closed when tunnel authentication is incomplete. | Process ownership is PID-only; no executable claim proves safe start, stop, recovery, and owner-visible lifecycle. |
 | EX-04 New-proposal live execution mode | Broken | Live unlock/relock, audit, scorecard, fail-closed Risk behavior, and the authority-only UI boundary are protected. `LU-C07` explicitly records the absent mode-selection join. | Honest downgrade complete; #418 remains open and live trading remains Experimental. |
-| EX-09 Market-aware position review | Partial | Evaluator behavior, wake-only authority, delivery-failure visibility, and honest Settings copy are tested. | The wake queue remains in-memory; automatic close/stop mutation is intentionally outside this capability. |
+| EX-09 Market-aware position review | Broken | Evaluator behavior, wake-only authority, delivery-failure visibility, and honest Settings copy are tested. | The active evaluator returns early when no entry candidate exists, does not render wake evidence into the model prompt, and accepts only `trade`/`skip`; no hold/adjust/close consumer exists. |
 | EX-14 Cost-complete exchange close | Partial | Local-paper funding and fail-closed incomplete-economics behavior are protected. | Scope boundary: no private exchange funding/bill producer claim exists. |
 | EX-15 Partial reduce and scale-in | Partial | Active entry actions reject unsupported reduce/scale forms; the partial-reduce dispatcher fails closed and the OKX broker helper is isolated. | Trigger/materializer absent: no claim crosses an authorized scale decision through Proposal, Risk, Order, Fill, and Position update. |
 | PF-03 Capital-adjusted curve | Partial | `DM-S07` proves persistence; `AN-S06` protects honest current UI semantics; missing tripwire `AN-C06` records the absent adjusted-performance consumer. | Honest downgrade complete; #419 remains open without forcing cash flows into verified trading PnL. |
