@@ -351,67 +351,64 @@ def _run_process_phase(data_dir: Path, phase: str) -> dict:
     return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
-@pytest.mark.parametrize(
-    "mode",
-    ["bitget_demo", "okx_demo", "binance_testnet"],
-)
 def test_exchange_funding_survives_private_fill_replay_and_process_restart(
     tmp_path: Path,
-    mode: str,
 ):
     """A separate Golden Path for exchange net economics and restart convergence.
 
-    The fixture replays adapter-normalized private fills plus venue-shaped
+    The fixture replays production-normalized private fills plus venue-shaped
     funding bills without network access. Three real Python processes create,
     settle, and verify one durable SQLite state root, so the proof crosses both
     connection and process boundaries while retaining the normal production
-    materializers and settler.
+    materializer and settler.
     """
-    # Each parameter gets an isolated persistent state root. Keeping one venue
-    # per run also prevents a passing venue from masking another venue's failure.
-    data_dir = tmp_path / mode
+    data_dir = tmp_path / "exchange-funding-restart"
     created = _run_process_phase(data_dir, "create")
-    created_row = next(
-        row for row in created["positions"] if row["execution_mode"] == mode
-    )
-    materialization = next(
-        row
+    assert {
+        row["mode"]: {
+            "first_state": row["first_state"],
+            "first_new_fill_count": row["first_new_fill_count"],
+            "replay_state": row["replay_state"],
+            "replay_new_fill_count": row["replay_new_fill_count"],
+        }
         for row in created["materializations"]
-        if row["mode"] == mode
-    )
-    assert materialization == {
-        "mode": mode,
-        "first_state": "filled",
-        "first_new_fill_count": 1,
-        "replay_state": "filled",
-        "replay_new_fill_count": 0,
+    } == {
+        mode: {
+            "first_state": "filled",
+            "first_new_fill_count": 1,
+            "replay_state": "filled",
+            "replay_new_fill_count": 0,
+        }
+        for mode in ("bitget_demo", "okx_demo", "binance_testnet")
     }
-    assert created_row["status"] == "closed"
-    assert created_row["realized_pnl"] is None
-    assert created_row["outcome_eligible"] == 0
-    assert (
-        created_row["outcome_exclusion_reason"]
-        == "incomplete_funding_economics"
-    )
+    assert {
+        (
+            row["status"],
+            row["realized_pnl"],
+            row["outcome_eligible"],
+            row["outcome_exclusion_reason"],
+        )
+        for row in created["positions"]
+    } == {("closed", None, 0, "incomplete_funding_economics")}
 
     settled = _run_process_phase(data_dir, "settle")
-    settled_row = next(
-        row for row in settled["positions"] if row["execution_mode"] == mode
-    )
     assert settled["replay_result"]["checked"] == 3
     assert settled["replay_result"]["settled"] == 3
     assert settled["replay_result"]["still_pending"] == 0
     assert settled["replay_result"]["errors"] == []
     assert settled["replay_result"]["as_of"]
-    assert settled_row["realized_pnl"] == pytest.approx(9.45)
-    assert settled_row["funding_cost"] == pytest.approx(0.25)
-    assert settled_row["funding_source"] == "broker_ledger"
-    assert settled_row["outcome_eligible"] == 1
-    assert settled_row["outcome_exclusion_reason"] == "eligible"
-    evidence = json.loads(settled_row["reconciliation_evidence"])
-    assert evidence["funding"]["source"] == "broker_ledger"
-    assert evidence["funding"]["events"][0]["funding_cost"] == pytest.approx(0.25)
-    assert evidence["funding_economics_fingerprint"].startswith("sha256:")
+    for settled_row in settled["positions"]:
+        assert settled_row["realized_pnl"] == pytest.approx(9.45)
+        assert settled_row["funding_cost"] == pytest.approx(0.25)
+        assert settled_row["funding_source"] == "broker_ledger"
+        assert settled_row["outcome_eligible"] == 1
+        assert settled_row["outcome_exclusion_reason"] == "eligible"
+        evidence = json.loads(settled_row["reconciliation_evidence"])
+        assert evidence["funding"]["source"] == "broker_ledger"
+        assert evidence["funding"]["events"][0]["funding_cost"] == pytest.approx(
+            0.25
+        )
+        assert evidence["funding_economics_fingerprint"].startswith("sha256:")
 
     # A third interpreter opens the same database and reruns the production
     # recovery job. Nothing is selected or duplicated after the durable result.
