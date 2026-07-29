@@ -430,18 +430,40 @@ the old observation remains evidence for why the repair was necessary.
 No historical evidence from another SHA was counted. The unavailable CASI
 connection and older Windows monitor state remain operational context only.
 
+### Run Q — remaining Partial capability closure
+
+The final five-item pass produced one combined focused acceptance run:
+
+```text
+174 passed, 1 skipped
+```
+
+- RT-14: owned start/status/stop, legacy pidfile refusal, unrelated PID reuse,
+  and non-blocking API dispatch.
+- PF-03: durable Capital Events cross into raw plus adjusted Account Equity and
+  visible flow markers without changing verified trading PnL.
+- LN-17 / EX-15: reference helpers remain bounded while Settings/API and the
+  dispatcher prove that no production order or partial mutation can occur.
+- EX-16: Bitget/OKX/Binance private funding identity, signed economics,
+  ambiguity refusal, retention refusal, atomic settlement, delayed recovery,
+  and Outcome/Attribution/Learning hooks.
+
+The Dashboard production build and documentation governance check also passed.
+No natural external-venue or cross-platform tunnel operation was used to claim
+`Supported`; those complete code paths remain `Implemented`.
+
 ## Reviewed broken joins
 
 | Join | Producer exists | Final consumer exists | Verdict |
 |---|---:|---:|---|
-| Capital events → adjusted performance curve | Yes | No | PF-03 Partial; current UI is explicit |
+| Capital events → adjusted performance curve | Yes | Yes; separate adjusted account-equity points and markers | PF-03 Implemented |
 | Live-unlocked state → new proposal execution mode | Yes | No | EX-04 Broken |
 | Market-aware adverse signal → Operator position decision | Yes | No; the wake can trigger the entry evaluator, but its evidence is not prompt-visible and the active schema accepts only `trade`/`skip` | EX-09 Broken |
-| Persona leverage/loss/add parameters → production sizing/execution | Yes | Partial/no | Reference-only fields cannot progressively unlock; LN-17 pyramid remains Partial; LN-14 base sizing is Supported |
-| Exchange private funding bill → cost-complete outcome | No | Outcome verifier fails closed | EX-16 Partial |
-| Pyramid plan → Risk/Gateway/position materialization | Yes | No | LN-17/EX-15 Partial |
-| Partial-reduce request → authorized broker/position materialization | Reference helper only | No; dispatcher fails closed before broker | EX-15 Partial |
-| Tunnel PID → owned cloudflared process → safe stop/recovery | PID exists/alive check only | No ownership verification or focused lifecycle acceptance | RT-14 Partial |
+| Persona leverage/loss/add parameters → production sizing/execution | Yes | Partial/no | Reference-only fields cannot progressively unlock; LN-17 pyramid is Experimental; LN-14 base sizing is Supported |
+| Exchange private funding bill → cost-complete outcome | Yes; Bitget/OKX/Binance private ledgers | Exact attribution, atomic settlement, and delayed recovery | EX-16 Implemented |
+| Pyramid plan → Risk/Gateway/position materialization | Reference helper only | Intentionally blocked | LN-17/EX-15 Experimental |
+| Partial-reduce request → authorized broker/position materialization | Reference helper only | Intentionally blocked before broker | EX-15 Experimental |
+| Tunnel process record → owned cloudflared process → safe stop/recovery | PID + executable + config command | Yes; mismatch is visible and never killed | RT-14 Implemented |
 | Candidate exchange credentials → authenticated private read-only result | Yes; Bitget account info, Binance/OKX balance | Yes; secret-safe result and no persistence | OS-03 Implemented |
 
 ## Evidence limitations

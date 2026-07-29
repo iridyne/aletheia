@@ -1505,7 +1505,7 @@ function ExecutionTab({ status, settings, qc, onDirty }: any) {
 
       <Section
         title="Capital Events"
-        description="Record deposits and withdrawals as audited cash-flow history. Account Equity remains a raw balance series and Cumulative PnL remains verified trading PnL; no cash-flow-adjusted performance curve is available yet."
+        description="Record deposits and withdrawals as audited cash-flow history. Account Equity remains visible as a raw balance series; when events fall inside the visible window, Overview also renders a separate cash-flow-adjusted series. Cumulative PnL remains verified trading PnL."
       >
         <CapitalEventsCard />
       </Section>
@@ -1632,6 +1632,7 @@ function CapitalEventsCard() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['capital-events'] })
       qc.invalidateQueries({ queryKey: ['capital-net-deposits'] })
+      qc.invalidateQueries({ queryKey: ['account-equity-history'] })
       setAmount('')
       setNote('')
       setMsg('Recorded')

@@ -6,6 +6,7 @@ the gateway and tracked via a pidfile at data/tunnel.pid.
 """
 
 import logging
+import json
 import os
 import platform
 import shutil
@@ -75,22 +76,52 @@ def _write_tunnel_config(cfg) -> Path:
 
 
 def is_tunnel_running() -> bool:
-    """Check if the tunnel process is alive."""
-    pid = read_tunnel_pid()
-    if pid is None:
+    """Check that the recorded process is alive and still owned by Aletheia."""
+    record = _read_tunnel_record()
+    if record is None:
         return False
-    return _pid_alive(pid)
+    return _tunnel_process_owned(record)
 
 
 def read_tunnel_pid() -> int | None:
-    """Read tunnel PID from pidfile."""
+    """Read the tunnel PID from the ownership record."""
+    record = _read_tunnel_record()
+    return int(record["pid"]) if record is not None else None
+
+
+def _read_tunnel_record() -> dict | None:
+    """Read the process ownership record.
+
+    Legacy integer-only pidfiles are accepted for cleanup but are never treated
+    as proof that the referenced process belongs to Aletheia.
+    """
     p = _pid_path()
     if not p.exists():
         return None
     try:
-        return int(p.read_text().strip())
-    except (ValueError, OSError):
+        raw = p.read_text(encoding="utf-8").strip()
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            value = int(raw)
+        if isinstance(value, int):
+            return {"pid": value, "legacy": True}
+        if not isinstance(value, dict) or not isinstance(value.get("pid"), int):
+            return None
+        return value
+    except (TypeError, ValueError, OSError):
         return None
+
+
+def _write_tunnel_record(*, pid: int, executable: str, config_path: Path) -> bool:
+    record = {
+        "version": 1,
+        "pid": pid,
+        "executable": str(executable),
+        "config_path": str(config_path.resolve()),
+    }
+    _pid_path().write_text(json.dumps(record, sort_keys=True), encoding="utf-8")
+    return True
 
 
 def _pid_alive(pid: int) -> bool:
@@ -112,6 +143,51 @@ def _pid_alive(pid: int) -> bool:
             return True
         except OSError:
             return False
+
+
+def _process_command_line(pid: int) -> str | None:
+    """Read the live command line used to prove the PID is our tunnel."""
+    try:
+        if platform.system() == "Windows":
+            command = (
+                f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"
+            )
+            args = ["powershell", "-NoProfile", "-Command", command]
+        else:
+            args = ["ps", "-p", str(pid), "-o", "command="]
+        proc = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        value = proc.stdout.strip()
+        return value if proc.returncode == 0 and value else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _tunnel_process_owned(record: dict) -> bool:
+    """Verify that the live PID command is the configured cloudflared tunnel."""
+    if record.get("legacy"):
+        return False
+    pid = int(record["pid"])
+    if not _pid_alive(pid):
+        return False
+    command_line = _process_command_line(pid)
+    if not command_line:
+        return False
+    expected_exe = str(record.get("executable") or "")
+    expected_config = str(record.get("config_path") or "")
+    if platform.system() == "Windows":
+        command_line = command_line.lower()
+        expected_exe = expected_exe.lower()
+        expected_config = expected_config.lower()
+    return (
+        expected_exe in command_line
+        and "--config" in command_line
+        and expected_config in command_line
+    )
 
 
 def start_tunnel() -> dict:
@@ -160,7 +236,7 @@ def start_tunnel() -> dict:
                 stderr=subprocess.DEVNULL,
             )
 
-        _pid_path().write_text(str(proc.pid), encoding="utf-8")
+        _write_tunnel_record(pid=proc.pid, executable=exe, config_path=config_file)
 
         # Verify cloudflared stays alive for a few seconds (catches config errors).
         # cloudflared logs to stderr and exits non-zero on bad config/creds within ~2s.
@@ -180,13 +256,23 @@ def start_tunnel() -> dict:
 
 def stop_tunnel() -> dict:
     """Stop the tunnel process."""
-    pid = read_tunnel_pid()
-    if pid is None:
+    record = _read_tunnel_record()
+    if record is None:
         return {"ok": True, "status": "not_running"}
+    pid = int(record["pid"])
 
     if not _pid_alive(pid):
         _pid_path().unlink(missing_ok=True)
         return {"ok": True, "status": "not_running"}
+    if not _tunnel_process_owned(record):
+        _pid_path().unlink(missing_ok=True)
+        logger.error("Refused to stop unowned process referenced by tunnel pidfile (pid=%d)", pid)
+        return {
+            "ok": False,
+            "status": "ownership_mismatch",
+            "pid": pid,
+            "reason": "recorded PID does not match the Aletheia cloudflared process",
+        }
 
     try:
         if platform.system() == "Windows":
@@ -210,13 +296,17 @@ def stop_tunnel() -> dict:
 def tunnel_status() -> dict:
     """Return current tunnel status."""
     cfg = load_config()
+    record = _read_tunnel_record()
     running = is_tunnel_running()
-    pid = read_tunnel_pid()
+    pid = int(record["pid"]) if record is not None else None
+    ownership_mismatch = bool(record and _pid_alive(pid) and not running)
 
     return {
         "enabled": cfg.tunnel.enabled,
         "running": running,
         "pid": pid if running else None,
+        "ownership_verified": running,
+        "ownership_mismatch": ownership_mismatch,
         "tunnel_id": cfg.tunnel.tunnel_id or None,
         "hostname": cfg.tunnel.hostname or None,
         "cloudflared_installed": find_cloudflared() is not None,

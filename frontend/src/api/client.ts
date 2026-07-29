@@ -1453,6 +1453,27 @@ export interface AccountEquityHistory {
   source: 'local_paper_ledger' | 'exchange_account_snapshot'
   state: 'available' | 'unavailable'
   points: { time: string; equity_usdt: number }[]
+  adjusted_points: {
+    time: string
+    raw_equity_usdt: number
+    cumulative_net_flow_usdt: number
+    adjusted_equity_usdt: number
+  }[]
+  capital_flow_markers: {
+    id: string
+    time: string
+    broker_id: string
+    event_type: 'deposit' | 'withdraw'
+    amount_usdt: number
+    signed_amount_usdt: number
+  }[]
+  adjustment: {
+    state: 'available' | 'unavailable'
+    method: 'visible_window_net_flow_adjusted_usdt'
+    scope: 'aggregate_tracked_account_equity'
+    baseline_at: string | null
+    note: string
+  }
   as_of: string | null
 }
 

@@ -33,9 +33,9 @@ Outside these canonical tables, use the full capability name.
 | Status | Count |
 |---|---:|
 | Supported | 69 |
-| Implemented | 4 |
-| Partial | 5 |
-| Experimental | 21 |
+| Implemented | 7 |
+| Partial | 0 |
+| Experimental | 23 |
 | Broken | 2 |
 | Deprecated | 0 |
 | **Total** | **101** |
@@ -59,7 +59,7 @@ Outside these canonical tables, use the full capability name.
 | RT-11 | Backup, verification, export, and import | E1+E2 | Supported | None in tested contract | No |
 | RT-12 | Data and filesystem retention | E1+E2 | Supported | None in tested contract | No |
 | RT-13 | Update check, apply, activation, and rollback | E1+E2 | Supported | None in tested contract | No |
-| RT-14 | Tunnel lifecycle and remote-owner protection | E1 | Partial | Auth fails closed, but PID ownership is not verified and start/stop/status have no focused lifecycle acceptance | No |
+| RT-14 | Tunnel lifecycle and remote-owner protection | E1+E2 | Implemented | Executable and config-command identity are verified; no natural cross-platform tunnel dogfood | No |
 | RT-15 | Proxy/network routing and diagnostics | E1+E2 | Supported | None in tested routing contract | No |
 
 ### Market data and universe
@@ -129,8 +129,8 @@ Outside these canonical tables, use the full capability name.
 | EX-12 | Exchange order/position reconciliation | E1+E2 | Implemented | No owner-selected external execution mode in supported profile | No |
 | EX-13 | Stale order and disappearance handling | E1+E2 | Implemented | No owner-selected external execution mode in supported profile | No |
 | EX-14 | Local paper cost-complete close settlement | E1+E2 | Supported | None in tested paper contract | Yes |
-| EX-15 | Partial reduce and scale-in lifecycle | E1 | Partial | Active actions reject reduce/scale-in; the dispatcher fails closed and the OKX helper remains isolated without Proposal/Risk authorization | No |
-| EX-16 | Exchange-backed cost-complete close settlement | E1+E2 | Partial | Private exchange funding/bill evidence writer absent; verifier fails closed | No |
+| EX-15 | Partial reduce and scale-in lifecycle | E1+E2 | Experimental | Reference helpers remain isolated; active actions and dispatchers fail closed before broker mutation | No |
+| EX-16 | Exchange-backed cost-complete close settlement | E1+E2 | Implemented | Private Bitget/OKX/Binance funding ledgers and recovery are executable; no natural venue dogfood | No |
 
 ### Portfolio, performance, and attribution
 
@@ -138,7 +138,7 @@ Outside these canonical tables, use the full capability name.
 |---|---|---|---|---|---|
 | PF-01 | Local paper cash account | E1+E2 | Supported | None in tested paper contract | Yes |
 | PF-02 | Capital event recording | E1+E2 | Supported | Recording is supported; PF-03 separately tracks missing curve consumption | No |
-| PF-03 | Capital-adjusted performance curve | E1 | Partial | Public copy now states that no adjusted curve exists; Capital Events remain unconsumed by performance analytics (#419) | No |
+| PF-03 | Capital-adjusted performance curve | E1+E2 | Implemented | Separate raw and cash-flow-adjusted account-equity series are executable; no natural UI dogfood | No |
 | PF-04 | Portfolio snapshots and account equity history | E1+E2 | Supported | Raw equity only; PF-03 tracks capital-adjusted curve gap | Yes |
 | PF-05 | Position and trade blotter | E1+E2 | Supported | None in tested contract | Yes |
 | PF-06 | Trade insights and performance analytics | E1+E2 | Supported | None in tested eligible-outcome contract | Yes |
@@ -166,7 +166,7 @@ Outside these canonical tables, use the full capability name.
 | LN-14 | Persona base sizing | E1+E2 | Supported | Notional/Kelly reach immutable Proposal quantity; other persona fields are explicitly outside this capability | No |
 | LN-15 | Persona regime learning | E1+E2 | Experimental | Bounded notional appetite only; default influence closed | No |
 | LN-16 | Persona progressive unlock | E1+E2 | Experimental | Default-off; active entry parameters only, but the gate uses lifetime eligible closes rather than a prospective Persona/policy cohort (#409) | No |
-| LN-17 | Persona pyramid decision | E1+E2 | Partial | Pure helper has no production trigger/materializer; Settings/API block new enablement (#410) | No |
+| LN-17 | Persona pyramid decision | E1+E2 | Experimental | Reference-only helper; Settings/API block new enablement and no order capability is promised (#410) | No |
 | LN-18 | Persona rollout automation | E1+E2 | Experimental | Scheduler is an explicit read-only safety hold; prospective Persona/policy step verdict is absent (#409) | No |
 | LN-19 | Policy/version history and diff | E1+E2 | Supported | Static diff route precedes the dynamic detail route; endpoint acceptance covers immutable diff, detail, and history | No |
 
@@ -274,11 +274,29 @@ endpoints, close clients on both success and failure, and do not expose raw
 secrets. It remains outside the supported paper profile because external venue
 availability is not part of that product surface.
 
-PF-03 was subsequently downgraded from `Broken` to `Partial`. Settings and the
-Capital API no longer claim that current curves consume Capital Events:
-Account Equity remains raw and Cumulative PnL remains verified trading PnL.
-The optional cash-flow-adjusted projection is still absent, explicitly tracked
-by `AN-C06` and GitHub #419.
+PF-03 is now `Implemented`. Capital Events feed a separate, reproducible
+cash-flow-adjusted account-equity series while raw Account Equity and verified
+trading PnL remain unchanged. The visible-window baseline and aggregate account
+scope are returned by the API instead of being hidden chart assumptions.
+
+RT-14 is `Implemented`, not `Supported`: the tunnel pidfile now records the
+executable and config-command identity. Status and stop revalidate that
+identity, so a PID reused by an unrelated process cannot be reported or terminated as Aletheia's
+cloudflared process. Focused lifecycle acceptance is executable, but natural
+cross-platform tunnel operation is outside the paper Supported Core.
+
+LN-17 and EX-15 are `Experimental`, not incomplete core promises. Their
+reference helpers remain bounded and tested, while Settings/API and the active
+dispatcher prevent new pyramid, scale-in, or strict partial-reduce execution.
+No second position-management path was added merely to promote a status label.
+
+EX-16 is `Implemented`. Bitget, OKX, and Binance exchange-backed futures can
+read private funding ledgers, preserve broker event identity and signed cash
+economics, settle the verified close, and recover delayed bills through the
+existing scheduler into Outcome, Attribution, and Learning. Ambiguous identity,
+overlapping positions, unavailable history, publication delay, and requests
+outside broker retention remain fail-closed. Natural venue dogfood is not
+claimed, so the capability remains outside `Supported`.
 
 ## Owner decision boundary
 

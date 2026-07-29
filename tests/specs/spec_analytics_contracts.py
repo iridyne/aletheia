@@ -369,28 +369,24 @@ def test_dreaming_summary_excludes_archived_from_recent(tmp_path, monkeypatch):
         "analytics_contract",
         "§capital-event curve semantics",
         "L2a",
-        "Capital Events is presented as audited cash-flow history; current Account "
-        "Equity is explicitly raw and Cumulative PnL is explicitly trading PnL, so "
-        "the UI does not claim a cash-flow adjustment that has no consumer.",
+        "Capital Events is presented as audited cash-flow history; raw Account "
+        "Equity, cash-flow-adjusted equity, and verified trading PnL remain "
+        "explicitly separate.",
         status="implemented",
     )
 )
-def test_capital_events_ui_does_not_claim_current_curve_adjustment():
+def test_capital_events_ui_distinguishes_raw_adjusted_and_trading_series():
     root = pathlib.Path(_project_root())
     settings = (root / "frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
     capital_route = (
         root / "aletheia/server/routes/capital.py"
     ).read_text(encoding="utf-8")
 
-    assert "no cash-flow-adjusted performance curve is available yet" in settings
-    assert "so the Cumulative PnL curve reflects true performance" not in settings
-    assert "analytics/equity_curve subtracts" not in capital_route
+    assert "renders a separate cash-flow-adjusted series" in settings
+    assert "Cumulative PnL remains verified trading PnL" in settings
+    assert "Account-equity history consumes this event" in capital_route
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="PF-03/#419 — no public cash-flow-adjusted performance consumer exists",
-)
 @spec_claim(
     SpecClaim(
         "AN-C06",
@@ -399,7 +395,7 @@ def test_capital_events_ui_does_not_claim_current_curve_adjustment():
         "L2c",
         "A public cash-flow-adjusted performance projection consumes scoped Capital "
         "Events while leaving raw Account Equity and verified trading PnL distinct.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_cash_flow_adjusted_performance_has_capital_event_consumer():
@@ -414,9 +410,11 @@ def test_cash_flow_adjusted_performance_has_capital_event_consumer():
             inspect.getsource(get_account_equity_history),
         )
     )
-    expected_consumer_markers = (
-        "get_net_deposits",
-        "list_capital_events",
-        "cash_flow_adjust",
-    )
+    expected_consumer_markers = ("list_capital_events", "adjusted_points")
     assert any(marker in consumer_source for marker in expected_consumer_markers)
+    chart_source = (
+        pathlib.Path(_project_root())
+        / "frontend/src/charts/AccountEquityChart.tsx"
+    ).read_text(encoding="utf-8")
+    assert "capital_flow_markers" in chart_source
+    assert "setMarkers" in chart_source

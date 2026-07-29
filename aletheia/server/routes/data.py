@@ -1288,15 +1288,70 @@ def get_account_equity_history(limit: int = 500, days: int | None = None):
         {"time": row["snapshot_at"], "equity_usdt": row["account_equity_usdt"]}
         for row in rows
     ]
+    capital_flow_markers: list[dict] = []
+    adjusted_points: list[dict] = []
+    if points:
+        capital_events = repo.list_capital_events_between(
+            points[0]["time"],
+            points[-1]["time"],
+        )
+        event_index = 0
+        cumulative_net_flow = 0.0
+        for point in points:
+            while (
+                event_index < len(capital_events)
+                and str(capital_events[event_index]["detected_at"]) <= point["time"]
+            ):
+                event = capital_events[event_index]
+                signed_amount = float(event["amount_usdt"])
+                if event["event_type"] == "withdraw":
+                    signed_amount = -signed_amount
+                cumulative_net_flow += signed_amount
+                capital_flow_markers.append({
+                    "id": event["id"],
+                    "time": event["detected_at"],
+                    "broker_id": event["broker_id"],
+                    "event_type": event["event_type"],
+                    "amount_usdt": float(event["amount_usdt"]),
+                    "signed_amount_usdt": round(signed_amount, 4),
+                })
+                event_index += 1
+            adjusted_points.append({
+                "time": point["time"],
+                "raw_equity_usdt": point["equity_usdt"],
+                "cumulative_net_flow_usdt": round(cumulative_net_flow, 4),
+                "adjusted_equity_usdt": round(
+                    float(point["equity_usdt"]) - cumulative_net_flow,
+                    4,
+                ),
+            })
     result = {
         "source": "local_paper_ledger" if local_paper else "exchange_account_snapshot",
         "state": "available" if points else "unavailable",
         "points": points,
+        "adjusted_points": adjusted_points,
+        "capital_flow_markers": capital_flow_markers,
+        "adjustment": {
+            "state": "available" if adjusted_points else "unavailable",
+            "method": "visible_window_net_flow_adjusted_usdt",
+            "scope": "aggregate_tracked_account_equity",
+            "baseline_at": points[0]["time"] if points else None,
+            "note": (
+                "Raw equity minus deposits plus withdrawals detected after the "
+                "first visible snapshot. Verified trading PnL is unchanged."
+            ),
+        },
         "as_of": points[-1]["time"] if points else None,
     }
     with _equity_history_cache_lock:
         _equity_history_cache[cache_key] = (now, result)
     return result
+
+
+def invalidate_account_equity_history_cache() -> None:
+    """Invalidate adjusted/raw equity views after an authoritative cash-flow write."""
+    with _equity_history_cache_lock:
+        _equity_history_cache.clear()
 
 
 @router.get("/market/macro")
