@@ -45,6 +45,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "tpsl_fill_check",
     "outcome_settler",
     "paper_funding_settler",
+    "broker_funding_settler",
     "outcome_hook_replay",
     "shadow_resolver",
     "learning_contribution_evaluator",
@@ -91,6 +92,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "shadow_resolver": 60.0,
     "outcome_settler": 120.0,
     "paper_funding_settler": 60.0,
+    "broker_funding_settler": 120.0,
     "learning_contribution_evaluator": 60.0,
     "learning_lifecycle_controller": 60.0,
     # #90 fix: tpsl_fill_check runs every 90s and calls Bitget via
@@ -1075,6 +1077,13 @@ def init_scheduler() -> BackgroundScheduler | None:
         id="paper_funding_settler", misfire_grace_time=120, max_instances=1,
         executor="io",
         next_run_time=datetime.now() + timedelta(minutes=3),
+    )
+    _scheduler.add_job(
+        _guarded("broker_funding_settler", _run_broker_funding_settler),
+        "interval", minutes=30,
+        id="broker_funding_settler", misfire_grace_time=120, max_instances=1,
+        executor="io",
+        next_run_time=datetime.now() + timedelta(minutes=4),
     )
     # AT-01 evaluator is measurement-only and remains available while autonomous
     # Learning is disabled or layered pause is active.  Lifecycle control is a
@@ -2824,6 +2833,37 @@ def _run_paper_funding_settler():
     except Exception as e:
         logger.warning("paper_funding_settler failed: %s", e)
         _record_job_failure("paper_funding_settler", str(e))
+
+
+async def _async_broker_funding_settler():
+    from aletheia.portfolio.broker_funding_settlement import (
+        settle_unsettled_exchange_closes,
+    )
+
+    result = await settle_unsettled_exchange_closes()
+    logger.debug(
+        "broker_funding_settler: checked=%d settled=%d still_pending=%d errors=%d",
+        result["checked"], result["settled"], result["still_pending"],
+        len(result["errors"]),
+    )
+
+
+def _run_broker_funding_settler():
+    """Retry private broker funding bills for exchange-backed futures closes."""
+    try:
+        _run_async_with_timeout(
+            "broker_funding_settler", _async_broker_funding_settler()
+        )
+        _record_job_success("broker_funding_settler")
+    except TimeoutError:
+        logger.warning(
+            "broker_funding_settler timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["broker_funding_settler"],
+        )
+        _record_job_failure("broker_funding_settler", "timed out")
+    except Exception as e:
+        logger.warning("broker_funding_settler failed: %s", e)
+        _record_job_failure("broker_funding_settler", str(e))
 
 
 def _run_guard_promotion():
