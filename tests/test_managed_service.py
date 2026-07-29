@@ -121,3 +121,39 @@ def test_windows_start_then_stop_runs_and_removes_the_task(monkeypatch):
     assert service._stop_windows()["ok"] is True
     assert calls[2] == ["schtasks", "/End", "/TN", service.WINDOWS_TASK_NAME]
     assert calls[3] == ["schtasks", "/Delete", "/TN", service.WINDOWS_TASK_NAME, "/F"]
+
+
+def test_windows_stop_is_idempotent_with_localized_not_found_bytes(monkeypatch):
+    """schtasks emits console-code-page bytes; an absent task is still a clean stop."""
+    from aletheia.gateway import console_text, managed_service as service
+
+    monkeypatch.setattr(console_text, "console_encoding", lambda: "gbk")
+    absent = "错误: 系统找不到指定的文件。\r\r\n".encode("gbk")
+    monkeypatch.setattr(
+        service.subprocess, "run",
+        lambda args, **_kwargs: _proc(returncode=1, stderr=absent),
+    )
+
+    result = service._stop_windows()
+    assert result["ok"] is True
+    assert result["managed"] is False
+
+
+def test_windows_stop_keeps_failure_when_the_task_survives(monkeypatch):
+    """An unrecognized delete failure is only forgiven when the task is really gone."""
+    from aletheia.gateway import console_text, managed_service as service
+
+    monkeypatch.setattr(console_text, "console_encoding", lambda: "cp932")
+    unknown = "エラー: 不明なエラーが発生しました。".encode("cp932")
+
+    def fake_run(args, **_kwargs):
+        if "/Query" in args:
+            return _proc(returncode=0, stdout="<Task />")
+        return _proc(returncode=1, stderr=unknown)
+
+    monkeypatch.setattr(service.subprocess, "run", fake_run)
+
+    result = service._stop_windows()
+    assert result["ok"] is False
+    assert result["reason"] == "schtasks_error"
+    assert "エラー" in result["detail"]

@@ -261,6 +261,88 @@ def test_disable_not_found_is_idempotent(tmp_path, monkeypatch):
     assert result["ok"] is True  # absence is success, not an error
 
 
+# --- 6b. localized schtasks output must survive decoding and stay idempotent ---
+
+def _force_console_code_page(monkeypatch, encoding):
+    """Pin the console code page so byte-level decoding is host-independent."""
+    from aletheia.gateway import console_text
+    monkeypatch.setattr(console_text, "console_encoding", lambda: encoding)
+
+
+def test_decode_console_recovers_code_page_bytes(monkeypatch):
+    """schtasks writes the console code page, not Python's locale encoding.
+
+    Decoding cp936 bytes as UTF-8 produced mojibake, which hid the localized
+    "not found" wording from the classifier.
+    """
+    from aletheia.gateway.console_text import decode_console
+    _force_console_code_page(monkeypatch, "gbk")
+
+    assert decode_console("错误: 系统找不到指定的文件。".encode("gbk")) == "错误: 系统找不到指定的文件。"
+    # UTF-8 is tried first, so a tool that does emit UTF-8 is not mojibake'd.
+    assert decode_console("已经是文本".encode("utf-8")) == "已经是文本"
+    assert decode_console("UTF-16 输出".encode("utf-16")) == "UTF-16 输出"
+    assert decode_console("passthrough") == "passthrough"
+    assert decode_console(None) == ""
+
+
+def test_disable_localized_not_found_bytes_is_idempotent(tmp_path, monkeypatch):
+    """Simplified-Chinese Windows: absence must still read as success."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import autostart
+    _force_windows(monkeypatch, autostart)
+    _force_console_code_page(monkeypatch, "gbk")
+    rec = _Recorder(returncode=1, stderr="错误: 系统找不到指定的文件。\r\r\n".encode("gbk"))
+    monkeypatch.setattr(autostart.subprocess, "run", rec)
+
+    result = autostart.disable(source="cli")
+    assert result["ok"] is True
+    assert result["enabled"] is False
+    # The wording is recognized directly — no extra existence query needed.
+    assert len(rec.calls) == 1
+
+
+def test_disable_unrecognized_failure_wording_probes_real_existence(tmp_path, monkeypatch):
+    """An unknown locale's wording is resolved by the /Query exit code, not text."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import autostart
+    _force_windows(monkeypatch, autostart)
+    _force_console_code_page(monkeypatch, "cp932")
+    # Japanese "the system cannot find the file specified", which no marker matches.
+    japanese = "エラー: 指定されたファイルが見つかりません。".encode("cp932")
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(list(args))
+        return _FakeProc(returncode=1, stderr=japanese)
+
+    monkeypatch.setattr(autostart.subprocess, "run", fake_run)
+    result = autostart.disable(source="cli")
+    assert result["ok"] is True
+    assert result["enabled"] is False
+    assert any("/Query" in call for call in calls)  # existence proved, not guessed
+
+
+def test_disable_keeps_failure_when_task_still_exists(tmp_path, monkeypatch):
+    """The existence probe must not launder a real failure into success."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import autostart
+    _force_windows(monkeypatch, autostart)
+    _force_console_code_page(monkeypatch, "cp932")
+    japanese = "エラー: 不明なエラーが発生しました。".encode("cp932")
+
+    def fake_run(args, **kwargs):
+        if "/Query" in args:
+            return _FakeProc(returncode=0, stdout="<Task />")  # task is still registered
+        return _FakeProc(returncode=1, stderr=japanese)
+
+    monkeypatch.setattr(autostart.subprocess, "run", fake_run)
+    result = autostart.disable(source="cli")
+    assert result["ok"] is False
+    assert result["reason"] == "schtasks_error"
+    assert "エラー" in result["detail"]  # readable, not mojibake
+
+
 # --- 7. status: task installed → enabled True (XML-based) ---
 
 def test_status_installed(tmp_path, monkeypatch):

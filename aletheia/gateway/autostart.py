@@ -35,6 +35,7 @@ from pathlib import Path, PureWindowsPath
 
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
 from aletheia.files.jsonl import write_audit
+from aletheia.gateway.console_text import decode_console
 from aletheia.gateway.pidfile import _no_window_kwargs
 
 TASK_NAME = "Aletheia Trading OS Gateway"
@@ -449,9 +450,37 @@ def _classify_stderr(stderr: str) -> str:
     return "schtasks_error"
 
 
-def _schtasks_text_kwargs() -> dict:
-    """Decode localized schtasks output without surfacing codec noise."""
-    return {"text": True, "errors": "replace"}
+def _run_schtasks(args: list[str], timeout: float = 30.0):
+    """Run schtasks and return the process with both streams decoded to text.
+
+    Captured as bytes and decoded by `decode_console` because schtasks writes the
+    console code page, which subprocess' locale-based text mode misreads under
+    Python's UTF-8 mode (see `aletheia/gateway/console_text.py`). The streams are
+    replaced in place so every caller keeps reading `.stdout` / `.stderr`.
+    """
+    proc = subprocess.run(
+        args, capture_output=True, timeout=timeout, **_no_window_kwargs()
+    )
+    proc.stdout = decode_console(proc.stdout)
+    proc.stderr = decode_console(proc.stderr)
+    return proc
+
+
+def _task_exists() -> bool | None:
+    """Locale-independent existence probe: the /Query exit code, never its text.
+
+    Returns None when existence cannot be established (query blocked or schtasks
+    unavailable) so a caller never converts an unknown state into a claim.
+    """
+    try:
+        proc = _run_schtasks(["schtasks", "/Query", "/TN", TASK_NAME])
+    except Exception:
+        return None
+    if proc.returncode == 0:
+        return True
+    if _classify_stderr(proc.stderr) == "access_denied":
+        return None
+    return False
 
 
 def _verify_after_prime(timeout: float = 30.0) -> dict:
@@ -745,11 +774,8 @@ def enable(source: str = "api") -> dict:
         ) as f:
             f.write(xml.encode("utf-16"))
             tmp = f.name
-        proc = subprocess.run(
-            ["schtasks", "/Create", "/TN", TASK_NAME, "/XML", tmp, "/F"],
-            capture_output=True, timeout=30,
-            **_schtasks_text_kwargs(),
-            **_no_window_kwargs(),
+        proc = _run_schtasks(
+            ["schtasks", "/Create", "/TN", TASK_NAME, "/XML", tmp, "/F"]
         )
     except FileNotFoundError:
         return {"supported": False, "enabled": False, "ok": False,
@@ -795,12 +821,7 @@ def disable(source: str = "api") -> dict:
         return _not_supported(f"unsupported_platform:{platform.system().lower()}")
 
     try:
-        proc = subprocess.run(
-            ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"],
-            capture_output=True, timeout=30,
-            **_schtasks_text_kwargs(),
-            **_no_window_kwargs(),
-        )
+        proc = _run_schtasks(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"])
     except FileNotFoundError:
         return {"supported": False, "enabled": False, "ok": False,
                 "reason": "schtasks_unavailable"}
@@ -809,6 +830,11 @@ def disable(source: str = "api") -> dict:
                 "reason": "schtasks_error", "detail": str(e)[:200]}
 
     reason = _classify_stderr(proc.stderr) if proc.returncode != 0 else None
+    if reason == "schtasks_error" and _task_exists() is False:
+        # The message wording is localized and only some locales are recognized
+        # by _classify_stderr; a task that provably does not exist is absent no
+        # matter how Windows phrased the failure.
+        reason = "not_found"
     if proc.returncode == 0 or reason == "not_found":
         write_audit({
             "actor": "human", "source": source, "event_type": "autostart_disabled",
@@ -824,13 +850,7 @@ def disable(source: str = "api") -> dict:
 def _prime_task() -> dict:
     """Best-effort immediate run so the current login session is protected too."""
     try:
-        proc = subprocess.run(
-            ["schtasks", "/Run", "/TN", TASK_NAME],
-            capture_output=True,
-            timeout=30,
-            **_schtasks_text_kwargs(),
-            **_no_window_kwargs(),
-        )
+        proc = _run_schtasks(["schtasks", "/Run", "/TN", TASK_NAME])
     except FileNotFoundError:
         return {"primed": False, "prime_reason": "schtasks_unavailable"}
     except Exception as e:
@@ -934,12 +954,7 @@ def status() -> dict:
 
     # Query 1: XML (structured, locale-independent config)
     try:
-        xml_proc = subprocess.run(
-            ["schtasks", "/Query", "/TN", TASK_NAME, "/XML"],
-            capture_output=True, timeout=30,
-            **_schtasks_text_kwargs(),
-            **_no_window_kwargs(),
-        )
+        xml_proc = _run_schtasks(["schtasks", "/Query", "/TN", TASK_NAME, "/XML"])
     except FileNotFoundError:
         return {"supported": False, "enabled": False, "task_name": TASK_NAME,
                 "reason": "schtasks_unavailable"}
@@ -959,11 +974,8 @@ def status() -> dict:
     # Query 2: LIST /V (runtime state — Last Run Time, Last Result)
     runtime_info: dict = {}
     try:
-        list_proc = subprocess.run(
-            ["schtasks", "/Query", "/TN", TASK_NAME, "/FO", "LIST", "/V"],
-            capture_output=True, timeout=30,
-            **_schtasks_text_kwargs(),
-            **_no_window_kwargs(),
+        list_proc = _run_schtasks(
+            ["schtasks", "/Query", "/TN", TASK_NAME, "/FO", "LIST", "/V"]
         )
         if list_proc.returncode == 0:
             runtime_info = _parse_runtime_status(list_proc.stdout)
