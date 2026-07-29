@@ -104,7 +104,25 @@ jobs:
           npm test
           npm run build
 
+      # `rustup toolchain install` always syncs the channel manifest, so the
+      # step below reaches static.rust-lang.org even when stable is already
+      # present: it exits 1 in 30s when egress is refused, and hangs until the
+      # job times out when egress is merely unresponsive. This probe needs no
+      # network, so an already-provisioned runner stops depending on one.
+      - name: Check for a preinstalled Rust toolchain
+        id: rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          if rustup show active-toolchain 2>/dev/null | grep -q '^stable-'; then
+            echo 'preinstalled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'preinstalled=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      # Kept as the fallback so a fresh runner still provisions itself.
       - name: Install stable Rust toolchain
+        if: steps.rust.outputs.preinstalled != 'true'
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
 
       - name: Test the platform-neutral native host
