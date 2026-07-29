@@ -27,6 +27,11 @@ jobs:
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          # Without an explicit version this resolves "latest" and downloads a
+          # fresh uv whenever upstream publishes one: six releases landed on the
+          # runners in nine days. Pinned, it hits the runner tool cache instead.
+          # Bump deliberately alongside the lockfile.
+          version: "0.12.0"
           python-version: "3.12"
           enable-cache: false
 
@@ -50,9 +55,26 @@ jobs:
           expected=9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c
           archive="$RUNNER_TEMP/gitleaks.tar.gz"
           install_dir="$RUNNER_TEMP/gitleaks-$version"
-          curl --fail --location --silent --show-error \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz" \
-            --output "$archive"
+          # Restore from the runner's pre-seeded tool cache first. Fetching this
+          # archive on every run means every run can fail on a transient egress
+          # fault; the network is the fallback here, not the normal path.
+          cached="${CI_TOOL_CACHE:-$RUNNER_TEMP/ci-tools}/gitleaks/gitleaks_${version}_linux_x64.tar.gz"
+          if [ -r "$cached" ] && cp "$cached" "$archive" &&
+             printf '%s  %s\n' "$expected" "$archive" | sha256sum --check --status -; then
+            echo "restored gitleaks $version from $cached"
+          else
+            curl --fail --location --silent --show-error \
+              "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz" \
+              --output "$archive"
+            # Seed the cache so the next run stays offline. Best-effort: a
+            # read-only or absent cache directory must not fail the scan.
+            if mkdir -p "$(dirname "$cached")" 2>/dev/null; then
+              cp "$archive" "$cached.partial" && mv "$cached.partial" "$cached" ||
+                rm -f "$cached.partial"
+            fi
+          fi
+          # Authoritative gate for both paths, so a stale or tampered cache
+          # entry fails exactly like a bad download would.
           printf '%s  %s\n' "$expected" "$archive" | sha256sum --check -
           mkdir -p "$install_dir"
           tar -xzf "$archive" -C "$install_dir" gitleaks
@@ -104,6 +126,11 @@ jobs:
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          # Without an explicit version this resolves "latest" and downloads a
+          # fresh uv whenever upstream publishes one: six releases landed on the
+          # runners in nine days. Pinned, it hits the runner tool cache instead.
+          # Bump deliberately alongside the lockfile.
+          version: "0.12.0"
           python-version: "3.12"
           enable-cache: false
 
