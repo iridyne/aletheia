@@ -497,8 +497,9 @@ def test_lco_projection_prioritizes_influence_paths_when_window_is_full(
 
     ``paper_influence_paths`` is an authority allowlist and ships empty, so an
     earlier fix that tiered only on it did not apply to any deployed
-    configuration: 474 dormant experiments on an unmeasurable path drove the real
-    projection to zero universe_family_calibration items at the default limit.
+    configuration: 485 experiments on a path that is not measurement-supported --
+    busy, but incapable of ever producing a verdict -- drove the real projection to
+    zero universe_family_calibration items at the default limit.
     Part A pins the visibility floor with an empty allowlist — measurement-supported
     paths outrank unmeasurable ones.  Part B keeps the allowlist working on top of
     it.  Both parts also pin that tiering did not widen the window itself.

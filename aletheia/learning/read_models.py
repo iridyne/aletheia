@@ -132,12 +132,15 @@ def _current_experiment_rows(
     )
     # Visibility tiers.  ``paper_influence_paths`` is an *authority* allowlist and
     # ships empty, so tiering on it alone left this window ordered purely by
-    # recency — and a path that opens ~10 dormant experiments an hour buried every
-    # measured experiment past the LIMIT.  With 474 dormant rows the owner
-    # projection returned zero universe_family_calibration items at the default
-    # limit of 20, i.e. nothing at all about the only path being measured.
-    # Measurement-supported paths are the only ones that can produce a verdict, so
-    # they keep a tier above unmeasurable ones regardless of the allowlist.
+    # recency — and ``observer_advisory_bundle``, which opens ~10 experiments an
+    # hour and is not in SUPPORTED_PATH_IDS, buried every measured experiment past
+    # the LIMIT.  Those rows are not idle (485 open, 7083 exposures) but they are
+    # unmeasurable: none of them can ever produce a verdict, and none has.  With
+    # 485 of them the owner projection returned zero universe_family_calibration
+    # items at the default limit of 20, i.e. nothing at all about the only path
+    # being measured.  Measurement-supported paths are the only ones that can
+    # produce a verdict, so they keep a tier above unmeasurable ones regardless of
+    # the allowlist.
     influence = tuple(dict.fromkeys(priority_paths or ()))
     measured = tuple(
         path for path in sorted(SUPPORTED_PATH_IDS) if path not in set(influence)
