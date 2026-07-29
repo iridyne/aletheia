@@ -3416,7 +3416,7 @@ def list_portfolio_snapshots(limit: int = 100, days: int | None = None) -> list[
 
 def list_account_equity_snapshots(
     execution_mode: str,
-    limit: int = 100,
+    limit: int | None = None,
     days: int | None = None,
 ) -> list[dict]:
     """Return one explicitly-account-valued snapshot series in ascending order.
@@ -3425,6 +3425,13 @@ def list_account_equity_snapshots(
     predicate: historical local-paper rows stored position notional there.  A
     missing `account_equity_usdt` therefore means *not an account reading*, not
     a zero balance.
+
+    The `days` window is the authoritative range selector. Rows are returned in
+    ascending time order spanning the WHOLE window. The previous implementation
+    wrapped the windowed query in a sub-select ordered DESC with `LIMIT ?`, which
+    silently truncated every range (7D/30D/90D/All) to the most-recent `limit`
+    rows and made them all render identically. `limit` is now an optional safety
+    cap applied to the final ascending result instead of an inner truncation.
     """
     db = get_db()
     params: list[object] = [execution_mode]
@@ -3432,16 +3439,17 @@ def list_account_equity_snapshots(
     if days is not None and days > 0:
         where += " AND snapshot_at >= datetime('now', ?)"
         params.append(f"-{days} days")
-    params.append(limit)
+    if limit and limit > 0:
+        params.append(limit)
+        limit_clause = "LIMIT ?"
+    else:
+        limit_clause = ""
     rows = db.execute(
         f"""
-        SELECT * FROM (
-            SELECT * FROM portfolio_snapshots
-            WHERE {where}
-            ORDER BY snapshot_at DESC, id DESC
-            LIMIT ?
-        )
+        SELECT * FROM portfolio_snapshots
+        WHERE {where}
         ORDER BY snapshot_at ASC, id ASC
+        {limit_clause}
         """,
         params,
     ).fetchall()
