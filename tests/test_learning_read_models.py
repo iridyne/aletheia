@@ -208,6 +208,153 @@ def test_lco_projection_keeps_stale_verdict_historical(tmp_path, monkeypatch):
     assert item["latest_historical_measurement"]["current"] is False
 
 
+def test_lco_projection_never_publishes_a_stale_verdicts_numbers_as_current(
+    tmp_path,
+    monkeypatch,
+):
+    """A superseded verdict's aggregates must not sit beside its zeroed arm counts.
+
+    ``measurement.*`` was gated on identity but ``samples.*`` and ``integrity.*``
+    were not, so a single item could report ``state=not_measured`` with ``arms
+    0/0`` and, from that very same superseded row, ``harm_breached=true`` and
+    ``raw_exposures=41``.  Nobody reading that can tell whether a live harm signal
+    exists.  Gate all three blocks together and keep the facts in the block that
+    is labelled not-current.
+    """
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    metrics = json.loads(
+        db.execute(
+            "SELECT harm_metrics_json FROM learning_contribution_verdicts "
+            "WHERE experiment_id=?",
+            (experiment_id,),
+        ).fetchone()[0]
+    )
+    metrics["breached"] = True
+    metrics["breach_reasons"] = ["mae_p95_worsening"]
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET code_commit='old-commit', "
+        "harm_metrics_json=? WHERE experiment_id=?",
+        (json.dumps(metrics), experiment_id),
+    )
+    db.commit()
+
+    from aletheia.learning.read_models import (
+        build_learning_contribution_projection,
+    )
+
+    item = build_learning_contribution_projection()["items"][0]
+    assert item["current_identity"]["mismatch_reason"] == "code_commit_mismatch"
+    assert item["measurement"]["state"] == "not_measured"
+
+    samples = item["samples"]
+    integrity = item["integrity"]
+    assert samples["treatment_assignment_units"] == 0
+    assert samples["control_assignment_units"] == 0
+    assert samples["raw_exposures"] == 0
+    assert samples["complete_assignment_units"] == 0
+    assert samples["cluster_members"] == 0
+    assert samples["selected_members"] == 0
+    assert integrity["harm_breached"] is False
+    assert integrity["breach_reasons"] == []
+    assert integrity["matching_mirror_rows"] == 0
+    assert integrity["outcome_source_member_counts"] == {}
+    # The gate's own requirement is an experiment fact, not a verdict fact.
+    assert samples["required_per_arm"] == 10
+
+    # Nothing is hidden: the block labelled not-current carries every fact.
+    historical = item["latest_historical_measurement"]
+    assert historical["current"] is False
+    assert historical["harm_breached"] is True
+    assert historical["breach_reasons"] == ["mae_p95_worsening"]
+    assert historical["raw_exposures"] == 18
+    assert historical["complete_assignment_units"] == 9
+    assert historical["treatment_assignment_units"] == 4
+    assert historical["control_assignment_units"] == 5
+    assert historical["window_end"] == "2026-07-24T01:00:00+00:00"
+
+
+def test_lco_projection_reads_the_newest_evaluation_not_the_latest_window(
+    tmp_path,
+    monkeypatch,
+):
+    """The 1970 sentinel window must not make a superseded verdict look current.
+
+    The projection keeps its own copy of the latest-verdict selector, so it needs
+    the same evaluation-order guarantee as get_latest_measurement_verdict: a cohort
+    that empties out stamps the sentinel window, which sorts after every real
+    window and silently re-elected the previous row.
+    """
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+
+    from aletheia.learning.experiments import _policy_epoch
+    from aletheia.learning.ledger import get_record, insert_record
+    from aletheia.learning.models import LearningContributionVerdict
+    from aletheia.learning.verdicts import METRIC_VERSION
+
+    from aletheia.storage.sqlite import get_db
+
+    seeded_id = _seeded_verdict_id(experiment_id)
+    db = get_db()
+    # The seed leaves created_at at "now"; pin it so evaluation order is explicit
+    # and the sentinel window is the only thing that could reorder these two.
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET created_at=? WHERE verdict_id=?",
+        ("2026-07-24T02:00:00+00:00", seeded_id),
+    )
+    db.commit()
+    superseded = get_record("learning_contribution_verdicts", seeded_id)
+    assert superseded is not None
+    emptied = LearningContributionVerdict(
+        experiment_id=experiment_id,
+        hypothesis_id=superseded["hypothesis_id"],
+        stage="shadow",
+        window_start="1970-01-01T00:00:00+00:00",
+        window_end="1970-01-01T00:00:00+00:00",
+        unique_treatment_n=0,
+        unique_control_n=0,
+        harm_metrics_json=json.dumps({"breached": False, "breach_reasons": []}),
+        verdict="insufficient_data",
+        reason="insufficient unique prospective treatment/control samples",
+        created_at="2026-07-24T09:00:00+00:00",
+        policy_epoch=_policy_epoch("universe_family_calibration"),
+        target_horizon="1h",
+        outcome_contract_version="v1",
+        metric_version=METRIC_VERSION,
+        code_commit="commit-current",
+    )
+    assert insert_record(
+        "learning_contribution_verdicts", emptied, ignore_duplicates=True
+    )
+
+    from aletheia.learning.read_models import (
+        build_learning_contribution_projection,
+    )
+
+    item = build_learning_contribution_projection()["items"][0]
+    assert item["latest_historical_measurement"]["verdict_id"] == emptied.verdict_id
+    assert item["samples"]["treatment_assignment_units"] == 0
+    assert item["samples"]["control_assignment_units"] == 0
+
+
+def _seeded_verdict_id(experiment_id: str) -> str:
+    from aletheia.storage.sqlite import get_db
+
+    return str(
+        get_db()
+        .execute(
+            "SELECT verdict_id FROM learning_contribution_verdicts "
+            "WHERE experiment_id=?",
+            (experiment_id,),
+        )
+        .fetchone()[0]
+    )
+
+
 def test_lco_projection_sanitizes_failure_and_is_side_effect_free(
     tmp_path,
     monkeypatch,
@@ -346,13 +493,15 @@ def test_lco_projection_prioritizes_influence_paths_when_window_is_full(
     tmp_path,
     monkeypatch,
 ):
-    """UFC stays visible when paper_influence_paths fills the observation window.
+    """A measured experiment stays visible however many newer ones are opened.
 
-    Part A proves the current bug: 21 newer open experiments push the UFC
-    experiment out of the LIMIT 20 window.
-    Part B proves the fix: with paper_influence_paths configured, UFC is
-    guaranteed a slot regardless of how many newer experiments exist.
-    Empty allowlist (Part A) must preserve the existing newest-first order.
+    ``paper_influence_paths`` is an authority allowlist and ships empty, so an
+    earlier fix that tiered only on it did not apply to any deployed
+    configuration: 474 dormant experiments on an unmeasurable path drove the real
+    projection to zero universe_family_calibration items at the default limit.
+    Part A pins the visibility floor with an empty allowlist — measurement-supported
+    paths outrank unmeasurable ones.  Part B keeps the allowlist working on top of
+    it.  Both parts also pin that tiering did not widen the window itself.
     """
     _setup_env(tmp_path, monkeypatch)
     _, ufc_experiment_id = _seed_current_experiment(monkeypatch)
@@ -393,17 +542,22 @@ def test_lco_projection_prioritizes_influence_paths_when_window_is_full(
     import aletheia.config.loader as loader_mod
     from aletheia.config.schema import AletheiaConfig, LearningConfig
 
-    # Part A: empty paper_influence_paths → newest-first; UFC falls outside limit 20.
+    # Part A: empty paper_influence_paths — the deployed configuration. A
+    # measurement-supported path must still be visible, and the unmeasurable
+    # filler path must be what gives up the slot.
     monkeypatch.setattr(loader_mod, "load_config", lambda: AletheiaConfig())
 
     from aletheia.learning.read_models import build_learning_contribution_projection
 
     result_default = build_learning_contribution_projection(limit=20)
     returned_ids_default = {item["experiment_id"] for item in result_default["items"]}
-    assert ufc_experiment_id not in returned_ids_default, (
-        "Without paper_influence_paths, UFC must be excluded by the limit-20 window"
+    assert ufc_experiment_id in returned_ids_default, (
+        "A measured experiment must stay visible with an empty influence allowlist"
     )
     assert len(result_default["items"]) == 20
+    assert sum(
+        item["path_id"] == "filler_path" for item in result_default["items"]
+    ) == 19, "the unmeasurable filler path must yield exactly the one contested slot"
 
     # Part B: paper_influence_paths=[universe_family_calibration] → UFC is prioritized.
     influence_cfg = AletheiaConfig(
