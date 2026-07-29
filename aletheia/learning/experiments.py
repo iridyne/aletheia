@@ -31,6 +31,11 @@ from aletheia.learning.models import LearningExperiment, LearningExposure, Learn
 from aletheia.learning.registry import get_learning_path
 from aletheia.learning.policy_epochs import PolicyEpoch, build_policy_epoch
 
+# Hypothesis statuses that forbid opening a *new* experiment.  `refrozen` is
+# written by the lifecycle controller when it invalidates an experiment, and is
+# a durable verdict on the hypothesis rather than on that one experiment.
+REFROZEN_HYPOTHESIS_STATUSES = frozenset({"refrozen"})
+
 
 @dataclass(frozen=True)
 class InfluenceDecision:
@@ -57,7 +62,15 @@ def _learning_gate_reason() -> str | None:
 def _ensure_experiment(
     *, path_id: str, scope: dict, action: dict, source_cohort: str,
     target_horizon: str, consumer: str,
-) -> tuple[LearningHypothesis, LearningExperiment]:
+) -> tuple[LearningHypothesis, LearningExperiment | None]:
+    """Resolve the hypothesis for this scope and its open experiment.
+
+    Returns ``(hypothesis, None)`` when the hypothesis has been refrozen and has
+    no open experiment: a refreeze is a durable decision that this line of
+    enquiry is closed, so it must not be reopened.  Hypotheses are resolved by
+    fingerprint, so without this the same refrozen hypothesis received a fresh
+    experiment on the next scanner tick and the refreeze silently expired.
+    """
     path = get_learning_path(path_id)
     fingerprint = hypothesis_fingerprint(
         path_id=path_id, scope=scope, action=action,
@@ -84,6 +97,12 @@ def _ensure_experiment(
 
     experiment_row = get_open_experiment(hypothesis.hypothesis_id)
     if experiment_row is None:
+        if hypothesis.status in REFROZEN_HYPOTHESIS_STATUSES:
+            _log.debug(
+                "refusing new experiment on %s hypothesis %s (path=%s)",
+                hypothesis.status, hypothesis.hypothesis_id, path_id,
+            )
+            return hypothesis, None
         experiment = LearningExperiment(
             hypothesis_id=hypothesis.hypothesis_id,
             assignment_salt=uuid4().hex,
@@ -239,6 +258,14 @@ def apply_numeric_treatment(
         path_id=path_id, scope=scope, action=action, source_cohort=source_cohort,
         target_horizon=target_horizon, consumer=consumer,
     )
+    if experiment is None:
+        # Refrozen hypothesis with nothing open: record no exposure and apply
+        # nothing.  Accruing further samples here would rebuild the evidence
+        # base for a hypothesis that has already been rejected.
+        return InfluenceDecision(
+            float(baseline), False, "unassigned", "hypothesis_refrozen",
+            hypothesis_id=hypothesis.hypothesis_id,
+        )
     assignment = stable_assignment(experiment, assignment_key or candidate_key)
     assignment_unit_key = assignment_key or candidate_key
     policy_epoch = _policy_epoch(path_id)

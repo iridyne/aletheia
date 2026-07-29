@@ -84,3 +84,69 @@ def test_measurement_startup_catchup_only_claims_one_current_window(monkeypatch)
     control.record_measurement_job_success("learning_contribution_evaluator")
     assert not control.measurement_catchup_due("learning_contribution_evaluator")
     assert calls == []
+
+
+def _health(**updates):
+    from aletheia.learning.models import LearningJobHealth
+
+    return LearningJobHealth(**{
+        "job_id": "learning_contribution_evaluator",
+        "schedule_key": "interval:60m",
+        "status": "healthy",
+        **updates,
+    })
+
+
+def test_job_health_view_derives_overdue_from_next_due_at():
+    """A job that stops firing keeps its stored status, so overdue must be derived."""
+    from datetime import datetime, timezone
+
+    from aletheia.learning.control import job_health_view
+
+    now = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
+    late = job_health_view(
+        _health(next_due_at="2026-07-15T11:00:00+00:00"), now=now,
+    )
+
+    assert late["overdue"] is True
+    assert late["overdue_seconds"] == 3600
+    assert late["status"] == "overdue"
+
+
+def test_job_health_view_tolerates_scheduler_jitter_and_missing_due_time():
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.learning.control import JOB_OVERDUE_GRACE_SECONDS, job_health_view
+
+    now = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
+    jitter = (now - timedelta(seconds=JOB_OVERDUE_GRACE_SECONDS - 5)).isoformat()
+
+    within_grace = job_health_view(_health(next_due_at=jitter), now=now)
+    unscheduled = job_health_view(_health(next_due_at=None), now=now)
+    unparsable = job_health_view(_health(next_due_at="not-a-timestamp"), now=now)
+
+    for view in (within_grace, unscheduled, unparsable):
+        assert view["overdue"] is False
+        assert view["overdue_seconds"] is None
+        assert view["status"] == "healthy"
+
+
+def test_job_health_view_never_downgrades_a_stored_failure_to_overdue():
+    """``failed`` is more severe than ``overdue`` and must survive the projection."""
+    from datetime import datetime, timezone
+
+    from aletheia.learning.control import job_health_view
+
+    now = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
+    view = job_health_view(
+        _health(
+            status="failed",
+            consecutive_failures=3,
+            next_due_at="2026-07-15T10:00:00+00:00",
+        ),
+        now=now,
+    )
+
+    assert view["status"] == "failed"
+    assert view["overdue"] is True
+    assert view["overdue_seconds"] == 7200

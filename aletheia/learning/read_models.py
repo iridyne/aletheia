@@ -33,6 +33,7 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
     from aletheia.config.loader import load_config
     from aletheia.learning.control import (
         get_learning_job_health,
+        job_health_view,
         measurement_catchup_due,
     )
 
@@ -71,7 +72,7 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
                 ),
             },
             "evaluator": _project_health(
-                evaluator.model_dump(),
+                job_health_view(evaluator),
                 catchup_due=measurement_catchup_due(
                     "learning_contribution_evaluator"
                 ),
@@ -346,6 +347,8 @@ def _project_health(row: dict[str, Any], *, catchup_due: bool) -> dict[str, Any]
         "backlog_count": _safe_int(row.get("backlog_count")),
         "oldest_backlog_at": row.get("oldest_backlog_at"),
         "consecutive_failures": _safe_int(row.get("consecutive_failures")),
+        "overdue": bool(row.get("overdue")),
+        "overdue_seconds": row.get("overdue_seconds"),
         "last_failed_at": row.get("last_failed_at"),
         "last_failure_code": _failure_code(
             row.get("last_failure_reason") or row.get("last_error")

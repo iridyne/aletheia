@@ -130,6 +130,12 @@ def resolve_learning_authority(
                 return blocked(
                     f"current_measurement_{measurement['verdict']}", measurement,
                 )
+            harm_reason = (
+                None if measurement is None
+                else measurement_harm_block_reason(measurement)
+            )
+            if harm_reason is not None:
+                return blocked(harm_reason, measurement)
         return _legacy_authority_adapter(experiment, current_policy_epoch, blocked)
     if current_code_commit is None:
         return blocked("code_commit_unavailable")
@@ -156,6 +162,9 @@ def resolve_learning_authority(
         )
         if identity_reason:
             return blocked(identity_reason, current)
+        harm_reason = measurement_harm_block_reason(current)
+        if harm_reason:
+            return blocked(harm_reason, current)
     # A harmful current-stage result must fail closed even when an older
     # activation record is malformed or a controller has not run yet.
     if current is not None and str(current.get("verdict") or "") in {"negative", "invalid"}:
@@ -202,7 +211,7 @@ def resolve_learning_authority(
             expected_horizon=expected_horizon,
             expected_code_commit=current_code_commit,
             expected_hypothesis_id=experiment.hypothesis_id,
-        )
+        ) or measurement_harm_block_reason(activation)
         return blocked(activation_reason) if activation_reason else AuthorityDecision(
             True,
             "admitted_shadow_trial" if activation_is_admitted_trial else "activated_by_predecessor",
@@ -214,7 +223,7 @@ def resolve_learning_authority(
         current, experiment.stage, current_policy_epoch, expected_horizon=expected_horizon,
         expected_code_commit=current_code_commit,
         expected_hypothesis_id=experiment.hypothesis_id,
-    )
+    ) or measurement_harm_block_reason(current)
     if identity_reason:
         return blocked(identity_reason, current)
     return AuthorityDecision(
@@ -252,6 +261,28 @@ def _legacy_authority_adapter(experiment: LearningExperiment, policy_epoch: str,
     )
 
 
+def measurement_harm_block_reason(verdict: dict[str, Any]) -> str | None:
+    """Return a reason when a verdict's harm gate forbids *granting* authority.
+
+    Deliberately separate from ``measurement_identity_reason``.  A harm breach is
+    not a property of measurement identity: it says the measured effect was bad,
+    not that the measurement describes something else.  Conflating the two put
+    this check upstream of the safety branch in ``process_lifecycle``, where it
+    suppressed the very invalidation it is evidence for -- a breaching experiment
+    was exempted from the reaping a clean one received.
+
+    Every caller that grants or extends authority must consult this.  The safety
+    path (refreeze/invalidate) must not.
+    """
+    try:
+        metrics = json.loads(verdict.get("harm_metrics_json") or "{}")
+    except (TypeError, ValueError):
+        return "measurement_metadata_invalid"
+    if not isinstance(metrics, dict):
+        return "measurement_metadata_invalid"
+    return "harm_gate_breached" if bool(metrics.get("breached")) else None
+
+
 def measurement_identity_reason(
     verdict: dict[str, Any],
     expected_stage: str | int,
@@ -261,6 +292,12 @@ def measurement_identity_reason(
     expected_code_commit: str | None = None,
     expected_hypothesis_id: str | None = None,
 ) -> str | None:
+    """Return a reason when a verdict does not describe *this* experiment now.
+
+    Identity only: stage, hypothesis, policy epoch, horizon, outcome contract,
+    metric version and code commit.  The harm gate lives in
+    ``measurement_harm_block_reason`` so that it cannot block a safety action.
+    """
     try:
         metrics = json.loads(verdict.get("harm_metrics_json") or "{}")
     except (TypeError, ValueError):
@@ -292,6 +329,4 @@ def measurement_identity_reason(
         return "code_commit_unavailable"
     if str(verdict.get("code_commit") or "") != expected_code_commit:
         return "code_commit_mismatch"
-    if bool(metrics.get("breached")):
-        return "harm_gate_breached"
     return None

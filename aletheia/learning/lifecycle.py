@@ -11,6 +11,7 @@ from typing import Any
 from aletheia.config.loader import load_config
 from aletheia.learning.authority import (
     MEASUREMENT_VERDICTS,
+    measurement_harm_block_reason,
     measurement_identity_reason,
     resolve_learning_authority,
 )
@@ -125,6 +126,18 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
     )
     if identity_reason:
         return LifecycleResult("hold", recommended, identity_reason, experiment_id, verdict_id=verdict["verdict_id"])
+
+    # A harm breach must never suppress the safety action it is evidence for.
+    # It blocks every path that grants or extends authority, and nothing else:
+    # holding a refreeze/invalidate because the result was harmful exempted the
+    # worst experiments from being stopped at all.
+    if recommended not in {"refreeze", "invalidate"}:
+        harm_reason = measurement_harm_block_reason(verdict)
+        if harm_reason:
+            return LifecycleResult(
+                "hold", recommended, harm_reason, experiment_id,
+                verdict_id=verdict["verdict_id"],
+            )
 
     # A no-intervention shadow can only recommend a separate owner action. The
     # scheduled controller must never cross the shadow -> paper authority boundary.
@@ -264,7 +277,7 @@ def _execute_trial_admission(
         expected_horizon=hypothesis.target_horizon,
         expected_code_commit=current_code_commit,
         expected_hypothesis_id=hypothesis.hypothesis_id,
-    )
+    ) or measurement_harm_block_reason(verdict)
     if identity_reason:
         return LifecycleResult("hold", "admit_trial", identity_reason, experiment_id, verdict_id=verdict_id)
 
@@ -553,7 +566,7 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
             recommended = "admit_trial"
     authority = resolve_learning_authority(hypothesis.path_id, experiment, current_policy_epoch)
     from aletheia.learning.cohorts import build_experiment_cohorts
-    from aletheia.learning.control import get_learning_job_health
+    from aletheia.learning.control import get_learning_job_health, job_health_view
     cohorts = [] if current_code_commit is None else [
         cohort
         for cohort in build_experiment_cohorts(experiment.experiment_id)
@@ -590,8 +603,10 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
         },
         "next_evaluation_at": evaluator_health.next_due_at,
         "job_health": {
-            "evaluator": evaluator_health.model_dump(),
-            "controller": get_learning_job_health("learning_lifecycle_controller").model_dump(),
+            "evaluator": job_health_view(evaluator_health),
+            "controller": job_health_view(
+                get_learning_job_health("learning_lifecycle_controller")
+            ),
         },
         "events": list_lifecycle_events(experiment_id),
     }

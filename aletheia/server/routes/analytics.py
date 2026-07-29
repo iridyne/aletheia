@@ -1761,7 +1761,7 @@ def get_learning_contribution():
     consumers and are activity context, not evidence of contribution.
     """
     from aletheia.storage.sqlite import get_db
-    from aletheia.learning.control import get_learning_job_health
+    from aletheia.learning.control import get_learning_job_health, job_health_view
 
     db = get_db()
 
@@ -1853,7 +1853,7 @@ def get_learning_contribution():
     ):
         try:
             h = get_learning_job_health(job_id)
-            health = h.model_dump()
+            health = job_health_view(h)
             health.pop("last_error", None)
             health.pop("last_failure_reason", None)
             job_health[job_id] = health

@@ -74,6 +74,7 @@ def _measurement(
     metric: str | None = None,
     reason: str = "test measurement",
     code_commit: str | None = "test-build",
+    breached: bool = False,
 ):
     from aletheia.learning.ledger import insert_record
     from aletheia.learning.models import LearningContributionVerdict
@@ -81,7 +82,10 @@ def _measurement(
 
     metric = metric or METRIC_VERSION
 
-    identifier = f"verdict-{experiment.experiment_id}-{verdict}-{epoch}-{horizon}-{contract}"
+    identifier = (
+        f"verdict-{experiment.experiment_id}-{verdict}-{epoch}-{horizon}-{contract}"
+        f"{'-breached' if breached else ''}"
+    )
     record = LearningContributionVerdict(
         verdict_id=identifier,
         experiment_id=experiment.experiment_id,
@@ -101,7 +105,8 @@ def _measurement(
             "horizon": horizon,
             "outcome_contract_version": contract,
             "metric_version": metric,
-            "breached": False,
+            "breached": breached,
+            **({"breach_reasons": ["mae_p95_worsening"]} if breached else {}),
         }),
         verdict=verdict,
         reason=reason,
@@ -957,6 +962,84 @@ def test_canonical_defaults_keep_numeric_consumers_on_static_baseline(monkeypatc
     assert decision.reason == "baseline:paper_influence_disabled"
 
 
+def test_invalidated_hypothesis_does_not_receive_a_fresh_experiment(monkeypatch):
+    """A refreeze is durable: the next scanner tick must not reopen the enquiry.
+
+    Regression (#442): ``_ensure_experiment`` resolved hypotheses by fingerprint and
+    only asked whether an *experiment* was open, never whether the hypothesis was
+    refrozen.  Invalidating an experiment therefore bought ~10 minutes -- the same
+    hypothesis got a new experiment on the next tick and kept accruing evidence for
+    a line of enquiry that had already been rejected.
+    """
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.learning.authority as authority
+    import aletheia.learning.control as control
+    import aletheia.learning.experiments as experiments
+    import aletheia.learning.lifecycle as lifecycle
+    from aletheia.learning.ledger import get_record
+    from aletheia.storage.sqlite import get_db
+
+    cfg = AletheiaConfig()
+    cfg.learning.auto_refreeze = True
+    for module in (authority, control, experiments, lifecycle):
+        monkeypatch.setattr(module, "load_config", lambda: cfg)
+    monkeypatch.setattr(authority, "global_learning_refreeze_reason", lambda: None)
+    monkeypatch.setattr(control, "global_learning_refreeze_reason", lambda: None)
+    monkeypatch.setattr(lifecycle, "global_learning_refreeze_reason", lambda: None)
+    monkeypatch.setattr(authority, "_code_fingerprint", lambda: "test-build")
+    monkeypatch.setattr(lifecycle, "_code_fingerprint", lambda: "test-build")
+    monkeypatch.setattr(experiments, "_code_fingerprint", lambda: "test-build")
+
+    treatment = dict(
+        path_id="universe_family_calibration",
+        scope={"family": "momentum", "direction": "long", "market_type": "perp"},
+        action={"type": "opportunity_multiplier", "multiplier": 1.1},
+        source_cohort="universe_forward_outcomes:clean_net:v2",
+        target_horizon="4h", baseline=1.0, treatment=1.1,
+        consumer="universe_allocator", consumer_stage="score",
+    )
+    first = experiments.apply_numeric_treatment(
+        candidate_key="candidate-before-refreeze", **treatment
+    )
+    assert first.experiment_id is not None
+
+    db = get_db()
+    epoch = get_record(
+        "learning_exposures", first.exposure_id
+    )["concurrent_policy_epoch"]
+    experiment = SimpleNamespace(
+        experiment_id=first.experiment_id, stage="shadow",
+    )
+    hypothesis = SimpleNamespace(hypothesis_id=first.hypothesis_id)
+    _measurement(hypothesis, experiment, "invalid", epoch=epoch)
+
+    result = lifecycle.process_lifecycle(
+        first.experiment_id, current_policy_epoch=epoch
+    )
+    assert result.action == "invalidate"
+    assert get_record("learning_hypotheses", first.hypothesis_id)["status"] == "refrozen"
+
+    # The next tick on the identical scope resolves the same refrozen hypothesis.
+    second = experiments.apply_numeric_treatment(
+        candidate_key="candidate-after-refreeze", **treatment
+    )
+
+    assert second.hypothesis_id == first.hypothesis_id
+    assert second.experiment_id is None
+    assert second.applied is False
+    assert second.value == 1.0
+    assert second.reason == "hypothesis_refrozen"
+    assert second.exposure_id is None
+    assert db.execute(
+        "SELECT COUNT(*) FROM learning_experiments WHERE hypothesis_id=?",
+        (first.hypothesis_id,),
+    ).fetchone()[0] == 1
+    assert db.execute(
+        "SELECT COUNT(*) FROM learning_exposures WHERE hypothesis_id=?",
+        (first.hypothesis_id,),
+    ).fetchone()[0] == 1
+
+
 @pytest.mark.parametrize("measurement", ["neutral", "insufficient_data"])
 def test_neutral_and_insufficient_hold_stage(monkeypatch, measurement):
     hypothesis, experiment = _experiment()
@@ -989,6 +1072,99 @@ def test_negative_and_invalid_fail_closed_in_authority_and_lifecycle(monkeypatch
     assert result.action == ("invalidate" if measurement == "invalid" else "refreeze")
     assert persisted["status"] == ("invalid" if measurement == "invalid" else "refrozen")
     assert persisted["ended_at"] is not None
+
+
+@pytest.mark.parametrize("measurement", ["negative", "invalid"])
+def test_harm_breach_does_not_suppress_the_safety_action_it_is_evidence_for(
+    monkeypatch, measurement,
+):
+    """A breached harm gate must never hold the refreeze/invalidate it argues for.
+
+    Regression (#441): the harm check lived inside ``measurement_identity_reason``,
+    which ``process_lifecycle`` consults *before* the safety branch.  A breaching
+    experiment was therefore held on every controller pass while an otherwise
+    identical clean one was reaped -- the gate was inverted, exempting the worst
+    experiments from being stopped at all.
+    """
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    verdict = _measurement(hypothesis, experiment, measurement, breached=True)
+    _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
+    from aletheia.learning.lifecycle import process_lifecycle
+    from aletheia.learning.ledger import get_record
+    from aletheia.storage.sqlite import get_db
+
+    result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
+    persisted = get_record("learning_experiments", experiment.experiment_id)
+
+    assert result.action == ("invalidate" if measurement == "invalid" else "refreeze")
+    assert result.reason != "harm_gate_breached"
+    assert persisted["status"] == ("invalid" if measurement == "invalid" else "refrozen")
+    assert persisted["ended_at"] is not None
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM learning_lifecycle_events WHERE experiment_id=? AND verdict_id=?",
+        (experiment.experiment_id, verdict.verdict_id),
+    ).fetchone()[0] == 1
+
+
+def test_harm_breach_blocks_promotion_and_authority(monkeypatch):
+    """The same breach that must not stop a refreeze must still stop every grant."""
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    _measurement(hypothesis, experiment, "positive", breached=True)
+    _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
+    from aletheia.learning.authority import resolve_learning_authority
+    from aletheia.learning.lifecycle import process_lifecycle
+    from aletheia.learning.ledger import get_record
+    from aletheia.storage.sqlite import get_db
+
+    decision = resolve_learning_authority(hypothesis.path_id, experiment, "epoch-a")
+    result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
+    persisted = get_record("learning_experiments", experiment.experiment_id)
+
+    assert decision.authorized is False
+    assert decision.reason == "harm_gate_breached"
+    assert result.action == "hold"
+    assert result.recommended_action == "promote_stage"
+    assert result.reason == "harm_gate_breached"
+    assert persisted["stage"] == "paper_10"
+    assert persisted["ended_at"] is None
+    assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 0
+
+
+def test_measurement_identity_reason_is_identity_only(monkeypatch):
+    """Identity means 'this measurement describes something else', not 'it was bad'."""
+    del monkeypatch
+    import json as _json
+
+    from aletheia.learning.authority import (
+        measurement_harm_block_reason,
+        measurement_identity_reason,
+    )
+    from aletheia.learning.verdicts import METRIC_VERSION
+
+    verdict = {
+        "stage": "paper_10",
+        "policy_epoch": "epoch-a",
+        "hypothesis_id": "hypothesis-a",
+        "target_horizon": "4h",
+        "outcome_contract_version": "v1",
+        "metric_version": METRIC_VERSION,
+        "code_commit": "test-build",
+        "harm_metrics_json": _json.dumps({"breached": True}),
+    }
+    kwargs = dict(
+        expected_horizon="4h",
+        expected_code_commit="test-build",
+        expected_hypothesis_id="hypothesis-a",
+    )
+
+    assert measurement_identity_reason(verdict, "paper_10", "epoch-a", **kwargs) is None
+    assert measurement_harm_block_reason(verdict) == "harm_gate_breached"
+
+    clean = {**verdict, "harm_metrics_json": _json.dumps({"breached": False})}
+    assert measurement_harm_block_reason(clean) is None
+    assert measurement_harm_block_reason({"harm_metrics_json": "{not json"}) == (
+        "measurement_metadata_invalid"
+    )
 
 
 @pytest.mark.parametrize(
