@@ -170,7 +170,17 @@ def get_latest_measurement_verdict(
     metric_version: str | None = None,
     code_commit: str | None = None,
 ) -> dict | None:
-    """Return the newest exact-cohort measurement, never a legacy authority row."""
+    """Return the newest exact-cohort measurement, never a legacy authority row.
+
+    "Newest" is evaluation order (``created_at``), not observation-window order.
+    ``contribution_runner._window`` stamps the 1970-01-01 sentinel on a cohort with
+    no surviving samples, and that sentinel sorts *after* every real window under
+    ``window_end DESC`` — so window ordering silently returned a superseded row from
+    the same cohort.  A cohort that empties out therefore resurrected its own last
+    ``positive`` and the controller promoted on it.  Verdicts are immutable and
+    evidence only accumulates within a cohort, so created_at ordering is the
+    monotonic one; window_end remains the tiebreak for cohorts evaluated together.
+    """
     clauses = [
         "experiment_id=?",
         "verdict IN ('positive', 'neutral', 'negative', 'insufficient_data', 'invalid')",
@@ -190,7 +200,7 @@ def get_latest_measurement_verdict(
             params.append(value)
     row = get_db().execute(
         "SELECT * FROM learning_contribution_verdicts WHERE " + " AND ".join(clauses) + " "
-        "ORDER BY datetime(window_end) DESC, datetime(created_at) DESC, verdict_id DESC LIMIT 1",
+        "ORDER BY datetime(created_at) DESC, datetime(window_end) DESC, verdict_id DESC LIMIT 1",
         tuple(params),
     ).fetchone()
     return dict(row) if row else None

@@ -439,6 +439,50 @@ def test_lifecycle_selects_current_build_before_ordering_observation_windows(mon
     assert result.action == "invalidate"
 
 
+def test_lifecycle_prefers_the_newest_evaluation_when_a_cohort_empties(monkeypatch):
+    """A sentinel window must not resurrect a superseded verdict from its own cohort.
+
+    ``contribution_runner._window`` stamps 1970-01-01 on a cohort with no surviving
+    samples, and that sentinel sorts *after* every real window under
+    ``window_end DESC``.  Both verdicts here share one cohort, so the code_commit
+    filter cannot separate them and ordering alone decides: window ordering hands
+    the controller a superseded ``positive`` to promote on while the newest
+    evaluation of the same cohort says ``invalid``.
+    """
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    superseded = _measurement(hypothesis, experiment, "positive")
+    newest = _measurement(hypothesis, experiment, "invalid")
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    # The newest evaluation found nothing left to measure: sentinel window, no
+    # samples, and a later created_at than the positive it supersedes.
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET window_start=?, window_end=?, "
+        "created_at=?, unique_treatment_n=0, unique_control_n=0 WHERE verdict_id=?",
+        (
+            "1970-01-01T00:00:00+00:00",
+            "1970-01-01T00:00:00+00:00",
+            _iso(30),
+            newest.verdict_id,
+        ),
+    )
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET created_at=? WHERE verdict_id=?",
+        (_iso(0), superseded.verdict_id),
+    )
+    db.commit()
+    _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
+    from aletheia.learning.lifecycle import process_lifecycle
+
+    result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
+
+    assert result.verdict_id == newest.verdict_id
+    assert result.action == "invalidate"
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM learning_lifecycle_events WHERE action='promote_stage'",
+    ).fetchone()[0] == 0
+
+
 @pytest.mark.parametrize("actor", ["learning_lifecycle_controller", "scheduler"])
 def test_non_owner_identity_cannot_admit_shadow_trial(monkeypatch, actor):
     hypothesis, experiment = _experiment()
