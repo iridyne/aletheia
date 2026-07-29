@@ -32,11 +32,11 @@ Outside these canonical tables, use the full capability name.
 
 | Status | Count |
 |---|---:|
-| Supported | 69 |
+| Supported | 70 |
 | Implemented | 7 |
 | Partial | 0 |
 | Experimental | 23 |
-| Broken | 2 |
+| Broken | 1 |
 | Deprecated | 0 |
 | **Total** | **101** |
 
@@ -123,7 +123,7 @@ Outside these canonical tables, use the full capability name.
 | EX-06 | Exchange order materialization | E1+E2 | Implemented | No owner-selected external execution mode in supported profile | No |
 | EX-07 | Exchange-native TP/SL brackets | E1+E2 | Experimental | Broker/private-fill paths tested; external venue behavior outside supported surface | No |
 | EX-08 | Local protective exits | E1+E2 | Supported | None in tested paper contract | Yes |
-| EX-09 | Market-aware position review | E1+E2 | Broken | Adverse signals can request a best-effort wake, but an empty entry queue returns before evaluation; wake evidence is not rendered into the Operator prompt; and the active decision schema accepts only `trade`/`skip`, so no wake-driven hold/adjust/close result exists | No |
+| EX-09 | Market-aware position review | E1+E2 | Supported | Adverse wakes enter the existing Operator portfolio review with exact Position evidence; hold/adjust/close results and unavailable reviews are durable, while the evaluator retains no mutation authority | No |
 | EX-10 | Horizon and thesis review | E1+E2 | Supported | None in tested contract | Yes |
 | EX-11 | External demo-position adoption | E1+E2 | Experimental | Opt-in reconciliation path outside core | No |
 | EX-12 | Exchange order/position reconciliation | E1+E2 | Implemented | No owner-selected external execution mode in supported profile | No |
@@ -216,15 +216,16 @@ tested software contract.
 
 ## Current review conclusion
 
-The current review classifies 68 rows as `Supported`. Several former Partial
+The current review classifies 70 rows as `Supported`. Several former Partial
 rows were evidence gaps rather than product gaps. The three external-exchange
 rows and credential verification stay
 `Implemented`, while policy/version history and diff is `Supported` and
 external TP/SL behavior remains `Experimental`. The live
 routing defect remains open as GitHub #418. Health/Doctor is `Supported`; the
-default-branch delivery resolves #426. EX-09 has honest Settings copy and
-fail-closed wake reporting, but remains `Broken`: the active Operator path
-cannot consume the adverse-position wake into a position decision.
+default-branch delivery resolves #426. EX-09 now routes position wakes into the
+existing Operator portfolio-review command, scopes the prompt to exact Position
+identities, and durably records hold/adjust/close or unavailable results without
+granting the deterministic evaluator mutation authority.
 
 The subsequent review keeps the original 20 Serenity/observe-only rows as
 honest, bounded experiments. DC-13 now states its split boundary directly: profile
@@ -319,9 +320,7 @@ joins:
 
 1. capital events persist but do not change performance curves;
 2. live unlock changes authority state but not new-proposal execution mode;
-3. market-aware exits emit a best-effort wake, but the active Operator path
-   neither receives the adverse evidence in its prompt nor permits a
-   hold/adjust/close decision;
+3. market-aware exits now reach a bounded Operator hold/adjust/close review;
 4. progressive Persona authority uses lifetime outcomes rather than a
    prospective Persona/policy step cohort;
 5. exchange-backed close economics lack a complete private funding/bill

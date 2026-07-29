@@ -275,7 +275,7 @@ async def _run_daemon_with_event(event, *, wake_capacity=15):
         captured.append(params)
         return {"action": "skip"}
 
-    with patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate), \
+    with patch("aletheia.agent_shell.commands.review_portfolio_state", new=fake_evaluate), \
          patch("aletheia.config.loader.load_config") as mock_cfg:
         mock_cfg.return_value.runtime.paused = False
         mock_cfg.return_value.agent.permission_mode = "Paper"

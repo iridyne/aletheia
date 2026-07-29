@@ -137,7 +137,8 @@ class TestMarketAwareExitIntegration:
     """Market-aware exit: a counter-signal WAKES the Operator (M5) — it no longer
     auto-tightens the stop or auto-closes."""
 
-    def test_counter_signal_wakes_operator(self, e2e_db, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_counter_signal_wakes_operator(self, e2e_db, monkeypatch):
         """An opposing Market Observer signal emits an ADVERSE_SIGNAL wake instead of
         mutating the position's stop (M5 — the Operator decides, not the rule)."""
         from aletheia.config.loader import load_config
@@ -211,3 +212,34 @@ class TestMarketAwareExitIntegration:
 
         from aletheia.agent_runtime.wake_events import ADVERSE_SIGNAL
         assert any(getattr(w, "kind", None) == ADVERSE_SIGNAL for w in wakes)
+
+        async def choose_hold(_system, user, *, schema):
+            assert pos.id in user
+            assert ADVERSE_SIGNAL in user
+            return ({
+                "action": "hold",
+                "target_position_id": pos.id,
+                "reasoning": "counter-signal is not decisive enough to exit",
+            }, None)
+
+        monkeypatch.setattr(
+            "aletheia.agents.helpers.llm_structured",
+            choose_hold,
+        )
+        from aletheia.agent_shell.commands import review_portfolio_state
+        from aletheia.agent_runtime.wake_events import WakeBatch
+
+        review = await review_portfolio_state({
+            "trigger": ADVERSE_SIGNAL,
+            "wake_batches": [WakeBatch(pos.id, wakes).to_context()],
+        })
+
+        decision = repo.get_db().execute(
+            "SELECT * FROM pi_decisions WHERE action='hold' "
+            "ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        assert review["action"] == "hold"
+        assert decision is not None
+        assert decision["symbol"] == pos.symbol
+        assert decision["proposal_reason"] == "position_review"
+        assert ADVERSE_SIGNAL in decision["evidence_manifest_json"]

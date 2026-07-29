@@ -458,7 +458,7 @@ No natural external-venue or cross-platform tunnel operation was used to claim
 |---|---:|---:|---|
 | Capital events → adjusted performance curve | Yes | Yes; separate adjusted account-equity points and markers | PF-03 Implemented |
 | Live-unlocked state → new proposal execution mode | Yes | No | EX-04 Broken |
-| Market-aware adverse signal → Operator position decision | Yes | No; the wake can trigger the entry evaluator, but its evidence is not prompt-visible and the active schema accepts only `trade`/`skip` | EX-09 Broken |
+| Market-aware adverse signal → Operator position decision | Yes | Yes; exact wake evidence reaches bounded hold/adjust/close review and a durable result | EX-09 Supported |
 | Persona leverage/loss/add parameters → production sizing/execution | Yes | Partial/no | Reference-only fields cannot progressively unlock; LN-17 pyramid is Experimental; LN-14 base sizing is Supported |
 | Exchange private funding bill → cost-complete outcome | Yes; Bitget/OKX/Binance private ledgers | Exact attribution, atomic settlement, and delayed recovery | EX-16 Implemented |
 | Pyramid plan → Risk/Gateway/position materialization | Reference helper only | Intentionally blocked | LN-17/EX-15 Experimental |
@@ -496,3 +496,19 @@ those facts. Current source shows three blocking facts:
 
 EX-09 is therefore `Broken`, not `Partial`. This correction adds no runtime
 state or trading authority.
+
+### Run Q — Market-aware position-review consumer repair
+
+The bounded repair reuses the existing daemon and
+`review_portfolio_state()` command. Position wakes no longer enter the
+entry-opportunity evaluator. The review reads the complete open-position set,
+scopes it to exact wake ids, renders the wake evidence, and permits only
+`hold`, `adjust_position`, or `close_one`. Results carry a deterministic wake
+fingerprint in `pi_decisions`; model unavailability is also durable and visible.
+Adjustment and close continue through the existing authorized helpers.
+
+Focused acceptance passes **138 tests**, including an adverse-signal producer
+through coalesced WakeBatch to a durable Operator hold, exact adjustment,
+safe-close behavior, unavailable-result persistence, daemon routing, and the
+no-direct-mutation invariant. No Agent, table, scheduler, queue, or direct
+evaluator authority was added. EX-09 is `Supported`.

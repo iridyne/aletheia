@@ -280,11 +280,15 @@ exchange 调用必须留在 helper 外并保持原失败语义。close 的审计
 > (#105) 原优先级-4 的 `ruleset_exit` 触发器已随规则引擎(Position C)删除——`_decide_exit`
 > 不再消费 `ruleset_exit_position_ids`,该触发器不再是活跃退出路径,请勿再加回。
 
-**System Operator 退出路径独立**:`review_portfolio_state()`(`commands.py:1922`,LLM 决策)只暴露
-`hold / close_one`，其中 `close_one` 按明确 Position 经**同一** `close_position_routed()` 入口平仓，
-且不传调用方 fallback price；manager 必须重新取得精确新鲜 mark。遗留 `reduce_exposure` 只能归一为
-`hold`，不得静默执行整仓关闭。该路径**不进入** `evaluate_open_positions` 自动循环——两条路径汇合于
-路由中枢，不在触发器优先级链内。
+**System Operator 退出路径独立**:`review_portfolio_state()`(LLM 决策)暴露
+`hold / adjust_position / close_one`。Position wake 直接进入该命令，而不是复用
+entry-opportunity schema；提示只包含 wake 指向的完整 Position 和 adverse evidence。
+`adjust_position` 复用 `apply_operator_adjustment()`，`close_one` 按明确 Position
+经**同一** `close_position_routed()` 入口平仓，且不传调用方 fallback price；
+manager 必须重新取得精确新鲜 mark。最终结果和 wake fingerprint 写入
+`pi_decisions`；模型不可用也写入 `review_unavailable`。遗留 `reduce_exposure`
+只能归一为 `hold`，不得静默执行整仓关闭。确定性 evaluator 仍只负责唤醒，
+在 Operator 决定前不得直接修改 Position。
 
 ### 10.2 close_position_routed 路由契约(唯一平仓中枢)
 

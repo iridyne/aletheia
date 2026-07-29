@@ -183,6 +183,199 @@ async def test_portfolio_review_can_close_old_target_beyond_default_position_pag
 
 
 @pytest.mark.asyncio
+async def test_wake_driven_portfolio_review_scopes_and_persists_hold(
+    tmp_path, monkeypatch
+):
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import _select_one, insert_position
+
+    target = Position(
+        id="wake-review-target",
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="paper_internal",
+    )
+    unrelated = Position(
+        id="wake-review-unrelated",
+        symbol="ETH/USDT",
+        market_type="spot",
+        direction="short",
+        quantity=1.0,
+        entry_price=2000.0,
+        execution_mode="paper_internal",
+    )
+    insert_position(target)
+    insert_position(unrelated)
+    monkeypatch.setattr(
+        "aletheia.agent_shell.context.build_app_context",
+        lambda sections=None: {
+            "trading": {
+                "open_positions": [
+                    _select_one("positions", target.id),
+                    _select_one("positions", unrelated.id),
+                ]
+            },
+            "risk": {"max_open_positions_demo": 3, "kill_switch": False},
+        },
+    )
+
+    async def choose_hold(_system, user, *, schema):
+        assert target.id in user
+        assert "adverse_signal" in user
+        assert unrelated.id not in user
+        return ({"action": "hold", "reasoning": "signal is not yet decisive"}, None)
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_hold)
+    wake_batches = [{
+        "position_id": target.id,
+        "max_priority": 2,
+        "events": [{
+            "kind": "adverse_signal",
+            "priority": 2,
+            "payload": {"suggestion": "tighten_stop", "score": 65},
+        }],
+    }]
+
+    result = await review_portfolio_state({
+        "trigger": "adverse_signal",
+        "wake_batches": wake_batches,
+    })
+
+    row = conn.execute(
+        "SELECT * FROM pi_decisions WHERE id=?",
+        (result["position_review_decision_id"],),
+    ).fetchone()
+    evidence = json.loads(row["evidence_manifest_json"])
+    assert result["action"] == "hold"
+    assert result["wake_fingerprint"].startswith("sha256:")
+    assert row["action"] == "hold"
+    assert row["symbol"] == target.symbol
+    assert evidence["position_review"]["target_position_id"] == target.id
+    assert evidence["position_review"]["wake_batches"] == wake_batches
+
+
+@pytest.mark.asyncio
+async def test_wake_driven_portfolio_review_adjusts_exact_position(
+    tmp_path, monkeypatch
+):
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import _select_one, insert_position
+
+    target = Position(
+        id="wake-adjust-target",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.1,
+        entry_price=100.0,
+        stop_price=90.0,
+        execution_mode="paper_internal",
+    )
+    insert_position(target)
+    monkeypatch.setattr(
+        "aletheia.agent_shell.context.build_app_context",
+        lambda sections=None: {
+            "trading": {"open_positions": [_select_one("positions", target.id)]},
+            "risk": {"max_open_positions_demo": 3, "kill_switch": False},
+        },
+    )
+
+    async def choose_adjust(_system, _user, *, schema):
+        return ({
+            "action": "adjust_position",
+            "target_position_id": target.id,
+            "new_stop_price": 95.0,
+            "reasoning": "reduce downside after adverse evidence",
+        }, None)
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_adjust)
+    result = await review_portfolio_state({
+        "trigger": "adverse_signal",
+        "wake_batches": [{
+            "position_id": target.id,
+            "max_priority": 2,
+            "events": [{
+                "kind": "adverse_signal",
+                "priority": 2,
+                "payload": {"suggestion": "tighten_stop", "score": 70},
+            }],
+        }],
+    })
+
+    row = conn.execute(
+        "SELECT action, evidence_manifest_json FROM pi_decisions WHERE id=?",
+        (result["position_review_decision_id"],),
+    ).fetchone()
+    assert result["adjust"]["updated"] is True
+    assert _select_one("positions", target.id)["stop_price"] == pytest.approx(95.0)
+    assert row["action"] == "adjust_position"
+    assert json.loads(row["evidence_manifest_json"])["position_review"]["effect"][
+        "adjust"
+    ]["updated"] is True
+
+
+@pytest.mark.asyncio
+async def test_wake_driven_portfolio_review_persists_unavailable_result(
+    tmp_path, monkeypatch
+):
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import insert_position
+
+    target = Position(
+        id="wake-unavailable-target",
+        symbol="SOL/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="paper_internal",
+    )
+    insert_position(target)
+    monkeypatch.setattr(
+        "aletheia.agent_shell.context.build_app_context",
+        lambda sections=None: {
+            "trading": {"open_positions": []},
+            "risk": {"max_open_positions_demo": 3, "kill_switch": False},
+        },
+    )
+
+    async def unavailable(_system, _user, *, schema):
+        return None, "provider_timeout"
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", unavailable)
+    result = await review_portfolio_state({
+        "trigger": "adverse_signal",
+        "wake_batches": [{
+            "position_id": target.id,
+            "max_priority": 2,
+            "events": [{"kind": "adverse_signal", "priority": 2, "payload": {}}],
+        }],
+    })
+
+    row = conn.execute(
+        "SELECT * FROM pi_decisions WHERE id=?",
+        (result["position_review_decision_id"],),
+    ).fetchone()
+    assert result["action"] == "review_unavailable"
+    assert result["reason"] == "operator_review_unavailable"
+    assert row["action"] == "review_unavailable"
+    assert row["proposal_status"] == "failed"
+    assert row["proposal_reason"] == "operator_review_unavailable"
+    assert json.loads(row["evidence_manifest_json"])["position_review"]["effect"] == {
+        "status": "unavailable"
+    }
+
+
+@pytest.mark.asyncio
 async def test_portfolio_review_stale_mark_leaves_position_and_close_facts_untouched(
     tmp_path, monkeypatch
 ):
@@ -269,6 +462,10 @@ async def test_portfolio_review_legacy_reduce_exposure_cannot_full_close(
             "risk": {"max_open_positions_demo": 3, "kill_switch": False},
         },
     )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.commands.list_all_open_positions",
+        lambda: [position],
+    )
 
     seen_schema: dict = {}
 
@@ -290,7 +487,11 @@ async def test_portfolio_review_legacy_reduce_exposure_cannot_full_close(
 
     result = await review_portfolio_state({})
 
-    assert seen_schema["properties"]["action"]["enum"] == ["hold", "close_one"]
+    assert seen_schema["properties"]["action"]["enum"] == [
+        "hold",
+        "adjust_position",
+        "close_one",
+    ]
     assert result["action"] == "hold"
     assert "unsupported_action" in result["reasoning"]
     assert close_calls == []

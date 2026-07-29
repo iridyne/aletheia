@@ -164,7 +164,7 @@ Relock, disable automatic live selection, and return to the current
 ## CI-03 — Market-aware exits promise automatic action but only wake Operator
 
 **Capability:** EX-09 Market-aware position management
-**Status:** Broken / wake producer has no position-decision consumer
+**Status:** Supported / wake producer joined to existing position review
 
 **Original product promise**
 
@@ -187,12 +187,13 @@ market_aware_exits enabled
 → Position Manager reads current market signals
 → exit_rules evaluates urgent_exit / tighten_stop / confidence collapse
 → daemon accepts event: wake:urgent_exit or wake:tighten_stop
-→ entry-opportunity evaluator runs
-→ with no pending entry candidate, returns before attaching wake context
-→ otherwise wake changes the decision fingerprint but is not rendered into the prompt
-→ active decision schema accepts only trade / skip
+→ daemon routes Position WakeBatch to review_portfolio_state
+→ complete exact-id open Position set is scoped to the wake
+→ prompt receives the adverse evidence
+→ active review schema accepts hold / adjust_position / close_one
+→ PiDecision stores the wake fingerprint, result, and effect
   OR daemon unavailable: wake_failed + explicit cycle error
-→ no wake-driven hold / adjust / close result
+  OR model unavailable: durable review_unavailable result
 ```
 
 `aletheia/portfolio/position_manager.py` explicitly preserves Operator
@@ -202,10 +203,8 @@ assert this exact behavior and the failed-delivery path.
 **User impact**
 
 The earlier configuration surface promised automatic protection that was not
-performed. The copy mismatch is repaired, but the narrower review promise is
-still not implemented end to end: the adverse-position evidence cannot produce
-an Operator position decision. Process-local delivery is a secondary liveness
-limitation, not the primary broken join.
+performed. The copy and final-consumer gaps are repaired. Process-local delivery
+remains a bounded liveness limitation rather than a second queue requirement.
 
 **Target state**
 
@@ -216,11 +215,9 @@ direct mutation authority.
 
 **Minimum repair**
 
-Reuse the existing daemon, Operator decision record, position adjustment, and
-proactive-close paths. Add the smallest typed position-review branch that
-consumes the wake and records its final result. Do not add autonomous evaluator
-authority, a second Operator, or a new queue framework. Durable delivery remains
-a later decision only if runtime evidence justifies it.
+Implemented by reusing the existing daemon, `review_portfolio_state`,
+`PiDecision`, `apply_operator_adjustment()`, and routed close path. No new Agent,
+table, scheduler, queue framework, or evaluator mutation authority was added.
 
 **Acceptance path**
 
