@@ -103,7 +103,7 @@ Discovery surfaces:
 | EX-12 | Exchange order/position reconciliation | Detect and converge local/exchange drift without fabricating fills | Scheduler, Positions, API | `execution/reconciliation.py`, `position_reconciler.py` |
 | EX-13 | Stale order and disappearance handling | Resolve stale/missing exchange orders and positions with durable evidence | Scheduler, execution | `stale_order_cleanup.py`, `disappearance_settlement.py` |
 | EX-14 | Local paper cost-complete close settlement | Persist exact fills, fees, slippage, funding, realized PnL, and paper ledger settlement on close | Positions, Analytics, Learning | `portfolio/outcome_closure.py`, `paper_account.py`, `local_funding.py` |
-| EX-15 | Partial reduce and scale-in lifecycle | Support declared reduce/scale behavior without duplicating position identity | Operator, Position lifecycle | decision actions, execution/position services |
+| EX-15 | Partial reduce and scale-in lifecycle | Retain bounded reference behavior while production mutation remains explicitly unavailable | Operator, Position lifecycle | decision actions, execution/position services |
 | EX-16 | Exchange-backed cost-complete close settlement | Settle exchange-backed futures only when private funding/bill evidence is attributable | Positions, Analytics, Learning | `portfolio/outcome_closure.py`, exchange private-ledger producers |
 
 ## Portfolio, performance, and attribution
@@ -140,7 +140,7 @@ Discovery surfaces:
 | LN-14 | Persona base sizing | Use the active persona to determine entry notional/Kelly inside Risk caps | Settings, Operator | `trading/persona.py`, `trading/sizing.py` |
 | LN-15 | Persona regime learning | Learn a bounded paper sizing adjustment from clean regime cohorts | Settings, scheduler, Operator | `trading/sizing_policy.py` |
 | LN-16 | Persona progressive unlock | Unlock operator-decidable persona parameters by clean evidence and refreeze on distress | Settings, scheduler | persona policy and rollout |
-| LN-17 | Persona pyramid decision | Decide bounded add-ons to winning positions using persona max-add/fraction limits | Settings, Operator | `trading/sizing_policy.py` |
+| LN-17 | Persona pyramid decision | Evaluate bounded reference add-on policy without promising order placement | Settings, Operator | `trading/sizing_policy.py` |
 | LN-18 | Persona rollout automation | Advance persona experiment steps on an 8-hour health-gated schedule | Settings, scheduler, doctor | `trading/persona_rollout.py` |
 | LN-19 | Policy/version history and diff | Persist versioned policies and inspect changes without rewriting history | Persistence API, CLI | `policies/`, persistence routes |
 

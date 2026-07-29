@@ -1246,6 +1246,21 @@ def list_capital_events(limit: int = 200) -> list[dict]:
     return _select_all("capital_events", order="detected_at DESC", limit=limit)
 
 
+def list_capital_events_between(start_at: str, end_at: str) -> list[dict]:
+    """Return aggregate external cash flows inside one equity-snapshot window."""
+    rows = get_db().execute(
+        """
+        SELECT *
+        FROM capital_events
+        WHERE datetime(detected_at) > datetime(?)
+          AND datetime(detected_at) <= datetime(?)
+        ORDER BY datetime(detected_at) ASC, id ASC
+        """,
+        (start_at, end_at),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_net_deposits() -> float:
     """Sum of all deposits minus withdrawals."""
     db = get_db()

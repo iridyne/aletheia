@@ -1942,7 +1942,8 @@ class TunnelConfigUpdate(SettingsRequest):
 @router.get("/tunnel/status")
 async def get_tunnel_status():
     from aletheia.gateway.tunnel import tunnel_status
-    return tunnel_status()
+    from starlette.concurrency import run_in_threadpool
+    return await run_in_threadpool(tunnel_status)
 
 
 @router.post("/tunnel")
@@ -1966,7 +1967,8 @@ async def update_tunnel_config(req: TunnelConfigUpdate):
 @router.post("/tunnel/start")
 async def start_tunnel_api():
     from aletheia.gateway.tunnel import start_tunnel
-    result = start_tunnel()
+    from starlette.concurrency import run_in_threadpool
+    result = await run_in_threadpool(start_tunnel)
     if not result.get("ok"):
         raise HTTPException(400, result.get("reason", "unknown error"))
     return result
@@ -1975,7 +1977,8 @@ async def start_tunnel_api():
 @router.post("/tunnel/stop")
 async def stop_tunnel_api():
     from aletheia.gateway.tunnel import stop_tunnel
-    return stop_tunnel()
+    from starlette.concurrency import run_in_threadpool
+    return await run_in_threadpool(stop_tunnel)
 
 
 # ---------------------------------------------------------------------------

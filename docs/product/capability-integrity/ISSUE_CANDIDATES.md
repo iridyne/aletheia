@@ -21,7 +21,7 @@ implementation by itself.
 ## CI-01 — Capital events do not adjust displayed performance
 
 **Capability:** PF-03 Capital-adjusted performance curve
-**Status:** Partial / owner-facing promise repaired; adjusted consumer still missing
+**Status:** Implemented / adjusted consumer added
 
 **Product promise**
 
@@ -34,35 +34,30 @@ true investment performance.
 Settings Capital Events card
 → POST /api/capital/events
 → capital_events
-→ GET /api/capital/net-deposits
-→ Settings summary only
-
-analytics equity curve
-→ realized eligible position PnL
-→ rendered curve
+→ account-equity snapshot window
+→ ordered scoped cash-flow join
+→ raw points + adjusted points + event markers
+→ Overview renders distinct raw and adjusted series
 ```
 
-`aletheia.storage.repositories.get_net_deposits` has no analytics consumer.
-`aletheia.analytics.trade_insights._equity_curve` and the account-equity-history
-route build their outputs without capital events. The comment in
-`aletheia/server/routes/capital.py` claiming that analytics subtracts net
-deposits is therefore false.
+The public account-equity-history route now consumes ordered Capital Events
+inside the visible snapshot window. Its response includes the baseline,
+aggregate scope, adjustment method, signed markers, raw points, and adjusted
+points. Verified position PnL remains a separate unchanged series.
 
 **User impact**
 
-An external deposit or withdrawal is persisted and shown in Settings but can be
-misrepresented as investment performance in the product's curves.
+An external deposit or withdrawal is visible both as a durable audited fact and
+as a separate adjustment to raw account equity.
 
 **Target state**
 
-Every curve that promises investment performance either consumes a
-well-defined capital-adjustment series or is relabeled as raw account equity.
-Raw account equity and investment return must not be conflated.
+Complete. Raw account equity, cash-flow-adjusted account equity, and verified
+trading PnL are separately labelled and returned.
 
 **Minimum repair**
 
-Define one capital-event adjustment projection and consume it in the promised
-curve(s). Do not redesign portfolio accounting or rewrite historical trades.
+Completed without changing portfolio accounting or historical trade facts.
 
 **Acceptance path**
 
@@ -370,7 +365,7 @@ incomplete classification; never synthesize a zero funding cost.
 ## CI-06 — Pyramid/scale decision has no production materialization path
 
 **Capabilities:** LN-17 Persona pyramid decision, EX-15 partial reduce/scale-in
-**Status:** Partial / Trigger-missing and Consumer-missing
+**Status:** Experimental / production mutation intentionally blocked
 
 **Product promise**
 
@@ -407,9 +402,8 @@ closed before a broker call.
 
 **Target state**
 
-Either hide the feature as experimental, or route one explicit Operator scale
-decision through proposal, Risk, execution, fill attribution, and position
-quantity/cost-basis update.
+The feature is explicitly Experimental. Reference helpers remain testable, but
+Settings/API and the active dispatcher refuse production mutation.
 
 **Minimum repair**
 
@@ -490,7 +484,7 @@ health, readiness, and stability endpoints available.
 ## CI-10 — Tunnel PID is not sufficient process ownership
 
 **Capability:** Tunnel lifecycle and remote-owner protection
-**Status:** Partial / process ownership and acceptance missing
+**Status:** Implemented / ownership and lifecycle acceptance complete
 
 **Product promise**
 
@@ -502,29 +496,25 @@ Cloudflare Tunnel while remote mutations remain owner-protected.
 ```text
 start_tunnel
 → spawn cloudflared
-→ write integer tunnel.pid
-→ status/stop checks only whether that PID is alive
-→ no executable identity check that the process is still owned cloudflared
+→ persist PID + executable + config command
+→ status/stop revalidate all ownership fields
+→ mismatch is visible and never signaled
 ```
 
 Remote sensitive routes correctly fail closed when the tunnel token is absent
-or invalid. The process lifecycle is weaker: after PID reuse, status can report
-an unrelated process as the tunnel and stop can signal that unrelated process.
-There are no focused start/stop/status tests. The async start API also calls the
-synchronous three-second startup check directly.
+or invalid. Lifecycle acceptance now covers owned start/status/stop, legacy
+pidfiles, PID reuse, and non-blocking async API dispatch.
 
 **User impact**
 
-Tunnel state may be false after restart or PID reuse, and a stop request could
-terminate an unrelated local process. A blocked API worker can also delay other
-requests during startup verification.
+PID reuse cannot make an unrelated process appear owned or receive a stop
+signal. Blocking process inspection and startup waits run outside the API event
+loop.
 
 **Target state**
 
-Lifecycle state proves both PID liveness and cloudflared ownership before
-reporting or signaling the process. API startup does not block the event loop,
-and focused tests cover start, immediate failure, status, safe stop, stale
-ownership, and auth failure.
+Complete in executable acceptance. Natural platform-specific tunnel operation
+remains outside the paper Supported Core.
 
 **Minimum repair**
 

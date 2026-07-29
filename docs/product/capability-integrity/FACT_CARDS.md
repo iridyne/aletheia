@@ -32,7 +32,7 @@ Notation:
 | RT-11 | API/CLI → persistence service → bundle/manifest → verifier/importer → restored state | progress/report; reject invalid bundle | E1+E2, Supported | Backup integrity tests cross WAL/verification seams. |
 | RT-12 | scheduler/settings → retention policies → prune audit/state → bounded stores → retained evidence | diagnostics; safe retry | E1+E2, Supported | Focused retention tests protect causal evidence and indexes. |
 | RT-13 | Settings/tray/API/CLI → update service → immutable payload/activation state → launcher → new version | progress/version; rollback/recovery | E1+E2, Supported | Package activation and recovery are executable acceptance facts. |
-| RT-14 | CLI/Settings → tunnel service → PID-only process state → remote frontdoor → protected access | tunnel status; auth failure visible | E1, Partial | Sensitive routes fail closed, but PID reuse can misattribute or terminate an unrelated process; lifecycle functions lack focused acceptance. |
+| RT-14 | CLI/Settings → tunnel start → durable process identity → verified status/stop → remote frontdoor | tunnel status; ownership mismatch and auth failure visible | E1+E2, Implemented | PID, executable, and config command must match; unrelated reused/legacy PIDs are never terminated. |
 | RT-15 | CLI/Settings → network config → client/session factory → provider calls → routed request | diagnostics; direct fallback/error | E1+E2, Supported | Egress and CLI tests cover routing and failure semantics. |
 
 ## Market data and universe
@@ -102,7 +102,7 @@ Notation:
 | EX-12 | scheduler/API → local/exchange readers → reconciliation state/events → repair/classification → converged view | Positions; stale/error | E1+E2, Implemented | Tests assert no fabricated fills. |
 | EX-13 | cleanup/reconcile jobs → stale/disappearance evidence → order/position state → settlement path → resolved status | Positions/audit; retry | E1+E2, Implemented | Administrative close remains outcome-ineligible when economics absent. |
 | EX-14 | local paper close → exact fills/fees + local funding evidence → atomic position/cash/outcome settlement → analytics/Learning | Positions/Analytics; explicit incomplete and recovery state | E1+E2, Supported | Futures fail closed when the local funding window is incomplete; recovery materializes settlement exactly once. |
-| EX-15 | Operator rejects reduce/scale-in; partial-reduce dispatcher fails closed → isolated OKX helper has **no Proposal/Risk-authorized production materializer** | settings/action surface | E1, Partial, CI-06 | Pure helper/action vocabulary and a broker reference helper are not a lifecycle. |
+| EX-15 | Operator rejects reduce/scale-in; partial-reduce dispatcher fails closed → isolated OKX helper remains reference-only | settings/action surface | E1+E2, Experimental, CI-06 | No broker mutation is promised; full close remains the supported lifecycle. |
 | EX-16 | exchange close/reconciliation → exact fill/fee verification → private funding/bill lookup → position/outcome settlement | Positions/Analytics; explicit incomplete | E1+E2, Partial, CI-05 | The verifier fails closed, but no private exchange funding/bill producer exists. |
 
 ## Portfolio, performance, and attribution
@@ -111,7 +111,7 @@ Notation:
 |---|---|---|---|---|
 | PF-01 | settings/fills → paper account ledger → cash/reserve/equity state → Risk/analytics → affordability/equity | Settings/Overview; reconciliation | E1+E2, Supported | Ledger events, not derived UI totals, are authoritative. |
 | PF-02 | Settings/sync → capital route/repository → capital_events → net-deposit read model → recorded cash-flow summary | Settings; validation/audit | E1+E2, Supported | Recording is split from adjusted-performance consumer. |
-| PF-03 | capital_events → net-deposit query → **no adjusted-curve consumer**; raw Account Equity and verified trading PnL remain separate | Settings now states adjusted performance is unavailable | E1, Partial, CI-01 | The false current-effect promise is removed; #419 still tracks the missing optional adjusted projection. |
+| PF-03 | capital_events → visible snapshot-window flow join → adjusted account-equity points/markers → Overview second series | Raw and adjusted Account Equity remain distinct; verified PnL unchanged | E1+E2, Implemented, CI-01 | API returns method, scope, baseline, markers, and both series; capital writes invalidate the view cache. |
 | PF-04 | scheduler/account state → portfolio snapshots → equity-history route → Overview → time series | Overview; gaps/staleness | E1+E2, Supported | Raw equity semantics must remain distinct from PF-03. |
 | PF-05 | orders/fills/positions → read routes → UI blotter → owner → lifecycle/cost view | Trades & Positions; errors | E1+E2, Supported | Final close/cost fields are represented explicitly. |
 | PF-06 | eligible outcomes → analytics builders → read models → Overview/CLI → PnL/drawdown/expectancy | charts; unavailable reasons | E1+E2, Supported | Administrative/incomplete records are excluded, not zero-filled. |
@@ -139,7 +139,7 @@ Notation:
 | LN-14 | Settings → active persona notional/Kelly → effective params → System Operator sizing → immutable Proposal quantity | Settings/sizing trace; legacy fallback and Risk caps | E1+E2, Supported, `PS-S14` | Base sizing is complete; leverage/stop/add ranges are explicitly assigned to LN-16/LN-17 experiments. |
 | LN-15 | clean regime cohorts → appetite learner → bounded adjustment → persona sizing → notional change | doctor/sizing trace; zero fallback | E1+E2, Experimental | Learning changes bounded appetite/notional only. |
 | LN-16 | lifetime eligible close count/distress → consumer-filtered unlock resolver → effective notional/Kelly → entry sizing | Settings states global-history limitation; distress refreeze | E1+E2, Experimental, CI-04, `PS-S10` | Only active entry parameters can unlock, but historical outcomes are not scoped to the current Persona/policy/step; #409. |
-| LN-17 | policy helper input → pyramid_plan → bounded decision dict → **no production consumer** | Settings/API block new enablement; legacy configs can switch off | E1+E2, Partial, CI-06, `PS-S11`/`PS-S12` | Unit-level decision is not an add order or position update. |
+| LN-17 | policy helper input → bounded reference decision → no production consumer by design | Settings/API block new enablement; legacy configs can switch off | E1+E2, Experimental, CI-06, `PS-S11`/`PS-S12` | Helper output is explicitly non-operational and cannot create an order. |
 | LN-18 | 8-hour job → integrity/distress checks → explicit safety hold → no config mutation | Settings blocks new enablement; legacy configs can switch off | E1+E2, Experimental, `PS-S13` | Time and broad health are not a prospective step verdict; automatic progression is fail-closed under #409. |
 | LN-19 | policy writes → version/history stores → static diff/read routes → API → immutable history view | API diff/detail/history; 404 on unknown versions | E1+E2, Supported, `LP-S22` | Static diff route precedes the dynamic policy-type route and reaches its final consumer. |
 

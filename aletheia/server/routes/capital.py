@@ -58,12 +58,14 @@ async def create_event(body: CapitalEventRequest):
         note=body.note or "manual",
     )
     repo.insert_capital_event(event)
+    from aletheia.server.routes.data import invalidate_account_equity_history_cache
+    invalidate_account_equity_history_cache()
 
     # #87 fix: capital deposits/withdrawals are trust-bearing account cash-flow
     # facts. The row was persisted but no audit event was written, so later
     # reconstruction of the owner's capital history had no hash-chain trace.
-    # Emit an audit event now. Current performance curves do not consume this
-    # event; PF-03/#419 tracks the separate adjusted-performance projection.
+    # Emit an audit event now. Account-equity history consumes this event in a
+    # separate adjusted series; verified trading PnL remains unchanged.
     from aletheia.files.jsonl import write_audit
     write_audit({
         "actor": "human",
