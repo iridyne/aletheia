@@ -264,6 +264,70 @@ def test_lco_projection_sanitizes_failure_and_is_side_effect_free(
     assert universe["measurement_supported"] is True
 
 
+def test_lco_projection_reports_an_overdue_evaluator_as_overdue(
+    tmp_path,
+    monkeypatch,
+):
+    """A job that simply stopped running must not keep reporting ``healthy``.
+
+    Regression (#444): ``status`` is written only on success or failure, so an
+    evaluator that stops firing altogether holds its last ``healthy`` value
+    forever -- indistinguishable from one that is actually running.
+    """
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+    from aletheia.storage.sqlite import get_db
+    from aletheia.learning.read_models import (
+        build_learning_contribution_projection,
+    )
+
+    db = get_db()
+    db.execute(
+        "UPDATE learning_job_health SET next_due_at=? WHERE job_id=?",
+        ("2026-07-24T02:00:00+00:00", "learning_contribution_evaluator"),
+    )
+    db.commit()
+
+    evaluator = build_learning_contribution_projection()["operations"]["evaluator"]
+
+    assert evaluator["overdue"] is True
+    assert evaluator["overdue_seconds"] > 0
+    assert evaluator["current_status"] == "overdue"
+    # The stored column is untouched: the signal is derived at read time only.
+    assert db.execute(
+        "SELECT status FROM learning_job_health WHERE job_id=?",
+        ("learning_contribution_evaluator",),
+    ).fetchone()[0] == "healthy"
+
+
+def test_lco_projection_does_not_mark_a_job_overdue_before_it_is_due(
+    tmp_path,
+    monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.storage.sqlite import get_db
+    from aletheia.learning.read_models import (
+        build_learning_contribution_projection,
+    )
+
+    due = datetime.now(timezone.utc) + timedelta(minutes=30)
+    db = get_db()
+    db.execute(
+        "UPDATE learning_job_health SET next_due_at=? WHERE job_id=?",
+        (due.isoformat(), "learning_contribution_evaluator"),
+    )
+    db.commit()
+
+    evaluator = build_learning_contribution_projection()["operations"]["evaluator"]
+
+    assert evaluator["overdue"] is False
+    assert evaluator["overdue_seconds"] is None
+    assert evaluator["current_status"] == "healthy"
+
+
 def test_unavailable_lco_envelope_does_not_invent_empty_success():
     from aletheia.learning.read_models import (
         unavailable_learning_contribution_projection,

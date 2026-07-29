@@ -135,6 +135,50 @@ def get_learning_job_health(job_id: str) -> LearningJobHealth:
     return LearningJobHealth(job_id=job_id, schedule_key=_schedule_key(job_id))
 
 
+# Absorbs ordinary scheduler jitter so a job that fires a few seconds late is
+# not reported as overdue.  A genuinely missed run overshoots this by minutes.
+JOB_OVERDUE_GRACE_SECONDS = 120
+
+
+def job_health_overdue_seconds(
+    health: LearningJobHealth, *, now: datetime | None = None,
+) -> int | None:
+    """Seconds past ``next_due_at``, or None when the job is not overdue."""
+    if not health.next_due_at:
+        return None
+    try:
+        due = datetime.fromisoformat(str(health.next_due_at).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if due.tzinfo is None:
+        due = due.replace(tzinfo=timezone.utc)
+    late = ((now or utc_now()) - due).total_seconds()
+    return int(late) if late > JOB_OVERDUE_GRACE_SECONDS else None
+
+
+def job_health_view(
+    health: LearningJobHealth, *, now: datetime | None = None,
+) -> dict:
+    """Read-only projection carrying a derived overdue signal.
+
+    ``status`` is a stored column written only when a job succeeds or fails, so a
+    job that simply stops running keeps reporting its last status forever -- an
+    overdue job was indistinguishable from a healthy one.  The overdue state is
+    therefore derived at read time from ``next_due_at``.
+
+    A stored ``failed``/``unknown`` is more severe than ``overdue`` and wins.
+    Never write this dict back through ``upsert_job_health``: it carries keys
+    that are not columns.
+    """
+    data = health.model_dump()
+    late = job_health_overdue_seconds(health, now=now)
+    data["overdue"] = late is not None
+    data["overdue_seconds"] = late
+    if late is not None and data.get("status") == "healthy":
+        data["status"] = "overdue"
+    return data
+
+
 def _next_due(job_id: str, now: datetime) -> str | None:
     if job_id in {"learning_contribution_evaluator", "learning_lifecycle_controller"}:
         try:
