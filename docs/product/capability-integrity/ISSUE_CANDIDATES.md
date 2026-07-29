@@ -302,10 +302,10 @@ remain available independently.
 
 ---
 
-## CI-05 — Exchange closes lack private funding/bill evidence
+## CI-05 — Exchange close funding/bill evidence
 
 **Capability:** EX-16 Exchange-backed cost-complete close settlement
-**Status:** Partial / Producer-missing outside local paper
+**Status:** Implemented / private producer and delayed recovery complete
 
 **Product promise**
 
@@ -321,30 +321,30 @@ paper_internal position
 → verified cost-complete outcome
 
 exchange-backed position
-→ exchange close/reconciliation
-→ no private funding/bill production writer found
-→ incomplete_funding_economics
-→ excluded or explicitly incomplete outcome
+→ exact private close fills
+→ Bitget/OKX/Binance private funding ledger
+→ account + mode + symbol + side + holding-window attribution
+→ atomic realized PnL and Outcome eligibility
+→ scheduler retry when terminal bills publish late
 ```
 
-The fail-closed outcome behavior is correct, but the public exchange-backed
-capability cannot normally reach a cost-complete result.
+Ambiguous/overlapping attribution, publication delay, unavailable history, and
+requests beyond provider retention remain explicitly incomplete.
 
 **User impact**
 
-Exchange demo/live trades may close operationally yet remain ineligible for
-clean PnL, attribution, and Learning cohorts.
+Complete broker evidence can reach PnL, Attribution, and Learning. Incomplete
+evidence stays excluded instead of fabricating zero funding.
 
 **Target state**
 
-The selected supported exchange mode has a private, venue-attributed
-funding/bill ingestion path tied to position identity and settlement windows.
-Other venues remain explicitly unsupported or incomplete.
+Complete for the three declared exchange-backed families. Natural venue
+dogfood remains a separate support qualification, not an implementation gap.
 
 **Minimum repair**
 
-Implement one selected venue/mode writer and its reconciliation seam. Do not
-generalize all exchanges in the same issue.
+Completed using the existing reconciliation and outcome-hook paths; no second
+settlement framework was introduced.
 
 **Acceptance path**
 

@@ -33,8 +33,8 @@ Outside these canonical tables, use the full capability name.
 | Status | Count |
 |---|---:|
 | Supported | 69 |
-| Implemented | 6 |
-| Partial | 1 |
+| Implemented | 7 |
+| Partial | 0 |
 | Experimental | 23 |
 | Broken | 2 |
 | Deprecated | 0 |
@@ -130,7 +130,7 @@ Outside these canonical tables, use the full capability name.
 | EX-13 | Stale order and disappearance handling | E1+E2 | Implemented | No owner-selected external execution mode in supported profile | No |
 | EX-14 | Local paper cost-complete close settlement | E1+E2 | Supported | None in tested paper contract | Yes |
 | EX-15 | Partial reduce and scale-in lifecycle | E1+E2 | Experimental | Reference helpers remain isolated; active actions and dispatchers fail closed before broker mutation | No |
-| EX-16 | Exchange-backed cost-complete close settlement | E1+E2 | Partial | Private exchange funding/bill evidence writer absent; verifier fails closed | No |
+| EX-16 | Exchange-backed cost-complete close settlement | E1+E2 | Implemented | Private Bitget/OKX/Binance funding ledgers and recovery are executable; no natural venue dogfood | No |
 
 ### Portfolio, performance, and attribution
 
@@ -289,6 +289,14 @@ LN-17 and EX-15 are `Experimental`, not incomplete core promises. Their
 reference helpers remain bounded and tested, while Settings/API and the active
 dispatcher prevent new pyramid, scale-in, or strict partial-reduce execution.
 No second position-management path was added merely to promote a status label.
+
+EX-16 is `Implemented`. Bitget, OKX, and Binance exchange-backed futures can
+read private funding ledgers, preserve broker event identity and signed cash
+economics, settle the verified close, and recover delayed bills through the
+existing scheduler into Outcome, Attribution, and Learning. Ambiguous identity,
+overlapping positions, unavailable history, publication delay, and requests
+outside broker retention remain fail-closed. Natural venue dogfood is not
+claimed, so the capability remains outside `Supported`.
 
 ## Owner decision boundary
 

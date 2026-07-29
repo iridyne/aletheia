@@ -103,7 +103,7 @@ Notation:
 | EX-13 | cleanup/reconcile jobs → stale/disappearance evidence → order/position state → settlement path → resolved status | Positions/audit; retry | E1+E2, Implemented | Administrative close remains outcome-ineligible when economics absent. |
 | EX-14 | local paper close → exact fills/fees + local funding evidence → atomic position/cash/outcome settlement → analytics/Learning | Positions/Analytics; explicit incomplete and recovery state | E1+E2, Supported | Futures fail closed when the local funding window is incomplete; recovery materializes settlement exactly once. |
 | EX-15 | Operator rejects reduce/scale-in; partial-reduce dispatcher fails closed → isolated OKX helper remains reference-only | settings/action surface | E1+E2, Experimental, CI-06 | No broker mutation is promised; full close remains the supported lifecycle. |
-| EX-16 | exchange close/reconciliation → exact fill/fee verification → private funding/bill lookup → position/outcome settlement | Positions/Analytics; explicit incomplete | E1+E2, Partial, CI-05 | The verifier fails closed, but no private exchange funding/bill producer exists. |
+| EX-16 | exchange close/reconciliation → private Bitget/OKX/Binance funding ledger → exact position attribution → atomic PnL/outcome settlement → delayed-bill recovery | Positions/Analytics; typed incomplete reasons and retry | E1+E2, Implemented, CI-05 | Broker-native identity/sign are preserved; ambiguous, delayed, overlapping, or out-of-retention evidence fails closed. |
 
 ## Portfolio, performance, and attribution
 

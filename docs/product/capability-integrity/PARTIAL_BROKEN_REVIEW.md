@@ -21,7 +21,7 @@ mandatory support gate, and it does not authorize implementation.
 | EX-04 New-proposal live mode | Broken | Broken | Live unlock is still not consumed at proposal-mode selection; Settings/contract/diagnostics now state the experimental authority-only boundary, `LU-C07` records the missing join, and #418 remains open. |
 | EX-07 Exchange-native TP/SL | Partial | Experimental | Broker/private-fill paths are tested, but external venue behavior is intentionally outside the supported product surface. |
 | EX-09 Market-aware position management | Broken | Broken | Settings and delivery reporting are honest, but the wake terminates on an empty entry queue; its evidence is not rendered into the Operator prompt; and the active schema rejects hold/adjust/close. |
-| EX-16 Exchange-backed cost-complete close | Partial | Partial | Local paper is separately classified as EX-14 Supported; external funding/bill producer remains absent; #386. |
+| EX-16 Exchange-backed cost-complete close | Partial | Implemented | Bitget/OKX/Binance private ledgers now reach exact PnL and delayed Outcome recovery; ambiguous or unavailable evidence remains fail closed. |
 | EX-15 Partial reduce and scale-in | Partial | Experimental | Active Operator and dispatcher reject mutation; the isolated helper is retained only as a reference and no product capability is promised. |
 | PF-03 Capital-adjusted curve | Broken | Implemented | Capital Events now feed a separate adjusted account-equity series with visible method, markers, and baseline; raw equity and verified PnL are unchanged. |
 | LN-03 Dreaming consolidation | Partial | Supported | Daily scheduler/agent output is executable; extracted `trade_case_study` lessons cross review into the applied Layer3/Operator-prompt consumer. |
