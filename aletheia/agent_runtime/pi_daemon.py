@@ -261,7 +261,10 @@ def _build_wake_context(triggered_by: str, batches: list) -> dict:
 async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -> int:
     try:
         from aletheia.agent_runtime.run_context import bind_economic_attribution
-        from aletheia.agent_shell.commands import evaluate_trading_opportunity
+        from aletheia.agent_shell.commands import (
+            evaluate_trading_opportunity,
+            review_portfolio_state,
+        )
         from aletheia.agent_runtime.scheduler import _record_job_success
 
         logger.info(
@@ -276,16 +279,24 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
             evaluation_id=evaluation_id,
             trigger=triggered_by,
         ):
-            result = await asyncio.wait_for(
-                evaluate_trading_opportunity(evaluation_params),
-                timeout=300.0,
+            evaluator = (
+                review_portfolio_state
+                if evaluation_params.get("wake_batches")
+                else evaluate_trading_opportunity
             )
+            result = await asyncio.wait_for(evaluator(evaluation_params), timeout=300.0)
         action = result.get("action", "unknown") if isinstance(result, dict) else "unknown"
-        remaining = (
-            result.get("pending_queue_remaining", 0)
-            if isinstance(result, dict) else 0
-        )
+        remaining = result.get("pending_queue_remaining") if isinstance(result, dict) else None
+        if remaining is None:
+            remaining = 1 if _has_pending_signal_work() else 0
         logger.info("pi_daemon: evaluation done (trigger=%s, action=%s)", triggered_by, action)
+        if action == "review_unavailable":
+            from aletheia.agent_runtime.scheduler import _record_job_failure
+
+            _record_job_failure(
+                "pi_trading_decision", "operator_position_review_unavailable"
+            )
+            return max(int(remaining or 0), 0)
         _record_job_success("pi_trading_decision")
         return max(int(remaining or 0), 0)
     except asyncio.TimeoutError:

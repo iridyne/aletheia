@@ -2820,57 +2820,106 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
 
 
 async def review_portfolio_state(params: dict) -> dict:
-    """System Operator reviews open positions and may close one exact Position."""
+    """System Operator reviews open positions and may hold, adjust, or close one."""
     import json as _json
+
     from aletheia.agent_shell.context import build_app_context
     from aletheia.agents.helpers import llm_structured
 
-    ctx = build_app_context(sections=["market", "trading", "risk"])
-    open_positions = ctx.get("trading", {}).get("open_positions", [])
+    params = params or {}
+    wake_batches = [
+        batch
+        for batch in (params.get("wake_batches") or [])
+        if isinstance(batch, dict) and batch.get("position_id")
+    ]
+    wake_position_ids = list(dict.fromkeys(
+        str(batch["position_id"]) for batch in wake_batches
+    ))
+    wake_fingerprint = (
+        "sha256:"
+        + hashlib.sha256(
+            _json.dumps(
+                wake_batches,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
+        if wake_batches
+        else None
+    )
+    ctx = build_app_context(sections=["risk"])
+    # This is execution authority, not a display context. build_app_context()
+    # intentionally truncates and projects positions for UI/LLM summaries, so it
+    # omits the exact id and market_type required for safe position selection.
+    open_positions = list_all_open_positions()
+    if wake_position_ids:
+        wake_ids = set(wake_position_ids)
+        open_positions = [
+            position
+            for position in open_positions
+            if str(position.get("id") or "") in wake_ids
+        ]
     risk = ctx.get("risk", {})
 
     if not open_positions:
-        return {"action": "none", "reason": "no_open_positions"}
+        return {
+            "action": "none",
+            "reason": (
+                "wake_positions_not_open" if wake_position_ids else "no_open_positions"
+            ),
+        }
 
-    # #106 fix: previously the schema only exposed `target_symbol`, so the
-    # close path matched `p['symbol'] == sym` and grabbed matching[:1] — a
-    # spot BTC/USDT + perp BTC/USDT pair could see the WRONG position closed
-    # (the first-in-list wins). Now the LLM can also emit `target_position_id`,
-    # `target_market_type`, and `target_direction`; the matcher tightens
-    # progressively — position_id > (symbol + market_type + direction) >
-    # (symbol + market_type) > (symbol + direction) > (symbol only, legacy).
     schema = {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["hold", "close_one"]},
+            "action": {
+                "type": "string",
+                "enum": ["hold", "adjust_position", "close_one"],
+            },
             "target_symbol": {"type": "string"},
-            "target_market_type": {"type": "string", "description": "spot | perp | usdt_futures — required when both spot and perp of the same symbol are open"},
-            "target_direction": {"type": "string", "enum": ["long", "short"]},
-            "target_position_id": {"type": "string", "description": "the exact position id from open_positions; disambiguates any collision"},
+            "target_market_type": {"type": "string"},
+            "target_direction": {
+                "type": "string",
+                "enum": ["long", "short"],
+            },
+            "target_position_id": {"type": "string"},
+            "new_stop_price": {"type": "number"},
+            "new_target_price": {"type": "number"},
+            "new_horizon_hours": {"type": "number"},
             "reasoning": {"type": "string"},
         },
         "required": ["action", "reasoning"],
     }
 
-    # Include position_id + market_type + direction in the summary so the LLM
-    # has the disambiguators it needs to fill target_position_id / target_market_type.
     pos_summary = "\n".join(
-        f"  id={p['id']} {p['symbol']} ({p.get('market_type', 'spot')}) {p['direction']} qty={p['quantity']} upnl={p.get('unrealized_pnl', '?')}"
+        f"  id={p['id']} {p['symbol']} ({p.get('market_type', 'spot')}) "
+        f"{p['direction']} qty={p['quantity']} "
+        f"upnl={p.get('unrealized_pnl', '?')}"
         for p in open_positions
+    )
+    wake_section = (
+        "\nWake evidence requiring this review:\n"
+        + _json.dumps(wake_batches, sort_keys=True, default=str)[:6000]
+        if wake_batches
+        else ""
     )
     system = "You are a portfolio risk reviewer for an autonomous paper trading system."
     user = f"""Current open positions:
 {pos_summary}
+{wake_section}
 
 Risk limits:
   Max open positions (demo): {risk.get('max_open_positions_demo', '?')}
   Kill switch: {risk.get('kill_switch', False)}
 
 Review the portfolio and decide:
-- "hold": all positions look fine
-- "close_one": one specific position should be closed (specify target_symbol)
+- "hold": keep the supplied position unchanged
+- "adjust_position": revise its stop, target, or horizon
+- "close_one": close one exact position
 
-Be conservative — only recommend closing if there is a clear risk reason.
+Be conservative. For adjust_position or close_one, target_position_id must identify
+one listed position. Never act on a position outside the supplied wake evidence.
 
 Return JSON: {_json.dumps(schema)}"""
 
@@ -2880,12 +2929,44 @@ Return JSON: {_json.dumps(schema)}"""
             return schema
 
     review, err = await llm_structured(system, user, schema=_Schema())
-
     if err or review is None:
-        return {"action": "none", "reason": err or "llm_unavailable"}
+        from aletheia.storage.models import PiDecision
+        from aletheia.storage.repositories import insert_pi_decision
+
+        target = open_positions[0] if len(open_positions) == 1 else None
+        unavailable = PiDecision(
+            symbol=target.get("symbol") if target else None,
+            direction=target.get("direction") if target else None,
+            market_type=target.get("market_type") if target else None,
+            action="review_unavailable",
+            conviction=0,
+            reasoning="Operator position review unavailable",
+            proposal_status="failed",
+            proposal_reason="operator_review_unavailable",
+            evidence_manifest_json=_json.dumps({
+                "position_review": {
+                    "trigger": (
+                        params.get("trigger")
+                        or params.get("_trigger")
+                        or "manual"
+                    ),
+                    "wake_fingerprint": wake_fingerprint,
+                    "wake_batches": wake_batches,
+                    "target_position_id": target.get("id") if target else None,
+                    "effect": {"status": "unavailable"},
+                }
+            }, sort_keys=True, separators=(",", ":"), default=str),
+        )
+        insert_pi_decision(unavailable)
+        return {
+            "action": "review_unavailable",
+            "reason": "operator_review_unavailable",
+            "position_review_decision_id": unavailable.id,
+            "wake_fingerprint": wake_fingerprint,
+        }
 
     raw_action = str(review.get("action") or "hold")
-    supported_action = raw_action in {"hold", "close_one"}
+    supported_action = raw_action in {"hold", "adjust_position", "close_one"}
     action = raw_action if supported_action else "hold"
     reasoning = str(review.get("reasoning") or "")[:300]
     if not supported_action:
@@ -2898,46 +2979,100 @@ Return JSON: {_json.dumps(schema)}"""
         "target_symbol": review.get("target_symbol"),
     }
 
-    if action == "close_one" and (
-        review.get("target_position_id") or review.get("target_symbol")
-    ):
-        sym = review.get("target_symbol") or ""
-        mkt = review.get("target_market_type")
-        direction = review.get("target_direction")
-        target_id = review.get("target_position_id")
-        # #106 fix: progressive tightening. position_id trumps everything;
-        # otherwise combine symbol + whatever disambiguators the LLM gave.
-        # This is execution authority, not a display page. Resolve the requested
-        # target against the complete open set so an older position beyond the
-        # default 50-row list window cannot become impossible to close.
-        candidates = list_all_open_positions()
-        if target_id:
-            matching = [p for p in candidates if p["id"] == target_id]
-        else:
-            matching = [p for p in candidates if p["symbol"] == sym]
-            if mkt:
-                matching = [p for p in matching if p.get("market_type") == mkt]
-            if direction:
-                matching = [p for p in matching if p["direction"] == direction]
+    sym = review.get("target_symbol") or ""
+    mkt = review.get("target_market_type")
+    direction = review.get("target_direction")
+    target_id = review.get("target_position_id")
+    candidates = list_all_open_positions()
+    if wake_position_ids:
+        wake_ids = set(wake_position_ids)
+        candidates = [p for p in candidates if p["id"] in wake_ids]
+    if target_id:
+        matching = [p for p in candidates if p["id"] == target_id]
+    else:
+        matching = [p for p in candidates if p["symbol"] == sym]
+        if mkt:
+            matching = [p for p in matching if p.get("market_type") == mkt]
+        if direction:
+            matching = [p for p in matching if p["direction"] == direction]
+
+    if action in {"adjust_position", "close_one"} and not matching:
+        result[f"{action}_error"] = "no_target_position"
+
+    if action == "adjust_position" and matching:
+        from aletheia.portfolio.position_manager import apply_operator_adjustment
+
+        target = matching[0]
+        result["adjust"] = apply_operator_adjustment(
+            target["id"],
+            new_stop=review.get("new_stop_price"),
+            new_target=review.get("new_target_price"),
+            new_horizon=review.get("new_horizon_hours"),
+            reason=reasoning,
+        )
+
+    if action == "close_one" and matching:
         closed_count = 0
         for pos in matching[:1]:
             try:
-                # The router resolves a fresh exact venue+symbol+market mark for
-                # local paper. Position.current_price and symbol-only snapshots are
-                # display facts, never authority for a close Fill.
                 from aletheia.portfolio.position_manager import close_position_routed
+
                 close_position_routed(
-                    pos["id"], reason="pi_agent_portfolio_review",
+                    pos["id"],
+                    reason="pi_agent_portfolio_review",
                     fallback_exit_price=None,
-                    decision_reasoning=str(review.get("reasoning") or ""),
+                    decision_reasoning=reasoning,
                     decision_actor="system_operator",
                     decision_source="portfolio_review",
                 )
                 closed_count += 1
-            except Exception as e:
-                result["close_error"] = str(e)[:100]
+            except Exception as exc:
+                result["close_error"] = str(exc)[:100]
         result["positions_closed"] = closed_count
 
+    target = matching[0] if matching else (
+        open_positions[0] if len(open_positions) == 1 else None
+    )
+    evidence = {
+        "position_review": {
+            "trigger": params.get("trigger") or params.get("_trigger") or "manual",
+            "wake_fingerprint": wake_fingerprint,
+            "wake_batches": wake_batches,
+            "target_position_id": target.get("id") if target else None,
+            "effect": {
+                key: value
+                for key, value in result.items()
+                if key in {
+                    "adjust",
+                    "adjust_position_error",
+                    "close_error",
+                    "positions_closed",
+                }
+            },
+        }
+    }
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+
+    persisted = PiDecision(
+        symbol=target.get("symbol") if target else None,
+        direction=target.get("direction") if target else None,
+        market_type=target.get("market_type") if target else None,
+        action="close" if action == "close_one" else action,
+        conviction=0,
+        reasoning=reasoning,
+        proposal_status="not_applicable",
+        proposal_reason="position_review",
+        evidence_manifest_json=_json.dumps(
+            evidence,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ),
+    )
+    insert_pi_decision(persisted)
+    result["position_review_decision_id"] = persisted.id
+    result["wake_fingerprint"] = wake_fingerprint
     return result
 
 
