@@ -13,6 +13,7 @@ Demo mode: CCXT sandbox mode injects `x-simulated-trading: 1` header.
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import ccxt.async_support as ccxt
 
@@ -379,6 +380,104 @@ class OKXClient:
         except ccxt.BaseError as e:
             logger.error("OKX get_positions failed: %s", e)
             raise RuntimeError(f"OKX positions: {e}") from e
+
+    async def get_funding_ledger(
+        self,
+        *,
+        broker_id: str,
+        symbol: str,
+        start_time_ms: int,
+        end_time_ms: int,
+    ) -> dict:
+        """Return complete private OKX funding bills for one swap holding window."""
+        from aletheia.execution.broker_funding import (
+            make_complete_ledger,
+            normalize_okx_funding_rows,
+            require_retained_history,
+        )
+
+        expected_mode = "okx_demo" if self._mode == "demo" else "okx_live_limited"
+        if broker_id != expected_mode:
+            raise ValueError("OKX funding account identity mismatch")
+        start_ms = int(start_time_ms)
+        end_ms = int(end_time_ms)
+        if start_ms <= 0 or end_ms < start_ms:
+            raise ValueError("OKX funding history window is invalid")
+        require_retained_history(
+            start_ms,
+            retention_days=90,
+            source="OKX account bills",
+        )
+
+        exchange = self._ensure_exchange()
+        await exchange.load_markets()
+        ccxt_symbol = okx_ccxt_symbol("usdt_futures", symbol)
+        market = exchange.market(ccxt_symbol)
+        instrument_id = str((market or {}).get("id") or "").strip()
+        if not instrument_id:
+            raise ValueError("OKX funding instrument identity unavailable")
+
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        recent_boundary_ms = now_ms - 7 * 24 * 60 * 60 * 1000
+        windows: list[tuple[int, int, str]] = []
+        if start_ms < recent_boundary_ms:
+            archive_end = min(end_ms, recent_boundary_ms - 1)
+            windows.append(
+                (start_ms, archive_end, "/api/v5/account/bills-archive")
+            )
+        if end_ms >= recent_boundary_ms:
+            windows.append(
+                (max(start_ms, recent_boundary_ms), end_ms, "/api/v5/account/bills")
+            )
+
+        raw_rows: list[dict] = []
+        endpoints: list[str] = []
+        for window_start, window_end, endpoint in windows:
+            if window_start > window_end:
+                continue
+            endpoints.append(endpoint)
+            cursor: str | None = None
+            for _ in range(100):
+                params = {
+                    "instType": "SWAP",
+                    "instId": instrument_id,
+                    "begin": str(window_start),
+                    "end": str(window_end),
+                    "limit": "100",
+                }
+                if cursor:
+                    params["after"] = cursor
+                if endpoint.endswith("bills-archive"):
+                    payload = await exchange.private_get_account_bills_archive(params)
+                else:
+                    payload = await exchange.private_get_account_bills(params)
+                if not isinstance(payload, dict) or str(payload.get("code")) != "0":
+                    raise RuntimeError("OKX private funding history rejected")
+                page = payload.get("data")
+                if not isinstance(page, list):
+                    raise ValueError("OKX private funding history malformed")
+                raw_rows.extend(row for row in page if isinstance(row, dict))
+                if len(page) < 100:
+                    break
+                next_cursor = str(page[-1].get("billId") or "")
+                if not next_cursor or next_cursor == cursor:
+                    raise RuntimeError("OKX private funding pagination incomplete")
+                cursor = next_cursor
+            else:
+                raise RuntimeError("OKX private funding history incomplete")
+
+        events = [
+            event for event in normalize_okx_funding_rows(raw_rows)
+            if event["symbol"] == to_canonical(symbol)
+        ]
+        return make_complete_ledger(
+            broker_id=broker_id,
+            account_environment=self._mode,
+            source_endpoint="+".join(dict.fromkeys(endpoints)),
+            history_start_ms=start_ms,
+            history_end_ms=end_ms,
+            events=events,
+        )
 
     async def get_verified_position_exit(self, request):
         """Verify one disappeared position from direct state and private fills."""

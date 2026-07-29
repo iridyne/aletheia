@@ -20,6 +20,7 @@ from aletheia.execution.exchange_materialization import (
     MaterializationIntegrityError,
     durable_private_fill_id,
     evidence_for_order,
+    funding_request_for_complete_close,
     materialize_bitget_close,
     materialize_bitget_entry,
 )
@@ -774,6 +775,40 @@ def _fetch_multibroker_evidence(order: dict):
         return fetch_private_fill_evidence(order)
     raise ValueError("unsupported exchange reconciliation mode")
 
+
+async def _fetch_multibroker_funding(order: dict, request: dict) -> dict:
+    """Read the exact private funding ledger for a proven complete close."""
+    execution_mode = str(order.get("execution_mode") or "")
+    if execution_mode in {"okx_demo", "okx_live_limited"}:
+        from aletheia.exchanges.okx.client import OKXClient
+
+        client = OKXClient(
+            mode="demo" if execution_mode == "okx_demo" else "live"
+        )
+    elif execution_mode in {"binance_testnet", "binance_live_limited"}:
+        from aletheia.exchanges.binance.client import BinanceClient
+
+        client = BinanceClient(
+            mode="testnet" if execution_mode == "binance_testnet" else "live"
+        )
+    else:
+        raise ValueError("unsupported exchange funding mode")
+    try:
+        return await client.get_funding_ledger(
+            broker_id=execution_mode,
+            symbol=str(request["position"]["symbol"]),
+            start_time_ms=int(request["start_time_ms"]),
+            end_time_ms=int(request["end_time_ms"]),
+        )
+    finally:
+        try:
+            await client.close()
+        except Exception as exc:
+            logger.warning(
+                "funding reconciliation client close failed (%s)",
+                type(exc).__name__,
+            )
+
 def _ccxt_client_for_mode(mode: str):
     """Build the live CCXT client for a reconcilable mode."""
     if mode == "okx_live_limited":
@@ -884,10 +919,31 @@ def reconcile() -> dict:
                 reason="private_fill_history_unavailable",
             )
             continue
+        funding_ledger = None
+        is_close_order = _is_close_order(order)
+        if is_close_order:
+            funding_request = funding_request_for_complete_close(order["id"], rows)
+            if funding_request is not None:
+                try:
+                    funding_ledger = _run_coro(
+                        _fetch_multibroker_funding(order, funding_request)
+                    )
+                except Exception as exc:
+                    errors.append(
+                        f"{execution_mode}/{market_type}: private funding history unavailable"
+                    )
+                    logger.warning(
+                        "reconcile: funding query failed for %s order %s (%s)",
+                        execution_mode,
+                        order["id"],
+                        type(exc).__name__,
+                    )
         try:
             result = (
-                materialize_bitget_close(order["id"], rows)
-                if _is_close_order(order)
+                materialize_bitget_close(
+                    order["id"], rows, funding_ledger=funding_ledger
+                )
+                if is_close_order
                 else materialize_bitget_entry(order["id"], rows)
             )
         except (MaterializationIntegrityError, ValueError) as exc:
@@ -1248,9 +1304,34 @@ def reconcile() -> dict:
                     f"{execution_mode}/{market_type}: default private fill history unavailable"
                 )
             if order.get("source") == "native":
+                funding_ledger = None
+                if is_close_order:
+                    funding_request = funding_request_for_complete_close(
+                        order["id"], rows
+                    )
+                    if funding_request is not None:
+                        try:
+                            funding_ledger = _run_coro(client.get_funding_ledger(
+                                broker_id=execution_mode,
+                                symbol=str(funding_request["position"]["symbol"]),
+                                start_time_ms=int(funding_request["start_time_ms"]),
+                                end_time_ms=int(funding_request["end_time_ms"]),
+                            ))
+                        except Exception as exc:
+                            errors.append(
+                                f"{execution_mode}/{market_type}: "
+                                "private funding history unavailable"
+                            )
+                            logger.warning(
+                                "reconcile: funding query failed for order %s (%s)",
+                                order["id"],
+                                type(exc).__name__,
+                            )
                 try:
                     result = (
-                        materialize_bitget_close(order["id"], rows)
+                        materialize_bitget_close(
+                            order["id"], rows, funding_ledger=funding_ledger
+                        )
                         if is_close_order
                         else materialize_bitget_entry(order["id"], rows)
                     )

@@ -139,3 +139,36 @@ async def test_get_fills(fake_http):
     fills = await client.get_fills()
     assert len(fills) == 1
     assert fills[0]["fillPrice"] == "3000"
+
+
+@pytest.mark.anyio
+async def test_get_funding_ledger_uses_private_contract_bills(fake_http):
+    fake_http.routes = {"/api/v2/mix/account/bill": {
+        "code": "00000",
+        "data": {
+            "bills": [{
+                "billId": "funding-1",
+                "symbol": "BTCUSDT",
+                "amount": "-1.5",
+                "fee": "0",
+                "businessType": "contract_settle_fee",
+                "coin": "USDT",
+                "cTime": "1784044800000",
+            }],
+            "endId": "funding-1",
+        },
+    }}
+    client = bg.BitgetClient(mode="demo")
+    ledger = await client.get_funding_ledger(
+        broker_id="bitget_demo",
+        symbol="BTC/USDT",
+        start_time_ms=1783987200000,
+        end_time_ms=1784073600000,
+    )
+    assert ledger["events"][0]["event_id"] == "funding-1"
+    assert ledger["events"][0]["funding_cost"] == 1.5
+    assert any(
+        "/api/v2/mix/account/bill" in call[1]
+        and "businessType=contract_settle_fee" in call[1]
+        for call in fake_http.calls
+    )

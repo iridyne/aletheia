@@ -9,6 +9,7 @@ from aletheia.net import httpx_client
 from aletheia.exchanges.bitget.auth import build_headers
 from aletheia.exchanges.submission_errors import SubmissionResponseUnknownError
 from aletheia.config.secrets import get_secret, redact
+from aletheia.data.symbols import to_canonical
 
 
 BASE_URL = "https://api.bitget.com"
@@ -705,6 +706,87 @@ class BitgetClient:
                 raise RuntimeError("Bitget exact private fill pagination incomplete")
             cursor = next_cursor
         raise RuntimeError("Bitget exact private fill history incomplete")
+
+    async def get_funding_ledger(
+        self,
+        *,
+        broker_id: str,
+        symbol: str,
+        start_time_ms: int,
+        end_time_ms: int,
+    ) -> dict:
+        """Return a complete private funding-bill window for one futures account."""
+        from aletheia.execution.broker_funding import (
+            make_complete_ledger,
+            normalize_bitget_funding_rows,
+            require_retained_history,
+        )
+
+        expected_mode = "bitget_demo" if self.mode == "demo" else "bitget_live_limited"
+        if broker_id != expected_mode:
+            raise ValueError("Bitget funding account identity mismatch")
+        start_ms = int(start_time_ms)
+        end_ms = int(end_time_ms)
+        if start_ms <= 0 or end_ms < start_ms:
+            raise ValueError("Bitget funding history window is invalid")
+        require_retained_history(
+            start_ms,
+            retention_days=90,
+            source="Bitget account bills",
+        )
+
+        endpoint = "/api/v2/mix/account/bill"
+        max_window_ms = 30 * 24 * 60 * 60 * 1000
+        raw_rows: list[dict] = []
+        chunk_start = start_ms
+        while chunk_start <= end_ms:
+            chunk_end = min(end_ms, chunk_start + max_window_ms - 1)
+            cursor: str | None = None
+            for _ in range(100):
+                params = {
+                    "productType": "USDT-FUTURES",
+                    "businessType": "contract_settle_fee",
+                    "startTime": str(chunk_start),
+                    "endTime": str(chunk_end),
+                    "limit": "100",
+                }
+                if cursor:
+                    params["idLessThan"] = cursor
+                path = f"{endpoint}?{urlencode(params)}"
+                headers = self._headers("GET", path)
+                async with httpx_client(timeout=15) as client:
+                    response = await client.get(f"{self._base}{path}", headers=headers)
+                    payload = response.json()
+                if payload.get("code") != "00000":
+                    raise RuntimeError("Bitget private funding history rejected")
+                data = payload.get("data")
+                if not isinstance(data, dict) or not isinstance(data.get("bills"), list):
+                    raise ValueError("Bitget private funding history malformed")
+                page = data["bills"]
+                raw_rows.extend(row for row in page if isinstance(row, dict))
+                if len(page) < 100:
+                    break
+                next_cursor = str(data.get("endId") or "")
+                if not next_cursor or next_cursor == cursor:
+                    raise RuntimeError("Bitget private funding pagination incomplete")
+                cursor = next_cursor
+            else:
+                raise RuntimeError("Bitget private funding history incomplete")
+            chunk_start = chunk_end + 1
+
+        canonical_symbol = to_canonical(symbol)
+        events = [
+            event for event in normalize_bitget_funding_rows(raw_rows)
+            if event["symbol"] == canonical_symbol
+        ]
+        return make_complete_ledger(
+            broker_id=broker_id,
+            account_environment=self.mode,
+            source_endpoint=endpoint,
+            history_start_ms=start_ms,
+            history_end_ms=end_ms,
+            events=events,
+        )
 
     async def get_verified_position_exit(self, request):
         """Read direct position + complete private futures fills; never mutate state."""

@@ -734,6 +734,43 @@ def _position_for_close_order(order: dict) -> dict | None:
     return dict(row) if row is not None else None
 
 
+def funding_request_for_complete_close(order_id: str, rows) -> dict | None:
+    """Return the exact account/symbol/window needed for close funding evidence."""
+    order = repo.get_order(order_id)
+    if order is None or order.get("market_type") != "usdt_futures":
+        return None
+    position = _position_for_close_order(order)
+    if position is None or position.get("status") != "open":
+        return None
+    exchange_order_id, evidence = evidence_for_order(order, rows)
+    if exchange_order_id is None or not evidence:
+        return None
+    requested_quantity = float(order["quantity"])
+    exchange_quantity = sum(item.quantity for item in evidence)
+    tolerance = max(1e-12, requested_quantity * 1e-9)
+    if abs(exchange_quantity - requested_quantity) > tolerance:
+        return None
+    closed_at = max(item.filled_at for item in evidence)
+    from aletheia.execution.broker_funding import (
+        BrokerFundingIntegrityError,
+        funding_query_window,
+    )
+
+    try:
+        start_ms, end_ms = funding_query_window(position, closed_at)
+    except BrokerFundingIntegrityError:
+        # Fill materialization remains operationally authoritative even when an
+        # old fixture/legacy row has no usable holding window. Funding stays
+        # unavailable and the recovery path can retry only after valid evidence.
+        return None
+    return {
+        "position": position,
+        "closed_at": closed_at,
+        "start_time_ms": start_ms,
+        "end_time_ms": end_ms,
+    }
+
+
 _PRIVATE_CLOSE_EVIDENCE = {
     "bitget_demo": ("bitget_private_close_fills", "private_fills", "demo"),
     "bitget_live_limited": (
@@ -765,7 +802,7 @@ _PRIVATE_CLOSE_EVIDENCE = {
 
 
 def _materialize_complete_private_close(
-    order_id: str, rows
+    order_id: str, rows, funding_ledger: dict | None = None
 ) -> MaterializationResult | None:
     """Close only when private evidence exactly covers the requested quantity.
 
@@ -935,6 +972,35 @@ def _materialize_complete_private_close(
 
     from aletheia.portfolio.pnl import close_position
 
+    funding_kwargs: dict = {}
+    if position.get("market_type") == "usdt_futures" and funding_ledger is not None:
+        from aletheia.execution.broker_funding import compute_broker_funding
+
+        candidate_rows = [
+            dict(row)
+            for row in repo.get_db().execute(
+                """SELECT * FROM positions
+                   WHERE id<>? AND execution_mode=? AND market_type='usdt_futures'
+                     AND symbol=?""",
+                (
+                    position["id"],
+                    position.get("execution_mode"),
+                    position.get("symbol"),
+                ),
+            ).fetchall()
+        ]
+        funding = compute_broker_funding(
+            position=position,
+            closed_at=max(item.filled_at for item in evidence),
+            ledger=funding_ledger,
+            candidate_positions=candidate_rows,
+        )
+        funding_kwargs = {
+            "funding_cost": funding.funding_cost,
+            "funding_source": funding.funding_source,
+            "funding_evidence": funding.evidence,
+        }
+
     close_position(
         position["id"],
         exit_price=exit_price,
@@ -973,6 +1039,7 @@ def _materialize_complete_private_close(
             ],
         },
         materialize_close=_materialize_close_rows,
+        **funding_kwargs,
     )
     return MaterializationResult(
         state="filled",
@@ -982,10 +1049,14 @@ def _materialize_complete_private_close(
     )
 
 
-def materialize_bitget_close(order_id: str, rows) -> MaterializationResult:
+def materialize_bitget_close(
+    order_id: str, rows, funding_ledger: dict | None = None
+) -> MaterializationResult:
     """Converge an asynchronously filled exchange close without invention."""
     try:
-        complete = _materialize_complete_private_close(order_id, rows)
+        complete = _materialize_complete_private_close(
+            order_id, rows, funding_ledger=funding_ledger
+        )
         if complete is not None:
             return complete
         with _atomic_materialization():

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import ccxt.async_support as ccxt
 
 from aletheia.config.secrets import get_secret
-from aletheia.data.symbols import to_ccxt_perp
+from aletheia.data.symbols import to_canonical, to_ccxt_perp
 
 logger = logging.getLogger("aletheia.binance_client")
 
@@ -211,6 +211,78 @@ class BinanceClient:
         except ccxt.BaseError as e:
             logger.error("Binance %s get_open_orders failed: %s", self._mode, e)
             raise RuntimeError(f"Binance {self._mode} open_orders: {e}") from e
+
+    async def get_funding_ledger(
+        self,
+        *,
+        broker_id: str,
+        symbol: str,
+        start_time_ms: int,
+        end_time_ms: int,
+    ) -> dict:
+        """Return complete signed USD-M funding income for one account window."""
+        from aletheia.execution.broker_funding import (
+            make_complete_ledger,
+            normalize_binance_funding_rows,
+            require_retained_history,
+        )
+
+        expected_mode = (
+            "binance_testnet" if self._mode == "testnet"
+            else "binance_live_limited"
+        )
+        if broker_id != expected_mode:
+            raise ValueError("Binance funding account identity mismatch")
+        start_ms = int(start_time_ms)
+        end_ms = int(end_time_ms)
+        if start_ms <= 0 or end_ms < start_ms:
+            raise ValueError("Binance funding history window is invalid")
+        require_retained_history(
+            start_ms,
+            retention_days=90,
+            source="Binance income history",
+        )
+
+        exchange = self._ensure_exchange()
+        exchange_symbol = to_canonical(symbol).replace("/", "")
+        max_window_ms = 7 * 24 * 60 * 60 * 1000
+        raw_rows: list[dict] = []
+        chunk_start = start_ms
+        while chunk_start <= end_ms:
+            chunk_end = min(end_ms, chunk_start + max_window_ms - 1)
+            page_number = 1
+            for _ in range(100):
+                params = {
+                    "symbol": exchange_symbol,
+                    "incomeType": "FUNDING_FEE",
+                    "startTime": chunk_start,
+                    "endTime": chunk_end,
+                    "limit": 1000,
+                    "page": page_number,
+                }
+                page = await exchange.fapiPrivateGetIncome(params)
+                if not isinstance(page, list):
+                    raise ValueError("Binance private funding history malformed")
+                raw_rows.extend(row for row in page if isinstance(row, dict))
+                if len(page) < 1000:
+                    break
+                page_number += 1
+            else:
+                raise RuntimeError("Binance private funding history incomplete")
+            chunk_start = chunk_end + 1
+
+        events = [
+            event for event in normalize_binance_funding_rows(raw_rows)
+            if event["symbol"] == to_canonical(symbol)
+        ]
+        return make_complete_ledger(
+            broker_id=broker_id,
+            account_environment=self._mode,
+            source_endpoint="/fapi/v1/income",
+            history_start_ms=start_ms,
+            history_end_ms=end_ms,
+            events=events,
+        )
 
     async def get_verified_position_exit(self, request):
         """Verify one disappeared position from direct state and private trades."""
