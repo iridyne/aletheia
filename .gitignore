@@ -69,3 +69,7 @@ docs/ChatExport_*.zip
 docs/review/tmp/
 docs/**/*.bak
 docs/**/*.before-fix
+
+# UFC monitor operational log (append-only, written concurrently by two CASI
+# instances -- tracking it would conflict on every run). The check script is tracked.
+docs/monitoring/ufc_casi_monitor_state.md
