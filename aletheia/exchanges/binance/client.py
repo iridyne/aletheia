@@ -224,6 +224,7 @@ class BinanceClient:
         from aletheia.execution.broker_funding import (
             make_complete_ledger,
             normalize_binance_funding_rows,
+            require_retained_history,
         )
 
         expected_mode = (
@@ -236,6 +237,11 @@ class BinanceClient:
         end_ms = int(end_time_ms)
         if start_ms <= 0 or end_ms < start_ms:
             raise ValueError("Binance funding history window is invalid")
+        require_retained_history(
+            start_ms,
+            retention_days=90,
+            source="Binance income history",
+        )
 
         exchange = self._ensure_exchange()
         exchange_symbol = to_canonical(symbol).replace("/", "")

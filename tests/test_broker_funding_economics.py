@@ -104,6 +104,30 @@ def test_complete_empty_private_ledger_proves_zero_funding(mode, environment):
     assert result.evidence["events"] == []
 
 
+def test_private_history_retention_cannot_fabricate_complete_zero_funding():
+    from aletheia.execution.broker_funding import (
+        BrokerFundingIntegrityError,
+        require_retained_history,
+    )
+
+    now_ms = 1_800_000_000_000
+    ninety_one_days_ms = 91 * 24 * 60 * 60 * 1000
+    with pytest.raises(BrokerFundingIntegrityError, match="cannot prove"):
+        require_retained_history(
+            now_ms - ninety_one_days_ms,
+            retention_days=90,
+            source="private ledger",
+            now_ms=now_ms,
+        )
+
+    require_retained_history(
+        now_ms - 89 * 24 * 60 * 60 * 1000,
+        retention_days=90,
+        source="private ledger",
+        now_ms=now_ms,
+    )
+
+
 def test_overlapping_same_symbol_position_rejects_directionless_funding_event():
     event = normalize_bitget_funding_rows([{
         "billId": "bg-shared",

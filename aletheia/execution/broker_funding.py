@@ -40,6 +40,27 @@ _MODE_ENVIRONMENTS = {
 }
 
 
+def require_retained_history(
+    start_time_ms: object,
+    *,
+    retention_days: int,
+    source: str,
+    now_ms: int | None = None,
+) -> None:
+    """Fail closed when an API cannot prove the requested ledger window."""
+    start_ms = _positive_ms(start_time_ms, field="history_start_ms")
+    observed_ms = (
+        int(now_ms)
+        if now_ms is not None
+        else int(datetime.now(timezone.utc).timestamp() * 1000)
+    )
+    oldest_supported_ms = observed_ms - int(retention_days) * 24 * 60 * 60 * 1000
+    if start_ms < oldest_supported_ms:
+        raise BrokerFundingIntegrityError(
+            f"{source} cannot prove funding history older than {retention_days} days"
+        )
+
+
 def _utc(value: object) -> datetime | None:
     if not value:
         return None
