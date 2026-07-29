@@ -120,24 +120,44 @@ def _current_experiment_rows(
         "LEFT JOIN learning_contribution_verdicts v ON v.verdict_id=("
         " SELECT v2.verdict_id FROM learning_contribution_verdicts v2 "
         " WHERE v2.experiment_id=e.experiment_id "
-        " ORDER BY datetime(v2.window_end) DESC, datetime(v2.created_at) DESC, "
+        # Evaluation order, not observation-window order: the 1970-01-01 sentinel
+        # window of a sample-less cohort sorts after every real window, so
+        # window_end ordering showed a superseded verdict as the latest one.
+        # Matches get_latest_measurement_verdict so the owner surface and the
+        # lifecycle controller cannot disagree about which row is authoritative.
+        " ORDER BY datetime(v2.created_at) DESC, datetime(v2.window_end) DESC, "
         " v2.verdict_id DESC LIMIT 1"
         ") "
         "WHERE e.ended_at IS NULL "
     )
-    if priority_paths:
-        placeholders = ", ".join("?" * len(priority_paths))
-        order_sql = (
-            f"ORDER BY CASE WHEN h.path_id IN ({placeholders}) THEN 0 ELSE 1 END ASC, "
-            "datetime(e.created_at) DESC, e.experiment_id DESC LIMIT ?"
-        )
-        params: tuple = tuple(priority_paths) + (limit,)
-    else:
-        order_sql = (
-            "ORDER BY datetime(e.created_at) DESC, e.experiment_id DESC LIMIT ?"
-        )
-        params = (limit,)
-    rows = get_db().execute(base_sql + order_sql, params).fetchall()
+    # Visibility tiers.  ``paper_influence_paths`` is an *authority* allowlist and
+    # ships empty, so tiering on it alone left this window ordered purely by
+    # recency — and ``observer_advisory_bundle``, which opens ~10 experiments an
+    # hour and is not in SUPPORTED_PATH_IDS, buried every measured experiment past
+    # the LIMIT.  Those rows are not idle (485 open, 7083 exposures) but they are
+    # unmeasurable: none of them can ever produce a verdict, and none has.  With
+    # 485 of them the owner projection returned zero universe_family_calibration
+    # items at the default limit of 20, i.e. nothing at all about the only path
+    # being measured.  Measurement-supported paths are the only ones that can
+    # produce a verdict, so they keep a tier above unmeasurable ones regardless of
+    # the allowlist.
+    influence = tuple(dict.fromkeys(priority_paths or ()))
+    measured = tuple(
+        path for path in sorted(SUPPORTED_PATH_IDS) if path not in set(influence)
+    )
+    cases: list[str] = []
+    params: list[Any] = []
+    for rank, paths in ((0, influence), (1, measured)):
+        if not paths:
+            continue
+        cases.append(f"WHEN h.path_id IN ({', '.join('?' * len(paths))}) THEN {rank}")
+        params.extend(paths)
+    tier_sql = f"CASE {' '.join(cases)} ELSE 2 END ASC, " if cases else ""
+    params.append(limit)
+    order_sql = (
+        f"ORDER BY {tier_sql}datetime(e.created_at) DESC, e.experiment_id DESC LIMIT ?"
+    )
+    rows = get_db().execute(base_sql + order_sql, tuple(params)).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -161,8 +181,17 @@ def _project_experiment(
         policy_epoch=policy_epoch,
         boot_commit=boot_commit,
     )
-    metrics = _safe_object(row.get("harm_metrics_json"))
+    verdict_metrics = _safe_object(row.get("harm_metrics_json"))
     current = mismatch is None
+    # The current-facing blocks must describe the running cohort and nothing else.
+    # ``measurement.*`` was already gated on identity, but ``samples.*`` and
+    # ``integrity.*`` were not: a stale verdict had its per-arm counts zeroed here
+    # while its aggregates were published unchanged, so one item could report
+    # ``state=not_measured`` with ``arms 0/0`` beside ``harm_breached=true`` and
+    # ``raw_exposures=41`` and no consumer could tell which cohort the breach
+    # belonged to.  Nothing is dropped — the stale facts move to
+    # ``latest_historical_measurement``, where they are labelled as not current.
+    metrics = verdict_metrics if current else {}
     measurement_state = (
         str(row.get("verdict"))
         if current and str(row.get("verdict")) in _MEASUREMENT_STATES
@@ -278,6 +307,25 @@ def _project_experiment(
             "code_commit": row.get("verdict_code_commit"),
             "current": current,
             "mismatch_reason": mismatch,
+            # Ungated on purpose: this block is explicitly labelled not-current, so
+            # it is the honest home for the numbers the current-facing blocks must
+            # not carry.  A harm breach measured under superseded identity stays
+            # visible here instead of disappearing.
+            "evaluated_at": row.get("verdict_created_at"),
+            "window_start": row.get("window_start"),
+            "window_end": row.get("window_end"),
+            "treatment_assignment_units": _safe_int(row.get("unique_treatment_n")),
+            "control_assignment_units": _safe_int(row.get("unique_control_n")),
+            "complete_assignment_units": _safe_int(
+                verdict_metrics.get("unique_assignment_unit_n")
+            ),
+            "raw_exposures": _safe_int(verdict_metrics.get("raw_exposure_n")),
+            "harm_breached": bool(verdict_metrics.get("breached")),
+            "breach_reasons": [
+                str(value)
+                for value in verdict_metrics.get("breach_reasons", [])
+                if isinstance(value, str)
+            ],
         } if row.get("verdict_id") else None,
     }
 
