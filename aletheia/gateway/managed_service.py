@@ -10,7 +10,6 @@ gateway's service lifetime.
 
 from __future__ import annotations
 
-import getpass
 import os
 import platform
 import plistlib
@@ -23,6 +22,7 @@ from pathlib import Path, PureWindowsPath
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
 from aletheia.gateway.console_text import decode_console
 from aletheia.gateway.pidfile import _no_window_kwargs, _resolve_real_python, is_running
+from aletheia.gateway.windows_identity import current_windows_user as _current_user
 from aletheia.packaged_process import gateway_runner_command, is_frozen_runtime
 
 MACOS_LABEL = "com.aletheia.trading-os.gateway.session"
@@ -73,12 +73,6 @@ def _runner_command(*, no_browser: bool) -> list[str]:
 
 def _xml_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _current_user() -> str:
-    domain = os.environ.get("USERDOMAIN")
-    user = os.environ.get("USERNAME") or getpass.getuser()
-    return f"{domain}\\{user}" if domain else user
 
 
 def _build_macos_plist(*, no_browser: bool) -> dict:

@@ -20,7 +20,6 @@ Governance:
   - Never raises into callers; degrades to honest dicts on every error.
 """
 
-import getpass
 import os
 import platform
 import plistlib
@@ -37,6 +36,7 @@ from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
 from aletheia.files.jsonl import write_audit
 from aletheia.gateway.console_text import decode_console
 from aletheia.gateway.pidfile import _no_window_kwargs
+from aletheia.gateway.windows_identity import current_windows_user as _current_user
 
 TASK_NAME = "Aletheia Trading OS Gateway"
 LAUNCHD_LABEL = "com.aletheia.trading-os.gateway"
@@ -98,13 +98,6 @@ def _python_for_task() -> str:
     except (ValueError, OSError):
         pass
     return exe
-
-
-def _current_user() -> str:
-    """Best-effort DOMAIN\\USERNAME for the task principal/trigger."""
-    domain = os.environ.get("USERDOMAIN")
-    user = os.environ.get("USERNAME") or getpass.getuser()
-    return f"{domain}\\{user}" if domain else user
 
 
 def _xml_escape(text: str) -> str:
