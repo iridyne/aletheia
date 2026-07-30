@@ -1,0 +1,38 @@
+name: Queue pull requests for auto-merge
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, reopened, ready_for_review, edited, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable:
+    name: Enable auto-merge
+    if: >-
+      github.event.pull_request.draft == false &&
+      !contains(github.event.pull_request.labels.*.name, 'do-not-auto-merge')
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+    steps:
+      - name: Queue pull request
+        run: gh pr merge "$PR_URL" --repo "$GITHUB_REPOSITORY" --auto --merge
+
+  disable:
+    name: Disable auto-merge
+    if: contains(github.event.pull_request.labels.*.name, 'do-not-auto-merge')
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+    steps:
+      - name: Remove pull request from auto-merge
+        run: |
+          if [ "$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')" = "true" ]; then
+            gh pr merge "$PR_URL" --repo "$GITHUB_REPOSITORY" --disable-auto
+          fi

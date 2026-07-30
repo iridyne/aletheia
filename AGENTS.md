@@ -114,6 +114,13 @@ state belong to the external development orchestrator (for example ORCA), not
 to Aletheia. This repository must not implement its own development-task
 database, worker lease, task packet, handoff ledger, or orchestration CLI.
 
+When the session is running inside Orca, use the version-matched Orca CLI for
+worktree creation, workspace status, terminals, and handoffs instead of raw
+`git worktree` or ad hoc terminal control. Read the
+[Orca CLI development workflow](docs/operations/development/ORCA_CLI_WORKFLOW.md)
+before the first Orca-managed mutation; it includes new-worktree initialization,
+Windows `uv` cache recovery, upstream handling, and PR auto-merge handoff.
+
 Use an isolated worktree for non-trivial parallel changes and give each agent a
 clear prompt containing goal, allowed paths, excluded paths, acceptance checks,
 and expected final report. Git/PR/CI remain the durable code and proof surfaces.
@@ -197,6 +204,7 @@ before classifying a non-obvious case.
 | A new/changed API route, data table, data source, scheduler job, promotion gate, or restricted tool | [Implementation guide](docs/governance/policies/implementation_guide.md), then the matching [API](docs/design/api/api_reference.md), [data model](docs/design/data/data_model.md), [data utilization](docs/design/data/data_utilization.md), [agent contracts](docs/design/contracts/agent_contracts.md), current Contract, or qualifying Proposal and its executable spec |
 | System ownership, data flow, agent jobs, or an unfamiliar subsystem                                 | [System map](docs/design/architecture/SYSTEM_MAP.md) and [agent contracts](docs/design/contracts/agent_contracts.md)                                                                                                                                                                                                                                                                                                |
 | Parallel work, a dirty checkout, merge, worktree, or frontend build conflict                        | [Worktree playbook](docs/operations/development/GIT_WORKTREE_PLAYBOOK.md)                                                                                                                                                                                                                                                                                                                                            |
+| Orca workspace creation, terminals, handoff, or PR auto-merge handoff                               | [Orca CLI development workflow](docs/operations/development/ORCA_CLI_WORKFLOW.md), then the [worktree playbook](docs/operations/development/GIT_WORKTREE_PLAYBOOK.md)                                                                                                                                                                                                                                                 |
 | Cross-machine development, handoff, or what belongs in Git                                          | [Qualification development protocol](docs/operations/development/QUALIFICATION_DEVELOPMENT_PROTOCOL.md)                                                                                                                                                                                                                                                                                                             |
 | A backend bug or a UI honesty gap                                                                   | [Bug triage protocol](docs/governance/protocols/BUG_TRIAGE_PROTOCOL.md), then the current GitHub Issue or a new one when tracking is needed                                                                                                                                                                                                                                                                          |
 
