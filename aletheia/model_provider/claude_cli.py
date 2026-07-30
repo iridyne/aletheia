@@ -18,8 +18,12 @@ import shutil
 
 from aletheia.gateway.pidfile import _no_window_kwargs
 from aletheia.model_provider.base import (
-    ModelProvider, ModelRequest, StructuredModelRequest,
-    ModelResponse, ModelHealth,
+    ModelHealth,
+    ModelProvider,
+    ModelRequest,
+    ModelResponse,
+    StructuredModelRequest,
+    model_json_schema_payload,
 )
 
 logger = logging.getLogger("aletheia.model_provider.claude_cli")
@@ -121,7 +125,7 @@ class ClaudeCLIProvider(ModelProvider):
         return ModelResponse(content=text, model=model_name, usage=usage)
 
     async def structured(self, request: StructuredModelRequest, schema: type) -> dict:
-        schema_json = schema.model_json_schema() if hasattr(schema, 'model_json_schema') else {}
+        schema_json = model_json_schema_payload(schema)
 
         # Primary path: text mode + extract JSON (fast, cheap)
         prompt = ""

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import threading
 
 from aletheia.model_provider.base import ModelRequest, StreamChunk
+from aletheia.model_provider.base import model_json_schema_payload
 from aletheia.model_provider.router import get_provider
 from aletheia.model_provider.fallback import complete_with_fallback
 
@@ -148,7 +149,7 @@ async def llm_structured(
 
     try:
         provider = get_provider(provider_name)
-        schema_dict = schema.model_json_schema() if hasattr(schema, "model_json_schema") else {}
+        schema_dict = model_json_schema_payload(schema)
         schema_json = json.dumps(schema_dict)
         base_messages = [
             {"role": "user", "content": user},

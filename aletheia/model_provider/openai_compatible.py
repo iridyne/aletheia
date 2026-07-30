@@ -7,8 +7,12 @@ import httpx
 
 from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.base import (
-    ModelProvider, ModelRequest, StructuredModelRequest,
-    ModelResponse, ModelHealth,
+    ModelHealth,
+    ModelProvider,
+    ModelRequest,
+    ModelResponse,
+    StructuredModelRequest,
+    model_json_schema_payload,
 )
 
 # Backwards-compatible alias — the implementation now lives in aletheia.net so every
@@ -107,7 +111,7 @@ class OpenAICompatibleProvider(ModelProvider):
         messages = list(request.messages)
         if request.system:
             messages.insert(0, {"role": "system", "content": request.system})
-        schema_json = json.dumps(schema.model_json_schema() if hasattr(schema, 'model_json_schema') else {})
+        schema_json = json.dumps(model_json_schema_payload(schema))
         messages.append({"role": "user", "content": f"Respond with valid JSON matching this schema: {schema_json}"})
         mr = ModelRequest(messages=messages, temperature=request.temperature, max_tokens=request.max_tokens)
         resp = await self.complete(mr)

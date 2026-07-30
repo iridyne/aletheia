@@ -5,8 +5,12 @@ import json
 
 from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.base import (
-    ModelProvider, ModelRequest, StructuredModelRequest,
-    ModelResponse, ModelHealth,
+    ModelHealth,
+    ModelProvider,
+    ModelRequest,
+    ModelResponse,
+    StructuredModelRequest,
+    model_json_schema_payload,
 )
 
 
@@ -66,7 +70,7 @@ class AnthropicCompatibleProvider(ModelProvider):
 
     async def structured(self, request: StructuredModelRequest, schema: type) -> dict:
         messages = list(request.messages)
-        schema_json = json.dumps(schema.model_json_schema() if hasattr(schema, 'model_json_schema') else {})
+        schema_json = json.dumps(model_json_schema_payload(schema))
         messages.append({"role": "user", "content": f"Respond with valid JSON matching this schema: {schema_json}"})
         mr = ModelRequest(
             messages=messages, system=request.system,

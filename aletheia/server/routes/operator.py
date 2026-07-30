@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from aletheia.agent_shell.runtime import CommandResponse
 
 from aletheia.agent_shell.context import (
     ALL_SECTIONS,
@@ -1082,7 +1083,7 @@ async def operator_command_preview(req: OperatorCommandPreviewRequest):
     return await _preview_operator_command(req)
 
 
-@router.post("/command")
+@router.post("/command", response_model=CommandResponse)
 async def operator_command(req: OperatorCommandRequest):
     from aletheia.agent_shell.runtime import AgentShellRuntime
 
@@ -1110,7 +1111,12 @@ async def operator_command(req: OperatorCommandRequest):
         permission_scope="operator",
         session_id=target_session_id,
     )
-    payload = result.model_dump() if hasattr(result, "model_dump") else result
+    if not isinstance(result, CommandResponse):
+        raise HTTPException(
+            status_code=500,
+            detail="Internal error: command handler returned unexpected payload type.",
+        )
+    payload = result.model_dump()
     command_name = None
     intent_name = payload.get("intent")
     if isinstance(intent_name, str) and _command_def_payload(intent_name) is not None:

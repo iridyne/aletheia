@@ -5,6 +5,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from aletheia.server.app import app
+from aletheia.agent_shell.runtime import CommandResponse
 
 
 @pytest.fixture
@@ -41,13 +42,13 @@ async def test_operator_command_uses_existing_agent_shell_runtime(operator_env):
     cfg.operator.permission_mode = "Research"
     loader.save_config(cfg)
 
-    fake_response = {
-        "intent": "get_system_status",
-        "risk_level": "read",
-        "response": "System healthy",
-        "action": None,
-        "needs_confirmation": False,
-    }
+    fake_response = CommandResponse(
+        intent="get_system_status",
+        risk_level="read",
+        response="System healthy",
+        action=None,
+        needs_confirmation=False,
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -69,13 +70,13 @@ async def test_operator_command_uses_existing_agent_shell_runtime(operator_env):
 
 @pytest.mark.anyio
 async def test_operator_command_persists_main_session_messages(operator_env):
-    fake_response = {
-        "intent": "get_system_status",
-        "risk_level": "read",
-        "response": "System healthy",
-        "action": None,
-        "needs_confirmation": False,
-    }
+    fake_response = CommandResponse(
+        intent="get_system_status",
+        risk_level="read",
+        response="System healthy",
+        action=None,
+        needs_confirmation=False,
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -115,14 +116,14 @@ async def test_operator_command_can_continue_selected_child_session(operator_env
         title="Strategy Review",
     )
 
-    fake_response = {
-        "intent": "get_failed_tasks",
-        "risk_level": "read",
-        "response": "Strategy session continued",
-        "action": None,
-        "needs_confirmation": False,
-        "session_id": "strategy-session-1",
-    }
+    fake_response = CommandResponse(
+        intent="get_failed_tasks",
+        risk_level="read",
+        response="Strategy session continued",
+        action=None,
+        needs_confirmation=False,
+        session_id="strategy-session-1",
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

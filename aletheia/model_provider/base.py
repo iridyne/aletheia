@@ -14,6 +14,19 @@ _ACTIVE_STREAM_REQUEST: ContextVar[Any | None] = ContextVar(
 )
 
 
+def model_json_schema_payload(schema: Any) -> dict[str, Any]:
+    """Return a JSON Schema payload from schema-like objects.
+
+    Prefer this over hasattr-based fallbacks: callers must provide an object with an
+    explicit `model_json_schema()` method (Pydantic models or lightweight shims).
+    """
+
+    schema_json = schema.model_json_schema()  # type: ignore[union-attr]
+    if not isinstance(schema_json, dict):
+        raise TypeError("model_json_schema() must return a dict")
+    return schema_json
+
+
 def _configured_provider_name(provider: Any) -> str:
     """Resolve an exact configured alias without changing provider routing."""
     existing = str(getattr(provider, "_aletheia_provider_name", "") or "").strip()
