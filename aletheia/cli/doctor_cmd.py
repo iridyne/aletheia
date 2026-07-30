@@ -160,12 +160,18 @@ def doctor(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Include redacted log tails, recent failures, and next-log pointers."),
     deep: bool = typer.Option(False, "--deep", help="Alias for --verbose; intended for interactive troubleshooting."),
     bundle: Path | None = typer.Option(None, "--bundle", help="Write a redacted JSON diagnostic bundle to this file."),
+    probe_llm: bool = typer.Option(False, "--probe-llm", help="Verify the model endpoint with a REAL inference call instead of only reading past call outcomes. Costs a live completion and up to ~20s per provider."),
 ):
     """Probe and print this machine's real state (the single source of truth).
 
     `--json` makes doctor an AI-agent-readable diagnostic surface: the report is
     emitted as a stable JSON contract (severity/name/detail/fix_hint as fields),
     so an agent can detect anomalies without scraping the printed table.
+
+    By default `llm.inference` judges the model endpoint from the outcomes of the
+    trading loop's own recent LLM calls — free, and real traffic rather than a
+    ping. `--probe-llm` adds a live inference call, which is what you want when
+    the system has been idle and there is no traffic to judge.
     """
     if fetch and not json_out:
         from aletheia.update import git_ops
@@ -178,7 +184,7 @@ def doctor(
             git_ops.fetch(git_ops.current_branch() or "master")  # silent under --json
 
     from aletheia.diagnostics import doctor as dx
-    report = dx.build_report()
+    report = dx.build_report(probe_llm=probe_llm)
 
     include_deep = verbose or deep or bundle is not None
 
@@ -187,7 +193,10 @@ def doctor(
         fix_actions = None
         if fix:
             fix_actions = dx.apply_fixes()
-            report = dx.build_report()  # re-probe so JSON reflects post-fix state
+            # Re-probe so JSON reflects post-fix state. Skip the active LLM probe
+            # on the second pass: --fix repairs no model endpoint, so paying for
+            # another live completion would buy nothing.
+            report = dx.build_report()
         out = report.to_dict()
         if include_deep:
             diagnostics = dx.build_deep_diagnostics(report)

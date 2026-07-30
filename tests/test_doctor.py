@@ -894,6 +894,225 @@ def test_llm_credentials_do_not_require_api_key_for_cli_provider(monkeypatch):
     assert "codex_cli" in llm.detail
 
 
+# --- llm.inference: configured credentials are not a working provider ---
+#
+# Regression guard for a real 7-day incident on this project: the model gateway
+# answered its own liveness endpoint with 200 "I'm alive!" while returning 500 to
+# every completion. 12,805 consecutive LLM calls failed, no trade was ever
+# proposed, and doctor showed a green `creds.llm` tick the whole time because it
+# only ever validated config shape.
+
+def _llm_creds_config(monkeypatch, *, endpoint="http://127.0.0.1:4000/v1"):
+    from aletheia.config.schema import AletheiaConfig, ProviderConfig
+    import aletheia.config.loader as loader
+    import aletheia.config.secrets as secrets
+
+    cfg = AletheiaConfig()
+    cfg.models.default_provider = "openai_compatible"
+    cfg.models.providers["openai_compatible"] = ProviderConfig(
+        type="openai_compatible", enabled=True, api_key_secret_ref=None, base_url=endpoint
+    )
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(secrets, "get_secret", lambda key: None)
+    return cfg
+
+
+def _record_llm_calls(*, ok: int, failed: int, minutes_ago: float = 5,
+                      error_type: str = "HTTPStatusError", provider: str = "openai_compatible"):
+    """Write real-shaped rows into the LLM call ledger doctor reads."""
+    from aletheia.economics.schema import ensure_economics_schema
+
+    db = ensure_economics_schema()
+    for i in range(ok + failed):
+        failing = i >= ok
+        at = _iso_ago(minutes_ago)
+        db.execute(
+            """INSERT INTO runtime_cost_events
+               (id,event_type,call_id,provider,model_or_tool,attempt_index,status,
+                started_at,cost_status,error_type,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (f"cost_llm_{i}", "llm", f"llm_call_{i}", provider, "test-model", 0,
+             "error" if failing else "success", at, "unknown",
+             error_type if failing else None, at),
+        )
+    return db
+
+
+def _inference_check(report):
+    return next(c for c in report.checks if c.name == "llm.inference")
+
+
+def test_llm_inference_blocks_when_every_recent_call_failed(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _record_llm_calls(ok=0, failed=12)
+
+    r = dx.Report(generated_at="t")
+    dx._probe_llm_inference(r)
+
+    check = _inference_check(r)
+    assert check.severity == "blocker"
+    assert "0/12" in check.detail
+    assert "HTTPStatusError" in check.detail
+    assert check.fix_hint
+
+
+def test_llm_inference_reports_unknown_rather_than_ok_without_traffic(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+
+    r = dx.Report(generated_at="t")
+    dx._probe_llm_inference(r)
+
+    check = _inference_check(r)
+    assert check.severity == "info"
+    assert "unverified" in check.detail
+    assert "--probe-llm" in check.fix_hint
+
+
+def test_llm_inference_ignores_failures_older_than_the_window(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _record_llm_calls(ok=0, failed=20,
+                      minutes_ago=dx._LLM_EVIDENCE_WINDOW_MINUTES + 30)
+
+    r = dx.Report(generated_at="t")
+    dx._probe_llm_inference(r)
+
+    # A provider that was broken yesterday and untested since is unknown, not broken.
+    assert _inference_check(r).severity == "info"
+
+
+def test_llm_inference_ok_when_recent_calls_succeed(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _record_llm_calls(ok=8, failed=0)
+
+    r = dx.Report(generated_at="t")
+    dx._probe_llm_inference(r)
+
+    check = _inference_check(r)
+    assert check.severity == "ok"
+    assert "8/8" in check.detail
+
+
+def test_llm_inference_warns_instead_of_blocking_on_a_tiny_failed_sample(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _record_llm_calls(ok=0, failed=dx._LLM_EVIDENCE_MIN_SAMPLE - 1)
+
+    r = dx.Report(generated_at="t")
+    dx._probe_llm_inference(r)
+
+    # doctor's exit code 1 must mean "this system cannot work", not "one call failed".
+    assert _inference_check(r).severity == "warn"
+
+
+def test_llm_inference_warns_when_calls_mostly_fail(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _record_llm_calls(ok=1, failed=9)
+
+    r = dx.Report(generated_at="t")
+    dx._probe_llm_inference(r)
+
+    check = _inference_check(r)
+    assert check.severity == "warn"
+    assert "1/10" in check.detail
+
+
+def test_llm_inference_does_not_count_tool_events_as_llm_successes(tmp_path, monkeypatch):
+    """Tool events use status='recorded' and a different timestamp format.
+
+    Data collection stayed healthy all through the incident, so counting tool
+    events would have reported a working LLM while every completion failed.
+    """
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.economics.schema import ensure_economics_schema
+
+    db = ensure_economics_schema()
+    for i in range(50):
+        db.execute(
+            """INSERT INTO runtime_cost_events
+               (id,event_type,call_id,provider,model_or_tool,attempt_index,status,
+                started_at,cost_status,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (f"cost_tool_{i}", "tool", f"tool_call_{i}", "tool", "get_market_data", 0,
+             "recorded", _iso_ago(1).replace("T", " "), "unknown", _iso_ago(1)),
+        )
+
+    r = dx.Report(generated_at="t")
+    dx._probe_llm_inference(r)
+
+    assert _inference_check(r).severity == "info"
+
+
+def test_creds_llm_ok_no_longer_implies_inference_works(monkeypatch):
+    """A green credentials tick must not read as 'the LLM works'."""
+    _llm_creds_config(monkeypatch)
+
+    r = dx.Report(generated_at="t")
+    dx._probe_credentials(r)
+
+    llm = next(c for c in r.checks if c.name == "creds.llm")
+    assert llm.severity == "ok"
+    assert "llm.inference" in llm.detail
+
+
+def test_active_probe_blocks_when_a_real_inference_call_fails(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _llm_creds_config(monkeypatch)
+    import aletheia.agent_runtime.startup_gate as gate
+
+    async def fake_probe(cfg, *, max_retries=None):
+        return {"any_usable": False, "checked": 1, "attempts": 1,
+                "results": [{"provider": "openai_compatible", "usable": False,
+                             "error": "500 Internal Server Error"}]}
+
+    monkeypatch.setattr(gate, "probe_llm_providers_at_startup", fake_probe)
+
+    r = dx.Report(generated_at="t")
+    dx._probe_llm_inference(r, active_probe=True)
+
+    probe = next(c for c in r.checks if c.name == "llm.inference.probe")
+    assert probe.severity == "blocker"
+    assert "500 Internal Server Error" in probe.detail
+    # The ledger verdict stays alongside it, labelled by its own evidence source.
+    assert _inference_check(r).severity == "info"
+
+
+def test_active_probe_confirms_a_working_endpoint(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _llm_creds_config(monkeypatch)
+    import aletheia.agent_runtime.startup_gate as gate
+
+    async def fake_probe(cfg, *, max_retries=None):
+        return {"any_usable": True, "checked": 1, "attempts": 1,
+                "results": [{"provider": "openai_compatible", "usable": True, "error": None}]}
+
+    monkeypatch.setattr(gate, "probe_llm_providers_at_startup", fake_probe)
+
+    r = dx.Report(generated_at="t")
+    dx._probe_llm_inference(r, active_probe=True)
+
+    probe = next(c for c in r.checks if c.name == "llm.inference.probe")
+    assert probe.severity == "ok"
+    assert "openai_compatible" in probe.detail
+
+
+def test_active_probe_is_off_by_default_so_doctor_stays_cheap(tmp_path, monkeypatch):
+    """build_report() must never make a live inference call unless asked.
+
+    doctor also serves GET /_infra/doctor and the operator loop; a 20s-per-provider
+    completion on every call is not acceptable there.
+    """
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.agent_runtime.startup_gate as gate
+
+    async def explode(cfg, *, max_retries=None):
+        raise AssertionError("build_report() must not run a live inference probe by default")
+
+    monkeypatch.setattr(gate, "probe_llm_providers_at_startup", explode)
+
+    report = dx.build_report()
+    assert not any(c.name == "llm.inference.probe" for c in report.checks)
+    assert any(c.name == "llm.inference" for c in report.checks)
+
+
 def test_universe_market_coverage_warns_when_enabled_perps_have_no_features(tmp_path, monkeypatch):
     from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader

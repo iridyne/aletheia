@@ -39,6 +39,18 @@ Severity = Literal["ok", "info", "warn", "blocker"]
 
 _OUTCOME_SETTLER_GRACE_MINUTES = 20
 
+# `llm.inference` evidence window. Deliberately module constants, not config
+# fields: a new config-schema field would owe the Settings UI a control, and an
+# operator has no reason to tune how far back doctor looks for LLM outcomes.
+_LLM_EVIDENCE_WINDOW_MINUTES = 60
+# Below this many attempts in the window, an all-failed run is reported as `warn`
+# rather than `blocker`: one or two failures can be a single transient request,
+# and doctor's exit code 1 should mean "this system cannot work", not "a call
+# failed once".
+_LLM_EVIDENCE_MIN_SAMPLE = 3
+# A working provider that still drops some calls is worth a warning.
+_LLM_DEGRADED_SUCCESS_RATE = 0.5
+
 
 @dataclass
 class Check:
@@ -633,6 +645,12 @@ def _probe_config_gates(report: Report) -> None:
 
 
 def _probe_credentials(report: Report) -> None:
+    """Which secrets are SET vs MISSING.
+
+    `creds.llm` answers "are the credentials shaped correctly", which is NOT
+    "can this system do inference". Keep its wording confined to configuration;
+    reachability is `llm.inference`'s job.
+    """
     from aletheia.config.secrets import get_secret
     from aletheia.config.loader import load_config
     cfg = load_config()
@@ -671,14 +689,17 @@ def _probe_credentials(report: Report) -> None:
 
     ptype = pcfg.type or provider
     if ptype in {"codex_cli", "claude_cli"}:
-        report.add("creds.llm", "ok", f"LLM provider configured (default={provider}, type={ptype})")
+        report.add("creds.llm", "ok",
+                   f"LLM credentials configured (default={provider}, type={ptype}) "
+                   "— inference not verified here, see llm.inference")
         return
 
     secret_ref = pcfg.api_key_secret_ref
     if secret_ref:
         if get_secret(secret_ref):
             report.add("creds.llm", "ok",
-                       f"LLM provider configured (default={provider}, secret_ref={secret_ref})")
+                       f"LLM credentials configured (default={provider}, secret_ref={secret_ref}) "
+                       "— inference not verified here, see llm.inference")
         else:
             report.add("creds.llm", "warn",
                        f"LLM provider secret missing (default={provider}, secret_ref={secret_ref})",
@@ -688,7 +709,8 @@ def _probe_credentials(report: Report) -> None:
     endpoint = pcfg.workspace_url or pcfg.base_url
     if _is_local_model_endpoint(endpoint):
         report.add("creds.llm", "ok",
-                   f"LLM provider configured without API key (default={provider}, local endpoint)")
+                   f"LLM credentials configured, no API key needed (default={provider}, "
+                   f"local endpoint {endpoint}) — inference not verified here, see llm.inference")
     else:
         report.add("creds.llm", "warn",
                    f"LLM provider has no api_key_secret_ref (default={provider}, type={ptype})",
@@ -704,6 +726,162 @@ def _is_local_model_endpoint(endpoint: str | None) -> bool:
         or "127.0.0.1" in lowered
         or lowered.startswith("http://0.0.0.0")
     )
+
+
+def _llm_call_evidence(window_minutes: int = _LLM_EVIDENCE_WINDOW_MINUTES) -> dict:
+    """Outcomes of the trading loop's own recent LLM calls.
+
+    `runtime_cost_events` is written by the provider tracing wrapper on EVERY
+    physical attempt (`status='success'` or `status='error'`), so this is real
+    production traffic rather than a synthetic ping — which matters, because a
+    reachability ping can pass while every real call fails. It costs one indexed
+    aggregate and no latency.
+
+    Windows on `started_at`, which is what `idx_runtime_cost_events_window
+    (event_type, started_at)` covers. The tracing wrapper always writes it as a
+    UTC-normalized `isoformat()` string for `event_type='llm'`, so the
+    lexicographic `>=` is sound; other event types use a different timestamp
+    format, which makes the event_type filter load-bearing rather than a mere
+    selector.
+    """
+    from aletheia.storage.sqlite import get_db
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).isoformat()
+    db = get_db()
+    empty = {
+        "attempts": 0,
+        "ok": 0,
+        "window_minutes": window_minutes,
+        "error_type": None,
+        "provider": None,
+    }
+    # The economics schema is created lazily on the first traced call, so an
+    # absent table means "no LLM call has ever run here" — not a broken probe.
+    if not db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runtime_cost_events'"
+    ).fetchone():
+        return empty
+    row = db.execute(
+        """SELECT COUNT(*) AS attempts,
+                  SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS ok
+           FROM runtime_cost_events
+           WHERE event_type = 'llm' AND started_at >= ?""",
+        (cutoff,),
+    ).fetchone()
+    attempts = int((row["attempts"] if row else 0) or 0)
+    ok = int((row["ok"] if row else 0) or 0)
+    evidence = {**empty, "attempts": attempts, "ok": ok}
+    if attempts and ok < attempts:
+        worst = db.execute(
+            """SELECT error_type, provider, COUNT(*) AS n
+               FROM runtime_cost_events
+               WHERE event_type = 'llm' AND started_at >= ? AND status <> 'success'
+               GROUP BY error_type, provider
+               ORDER BY n DESC LIMIT 1""",
+            (cutoff,),
+        ).fetchone()
+        if worst:
+            evidence["error_type"] = worst["error_type"] or "unknown_error"
+            evidence["provider"] = worst["provider"]
+    return evidence
+
+
+def _probe_llm_inference(report: Report, *, active_probe: bool = False) -> None:
+    """Whether the LLM can actually answer — the question `creds.llm` cannot answer.
+
+    Configured credentials are not a working provider: a broken gateway keeps
+    answering its own liveness endpoint while returning 500 to every completion,
+    so agent decisions fail continuously behind a green credentials tick. That is
+    the 'False confidence' failure mode `agent_runtime/startup_gate` exists to
+    catch, and doctor was blind to it.
+
+    Evidence order: the ledger of real calls first (free, real traffic); an
+    opt-in real inference call (`doctor --probe-llm`) only when an operator asks,
+    because it costs a live completion and up to ~20s per provider and doctor is
+    also on the UI and operator-loop paths.
+    """
+    try:
+        evidence = _llm_call_evidence()
+    except Exception as e:
+        report.add("llm.inference", "info", f"LLM call ledger unreadable: {e}")
+        evidence = None
+
+    if evidence is not None:
+        attempts, ok = evidence["attempts"], evidence["ok"]
+        window = evidence["window_minutes"]
+        if not attempts:
+            hint = "" if active_probe else "`aletheia doctor --probe-llm` to verify with a real call"
+            report.add("llm.inference", "info",
+                       f"no LLM call in last {window}min — reachability unverified", hint)
+        elif not ok:
+            failure = evidence["error_type"]
+            provider = evidence["provider"] or "provider"
+            detail = (f"0/{attempts} real LLM calls succeeded in last {window}min "
+                      f"({failure}) — agent decisions cannot complete")
+            if attempts >= _LLM_EVIDENCE_MIN_SAMPLE:
+                report.add("llm.inference", "blocker", detail,
+                           f"the '{provider}' endpoint is not serving completions — "
+                           "check the model gateway, then Settings -> Model Provider")
+            else:
+                report.add("llm.inference", "warn", detail + " (small sample)",
+                           "`aletheia doctor --probe-llm` to confirm")
+        elif ok < attempts * _LLM_DEGRADED_SUCCESS_RATE:
+            report.add("llm.inference", "warn",
+                       f"only {ok}/{attempts} real LLM calls succeeded in last {window}min "
+                       f"({evidence['error_type']}) — decisions fail intermittently",
+                       "check the model gateway for rate limits or timeouts")
+        else:
+            report.add("llm.inference", "ok",
+                       f"{ok}/{attempts} real LLM calls succeeded in last {window}min")
+
+    if active_probe:
+        _probe_llm_inference_active(report)
+
+
+def _probe_llm_inference_active(report: Report) -> None:
+    """Force ground truth with one real minimal completion per enabled provider.
+
+    Reuses the startup gate's prober so `--probe-llm` and the startup verdict can
+    never disagree. `max_retries=1` keeps this to a single round.
+    """
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass  # no loop on this thread — safe to drive one
+    else:
+        report.add("llm.inference.probe", "info",
+                   "active probe skipped: doctor is running inside an event loop",
+                   "run `aletheia doctor --probe-llm` from the CLI instead")
+        return
+
+    try:
+        from aletheia.agent_runtime.startup_gate import probe_llm_providers_at_startup
+        from aletheia.config.loader import load_config
+
+        result = asyncio.run(probe_llm_providers_at_startup(load_config(), max_retries=1))
+    except Exception as e:
+        report.add("llm.inference.probe", "info", f"active probe could not run: {e}")
+        return
+
+    if not result.get("checked"):
+        report.add("llm.inference.probe", "warn",
+                   "active probe ran against no provider — none is enabled",
+                   "Settings -> Model Provider, or `aletheia model set`")
+        return
+
+    results = result.get("results") or []
+    usable = [r["provider"] for r in results if r.get("usable")]
+    if result.get("any_usable"):
+        report.add("llm.inference.probe", "ok",
+                   f"real inference call succeeded ({', '.join(usable)})")
+        return
+    failures = ", ".join(f"{r['provider']}: {r.get('error') or 'unknown error'}" for r in results)
+    report.add("llm.inference.probe", "blocker",
+               f"real inference call failed on all {result['checked']} enabled provider(s) "
+               f"— {failures}",
+               "repair the model endpoint; agent decisions cannot complete until it answers")
 
 
 def _probe_market_data(report: Report) -> None:
@@ -3326,8 +3504,16 @@ def build_content_report() -> Report:
     return report
 
 
-def build_report() -> Report:
-    """Probe every dimension of ground truth. Pure read — changes nothing."""
+def build_report(*, probe_llm: bool = False) -> Report:
+    """Probe every dimension of ground truth. Pure read — changes nothing.
+
+    `probe_llm` adds a REAL inference call to verify the model endpoint instead of
+    reading past call outcomes. Off by default: it costs a live completion and up
+    to ~20s per provider, and this function is also on the UI and operator-loop
+    paths. Only `aletheia doctor --probe-llm` turns it on.
+    """
+    import functools
+
     report = Report(generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
     for probe in (
         _probe_code_sync,
@@ -3337,6 +3523,7 @@ def build_report() -> Report:
         _probe_config_gates,
         _probe_config_consistency,
         _probe_credentials,
+        functools.partial(_probe_llm_inference, active_probe=probe_llm),
         _probe_market_data,
         _probe_collector_health,
         _probe_universe_market_coverage,
@@ -3380,7 +3567,10 @@ def build_report() -> Report:
         try:
             probe(report)
         except Exception as e:  # a broken probe must never sink the whole report
-            report.add(probe.__name__, "info", f"probe error: {e}")
+            # functools.partial has no __name__; fall back to the wrapped probe.
+            name = getattr(probe, "__name__", None) or getattr(
+                getattr(probe, "func", None), "__name__", "probe")
+            report.add(name, "info", f"probe error: {e}")
     return report
 
 
