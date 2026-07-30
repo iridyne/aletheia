@@ -553,6 +553,53 @@ def test_an_uncovered_sibling_still_defers_when_the_budget_is_spent(monkeypatch)
     assert statuses["opportunity:capped-beyond"] == "pending"
 
 
+def test_the_fetch_ceiling_holds_across_every_round(monkeypatch):
+    """The request ceiling is the load-safety property, so it must bound the TOTAL.
+
+    Rounds exist so a sibling the fetched span missed is not abandoned, but that
+    must not turn into a second helping of budget. Here six instruments each have
+    two rows whose windows cannot share a response, so every row wants its own
+    request and the harvest can never answer one. Under a ceiling of five, exactly
+    five requests may leave the process no matter how many rounds run.
+
+    This is what keeps 400 requests per cycle a real 0.67/sec rather than a
+    per-round figure multiplied by however many rounds a bad cycle needs.
+    """
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+
+    rep_entry, rep_due = _aligned_1h_window(hours_ago=10)
+    sib_entry, sib_due = _aligned_1h_window(hours_ago=1)
+    assert sib_due > rep_entry + 300 * 60_000, "the harvest must not be able to help"
+    rows = []
+    for n in range(6):
+        rows.append(
+            _hourly_filter_outcome(f"opportunity:cap-{n}-old", rep_entry, rep_due,
+                                   venue=f"venue{n}")
+        )
+        rows.append(
+            _hourly_filter_outcome(f"opportunity:cap-{n}-new", sib_entry, sib_due,
+                                   venue=f"venue{n}")
+        )
+    repo.insert_filter_candidate_outcomes_batch(rows)
+    provider = _SinceHonouringProvider()
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+    )
+
+    settled = asyncio.run(settle_due_filter_outcomes(max_rows=64, max_fetches=5))
+    assert len(provider.calls) == 5, (
+        f"the ceiling must bound total requests across rounds, got "
+        f"{len(provider.calls)}"
+    )
+    assert settled == 5
+    pending = get_db().execute(
+        "SELECT COUNT(*) AS n FROM filter_candidate_outcomes WHERE status='pending'"
+    ).fetchone()["n"]
+    assert pending == 7, "the seven unaffordable rows must be deferred, not failed"
+
+
 def test_each_distinct_instrument_costs_one_unit_of_the_fetch_budget(monkeypatch):
     """The ceiling must bite mid-population, not only at zero.
 
