@@ -242,7 +242,11 @@ def _launchd_plist_path() -> Path:
 
 
 def _launchd_domain() -> str:
-    return f"gui/{os.getuid()}"
+    try:
+        getuid = getattr(os, "getuid")
+    except AttributeError:
+        return "gui/0"
+    return f"gui/{getuid()}"
 
 
 def _launchd_target() -> str:
@@ -370,7 +374,10 @@ def _bootout_legacy_macos() -> list[str]:
     Raises on unexpected launchctl errors so _enable_macos/_disable_macos can decide.
     """
     removed: list[str] = []
-    uid = os.getuid()
+    try:
+        uid = os.getuid()
+    except AttributeError:
+        uid = 0
     for label in _LEGACY_LAUNCHD_LABELS:
         target = f"gui/{uid}/{label}"
         try:
@@ -396,7 +403,10 @@ def _bootout_legacy_macos() -> list[str]:
 
 def _legacy_launchd_present() -> list[str]:
     """Return legacy Aletheia labels that are currently loaded in launchd."""
-    uid = os.getuid()
+    try:
+        uid = os.getuid()
+    except AttributeError:
+        uid = 0
     present: list[str] = []
     for label in _LEGACY_LAUNCHD_LABELS:
         target = f"gui/{uid}/{label}"
