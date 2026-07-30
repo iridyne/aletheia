@@ -4902,15 +4902,36 @@ def settle_forward_outcome(
     _update("universe_forward_outcomes", outcome_id, updates)
 
 
-def fail_forward_outcome(outcome_id: str, settled_at: str) -> None:
-    _update(
-        "universe_forward_outcomes",
-        outcome_id,
-        {
-            "settled_at": settled_at,
-            "status": "failed",
-        },
-    )
+def fail_forward_outcome(
+    outcome_id: str,
+    settled_at: str,
+    *,
+    exit_price: float | None = None,
+    settlement_price_source: str | None = None,
+) -> None:
+    """Record a terminal "not measurable" verdict for one forward row.
+
+    Pass ``exit_price``/``settlement_price_source`` whenever the venue DID answer
+    and the answer was rejected — a >10x deviation from entry, which is how
+    cross-symbol contamination presents. Recording the rejected observation makes
+    the row say what was seen, and leaves NULL meaning exactly one thing: no
+    observation was ever taken.
+
+    ``maintenance.settlement_requeue`` depends on that distinction to separate
+    evidence destroyed by an unreachable venue from a genuine verdict, so never
+    fail a row with a price in hand without passing it. Neither column is read by
+    any consumer of a failed row: those all gate on ``net_return_pct IS NOT NULL``
+    (outcome contract §8), which a failed row never has.
+    """
+    updates: dict[str, object] = {
+        "settled_at": settled_at,
+        "status": "failed",
+    }
+    if exit_price is not None:
+        updates["exit_price_usd"] = exit_price
+    if settlement_price_source is not None:
+        updates["settlement_price_source"] = settlement_price_source
+    _update("universe_forward_outcomes", outcome_id, updates)
 
 
 def cancel_all_pending_forward_outcomes() -> int:
@@ -5177,15 +5198,28 @@ def settle_filter_candidate_outcome(
     _update("filter_candidate_outcomes", outcome_id, updates)
 
 
-def fail_filter_candidate_outcome(outcome_id: str, settled_at: str) -> None:
-    _update(
-        "filter_candidate_outcomes",
-        outcome_id,
-        {
-            "settled_at": settled_at,
-            "status": "failed",
-        },
-    )
+def fail_filter_candidate_outcome(
+    outcome_id: str,
+    settled_at: str,
+    *,
+    exit_price: float | None = None,
+    settlement_price_source: str | None = None,
+) -> None:
+    """Record a terminal "not measurable" verdict for one canonical row.
+
+    See :func:`fail_forward_outcome` for why a rejected observation is recorded
+    rather than dropped: NULL on both columns is the marker that no observation
+    was ever taken, which is what ``maintenance.settlement_requeue`` reclaims.
+    """
+    updates: dict[str, object] = {
+        "settled_at": settled_at,
+        "status": "failed",
+    }
+    if exit_price is not None:
+        updates["exit_price_usd"] = exit_price
+    if settlement_price_source is not None:
+        updates["settlement_price_source"] = settlement_price_source
+    _update("filter_candidate_outcomes", outcome_id, updates)
 
 
 def settle_linked_shadow_outcomes(
@@ -5863,15 +5897,27 @@ def settle_perp_structure_shadow_outcome(
     )
 
 
-def fail_perp_structure_shadow_outcome(outcome_id: str, settled_at: str) -> None:
-    _update(
-        "perp_structure_shadow_outcomes",
-        outcome_id,
-        {
-            "settled_at": settled_at,
-            "status": "failed",
-        },
-    )
+def fail_perp_structure_shadow_outcome(
+    outcome_id: str,
+    settled_at: str,
+    *,
+    exit_price: float | None = None,
+    settlement_price_source: str | None = None,
+) -> None:
+    """Record a terminal "not measurable" verdict for one Position X shadow row.
+
+    See :func:`fail_forward_outcome` for why a rejected observation is recorded
+    rather than dropped.
+    """
+    updates: dict[str, object] = {
+        "settled_at": settled_at,
+        "status": "failed",
+    }
+    if exit_price is not None:
+        updates["exit_price_usd"] = exit_price
+    if settlement_price_source is not None:
+        updates["settlement_price_source"] = settlement_price_source
+    _update("perp_structure_shadow_outcomes", outcome_id, updates)
 
 
 def latest_perp_structure(symbol: str, source: str | None = None) -> dict | None:

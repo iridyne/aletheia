@@ -9,7 +9,10 @@ from aletheia.storage import repositories as repo
 
 async def settle_due_perp_structure_outcomes(limit: int = 100) -> int:
     """Settle due structure rows on their exact venue/instrument OHLCV path."""
-    from aletheia.universe.outcome_recorder import _batch_fetch_market_observations
+    from aletheia.universe.outcome_recorder import (
+        _batch_fetch_market_observations,
+        is_deferred,
+    )
 
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
@@ -20,6 +23,11 @@ async def settle_due_perp_structure_outcomes(limit: int = 100) -> int:
     settled = 0
     for row in rows:
         observation = observations.get(row["id"])
+        if is_deferred(observation):
+            # The venue was never reached, so this row was never measured. It stays
+            # due and is asked about again next cycle; failing it here would write
+            # off a measurable observation permanently.
+            continue
         exit_price = observation.get("exit_price") if observation else None
         entry_price = float(row["entry_price_usd"])
         if exit_price is None or exit_price <= 0 or entry_price <= 0:
@@ -27,7 +35,15 @@ async def settle_due_perp_structure_outcomes(limit: int = 100) -> int:
             continue
         ratio = float(exit_price) / entry_price
         if ratio > 10.0 or ratio < 0.1:
-            repo.fail_perp_structure_shadow_outcome(row["id"], now_iso)
+            # A real verdict on a real observation: record what was seen and
+            # rejected, so this row is not mistaken for one that was never
+            # measured (see repo.fail_perp_structure_shadow_outcome).
+            repo.fail_perp_structure_shadow_outcome(
+                row["id"],
+                now_iso,
+                exit_price=float(exit_price),
+                settlement_price_source=observation.get("price_source"),
+            )
             continue
         raw_return = (float(exit_price) - entry_price) / entry_price * 100.0
         directional_return = raw_return if row["direction"] == "long" else -raw_return

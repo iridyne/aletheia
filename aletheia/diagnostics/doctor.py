@@ -3297,6 +3297,16 @@ def _probe_filter_evidence(report: Report) -> None:
         stale_overdue = int(outcomes["stale_overdue"] or 0) if outcomes else 0
         awaiting_cadence = max(0, overdue - stale_overdue)
         registration = registered / outcome_candidates if outcome_candidates else 1.0
+        # Rows already written off without any observation behind them, across all
+        # three settlement queues. Every other number in this probe describes work
+        # that is still pending and will drain on its own; this one describes
+        # evidence that is gone and stays gone until someone reclaims it, so it is
+        # the one that has to be visible.
+        from aletheia.maintenance.settlement_requeue import (
+            count_unobserved_failed_outcomes,
+        )
+
+        unobserved_failed = sum(count_unobserved_failed_outcomes().values())
         detail = (
             f"decisions={total} (pass={int(decisions['passed'] or 0)}, "
             f"reject={int(decisions['rejected'] or 0)}); "
@@ -3304,9 +3314,21 @@ def _probe_filter_evidence(report: Report) -> None:
             f"batch_filters={batch_filters}, malformed={malformed_batches}; "
             f"outcome_candidates={registered}/{outcome_candidates}; "
             f"settled={settled}, net_complete={net_complete}, overdue={overdue}, "
-            f"awaiting_cadence={awaiting_cadence}, stale_overdue={stale_overdue}"
+            f"awaiting_cadence={awaiting_cadence}, stale_overdue={stale_overdue}, "
+            f"unobserved_failed={unobserved_failed}"
         )
-        if malformed_batches:
+        if unobserved_failed:
+            report.add(
+                "data.filter_evidence",
+                "warn",
+                detail,
+                f"{unobserved_failed} settlement rows are 'failed' with no price and no "
+                "price source — they were written off before any observation was taken, "
+                "and nothing revisits them. Reclaim with "
+                "`aletheia data requeue-unobserved-settlements --apply` "
+                "(dry-run without --apply)",
+            )
+        elif malformed_batches:
             report.add(
                 "data.filter_evidence",
                 "warn",

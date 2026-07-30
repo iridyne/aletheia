@@ -97,6 +97,49 @@ _CANONICAL_FETCH_CEILING = 400
 # At most one drain of these queues runs at a time; see settle_due().
 _settle_in_flight = False
 
+# Marks an observation attempt that never reached the venue. See
+# deferred_observation() for why "no price" needed splitting into two answers.
+_DEFER_KEY = "deferred"
+
+
+def deferred_observation(reason: str) -> dict:
+    """Report that this row was never measured, and why. Carries no price.
+
+    The observation layer used to answer with a price or with ``None``, and all
+    three settle loops read ``None`` as "this row is unmeasurable" and wrote
+    ``status='failed'`` — a terminal state no job revisits. But ``None`` covered
+    two different facts:
+
+    * the venue answered, and its answer holds no usable price for the window —
+      the row really is unmeasurable, and failing it is correct;
+    * the venue could not be reached at all — nothing was measured, and the bars
+      the row would have been measured from are untouched.
+
+    Conflating them destroys evidence. A 20-minute Binance IP ban
+    (``418 -1003 ... IP banned until ...``) wrote off 335 canonical and forward
+    rows in two settlement cycles, every one with ``exit_price_usd IS NULL`` and
+    ``settlement_price_source IS NULL`` — no observation was ever taken — while
+    their 1m bars sat in ``market_ohlcv`` the whole time. One failed fetch
+    permanently condemned a row that was fully measurable.
+
+    So this is the third answer: measured nothing, decide nothing, come back next
+    cycle. It needs no new status value and no retry counter, because it lasts
+    exactly as long as the outage that caused it — the row stays ``pending``,
+    which is already the state meaning "still owed an observation".
+
+    The verdict rides inside the existing ``dict[row_id, dict]`` observation map
+    rather than a new return type, so every caller and test that reads
+    ``observation.get("exit_price")`` keeps working: the price is ``None``, which
+    is what a deferral means. Callers that must not write a terminal state check
+    :func:`is_deferred` first.
+    """
+    return {"exit_price": None, _DEFER_KEY: True, "defer_reason": reason}
+
+
+def is_deferred(observation: dict | None) -> bool:
+    """True when the venue was never reached, so no terminal write is allowed."""
+    return bool(observation) and bool(observation.get(_DEFER_KEY))
+
 
 def build_pending(members: list[dict], entry_ts: str) -> list[UniverseForwardOutcome]:
     """Create pending outcome rows for each member × horizon.
@@ -262,6 +305,13 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
             logger.warning("filter outcome settlement failed (non-fatal): %s", exc)
 
     forward_row_budget = max(0, max_rows - filter_row_budget)
+    # Rows this cycle asked about and could not reach. They keep status='pending',
+    # which is also what list_pending_forward_outcomes selects on, so without this
+    # exclusion the next batch re-selects the same oldest-due head and asks the
+    # same unreachable venue about the same rows until the wall clock runs out —
+    # an unbounded retry inside one cycle, aimed at an endpoint that is very
+    # possibly refusing us for volume in the first place.
+    deferred_ids: set[str] = set()
     while total_processed < forward_row_budget:
         if _time.monotonic() >= deadline:
             logger.info(
@@ -271,16 +321,33 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
             )
             break
 
-        pending = repo.list_pending_forward_outcomes(before_ts=now_iso, limit=batch_size)
+        # The limit is widened by the deferrals so excluding them still leaves a
+        # full batch of rows this cycle has not tried yet.
+        pending = [
+            row
+            for row in repo.list_pending_forward_outcomes(
+                before_ts=now_iso, limit=batch_size + len(deferred_ids)
+            )
+            if row["id"] not in deferred_ids
+        ]
         if not pending:
             break  # queue drained
 
         observations = await _batch_fetch_market_observations(pending, now=now)
 
         batch_settled_rows: list[dict] = []
+        batch_deferred = 0
         for row in pending:
             symbol = row["symbol"]
             observation = observations.get(row["id"])
+            if is_deferred(observation):
+                # Never reached the venue, so nothing about this row was measured
+                # and there is no verdict to write. It stays pending and comes
+                # back next cycle, when the venue may answer again.
+                deferred_ids.add(row["id"])
+                batch_deferred += 1
+                total_processed += 1
+                continue
             price = observation.get("exit_price") if observation else None
             if price is None or price <= 0:
                 repo.fail_forward_outcome(row["id"], settled_at=now_iso)
@@ -299,9 +366,17 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
             # raising when a symbol isn't found on the fallback exchange.
             ratio = price / entry
             if ratio > 10.0 or ratio < 0.1:
-                repo.fail_forward_outcome(row["id"], settled_at=now_iso)
+                # A real verdict on a real observation: record what was seen and
+                # rejected, so this row is not mistaken for one that was never
+                # measured at all (see repo.fail_forward_outcome).
+                repo.fail_forward_outcome(
+                    row["id"],
+                    settled_at=now_iso,
+                    exit_price=price,
+                    settlement_price_source=observation.get("price_source"),
+                )
                 logger.warning(
-                    "forward_outcome FAILED: symbol=%s horizon=%s — price unavailable",
+                    "forward_outcome FAILED: symbol=%s horizon=%s — exit price rejected",
                     symbol, row.get("horizon"),
                 )
                 logger.warning(
@@ -360,6 +435,18 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
                 len(batch_settled_rows), len(pending),
             )
         all_settled_rows.extend(batch_settled_rows)
+
+        if batch_deferred == len(pending):
+            # A whole batch reached nothing: the venue is down, not this batch.
+            # Draining further batches against it would only add load to an
+            # endpoint that is already refusing, and every one of those rows is
+            # measurable again the moment it answers.
+            logger.warning(
+                "outcome_settler: the venue answered none of %d rows — stopping the "
+                "forward drain for this cycle, %d rows left pending",
+                len(pending), len(deferred_ids),
+            )
+            break
 
     if total_settled:
         logger.info(
@@ -456,7 +543,21 @@ async def _batch_fetch_market_observations(
     local_reasons: dict[str, int] = {}
 
     async def fetch_one(row: dict) -> tuple[str, dict | None]:
-        plan = _build_plan(row, default_venue=default_venue, now=now)
+        # Plan construction is caught HERE rather than left to fetch_bounded,
+        # because its failures are deterministic — an unparseable timestamp or a
+        # symbol that is not an instrument on this venue — and a deterministic
+        # failure must stay terminal. A deferral is bounded only by the outage
+        # that caused it; a row that can never be planned has no such end, so
+        # deferring it would park it in the queue until retention deleted it and
+        # re-plan it every cycle. Keeping this catch local means fetch_bounded's
+        # own catch only ever sees the transport.
+        try:
+            plan = _build_plan(row, default_venue=default_venue, now=now)
+        except Exception as exc:
+            logger.debug(
+                "outcome observation unplannable for %s: %s", row.get("id"), exc
+            )
+            return row["id"], None
         if plan is None:
             return row["id"], None
 
@@ -470,6 +571,11 @@ async def _batch_fetch_market_observations(
             return plan.row_id, local
 
         async with semaphore:
+            # Which probes RAISED, as opposed to answering with nothing usable.
+            # This is the only place that distinction still exists: past this
+            # function the observation map holds prices, and the caller cannot
+            # tell an empty venue from an unreachable one.
+            unreachable: list[str] = []
             try:
                 candles = await provider.get_ohlcv(
                     plan.instrument,
@@ -496,6 +602,7 @@ async def _batch_fetch_market_observations(
                         "settlement_lag_sec": plan.lag_sec,
                     }
             except Exception as exc:
+                unreachable.append(f"ohlcv:{type(exc).__name__}")
                 logger.debug(
                     "forward outcome OHLCV unavailable for %s/%s: %s",
                     plan.instrument,
@@ -506,9 +613,15 @@ async def _batch_fetch_market_observations(
             try:
                 ticker = await provider.get_ticker(plan.instrument)
                 price = float(ticker.last_price) if ticker.last_price else None
-            except Exception:
+            except Exception as exc:
+                unreachable.append(f"ticker:{type(exc).__name__}")
                 price = None
             if not price or price <= 0:
+                # Terminal ONLY when both probes answered. If either raised, this
+                # row's window was never looked at, so there is nothing to
+                # conclude about it — see deferred_observation().
+                if unreachable:
+                    return plan.row_id, deferred_observation(",".join(unreachable))
                 return plan.row_id, None
             hold_sec = max(1.0, (plan.due_dt - plan.entry_dt).total_seconds())
             near_due = plan.lag_sec <= hold_sec * 0.10
@@ -525,8 +638,11 @@ async def _batch_fetch_market_observations(
         try:
             return await asyncio.wait_for(fetch_one(row), timeout=_FETCH_TIMEOUT_SEC)
         except Exception as exc:
+            # fetch_one absorbs its own deterministic failures above, so whatever
+            # reaches here is the transport — a _FETCH_TIMEOUT_SEC expiry above
+            # all, which is the ordinary shape of a venue that stopped answering.
             logger.debug("forward outcome fetch failed for %s: %s", row.get("id"), exc)
-            return row["id"], None
+            return row["id"], deferred_observation(f"fetch:{type(exc).__name__}")
 
     try:
         fetched = await asyncio.gather(*(fetch_bounded(row) for row in rows))
@@ -536,7 +652,31 @@ async def _batch_fetch_market_observations(
                 len(rows),
                 " ".join(f"{k}={v}" for k, v in sorted(local_reasons.items())),
             )
-        return {outcome_id: value for outcome_id, value in fetched if value is not None}
+        observations = {
+            outcome_id: value for outcome_id, value in fetched if value is not None
+        }
+        # One line per batch, not one per row. The ban that destroyed 335 rows
+        # logged only per-row "price unavailable" warnings, which read as a
+        # data-quality drift across many symbols rather than as one venue going
+        # away — so the actual cause took a manual ccxt probe to find.
+        deferrals = {
+            outcome_id: value
+            for outcome_id, value in observations.items()
+            if is_deferred(value)
+        }
+        if deferrals:
+            reasons: dict[str, int] = {}
+            for value in deferrals.values():
+                reason = str(value.get("defer_reason") or "unknown")
+                reasons[reason] = reasons.get(reason, 0) + 1
+            logger.warning(
+                "outcome observations: %d of %d rows could not be reached (%s) — "
+                "left pending rather than written off",
+                len(deferrals),
+                len(rows),
+                " ".join(f"{k}={v}" for k, v in sorted(reasons.items())),
+            )
+        return observations
     finally:
         await provider.close()
 
