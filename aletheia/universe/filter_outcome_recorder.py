@@ -21,6 +21,13 @@ _PROLOGUE_BUDGET_FRACTION = 0.30
 # deadline and the fetch ceiling are re-checked.
 _NETWORK_WAVE_ROWS = 32
 
+# What one row's observation resolved to. The first two are terminal writes; the
+# third writes nothing at all, because the venue was never reached and so nothing
+# about the row was measured (see outcome_recorder.deferred_observation).
+_SETTLED = "settled"
+_FAILED = "failed"
+_DEFERRED = "deferred"
+
 
 async def settle_due_filter_outcomes(
     max_rows: int = 500,
@@ -46,6 +53,8 @@ async def settle_due_filter_outcomes(
             row and time budgets allow", which is the pre-existing behaviour.
             Rows past the ceiling stay ``pending`` — they are never marked
             ``failed``, because budget exhaustion is not a measurement failure.
+            Nor is an unreachable venue: a row the exchange refused to answer
+            about also stays ``pending``, since nothing about it was measured.
     """
     from aletheia.config.loader import load_config
     from aletheia.universe.outcome_economics import estimate_outcome_economics
@@ -53,6 +62,7 @@ async def settle_due_filter_outcomes(
         _batch_fetch_market_observations,
         _parse_dt,
         fetch_group_key,
+        is_deferred,
         local_market_observations,
     )
 
@@ -143,23 +153,38 @@ async def settle_due_filter_outcomes(
             candidates.append(row)
     nothing_due = not candidates
 
-    def apply(row: dict, observation: dict | None) -> bool:
-        """Write one row's terminal state. Returns True when it settled.
+    def apply(row: dict, observation: dict | None) -> str:
+        """Resolve one row. Returns _SETTLED, _FAILED, or _DEFERRED.
 
         Extracted verbatim from the old single loop so the local and exchange
         phases cannot drift apart in economics, guards, or shadow linkage.
+
+        It used to return a bool, which forced the two ways of not settling into
+        one answer and made the terminal write unconditional. A deferral must
+        write nothing: the venue was never reached, the row's bars are still
+        there, and ``failed`` is a state no job revisits.
         """
+        if is_deferred(observation):
+            return _DEFERRED
         price = observation.get("exit_price") if observation else None
         if price is None or float(price) <= 0:
             repo.fail_filter_candidate_outcome(row["id"], settled_at=now_iso)
-            return False
+            return _FAILED
 
         entry = float(row["entry_price_usd"])
         exit_price = float(price)
         ratio = exit_price / entry
         if ratio > 10.0 or ratio < 0.1:
-            repo.fail_filter_candidate_outcome(row["id"], settled_at=now_iso)
-            return False
+            # A real verdict on a real observation: record what was seen and
+            # rejected, so this row is not mistaken for one that was never
+            # measured at all (see repo.fail_filter_candidate_outcome).
+            repo.fail_filter_candidate_outcome(
+                row["id"],
+                settled_at=now_iso,
+                exit_price=exit_price,
+                settlement_price_source=observation.get("price_source"),
+            )
+            return _FAILED
 
         entry_dt = _parse_dt(row.get("entry_ts"))
         due_dt = _parse_dt(row.get("due_at"))
@@ -200,7 +225,7 @@ async def settle_due_filter_outcomes(
                 settlement_price_source=observation.get("price_source"),
                 settlement_lag_sec=observation.get("settlement_lag_sec"),
             )
-        return True
+        return _SETTLED
 
     # ---- phase A: everything the persisted window already answers ------------
     # No exchange resource is held here at all, so this is bounded only by rows
@@ -222,7 +247,7 @@ async def settle_due_filter_outcomes(
             continue
         processed += 1
         local_processed += 1
-        if apply(row, observation):
+        if apply(row, observation) == _SETTLED:
             settled += 1
 
     # ---- phase B: the exchange, one request per instrument, not per row -------
@@ -254,8 +279,10 @@ async def settle_due_filter_outcomes(
     # A single-pass collapse silently starved those rows: three due rows on one
     # instrument settled one per cycle even with an unlimited budget. So each round
     # regroups whatever is still unanswered and spends what is left of the
-    # allowance on it. Rounds terminate because every representative gets a
-    # terminal write, so each round removes at least one row per group.
+    # allowance on it. Rounds terminate because only a group's siblings are ever
+    # carried into the next round: its representative is dropped either way, so
+    # each round removes at least one row per group even when the representative
+    # got no write at all because the venue was unreachable.
     default_venue = cfg.market_data.ccxt_exchange
     unanswered = list(network_rows)
     fetch_allowance = (
@@ -264,6 +291,8 @@ async def settle_due_filter_outcomes(
     fetched_groups = 0
     harvested = 0
     rounds = 0
+    deferred = 0
+    venue_unreachable = False
     while unanswered and fetched_groups < fetch_allowance:
         if time.monotonic() >= deadline:
             break
@@ -291,11 +320,27 @@ async def settle_due_filter_outcomes(
             wave = budgeted[start:start + _NETWORK_WAVE_ROWS]
             observations = await _batch_fetch_market_observations(wave, now=now)
             fetched_groups += len(wave)
+            wave_deferred = 0
             for row in wave:
                 attempted.add(row["id"])
+                verdict = apply(row, observations.get(row["id"]))
+                if verdict == _DEFERRED:
+                    # Not processed: nothing was measured and nothing was written.
+                    deferred += 1
+                    wave_deferred += 1
+                    continue
                 processed += 1
-                if apply(row, observations.get(row["id"])):
+                if verdict == _SETTLED:
                     settled += 1
+            if wave_deferred == len(wave):
+                # A whole wave reached nothing, so the venue is down rather than
+                # this wave being unlucky. Every later wave and round would regroup
+                # more rows and spend more of the allowance against an endpoint
+                # that is not answering — and when the cause is a rate-limit ban,
+                # that spending is what extends the ban. Stop for this cycle; the
+                # rows are all still measurable when it answers again.
+                venue_unreachable = True
+                break
 
         # ---- harvest: siblings the requests above just warmed ----------------
         # No request is issued here; this only reads what the fetches persisted.
@@ -317,18 +362,20 @@ async def settle_due_filter_outcomes(
                     continue
                 processed += 1
                 harvested += 1
-                if apply(row, observation):
+                if apply(row, observation) == _SETTLED:
                     settled += 1
         else:
             still_unanswered = siblings
         # Rows the deadline cut out of `budgeted` keep their 'pending' status and
         # are simply left to the next cycle, so they are not carried forward here.
         unanswered = still_unanswered
+        if venue_unreachable:
+            break
 
     if settled or processed:
         logger.info(
             "filter outcome settler: settled %d of %d processed "
-            "(local %d, fetched %d in %d rounds, harvested %d) "
+            "(local %d, fetched %d in %d rounds, harvested %d, deferred %d) "
             "from %d candidates, prologue %.1fs, local window %s",
             settled,
             processed,
@@ -336,9 +383,24 @@ async def settle_due_filter_outcomes(
             fetched_groups,
             rounds,
             harvested,
+            deferred,
             len(candidates),
             prologue_sec,
             " ".join(f"{k}={v}" for k, v in sorted(local_reasons.items())) or "none",
+        )
+    elif deferred:
+        # A zero-throughput cycle caused by an outage and one caused by a stalled
+        # queue look identical from the outside and need opposite responses — chase
+        # the venue, or chase the settler. Say which one this was, and say plainly
+        # that the evidence survived.
+        logger.warning(
+            "filter outcome settler: settled 0 of %d due rows — the venue was "
+            "unreachable for all %d rows asked about (%d requests, %d rounds); those "
+            "rows stay pending and are retried next cycle, none were written off",
+            len(candidates),
+            deferred,
+            fetched_groups,
+            rounds,
         )
     elif nothing_due:
         logger.debug("filter outcome settler: nothing due")

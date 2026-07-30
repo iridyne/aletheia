@@ -47,6 +47,33 @@ def reconcile_local_paper_accounting(
     ))
 
 
+@data_app.command("requeue-unobserved-settlements")
+def requeue_unobserved_settlements(
+    apply: bool = typer.Option(
+        False, "--apply",
+        help="Return never-observed 'failed' rows to 'pending'. Default is dry-run.",
+    ),
+):
+    """Reclaim settlement rows written off before any observation was taken.
+
+    Targets exactly the rows whose status is 'failed' while both exit_price_usd and
+    settlement_price_source are NULL — the signature of a terminal write that
+    happened because the venue could not be reached, not because the row was
+    unmeasurable. Resets status and settled_at only; never touches economics,
+    deletes history, or reopens a row that carries a real verdict.
+    """
+    from aletheia.maintenance.settlement_requeue import (
+        requeue_unobserved_failed_outcomes,
+    )
+    from aletheia.storage.migrations import run_migrations
+
+    run_migrations()
+    typer.echo(json.dumps(
+        requeue_unobserved_failed_outcomes(dry_run=not apply),
+        indent=2, ensure_ascii=False, sort_keys=True,
+    ))
+
+
 @data_app.command("reconcile-paper-funding")
 def reconcile_paper_funding(
     position_ids: list[str] = typer.Option([], "--position-id"),

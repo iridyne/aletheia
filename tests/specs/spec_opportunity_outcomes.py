@@ -108,7 +108,112 @@ def test_missing_perp_funding_keeps_net_unknown():
 
 @spec_claim(
     SpecClaim(
-        "OO-B03", _CONTRACT, "§6 counterfactual verdict", "L2b",
+        "OO-B04", _CONTRACT, "§6 settlement status", "L2b",
+        "An unreachable venue leaves the row pending for the next cycle; only an answered-but-unmeasurable row becomes failed.",
+        status="implemented",
+    )
+)
+def test_unreachable_venue_is_not_a_measurement_failure(monkeypatch):
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import FilterCandidateOutcome
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+    from aletheia.universe.outcome_recorder import deferred_observation
+
+    entry = datetime.now(timezone.utc) - timedelta(hours=25)
+    outcome = FilterCandidateOutcome(
+        outcome_candidate_key="oo-b04", venue="okx", symbol="BTC/USDT",
+        market_type="spot", direction="long", scanner_family="momentum",
+        horizon="24h", entry_price_usd=100.0, entry_ts=entry.isoformat(),
+        due_at=(entry + timedelta(hours=24)).isoformat(),
+    )
+    repo.insert_filter_candidate_outcomes_batch([outcome])
+
+    def _status():
+        return get_db().execute(
+            "SELECT status FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)
+        ).fetchone()["status"]
+
+    async def _never_reached(rows, *, now):
+        return {r["id"]: deferred_observation("ohlcv:RateLimitExceeded") for r in rows}
+
+    async def _answered_with_no_price(rows, *, now):
+        return {}
+
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
+        _never_reached,
+    )
+    asyncio.run(settle_due_filter_outcomes(max_rows=8))
+    assert _status() == "pending"
+
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
+        _answered_with_no_price,
+    )
+    asyncio.run(settle_due_filter_outcomes(max_rows=8))
+    assert _status() == "failed"
+
+
+@spec_claim(
+    SpecClaim(
+        "OO-B05", _CONTRACT, "§6 evidence preservation", "L2b",
+        "A failed row records the observation it rejected, so NULL exit price with NULL price source means never observed and is reclaimable.",
+        status="implemented",
+    )
+)
+def test_failed_rows_separate_a_rejected_observation_from_no_observation():
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.maintenance.settlement_requeue import (
+        requeue_unobserved_failed_outcomes,
+    )
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseForwardOutcome
+    from aletheia.storage.sqlite import get_db
+
+    entry = datetime.now(timezone.utc) - timedelta(hours=25)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    common = dict(
+        snapshot_id="snap-oo-b05", scanner_family="momentum", direction="long",
+        venue="binance", market_type="spot", horizon="1h", entry_price_usd=100.0,
+        entry_ts=entry.isoformat(), due_at=(entry + timedelta(hours=1)).isoformat(),
+    )
+    repo.insert_forward_outcomes_batch([
+        UniverseForwardOutcome(member_id="m-rejected", symbol="AAA/USDT", **common),
+        UniverseForwardOutcome(member_id="m-unobserved", symbol="BBB/USDT", **common),
+    ])
+    ids = {
+        row["symbol"]: row["id"]
+        for row in get_db().execute("SELECT id, symbol FROM universe_forward_outcomes")
+    }
+    # The venue answered and the answer was rejected as cross-symbol contamination.
+    repo.fail_forward_outcome(
+        ids["AAA/USDT"], now_iso,
+        exit_price=99_999.0, settlement_price_source="horizon_ohlcv",
+    )
+    # The venue was never reached, which is what an IP ban produced in practice.
+    repo.fail_forward_outcome(ids["BBB/USDT"], now_iso)
+
+    result = requeue_unobserved_failed_outcomes(dry_run=False)
+
+    assert result["universe_forward_outcomes"] == 1
+    statuses = {
+        row["symbol"]: row["status"]
+        for row in get_db().execute(
+            "SELECT symbol, status FROM universe_forward_outcomes"
+        )
+    }
+    assert statuses["AAA/USDT"] == "failed", "a real verdict must stay terminal"
+    assert statuses["BBB/USDT"] == "pending", "never-observed evidence is reclaimable"
+
+
+@spec_claim(
+    SpecClaim(
+        "OO-B03", _CONTRACT, "§7 counterfactual verdict", "L2b",
         "Missed alpha requires net return above its safety edge; positive gross alone has a separate verdict.",
         status="implemented",
     )
@@ -124,7 +229,7 @@ def test_missed_alpha_requires_tradable_net_edge():
 
 @spec_claim(
     SpecClaim(
-        "OO-C01", _CONTRACT, "§7 learning isolation", "L2c",
+        "OO-C01", _CONTRACT, "§8 learning isolation", "L2c",
         "Calibration excludes legacy gross-only rows and counts wins from net_return_pct.",
         status="implemented",
     )
@@ -166,7 +271,7 @@ def test_calibration_excludes_gross_only_rows():
 
 @spec_claim(
     SpecClaim(
-        "OO-C02", _CONTRACT, "§7 display isolation", "L2c",
+        "OO-C02", _CONTRACT, "§8 display isolation", "L2c",
         "Universe UI consumes cohort calibration and displays family, direction and market type.",
         status="implemented",
     )
@@ -185,7 +290,7 @@ def test_universe_ui_does_not_refold_calibration_cohorts():
 
 @spec_claim(
     SpecClaim(
-        "OO-C03", _CONTRACT, "§7 guard isolation", "L2c",
+        "OO-C03", _CONTRACT, "§8 guard isolation", "L2c",
         "Net-loss guard candidates are scoped by direction and market_type; perp evidence cannot block spot.",
         status="implemented",
     )
