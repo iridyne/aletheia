@@ -16,6 +16,7 @@ Self-evolution Tier 1:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 
 from aletheia.storage.models import UniverseForwardOutcome
@@ -43,6 +44,16 @@ _FETCH_PLAN: dict[str, tuple[str, int]] = {
 }
 _MAX_CONCURRENT_FETCHES = 8
 _FETCH_TIMEOUT_SEC = 20.0
+
+# Extra bars read either side of the derived window, absorbing an unaligned
+# entry_ts boundary.
+_LOCAL_BAR_MARGIN = 2
+# Distinct labels so the local-store hit rate is measurable straight from the
+# evidence ledger. The semantics are identical — both are the close of a bar that
+# ended at or before due_at, past the same staleness gate — so both carry
+# price_quality_ok=True.
+_NETWORK_PRICE_SOURCE = "horizon_ohlcv"
+_LOCAL_PRICE_SOURCE = "horizon_ohlcv_local"
 
 
 def build_pending(members: list[dict], entry_ts: str) -> list[UniverseForwardOutcome]:
@@ -342,87 +353,88 @@ async def _batch_fetch_market_observations(
     OHLCV is preferred because an overdue scheduler run must still settle at
     ``due_at`` rather than at the later wall-clock time. Ticker fallback is usable
     for net learning only when the lag is within 10% of the requested horizon.
+
+    The already-persisted ``market_ohlcv`` window is consulted first. Those are the
+    very bars this settler wrote through ``ccxt_provider._persist``, so a hit
+    reproduces the network answer exactly — and costs no exchange round trip.
+    Because ``since`` is non-None the provider's in-process cache is bypassed on
+    both read and write (``ccxt_provider.get_ohlcv``), so without this the settler
+    pays one live request per row even for a window it already owns.
     """
     import asyncio
 
     from aletheia.config.loader import load_config
-    from aletheia.data.ccxt_provider import get_market_data_provider, timeframe_ms
-    from aletheia.data.symbols import InstrumentId
+    from aletheia.data.ccxt_provider import get_market_data_provider
 
     provider = get_market_data_provider()
     default_venue = load_config().market_data.ccxt_exchange
     semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
+    local_reasons: dict[str, int] = {}
 
     async def fetch_one(row: dict) -> tuple[str, dict | None]:
+        plan = _build_plan(row, default_venue=default_venue, now=now)
+        if plan is None:
+            return row["id"], None
+
+        # Local store first, deliberately OUTSIDE the semaphore: a hit must not
+        # consume one of the _MAX_CONCURRENT_FETCHES network permits, which is
+        # where the throughput comes from. Only a miss (absent / stale / short)
+        # falls through to the exchange below.
+        local, reason = _local_observation(plan)
+        local_reasons[reason] = local_reasons.get(reason, 0) + 1
+        if local is not None:
+            return plan.row_id, local
+
         async with semaphore:
-            entry_dt = _parse_dt(row.get("entry_ts"))
-            due_dt = _parse_dt(row.get("due_at"))
-            if entry_dt is None or due_dt is None:
-                return row["id"], None
-            raw_market_type = str(row.get("market_type") or "spot").lower()
-            market_type = (
-                "perp"
-                if raw_market_type in {"perp", "swap", "usdt_futures"}
-                else raw_market_type
-            )
-            instrument = InstrumentId.from_parts(
-                row.get("venue") or default_venue,
-                row["symbol"],
-                market_type,
-            )
-            horizon = row.get("horizon") or "1h"
-            timeframe, limit = _FETCH_PLAN.get(horizon, ("1h", 27))
-            entry_ms = int(entry_dt.timestamp() * 1000)
-            due_ms = int(due_dt.timestamp() * 1000)
-            lag_sec = max(0.0, (now - due_dt).total_seconds())
             try:
                 candles = await provider.get_ohlcv(
-                    instrument,
-                    timeframe=timeframe,
-                    limit=limit,
-                    since=entry_ms,
+                    plan.instrument,
+                    timeframe=plan.timeframe,
+                    limit=plan.limit,
+                    since=plan.entry_ms,
                 )
-                bar_ms = timeframe_ms(timeframe)
-                eligible = [
-                    c for c in candles
-                    if entry_ms <= c.timestamp and c.timestamp + bar_ms <= due_ms
-                ]
-                if eligible:
-                    last = eligible[-1]
-                    max_gap_ms = max(60_000, bar_ms * 2)
-                    if due_ms - (last.timestamp + bar_ms) <= max_gap_ms:
-                        return row["id"], {
-                            "exit_price": float(last.close),
-                            "range_high": max(float(c.high) for c in eligible),
-                            "range_low": min(float(c.low) for c in eligible),
-                            "price_source": "horizon_ohlcv",
-                            "price_quality_ok": True,
-                            "settlement_lag_sec": lag_sec,
-                        }
+                window = _window_observation(
+                    [
+                        (int(c.timestamp), float(c.high), float(c.low), float(c.close))
+                        for c in candles
+                    ],
+                    entry_ms=plan.entry_ms,
+                    due_ms=plan.due_ms,
+                    bar_ms=plan.bar_ms,
+                )
+                if window is not None:
+                    return plan.row_id, {
+                        "exit_price": window["exit_price"],
+                        "range_high": window["range_high"],
+                        "range_low": window["range_low"],
+                        "price_source": _NETWORK_PRICE_SOURCE,
+                        "price_quality_ok": True,
+                        "settlement_lag_sec": plan.lag_sec,
+                    }
             except Exception as exc:
                 logger.debug(
                     "forward outcome OHLCV unavailable for %s/%s: %s",
-                    instrument,
-                    horizon,
+                    plan.instrument,
+                    plan.horizon,
                     exc,
                 )
 
             try:
-                ticker = await provider.get_ticker(instrument)
+                ticker = await provider.get_ticker(plan.instrument)
                 price = float(ticker.last_price) if ticker.last_price else None
             except Exception:
                 price = None
             if not price or price <= 0:
-                return row["id"], None
-            hold_sec = max(1.0, (due_dt - entry_dt).total_seconds())
-            near_due = lag_sec <= hold_sec * 0.10
-            return row["id"], {
+                return plan.row_id, None
+            hold_sec = max(1.0, (plan.due_dt - plan.entry_dt).total_seconds())
+            near_due = plan.lag_sec <= hold_sec * 0.10
+            return plan.row_id, {
                 "exit_price": price,
                 "range_high": None,
                 "range_low": None,
                 "price_source": "near_due_ticker" if near_due else "late_ticker",
                 "price_quality_ok": near_due,
-                "settlement_lag_sec": lag_sec,
+                "settlement_lag_sec": plan.lag_sec,
             }
 
     async def fetch_bounded(row: dict) -> tuple[str, dict | None]:
@@ -434,9 +446,236 @@ async def _batch_fetch_market_observations(
 
     try:
         fetched = await asyncio.gather(*(fetch_bounded(row) for row in rows))
+        if local_reasons:
+            logger.info(
+                "outcome observations: %d rows, local OHLCV %s",
+                len(rows),
+                " ".join(f"{k}={v}" for k, v in sorted(local_reasons.items())),
+            )
         return {outcome_id: value for outcome_id, value in fetched if value is not None}
     finally:
         await provider.close()
+
+
+@dataclass(frozen=True)
+class _ObservationPlan:
+    """Everything one queue row needs to be observed, derived before any I/O.
+
+    Duck-typed across the three tables this helper serves
+    (``universe_forward_outcomes``, ``filter_candidate_outcomes``,
+    ``perp_structure_shadow_outcomes``): requires id/symbol/entry_ts/due_at and
+    reads venue/market_type/horizon when present.
+    """
+
+    row_id: str
+    instrument: object  # InstrumentId; imported lazily, see _build_plan
+    horizon: str
+    timeframe: str
+    limit: int  # network fetch limit, from _FETCH_PLAN
+    bar_ms: int
+    entry_dt: datetime
+    due_dt: datetime
+    entry_ms: int
+    due_ms: int
+    lag_sec: float
+
+
+def _build_plan(
+    row: dict, *, default_venue: str, now: datetime
+) -> _ObservationPlan | None:
+    """Derive the exact instrument and no-lookahead window for one row.
+
+    Returns None for an unparseable entry/due pair. Raises for a symbol that is not
+    a valid instrument — the caller's fetch_bounded() turns that into a per-row
+    miss, exactly as it did before this was split out of fetch_one().
+    """
+    from aletheia.data.ccxt_provider import timeframe_ms
+    from aletheia.data.symbols import InstrumentId
+
+    entry_dt = _parse_dt(row.get("entry_ts"))
+    due_dt = _parse_dt(row.get("due_at"))
+    if entry_dt is None or due_dt is None:
+        return None
+    raw_market_type = str(row.get("market_type") or "spot").lower()
+    market_type = (
+        "perp"
+        if raw_market_type in {"perp", "swap", "usdt_futures"}
+        else raw_market_type
+    )
+    instrument = InstrumentId.from_parts(
+        row.get("venue") or default_venue,
+        row["symbol"],
+        market_type,
+    )
+    horizon = row.get("horizon") or "1h"
+    timeframe, limit = _FETCH_PLAN.get(horizon, ("1h", 27))
+    return _ObservationPlan(
+        row_id=row["id"],
+        instrument=instrument,
+        horizon=horizon,
+        timeframe=timeframe,
+        limit=limit,
+        bar_ms=timeframe_ms(timeframe),
+        entry_dt=entry_dt,
+        due_dt=due_dt,
+        entry_ms=int(entry_dt.timestamp() * 1000),
+        due_ms=int(due_dt.timestamp() * 1000),
+        lag_sec=max(0.0, (now - due_dt).total_seconds()),
+    )
+
+
+def _window_observation(
+    bars: list[tuple[int, float, float, float]],
+    *,
+    entry_ms: int,
+    due_ms: int,
+    bar_ms: int,
+) -> dict | None:
+    """Aggregate the eligible fixed-horizon window; None when unusable.
+
+    ``bars`` is ``(open_ms, high, low, close)``. Shared by the local-store and the
+    network branch so the two paths cannot drift apart.
+
+    Eligibility is exactly ``entry_ms <= open_ms and open_ms + bar_ms <= due_ms``:
+    the bar that OPENS at ``due_at`` is excluded, so no future information can leak
+    into a fixed-horizon result.
+
+    Returns None when no bar is eligible, or when the last eligible bar closes more
+    than ``max(60_000, bar_ms * 2)`` before ``due_at`` — a delisted or halted symbol
+    must never settle off a stale bar.
+
+    ``bar_ms <= 0`` (unsupported timeframe: ``timeframe_ms()`` returns 0) yields
+    None rather than degenerating the predicate into an at-``due_at`` lookahead.
+    """
+    if bar_ms <= 0:
+        return None
+    eligible = sorted(
+        (b for b in bars if entry_ms <= b[0] and b[0] + bar_ms <= due_ms),
+        key=lambda b: b[0],
+    )
+    if not eligible:
+        return None
+    last = eligible[-1]
+    if due_ms - (last[0] + bar_ms) > max(60_000, bar_ms * 2):
+        return None
+    return {
+        "exit_price": float(last[3]),
+        "range_high": max(float(b[1]) for b in eligible),
+        "range_low": min(float(b[2]) for b in eligible),
+        "bar_count": len(eligible),
+    }
+
+
+def _expected_bar_count(*, entry_ms: int, due_ms: int, bar_ms: int) -> int:
+    """Count of exchange-aligned bars fully inside ``[entry_ms, due_ms]``.
+
+    Aligned opens are multiples of ``bar_ms``. ``entry_ts`` is a snapshot wall-clock
+    time and is NOT aligned, so the first eligible open is the smallest multiple at
+    or after ``entry_ms`` and the last is the largest multiple at or before
+    ``due_ms - bar_ms`` (the bar opening at ``due_at`` is excluded).
+    """
+    if bar_ms <= 0 or due_ms <= entry_ms:
+        return 0
+    first = -(-entry_ms // bar_ms) * bar_ms  # ceil to bar boundary
+    last = (due_ms - bar_ms) // bar_ms * bar_ms  # floor to bar boundary
+    if last < first:
+        return 0
+    return (last - first) // bar_ms + 1
+
+
+def _local_window_bars(
+    plan: _ObservationPlan,
+) -> list[tuple[int, float, float, float]]:
+    """Read the already-persisted window for one exact instrument. Never raises.
+
+    One index-optimal seek on ``idx_market_ohlcv_instrument_tf_ts``
+    (exchange, symbol, market_type, timeframe, ts DESC). ``before_ts=due_ms`` means
+    the query cannot even return the bar that opens at ``due_at``, so no-lookahead
+    holds at the SQL layer as well as inside _window_observation().
+
+    Identity comes from the InstrumentId, not the raw row: ``from_parts`` has
+    already lower-cased the exchange and canonicalised the symbol, which is exactly
+    the form ``ccxt_provider._persist`` writes. Both scope fields being non-empty
+    also short-circuits ``_resolve_ohlcv_scope``, so this can never degrade into a
+    fuzzy cross-venue match. Deliberately no fallback-exchange lookup: _persist
+    tags rows with the exchange that actually served the request, and settling a
+    binance row from bitget bars is the contamination the caller's 10x ratio guard
+    exists to catch.
+
+    Called synchronously rather than via ``asyncio.to_thread``: ``get_db()`` is
+    thread-local (storage/sqlite.py), so a worker thread would open a DIFFERENT
+    database than the one holding these bars. An indexed seek costs well under a
+    millisecond, which is cheaper than the correctness question.
+    """
+    if plan.bar_ms <= 0 or plan.due_ms <= plan.entry_ms:
+        return []
+    span = max(1, (plan.due_ms - plan.entry_ms) // plan.bar_ms + 1)
+    # The parse is inside the try as well: a malformed stored bar must degrade to
+    # "no local window" (and so to the exchange), never to an unsettled row.
+    try:
+        rows = repo.get_ohlcv_candles(
+            plan.instrument.symbol,
+            plan.timeframe,
+            limit=min(2000, span + _LOCAL_BAR_MARGIN),
+            exchange=plan.instrument.exchange,
+            market_type=plan.instrument.market_type,
+            before_ts=plan.due_ms,
+        )
+        out: list[tuple[int, float, float, float]] = []
+        for r in rows:
+            ts = r.get("ts")
+            if ts is None or int(ts) < plan.entry_ms:
+                continue
+            out.append((int(ts), float(r["high"]), float(r["low"]), float(r["close"])))
+        return out
+    except Exception as exc:
+        logger.debug(
+            "local OHLCV read failed for %s/%s: %s",
+            plan.instrument,
+            plan.timeframe,
+            exc,
+        )
+        return []
+
+
+def _local_observation(plan: _ObservationPlan) -> tuple[dict | None, str]:
+    """Try to satisfy one observation from the persisted market_ohlcv window.
+
+    Returns ``(observation, reason)`` where reason is one of hit / absent / stale /
+    short, so the local hit rate and its miss modes are measurable per batch
+    without waiting for the evidence ledger to fill.
+
+    The window must be BAR-COMPLETE. A tail gap is already caught by the staleness
+    gate, but a MID-window gap would leave exit_price correct while range_high /
+    range_low come out silently narrower than reality — minting a real
+    net_return_pct beside a wrong mfe/mae, which is worse than not settling.
+    Settling with ranges=None is no better: downstream could not tell "no path data
+    available" from "path data withheld because it was incomplete". So a short
+    window falls through to the exchange, which is authoritative for the window;
+    the local store is a cache bounded by per-timeframe retention and by the
+    rolling-window prune in upsert_ohlcv_candles, and a cache must prove itself.
+    """
+    bars = _local_window_bars(plan)
+    if not bars:
+        return None, "absent"
+    window = _window_observation(
+        bars, entry_ms=plan.entry_ms, due_ms=plan.due_ms, bar_ms=plan.bar_ms
+    )
+    if window is None:
+        return None, "stale"
+    expected = _expected_bar_count(
+        entry_ms=plan.entry_ms, due_ms=plan.due_ms, bar_ms=plan.bar_ms
+    )
+    if expected <= 0 or window["bar_count"] < expected:
+        return None, "short"
+    return {
+        "exit_price": window["exit_price"],
+        "range_high": window["range_high"],
+        "range_low": window["range_low"],
+        "price_source": _LOCAL_PRICE_SOURCE,
+        "price_quality_ok": True,
+        "settlement_lag_sec": plan.lag_sec,
+    }, "hit"
 
 
 def _parse_dt(value: str | None) -> datetime | None:

@@ -297,3 +297,251 @@ def test_forming_ohlcv_is_not_visible_to_db_consumers_and_closed_bar_is_persiste
     assert [row["ts"] for row in get_ohlcv_candles(
         "BTC/USDT", "1h", exchange="okx", market_type="perp"
     )] == [1_000, 2_000]
+
+
+# --- local-store-first horizon observation -----------------------------------
+#
+# The settler is the only writer of the 1m/5m/15m timeframes it reads back, so a
+# local hit must reproduce the network answer exactly. The integration tests below
+# assert the SAME economics as
+# test_settle_due_uses_exact_instrument_and_horizon_candles above; that numeric
+# equality is what proves the two paths cannot drift apart.
+
+
+def test_expected_bar_count_handles_unaligned_entry():
+    from aletheia.universe.outcome_recorder import _expected_bar_count
+
+    # Aligned entry: every bar from entry up to due-1bar is fully inside.
+    assert _expected_bar_count(entry_ms=0, due_ms=3_600_000, bar_ms=60_000) == 60
+    # Unaligned entry loses the partial leading bar -> 59, not 60.
+    assert _expected_bar_count(entry_ms=153_000, due_ms=3_753_000, bar_ms=60_000) == 59
+    assert _expected_bar_count(entry_ms=1_000, due_ms=1_000, bar_ms=60_000) == 0
+    assert _expected_bar_count(entry_ms=0, due_ms=3_600_000, bar_ms=0) == 0
+
+
+def test_window_observation_excludes_the_bar_opening_at_due_at():
+    from aletheia.universe.outcome_recorder import _window_observation
+
+    window = _window_observation(
+        [
+            (0, 101, 99, 100.5),
+            (60_000, 103, 100, 102),
+            # Opens exactly at due_at: using it would leak future information.
+            (120_000, 200, 1, 190),
+        ],
+        entry_ms=0,
+        due_ms=120_000,
+        bar_ms=60_000,
+    )
+    assert window == {
+        "exit_price": 102.0,
+        "range_high": 103.0,
+        "range_low": 99.0,
+        "bar_count": 2,
+    }
+
+
+def test_window_observation_rejects_a_stale_final_bar():
+    from aletheia.universe.outcome_recorder import _window_observation
+
+    # The last eligible bar closes ten bars before due_at. A halted or delisted
+    # symbol must not settle off it.
+    assert (
+        _window_observation(
+            [(0, 101, 99, 100.5)], entry_ms=0, due_ms=660_000, bar_ms=60_000
+        )
+        is None
+    )
+
+
+def test_window_observation_rejects_an_unsupported_timeframe():
+    from aletheia.universe.outcome_recorder import _window_observation
+
+    # timeframe_ms() returns 0 for an unknown timeframe; degenerating the
+    # predicate would admit the bar opening at due_at.
+    assert (
+        _window_observation(
+            [(0, 101, 99, 100.5), (120_000, 200, 1, 190)],
+            entry_ms=0,
+            due_ms=120_000,
+            bar_ms=0,
+        )
+        is None
+    )
+
+
+def _aligned_1h_window():
+    """An aligned, already-past one-hour window. Exactly 60 expected 1m bars."""
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    due_ms = (now_ms // 60_000) * 60_000 - 60_000
+    entry_ms = due_ms - 3_600_000
+    return (
+        entry_ms,
+        due_ms,
+        datetime.fromtimestamp(entry_ms / 1000, tz=timezone.utc),
+        datetime.fromtimestamp(due_ms / 1000, tz=timezone.utc),
+    )
+
+
+def _forward_row(entry, due, *, venue="okx"):
+    return {
+        "id": "outcome-local-perp",
+        "member_id": "member-local-perp",
+        "snapshot_id": "snapshot-local-perp",
+        "symbol": "BTC/USDT",
+        "venue": venue,
+        "market_type": "perp",
+        "scanner_family": "momentum",
+        "direction": "long",
+        "horizon": "1h",
+        "entry_price_usd": 100.0,
+        "entry_spread_bps": 8.0,
+        "funding_rate_at_entry": 0.0008,
+        "entry_ts": entry.isoformat(),
+        "due_at": due.isoformat(),
+        "status": "pending",
+    }
+
+
+def _install_settle_stubs(monkeypatch, row, provider):
+    settled = []
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder.repo.list_pending_forward_outcomes",
+        lambda **_: [row],
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder.repo.settle_forward_outcome",
+        lambda **kwargs: settled.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder.repo.calibration_stats", lambda: []
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._maybe_generate_guard_candidates",
+        lambda rows: None,
+    )
+    return settled
+
+
+class _RefusingProvider:
+    """Any call means the local window was not consulted, or not trusted."""
+
+    async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        raise AssertionError("a complete local window must not hit the network")
+
+    async def get_ticker(self, instrument):
+        raise AssertionError("a complete local window must not hit the ticker")
+
+    async def close(self):
+        pass
+
+
+class _RecordingProvider:
+    """The pre-existing network answer, with a wider range than any local seed."""
+
+    def __init__(self, entry_ms, due_ms):
+        from aletheia.data.providers import Candle
+
+        self.calls = []
+        self._candles = [
+            Candle(entry_ms, 100, 101, 99, 100.5, 10),
+            Candle(due_ms - 60_000, 100.5, 103, 100, 102, 12),
+            Candle(due_ms, 102, 200, 1, 190, 99),
+        ]
+
+    async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        self.calls.append((instrument, timeframe, limit, since))
+        return list(self._candles)
+
+    async def get_ticker(self, instrument):
+        raise AssertionError("horizon OHLCV should avoid current-ticker settlement")
+
+    async def close(self):
+        pass
+
+
+def _seed_local_1m(entry_ms, count, *, skip=(), exchange="okx", extra=()):
+    from aletheia.data.providers import Candle
+    from aletheia.storage.repositories import upsert_ohlcv_candles
+
+    skipped = set(skip)
+    candles = [
+        Candle(entry_ms + i * 60_000, 100, 101, 99, 100.5, 10)
+        for i in range(count)
+        if i not in skipped
+    ]
+    if count - 1 not in skipped:
+        # Final bar carries the window's extremes and the exit close.
+        candles[-1] = Candle(entry_ms + (count - 1) * 60_000, 100.5, 103, 100, 102, 12)
+    candles.extend(extra)
+    upsert_ohlcv_candles(
+        "BTC/USDT", "1m", candles, exchange=exchange, market_type="perp"
+    )
+
+
+def test_complete_local_window_settles_without_any_network_call(monkeypatch):
+    from aletheia.universe.outcome_recorder import settle_due
+
+    entry_ms, _due_ms, entry, due = _aligned_1h_window()
+    _seed_local_1m(entry_ms, 60)
+    settled = _install_settle_stubs(
+        monkeypatch, _forward_row(entry, due), _RefusingProvider()
+    )
+
+    assert asyncio.run(settle_due(max_rows=1)) == 1
+    assert settled[0]["settlement_price_source"] == "horizon_ohlcv_local"
+    assert settled[0]["economics"]["gross_return_pct"] == pytest.approx(2.0)
+    assert settled[0]["economics"]["net_return_pct"] == pytest.approx(1.69)
+    assert settled[0]["economics"]["mfe_pct"] == pytest.approx(3.0)
+    assert settled[0]["economics"]["mae_pct"] == pytest.approx(-1.0)
+
+
+def test_local_window_ignores_the_bar_opening_at_due_at(monkeypatch):
+    from aletheia.data.providers import Candle
+    from aletheia.universe.outcome_recorder import settle_due
+
+    entry_ms, due_ms, entry, due = _aligned_1h_window()
+    _seed_local_1m(entry_ms, 60, extra=[Candle(due_ms, 102, 200, 1, 190, 99)])
+    settled = _install_settle_stubs(
+        monkeypatch, _forward_row(entry, due), _RefusingProvider()
+    )
+
+    assert asyncio.run(settle_due(max_rows=1)) == 1
+    assert settled[0]["settlement_price_source"] == "horizon_ohlcv_local"
+    assert settled[0]["economics"]["mfe_pct"] == pytest.approx(3.0)
+    assert settled[0]["economics"]["mae_pct"] == pytest.approx(-1.0)
+
+
+def test_local_window_with_a_mid_window_hole_falls_back_to_the_exchange(monkeypatch):
+    from aletheia.universe.outcome_recorder import settle_due
+
+    entry_ms, due_ms, entry, due = _aligned_1h_window()
+    # One missing bar. Settling off the remaining 59 would mint a real
+    # net_return_pct beside a silently narrowed mfe/mae.
+    _seed_local_1m(entry_ms, 60, skip={30})
+    provider = _RecordingProvider(entry_ms, due_ms)
+    settled = _install_settle_stubs(monkeypatch, _forward_row(entry, due), provider)
+
+    assert asyncio.run(settle_due(max_rows=1)) == 1
+    assert provider.calls, "an incomplete local window must fall through"
+    assert settled[0]["settlement_price_source"] == "horizon_ohlcv"
+
+
+def test_local_read_is_scoped_to_the_exact_instrument(monkeypatch):
+    from aletheia.universe.outcome_recorder import settle_due
+
+    entry_ms, due_ms, entry, due = _aligned_1h_window()
+    # A complete window, but on another venue. Settling an okx row from binance
+    # bars is the cross-venue contamination the 10x ratio guard exists to catch.
+    _seed_local_1m(entry_ms, 60, exchange="binance")
+    provider = _RecordingProvider(entry_ms, due_ms)
+    settled = _install_settle_stubs(
+        monkeypatch, _forward_row(entry, due, venue="okx"), provider
+    )
+
+    assert asyncio.run(settle_due(max_rows=1)) == 1
+    assert provider.calls and provider.calls[0][0].exchange == "okx"
+    assert settled[0]["settlement_price_source"] == "horizon_ohlcv"
