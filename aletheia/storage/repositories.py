@@ -9,6 +9,7 @@ import threading
 import sqlite3
 import time
 import uuid
+from collections.abc import Mapping
 from aletheia.storage.sqlite import (
     acquire_write_lock,
     execute_many_write,
@@ -41,6 +42,7 @@ from aletheia.storage.models import (
     OutcomeHookJob,
     PaperAccountEvent,
 )
+from pydantic import BaseModel
 
 _PROVENANCE_FIELDS = ("runtime_session_id", "producer_commit", "behavior_fingerprint")
 _sqlite_logger = logging.getLogger("aletheia.storage.sqlite")
@@ -66,6 +68,14 @@ def _record_retention_batch(table: str, deleted: int, duration_ms: float) -> Non
             max(float(metrics["max_batch_ms"]), duration_ms),
             3,
         )
+
+
+def _to_payload_dict(value: object) -> dict:
+    if isinstance(value, BaseModel):
+        return value.model_dump()
+    if isinstance(value, Mapping):
+        return dict(value)
+    raise TypeError(f"Unsupported payload type: {type(value)!r}")
 
 
 def _stamp_provenance(data: dict) -> dict:
@@ -600,7 +610,7 @@ def insert_divergence_opportunity_once(
 
 def insert_pi_decision(decision) -> None:
     """Persist a System Operator trading decision to the database."""
-    data = decision.model_dump() if hasattr(decision, "model_dump") else dict(decision)
+    data = _to_payload_dict(decision)
     _insert("pi_decisions", _stamp_provenance(data))
 
 
@@ -611,7 +621,7 @@ def record_operator_evaluation_event(event) -> dict:
     queue carrier is not an entry decision and must not consume an Opportunity.
     ``dedup_key`` is supplied by the caller's bounded observation window.
     """
-    data = event.model_dump() if hasattr(event, "model_dump") else dict(event)
+    data = _to_payload_dict(event)
     db = get_db()
     was_in_tx = db.in_transaction
     columns = ", ".join(data)
@@ -1239,7 +1249,7 @@ def expire_stale_queued_opportunities(max_age_minutes: int = 30) -> int:
 
 
 def insert_capital_event(event) -> None:
-    _insert("capital_events", event.model_dump() if hasattr(event, "model_dump") else event)
+    _insert("capital_events", _to_payload_dict(event))
 
 
 def list_capital_events(limit: int = 200) -> list[dict]:
@@ -6744,7 +6754,7 @@ def expire_stale_opportunities(ttl_hours: int = 48) -> int:
 def insert_shadow_trade(shadow) -> None:
     from aletheia.storage.models import ShadowTrade
 
-    data = shadow.model_dump() if hasattr(shadow, "model_dump") else dict(shadow)
+    data = _to_payload_dict(shadow)
     _insert("shadow_trades", data)
 
 
@@ -6872,7 +6882,7 @@ def insert_market_regime(record) -> None:
     read MAX(detected_at); we preserve that heartbeat by forcing a write once
     the newest row crosses the floor.
     """
-    data = record.model_dump() if hasattr(record, "model_dump") else dict(record)
+    data = _to_payload_dict(record)
     if isinstance(data.get("signals"), dict):
         data["signals"] = json.dumps(data["signals"])
     db = get_db()
