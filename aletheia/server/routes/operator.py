@@ -1111,6 +1111,11 @@ async def operator_command(req: OperatorCommandRequest):
         permission_scope="operator",
         session_id=target_session_id,
     )
+    if not isinstance(result, CommandResponse):
+        raise HTTPException(
+            status_code=500,
+            detail="Internal error: command handler returned unexpected payload type.",
+        )
     payload = result.model_dump()
     command_name = None
     intent_name = payload.get("intent")

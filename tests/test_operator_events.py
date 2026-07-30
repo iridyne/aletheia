@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from aletheia.agent_shell.runtime import CommandResponse
 from aletheia.server.app import app
 
 
@@ -1293,13 +1294,13 @@ async def test_operator_recommendations_hide_archived_low_value_notifications(cl
 
 @pytest.mark.anyio
 async def test_operator_command_route_emits_command_events(client):
-    fake_response = {
-        "intent": "get_system_status",
-        "risk_level": "read",
-        "response": "System healthy",
-        "action": None,
-        "needs_confirmation": False,
-    }
+    fake_response = CommandResponse(
+        intent="get_system_status",
+        risk_level="read",
+        response="System healthy",
+        action=None,
+        needs_confirmation=False,
+    )
 
     with patch(
         "aletheia.agent_shell.runtime.AgentShellRuntime.handle",
