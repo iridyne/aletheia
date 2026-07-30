@@ -2002,7 +2002,7 @@ def _validate_native_entry_order_snapshot(
         raise ValueError("exchange entry Order client identity is not durable")
 
 
-def validate_native_order_authority(order: Order | dict) -> None:
+def validate_native_order_authority(order: Order | Mapping[str, object]) -> None:
     """Fail closed when a new native Order lacks its immutable authority.
 
     Entry Orders consume exactly one approved authoritative RiskDecision. Close
@@ -2010,7 +2010,7 @@ def validate_native_order_authority(order: Order | dict) -> None:
     is deliberately exempt because its synthetic chain records observation, not
     a new Aletheia trading decision.
     """
-    data = order.model_dump() if isinstance(order, Order) else dict(order)
+    data = _to_payload_dict(order)
     if data.get("source", "native") != "native":
         return
 
