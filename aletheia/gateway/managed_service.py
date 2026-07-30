@@ -21,6 +21,7 @@ import tempfile
 from pathlib import Path, PureWindowsPath
 
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
+from aletheia.gateway.console_text import decode_console
 from aletheia.gateway.pidfile import _no_window_kwargs, _resolve_real_python, is_running
 from aletheia.packaged_process import gateway_runner_command, is_frozen_runtime
 
@@ -147,6 +148,7 @@ def _is_not_found(detail: str) -> bool:
     return any(marker in low for marker in (
         "not found", "no such process", "could not find service",
         "does not exist", "cannot find the file",
+        "找不到", "不存在",
     ))
 
 
@@ -365,12 +367,43 @@ def _build_windows_task_xml(*, no_browser: bool) -> str:
     )
 
 
+def _run_schtasks(args: list[str], timeout: float = 30.0):
+    """Run schtasks and return the process with both streams decoded to text.
+
+    schtasks writes the console code page, which subprocess' locale-based text
+    mode misreads under Python's UTF-8 mode — a mojibake `stderr` hides the
+    localized "task not found" wording that makes stop idempotent. See
+    `aletheia/gateway/console_text.py`.
+    """
+    proc = subprocess.run(
+        args, capture_output=True, timeout=timeout, **_no_window_kwargs()
+    )
+    proc.stdout = decode_console(proc.stdout)
+    proc.stderr = decode_console(proc.stderr)
+    return proc
+
+
+def _windows_task_exists() -> bool | None:
+    """Locale-independent existence probe: the /Query exit code, never its text.
+
+    Returns None when existence cannot be established, so a blocked query is
+    never reported as an absent task.
+    """
+    try:
+        proc = _run_schtasks(["schtasks", "/Query", "/TN", WINDOWS_TASK_NAME])
+    except Exception:
+        return None
+    if proc.returncode == 0:
+        return True
+    stderr = proc.stderr or ""
+    if "denied" in stderr.lower() or "拒绝" in stderr:
+        return None
+    return False
+
+
 def _status_windows() -> dict:
     try:
-        proc = subprocess.run(
-            ["schtasks", "/Query", "/TN", WINDOWS_TASK_NAME, "/XML"], capture_output=True, timeout=30,
-            text=True, errors="replace", **_no_window_kwargs(),
-        )
+        proc = _run_schtasks(["schtasks", "/Query", "/TN", WINDOWS_TASK_NAME, "/XML"])
     except FileNotFoundError:
         return {"supported": False, "managed": False, "platform": "task_scheduler", "reason": "schtasks_unavailable"}
     except Exception as exc:
@@ -387,16 +420,12 @@ def _start_windows(*, no_browser: bool) -> dict:
         with tempfile.NamedTemporaryFile(mode="wb", suffix=".xml", delete=False) as handle:
             handle.write(xml.encode("utf-16"))
             temp_path = handle.name
-        created = subprocess.run(
-            ["schtasks", "/Create", "/TN", WINDOWS_TASK_NAME, "/XML", temp_path, "/F"], capture_output=True, timeout=30,
-            text=True, errors="replace", **_no_window_kwargs(),
+        created = _run_schtasks(
+            ["schtasks", "/Create", "/TN", WINDOWS_TASK_NAME, "/XML", temp_path, "/F"]
         )
         if created.returncode != 0:
             return {"supported": True, "managed": False, "ok": False, "platform": "task_scheduler", "reason": "schtasks_error", "detail": (created.stderr or "").strip()[:200]}
-        started = subprocess.run(
-            ["schtasks", "/Run", "/TN", WINDOWS_TASK_NAME], capture_output=True, timeout=30,
-            text=True, errors="replace", **_no_window_kwargs(),
-        )
+        started = _run_schtasks(["schtasks", "/Run", "/TN", WINDOWS_TASK_NAME])
         if started.returncode != 0:
             return {"supported": True, "managed": True, "ok": False, "platform": "task_scheduler", "reason": "schtasks_error", "detail": (started.stderr or "").strip()[:200]}
     except FileNotFoundError:
@@ -414,19 +443,19 @@ def _start_windows(*, no_browser: bool) -> dict:
 
 def _stop_windows() -> dict:
     try:
-        ended = subprocess.run(
-            ["schtasks", "/End", "/TN", WINDOWS_TASK_NAME], capture_output=True, timeout=30,
-            text=True, errors="replace", **_no_window_kwargs(),
-        )
-        deleted = subprocess.run(
-            ["schtasks", "/Delete", "/TN", WINDOWS_TASK_NAME, "/F"], capture_output=True, timeout=30,
-            text=True, errors="replace", **_no_window_kwargs(),
-        )
+        ended = _run_schtasks(["schtasks", "/End", "/TN", WINDOWS_TASK_NAME])
+        deleted = _run_schtasks(["schtasks", "/Delete", "/TN", WINDOWS_TASK_NAME, "/F"])
     except FileNotFoundError:
         return {"supported": False, "managed": False, "ok": False, "platform": "task_scheduler", "reason": "schtasks_unavailable"}
     except Exception as exc:
         return {"supported": True, "managed": None, "ok": False, "platform": "task_scheduler", "reason": "schtasks_error", "detail": type(exc).__name__}
-    if deleted.returncode != 0 and not _is_not_found(deleted.stderr):
+    # _is_not_found only recognizes some locales' wording, so an unrecognized
+    # failure is checked against the task's real existence before it is called one.
+    if (
+        deleted.returncode != 0
+        and not _is_not_found(deleted.stderr)
+        and _windows_task_exists() is not False
+    ):
         return {"supported": True, "managed": None, "ok": False, "platform": "task_scheduler", "reason": "schtasks_error", "detail": (deleted.stderr or "").strip()[:200]}
     return {"supported": True, "managed": False, "ok": True, "platform": "task_scheduler", "end_requested": ended.returncode == 0}
 
