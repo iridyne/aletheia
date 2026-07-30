@@ -19,6 +19,7 @@ from typing import Any
 from aletheia.learning.ledger import get_record
 from aletheia.learning.models import LearningExperiment, LearningHypothesis
 from aletheia.learning.outcomes import assess_candidate_outcome
+from aletheia.learning.registry import LEARNING_PATHS
 from aletheia.storage.sqlite import get_db
 
 
@@ -48,10 +49,9 @@ SUPPORTED_PATH_ID = "universe_family_calibration"
 #   ranker_case_score:          needs path-specific statistical-unit/outcome contract
 #   ranker_memo_score:          needs path-specific statistical-unit/outcome contract
 #   ranker_factor_filter:       needs path-specific statistical-unit/outcome contract
-SUPPORTED_PATH_IDS = frozenset({
-    SUPPORTED_PATH_ID,
-    "operator_learning_bundle",
-})
+SUPPORTED_PATH_IDS = frozenset(
+    path.path_id for path in LEARNING_PATHS if path.measurement_supported
+)
 
 # Paths that use opportunity-keyed outcomes (opportunity:{id}:{horizon}).
 # filter_candidate_outcomes rows for these paths have allocation_selected=NULL by

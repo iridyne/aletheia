@@ -620,6 +620,7 @@ def run_contribution_evaluator() -> dict[str, int | str]:
     """
     from aletheia.learning.control import (
         record_measurement_job_failure,
+        record_measurement_job_partial,
         record_measurement_job_skipped,
         record_measurement_job_started,
         record_measurement_job_success,
@@ -658,9 +659,16 @@ def run_contribution_evaluator() -> dict[str, int | str]:
                     "skipping and continuing the cycle",
                     experiment_id, exc_info=True,
                 )
-        record_measurement_job_success(job_id)
+        status = "healthy"
+        if failed_experiments:
+            status = "degraded"
+            record_measurement_job_partial(
+                job_id, f"experiment_evaluation_failed:{failed_experiments}"
+            )
+        else:
+            record_measurement_job_success(job_id)
         return {
-            "status": "healthy",
+            "status": status,
             "experiments": len(experiment_rows),
             "verdicts": verdicts,
             "failed_experiments": failed_experiments,

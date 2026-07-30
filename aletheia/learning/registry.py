@@ -23,6 +23,7 @@ class LearningPath:
     is_learning_treatment: bool = True
     consumer_wired: bool = True
     settings_supported: bool = True
+    measurement_supported: bool = False
 
 
 LEARNING_PATHS: tuple[LearningPath, ...] = (
@@ -30,6 +31,7 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
         "universe_family_calibration", "universe calibration stats", "universe allocator",
         "bounded paper opportunity-score multiplier", ("score_adjustment",),
         "universe", "fixed-horizon candidate net outcome", "neutral multiplier 1.0",
+        measurement_supported=True,
     ),
     LearningPath(
         "observer_advisory_bundle", "knowledge router and trading memo", "market observer",
@@ -60,6 +62,7 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
         "operator_learning_bundle", "memo/reasoning/calibration/reflection/lessons", "System Operator",
         "advisory paper decision context", ("prompt_advisory",), "operator",
         "decision-linked realized or fixed-horizon outcome", "no Learning prompt bundle",
+        measurement_supported=True,
     ),
     LearningPath(
         "risk_lesson_constraint", "applied structured risk lesson", "Risk Engine",
@@ -142,12 +145,18 @@ def paper_influence_path_options() -> tuple[dict[str, object], ...]:
     for path in LEARNING_PATHS:
         if not path.is_learning_treatment:
             continue
-        supported = bool(path.consumer_wired and path.settings_supported)
+        supported = bool(
+            path.consumer_wired
+            and path.settings_supported
+            and path.measurement_supported
+        )
         status = (
             "supported"
             if supported
             else "consumer_unwired" if not path.consumer_wired else "authority_unwired"
         )
+        if path.consumer_wired and path.settings_supported and not path.measurement_supported:
+            status = "measurement_unwired"
         options.append({
             "path_id": path.path_id,
             "label": path.producer,

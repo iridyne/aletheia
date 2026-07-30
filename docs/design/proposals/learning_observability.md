@@ -75,7 +75,7 @@ surface look shipped.
 | Capability | Current fact | LCO target |
 | --- | --- | --- |
 | Measured ledger | Seven permanent Learning tables exist | Read-only typed projection |
-| Measurable path | Only `universe_family_calibration` has the current cohort evaluator | Explicit `measurement_supported` per path |
+| Measurable path | `universe_family_calibration` and `operator_learning_bundle` have current cohort adapters | Explicit `measurement_supported` per path |
 | Current metric | `universe_family_calibration_cluster_allocation_utility_v2` | Current identity plus append-only metric history |
 | Cohort inspection | Internal aggregate inspection exists | Bounded aggregate plus selected cluster detail |
 | Lifecycle inspection | Internal read function returns progress, recommendation and job health | Public sanitized projection |
@@ -99,7 +99,7 @@ Every API and UI presentation keeps these dimensions separate:
 | --- | --- | --- |
 | Activity | Were artifacts or observations produced? | artifact count, exposure count |
 | Measurement | Is there an identity-matched prospective verdict? | `not_measured`, `positive`, `invalid` |
-| Operations | Did the evaluator run as expected? | `healthy`, `catchup_due`, `failed` |
+| Operations | Did the evaluator run as expected? | `healthy`, `degraded`, `catchup_due`, `failed` |
 | Authority | May a treatment affect behavior? | `measurement_only`, `paper_10`, `blocked` |
 
 An operationally healthy evaluator can report `insufficient_data`. A positive
@@ -565,6 +565,12 @@ Every configured path remains visible. `measurement_supported=false`,
 `not_measured`, and `inactive` are explicit states. The recommendation panel says
 "Read-only recommendation" and contains no admission button.
 
+A path with `measurement_supported=false` cannot create a formal hypothesis,
+experiment, or exposure. Its consumer receives the declared static fallback with
+`measurement_unsupported`. Historical open experiments for such paths are
+soft-terminalized only through the owner maintenance command, which defaults to
+dry-run and preserves all prior ledger rows.
+
 ### 8.4 Experiments tab
 
 The ledger exposes path, hypothesis, stage, status, allocation, required samples,
@@ -581,6 +587,10 @@ Separate panels show:
 - durable last failure even after recovery;
 - real backlog/watermark fields where recorded;
 - outcome/source integrity counts from current measurements.
+
+If one experiment fails while the evaluator continues processing others, the
+durable job state is `degraded`, records the bounded failure count, and does not
+advance the measurement watermark. It must not report `healthy` for that cycle.
 
 No panel says the Learning strategy is effective because the evaluator is healthy.
 

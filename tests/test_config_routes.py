@@ -245,12 +245,18 @@ async def test_learning_settings_persist_and_cap_active_paper_allocation(client)
 
 
 @pytest.mark.anyio
-async def test_learning_settings_expose_only_wired_paper_path_options(client):
+async def test_learning_settings_expose_only_measurable_paper_path_options(client):
     response = await client.get("/api/settings")
     assert response.status_code == 200
     options = response.json()["learning_path_options"]
     by_id = {option["path_id"]: option for option in options}
-    assert by_id["ranker_learned_guard"]["supported"] is True
+    assert by_id["universe_family_calibration"]["supported"] is True
+    assert by_id["ranker_learned_guard"] == {
+        "path_id": "ranker_learned_guard",
+        "label": "learned trading guards",
+        "supported": False,
+        "status": "measurement_unwired",
+    }
     assert by_id["advisory_skill"] == {
         "path_id": "advisory_skill",
         "label": "proven hypothesis skill",

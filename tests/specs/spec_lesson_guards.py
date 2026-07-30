@@ -204,9 +204,9 @@ def test_older_applied_risk_lesson_is_not_truncated(tmp_path, monkeypatch):
 
 @spec_claim(SpecClaim(
     "LG-S06", "risk_engine_contract", "§lesson_guards paper authority", "L2c",
-    "An automatically produced applied Risk lesson is advisory at the default baseline and only "
-    "blocks a proposal when the exact risk_lesson_constraint paper treatment is assigned and "
-    "authorized; explicit owner/manual lessons remain static safety rules.",
+    "An automatically produced applied Risk lesson remains advisory and creates no formal "
+    "Learning exposure while risk_lesson_constraint lacks a measurement adapter; it only blocks "
+    "when exact treatment authority is available. Owner/manual lessons remain static safety rules.",
     status="implemented",
 ))
 def test_automatic_risk_lesson_requires_paper_treatment_authority(tmp_path, monkeypatch):
@@ -242,40 +242,7 @@ def test_automatic_risk_lesson_requires_paper_treatment_authority(tmp_path, monk
     exposure = get_db().execute(
         "SELECT * FROM learning_exposures WHERE path_id='risk_lesson_constraint'"
     ).fetchone()
-    assert exposure is not None
-    assert exposure["candidate_key"] == f"risk_lesson:{proposal.id}:{auto.lesson_id}"
-    assert exposure["outcome_candidate_key"] == f"proposal:{proposal.id}:4h"
-
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import TradeProposal
-    from aletheia.learning.ledger import linked_settled_exposure_counts
-    real_proposal = TradeProposal(
-        id=proposal.id, opportunity_id=proposal.opportunity_id,
-        symbol="BTC/USDT", market_type="spot", direction="long",
-        order_type="market", execution_mode="paper_internal",
-        quantity=0.001, price=60_000.0, stop_price=58_000.0,
-    )
-    repo.insert_trade_proposal(real_proposal)
-    monkeypatch.setattr(
-        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
-        lambda symbol, market_type, *, venue: 60_000.0,
-    )
-    eng.evaluate_proposal(real_proposal, decision_role="authoritative")
-    outcome = get_db().execute(
-        "SELECT id FROM filter_candidate_outcomes WHERE outcome_candidate_key=? AND horizon='4h'",
-        (f"proposal:{proposal.id}",),
-    ).fetchone()
-    assert outcome is not None
-    get_db().execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.2, "
-        "cost_model_version='test-v1', settled_at=datetime('now') WHERE id=?",
-        (outcome["id"],),
-    )
-    get_db().commit()
-    counts = linked_settled_exposure_counts(
-        exposure["experiment_id"], policy_epoch=exposure["concurrent_policy_epoch"],
-    )
-    assert counts[exposure["assignment"]] == 1
+    assert exposure is None
 
     from aletheia.learning.experiments import InfluenceDecision
     captured = []

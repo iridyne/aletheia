@@ -1380,12 +1380,20 @@ def test_contribution_evaluator_isolates_a_failing_experiment(monkeypatch):
 
     result = lifecycle.run_contribution_evaluator()
 
-    assert result["status"] == "healthy"
+    assert result["status"] == "degraded"
     assert result["failed_experiments"] == 1
     # Both were attempted; the good one still evaluated despite the bad one raising.
     assert good_exp.experiment_id in calls
     assert bad_exp.experiment_id in calls
     assert result["verdicts"] >= 1
+
+    from aletheia.learning.control import get_learning_job_health
+
+    health = get_learning_job_health("learning_contribution_evaluator")
+    assert health.status == "degraded"
+    assert health.consecutive_failures == 1
+    assert health.last_failure_reason == "experiment_evaluation_failed:1"
+    assert health.input_watermark is None
 
 
 def test_lifecycle_controller_isolates_a_failing_experiment(monkeypatch):

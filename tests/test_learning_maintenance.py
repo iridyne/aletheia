@@ -1,0 +1,90 @@
+"""Owner maintenance for Learning records that cannot produce measurements."""
+
+from __future__ import annotations
+
+
+def _open_experiment(path_id: str, token: str) -> tuple[str, str]:
+    from aletheia.learning.ledger import insert_experiment, insert_hypothesis
+    from aletheia.learning.models import LearningExperiment, LearningHypothesis
+
+    hypothesis_id = f"hypothesis-{token}"
+    experiment_id = f"experiment-{token}"
+    assert insert_hypothesis(LearningHypothesis(
+        hypothesis_id=hypothesis_id,
+        fingerprint=f"fingerprint-{token}",
+        cohort_id=f"cohort-{token}",
+        path_id=path_id,
+        overlap_group="test",
+        source_type="test",
+        scope_json="{}",
+        action_json="{}",
+        consumer="test",
+        target_horizon="4h",
+        status="shadow",
+    ))
+    assert insert_experiment(LearningExperiment(
+        experiment_id=experiment_id,
+        hypothesis_id=hypothesis_id,
+        assignment_salt=f"salt-{token}",
+        status="active",
+    ))
+    return hypothesis_id, experiment_id
+
+
+def test_archive_unmeasurable_experiments_is_dry_run_by_default_and_idempotent():
+    from aletheia.learning.maintenance import archive_unmeasurable_experiments
+    from aletheia.storage.sqlite import get_db
+
+    unsupported_hypothesis, unsupported_experiment = _open_experiment(
+        "observer_advisory_bundle", "unsupported"
+    )
+    supported_hypothesis, supported_experiment = _open_experiment(
+        "universe_family_calibration", "supported"
+    )
+    db = get_db()
+
+    planned = archive_unmeasurable_experiments()
+
+    assert planned == {
+        "dry_run": True,
+        "experiments": 1,
+        "hypotheses": 1,
+        "paths": {"observer_advisory_bundle": 1},
+    }
+    assert db.execute(
+        "SELECT ended_at FROM learning_experiments WHERE experiment_id=?",
+        (unsupported_experiment,),
+    ).fetchone()[0] is None
+
+    applied = archive_unmeasurable_experiments(dry_run=False)
+
+    assert applied == {**planned, "dry_run": False}
+    unsupported = db.execute(
+        "SELECT status, ended_at FROM learning_experiments WHERE experiment_id=?",
+        (unsupported_experiment,),
+    ).fetchone()
+    assert unsupported["status"] == "archived"
+    assert unsupported["ended_at"] is not None
+    assert db.execute(
+        "SELECT status FROM learning_hypotheses WHERE hypothesis_id=?",
+        (unsupported_hypothesis,),
+    ).fetchone()[0] == "archived"
+    event = db.execute(
+        "SELECT action, reason FROM learning_lifecycle_events WHERE experiment_id=?",
+        (unsupported_experiment,),
+    ).fetchone()
+    assert tuple(event) == (
+        "archive_unmeasurable",
+        "owner_maintenance:measurement_unsupported",
+    )
+
+    supported = db.execute(
+        "SELECT status, ended_at FROM learning_experiments WHERE experiment_id=?",
+        (supported_experiment,),
+    ).fetchone()
+    assert tuple(supported) == ("active", None)
+    assert db.execute(
+        "SELECT status FROM learning_hypotheses WHERE hypothesis_id=?",
+        (supported_hypothesis,),
+    ).fetchone()[0] == "shadow"
+    assert archive_unmeasurable_experiments(dry_run=False)["experiments"] == 0
