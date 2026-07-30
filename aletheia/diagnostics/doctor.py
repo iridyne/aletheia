@@ -2625,8 +2625,21 @@ def _probe_content_attribution(report: Report) -> None:
 
 
 def _probe_content_shadow_trades(report: Report) -> None:
-    """Orphan shadow trades never resolved — their counterfactual pnl stays NULL and
-    edge-lab analysis silently loses that sample."""
+    """Shadow trades whose counterfactual pnl never lands — edge-lab analysis
+    silently loses that sample.
+
+    The unresolved rows split by `outcome_candidate_key`, and the two halves need
+    DIFFERENT remedies, so a bare count would send the operator to the wrong tool:
+
+    * key IS NULL — pre-b9ad957 orphans whose parent position carries no
+      opportunity_id. `resolve_stale_shadows` (and `scripts/backfill_shadow_trades.py`
+      on top of it) resolve these by their own historical horizon.
+    * key IS NOT NULL — resolved only by `settle_linked_shadow_outcomes()`, which
+      fires when the linked 24h `filter_candidate_outcomes` row settles. Both
+      backfill paths SELECT `outcome_candidate_key IS NULL`, so they cannot move a
+      single one of these rows; naming them here would be a no-op fix hint hiding
+      the real dependency (a filter-outcome settler that cannot keep up).
+    """
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
@@ -2635,30 +2648,45 @@ def _probe_content_shadow_trades(report: Report) -> None:
             report.add("content.shadow_trades", "info", "no shadow trades yet")
             return
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-        stale = db.execute(
-            "SELECT COUNT(*) FROM shadow_trades "
+        row = db.execute(
+            "SELECT COUNT(*) AS stale, "
+            "SUM(CASE WHEN outcome_candidate_key IS NULL THEN 1 ELSE 0 END) AS orphaned "
+            "FROM shadow_trades "
             "WHERE resolved_at IS NULL AND created_at < ?",
             (cutoff,),
-        ).fetchone()[0]
+        ).fetchone()
+        stale = int(row["stale"] or 0)
+        orphaned = int(row["orphaned"] or 0)
     except Exception as e:
         report.add("content.shadow_trades", "info", f"probe error: {e}")
         return
+    linked = stale - orphaned
     stale_pct = stale / total if total else 0.0
     if stale == 0:
         report.add("content.shadow_trades", "ok", f"{total} shadow trades, none stale")
-    elif stale_pct > 0.25:
+        return
+    # Point at the remedy that can actually move the dominant half.
+    if linked > orphaned:
+        hint = ("these carry an outcome_candidate_key, so they resolve only when their "
+                "linked 24h filter_candidate_outcomes row settles — check "
+                "data.filter_evidence stale_overdue; the backfill script excludes them")
+    else:
+        hint = ("run scripts/backfill_shadow_trades.py for the orphaned backlog; the "
+                "shadow_resolver job catches up new ones (resolve_stale_shadows)")
+    split = f"{orphaned} orphaned, {linked} awaiting 24h filter-outcome settlement"
+    if stale_pct > 0.25:
         report.add("content.shadow_trades", "warn",
-                   f"{stale} shadow trades unresolved >24h ({stale_pct:.0%} of {total}) — "
-                   "counterfactual pnl never computed",
-                   "run scripts/backfill_shadow_trades.py for the historical backlog; the "
-                   "shadow_resolver job catches up new ones (resolve_stale_shadows)")
+                   f"{stale} shadow trades unresolved >24h ({stale_pct:.0%} of {total}; "
+                   f"{split}) — counterfactual pnl never computed",
+                   hint)
     else:
         # Bounded residue: symbols that left the universe have no OHLCV to resolve
         # against, so a small unresolved tail is honest, not a systemic failure.
         report.add("content.shadow_trades", "info",
-                   f"{stale} shadow trades unresolved >24h ({stale_pct:.0%} of {total}) — "
-                   "bounded residue (delisted/out-of-universe symbols lack OHLCV to resolve)",
-                   "shadow_resolver job handles new ones; older un-backfillable rows are expected")
+                   f"{stale} shadow trades unresolved >24h ({stale_pct:.0%} of {total}; "
+                   f"{split}) — bounded residue (delisted/out-of-universe symbols lack "
+                   "OHLCV to resolve)",
+                   hint)
 
 
 def _probe_content_signal_settlement(report: Report) -> None:
