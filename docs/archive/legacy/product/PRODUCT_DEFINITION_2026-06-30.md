@@ -1,7 +1,13 @@
 # Aletheia 产品定义
 
+> **Archived historical snapshot.** This file preserves the owner's
+> 2026-06-30 decisions in their original level of detail. It is not current
+> Product Truth, a roadmap, or implementation authority. Current product
+> definition and direction live only in
+> [`docs/product/definition/DIRECTION.md`](../../../product/definition/DIRECTION.md).
+
 来源：2026-06-30 owner 深度对话，8 个领域全量确认
-状态：已定案，后续修改须 owner 明确授权
+历史状态：当时已定案；现作为来源证据保留
 
 ---
 

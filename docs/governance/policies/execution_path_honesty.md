@@ -159,7 +159,7 @@ Aletheia 是**镜像的另一半**：
 - ⚠️ **只影响 LLM 的"读"，不改任何确定性参数**：学到的 lesson 进 prompt 影响下一次 LLM 市场解读，
   但**不调 scanner 权重 / 不调 TTL / 不改 risk 限额**——与原始设计 §3.9 的"scanner weight updates / TTL tuning"
   这类**参数化反馈**有明确差距。当前是 advisory 文本注入，不是闭环控制。
-- 📌 **更正**：`docs/references/external-systems/north_star.md` §6（2026-06-08 表述）称 "market_observer：LLM 只看 latest_snapshot，
+- 📌 **更正**：`docs/references/external-systems/comparative_systems.md` §6（2026-06-08 表述）称 "market_observer：LLM 只看 latest_snapshot，
   不读任何历史/教训"——**已过时**。现在 market_observer 确实注入 memory block。该文件已同步更正。
 
 ---
@@ -204,7 +204,7 @@ Aletheia 是**镜像的另一半**：
 
 ## 9. 相关文档
 
-- `docs/references/external-systems/north_star.md` — 方向地图（§6 经验闭环主题已更正）
+- `docs/references/external-systems/comparative_systems.md` — 外部系统比较研究（§6 经验闭环主题已更正）
 - `docs/references/external-systems/openalice_prism_review.md` — OpenAlice/Prism 对照（蓝图 B = 审计链，与本文 §5 呼应）
 - `docs/references/papers-and-benchmarks/agent_framework_research_2025_2026.md` — 外部综述验证镜（"确定性优先 + LLM 影响最小"佐证）
 - `docs/archive/legacy/issues/domain/BACKEND_ISSUES.md` — 冻结的历史问题证据；当前偏差只在 GitHub Issues 跟踪

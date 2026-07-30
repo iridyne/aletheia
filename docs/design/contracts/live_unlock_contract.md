@@ -1,7 +1,7 @@
 # Live Unlock 信任边界契约 (L2 金标准)
 
 > **角色**:定义实盘解锁这一最不可逆操作的信任边界——谁能解锁、需什么前置、写什么审计、agent 如何被永久挡在门外。
-> 这是 [VISION](../../product/definition/VISION.md) "hard control = 试错许可证" 的最后一道门。
+> 这是 [Product Direction](../../product/definition/DIRECTION.md) 所要求的人类控制资本暴露与逐级获得自主权的最后一道门。
 > **基线**：以当前代码为底；本契约描述已实现边界，产品支持状态仍以 Capability Ground Truth 为准。
 > **不变式来源**:[trust §6.3 (live.py / permissions)](../../governance/policies/trust_and_change_control.md)。
 > Last updated: 2026-06-21 · 维护者:Aletheia Dev

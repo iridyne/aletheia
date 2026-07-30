@@ -34,7 +34,7 @@
 当前权威文档同时描述了三种不同产品：
 
 - `docs/governance/policies/implementation_guide.md` 仍把 MVP 限定为 Bitget + BTC/ETH/SOL，并明确把 OKX、xStocks、新闻和预测市场放到以后。
-- `docs/product/definition/PRD.md`、`METRICS.md`、`PHASE_GATES.md` 仍把已删除的 RuleSet、回测和策略晋级引擎写成已完成或当前门槛。
+- `docs/product/SCOPE.md`（当时为 `docs/product/definition/PRD.md`）、`METRICS.md`、`PHASE_GATES.md` 仍把已删除的 RuleSet、回测和策略晋级引擎写成已完成或当前门槛。
 - 当前代码实际是 OKX/Bitget 可切换、动态加密 Universe、新闻、预测市场、股票观察和 Serenity 研究并存。
 
 后果是：测试可以对旧目标全绿，代码也可以对新目标运行，但没有一份顶层文件明确回答“现在什么资产能被发现、什么资产能执行、以什么净收益指标判定好坏”。

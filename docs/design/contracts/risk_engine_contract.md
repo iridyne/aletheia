@@ -1,7 +1,7 @@
 # Risk Engine 决策契约 (L2 金标准)
 
 > **角色**:定义 Risk Engine 作为"agent 不可绕过的硬墙"的完整决策契约。
-> 这是 trust 边界的核心——[VISION](../../product/definition/VISION.md) 把它定义为"给 AI 买到的犯错许可证"。
+> 这是 trust 边界的核心——[Product Direction](../../product/definition/DIRECTION.md) 要求失败可生还且自主权只能逐级获得。
 > **基线**：以当前代码与可执行证据为底；本契约描述当前权威行为，偏差进入 GitHub Issues，历史问题证据见 [`BACKEND_ISSUES.md`](../../archive/legacy/issues/domain/BACKEND_ISSUES.md)。
 > **不变式来源**:[trust_and_change_control §6.3](../../governance/policies/trust_and_change_control.md)。
 > Last updated: 2026-07-14 · 维护者:Aletheia Dev
@@ -192,7 +192,7 @@ config:`trading.default_notional_usdt=25`, `vol_kelly_cap_fraction=0.25`, `vol_s
 ## 8. 目标态差距(意图领先代码)
 
 - [execution_path_honesty §1.2](../../governance/policies/execution_path_honesty.md):LLM 的 `direction_bias` 直接驱动下单方向,Risk Engine **不验证方向是否合理**——它只管账户/订单安全,不管"这个方向对不对"。这是有意的职责边界(risk 不依赖市场状态判断),但意味着"方向正确性"无硬约束。
-- ⚠️ 不要把 market-state guard(如资金费率熔断)塞进 Risk Engine——见 [north_star §10.6](../../references/external-systems/north_star.md),那属策略层。
+- ⚠️ 不要把 market-state guard(如资金费率熔断)塞进 Risk Engine——见 [external systems comparison §10.6](../../references/external-systems/comparative_systems.md),那属策略层。
 
 ---
 

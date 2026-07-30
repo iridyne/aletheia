@@ -1,6 +1,10 @@
-# Aletheia Trading OS — Product Requirements Document
+# Aletheia Trading OS - Product Scope
 
 > Last updated: 2026-07-12
+>
+> **Role:** Product scope. This document states what is included, deferred, or
+> excluded. It does not define product purpose or strategic direction; the
+> single authority for those questions is [Product Direction](definition/DIRECTION.md).
 > Status: Living document — authoritative source for "what we're building and why"
 > 顶层愿景（赌什么 / 为谁 / 什么叫赢）见 **[VISION.md](VISION.md)**；本文件承接它，定义范围与边界。
 > Companion docs: [VISION.md](VISION.md) · [DIRECTION.md](DIRECTION.md) · [METRICS.md](../gates/METRICS.md) · [PHASE_GATES.md](../gates/PHASE_GATES.md)
@@ -74,10 +78,10 @@
 
 | 功能 | 原因 | 参考文档 |
 |------|------|----------|
-| Live trading (实盘) | 需积累足够 paper 数据 + 用户显式授权 | ROADMAP Phase 6 |
+| Live trading (实盘) | 需积累足够 paper 数据 + 用户显式授权 | 仅可通过当前准入门控与 owner 显式授权 |
 | Self-evolution Tier 2-3 | 需 Tier 1 积累数据 | plans/self_evolution_plan.md |
-| News intelligence scanner | 缺数据源 + 不是当前瓶颈 | ROADMAP Phase 5 |
-| Cross-agent debate | 架构复杂度高, 当前 System Operator 辩论已覆盖 | ROADMAP Phase 4 |
+| News intelligence scanner | 缺数据源 + 不是当前瓶颈 | 独立 Proposal 获批前不进入支持范围 |
+| Cross-agent debate | 架构复杂度高, 当前 System Operator 辩论已覆盖 | 独立 Proposal 获批前不进入支持范围 |
 | Trailing stop ML optimization | 需更多交易数据 | — |
 
 ### 5.3 永不做
@@ -149,10 +153,10 @@
 
 ## 关联文档
 
-- 远期愿景：[North Star](../../references/external-systems/north_star.md)（方向参考，非施工授权）
+- 外部范式比较：[Comparative Systems Reference](../references/external-systems/comparative_systems.md)（研究参考，非产品方向或施工授权）
 - 实施规则：[Implementation Guide](../../governance/policies/implementation_guide.md)
 - 系统架构：[SYSTEM_ARCHITECTURE_GUIDE](../../design/architecture/SYSTEM_ARCHITECTURE_GUIDE.md)
 - 阶段门控：[PHASE_GATES](../gates/PHASE_GATES.md)
-- 历史路线图：[ROADMAP](../../archive/legacy/status/roadmap/ROADMAP.md)（仅作出处证据）
+- 历史路线图：[ROADMAP](../archive/legacy/status/roadmap/ROADMAP.md)（仅作出处证据）
 - 指标定义：[METRICS](../gates/METRICS.md)
-- 稳定产品取舍：[Product Direction](DIRECTION.md)
+- 唯一产品定义与长期方向：[Product Direction](definition/DIRECTION.md)

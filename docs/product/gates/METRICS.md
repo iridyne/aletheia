@@ -1,4 +1,4 @@
-# North-Star Metrics & Phase KPIs
+# Product Evaluation Metrics
 
 > Single source of truth for what we measure and why.
 > Each metric is tied to a concrete code path or DB query.
@@ -6,7 +6,7 @@
 
 ---
 
-## 1. North-Star Metric
+## 1. Primary Outcome Metric
 
 **Closed-Loop Learning Velocity** -- how fast the system discovers, validates, and discards trading hypotheses.
 

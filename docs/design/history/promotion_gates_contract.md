@@ -3,7 +3,7 @@
 > **Historical document**: this file describes a retired mechanism. It is not a
 > current Contract and must not authorize new strategy-promotion behavior.
 
-> **角色**:定义策略从假设到实盘的晋级门槛——这是 [VISION](../../product/definition/VISION.md) "B 个人终点线"所依赖的质量闸,也是"信任是赚来的"的物理实现。
+> **角色**:定义策略从假设到实盘的晋级门槛——这是 [Product Direction](../../product/definition/DIRECTION.md) 所要求的受控验证与逐级获得自主权的质量闸。
 > **基线**:意图源 [trust §5](../../governance/policies/trust_and_change_control.md) 已是近完整规范,代码 100% 吻合;一处残余偏差(偏差1)标 ⚠️;偏差2(PI 审批门)已于 2026-06-23 确认实现,标 ✅。
 > Last updated: 2026-06-21 · 维护者:Aletheia Dev
 
