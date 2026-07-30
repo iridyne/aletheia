@@ -20,6 +20,8 @@ authoritative it moves into `design/proposals/`, `design/decisions/`, or
 | `routing_and_fallback_2026-07-30.md` | Broker admission (per-provider concurrency, RPM, TPM, priority) and fallback (request-level model fallback + per-model cooldown) already implemented; corrects an earlier "no RPM/TPM" tracking-issue claim. |
 | `config_and_surfaces_2026-07-30.md` | `ModelsConfig`/`ProviderConfig` fields already carry routing, fallback, and broker admission. No `/api/economics` backend route or Settings tile exists today — Phase 1 must build them. Sketches where Phase 2's `EconomicsConfig` block would land. |
 | `system_prompt_patterns_2026-07-30.md` | Nine callers sampled: role → input contract → output contract → behavioural constraints. What every prompt is missing (time, run identity, budget-remaining, tool permissions) and a sketch of a Phase 5 harness environment header prepended in `helpers.py`. |
+| `existing_cli_audit_shape_2026-07-30.md` | Every `aletheia audit` subcommand, backing economics-module function, and exact JSON shape it emits. Sketches a straight-mirror Phase 1 endpoint layout that reuses the same functions the CLI does. |
+| `economics_test_fixtures_2026-07-30.md` | Autouse `conftest.py` fixtures every test inherits, the eight-step economics setup pattern from `test_economic_*.py`, the `httpx.AsyncClient` + `ASGITransport(app=app)` route test pattern, and what Phase 1 route tests should and should not assert. |
 
 ## Related current documents
 
