@@ -129,7 +129,15 @@ def _build_verdict(
         target_horizon=cohort.key.horizon,
         outcome_contract_version=cohort.key.outcome_contract_version,
         metric_version=METRIC_VERSION,
-        code_commit=cohort.key.code_commit or None,
+        code_commit=(
+            next(iter(cohort.source_code_commits))
+            if (
+                len(cohort.source_code_commits) == 1
+                and cohort.source_code_commit_unknown_n == 0
+            )
+            else None
+        ),
+        behavior_contract_hash=cohort.key.behavior_contract_hash or None,
     )
 
 
@@ -141,7 +149,7 @@ def _cohort_fingerprint(cohort: ContributionCohort, evaluation: VerdictEvaluatio
             "policy_epoch": cohort.key.policy_epoch,
             "horizon": cohort.key.horizon,
             "outcome_contract_version": cohort.key.outcome_contract_version,
-            "code_commit": cohort.key.code_commit,
+            "behavior_contract_hash": cohort.key.behavior_contract_hash,
         },
         "samples": [
             {

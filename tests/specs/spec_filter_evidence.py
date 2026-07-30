@@ -204,8 +204,8 @@ def test_filter_outcome_settler_has_capacity_before_universe_mirror_backlog(
     SpecClaim(
         "FE-B04a", _CONTRACT, "§4 fixed-horizon settlement", "L2b",
         "Within the canonical settlement quota, due outcomes belonging to the "
-        "running build of the open Universe Learning epoch are processed before "
-        "older-build rows and unrelated historical backlog.",
+        "current behavior contract of the open Universe Learning epoch are processed "
+        "before older-contract rows and unrelated historical backlog.",
         status="implemented",
     )
 )
@@ -257,11 +257,11 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
 
     key_queries = []
 
-    def open_learning_keys(path_ids, code_commit=None):
-        key_queries.append(code_commit)
+    def open_learning_keys(path_ids, behavior_contract_hash=None):
+        key_queries.append(behavior_contract_hash)
         return (
             {"current-ufc-candidate:4h"}
-            if code_commit == "current-build"
+            if behavior_contract_hash == "current-behavior"
             else {
                 "current-ufc-candidate:4h",
                 "previous-build-ufc-candidate:4h",
@@ -290,8 +290,12 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
         raising=False,
     )
     monkeypatch.setattr(
-        "aletheia.agent_runtime.build_info.get_boot_commit",
-        lambda: "current-build",
+        "aletheia.learning.experiments.current_policy_epoch",
+        lambda _path_id: "current-epoch",
+    )
+    monkeypatch.setattr(
+        "aletheia.learning.behavior_contracts.current_behavior_contract_hash",
+        lambda **_kwargs: "current-behavior",
     )
     monkeypatch.setattr(
         filter_outcome_recorder.repo,
@@ -334,7 +338,7 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
         "previous-build-ufc",
         "historical-backlog",
     ]
-    assert key_queries == ["current-build", None]
+    assert key_queries == ["current-behavior", None]
 
 
 @spec_claim(

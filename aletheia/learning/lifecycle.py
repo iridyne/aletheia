@@ -16,6 +16,7 @@ from aletheia.learning.authority import (
     resolve_learning_authority,
 )
 from aletheia.learning.cohorts import SUPPORTED_PATH_ID, SUPPORTED_PATH_IDS
+from aletheia.learning.behavior_contracts import current_behavior_contract_hash
 from aletheia.learning.control import global_learning_refreeze_reason
 from aletheia.learning.ledger import (
     get_latest_measurement_verdict,
@@ -31,7 +32,7 @@ from aletheia.learning.models import (
     LearningHypothesis,
     LearningLifecycleEvent,
 )
-from aletheia.learning.experiments import _code_fingerprint, _policy_epoch
+from aletheia.learning.experiments import _policy_epoch, current_policy_epoch
 from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
@@ -95,10 +96,17 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
     hypothesis = LearningHypothesis(**hypothesis_row)
     if hypothesis.path_id not in SUPPORTED_PATH_IDS:
         return LifecycleResult("hold", "hold", "unsupported_learning_path", experiment_id)
-    current_code_commit = _code_fingerprint()
-    if current_code_commit is None:
+    try:
+        expected_behavior_contract_hash = current_behavior_contract_hash(
+            path_id=hypothesis.path_id,
+            policy_epoch=current_policy_epoch,
+            target_horizon=hypothesis.target_horizon,
+            outcome_contract_version="v1",
+            metric_version=METRIC_VERSION,
+        )
+    except (KeyError, ValueError):
         return LifecycleResult(
-            "hold", "hold", "code_commit_unavailable", experiment_id,
+            "hold", "hold", "behavior_contract_unavailable", experiment_id,
         )
     verdict = get_latest_measurement_verdict(
         experiment.experiment_id,
@@ -108,7 +116,7 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
         target_horizon=hypothesis.target_horizon,
         outcome_contract_version="v1",
         metric_version=METRIC_VERSION,
-        code_commit=current_code_commit,
+        behavior_contract_hash=expected_behavior_contract_hash,
     )
     if verdict is None:
         verdict = get_latest_measurement_verdict(experiment.experiment_id)
@@ -121,7 +129,7 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
     identity_reason = measurement_identity_reason(
         verdict, experiment.stage, current_policy_epoch,
         expected_horizon=hypothesis.target_horizon,
-        expected_code_commit=current_code_commit,
+        expected_behavior_contract_hash=expected_behavior_contract_hash,
         expected_hypothesis_id=hypothesis.hypothesis_id,
     )
     if identity_reason:
@@ -251,9 +259,19 @@ def _execute_trial_admission(
     if gate_reason is not None:
         return LifecycleResult("hold", "admit_trial", gate_reason, experiment_id, verdict_id=verdict_id)
 
-    current_code_commit = _code_fingerprint()
-    if current_code_commit is None:
-        return LifecycleResult("hold", "admit_trial", "code_commit_unavailable", experiment_id, verdict_id=verdict_id)
+    try:
+        expected_behavior_contract_hash = current_behavior_contract_hash(
+            path_id=hypothesis.path_id,
+            policy_epoch=current_policy_epoch,
+            target_horizon=hypothesis.target_horizon,
+            outcome_contract_version="v1",
+            metric_version=METRIC_VERSION,
+        )
+    except (KeyError, ValueError):
+        return LifecycleResult(
+            "hold", "admit_trial", "behavior_contract_unavailable",
+            experiment_id, verdict_id=verdict_id,
+        )
 
     verdict = get_latest_measurement_verdict(
         experiment_id,
@@ -263,7 +281,7 @@ def _execute_trial_admission(
         target_horizon=hypothesis.target_horizon,
         outcome_contract_version="v1",
         metric_version=METRIC_VERSION,
-        code_commit=current_code_commit,
+        behavior_contract_hash=expected_behavior_contract_hash,
     )
     if verdict is None or str(verdict.get("verdict_id") or "") != verdict_id:
         return LifecycleResult("hold", "admit_trial", "verdict_not_found_or_mismatch", experiment_id, verdict_id=verdict_id)
@@ -275,7 +293,7 @@ def _execute_trial_admission(
     identity_reason = measurement_identity_reason(
         verdict, "shadow", current_policy_epoch,
         expected_horizon=hypothesis.target_horizon,
-        expected_code_commit=current_code_commit,
+        expected_behavior_contract_hash=expected_behavior_contract_hash,
         expected_hypothesis_id=hypothesis.hypothesis_id,
     ) or measurement_harm_block_reason(verdict)
     if identity_reason:
@@ -533,7 +551,16 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
     if hypothesis_row is None:
         return {"experiment_id": experiment_id, "status": "orphaned_hypothesis"}
     hypothesis = LearningHypothesis(**hypothesis_row)
-    current_code_commit = _code_fingerprint()
+    try:
+        expected_behavior_contract_hash = current_behavior_contract_hash(
+            path_id=hypothesis.path_id,
+            policy_epoch=current_policy_epoch,
+            target_horizon=hypothesis.target_horizon,
+            outcome_contract_version="v1",
+            metric_version=METRIC_VERSION,
+        )
+    except (KeyError, ValueError):
+        expected_behavior_contract_hash = None
     verdict = get_latest_measurement_verdict(
         experiment_id,
         policy_epoch=current_policy_epoch,
@@ -542,14 +569,14 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
         target_horizon=hypothesis.target_horizon,
         outcome_contract_version="v1",
         metric_version=METRIC_VERSION,
-        code_commit=current_code_commit,
+        behavior_contract_hash=expected_behavior_contract_hash,
     )
     if verdict is not None and measurement_identity_reason(
         verdict,
         experiment.stage,
         current_policy_epoch,
         expected_horizon=hypothesis.target_horizon,
-        expected_code_commit=current_code_commit,
+        expected_behavior_contract_hash=expected_behavior_contract_hash,
         expected_hypothesis_id=hypothesis.hypothesis_id,
     ):
         verdict = None
@@ -567,13 +594,13 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
     authority = resolve_learning_authority(hypothesis.path_id, experiment, current_policy_epoch)
     from aletheia.learning.cohorts import build_experiment_cohorts
     from aletheia.learning.control import get_learning_job_health, job_health_view
-    cohorts = [] if current_code_commit is None else [
+    cohorts = [] if expected_behavior_contract_hash is None else [
         cohort
         for cohort in build_experiment_cohorts(experiment.experiment_id)
         if cohort.key.policy_epoch == current_policy_epoch
         and cohort.key.horizon == hypothesis.target_horizon
         and cohort.key.outcome_contract_version == "v1"
-        and cohort.key.code_commit == current_code_commit
+        and cohort.key.behavior_contract_hash == expected_behavior_contract_hash
     ]
     evaluator_health = get_learning_job_health("learning_contribution_evaluator")
     return {
@@ -694,7 +721,7 @@ def run_lifecycle_controller() -> dict[str, int]:
             # controller cycle and left every subsequent experiment unprocessed.
             # Contain the failure to the offending experiment. (issue #160)
             try:
-                epoch = _latest_exposure_policy_epoch(experiment_id)
+                epoch = current_policy_epoch(pid) or ""
                 results.append(process_lifecycle(experiment_id, current_policy_epoch=epoch))
             except Exception:
                 failed_experiments += 1
@@ -710,15 +737,6 @@ def run_lifecycle_controller() -> dict[str, int]:
         "admitted": sum(result.action == "admit_trial" for result in results),
         "failed_experiments": failed_experiments,
     }
-
-
-def _latest_exposure_policy_epoch(experiment_id: str) -> str:
-    row = get_db().execute(
-        "SELECT concurrent_policy_epoch FROM learning_exposures WHERE experiment_id=? "
-        "ORDER BY datetime(exposed_at) DESC, exposure_id DESC LIMIT 1",
-        (experiment_id,),
-    ).fetchone()
-    return str(row[0]) if row and row[0] else ""
 
 
 def _stage_allocation(stage: str) -> float:

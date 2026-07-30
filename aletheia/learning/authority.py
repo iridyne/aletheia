@@ -23,7 +23,7 @@ from aletheia.learning.ledger import (
     linked_settled_exposure_counts,
 )
 from aletheia.learning.models import LearningExperiment
-from aletheia.learning.experiments import _code_fingerprint
+from aletheia.learning.behavior_contracts import current_behavior_contract_hash
 from aletheia.learning.verdicts import METRIC_VERSION
 
 
@@ -102,43 +102,49 @@ def resolve_learning_authority(
     expected_horizon = str(hypothesis.get("target_horizon") or "")
     if not expected_horizon:
         return blocked("hypothesis_horizon_missing")
-    current_code_commit = _code_fingerprint()
+    try:
+        expected_behavior_contract_hash = current_behavior_contract_hash(
+            path_id=path_id,
+            policy_epoch=current_policy_epoch,
+            target_horizon=expected_horizon,
+            outcome_contract_version="v1",
+            metric_version=METRIC_VERSION,
+        )
+    except (KeyError, ValueError):
+        return blocked("behavior_contract_unavailable")
     if not experiment.activation_verdict_id:
-        if current_code_commit is not None:
-            measurement = get_latest_measurement_verdict(
-                experiment.experiment_id,
-                policy_epoch=current_policy_epoch,
-                stage=experiment.stage,
-                hypothesis_id=experiment.hypothesis_id,
-                target_horizon=expected_horizon,
-                outcome_contract_version="v1",
-                metric_version=METRIC_VERSION,
-                code_commit=current_code_commit,
+        measurement = get_latest_measurement_verdict(
+            experiment.experiment_id,
+            policy_epoch=current_policy_epoch,
+            stage=experiment.stage,
+            hypothesis_id=experiment.hypothesis_id,
+            target_horizon=expected_horizon,
+            outcome_contract_version="v1",
+            metric_version=METRIC_VERSION,
+            behavior_contract_hash=expected_behavior_contract_hash,
+        )
+        if (
+            measurement is not None
+            and measurement_identity_reason(
+                measurement,
+                experiment.stage,
+                current_policy_epoch,
+                expected_horizon=expected_horizon,
+                expected_behavior_contract_hash=expected_behavior_contract_hash,
+                expected_hypothesis_id=experiment.hypothesis_id,
+            ) is None
+            and str(measurement.get("verdict") or "") in {"negative", "invalid"}
+        ):
+            return blocked(
+                f"current_measurement_{measurement['verdict']}", measurement,
             )
-            if (
-                measurement is not None
-                and measurement_identity_reason(
-                    measurement,
-                    experiment.stage,
-                    current_policy_epoch,
-                    expected_horizon=expected_horizon,
-                    expected_code_commit=current_code_commit,
-                    expected_hypothesis_id=experiment.hypothesis_id,
-                ) is None
-                and str(measurement.get("verdict") or "") in {"negative", "invalid"}
-            ):
-                return blocked(
-                    f"current_measurement_{measurement['verdict']}", measurement,
-                )
-            harm_reason = (
-                None if measurement is None
-                else measurement_harm_block_reason(measurement)
-            )
-            if harm_reason is not None:
-                return blocked(harm_reason, measurement)
-        return _legacy_authority_adapter(experiment, current_policy_epoch, blocked)
-    if current_code_commit is None:
-        return blocked("code_commit_unavailable")
+        harm_reason = (
+            None if measurement is None
+            else measurement_harm_block_reason(measurement)
+        )
+        if harm_reason is not None:
+            return blocked(harm_reason, measurement)
+        return blocked("missing_activation_verdict", measurement)
     current = get_latest_measurement_verdict(
         experiment.experiment_id,
         policy_epoch=current_policy_epoch,
@@ -147,7 +153,7 @@ def resolve_learning_authority(
         target_horizon=expected_horizon,
         outcome_contract_version="v1",
         metric_version=METRIC_VERSION,
-        code_commit=current_code_commit,
+        behavior_contract_hash=expected_behavior_contract_hash,
     )
     if current is None:
         current = get_latest_measurement_verdict(experiment.experiment_id)
@@ -157,7 +163,7 @@ def resolve_learning_authority(
             experiment.stage,
             current_policy_epoch,
             expected_horizon=expected_horizon,
-            expected_code_commit=current_code_commit,
+            expected_behavior_contract_hash=expected_behavior_contract_hash,
             expected_hypothesis_id=experiment.hypothesis_id,
         )
         if identity_reason:
@@ -209,7 +215,7 @@ def resolve_learning_authority(
         activation_reason = measurement_identity_reason(
             activation, predecessor_stage, current_policy_epoch,
             expected_horizon=expected_horizon,
-            expected_code_commit=current_code_commit,
+            expected_behavior_contract_hash=expected_behavior_contract_hash,
             expected_hypothesis_id=experiment.hypothesis_id,
         ) or measurement_harm_block_reason(activation)
         return blocked(activation_reason) if activation_reason else AuthorityDecision(
@@ -221,7 +227,7 @@ def resolve_learning_authority(
     verdict = str(current.get("verdict") or "")
     identity_reason = measurement_identity_reason(
         current, experiment.stage, current_policy_epoch, expected_horizon=expected_horizon,
-        expected_code_commit=current_code_commit,
+        expected_behavior_contract_hash=expected_behavior_contract_hash,
         expected_hypothesis_id=experiment.hypothesis_id,
     ) or measurement_harm_block_reason(current)
     if identity_reason:
@@ -289,13 +295,13 @@ def measurement_identity_reason(
     current_policy_epoch: str,
     *,
     expected_horizon: str | None,
-    expected_code_commit: str | None = None,
+    expected_behavior_contract_hash: str | None = None,
     expected_hypothesis_id: str | None = None,
 ) -> str | None:
     """Return a reason when a verdict does not describe *this* experiment now.
 
     Identity only: stage, hypothesis, policy epoch, horizon, outcome contract,
-    metric version and code commit.  The harm gate lives in
+    metric version and behavior contract.  The harm gate lives in
     ``measurement_harm_block_reason`` so that it cannot block a safety action.
     """
     try:
@@ -325,8 +331,11 @@ def measurement_identity_reason(
     metric_version = verdict.get("metric_version") or metrics.get("metric_version")
     if str(metric_version or "") != METRIC_VERSION:
         return "metric_version_mismatch"
-    if expected_code_commit is None:
-        return "code_commit_unavailable"
-    if str(verdict.get("code_commit") or "") != expected_code_commit:
-        return "code_commit_mismatch"
+    if expected_behavior_contract_hash is None:
+        return "behavior_contract_unavailable"
+    if (
+        str(verdict.get("behavior_contract_hash") or "")
+        != expected_behavior_contract_hash
+    ):
+        return "behavior_contract_mismatch"
     return None

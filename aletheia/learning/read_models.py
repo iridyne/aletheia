@@ -7,7 +7,9 @@ import json
 from typing import Any
 
 from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
+from aletheia.learning.behavior_contracts import current_behavior_contract_hash
 from aletheia.learning.experiments import current_policy_epoch
+from aletheia.learning.ledger import get_latest_measurement_verdict
 from aletheia.learning.registry import LEARNING_PATHS
 from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.storage.sqlite import get_db
@@ -114,6 +116,7 @@ def _current_experiment_rows(
         "v.outcome_contract_version AS verdict_outcome_contract_version, "
         "v.metric_version AS verdict_metric_version, "
         "v.code_commit AS verdict_code_commit, "
+        "v.behavior_contract_hash AS verdict_behavior_contract_hash, "
         "v.hypothesis_id AS verdict_hypothesis_id "
         "FROM learning_experiments e "
         "JOIN learning_hypotheses h ON h.hypothesis_id=e.hypothesis_id "
@@ -176,13 +179,44 @@ def _project_experiment(
         policy_epoch = None
         policy_reason = "current_policy_epoch_unavailable"
 
-    mismatch = policy_reason or _identity_mismatch(
+    behavior_contract_hash = None
+    behavior_reason = None
+    if policy_epoch is not None:
+        try:
+            behavior_contract_hash = current_behavior_contract_hash(
+                path_id=path_id,
+                policy_epoch=policy_epoch,
+                target_horizon=str(row.get("target_horizon") or ""),
+                outcome_contract_version=_OUTCOME_CONTRACT_VERSION,
+                metric_version=METRIC_VERSION,
+            )
+        except (KeyError, ValueError):
+            behavior_reason = "behavior_contract_unavailable"
+
+    identity_precondition_reason = policy_reason or behavior_reason
+    current_verdict = None
+    if identity_precondition_reason is None:
+        current_verdict = get_latest_measurement_verdict(
+            str(row.get("experiment_id") or ""),
+            policy_epoch=policy_epoch,
+            stage=str(row.get("stage") or ""),
+            hypothesis_id=str(row.get("hypothesis_id") or ""),
+            target_horizon=str(row.get("target_horizon") or ""),
+            outcome_contract_version=_OUTCOME_CONTRACT_VERSION,
+            metric_version=METRIC_VERSION,
+            behavior_contract_hash=behavior_contract_hash,
+        )
+    historical_mismatch = identity_precondition_reason or _identity_mismatch(
         row,
         policy_epoch=policy_epoch,
-        boot_commit=boot_commit,
+        behavior_contract_hash=behavior_contract_hash,
     )
+    current = current_verdict is not None
+    mismatch = None if current else historical_mismatch
     verdict_metrics = _safe_object(row.get("harm_metrics_json"))
-    current = mismatch is None
+    current_metrics = _safe_object(
+        (current_verdict or {}).get("harm_metrics_json")
+    )
     # The current-facing blocks must describe the running cohort and nothing else.
     # ``measurement.*`` was already gated on identity, but ``samples.*`` and
     # ``integrity.*`` were not: a stale verdict had its per-arm counts zeroed here
@@ -191,14 +225,14 @@ def _project_experiment(
     # ``raw_exposures=41`` and no consumer could tell which cohort the breach
     # belonged to.  Nothing is dropped — the stale facts move to
     # ``latest_historical_measurement``, where they are labelled as not current.
-    metrics = verdict_metrics if current else {}
+    metrics = current_metrics if current else {}
     measurement_state = (
-        str(row.get("verdict"))
-        if current and str(row.get("verdict")) in _MEASUREMENT_STATES
+        str((current_verdict or {}).get("verdict"))
+        if current and str((current_verdict or {}).get("verdict")) in _MEASUREMENT_STATES
         else "not_measured"
     )
     measurement_reason = (
-        str(row.get("verdict_reason") or "") or None
+        str((current_verdict or {}).get("reason") or "") or None
         if current
         else mismatch
     )
@@ -236,6 +270,7 @@ def _project_experiment(
             "target_horizon": row.get("target_horizon"),
             "outcome_contract_version": _OUTCOME_CONTRACT_VERSION,
             "metric_version": METRIC_VERSION,
+            "behavior_contract_hash": behavior_contract_hash,
             "code_commit": boot_commit,
             "matches_running_cohort": current,
             "mismatch_reason": mismatch,
@@ -243,22 +278,34 @@ def _project_experiment(
         "measurement": {
             "state": measurement_state,
             "reason": measurement_reason,
-            "baseline": row.get("baseline") if current else None,
-            "observed": row.get("observed") if current else None,
-            "delta": row.get("delta") if current else None,
-            "confidence_low": row.get("confidence_low") if current else None,
-            "confidence_high": row.get("confidence_high") if current else None,
-            "evaluated_at": row.get("verdict_created_at") if current else None,
-            "window_start": row.get("window_start") if current else None,
-            "window_end": row.get("window_end") if current else None,
+            "baseline": (current_verdict or {}).get("baseline") if current else None,
+            "observed": (current_verdict or {}).get("observed") if current else None,
+            "delta": (current_verdict or {}).get("delta") if current else None,
+            "confidence_low": (
+                (current_verdict or {}).get("confidence_low") if current else None
+            ),
+            "confidence_high": (
+                (current_verdict or {}).get("confidence_high") if current else None
+            ),
+            "evaluated_at": (
+                (current_verdict or {}).get("created_at") if current else None
+            ),
+            "window_start": (
+                (current_verdict or {}).get("window_start") if current else None
+            ),
+            "window_end": (
+                (current_verdict or {}).get("window_end") if current else None
+            ),
         },
         "samples": {
             "raw_exposures": _safe_int(metrics.get("raw_exposure_n")),
             "treatment_assignment_units": (
-                _safe_int(row.get("unique_treatment_n")) if current else 0
+                _safe_int((current_verdict or {}).get("unique_treatment_n"))
+                if current else 0
             ),
             "control_assignment_units": (
-                _safe_int(row.get("unique_control_n")) if current else 0
+                _safe_int((current_verdict or {}).get("unique_control_n"))
+                if current else 0
             ),
             "required_per_arm": _safe_int(row.get("min_samples_per_arm")),
             "complete_assignment_units": _safe_int(
@@ -270,6 +317,17 @@ def _project_experiment(
             ),
         },
         "integrity": {
+            "source_code_commits": [
+                str(value)
+                for value in metrics.get("source_code_commits", [])
+                if isinstance(value, str)
+            ],
+            "source_code_commit_unknown_n": _safe_int(
+                metrics.get("source_code_commit_unknown_n")
+            ),
+            "code_commit_provenance_complete": bool(
+                metrics.get("code_commit_provenance_complete")
+            ),
             "outcome_source_member_counts": source_counts,
             "allocation_selection_source_member_counts": allocation_sources,
             "matching_mirror_rows": _safe_int(
@@ -304,9 +362,31 @@ def _project_experiment(
                 "verdict_outcome_contract_version"
             ),
             "metric_version": row.get("verdict_metric_version"),
+            "behavior_contract_hash": row.get(
+                "verdict_behavior_contract_hash"
+            ),
             "code_commit": row.get("verdict_code_commit"),
-            "current": current,
-            "mismatch_reason": mismatch,
+            "source_code_commits": [
+                str(value)
+                for value in verdict_metrics.get("source_code_commits", [])
+                if isinstance(value, str)
+            ],
+            "source_code_commit_unknown_n": _safe_int(
+                verdict_metrics.get("source_code_commit_unknown_n")
+            ),
+            "code_commit_provenance_complete": bool(
+                verdict_metrics.get("code_commit_provenance_complete")
+            ),
+            "current": (
+                current
+                and row.get("verdict_id") == (current_verdict or {}).get("verdict_id")
+            ),
+            "mismatch_reason": (
+                None
+                if current
+                and row.get("verdict_id") == (current_verdict or {}).get("verdict_id")
+                else historical_mismatch
+            ),
             # Ungated on purpose: this block is explicitly labelled not-current, so
             # it is the honest home for the numbers the current-facing blocks must
             # not carry.  A harm breach measured under superseded identity stays
@@ -349,12 +429,12 @@ def _identity_mismatch(
     row: dict[str, Any],
     *,
     policy_epoch: str | None,
-    boot_commit: str | None,
+    behavior_contract_hash: str | None,
 ) -> str | None:
     if not row.get("verdict_id"):
         return "no_persisted_measurement"
-    if boot_commit is None:
-        return "boot_commit_unavailable"
+    if behavior_contract_hash is None:
+        return "behavior_contract_unavailable"
     checks = (
         ("hypothesis_mismatch", row.get("verdict_hypothesis_id"), row.get("hypothesis_id")),
         ("stage_mismatch", row.get("verdict_stage"), row.get("stage")),
@@ -366,7 +446,11 @@ def _identity_mismatch(
             _OUTCOME_CONTRACT_VERSION,
         ),
         ("metric_version_mismatch", row.get("verdict_metric_version"), METRIC_VERSION),
-        ("code_commit_mismatch", row.get("verdict_code_commit"), boot_commit),
+        (
+            "behavior_contract_mismatch",
+            row.get("verdict_behavior_contract_hash"),
+            behavior_contract_hash,
+        ),
     )
     for reason, actual, expected in checks:
         if actual != expected:

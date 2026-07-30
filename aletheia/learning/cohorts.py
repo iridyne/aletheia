@@ -110,7 +110,7 @@ class CohortKey:
     policy_epoch: str
     horizon: str
     outcome_contract_version: str
-    code_commit: str
+    behavior_contract_hash: str
 
 
 @dataclass(frozen=True)
@@ -147,6 +147,8 @@ class ContributionCohort:
     evidence_conflict_fingerprints: set[str] = field(default_factory=set)
     exclusion_reasons: Counter[str] = field(default_factory=Counter)
     invalid_reasons: Counter[str] = field(default_factory=Counter)
+    source_code_commits: set[str] = field(default_factory=set)
+    source_code_commit_unknown_n: int = 0
 
     @property
     def treatment_samples(self) -> list[CohortSample]:
@@ -163,7 +165,12 @@ class ContributionCohort:
             "policy_epoch": self.key.policy_epoch,
             "horizon": self.key.horizon,
             "outcome_contract_version": self.key.outcome_contract_version,
-            "code_commit": self.key.code_commit or None,
+            "behavior_contract_hash": self.key.behavior_contract_hash or None,
+            "source_code_commits": sorted(self.source_code_commits),
+            "source_code_commit_unknown_n": self.source_code_commit_unknown_n,
+            "code_commit_provenance_complete": (
+                self.source_code_commit_unknown_n == 0
+            ),
             "raw_exposure_n": self.raw_exposure_n,
             "unique_treatment_n": len(self.treatment_samples),
             "unique_control_n": len(self.control_samples),
@@ -202,6 +209,21 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
         "AND path_id=? ORDER BY datetime(exposed_at), exposure_id",
         (experiment.experiment_id, hypothesis.hypothesis_id, hypothesis.path_id),
     ).fetchall()]
+    epoch_ids = sorted({
+        str(row.get("concurrent_policy_epoch") or "") for row in rows
+        if row.get("concurrent_policy_epoch")
+    })
+    valid_policy_epochs: set[str] = set()
+    if epoch_ids:
+        placeholders = ", ".join("?" for _ in epoch_ids)
+        valid_policy_epochs = {
+            str(row["epoch_id"])
+            for row in get_db().execute(
+                "SELECT epoch_id FROM learning_policy_epochs "
+                f"WHERE epoch_id IN ({placeholders}) AND epoch_kind=?",
+                (*epoch_ids, f"decision_policy:{hypothesis.path_id}"),
+            ).fetchall()
+        }
     outcome_resolutions = _load_exact_outcomes(
         {str(row.get("outcome_candidate_key") or "") for row in rows},
         str(hypothesis.target_horizon or ""),
@@ -228,10 +250,15 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
             str(exposure.get("concurrent_policy_epoch") or ""),
             str(hypothesis.target_horizon or ""),
             str(exposure.get("outcome_contract_version") or ""),
-            str(exposure.get("code_commit") or ""),
+            str(exposure.get("behavior_contract_hash") or ""),
         )
         cohort = cohorts.setdefault(key, ContributionCohort(key, experiment, hypothesis))
         cohort.raw_exposure_n += 1
+        source_commit = str(exposure.get("code_commit") or "")
+        if source_commit:
+            cohort.source_code_commits.add(source_commit)
+        else:
+            cohort.source_code_commit_unknown_n += 1
         exposure_stage = exposure.get("experiment_stage")
         if exposure_stage is not None and str(exposure_stage) != experiment.stage:
             cohort.invalid_reasons["experiment_stage_mismatch"] += 1
@@ -239,11 +266,17 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
         if not key.policy_epoch:
             cohort.invalid_reasons["missing_policy_epoch"] += 1
             continue
+        if key.policy_epoch not in valid_policy_epochs:
+            cohort.invalid_reasons["policy_epoch_path_mismatch"] += 1
+            continue
         if not key.horizon:
             cohort.invalid_reasons["missing_target_horizon"] += 1
             continue
         if not key.outcome_contract_version:
             cohort.invalid_reasons["missing_outcome_contract_version"] += 1
+            continue
+        if not key.behavior_contract_hash:
+            cohort.invalid_reasons["missing_behavior_contract_hash"] += 1
             continue
         assignment = str(exposure.get("assignment") or "").lower()
         if assignment not in {"treatment", "control"}:
@@ -644,7 +677,7 @@ def _exposure_fingerprint(exposure: dict[str, Any]) -> tuple[Any, ...]:
         "experiment_id", "hypothesis_id", "assignment", "assignment_unit_key",
         "candidate_key", "outcome_candidate_key", "outcome_source",
         "outcome_contract_version", "experiment_stage", "concurrent_policy_epoch",
-        "code_commit", "before_json", "after_json", "manifest_json", "exposed_at",
+        "behavior_contract_hash", "before_json", "after_json", "manifest_json", "exposed_at",
     ))
 
 

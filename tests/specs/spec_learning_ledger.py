@@ -34,6 +34,8 @@ def test_learning_ledger_tables_and_models_exist():
     ):
         assert field in model.model_fields
     assert "assignment_unit_key" in LearningExposure.model_fields
+    assert "behavior_contract_hash" in LearningExposure.model_fields
+    assert "behavior_contract_hash" in LearningContributionVerdict.model_fields
 
 
 def test_a1_additive_columns_are_present_after_migration():
@@ -44,12 +46,15 @@ def test_a1_additive_columns_are_present_after_migration():
         table: {row[1] for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         for table in (
             "learning_exposures",
+            "learning_contribution_verdicts",
             "learning_job_health",
             "filter_candidate_outcomes",
         )
     }
 
     assert "assignment_unit_key" in columns["learning_exposures"]
+    assert "behavior_contract_hash" in columns["learning_exposures"]
+    assert "behavior_contract_hash" in columns["learning_contribution_verdicts"]
     assert {"last_failed_at", "last_failure_reason"} <= columns["learning_job_health"]
     assert "allocation_selected" in columns["filter_candidate_outcomes"]
 

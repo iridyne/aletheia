@@ -83,6 +83,7 @@ class LearningExposure(BaseModel):
     outcome_contract_version: str = "v1"
     experiment_stage: str | None = None
     code_commit: str | None = None
+    behavior_contract_hash: str | None = None
     policy_version: str | None = None
     concurrent_policy_epoch: str
     exposed_at: str = Field(default_factory=_now)
@@ -115,6 +116,7 @@ class LearningContributionVerdict(BaseModel):
     outcome_contract_version: str = "v1"
     metric_version: str | None = None
     code_commit: str | None = None
+    behavior_contract_hash: str | None = None
 
 
 class LearningLifecycleEvent(BaseModel):

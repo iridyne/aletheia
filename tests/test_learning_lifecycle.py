@@ -74,17 +74,26 @@ def _measurement(
     metric: str | None = None,
     reason: str = "test measurement",
     code_commit: str | None = "test-build",
+    behavior_contract_hash: str | None = None,
     breached: bool = False,
 ):
+    from aletheia.learning.behavior_contracts import build_behavior_contract_hash
     from aletheia.learning.ledger import insert_record
     from aletheia.learning.models import LearningContributionVerdict
     from aletheia.learning.verdicts import METRIC_VERSION
 
     metric = metric or METRIC_VERSION
+    behavior_contract_hash = behavior_contract_hash or build_behavior_contract_hash(
+        path_id=hypothesis.path_id,
+        policy_hash=epoch,
+        target_horizon=horizon,
+        outcome_contract_version=contract,
+        metric_version=metric,
+    )
 
     identifier = (
         f"verdict-{experiment.experiment_id}-{verdict}-{epoch}-{horizon}-{contract}"
-        f"{'-breached' if breached else ''}"
+        f"-{behavior_contract_hash}{'-breached' if breached else ''}"
     )
     record = LearningContributionVerdict(
         verdict_id=identifier,
@@ -116,12 +125,14 @@ def _measurement(
         outcome_contract_version=contract,
         metric_version=metric,
         code_commit=code_commit,
+        behavior_contract_hash=behavior_contract_hash,
     )
     assert insert_record("learning_contribution_verdicts", record)
     return record
 
 
 def _configure(monkeypatch, cfg):
+    from aletheia.learning.behavior_contracts import build_behavior_contract_hash
     import aletheia.learning.authority as authority
     import aletheia.learning.lifecycle as lifecycle
 
@@ -129,8 +140,15 @@ def _configure(monkeypatch, cfg):
     monkeypatch.setattr(lifecycle, "load_config", lambda: cfg)
     monkeypatch.setattr(authority, "global_learning_refreeze_reason", lambda: None)
     monkeypatch.setattr(lifecycle, "global_learning_refreeze_reason", lambda: None)
-    monkeypatch.setattr(authority, "_code_fingerprint", lambda: "test-build")
-    monkeypatch.setattr(lifecycle, "_code_fingerprint", lambda: "test-build")
+    synthetic_contract = lambda **kwargs: build_behavior_contract_hash(
+        path_id=kwargs["path_id"],
+        policy_hash=kwargs["policy_epoch"],
+        target_horizon=kwargs["target_horizon"],
+        outcome_contract_version=kwargs["outcome_contract_version"],
+        metric_version=kwargs["metric_version"],
+    )
+    monkeypatch.setattr(authority, "current_behavior_contract_hash", synthetic_contract)
+    monkeypatch.setattr(lifecycle, "current_behavior_contract_hash", synthetic_contract)
 
 
 @pytest.mark.parametrize(
@@ -240,7 +258,7 @@ def test_lifecycle_ignores_newer_stale_epoch_negative_measurement(monkeypatch):
     assert result.recommended_action == "promote_stage"
 
 
-def test_lifecycle_does_not_consume_a_verdict_from_an_older_build(monkeypatch):
+def test_lifecycle_consumes_an_older_build_verdict_when_behavior_matches(monkeypatch):
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     stale = _measurement(
         hypothesis,
@@ -276,11 +294,11 @@ def test_lifecycle_does_not_consume_a_verdict_from_an_older_build(monkeypatch):
     )
 
     assert result.verdict_id == stale.verdict_id
-    assert result.action == "hold"
-    assert result.reason == "code_commit_mismatch"
+    assert result.action == "refreeze"
+    assert result.reason == "negative_measurement_refreeze"
 
 
-def test_lifecycle_holds_when_running_build_identity_is_unavailable(monkeypatch):
+def test_lifecycle_holds_when_behavior_contract_is_unavailable(monkeypatch):
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     _measurement(hypothesis, experiment, "negative")
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
@@ -304,7 +322,11 @@ def test_lifecycle_holds_when_running_build_identity_is_unavailable(monkeypatch)
         code_commit="persisted-old-build",
         concurrent_policy_epoch="epoch-a",
     ))
-    monkeypatch.setattr(lifecycle, "_code_fingerprint", lambda: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "current_behavior_contract_hash",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("missing contract")),
+    )
 
     result = lifecycle.process_lifecycle(
         experiment.experiment_id,
@@ -312,7 +334,7 @@ def test_lifecycle_holds_when_running_build_identity_is_unavailable(monkeypatch)
     )
 
     assert result.action == "hold"
-    assert result.reason == "code_commit_unavailable"
+    assert result.reason == "behavior_contract_unavailable"
 
 
 def test_lifecycle_uses_current_contract_verdict_not_newer_mismatched_row(monkeypatch):
@@ -352,13 +374,12 @@ def test_wrong_hypothesis_negative_measurement_cannot_invalidate_experiment(monk
     assert get_record("learning_experiments", experiment.experiment_id)["status"] == "active"
 
 
-def test_fresh_successor_rejects_activation_verdict_from_previous_build(monkeypatch):
+def test_fresh_successor_rejects_activation_verdict_from_previous_behavior(monkeypatch):
     hypothesis, _experiment_row, _activation, successor = _promoted_successor(
         monkeypatch,
-        activation_code_commit="old-build",
+        activation_behavior_contract_hash="old-behavior",
     )
     import aletheia.learning.authority as authority
-    monkeypatch.setattr(authority, "_code_fingerprint", lambda: "current-build")
 
     decision = authority.resolve_learning_authority(
         hypothesis.path_id,
@@ -367,10 +388,10 @@ def test_fresh_successor_rejects_activation_verdict_from_previous_build(monkeypa
     )
 
     assert decision.authorized is False
-    assert decision.reason == "code_commit_mismatch"
+    assert decision.reason == "behavior_contract_mismatch"
 
 
-def test_fresh_successor_stays_on_baseline_without_running_build_identity(monkeypatch):
+def test_fresh_successor_stays_on_baseline_without_behavior_contract(monkeypatch):
     hypothesis, _experiment_row, _activation, successor = _promoted_successor(monkeypatch)
     import aletheia.learning.authority as authority
     from aletheia.learning.ledger import insert_exposure
@@ -392,7 +413,11 @@ def test_fresh_successor_stays_on_baseline_without_running_build_identity(monkey
         code_commit="persisted-old-build",
         concurrent_policy_epoch="epoch-a",
     ))
-    monkeypatch.setattr(authority, "_code_fingerprint", lambda: None)
+    monkeypatch.setattr(
+        authority,
+        "current_behavior_contract_hash",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("missing contract")),
+    )
 
     decision = authority.resolve_learning_authority(
         hypothesis.path_id,
@@ -401,10 +426,10 @@ def test_fresh_successor_stays_on_baseline_without_running_build_identity(monkey
     )
 
     assert decision.authorized is False
-    assert decision.reason == "code_commit_unavailable"
+    assert decision.reason == "behavior_contract_unavailable"
 
 
-def test_lifecycle_selects_current_build_before_ordering_observation_windows(monkeypatch):
+def test_lifecycle_pools_matching_behavior_across_builds_before_ordering_windows(monkeypatch):
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     old = _measurement(
         hypothesis,
@@ -421,9 +446,14 @@ def test_lifecycle_selects_current_build_before_ordering_observation_windows(mon
     from aletheia.storage.sqlite import get_db
     db = get_db()
     db.execute(
-        "UPDATE learning_contribution_verdicts SET window_start=?, window_end=? "
+        "UPDATE learning_contribution_verdicts SET window_start=?, window_end=?, created_at=? "
         "WHERE verdict_id=?",
-        ("1970-01-01T00:00:00+00:00", "1970-01-01T00:00:00+00:00", current.verdict_id),
+        (
+            "1970-01-01T00:00:00+00:00",
+            "1970-01-01T00:00:00+00:00",
+            _iso(1),
+            current.verdict_id,
+        ),
     )
     db.execute(
         "UPDATE learning_contribution_verdicts SET window_end=? WHERE verdict_id=?",
@@ -444,7 +474,7 @@ def test_lifecycle_prefers_the_newest_evaluation_when_a_cohort_empties(monkeypat
 
     ``contribution_runner._window`` stamps 1970-01-01 on a cohort with no surviving
     samples, and that sentinel sorts *after* every real window under
-    ``window_end DESC``.  Both verdicts here share one cohort, so the code_commit
+    ``window_end DESC``.  Both verdicts here share one behavior cohort, so build
     filter cannot separate them and ordering alone decides: window ordering hands
     the controller a superseded ``positive`` to promote on while the newest
     evaluation of the same cohort says ``invalid``.
@@ -801,13 +831,19 @@ def test_empty_allowlist_and_default_config_always_resolve_to_baseline(monkeypat
     assert decision.reason == "path_not_allowlisted"
 
 
-def _promoted_successor(monkeypatch, *, activation_code_commit: str = "test-build"):
+def _promoted_successor(
+    monkeypatch,
+    *,
+    activation_code_commit: str = "test-build",
+    activation_behavior_contract_hash: str | None = None,
+):
     # Seed the post-authentication state directly. The production module has no
     # authenticated owner mutation route yet and therefore cannot create it.
     hypothesis, experiment = _experiment()
     activation = _measurement(
         hypothesis, experiment, "insufficient_data", reason="no_actual_intervention",
         code_commit=activation_code_commit,
+        behavior_contract_hash=activation_behavior_contract_hash,
     )
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
     from aletheia.learning.ledger import insert_experiment, insert_lifecycle_event
@@ -1030,8 +1066,6 @@ def test_invalidated_hypothesis_does_not_receive_a_fresh_experiment(monkeypatch)
     monkeypatch.setattr(authority, "global_learning_refreeze_reason", lambda: None)
     monkeypatch.setattr(control, "global_learning_refreeze_reason", lambda: None)
     monkeypatch.setattr(lifecycle, "global_learning_refreeze_reason", lambda: None)
-    monkeypatch.setattr(authority, "_code_fingerprint", lambda: "test-build")
-    monkeypatch.setattr(lifecycle, "_code_fingerprint", lambda: "test-build")
     monkeypatch.setattr(experiments, "_code_fingerprint", lambda: "test-build")
 
     treatment = dict(
@@ -1048,14 +1082,22 @@ def test_invalidated_hypothesis_does_not_receive_a_fresh_experiment(monkeypatch)
     assert first.experiment_id is not None
 
     db = get_db()
-    epoch = get_record(
-        "learning_exposures", first.exposure_id
-    )["concurrent_policy_epoch"]
+    first_exposure = get_record("learning_exposures", first.exposure_id)
+    epoch = first_exposure["concurrent_policy_epoch"]
     experiment = SimpleNamespace(
         experiment_id=first.experiment_id, stage="shadow",
     )
-    hypothesis = SimpleNamespace(hypothesis_id=first.hypothesis_id)
-    _measurement(hypothesis, experiment, "invalid", epoch=epoch)
+    hypothesis = SimpleNamespace(
+        hypothesis_id=first.hypothesis_id,
+        path_id="universe_family_calibration",
+    )
+    _measurement(
+        hypothesis,
+        experiment,
+        "invalid",
+        epoch=epoch,
+        behavior_contract_hash=first_exposure["behavior_contract_hash"],
+    )
 
     result = lifecycle.process_lifecycle(
         first.experiment_id, current_policy_epoch=epoch
@@ -1193,11 +1235,12 @@ def test_measurement_identity_reason_is_identity_only(monkeypatch):
         "outcome_contract_version": "v1",
         "metric_version": METRIC_VERSION,
         "code_commit": "test-build",
+        "behavior_contract_hash": "behavior-current",
         "harm_metrics_json": _json.dumps({"breached": True}),
     }
     kwargs = dict(
         expected_horizon="4h",
-        expected_code_commit="test-build",
+        expected_behavior_contract_hash="behavior-current",
         expected_hypothesis_id="hypothesis-a",
     )
 
@@ -1301,12 +1344,16 @@ def test_read_only_inspection_does_not_report_stale_epoch_verdict_as_current(mon
     assert inspection["recommended_lifecycle_action"] == "admit_trial"
 
 
-def test_read_only_inspection_reports_no_progress_without_running_build_identity(monkeypatch):
+def test_read_only_inspection_reports_no_progress_without_behavior_contract(monkeypatch):
     hypothesis, experiment = _experiment()
     _measurement(hypothesis, experiment, "positive")
     _configure(monkeypatch, _settings())
     import aletheia.learning.lifecycle as lifecycle
-    monkeypatch.setattr(lifecycle, "_code_fingerprint", lambda: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "current_behavior_contract_hash",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("missing contract")),
+    )
 
     inspection = lifecycle.inspect_learning_experiment(
         experiment.experiment_id,

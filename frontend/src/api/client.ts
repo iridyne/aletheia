@@ -37,6 +37,7 @@ export interface LearningContributionProjection {
       target_horizon: string
       outcome_contract_version: string
       metric_version: string
+      behavior_contract_hash: string | null
       code_commit: string | null
       matches_running_cohort: boolean
       mismatch_reason: string | null
@@ -63,6 +64,9 @@ export interface LearningContributionProjection {
       selected_members: number
     }
     integrity: {
+      source_code_commits: string[]
+      source_code_commit_unknown_n: number
+      code_commit_provenance_complete: boolean
       outcome_source_member_counts: Record<string, number>
       allocation_selection_source_member_counts: Record<string, number>
       matching_mirror_rows: number
@@ -89,7 +93,11 @@ export interface LearningContributionProjection {
       target_horizon: string | null
       outcome_contract_version: string | null
       metric_version: string | null
+      behavior_contract_hash: string | null
       code_commit: string | null
+      source_code_commits: string[]
+      source_code_commit_unknown_n: number
+      code_commit_provenance_complete: boolean
       current: boolean
       mismatch_reason: string | null
     } | null

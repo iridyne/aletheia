@@ -193,7 +193,7 @@ below are the Phase 3 target lines.
 | 17 | `universe_snapshots` + `universe_members` change-suppression | `aletheia/universe/service.py:359,397,432-441` | Skip INSERTs if member-set fingerprint (sorted `asset_id` + ranks + regime tag) matches previous. Heartbeat write every 6 refreshes (60 min). |
 | 18 | `filter_decision_batches` content-hash dedup + 5-into-1 tradability coalesce | `aletheia/analytics/filter_evidence.py:236-255` + `aletheia/universe/filters.py:124-132` | Content-hash dedup for tradability_* filters; heartbeat every 6th tick; coalesce five tradability_* batches into one matrix-encoded batch. Requires contract addendum. |
 | 19 | `market_regimes` skip-if-unchanged | `aletheia/storage/repositories.py:4672` (or wherever `INSERT INTO market_regimes` lives) | Skip INSERT if regime state is byte-identical to latest. Hourly floor. |
-| 20 | `learning_policy_epochs` drop `code_commit` from hash | `aletheia/learning/policy_epochs.py:52-67` + `aletheia/learning/experiments.py:151-153` | Strip `code_commit` key from `effective_values` before hashing `build_policy_epoch`. Verdict `cohort_input_fingerprint` still includes `code_commit` separately via `cohort.key.code_commit`. |
+| 20 | Learning behavior identity excludes `code_commit` | `aletheia/learning/policy_epochs.py` + `aletheia/learning/behavior_contracts.py` | Strip `code_commit` from policy hashing and use `behavior_contract_hash` for cohort/verdict identity. Exposure commits remain provenance and do not multiply behaviorally identical cohorts. |
 | 21 | `serenity_evidence` content_hash dedup | `aletheia/agents/research_worker.py:689` + `aletheia/agents/prediction_observer.py:434` + `aletheia/server/routes/data.py:390` | Use the existing `content_hash` column. Before INSERT, check `(theme_id, content_hash)`. Skip on match. |
 
 ---
@@ -248,7 +248,7 @@ match `/tmp/RETENTION_SPEC.md#user-confirmed-decisions-phase-2`.
 | 5 | Backup rotation | **`keep_recent=7`** (count-based). |
 | 6 | `filter_shadow_evaluations` schema | **Keep append-only.** No UPSERT-latest schema change. |
 | 7 | `universe_snapshots` + `universe_members` + `universe_scanner_runs` | **30d retention plus selected-member fallback guard.** Parent pruning preserves rows still referenced by a guarded `universe_forward_outcomes` observation. |
-| 8 | `learning_policy_epochs` hash | **Drop `code_commit` from `effective_values`.** `learning_exposures.code_commit` still recorded separately, so replay authority is preserved. |
+| 8 | Learning cohort hash | **Drop `code_commit` from statistical identity.** `learning_exposures.code_commit` remains provenance; authority/replay currentness uses the versioned, secret-free `behavior_contract_hash`. |
 | 9 | Retro-strip `content.context` | **Yes.** One-shot UPDATE strips `content.context` from surviving <3d rows inside the backfill script. Saves ~8 MiB immediately. |
 | 10 | Legacy source tree removal | **NOT part of this workflow.** Schedule a `CronCreate` job for 2026-08-16. See §11. |
 | 11 | Doctor threshold regression tests | **Yes.** Agent 10 writes `tests/test_doctor_thresholds.py` covering agent_shell_events counts, filter_candidate_outcomes registered/settled ratios, coingecko_top_snapshots 30-min freshness. |

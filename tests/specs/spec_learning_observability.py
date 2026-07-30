@@ -79,7 +79,8 @@ def test_lco_outcome_provenance_projection_is_not_implemented():
 @spec_claim(SpecClaim(
     "LCO-B03", _CONTRACT, "§3.3 measurement identity", "L2b",
     "The current identity-matched metric/cohort verdict is separate from append-only historical "
-    "metric, epoch, stage, horizon, outcome-contract and build versions.",
+    "metric, epoch, stage, horizon, outcome-contract and behavior-contract versions; build "
+    "identity remains provenance only.",
     status="implemented",
 ))
 def test_lco_current_and_historical_verdicts_are_separate(tmp_path, monkeypatch):
@@ -90,14 +91,15 @@ def test_lco_current_and_historical_verdicts_are_separate(tmp_path, monkeypatch)
     from aletheia.storage.sqlite import get_db
 
     get_db().execute(
-        "UPDATE learning_contribution_verdicts SET code_commit='old-commit' "
+        "UPDATE learning_contribution_verdicts SET behavior_contract_hash='old-behavior', "
+        "code_commit='old-commit' "
         "WHERE experiment_id=?",
         (experiment_id,),
     )
     get_db().commit()
     item = build_learning_contribution_projection()["items"][0]
     assert item["measurement"]["state"] == "not_measured"
-    assert item["measurement"]["reason"] == "code_commit_mismatch"
+    assert item["measurement"]["reason"] == "behavior_contract_mismatch"
     assert item["measurement"]["delta"] is None
     assert item["latest_historical_measurement"]["state"] == "insufficient_data"
     assert item["latest_historical_measurement"]["code_commit"] == "old-commit"

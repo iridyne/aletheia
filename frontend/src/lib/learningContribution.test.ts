@@ -29,6 +29,7 @@ function projection(
         target_horizon: '1h',
         outcome_contract_version: 'v1',
         metric_version: 'v2',
+        behavior_contract_hash: 'behavior-contract',
         code_commit: 'commit',
         matches_running_cohort: true,
         mismatch_reason: null,
@@ -55,6 +56,9 @@ function projection(
         selected_members: 999,
       },
       integrity: {
+        source_code_commits: ['commit'],
+        source_code_commit_unknown_n: 0,
+        code_commit_provenance_complete: true,
         outcome_source_member_counts: {},
         allocation_selection_source_member_counts: {},
         matching_mirror_rows: 0,

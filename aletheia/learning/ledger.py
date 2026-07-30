@@ -168,7 +168,7 @@ def get_latest_measurement_verdict(
     target_horizon: str | None = None,
     outcome_contract_version: str | None = None,
     metric_version: str | None = None,
-    code_commit: str | None = None,
+    behavior_contract_hash: str | None = None,
 ) -> dict | None:
     """Return the newest exact-cohort measurement, never a legacy authority row.
 
@@ -193,7 +193,7 @@ def get_latest_measurement_verdict(
         ("target_horizon", target_horizon),
         ("outcome_contract_version", outcome_contract_version),
         ("metric_version", metric_version),
-        ("code_commit", code_commit),
+        ("behavior_contract_hash", behavior_contract_hash),
     ):
         if value is not None:
             clauses.append(f"{column}=?")

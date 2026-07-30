@@ -64,10 +64,21 @@ def _exposure(
     outcome_key: str | None = None,
     authority_applied: bool | None = None,
     code_commit: str | None = "test-commit",
+    behavior_contract_hash: str | None = "behavior-v1",
     assignment_unit_key: str | None = None,
 ):
-    from aletheia.learning.ledger import insert_exposure
-    from aletheia.learning.models import LearningExposure
+    from aletheia.learning.ledger import insert_exposure, insert_record
+    from aletheia.learning.models import LearningExposure, LearningPolicyEpoch
+
+    insert_record("learning_policy_epochs", LearningPolicyEpoch(
+        epoch_id=epoch,
+        epoch_kind=f"decision_policy:{hypothesis.path_id}",
+        effective_values_hash=f"policy-hash:{epoch}",
+        effective_values_json="{}",
+        affected_path_ids_json=json.dumps([hypothesis.path_id]),
+        started_at=_iso(-1),
+        ended_at=_iso(),
+    ), ignore_duplicates=True)
 
     exposure = LearningExposure(
         exposure_id=f"exposure-{candidate}-{assignment}-{epoch}-{contract}",
@@ -92,6 +103,7 @@ def _exposure(
         }),
         experiment_stage=experiment.stage,
         code_commit=code_commit,
+        behavior_contract_hash=behavior_contract_hash,
         concurrent_policy_epoch=epoch,
         exposed_at=exposed_at or _iso(),
     )
@@ -538,6 +550,91 @@ def test_policy_epoch_and_outcome_contract_isolate_cohorts():
     assert {verdict.delta for verdict in verdicts} == {1.0, 2.0, 3.0}
 
 
+def test_same_behavior_contract_pools_exposures_across_commits():
+    hypothesis, experiment = _experiment()
+    _exposure(
+        experiment, hypothesis, candidate="old-treatment", assignment="treatment",
+        code_commit="old-build", behavior_contract_hash="behavior-a",
+    )
+    _exposure(
+        experiment, hypothesis, candidate="new-control", assignment="control",
+        code_commit="new-build", behavior_contract_hash="behavior-a",
+    )
+    _outcome("old-treatment", net=1.0)
+    _outcome("new-control", net=0.0)
+
+    from aletheia.learning.cohorts import build_experiment_cohorts
+
+    cohorts = build_experiment_cohorts(experiment.experiment_id)
+
+    assert len(cohorts) == 1
+    assert cohorts[0].key.behavior_contract_hash == "behavior-a"
+    assert cohorts[0].source_code_commits == {"old-build", "new-build"}
+
+
+def test_mixed_known_and_unknown_commit_provenance_is_reported_incomplete():
+    hypothesis, experiment = _experiment()
+    _exposure(
+        experiment, hypothesis, candidate="known-treatment", assignment="treatment",
+        code_commit="known-build", behavior_contract_hash="behavior-a",
+    )
+    _exposure(
+        experiment, hypothesis, candidate="unknown-control", assignment="control",
+        code_commit=None, behavior_contract_hash="behavior-a",
+    )
+    _outcome("known-treatment", net=1.0)
+    _outcome("unknown-control", net=0.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.code_commit is None
+    assert metrics["source_code_commits"] == ["known-build"]
+    assert metrics["source_code_commit_unknown_n"] == 1
+    assert metrics["code_commit_provenance_complete"] is False
+
+
+def test_different_behavior_contracts_stay_isolated_on_same_commit():
+    hypothesis, experiment = _experiment()
+    for contract_hash, side in (("behavior-a", "treatment"), ("behavior-b", "control")):
+        candidate = f"{contract_hash}-{side}"
+        _exposure(
+            experiment, hypothesis, candidate=candidate, assignment=side,
+            code_commit="same-build", behavior_contract_hash=contract_hash,
+        )
+        _outcome(candidate)
+
+    from aletheia.learning.cohorts import build_experiment_cohorts
+
+    cohorts = build_experiment_cohorts(experiment.experiment_id)
+
+    assert {cohort.key.behavior_contract_hash for cohort in cohorts} == {
+        "behavior-a", "behavior-b",
+    }
+
+
+def test_policy_epoch_from_another_path_is_invalid_cohort_evidence():
+    hypothesis, experiment = _experiment()
+    _exposure(
+        experiment, hypothesis, candidate="wrong-path-epoch", assignment="control",
+        epoch="epoch-wrong-path",
+    )
+    _outcome("wrong-path-epoch")
+    from aletheia.storage.sqlite import get_db
+
+    get_db().execute(
+        "UPDATE learning_policy_epochs SET epoch_kind=? WHERE epoch_id=?",
+        ("decision_policy:operator_learning_bundle", "epoch-wrong-path"),
+    )
+    get_db().commit()
+    from aletheia.learning.cohorts import build_experiment_cohorts
+
+    cohort = build_experiment_cohorts(experiment.experiment_id)[0]
+
+    assert cohort.samples == []
+    assert cohort.invalid_reasons == {"policy_epoch_path_mismatch": 1}
+
+
 def test_exact_outcome_key_and_horizon_are_required_not_symbol_or_approximation():
     hypothesis, experiment = _experiment()
     _exposure(experiment, hypothesis, candidate="exact-treatment", assignment="treatment")
@@ -982,7 +1079,7 @@ def test_measurement_verdict_never_authorizes_or_changes_learning_lifecycle():
     assert get_record("learning_experiments", experiment.experiment_id)["status"] == "active"
 
 
-def test_measurement_verdict_does_not_shadow_an_existing_authority_verdict(monkeypatch):
+def test_legacy_authority_verdict_without_behavior_hash_cannot_authorize(monkeypatch):
     hypothesis, experiment = _experiment()
     _exposure(experiment, hypothesis, candidate="authority-treatment", assignment="treatment")
     _exposure(experiment, hypothesis, candidate="authority-control", assignment="control")
@@ -998,6 +1095,11 @@ def test_measurement_verdict_does_not_shadow_an_existing_authority_verdict(monke
     cfg.learning.paper_influence_enabled = True
     cfg.learning.paper_influence_paths = [hypothesis.path_id]
     monkeypatch.setattr(authority, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        authority,
+        "current_behavior_contract_hash",
+        lambda **_kwargs: "behavior-v1",
+    )
 
     insert_record("learning_contribution_verdicts", LearningContributionVerdict(
         verdict_id="manual-authority-promotion",
@@ -1017,12 +1119,12 @@ def test_measurement_verdict_does_not_shadow_an_existing_authority_verdict(monke
         stage=experiment.stage,
         created_at=_iso(-1, 1),
     ))
-    assert _verdict_authorizes(LearningExperiment(**experiment.model_dump()), "epoch-a") is True
+    assert _verdict_authorizes(LearningExperiment(**experiment.model_dump()), "epoch-a") is False
 
     measurement = _run(experiment.experiment_id)[0]
 
     assert measurement.verdict in {"positive", "neutral"}
-    assert _verdict_authorizes(LearningExperiment(**experiment.model_dump()), "epoch-a") is True
+    assert _verdict_authorizes(LearningExperiment(**experiment.model_dump()), "epoch-a") is False
 
 
 def test_unsupported_learning_path_is_not_processed_or_persisted():

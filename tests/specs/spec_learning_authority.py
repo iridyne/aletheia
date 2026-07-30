@@ -12,6 +12,7 @@ def _enable_legacy_paper_authority(monkeypatch, path_id: str) -> None:
 
     from aletheia.config.schema import AletheiaConfig
     import aletheia.learning.authority as authority
+    import aletheia.learning.behavior_contracts as behavior_contracts
     import aletheia.learning.experiments as experiments
 
     cfg = AletheiaConfig()
@@ -21,13 +22,17 @@ def _enable_legacy_paper_authority(monkeypatch, path_id: str) -> None:
     cfg.learning.paper_influence_paths = [path_id]
     monkeypatch.setattr(authority, "load_config", lambda: cfg)
     get_path = experiments.get_learning_path
+    measured_path = lambda requested: replace(
+        get_path(requested),
+        measurement_supported=True,
+        behavior_contract_version="test-contract/v1",
+    ) if requested == path_id else get_path(requested)
     monkeypatch.setattr(
         experiments,
         "get_learning_path",
-        lambda requested: replace(get_path(requested), measurement_supported=True)
-        if requested == path_id
-        else get_path(requested),
+        measured_path,
     )
+    monkeypatch.setattr(behavior_contracts, "get_learning_path", measured_path)
 
 
 def _insert_settled_outcome(candidate_key: str) -> str:
@@ -217,8 +222,9 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
 )
 def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
     from aletheia.learning.experiments import apply_numeric_treatment, stable_assignment
-    from aletheia.learning.ledger import get_record, insert_record
+    from aletheia.learning.ledger import get_record, insert_experiment, insert_record
     from aletheia.learning.models import LearningContributionVerdict, LearningExperiment
+    from aletheia.learning.verdicts import METRIC_VERSION
     from aletheia.storage.sqlite import get_db
 
     kwargs = dict(
@@ -231,16 +237,55 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
     )
     _enable_legacy_paper_authority(monkeypatch, kwargs["path_id"])
     created = apply_numeric_treatment(candidate_key="seed", **kwargs)
+    parent = LearningExperiment(**get_record("learning_experiments", created.experiment_id))
+    first_exposure = get_record("learning_exposures", created.exposure_id)
+    epoch = first_exposure["concurrent_policy_epoch"]
+    behavior_contract_hash = first_exposure["behavior_contract_hash"]
+    now = datetime.now(timezone.utc)
+    activation = LearningContributionVerdict(
+        verdict_id="paper-activation-positive",
+        experiment_id=parent.experiment_id,
+        hypothesis_id=parent.hypothesis_id,
+        stage="shadow",
+        window_start=(now - timedelta(days=14)).isoformat(),
+        window_end=now.isoformat(),
+        unique_treatment_n=1,
+        unique_control_n=1,
+        verdict="positive",
+        reason="positive shadow measurement",
+        created_at=now.isoformat(),
+        policy_epoch=epoch,
+        target_horizon="4h",
+        outcome_contract_version="v1",
+        metric_version=METRIC_VERSION,
+        code_commit="older-build",
+        behavior_contract_hash=behavior_contract_hash,
+    )
+    assert insert_record("learning_contribution_verdicts", activation)
     db = get_db()
     was_in_tx = db.in_transaction
     db.execute(
-        "UPDATE learning_experiments SET stage='paper_10', status='active', "
-        "min_samples_per_arm=1 WHERE experiment_id=?",
-        (created.experiment_id,),
+        "UPDATE learning_experiments SET status='closed', ended_at=? "
+        "WHERE experiment_id=?",
+        (now.isoformat(), parent.experiment_id),
     )
+    experiment = LearningExperiment(
+        experiment_id="paper-successor",
+        hypothesis_id=parent.hypothesis_id,
+        stage="paper_10",
+        assignment_salt="paper-successor-salt",
+        allocation_pct=0.1,
+        min_samples_per_arm=1,
+        min_market_days=0,
+        status="active",
+        parent_experiment_id=parent.experiment_id,
+        activation_verdict_id=activation.verdict_id,
+        stage_generation=1,
+        started_at=now.isoformat(),
+    )
+    assert insert_experiment(experiment)
     if not was_in_tx:
         db.commit()
-    experiment = LearningExperiment(**get_record("learning_experiments", created.experiment_id))
     treatment_candidate = next(
         f"treatment:{i}" for i in range(1000)
         if stable_assignment(experiment, f"treatment:{i}") == "treatment"
@@ -257,13 +302,15 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
         candidate_key=control_candidate,
         outcome_candidate_key=_insert_settled_outcome(control_candidate), **kwargs,
     )
-    now = datetime.now(timezone.utc)
-    epoch = get_record("learning_exposures", created.exposure_id)["concurrent_policy_epoch"]
     positive = LearningContributionVerdict(
+        verdict_id="paper-current-positive",
         experiment_id=experiment.experiment_id, hypothesis_id=experiment.hypothesis_id,
         window_start=(now - timedelta(days=14)).isoformat(), window_end=now.isoformat(),
-        unique_treatment_n=1, unique_control_n=1, verdict="promote", reason="positive",
-        created_at=now.isoformat(), policy_epoch=epoch, stage="paper_10",
+        unique_treatment_n=1, unique_control_n=1, verdict="positive", reason="positive",
+        created_at=(now + timedelta(seconds=1)).isoformat(), policy_epoch=epoch,
+        stage="paper_10", target_horizon="4h", outcome_contract_version="v1",
+        metric_version=METRIC_VERSION, code_commit="newer-build",
+        behavior_contract_hash=behavior_contract_hash,
     )
     insert_record("learning_contribution_verdicts", positive)
     authorized_candidate = next(
@@ -274,8 +321,8 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
 
     negative = positive.model_copy(update={
         "verdict_id": "negative-verdict",
-        "verdict": "refreeze", "reason": "holdout harmed",
-        "created_at": (now + timedelta(seconds=1)).isoformat(),
+        "verdict": "negative", "reason": "holdout harmed",
+        "created_at": (now + timedelta(seconds=2)).isoformat(),
     })
     insert_record("learning_contribution_verdicts", negative)
     refrozen_candidate = next(
@@ -438,12 +485,14 @@ def test_operator_factor_context_uses_factor_key(monkeypatch):
     status="implemented",
 ))
 def test_dropped_experiment_candidates_settle_into_both_arms():
+    from aletheia.learning.behavior_contracts import build_behavior_contract_hash
     from aletheia.universe.service import _register_experiment_candidate_outcomes
     from aletheia.learning.contribution_runner import evaluate_experiment
     from aletheia.learning.models import (
         LearningExperiment,
         LearningExposure,
         LearningHypothesis,
+        LearningPolicyEpoch,
     )
     from aletheia.learning.ledger import (
         insert_experiment,
@@ -451,6 +500,7 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
         insert_hypothesis,
     )
     from aletheia.storage.sqlite import get_db
+    from aletheia.learning.verdicts import METRIC_VERSION
 
     epoch, exp = "epoch-p03", "exp-p03"
     ck_t = "universe:featT:momentum:long:perp"
@@ -478,6 +528,24 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
     )
     assert insert_hypothesis(hypothesis)
     assert insert_experiment(experiment)
+    from aletheia.learning.ledger import insert_record
+
+    assert insert_record("learning_policy_epochs", LearningPolicyEpoch(
+        epoch_id=epoch,
+        epoch_kind="decision_policy:universe_family_calibration",
+        effective_values_hash="policy-hash-p03",
+        effective_values_json="{}",
+        affected_path_ids_json='["universe_family_calibration"]',
+        started_at=(datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat(),
+        ended_at=(datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+    ))
+    behavior_contract_hash = build_behavior_contract_hash(
+        path_id=hypothesis.path_id,
+        policy_hash=epoch,
+        target_horizon=hypothesis.target_horizon,
+        outcome_contract_version="v1",
+        metric_version=METRIC_VERSION,
+    )
     for ck, arm in ((ck_t, "treatment"), (ck_c, "control")):
         assert insert_exposure(LearningExposure(
             dedup_key=f"{exp}:{ck}:paper_10:{epoch}",
@@ -487,9 +555,10 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
             assignment_unit_key=ck,
             candidate_key=ck, outcome_candidate_key=f"{ck}:4h",
             outcome_source="fixed_horizon_candidate", concurrent_policy_epoch=epoch,
-            experiment_stage="shadow",
-            code_commit="test-commit",
-        ))
+                experiment_stage="shadow",
+                code_commit="test-commit",
+                behavior_contract_hash=behavior_contract_hash,
+            ))
 
     now = datetime.now(timezone.utc).isoformat()
     scored = [
@@ -602,8 +671,8 @@ def test_stale_epoch_verdict_does_not_authorize(monkeypatch):
 
 @spec_claim(SpecClaim(
     "LE-B27", "learning_evolution", "§ exposure fingerprint", "L2b",
-    "The policy epoch stays stable across code-only rebuilds, rotates when universe "
-    "behavior config changes, and each exposure is stamped with the running build.",
+    "Behavior identity stays stable across code-only rebuilds, rotates when declared policy or "
+    "contract inputs change, and each exposure retains the running build as provenance.",
     status="implemented",
 ))
 def test_policy_epoch_ignores_code_only_rebuild_and_rotates_on_config_change(monkeypatch):
@@ -644,3 +713,4 @@ def test_policy_epoch_ignores_code_only_rebuild_and_rotates_on_config_change(mon
         consumer="paper_ranker", consumer_stage="score",
     )
     assert get_record("learning_exposures", d.exposure_id)["code_commit"] == "commit-XYZ"
+    assert get_record("learning_exposures", d.exposure_id)["behavior_contract_hash"]

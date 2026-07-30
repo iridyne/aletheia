@@ -18,6 +18,7 @@ _LAST_SUCCESS_POLICY_VALUES: dict[str, dict] = {}
 
 from aletheia.config.loader import load_config
 from aletheia.learning.hypotheses import hypothesis_fingerprint
+from aletheia.learning.behavior_contracts import current_behavior_contract_hash
 from aletheia.learning.ledger import (
     get_record,
     get_hypothesis_by_fingerprint,
@@ -30,6 +31,7 @@ from aletheia.learning.ledger import (
 from aletheia.learning.models import LearningExperiment, LearningExposure, LearningHypothesis
 from aletheia.learning.registry import get_learning_path
 from aletheia.learning.policy_epochs import PolicyEpoch, build_policy_epoch
+from aletheia.learning.verdicts import METRIC_VERSION
 
 # Hypothesis statuses that forbid opening a *new* experiment.  `refrozen` is
 # written by the lifecycle controller when it invalidates an experiment, and is
@@ -143,6 +145,9 @@ def _policy_epoch_definition(path_id: str) -> PolicyEpoch:
     try:
         cfg = load_config()
         values = {
+            "behavior_contract_version": get_learning_path(
+                path_id
+            ).behavior_contract_version,
             "autonomous_learning": cfg.agent.autonomous_learning,
             "permission_mode": cfg.agent.permission_mode,
             "scanner_weights": cfg.universe.scanner_weights,
@@ -200,8 +205,14 @@ def _policy_epoch_definition(path_id: str) -> PolicyEpoch:
             # producing commit remains separate provenance; these effective
             # semantics rotate the actual Learning policy cohort.
             from aletheia.agent_shell.skip_policy import skip_policy_context
+            from aletheia.learning.opportunity_information_policy import (
+                opportunity_information_policy_context,
+            )
 
             values["operator_decision_context"] = skip_policy_context()
+            values["opportunity_information_policy"] = (
+                opportunity_information_policy_context()
+            )
         _LAST_SUCCESS_POLICY_VALUES[path_id] = values
     except Exception as exc:
         cached = _LAST_SUCCESS_POLICY_VALUES.get(path_id)
@@ -273,13 +284,23 @@ def apply_numeric_treatment(
     assignment = stable_assignment(experiment, assignment_key or candidate_key)
     assignment_unit_key = assignment_key or candidate_key
     policy_epoch = _policy_epoch(path_id)
+    behavior_contract_hash = current_behavior_contract_hash(
+        path_id=path_id,
+        policy_epoch=policy_epoch,
+        target_horizon=target_horizon,
+        outcome_contract_version="v1",
+        metric_version=METRIC_VERSION,
+    )
     from aletheia.learning.authority import resolve_learning_authority
     authority = resolve_learning_authority(path_id, experiment, policy_epoch)
     authorized = authority.authorized
     applied = authorized and assignment == "treatment"
     value = float(treatment if applied else baseline)
     stage = experiment.stage if authorized else "shadow_refrozen"
-    dedup_key = f"{experiment.experiment_id}:{candidate_key}:{stage}:{policy_epoch}"
+    dedup_key = (
+        f"{experiment.experiment_id}:{candidate_key}:{stage}:{policy_epoch}:"
+        f"{behavior_contract_hash}"
+    )
     exposure = LearningExposure(
         dedup_key=dedup_key,
         experiment_id=experiment.experiment_id,
@@ -308,6 +329,7 @@ def apply_numeric_treatment(
         # different code versions is distinguishable (the fingerprint is also folded
         # into policy_epoch above, so a rebuild rotates the epoch on restart).
         code_commit=_code_fingerprint(),
+        behavior_contract_hash=behavior_contract_hash,
     )
     inserted = insert_exposure(exposure)
     if not inserted:
