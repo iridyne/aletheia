@@ -40,6 +40,7 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
         LearningJobHealth,
     )
     from aletheia.learning.verdicts import METRIC_VERSION
+    from aletheia.learning.behavior_contracts import current_behavior_contract_hash
 
     monkeypatch.setattr(build_info, "_boot_commit", "commit-current")
     hypothesis = LearningHypothesis(
@@ -66,6 +67,13 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
     assert insert_hypothesis(hypothesis)
     assert insert_experiment(experiment)
     epoch = _policy_epoch(hypothesis.path_id)
+    behavior_contract_hash = current_behavior_contract_hash(
+        path_id=hypothesis.path_id,
+        policy_epoch=epoch,
+        target_horizon=hypothesis.target_horizon,
+        outcome_contract_version="v1",
+        metric_version=METRIC_VERSION,
+    )
     verdict = LearningContributionVerdict(
         experiment_id=experiment.experiment_id,
         hypothesis_id=hypothesis.hypothesis_id,
@@ -96,6 +104,9 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
             "evidence_conflict_fingerprints": [],
             "breached": False,
             "breach_reasons": [],
+            "source_code_commits": ["commit-current"],
+            "source_code_commit_unknown_n": 0,
+            "code_commit_provenance_complete": True,
         }),
         verdict="insufficient_data",
         reason="no_actual_intervention",
@@ -104,6 +115,7 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
         outcome_contract_version="v1",
         metric_version=METRIC_VERSION,
         code_commit="commit-current",
+        behavior_contract_hash=behavior_contract_hash,
     )
     assert insert_record(
         "learning_contribution_verdicts",
@@ -185,13 +197,13 @@ def test_lco_projection_reports_protected_admission_readiness(
     assert lifecycle_view["mutation_unavailable_reason"] is None
 
 
-def test_lco_projection_keeps_stale_verdict_historical(tmp_path, monkeypatch):
+def test_lco_projection_keeps_stale_behavior_verdict_historical(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     _, experiment_id = _seed_current_experiment(monkeypatch)
     from aletheia.storage.sqlite import get_db
 
     get_db().execute(
-        "UPDATE learning_contribution_verdicts SET code_commit='old-commit' "
+        "UPDATE learning_contribution_verdicts SET behavior_contract_hash='old-behavior' "
         "WHERE experiment_id=?",
         (experiment_id,),
     )
@@ -203,9 +215,70 @@ def test_lco_projection_keeps_stale_verdict_historical(tmp_path, monkeypatch):
 
     item = build_learning_contribution_projection()["items"][0]
     assert item["measurement"]["state"] == "not_measured"
-    assert item["measurement"]["reason"] == "code_commit_mismatch"
+    assert item["measurement"]["reason"] == "behavior_contract_mismatch"
     assert item["latest_historical_measurement"]["state"] == "insufficient_data"
     assert item["latest_historical_measurement"]["current"] is False
+
+
+def test_lco_projection_keeps_matching_behavior_current_across_commits(
+    tmp_path, monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    get_db().execute(
+        "UPDATE learning_contribution_verdicts SET code_commit='old-commit' "
+        "WHERE experiment_id=?",
+        (experiment_id,),
+    )
+    get_db().commit()
+
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    item = build_learning_contribution_projection()["items"][0]
+
+    assert item["measurement"]["state"] == "insufficient_data"
+    assert item["current_identity"]["matches_running_cohort"] is True
+    assert item["latest_historical_measurement"]["code_commit"] == "old-commit"
+
+
+def test_lco_projection_selects_current_verdict_before_newer_historical_row(
+    tmp_path, monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+    from aletheia.learning.ledger import insert_record
+    from aletheia.learning.models import LearningContributionVerdict
+    from aletheia.storage.sqlite import get_db
+
+    current = dict(get_db().execute(
+        "SELECT * FROM learning_contribution_verdicts WHERE experiment_id=?",
+        (experiment_id,),
+    ).fetchone())
+    historical = LearningContributionVerdict(**{
+        **current,
+        "verdict_id": "newer-historical-verdict",
+        "behavior_contract_hash": "historical-behavior",
+        "code_commit": "historical-build",
+        "verdict": "negative",
+        "reason": "historical negative",
+        "created_at": "2099-07-24T02:00:00+00:00",
+    })
+    assert insert_record("learning_contribution_verdicts", historical)
+
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    item = build_learning_contribution_projection()["items"][0]
+
+    assert item["measurement"]["state"] == "insufficient_data"
+    assert item["measurement"]["reason"] == "no_actual_intervention"
+    assert item["current_identity"]["matches_running_cohort"] is True
+    assert item["latest_historical_measurement"]["verdict_id"] == historical.verdict_id
+    assert item["latest_historical_measurement"]["current"] is False
+    assert item["latest_historical_measurement"]["mismatch_reason"] == (
+        "behavior_contract_mismatch"
+    )
 
 
 def test_lco_projection_never_publishes_a_stale_verdicts_numbers_as_current(
@@ -236,7 +309,7 @@ def test_lco_projection_never_publishes_a_stale_verdicts_numbers_as_current(
     metrics["breached"] = True
     metrics["breach_reasons"] = ["mae_p95_worsening"]
     db.execute(
-        "UPDATE learning_contribution_verdicts SET code_commit='old-commit', "
+        "UPDATE learning_contribution_verdicts SET behavior_contract_hash='old-behavior', "
         "harm_metrics_json=? WHERE experiment_id=?",
         (json.dumps(metrics), experiment_id),
     )
@@ -247,7 +320,7 @@ def test_lco_projection_never_publishes_a_stale_verdicts_numbers_as_current(
     )
 
     item = build_learning_contribution_projection()["items"][0]
-    assert item["current_identity"]["mismatch_reason"] == "code_commit_mismatch"
+    assert item["current_identity"]["mismatch_reason"] == "behavior_contract_mismatch"
     assert item["measurement"]["state"] == "not_measured"
 
     samples = item["samples"]
@@ -326,6 +399,7 @@ def test_lco_projection_reads_the_newest_evaluation_not_the_latest_window(
         outcome_contract_version="v1",
         metric_version=METRIC_VERSION,
         code_commit="commit-current",
+        behavior_contract_hash=superseded["behavior_contract_hash"],
     )
     assert insert_record(
         "learning_contribution_verdicts", emptied, ignore_duplicates=True

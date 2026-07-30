@@ -104,8 +104,10 @@ loop contributes positively. Current behavior has these contract-relevant limita
   metric verdict rows remain immutable history. A verdict's `created_at` is evaluation time, while
   `window_start` and `window_end` remain observation bounds;
 - lifecycle, authority, and owner-facing progress consume only the exact current hypothesis, stage,
-  policy epoch, horizon, outcome contract, metric version, and running-build cohort. Mismatched
-  harmful history can explain a hold but cannot refreeze or invalidate the current experiment;
+  policy epoch, horizon, outcome contract, metric version, and deterministic behavior-contract
+  cohort. `code_commit` remains provenance and does not fragment behaviorally identical evidence.
+  Mismatched harmful history can explain a hold but cannot refreeze or invalidate the current
+  experiment;
 - experiment registration is not an observation start. The first durable exposure atomically and
   idempotently changes an open experiment from `registered` to `active`, and `started_at` is always
   repaired to the earliest durable exposure;
@@ -134,6 +136,18 @@ loop contributes positively. Current behavior has these contract-relevant limita
   new policy epoch and a from-zero observation window before owner enablement; old-window evidence
   cannot authorize the new behavior. Safety tightening must never be withheld merely to make a
   cleaner experiment.
+- every measurement-supported path declares a versioned behavior contract. The secret-free
+  `behavior_contract_hash` combines that version with policy epoch, horizon, outcome contract and
+  metric/statistical-unit version. A behavior version change starts a new from-zero cohort even on
+  the same commit; an unrelated commit does not. Historical rows without a behavior hash remain
+  auditable but cannot pool with or authorize a current cohort.
+- commit provenance for a behavior cohort is a sorted source set plus an explicit unknown-source
+  count/completeness flag. The scalar verdict `code_commit` is populated only when every exposure
+  has the same known commit; mixed known/NULL provenance must remain visibly incomplete.
+- policy epoch ids remain explicit observation-window boundaries. The behavior hash uses the
+  epoch's deterministic effective-values hash for reproducibility, while a later return to the
+  same effective policy still starts a fresh epoch and does not pool across the intervening
+  B-class policy window.
 - Operator prompt-bundle exposure is created only after single-candidate scoping. It uses a stable
   candidate identity and the exact Opportunity 4h outcome key; a mixed queue returns the static
   prompt without creating an unlinked exposure. Candidate-context contract changes are included in

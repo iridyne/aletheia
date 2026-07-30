@@ -1737,8 +1737,10 @@ _ADDITIVE_COLUMNS = [
     ("stage_generation", "learning_experiments", "INTEGER NOT NULL DEFAULT 0"),
     ("experiment_stage", "learning_exposures", "TEXT"),
     ("assignment_unit_key", "learning_exposures", "TEXT"),
+    ("behavior_contract_hash", "learning_exposures", "TEXT"),
     ("allocation_selected", "filter_candidate_outcomes", "INTEGER"),
     ("stage", "learning_contribution_verdicts", "TEXT"),
+    ("behavior_contract_hash", "learning_contribution_verdicts", "TEXT"),
     ("last_failed_at", "learning_job_health", "TEXT"),
     ("last_failure_reason", "learning_job_health", "TEXT"),
     ("leverage", "trade_proposals", "INTEGER"),
@@ -2991,6 +2993,7 @@ CREATE TABLE IF NOT EXISTS learning_exposures (
     outcome_contract_version TEXT NOT NULL,
     experiment_stage TEXT,
     code_commit TEXT,
+    behavior_contract_hash TEXT,
     policy_version TEXT,
     concurrent_policy_epoch TEXT NOT NULL,
     exposed_at TEXT NOT NULL

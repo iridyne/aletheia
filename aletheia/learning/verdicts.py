@@ -157,7 +157,12 @@ def _harm_metrics(
         "policy_epoch": cohort.key.policy_epoch,
         "horizon": cohort.key.horizon,
         "outcome_contract_version": cohort.key.outcome_contract_version,
-        "code_commit": cohort.key.code_commit or None,
+        "behavior_contract_hash": cohort.key.behavior_contract_hash or None,
+        "source_code_commits": sorted(cohort.source_code_commits),
+        "source_code_commit_unknown_n": cohort.source_code_commit_unknown_n,
+        "code_commit_provenance_complete": (
+            cohort.source_code_commit_unknown_n == 0
+        ),
         "raw_exposure_n": cohort.raw_exposure_n,
         "unique_assignment_unit_n": len(cohort.samples),
         "cluster_member_n": sum(sample.member_count for sample in cohort.samples),

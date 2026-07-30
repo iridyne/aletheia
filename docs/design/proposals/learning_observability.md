@@ -136,13 +136,26 @@ experiment and running process:
 - `target_horizon`;
 - `outcome_contract_version`;
 - `metric_version`;
-- running boot `code_commit`.
+- deterministic `behavior_contract_hash` built from the declared path behavior
+  version and the policy/horizon/outcome/metric contract above.
 
 The projection exposes the identity and a stable mismatch reason. It never calls
 an old verdict "current" because it is the newest row by timestamp. Old metric,
-epoch, stage, horizon, outcome-contract, or build rows remain historical evidence.
-If the running boot commit cannot be established, current authority is
-`unavailable`; history remains readable.
+epoch, stage, horizon, outcome-contract, or behavior-contract rows remain
+historical evidence. `code_commit` and the sorted source-commit set remain
+provenance only: a behaviorally identical rebuild neither fragments a cohort nor
+blocks a safety action. If the behavior contract cannot be established, current
+authority is `unavailable`; history remains readable.
+
+Cross-build cohorts expose sorted `source_code_commits`,
+`source_code_commit_unknown_n`, and `code_commit_provenance_complete`. A mixed
+known/NULL source never collapses to a reassuring single-commit provenance; the
+legacy scalar `code_commit` is populated only for a complete one-commit cohort.
+
+The persisted policy-epoch id remains a separate observation-window boundary.
+Equivalent effective-policy hashes are reproducible across instances, but an
+explicit A→B→A policy rotation does not pool the later A window with the earlier
+one; B-class interventions always restart observation.
 
 ## 4. Data Sources And Projection Ownership
 
@@ -278,6 +291,7 @@ Each item contains:
     "target_horizon": "4h",
     "outcome_contract_version": "...",
     "metric_version": "universe_family_calibration_cluster_allocation_utility_v2",
+    "behavior_contract_hash": "...",
     "code_commit": "...",
     "matches_running_cohort": true,
     "mismatch_reason": null

@@ -5035,21 +5035,23 @@ def list_pending_filter_candidate_outcomes(
 def list_open_learning_outcome_candidate_keys(
     path_ids: tuple[str, ...],
     *,
-    code_commit: str | None = None,
+    behavior_contract_hash: str | None = None,
 ) -> set[str]:
     """Return exact outcome keys attached to active experiments in open epochs.
 
-    When ``code_commit`` is supplied, restrict the keys to that prospective
-    build identity so settlement can prioritize evidence usable by the running
-    process without pooling older-build cohorts.
+    When ``behavior_contract_hash`` is supplied, restrict the keys to the
+    current measured behavior so settlement can prioritize usable evidence
+    without treating unrelated builds as different cohorts.
     """
     if not path_ids:
         return set()
     placeholders = ", ".join("?" for _ in path_ids)
-    commit_clause = " AND le.code_commit=?" if code_commit else ""
+    behavior_clause = (
+        " AND le.behavior_contract_hash=?" if behavior_contract_hash else ""
+    )
     parameters: tuple[object, ...] = (
-        (*path_ids, code_commit)
-        if code_commit
+        (*path_ids, behavior_contract_hash)
+        if behavior_contract_hash
         else path_ids
     )
     rows = get_db().execute(
@@ -5063,7 +5065,7 @@ def list_open_learning_outcome_candidate_keys(
         f"WHERE h.path_id IN ({placeholders}) "
         "AND pe.epoch_kind=('decision_policy:' || h.path_id) "
         "AND le.outcome_candidate_key IS NOT NULL"
-        f"{commit_clause}",
+        f"{behavior_clause}",
         parameters,
     ).fetchall()
     return {
