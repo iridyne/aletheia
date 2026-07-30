@@ -164,7 +164,7 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
 
 **Scope**：愿景/红线/度量/SDD 方法/金字塔/协作流程——统领其余 11 域。
 
-- **L0–L1**：[`product/VISION`](../../product/definition/VISION.md) · `PRD` · `METRICS` · `PHASE_GATES` · `EXPERIMENT_{PROTOCOL,MVP_GATE,BACKLOG}`；`DOC_SYSTEM_PLAN` 是已执行迁移计划，不是当前状态页
+- **L0–L1**：[`Product Direction`](../../product/definition/DIRECTION.md) 是唯一产品定义；[`Product Scope`](../../product/SCOPE.md)、`METRICS`、`PHASE_GATES`、`EXPERIMENT_{PROTOCOL,MVP_GATE,BACKLOG}` 分别承载范围、度量与准入；`DOC_SYSTEM_PLAN` 是已执行迁移计划，不是当前状态页
 - **历史状态证据**：[`ROADMAP`](../../archive/legacy/status/roadmap/ROADMAP.md) · `WORLD_MAP` · `PIPELINE_STATUS` · `REMAINING_WORK_2026-06-30`；均已归档为 point-in-time evidence
 - **方法/导航**：[`docs/README`](../../README.md)(总入口) · [`design/README`](../README.md)(契约索引) · [`SDD_METHODOLOGY`](SDD_METHODOLOGY.md) · [`SYSTEM_MAP`](../architecture/SYSTEM_MAP.md) · **本文(域索引)**
 - **治理**：[governance/`trust_and_change_control`](../../governance/policies/trust_and_change_control.md) · `implementation_guide`

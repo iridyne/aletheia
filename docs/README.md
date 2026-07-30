@@ -28,7 +28,8 @@ This directory is organized for AI agents first: read the smallest routing file,
 | Task | Read first | Then narrow to |
 |---|---|---|
 | New agent session | `../AGENTS.md` | choose the narrow task lane below; external orchestrator owns session/worktree state |
-| Product direction or scope | `product/README.md` | `product/definition/`, `product/gates/`, `product/experiments/` |
+| Product definition or long-term direction | `product/definition/DIRECTION.md` | The single canonical direction document |
+| Product scope, evaluation, or admission | `product/README.md` | `product/SCOPE.md`, `product/gates/`, `product/experiments/` |
 | Architecture or subsystem behavior | `design/README.md` | `design/contracts/`, `design/architecture/`, `design/data/` |
 | API or schema work | `design/README.md` | `design/api/`, `design/data/`, `design/contracts/` |
 | Risk, execution, live unlock, audit chain | `governance/README.md` | `governance/policies/`, `design/contracts/` |

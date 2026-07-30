@@ -17,7 +17,7 @@
 |---|---|
 | `AGENTS.md::Preferred Direction` | 优先级 1.状态一致性 → 7.功能容量 → 自主；UI 外壳工作属功能容量层 |
 | `AGENTS.md::No Uncontrolled Expansion` | 不做"大重构、样式重写、广泛清理"；推翻 UI 外壳违反此条 |
-| historical north-star reference §7 (now `docs/references/external-systems/north_star.md`) | 当前在阶段 0（稳跑验证），阶段 2 才考虑经验闭环 |
+| historical north-star reference §7 (now `docs/references/external-systems/comparative_systems.md`) | 当前在阶段 0（稳跑验证），阶段 2 才考虑经验闭环 |
 | historical `docs/archive/legacy/issues/archive/audits/issue_register_2026-06-06.md::ISSUE-008` | News Intelligence 应隐藏/标记实验，不应再扩 news 面 |
 | memory `aletheia-portfolio-sync-gap` | Portfolio 缺真实账户数据是**后端**缺 Exchange Account Sync 层，不是 UI 问题 |
 | memory `aletheia-stay-in-guide-scope` | 不做超出实现指南范围的扩张 |

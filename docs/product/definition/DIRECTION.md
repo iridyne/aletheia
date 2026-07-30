@@ -1,141 +1,149 @@
-# Aletheia Trading OS — Product Direction
+# Aletheia Trading OS - Product Direction
 
-> **Role:** L1 product direction. This is the durable interpretation of the
-> owner's 2026-07 discussion, consolidated from the former repository-root
-> note. It records intent and boundaries, not machine-local runtime facts or a
-> claim that a feature is currently working.
+> **Role:** L1 product direction. This document defines the durable direction
+> of travel and the order in which Aletheia should earn greater capability.
+> It is not a delivery plan, release schedule, implementation status report,
+> or list of current defects.
 >
-> For product scope see [PRD](PRD.md); for success gates see
-> [PHASE_GATES](../gates/PHASE_GATES.md) and [EXPERIMENT_PROTOCOL](../experiments/EXPERIMENT_PROTOCOL.md);
-> for implementation truth see the linked L2 contracts and executable tests.
-> Last updated: 2026-07-12.
-
-The currently admitted executable subset is declared separately in
-[ACTIVE_RUNTIME_SCOPE](../ACTIVE_RUNTIME_SCOPE.md). That file is machine checked and
-must stay smaller than, or equal to, this broader product direction.
+> This is the single canonical product-definition document. For supported
+> scope, see [Product Scope](../SCOPE.md) and
+> [ACTIVE_RUNTIME_SCOPE](../ACTIVE_RUNTIME_SCOPE.md). Measurable admission and
+> promotion decisions remain governed by
+> [PHASE_GATES](../gates/PHASE_GATES.md) and
+> [EXPERIMENT_PROTOCOL](../experiments/EXPERIMENT_PROTOCOL.md).
+>
+> Last updated: 2026-07-30.
 
 ---
 
-## 1. Direction of travel
+## North star
 
-Aletheia is a medium-horizon agentic trading system, not a high-frequency
-signal bot and not a conventional rule/DSL/backtest strategy factory. Before
-the next evaluation round, the priority is to prove that the existing loop is
-truthful and connected:
+Aletheia is becoming a personal, autonomous trading research and decision
+system that can improve through experience without becoming opaque or unsafe.
+
+The central product bet is that AI trading capability is constrained less by
+model intelligence than by the quality of the apparatus around it: evidence,
+feedback, controlled exposure, memory, and hard safety boundaries. Aletheia
+exists to test that bet honestly and, if it holds, to let one owner delegate
+the work of developing and operating a durable trading edge.
+
+Its long-term advantage should not come from one model, indicator, strategy, or
+market regime. It should come from a durable learning apparatus:
 
 ```text
-market observation -> opportunity -> System Operator decision
--> proposal -> risk/execution -> outcome -> review/knowledge
--> a later, attributable decision
+observe -> reason -> act within limits -> measure -> learn -> improve
 ```
 
-Counts, attractive UI states, and retrospective narratives are not proof that
-the loop improves trading. A path may influence behaviour only with its own
-causal record, outcome quality checks, and the measured contribution gates in
-[learning_evolution_contract](../../design/proposals/learning_evolution.md).
-Round admission is governed by [EXPERIMENT_PROTOCOL](../experiments/EXPERIMENT_PROTOCOL.md),
-not by this document.
+The loop matters only when each transition is attributable, economically
+truthful, and capable of being challenged by later evidence. More activity,
+more artifacts, and more automation are not progress by themselves.
 
-## 2. System Operator and supporting agents
+## Definition of success
 
-The **System Operator** is the sole top-level trading decision maker. It works
-on the system's medium-horizon cadence: it receives structured market context,
-candidate opportunities, learning context, portfolio facts, and hard risk
-boundaries, then decides whether to propose, hold, or skip. It does not bypass
-the Risk Engine or Execution Gateway.
+Aletheia succeeds as a product when it can demonstrate attributable
+improvement while keeping failure survivable, authority bounded, and its
+economic record trustworthy.
 
-Specialised agents collect evidence, form opportunities, maintain knowledge,
-and perform bounded supporting work. They are not independent order channels.
-The Operator may inspect runtime diagnostics and make only already-authorised
-runtime actions; it may not edit code, alter credentials or hard risk limits,
-unlock live trading, or place orders outside the normal proposal path. The
-implementation boundary is [operator_layer](../../design/operator/operator_layer.md) and
-[trust_and_change_control](../../governance/policies/trust_and_change_control.md).
+Its longer-term human outcome is a system that can produce durable economic
+performance across changing market conditions within owner-defined risk
+limits. Exact promotion thresholds and evaluation windows belong to the
+current gates and experiment protocol, not to this direction document.
 
-`System Operator` is the product and documentation name. Historical technical
-identifiers such as `pi_daemon` and `pi_decisions` remain compatibility/audit
-identifiers until a separately approved migration; they are not a second
-product role.
+## Strategic sequence
 
-## 3. Learning is an evidence pipeline, not a page
+The direction is an order of earned capabilities, not a calendar. Later
+directions must not outrun the foundations beneath them.
 
-Learning must turn observations, decisions, entries, exits, realised or
-fixed-horizon outcomes, reviews, and later corrections into machine-readable
-artifacts that can be retrieved by a later judgment. It must also retain enough
-causal identity to answer which source influenced which decision and whether
-that influence helped.
+### 1. Establish a trustworthy operating core
 
-- New evidence may revise, demote, freeze, expire, or archive earlier advice;
-  it must not silently overwrite history.
-- Insufficient, contaminated, synthetic, or economically incomplete outcomes
-  are unavailable for behavioural authority, not treated as positive evidence.
-- Learning may provide bounded prompt/ranking/sizing/guard inputs only through
-  its declared path. It never changes credentials, live authority, hard risk
-  limits, or execution semantics.
-- Universe-family diversity is part of the same loop. Momentum is not a
-  default winner: family/direction/market/regime evidence must be recorded, and
-  insufficient evidence falls back to neutral treatment.
+The system must first become dependable enough that its records can be treated
+as evidence. Market identity, decisions, risk judgments, orders, fills,
+positions, outcomes, and runtime actions must remain causally connected and
+honest about uncertainty or failure.
 
-The current contract is [learning_contract](../../design/contracts/learning_contract.md).
-The measured promotion, control, attribution, and demotion target is
-[learning_evolution_contract](../../design/proposals/learning_evolution.md).
+The aim is not the absence of faults. It is a system whose faults are bounded,
+visible, recoverable, and unable to silently rewrite financial or operational
+truth.
 
-## 4. Trade planning and execution honesty
+### 2. Complete the evidence-to-learning loop
 
-An entry is a planned risk decision, not a gambler-style market click. For a
-native limit entry, the product direction requires a usable entry price, stop
-loss, take profit, and expected reward-to-risk. The implementation contract and
-Product Ground Truth and current code decide what is currently enforced; GitHub records any missing-field
-or price-geometry gap. Every order still passes the Risk Engine and the single
-Execution Gateway, and exchange rules remain the final authority.
+Aletheia must turn lived market experience into evidence that a later decision
+can actually use. Outcomes need stable identity, economic completeness,
+comparable cohorts, and explicit provenance. Learning must distinguish signal
+from noise, preserve contrary evidence, and retire conclusions that no longer
+hold.
 
-The implementation details, including exchange minimum-order constraints,
-limit-entry validation, causal records, and reconciliation rules, belong to
-[execution_contract](../../design/contracts/execution_contract.md) and
-[risk_engine_contract](../../design/contracts/risk_engine_contract.md). A change to that
-behaviour is a trust-boundary task, not a Learning or UI change.
+The product should prefer an honest "not enough evidence" over premature
+learning authority. A memory, review, verdict, or recommendation is an
+intermediate artifact until its downstream contribution is demonstrated.
 
-## 5. Research, Serenity, and the user interface
+### 3. Prove improvement under controlled exposure
 
-Serenity is an independent deep-research lens: it studies real-world supply,
-demand, industry, and geopolitical relationships before producing evidence for
-the System Operator. It is not merely a sub-tab of the Learning page. Its
-research and trading boundary is [serenity_contract](../../design/contracts/serenity_contract.md).
+Once the loop is trustworthy, Aletheia should demonstrate that it makes later
+decisions better across time and market conditions. Progress is measured by
+attributable improvement against a credible baseline, not by retrospective
+storytelling or isolated profit.
 
-The UI must organise work by operator purpose—research, decision, portfolio,
-learning, and settings—rather than preserving obsolete module names. Existing
-legacy strategy records may remain visible for historical attribution, but the
-interface must not imply that a removed executable RuleSet/DSL strategy engine
-is driving trades. A broad navigation redesign remains an owner-approved
-information-architecture decision; concrete UI gaps belong in GitHub Issues,
-not in this direction document.
+Experiments should remain bounded, reversible, and comparable across policy
+epochs. Failure to find durable alpha is a valid result; it should narrow the
+system's beliefs rather than encourage wider or less controlled searching.
 
-## 6. Engineering choices
+### 4. Earn autonomy progressively
 
-- Keep the Python backend. A wholesale TypeScript rewrite would not solve API
-  latency, caching, or data-contract defects and would put the trading safety
-  path through a high-risk rewrite. Type-safe API generation is the preferred
-  frontend/backend alignment mechanism.
-- Keep tests layered: focused tests during development; contracts and
-  trust-boundary tests for governed changes; the full suite before integration.
-  Profile and label genuinely slow tests before changing fixtures or removing
-  coverage. See [TESTING](../../operations/development/TESTING.md) and
-  [PYTEST_OPTIMIZATION_GUIDE](../../operations/development/PYTEST_OPTIMIZATION_GUIDE.md).
-- UI latency and missing price states are operational defects to measure and
-  track in GitHub Issues. They are not evidence for a language migration.
+Autonomy should expand only after the preceding capability has been observed
+to work. The system may move from recommendation, to bounded paper influence,
+to supervised exchange interaction, and eventually to narrowly limited live
+authority only through explicit human-controlled gates.
 
-## 7. Source-to-home map
+Greater autonomy never includes authority to redefine its own hard risk,
+credential, audit, execution, or live-unlock boundaries. Risk Engine approval
+and the Execution Gateway remain structural constraints, not temporary
+scaffolding.
 
-| Original discussion theme | Canonical home | What belongs there |
-| --- | --- | --- |
-| Why the system must learn before the next evaluation | [VISION](VISION.md), [EXPERIMENT_PROTOCOL](../experiments/EXPERIMENT_PROTOCOL.md) | product bet and evaluation gates |
-| Learning, correction, attribution, and Universe diversity | [learning_contract](../../design/contracts/learning_contract.md), [learning_evolution_contract](../../design/proposals/learning_evolution.md) | implementation obligations and measurable authority |
-| System Operator responsibilities and naming | [operator_layer](../../design/operator/operator_layer.md), [agent_contracts](../../design/contracts/agent_contracts.md) | role, tools, cadence, and safety boundary |
-| Planned limit entries and four entry fields | [execution_contract](../../design/contracts/execution_contract.md), [risk_engine_contract](../../design/contracts/risk_engine_contract.md) | executable order/risk behaviour |
-| Serenity research | [serenity_contract](../../design/contracts/serenity_contract.md) | evidence and promotion boundary |
-| UI layout, price-feed, loading, and navigation gaps | GitHub Issues | evidence-backed, actionable UI work |
-| Test-speed practice | [TESTING](../../operations/development/TESTING.md), [PYTEST_OPTIMIZATION_GUIDE](../../operations/development/PYTEST_OPTIMIZATION_GUIDE.md) | test tiers and profiling procedure |
-| Historical decomposition and completed work | `docs/archive/legacy/ai-context/discussions/` | dated process evidence; not current product truth |
+### 5. Broaden the system's field of understanding
 
-When a statement is about the current machine, use `aletheia doctor` or a
-fresh measurement. Do not promote a historical report into a standing fact.
+After the core loop is proven, Aletheia may widen the evidence it can reason
+about: more market structures, deeper real-world research, and additional
+forms of portfolio context. Breadth should strengthen the same decision and
+learning loop rather than create disconnected agents, pages, data collections,
+or order paths.
+
+Expansion is justified only when the new evidence has a named decision
+consumer, a measurable contribution claim, and a safe failure mode.
+
+## Enduring product boundaries
+
+- Aletheia remains local-first and owner-controlled.
+- Safety, auditability, and economic truth are prerequisites for learning, not
+  competing priorities.
+- The System Operator is the top-level decision role; supporting agents produce
+  evidence and bounded assistance, not independent execution authority.
+- Human ownership remains over capital exposure, hard safety boundaries,
+  credentials, irreversible actions, and product direction.
+- The product favors explicit contracts and simple infrastructure over breadth
+  that cannot be operated or understood.
+- Current support must never be inferred from this roadmap. Product Ground
+  Truth, current contracts, executable evidence, and runtime facts determine
+  what works today.
+
+## Directional decision test
+
+A substantial proposal aligns with this direction only if it advances at least
+one strategic direction without weakening an earlier one. In practice, ask:
+
+1. Does it make the operating truth more reliable?
+2. Does it close or strengthen the evidence and learning loop?
+3. Does it produce a measurable improvement claim?
+4. Has the system earned the additional autonomy or breadth?
+5. Can it fail visibly, reversibly, and within existing safety boundaries?
+
+If the answer is no, the work is likely maintenance, a local capability, or
+premature expansion. Track it in GitHub or the appropriate contract or
+proposal; do not enlarge the product direction to accommodate it.
+
+## What does not belong here
+
+Issue status, implementation checklists, release targets, named bug fixes,
+individual UI changes, parameter tuning, and machine-local runtime state are
+deliberately excluded. They change faster than product direction and belong in
+GitHub, current contracts, operations procedures, or measured runtime evidence.

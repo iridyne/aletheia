@@ -1,4 +1,10 @@
-# North-Star References — 方向地图，**非施工授权**
+# External Systems Comparative Reference
+
+> **Role:** Research reference. This document compares external systems and
+> records ideas that may inform future proposals. It is not Aletheia's product
+> definition, strategic roadmap, implementation plan, or authorization source.
+> The single product-direction authority is
+> [Product Direction](../../product/definition/DIRECTION.md).
 
 > ⚠️ **本文件是方向参考（北极星），不是 MVP 施工授权。**
 >

@@ -2,7 +2,7 @@
 
 > **角色**：定义 demo 阶段三条系统级 Kill 判决——防止系统在已证明无效或危险状态下持续运行。
 > 每条 Kill 条件均有对应的可执行 spec claim 锁死，防止代码漂移。
-> **不变式来源**：[产品定义 §8（失败与撤退）](../../product/definition/VISION.md)；[EXPERIMENT_PROTOCOL.md](../../product/experiments/EXPERIMENT_PROTOCOL.md)。
+> **不变式来源**：[Product Direction 的永久边界](../../product/definition/DIRECTION.md#enduring-product-boundaries)；[EXPERIMENT_PROTOCOL.md](../../product/experiments/EXPERIMENT_PROTOCOL.md)。
 > Last updated: 2026-06-30 · 维护者: Aletheia Dev
 
 ---

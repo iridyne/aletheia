@@ -1,8 +1,8 @@
 # Aletheia Trading OS — Local-first Agentic Trading System Implementation Guide
 
 > ⚠️ **v1 实现规范,部分内容已被上层文档取代(2026-06-21 标注):**
-> 本文件是 MVP 初版的完整实现规范。其中"为什么做/做什么"已被 [VISION](../../product/definition/VISION.md) +
-> [PRD](../../product/definition/PRD.md) 取代;具体子系统契约以 [docs/design/](../../design/contracts) 的 L2 金标准为准
+> 本文件是 MVP 初版的完整实现规范。其中"为什么做/做什么"已被 [Product Direction](../../product/definition/DIRECTION.md) +
+> [Product Scope](../../product/SCOPE.md) 取代;具体子系统契约以 [docs/design/](../../design/contracts) 的 L2 金标准为准
 > (Risk/Execution/Live/Promotion/data_model/agent_contracts/api_reference)。
 > 本文件仍保留有效的 CLI/目录结构/部分实现细节作参考;**契约层冲突时以 L2 design 文档为准**。
 > 长期不变的开发红线在 [trust_and_change_control](trust_and_change_control.md)。文档分层见 [DOC_SYSTEM_PLAN](../../product/documentation/DOC_SYSTEM_PLAN.md)。
@@ -2212,9 +2212,12 @@ No additional password is required for Dashboard switching, but every switch is 
 
 ---
 
-## 30. Roadmap after MVP
+## 30. Explicit exclusions from the MVP baseline
 
-Do not implement these in MVP unless explicitly requested.
+The following are not a product roadmap or a planned queue. They are examples
+outside the original MVP baseline. Any current proposal must be evaluated
+against Product Direction and Product Scope and receive the authorization
+required by repository governance.
 
 ### 30.1 Next markets
 

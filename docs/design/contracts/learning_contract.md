@@ -2,7 +2,7 @@
 
 > Contract level: L2. This file is normative for the Learning subsystem.
 > Last aligned: 2026-07-19 A1 contribution-measurement integrity.
-> Reference intent: [Product Direction §3](../../product/definition/DIRECTION.md#3-learning-is-an-evidence-pipeline-not-a-page).
+> Reference intent: [Product Direction - evidence-to-learning loop](../../product/definition/DIRECTION.md#2-complete-the-evidence-to-learning-loop).
 > Future designs:
 > [`learning_evolution.md`](../proposals/learning_evolution.md) and
 > [`learning_observability.md`](../proposals/learning_observability.md).
