@@ -148,13 +148,16 @@ def test_auto_merge_queues_ready_master_pull_requests_without_running_their_code
         "reopened",
         "ready_for_review",
         "edited",
+        "synchronize",
+        "labeled",
+        "unlabeled",
     ]
     assert workflow["permissions"] == {
         "contents": "write",
         "pull-requests": "write",
     }
 
-    assert set(workflow["jobs"]) == {"enable"}
+    assert set(workflow["jobs"]) == {"enable", "disable"}
     job = workflow["jobs"]["enable"]
     assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
     assert "draft == false" in job["if"]
@@ -163,3 +166,16 @@ def test_auto_merge_queues_ready_master_pull_requests_without_running_their_code
     assert _run_commands(job).strip() == (
         'gh pr merge "$PR_URL" --repo "$GITHUB_REPOSITORY" --auto --merge'
     )
+
+    disable_job = workflow["jobs"]["disable"]
+    assert disable_job["runs-on"] == [
+        "self-hosted",
+        "Linux",
+        "X64",
+        "ubuntu-24.04",
+    ]
+    assert "do-not-auto-merge" in disable_job["if"]
+    assert not any("uses" in step for step in disable_job["steps"])
+    disable_commands = _run_commands(disable_job)
+    assert "--json autoMergeRequest" in disable_commands
+    assert "--disable-auto" in disable_commands
