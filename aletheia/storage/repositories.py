@@ -3373,31 +3373,45 @@ def insert_portfolio_snapshot(snap) -> None:
     _insert("portfolio_snapshots", snap.model_dump())
 
 
-def list_portfolio_snapshots(limit: int = 100, days: int | None = None) -> list[dict]:
+def list_portfolio_snapshots(limit: int | None = None, days: int | None = None) -> list[dict]:
     """Return the latest snapshot window in chronological order.
 
-    UI chart consumers need ascending timestamps, but the window itself must be
-    selected from the newest rows so long-lived databases do not show stale
-    history forever once the table grows beyond `limit`.
+    When `days` is provided it is the authoritative range selector: all rows
+    inside the window are returned so range selectors (7D/30D/90D/All) stay
+    distinct even when the table grows beyond any cap. `limit` is an optional
+    safety cap that takes the most-recent rows inside the window.
 
-    If `days` is provided, only return snapshots within the last N days.
+    Without `days`, `limit` guards against returning the entire table; it caps
+    from the newest end of the full series (default 100 rows).
     """
     db = get_db()
     if days is not None and days > 0:
-        rows = db.execute(
-            """
-            SELECT * FROM (
+        if limit and limit > 0:
+            rows = db.execute(
+                """
+                SELECT * FROM (
+                    SELECT *
+                    FROM portfolio_snapshots
+                    WHERE snapshot_at >= datetime('now', ?)
+                    ORDER BY snapshot_at DESC, id DESC
+                    LIMIT ?
+                )
+                ORDER BY snapshot_at ASC, id ASC
+                """,
+                (f"-{days} days", limit),
+            ).fetchall()
+        else:
+            rows = db.execute(
+                """
                 SELECT *
                 FROM portfolio_snapshots
                 WHERE snapshot_at >= datetime('now', ?)
-                ORDER BY snapshot_at DESC, id DESC
-                LIMIT ?
-            )
-            ORDER BY snapshot_at ASC, id ASC
-            """,
-            (f"-{days} days", limit),
-        ).fetchall()
+                ORDER BY snapshot_at ASC, id ASC
+                """,
+                (f"-{days} days",),
+            ).fetchall()
     else:
+        cap = limit if (limit and limit > 0) else 100
         rows = db.execute(
             """
             SELECT *
@@ -3409,14 +3423,14 @@ def list_portfolio_snapshots(limit: int = 100, days: int | None = None) -> list[
             )
             ORDER BY snapshot_at ASC, id ASC
             """,
-            (limit,),
+            (cap,),
         ).fetchall()
     return [dict(r) for r in rows]
 
 
 def list_account_equity_snapshots(
     execution_mode: str,
-    limit: int = 100,
+    limit: int | None = None,
     days: int | None = None,
 ) -> list[dict]:
     """Return one explicitly-account-valued snapshot series in ascending order.
@@ -3425,6 +3439,12 @@ def list_account_equity_snapshots(
     predicate: historical local-paper rows stored position notional there.  A
     missing `account_equity_usdt` therefore means *not an account reading*, not
     a zero balance.
+
+    The `days` window is the authoritative range selector. Rows are returned in
+    ascending time order spanning the WHOLE window. `limit` is an optional safety
+    cap: when provided it takes the most-recent `limit` rows inside the window
+    (via an inner DESC sub-select) so chart consumers see the latest data, not
+    the oldest. The default is None (no cap) so all range selectors remain distinct.
     """
     db = get_db()
     params: list[object] = [execution_mode]
@@ -3432,19 +3452,28 @@ def list_account_equity_snapshots(
     if days is not None and days > 0:
         where += " AND snapshot_at >= datetime('now', ?)"
         params.append(f"-{days} days")
-    params.append(limit)
-    rows = db.execute(
-        f"""
-        SELECT * FROM (
+    if limit and limit > 0:
+        rows = db.execute(
+            f"""
+            SELECT * FROM (
+                SELECT * FROM portfolio_snapshots
+                WHERE {where}
+                ORDER BY snapshot_at DESC, id DESC
+                LIMIT ?
+            )
+            ORDER BY snapshot_at ASC, id ASC
+            """,
+            (*params, limit),
+        ).fetchall()
+    else:
+        rows = db.execute(
+            f"""
             SELECT * FROM portfolio_snapshots
             WHERE {where}
-            ORDER BY snapshot_at DESC, id DESC
-            LIMIT ?
-        )
-        ORDER BY snapshot_at ASC, id ASC
-        """,
-        params,
-    ).fetchall()
+            ORDER BY snapshot_at ASC, id ASC
+            """,
+            params,
+        ).fetchall()
     return [dict(row) for row in rows]
 
 

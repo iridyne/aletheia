@@ -1255,13 +1255,13 @@ async def get_market_ohlcv(
 
 
 @router.get("/market/portfolio-history")
-def get_portfolio_history(limit: int = 500, days: int | None = None):
+def get_portfolio_history(limit: int | None = None, days: int | None = None):
     _ensure_db()
     return repo.list_portfolio_snapshots(limit=limit, days=days)
 
 
 @router.get("/market/account-equity-history")
-def get_account_equity_history(limit: int = 500, days: int | None = None):
+def get_account_equity_history(limit: int | None = None, days: int | None = None):
     """One stable account-equity curve for the Overview.
 
     The endpoint selects the current account's explicit equity snapshot field.
@@ -1271,7 +1271,7 @@ def get_account_equity_history(limit: int = 500, days: int | None = None):
     _ensure_db()
     local_paper = load_config().exchange.paper_execution_mode == "paper_internal"
     execution_mode = "paper_internal" if local_paper else "exchange_account"
-    cache_key = (days, execution_mode)
+    cache_key = (days, limit, execution_mode)
     now = time.monotonic()
     with _equity_history_cache_lock:
         entry = _equity_history_cache.get(cache_key)
