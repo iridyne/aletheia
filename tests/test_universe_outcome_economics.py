@@ -530,6 +530,61 @@ def test_local_window_with_a_mid_window_hole_falls_back_to_the_exchange(monkeypa
     assert settled[0]["settlement_price_source"] == "horizon_ohlcv"
 
 
+def test_a_second_concurrent_drain_yields_instead_of_duplicating_requests(monkeypatch):
+    """Two scheduler jobs call settle_due(); only one may drain at a time.
+
+    ``outcome_settler`` and ``universe_refresh`` fire on the same 10-minute
+    interval 30s apart, and ``max_instances=1`` bounds each job against itself but
+    not against the other. Both selected the same oldest-due rows, so they
+    duplicated one another's exchange requests: double the external load for half
+    the useful work.
+    """
+    from aletheia.universe import outcome_recorder as orec
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = []
+
+    async def slow_drain(*, max_rows, time_budget_sec):
+        calls.append(max_rows)
+        started.set()
+        await release.wait()
+        return 7
+
+    monkeypatch.setattr(orec, "_settle_due_once", slow_drain)
+
+    async def scenario():
+        first = asyncio.create_task(orec.settle_due(max_rows=8))
+        await started.wait()
+        second = await orec.settle_due(max_rows=8)
+        release.set()
+        return await first, second
+
+    first, second = asyncio.run(scenario())
+    assert first == 7
+    assert second == 0, "the second caller must yield, not queue a duplicate drain"
+    assert calls == [8], "the drain body must have run exactly once"
+    assert orec._settle_in_flight is False, "the flag must clear even on the happy path"
+
+
+def test_the_in_flight_flag_clears_when_a_drain_raises(monkeypatch):
+    """A flag that leaks on failure would silence settlement permanently.
+
+    The process is long-lived, so a single raise inside the drain must not leave
+    every later cycle yielding to a caller that is no longer running.
+    """
+    from aletheia.universe import outcome_recorder as orec
+
+    async def boom(*, max_rows, time_budget_sec):
+        raise RuntimeError("drain failed")
+
+    monkeypatch.setattr(orec, "_settle_due_once", boom)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(orec.settle_due(max_rows=8))
+    assert orec._settle_in_flight is False
+
+
 def test_local_read_is_scoped_to_the_exact_instrument(monkeypatch):
     from aletheia.universe.outcome_recorder import settle_due
 

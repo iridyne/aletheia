@@ -36,11 +36,27 @@ _HORIZONS: dict[str, timedelta] = {
     "24h": timedelta(hours=24),
 }
 
+# The limit is deliberately far wider than the window itself needs. get_ohlcv()
+# persists every bar it returns to market_ohlcv unconditionally — only the
+# in-process cache is gated on `since` (ccxt_provider.get_ohlcv) — so one request
+# warms the local window of every sibling row on the same instrument whose window
+# falls inside the span it covers. The queue drains oldest-due first, so the bars
+# a request warms are exactly the ones the following rows ask for.
+#
+# This is free: a wide limit is ONE round trip and ONE ccxt rate-limit token, the
+# same as a narrow one. Measured over the live 208k-row backlog, widening from
+# 20/65/51/99 to a uniform 300 cut the exchange requests needed to settle the
+# whole miss population from 270 to 132 per 1000 rows.
+#
+# 300 rather than the ~1000 that measured slightly better (95/1000): it sits
+# inside every venue cap in use (OKX history-candles 300, Binance 1000+), and a
+# venue that clamps anyway still returns far more than the 96 bars the widest
+# window here needs, so a clamp costs amortisation and never correctness.
 _FETCH_PLAN: dict[str, tuple[str, int]] = {
-    "15m": ("1m", 20),
-    "1h": ("1m", 65),
-    "4h": ("5m", 51),
-    "24h": ("15m", 99),
+    "15m": ("1m", 300),
+    "1h": ("1m", 300),
+    "4h": ("5m", 300),
+    "24h": ("15m", 300),
 }
 _MAX_CONCURRENT_FETCHES = 8
 _FETCH_TIMEOUT_SEC = 20.0
@@ -54,6 +70,32 @@ _LOCAL_BAR_MARGIN = 2
 # price_quality_ok=True.
 _NETWORK_PRICE_SOURCE = "horizon_ohlcv"
 _LOCAL_PRICE_SOURCE = "horizon_ohlcv_local"
+
+# Ceiling on the exchange work one canonical cycle may spend. Bounds the resource
+# that is actually shared — ccxt throttles per client, the venue throttles per IP,
+# and a dozen other scheduler jobs draw on the same budget — so that raising row
+# throughput no longer means raising external load.
+#
+# It is a hard cap on requests: settle_due_filter_outcomes spends the budget on
+# instrument GROUPS, one request each, so 400 means <=400 requests per 10-minute
+# cycle — 0.67/sec, a few percent of one ccxt client's throttle.
+#
+# Sized against the live queue rather than guessed. Measured on a clone of the
+# 249k-row backlog, a 6,000-row cycle settles ~1,570 rows from the local window
+# alone; the oldest rows fare worst because their 1m/5m bars have aged past the
+# 2-day and 7-day retention windows and no backfill job maintains those
+# timeframes. The remaining ~4,430 collapse into 363 instrument groups — the same
+# few hundred symbols recur across every horizon and due time — so the entire
+# slice costs at most 363 requests, and one request is worth ~12 rows.
+#
+# 400 therefore sits just above a full cycle's real cost: a normal cycle is never
+# truncated by it, and a pathological one still cannot exceed 0.67 requests/sec.
+# At ~6,000 rows per cycle against a measured arrival rate of ~1,054, the standing
+# backlog drains in well under a day.
+_CANONICAL_FETCH_CEILING = 400
+
+# At most one drain of these queues runs at a time; see settle_due().
+_settle_in_flight = False
 
 
 def build_pending(members: list[dict], entry_ts: str) -> list[UniverseForwardOutcome]:
@@ -120,11 +162,42 @@ def register_pending(members: list[dict], entry_ts: str) -> int:
     return len(outcomes)
 
 
-async def settle_due(max_rows: int = 2000, time_budget_sec: float = 100.0) -> int:
+async def settle_due(max_rows: int = 8000, time_budget_sec: float = 240.0) -> int:
+    """Settle all overdue pending outcomes, at most one drain at a time.
+
+    Two scheduler jobs call this — ``outcome_settler`` and ``universe_refresh``,
+    which fire on the same 10-minute interval only 30s apart. ``max_instances=1``
+    bounds each job against itself but not against the other, so both used to
+    drain concurrently, and because each selects the same oldest-due rows they
+    duplicated one another's exchange requests. That silently doubles external
+    load and halves the useful work, so the second caller yields instead.
+
+    A plain flag rather than an ``asyncio.Lock``: both callers run on the one
+    scheduler event loop, there is no await between the test and the set, and
+    yielding is the wanted behaviour anyway — queueing a second full drain behind
+    the first would just run it against an already-drained queue.
+    """
+    global _settle_in_flight
+
+    if _settle_in_flight:
+        logger.info(
+            "outcome settler: another drain is already in flight — yielding this call"
+        )
+        return 0
+    _settle_in_flight = True
+    try:
+        return await _settle_due_once(
+            max_rows=max_rows, time_budget_sec=time_budget_sec
+        )
+    finally:
+        _settle_in_flight = False
+
+
+async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
     """Settle all overdue pending outcomes by fetching current prices.
 
     Processes rows in batches until the queue is empty or the wall-clock budget
-    is exhausted (default 100s, safely under the scheduler's 120s job timeout).
+    is exhausted (default 240s, safely under the scheduler's 300s job timeout).
     This prevents large backlogs from accumulating when many rows pile up between
     runs — previously a fixed limit=500 per call took hours to drain a deep queue.
 
@@ -155,14 +228,24 @@ async def settle_due(max_rows: int = 2000, time_budget_sec: float = 100.0) -> in
     # Canonical filter outcomes are the authority for Learning contribution and
     # filter feedback.  They used to run only after the (often much larger)
     # Universe mirror queue, so a busy/slow forward queue could consume the whole
-    # wall-clock budget and leave already-due canonical rows pending forever.
-    # Reserve a bounded quarter of both caps before draining mirrors.  This is
-    # measurement scheduling only; it does not alter candidate selection.
+    # wall-clock budget and leave already-due canonical rows pending forever, so a
+    # bounded share is reserved before draining mirrors.  This is measurement
+    # scheduling only; it does not alter candidate selection, and it does not enter
+    # the policy-epoch hash (see learning/experiments._policy_epoch_definition,
+    # which folds decision policy only and deliberately excludes scheduling knobs).
+    #
+    # The share was a quarter, split on the assumption that the two queues were
+    # comparable in size.  Measured, they are not: the canonical queue had 209,090
+    # overdue rows while the forward mirror had ~25, so three quarters of the
+    # budget sat on the queue that had nothing to do.  Inverted to match the
+    # measurement.  The forward mirror still gets a quarter of the rows plus
+    # whatever wall clock canonical leaves, which is ample for a two-digit queue.
+    #
     # Tiny explicit calls are commonly used to settle one forward row in tests
     # and maintenance probes; preserve that contract. Scheduled production calls
     # use a large cap and therefore receive the reserved canonical quota.
-    filter_row_budget = min(500, max_rows // 4) if max_rows >= 4 else 0
-    filter_time_budget = min(30.0, max(0.0, time_budget_sec * 0.25))
+    filter_row_budget = min(6000, max_rows * 3 // 4) if max_rows >= 4 else 0
+    filter_time_budget = min(180.0, max(0.0, time_budget_sec * 0.75))
     filter_settled = 0
     if filter_row_budget and filter_time_budget > 0:
         try:
@@ -173,6 +256,7 @@ async def settle_due(max_rows: int = 2000, time_budget_sec: float = 100.0) -> in
             filter_settled = await settle_due_filter_outcomes(
                 max_rows=filter_row_budget,
                 time_budget_sec=filter_time_budget,
+                max_fetches=_CANONICAL_FETCH_CEILING,
             )
         except Exception as exc:
             logger.warning("filter outcome settlement failed (non-fatal): %s", exc)
@@ -455,6 +539,85 @@ async def _batch_fetch_market_observations(
         return {outcome_id: value for outcome_id, value in fetched if value is not None}
     finally:
         await provider.close()
+
+
+def local_market_observations(
+    rows: list[dict],
+    *,
+    now: datetime,
+    default_venue: str | None = None,
+) -> tuple[dict[str, dict], list[dict], dict[str, int]]:
+    """Observe every row that the already-persisted window can answer. No network.
+
+    Returns ``(observations_by_row_id, rows_still_needing_the_exchange, reasons)``.
+
+    This exists so a settle loop can drain its local-hit majority without holding
+    any exchange resource at all: measured on the live queue it observes ~4,100
+    rows/sec, and ~71% of the backlog answers from disk. Splitting it out of
+    ``_batch_fetch_market_observations`` lets the caller bound the exchange work by
+    a fetch budget while leaving the local work bounded only by rows and time.
+
+    A row that misses is returned for the caller to decide about; it is NEVER
+    reported as an observation failure. That distinction matters because both
+    settle loops treat "no observation" as terminal and mark the row ``failed``,
+    so a row deferred for lack of budget must never reach that path.
+    """
+    if default_venue is None:
+        from aletheia.config.loader import load_config
+
+        default_venue = load_config().market_data.ccxt_exchange
+
+    observations: dict[str, dict] = {}
+    misses: list[dict] = []
+    reasons: dict[str, int] = {}
+    for row in rows:
+        try:
+            plan = _build_plan(row, default_venue=default_venue, now=now)
+        except Exception as exc:
+            # An unparseable instrument is the exchange path's problem to report,
+            # exactly as before this was split out.
+            logger.debug("local observation plan failed for %s: %s", row.get("id"), exc)
+            reasons["unplannable"] = reasons.get("unplannable", 0) + 1
+            misses.append(row)
+            continue
+        if plan is None:
+            reasons["unplannable"] = reasons.get("unplannable", 0) + 1
+            misses.append(row)
+            continue
+        observation, reason = _local_observation(plan)
+        reasons[reason] = reasons.get(reason, 0) + 1
+        if observation is not None:
+            observations[plan.row_id] = observation
+        else:
+            misses.append(row)
+    return observations, misses, reasons
+
+
+def fetch_group_key(
+    row: dict,
+    *,
+    now: datetime,
+    default_venue: str,
+) -> str | None:
+    """Identify the single exchange request that could serve this row.
+
+    Rows sharing a key ask the same endpoint for the same series, differing only
+    in which slice of it they need. Because ``get_ohlcv`` persists every bar it
+    returns, one request for the oldest member of a group also answers every
+    later member whose window falls inside the span it covered — so a caller that
+    spends one request per GROUP rather than one per ROW settles several rows per
+    request instead of one, at no extra external load.
+
+    Returns ``None`` when the row cannot be planned, so the caller can leave it to
+    the per-row path to report rather than silently folding it into a group.
+    """
+    try:
+        plan = _build_plan(row, default_venue=default_venue, now=now)
+    except Exception:
+        return None
+    if plan is None:
+        return None
+    return f"{plan.instrument}|{plan.timeframe}"
 
 
 @dataclass(frozen=True)

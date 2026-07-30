@@ -709,6 +709,63 @@ def test_prune_filter_candidate_outcomes_clean_window_cutoff():
     assert remaining == {"k-100d", "k-60d", "k-10d"}
 
 
+def test_dropping_unmeasured_filter_outcomes_is_recorded_in_the_audit_chain():
+    """Evidence deleted before it was ever measured must not vanish silently.
+
+    Retention has to delete these rows — the file must stay bounded, and by the
+    cutoff the 1m/5m bars their windows needed have long expired, so they are past
+    the settler's reach. The danger is the shape of what is left behind: coverage
+    aggregations match status='settled' and the stale-overdue count only sees rows
+    that still exist, so a queue that never caught up becomes indistinguishable
+    from one that drained. audit_events is outside _PRUNABLE and never pruned, so
+    the loss stays on the record permanently.
+    """
+    import json
+
+    from aletheia.storage.repositories import prune_filter_candidate_outcomes
+
+    # Two unmeasured rows past the cutoff, one settled row past it, one fresh row.
+    _seed_filter_candidate_outcome(key="unmeasured-100d", entry_ts=_iso(100))
+    _seed_filter_candidate_outcome(key="unmeasured-60d", entry_ts=_iso(60))
+    _seed_filter_candidate_outcome(key="measured-60d", entry_ts=_iso(60))
+    _seed_filter_candidate_outcome(key="fresh-10d", entry_ts=_iso(10))
+    db = get_db()
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET status='settled' "
+        "WHERE outcome_candidate_key='measured-60d'"
+    )
+    db.commit()
+
+    assert prune_filter_candidate_outcomes(days=30) == 3
+
+    events = db.execute(
+        "SELECT * FROM audit_events WHERE event_type=?",
+        ("filter_outcome_evidence_dropped_unmeasured",),
+    ).fetchall()
+    assert len(events) == 1, "one event per prune run that dropped unmeasured rows"
+    state = json.loads(events[0]["after_state"])
+    assert state["dropped_unmeasured"] == 2, "the settled row is not a loss"
+    assert state["by_horizon"] == {"1h": 2}
+    assert state["retention_days"] == 30
+    assert "never measured" in (events[0]["message"] or "")
+
+
+def test_pruning_only_measured_filter_outcomes_writes_no_audit_event():
+    """The event must mean something. A run with nothing lost must stay quiet."""
+    from aletheia.storage.repositories import prune_filter_candidate_outcomes
+
+    _seed_filter_candidate_outcome(key="measured-only-60d", entry_ts=_iso(60))
+    db = get_db()
+    db.execute("UPDATE filter_candidate_outcomes SET status='settled'")
+    db.commit()
+
+    assert prune_filter_candidate_outcomes(days=30) == 1
+    assert db.execute(
+        "SELECT COUNT(*) FROM audit_events WHERE event_type=?",
+        ("filter_outcome_evidence_dropped_unmeasured",),
+    ).fetchone()[0] == 0
+
+
 def test_retention_anchor_is_earliest_active_exposure_and_ignores_unexposed_registration():
     from aletheia.storage.repositories import prune_filter_candidate_outcomes
 

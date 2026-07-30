@@ -169,8 +169,11 @@ def test_filter_outcome_settler_has_capacity_before_universe_mirror_backlog(
 
     calls = []
 
-    async def settle_filters(*, max_rows, time_budget_sec):
+    fetch_ceilings = []
+
+    async def settle_filters(*, max_rows, time_budget_sec, max_fetches=None):
         calls.append(("filter", max_rows, time_budget_sec))
+        fetch_ceilings.append(max_fetches)
         return 1
 
     monkeypatch.setattr(
@@ -190,6 +193,11 @@ def test_filter_outcome_settler_has_capacity_before_universe_mirror_backlog(
     assert [call[0] for call in calls[:2]] == ["filter", "forward"]
     assert calls[0][1] > 0
     assert 0 < calls[0][2] < 8.0
+    # The canonical queue is given a bounded exchange-request ceiling, not just a
+    # row cap. Without it, raising row throughput would raise external load by the
+    # same factor, because settlement used one live request per row.
+    assert fetch_ceilings and isinstance(fetch_ceilings[0], int)
+    assert fetch_ceilings[0] > 0
 
 
 @spec_claim(

@@ -3954,7 +3954,57 @@ def prune_filter_candidate_outcomes(
     if min_experiment_started_at is None:
         min_experiment_started_at = min_open_experiment_exposure_at()
     cutoff = _effective_cutoff(days, min_experiment_started_at)
-    return _delete_by_rowid_batches("filter_candidate_outcomes", "entry_ts < ?", (cutoff,))
+
+    # A row still 'pending' at the cutoff was never measured, and deleting it
+    # leaves nothing behind that says so: every coverage aggregation matches
+    # status='settled', and doctor's stale-overdue count only counts rows that
+    # still exist, so a queue that never caught up ends up indistinguishable from
+    # one that drained. The gap closes itself and the ledger reads as complete.
+    #
+    # Deletion still has to happen — retention is what keeps the file bounded, and
+    # a row this old is past the settler's reach anyway (the 1m/5m bars its window
+    # needs expired days earlier). What must not happen is the silence. So record
+    # the loss in audit_events, which is deliberately outside _PRUNABLE and never
+    # pruned, before the rows go.
+    unmeasured = get_db().execute(
+        "SELECT horizon, COUNT(*) FROM filter_candidate_outcomes "
+        "WHERE status = 'pending' AND entry_ts < ? GROUP BY horizon",
+        (cutoff,),
+    ).fetchall()
+    dropped = sum(row[1] for row in unmeasured)
+    if dropped:
+        by_horizon = {str(row[0]): int(row[1]) for row in unmeasured}
+        _sqlite_logger.warning(
+            "prune_filter_candidate_outcomes: %d filter-outcome rows reached the "
+            "%s retention cutoff still unmeasured (%s) — the canonical settler is "
+            "not keeping up; deleting them and recording the loss in audit_events",
+            dropped,
+            cutoff,
+            " ".join(f"{k}={v}" for k, v in sorted(by_horizon.items())),
+        )
+        insert_audit_event(AuditEvent(
+            actor="system",
+            source="prune_filter_candidate_outcomes",
+            event_type="filter_outcome_evidence_dropped_unmeasured",
+            entity_type="filter_candidate_outcomes",
+            entity_id=cutoff,
+            after_state=json.dumps({
+                "dropped_unmeasured": dropped,
+                "by_horizon": by_horizon,
+                "cutoff": cutoff,
+                "retention_days": days,
+            }, sort_keys=True),
+            message=(
+                f"{dropped} filter-outcome rows were deleted at the {cutoff} "
+                f"retention cutoff while still 'pending'. Their counterfactual "
+                f"returns were never measured, so Learning contribution and filter "
+                f"feedback over any window containing them are computed on an "
+                f"incomplete population."
+            ),
+        ))
+    return _delete_by_rowid_batches(
+        "filter_candidate_outcomes", "entry_ts < ?", (cutoff,)
+    )
 
 
 def prune_operator_evaluation_events(days: int = 30) -> int:
