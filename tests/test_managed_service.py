@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 
 def _proc(returncode=0, stdout="", stderr=""):
     return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
@@ -86,6 +88,60 @@ def test_windows_task_is_demand_only_without_a_schedule(monkeypatch):
     assert "<AllowStartOnDemand>true</AllowStartOnDemand>" in xml
     assert "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>" in xml
     assert "_gateway_runner.py --no-browser" in xml
+
+
+@pytest.mark.parametrize(
+    ("username", "domain", "computername", "fallback", "expected"),
+    [
+        ("operator", "CORP", "HOST", "fallback", r"CORP\operator"),
+        ("operator", "HOST", "HOST", "fallback", r"HOST\operator"),
+        ("operator", "WORKGROUP", "HOST", "fallback", r"HOST\operator"),
+        ("operator", "workgroup", "HOST", "fallback", r"HOST\operator"),
+        (None, None, None, "fallback", "fallback"),
+        (r"CORP\operator", "IGNORED", "HOST", "fallback", r"CORP\operator"),
+        ("operator@example.test", "IGNORED", "HOST", "fallback", "operator@example.test"),
+    ],
+)
+def test_windows_current_user_resolves_a_mappable_account_authority(
+    monkeypatch, username, domain, computername, fallback, expected,
+):
+    from aletheia.gateway import windows_identity
+
+    for key, value in {
+        "USERNAME": username,
+        "USERDOMAIN": domain,
+        "COMPUTERNAME": computername,
+    }.items():
+        if value is None:
+            monkeypatch.delenv(key, raising=False)
+        else:
+            monkeypatch.setenv(key, value)
+    monkeypatch.setattr(windows_identity.getpass, "getuser", lambda: fallback)
+
+    assert windows_identity.current_windows_user() == expected
+
+
+def test_windows_service_and_watchdog_share_the_principal_resolver():
+    from aletheia.gateway import autostart, managed_service, windows_identity
+
+    assert managed_service._current_user is windows_identity.current_windows_user
+    assert autostart._current_user is windows_identity.current_windows_user
+
+
+def test_windows_task_xml_escapes_the_resolved_principal(monkeypatch):
+    from aletheia.gateway import managed_service as service
+
+    monkeypatch.setattr(
+        service,
+        "_windows_program_and_arguments",
+        lambda **_kwargs: (r"C:\Python\pythonw.exe", r"C:\app\_gateway_runner.py"),
+    )
+    monkeypatch.setattr(service, "_current_user", lambda: r"HOST&LAB\op<er")
+
+    xml = service._build_windows_task_xml(no_browser=True)
+
+    assert r"HOST&amp;LAB\op&lt;er" in xml
+    assert r"HOST&LAB\op<er" not in xml
 
 
 def test_windows_program_arguments_checks_windows_venv_config_as_filesystem_path(monkeypatch):
