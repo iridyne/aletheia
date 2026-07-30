@@ -36,7 +36,7 @@ def _shim_content(root: Path) -> str:
         return (
             f"@rem {_MARKER}\r\n"
             "@echo off\r\n"
-            f'uv run --project "{root}" -- aletheia %*\r\n'
+            f"uv run --project {root} -- aletheia %*\r\n"
         )
     return (
         f"#!/bin/sh\n# {_MARKER}\n"

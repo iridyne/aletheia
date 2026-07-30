@@ -405,7 +405,7 @@ def _operator_cost_rows(
         f"""SELECT id FROM agent_runs
             WHERE agent_name IN ({placeholders})
               AND replace(started_at,' ','T') >= replace(?,' ','T')
-              AND replace(started_at,' ','T') < replace(?,' ','T')""",
+              AND replace(started_at,' ','T') <= replace(?,' ','T')""",
         (*_OPERATOR_AGENT_NAMES, start_iso, end_iso),
     ).fetchall()
     run_ids = [str(row["id"]) for row in run_rows]
@@ -416,7 +416,7 @@ def _operator_cost_rows(
     )
     conditions = [
         "replace(started_at,' ','T') >= replace(?,' ','T')",
-        "replace(started_at,' ','T') < replace(?,' ','T')",
+        "replace(started_at,' ','T') <= replace(?,' ','T')",
     ]
     params: list[Any] = [start_iso, end_iso]
     identity_clauses = [logical_clause]
