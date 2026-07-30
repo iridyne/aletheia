@@ -1,0 +1,24 @@
+name: Queue pull requests for auto-merge
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, reopened, ready_for_review, edited]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable:
+    name: Enable auto-merge
+    if: >-
+      github.event.pull_request.draft == false &&
+      !contains(github.event.pull_request.labels.*.name, 'do-not-auto-merge')
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+    steps:
+      - name: Queue pull request
+        run: gh pr merge "$PR_URL" --repo "$GITHUB_REPOSITORY" --auto --merge

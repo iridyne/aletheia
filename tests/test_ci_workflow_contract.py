@@ -7,11 +7,19 @@ import yaml
 
 WORKFLOW_DIR = Path(__file__).resolve().parents[1] / ".github" / "workflows"
 WORKFLOW_PATH = WORKFLOW_DIR / "ci.yml"
+AUTO_MERGE_WORKFLOW_PATH = WORKFLOW_DIR / "auto-merge.yml"
 PINNED_ACTION_SHA_LENGTH = 40
 
 
 def _workflow() -> dict:
     return yaml.load(WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+
+def _auto_merge_workflow() -> dict:
+    return yaml.load(
+        AUTO_MERGE_WORKFLOW_PATH.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
 
 
 def _run_commands(job: dict) -> str:
@@ -22,8 +30,11 @@ def _run_commands(job: dict) -> str:
     )
 
 
-def test_ci_is_the_only_active_workflow() -> None:
-    assert sorted(path.name for path in WORKFLOW_DIR.glob("*.yml")) == ["ci.yml"]
+def test_only_ci_and_auto_merge_workflows_are_active() -> None:
+    assert sorted(path.name for path in WORKFLOW_DIR.glob("*.yml")) == [
+        "auto-merge.yml",
+        "ci.yml",
+    ]
 
 
 def test_ci_only_validates_pull_requests_and_merge_queue_entries() -> None:
@@ -124,3 +135,31 @@ def test_superseded_pull_request_runs_are_cancelled() -> None:
 
     assert concurrency["cancel-in-progress"] == "true"
     assert "github.event.pull_request.number" in concurrency["group"]
+
+
+def test_auto_merge_queues_ready_master_pull_requests_without_running_their_code() -> None:
+    workflow = _auto_merge_workflow()
+    triggers = workflow["on"]
+
+    assert set(triggers) == {"pull_request"}
+    assert triggers["pull_request"]["branches"] == ["master"]
+    assert triggers["pull_request"]["types"] == [
+        "opened",
+        "reopened",
+        "ready_for_review",
+        "edited",
+    ]
+    assert workflow["permissions"] == {
+        "contents": "write",
+        "pull-requests": "write",
+    }
+
+    assert set(workflow["jobs"]) == {"enable"}
+    job = workflow["jobs"]["enable"]
+    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
+    assert "draft == false" in job["if"]
+    assert "do-not-auto-merge" in job["if"]
+    assert not any("uses" in step for step in job["steps"])
+    assert _run_commands(job).strip() == (
+        'gh pr merge "$PR_URL" --repo "$GITHUB_REPOSITORY" --auto --merge'
+    )
