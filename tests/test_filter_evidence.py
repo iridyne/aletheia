@@ -112,6 +112,164 @@ def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
     assert shadow_row["resolved_at"]
 
 
+def _due_filter_outcome(key, *, horizon="24h", hours_ago=25):
+    """A canonical outcome whose 24h horizon is already past due."""
+    from aletheia.storage.models import FilterCandidateOutcome
+
+    entry = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+    return FilterCandidateOutcome(
+        outcome_candidate_key=key,
+        venue="okx",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        scanner_family="momentum",
+        horizon=horizon,
+        entry_price_usd=100.0,
+        entry_spread_bps=10.0,
+        entry_ts=entry.isoformat(),
+        due_at=(entry + timedelta(hours=24)).isoformat(),
+    )
+
+
+def _settling_observations():
+    async def observations(rows, *, now):
+        return {
+            row["id"]: {
+                "exit_price": 102.0,
+                "range_high": 103.0,
+                "range_low": 99.0,
+                "price_source": "horizon_ohlcv",
+                "price_quality_ok": True,
+                "settlement_lag_sec": 30.0,
+            }
+            for row in rows
+        }
+
+    return observations
+
+
+def test_slow_priority_prologue_still_settles_due_rows(monkeypatch):
+    """A prologue that overruns its slice must cost ORDER, never throughput.
+
+    This is the defect that stopped canonical settlement for hours: expanding the
+    open-experiment keys grew past the entire cycle budget, so the settlement loop
+    never ran an iteration, the function returned 0 without raising, and the only
+    log line fired exclusively when settled > 0.
+    """
+    import time
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe import filter_outcome_recorder as fr
+
+    outcome = _due_filter_outcome("opportunity:slow-prologue")
+    repo.insert_filter_candidate_outcomes_batch([outcome])
+
+    deadlines = []
+
+    def slow_priority(before_ts, keys, limit, deadline=None):
+        deadlines.append(deadline)
+        time.sleep(0.45)  # > 0.30 * 1.0s slice, < the 1.0s cycle budget
+        return [], True
+
+    monkeypatch.setattr(
+        fr.repo, "list_pending_filter_candidate_outcomes_for_keys", slow_priority
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
+        _settling_observations(),
+    )
+
+    settled = asyncio.run(fr.settle_due_filter_outcomes(max_rows=1, time_budget_sec=1.0))
+
+    assert settled == 1, "an overrunning prologue must not zero out settlement"
+    assert deadlines and deadlines[0] is not None, "prologue must be time-boxed"
+    row = get_db().execute(
+        "SELECT status FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)
+    ).fetchone()
+    assert row["status"] == "settled"
+
+
+def test_zero_throughput_cycle_with_work_outstanding_is_logged(caplog):
+    """A cycle that settles nothing while rows are due must be audible."""
+    import logging
+
+    from aletheia.storage import repositories as repo
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+
+    repo.insert_filter_candidate_outcomes_batch(
+        [_due_filter_outcome("opportunity:zero-throughput")]
+    )
+
+    with caplog.at_level(
+        logging.WARNING, logger="aletheia.universe.filter_outcome_recorder"
+    ):
+        assert asyncio.run(
+            settle_due_filter_outcomes(max_rows=500, time_budget_sec=0.0)
+        ) == 0
+
+    assert any("not draining" in r.getMessage() for r in caplog.records)
+
+
+def test_caught_up_queue_does_not_warn(monkeypatch, caplog):
+    """The zero-throughput warning must stay silent when nothing is due.
+
+    Otherwise it fires every cycle once the backlog is actually drained, and an
+    always-on warning is indistinguishable from no warning at all.
+    """
+    import logging
+
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
+        _settling_observations(),
+    )
+
+    with caplog.at_level(
+        logging.WARNING, logger="aletheia.universe.filter_outcome_recorder"
+    ):
+        assert asyncio.run(
+            settle_due_filter_outcomes(max_rows=500, time_budget_sec=5.0)
+        ) == 0
+
+    assert not [r for r in caplog.records if "not draining" in r.getMessage()]
+
+
+def test_pending_for_keys_is_bounded_by_limit_and_deadline():
+    """Cost must scale with `limit`, not with the number of open-experiment keys."""
+    import time
+
+    from aletheia.storage import repositories as repo
+
+    learning_keys = set()
+    rows = []
+    for i in range(5):
+        base = f"opportunity:bounded-{i}"
+        learning_keys.add(f"{base}:24h")
+        rows.append(_due_filter_outcome(base, hours_ago=30 + i))
+    repo.insert_filter_candidate_outcomes_batch(rows)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    selected, truncated = repo.list_pending_filter_candidate_outcomes_for_keys(
+        now_iso, learning_keys, limit=2,
+    )
+    assert truncated is False
+    # Later i means an earlier entry_ts, hence an earlier due_at: bounded-4 is the
+    # most overdue and must be settled first.
+    assert [r["outcome_candidate_key"] for r in selected] == [
+        "opportunity:bounded-4",
+        "opportunity:bounded-3",
+    ]
+
+    expired, expired_truncated = repo.list_pending_filter_candidate_outcomes_for_keys(
+        now_iso, learning_keys, limit=5, deadline=time.monotonic() - 1.0,
+    )
+    assert expired == []
+    assert expired_truncated is True
+
+
 def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
     from aletheia.analytics.filter_evidence import (
         filter_feedback_stats,

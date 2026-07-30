@@ -267,13 +267,13 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
         raising=False,
     )
 
-    def pending_for_keys(before_ts, outcome_candidate_keys, limit):
+    def pending_for_keys(before_ts, outcome_candidate_keys, limit, deadline=None):
         rows = []
         if "previous-build-ufc-candidate:4h" in outcome_candidate_keys:
             rows.append(previous_build)
         if "current-ufc-candidate:4h" in outcome_candidate_keys:
             rows.append(current)
-        return rows[:limit]
+        return rows[:limit], False
 
     monkeypatch.setattr(
         filter_outcome_recorder.repo,
