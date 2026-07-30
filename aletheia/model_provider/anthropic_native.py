@@ -6,8 +6,13 @@ from collections.abc import AsyncIterator
 
 from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.base import (
-    ModelProvider, ModelRequest, StructuredModelRequest,
-    ModelResponse, ModelHealth, StreamChunk,
+    ModelHealth,
+    ModelProvider,
+    ModelRequest,
+    ModelResponse,
+    StreamChunk,
+    StructuredModelRequest,
+    model_json_schema_payload,
 )
 
 BASE_URL = "https://api.anthropic.com"
@@ -113,7 +118,7 @@ class AnthropicNativeProvider(ModelProvider):
     async def structured(self, request: StructuredModelRequest, schema: type) -> dict:
         messages = list(request.messages)
         schema_json = json.dumps(
-            schema.model_json_schema() if hasattr(schema, "model_json_schema") else {}
+            model_json_schema_payload(schema)
         )
         messages.append({
             "role": "user",

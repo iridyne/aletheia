@@ -6,8 +6,13 @@ from collections.abc import AsyncIterator
 
 from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.base import (
-    ModelProvider, ModelRequest, StructuredModelRequest,
-    ModelResponse, ModelHealth, StreamChunk,
+    ModelProvider,
+    ModelRequest,
+    StructuredModelRequest,
+    ModelResponse,
+    ModelHealth,
+    StreamChunk,
+    model_json_schema_payload,
 )
 
 BASE_URL = "https://api.openai.com/v1"
@@ -133,7 +138,7 @@ class OpenAINativeProvider(ModelProvider):
         if request.system:
             messages.insert(0, {"role": "system", "content": request.system})
         schema_json = json.dumps(
-            schema.model_json_schema() if hasattr(schema, "model_json_schema") else {}
+            model_json_schema_payload(schema)
         )
         messages.append({
             "role": "user",
