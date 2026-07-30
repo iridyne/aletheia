@@ -251,6 +251,10 @@ def apply_numeric_treatment(
     gate_reason = _learning_gate_reason()
     if gate_reason is not None:
         return InfluenceDecision(float(baseline), False, "disabled", gate_reason)
+    if not get_learning_path(path_id).measurement_supported:
+        return InfluenceDecision(
+            float(baseline), False, "disabled", "measurement_unsupported"
+        )
     if not candidate_key:
         return InfluenceDecision(float(baseline), False, "unassigned", "missing_candidate_key")
 

@@ -371,6 +371,20 @@ def record_measurement_job_success(job_id: str) -> None:
     }))
 
 
+def record_measurement_job_partial(job_id: str, error: str) -> None:
+    """Persist a completed cycle that failed for one or more experiments."""
+    now = utc_now()
+    health = get_learning_job_health(job_id)
+    upsert_job_health(health.model_copy(update={
+        "next_due_at": _next_due(job_id, now),
+        "consecutive_failures": health.consecutive_failures + 1,
+        "status": "degraded", "last_error": str(error)[:1000],
+        "last_failed_at": now.isoformat(),
+        "last_failure_reason": str(error)[:1000],
+        "updated_at": now.isoformat(),
+    }))
+
+
 def record_measurement_job_failure(job_id: str, error: str) -> None:
     now = utc_now()
     health = get_learning_job_health(job_id)

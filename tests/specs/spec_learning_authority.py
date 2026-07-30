@@ -8,8 +8,11 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
 def _enable_legacy_paper_authority(monkeypatch, path_id: str) -> None:
+    from dataclasses import replace
+
     from aletheia.config.schema import AletheiaConfig
     import aletheia.learning.authority as authority
+    import aletheia.learning.experiments as experiments
 
     cfg = AletheiaConfig()
     cfg.agent.autonomous_learning = True
@@ -17,6 +20,14 @@ def _enable_legacy_paper_authority(monkeypatch, path_id: str) -> None:
     cfg.learning.paper_influence_enabled = True
     cfg.learning.paper_influence_paths = [path_id]
     monkeypatch.setattr(authority, "load_config", lambda: cfg)
+    get_path = experiments.get_learning_path
+    monkeypatch.setattr(
+        experiments,
+        "get_learning_path",
+        lambda requested: replace(get_path(requested), measurement_supported=True)
+        if requested == path_id
+        else get_path(requested),
+    )
 
 
 def _insert_settled_outcome(candidate_key: str) -> str:
@@ -56,6 +67,48 @@ def test_stable_assignment_survives_retries():
     first = stable_assignment(experiment, "opportunity:123")
     assert first in {"control", "treatment"}
     assert {stable_assignment(experiment, "opportunity:123") for _ in range(10)} == {first}
+
+
+def test_measurement_unsupported_path_keeps_static_baseline_without_ledger_writes(monkeypatch):
+    from aletheia.learning import experiments
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+
+    db = get_db()
+    tables = (
+        "learning_hypotheses",
+        "learning_experiments",
+        "learning_exposures",
+    )
+    before = {
+        table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        for table in tables
+    }
+
+    decision = experiments.apply_numeric_treatment(
+        path_id="observer_advisory_bundle",
+        scope={"symbol": "BTC/USDT"},
+        action={"type": "prompt_advisory"},
+        source_cohort="observer:test",
+        target_horizon="4h",
+        candidate_key="opportunity:test",
+        baseline=0.0,
+        treatment=1.0,
+        consumer="market_observer",
+        consumer_stage="prompt",
+    )
+
+    assert decision.value == 0.0
+    assert decision.applied is False
+    assert decision.reason == "measurement_unsupported"
+    assert decision.hypothesis_id is None
+    assert decision.experiment_id is None
+    assert decision.exposure_id is None
+    assert {
+        table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        for table in tables
+    } == before
 
 
 @spec_claim(
@@ -237,11 +290,11 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
 
 @spec_claim(SpecClaim(
     "LE-B13", "learning_evolution", "§9.3 factor feedback", "L2b",
-    "Retrospective factor statistics are diagnostic only: exact clean evidence proposes a shadow "
-    "experiment, while the ranker remains neutral until prospective authority exists.",
+    "Retrospective factor statistics are diagnostic only: without a measurement adapter the "
+    "ranker remains neutral and no formal experiment or exposure is created.",
     status="implemented",
 ))
-def test_factor_history_is_shadow_only_until_prospectively_authorized(monkeypatch):
+def test_factor_history_without_measurement_adapter_stays_diagnostic(monkeypatch):
     from aletheia.analytics import factor_feedback
     from tests.test_outcome_closure import _insert_entry_chain
 
@@ -287,7 +340,9 @@ def test_factor_history_is_shadow_only_until_prospectively_authorized(monkeypatc
     assert signal["observed_status"] == "hard_blocked"
     assert signal["status"] == "watch"
     assert signal["authority_applied"] is False
-    assert signal["experiment_id"]
+    assert signal["hypothesis_id"] is None
+    assert signal["experiment_id"] is None
+    assert signal["exposure_id"] is None
 
     broad_only = factor_feedback.lookup_factor_signal({
         "opportunity_id": "opp-2", "scanner_family": "momentum",
@@ -497,7 +552,7 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
     "treatment: stale evidence never grants authority to a new cohort.",
     status="implemented",
 ))
-def test_stale_epoch_verdict_does_not_authorize():
+def test_stale_epoch_verdict_does_not_authorize(monkeypatch):
     from aletheia.learning.experiments import apply_numeric_treatment, stable_assignment
     from aletheia.learning.ledger import get_record, insert_record
     from aletheia.learning.models import LearningContributionVerdict, LearningExperiment
@@ -510,6 +565,7 @@ def test_stale_epoch_verdict_does_not_authorize():
         source_cohort="factor_feedback:v2", target_horizon="4h",
         baseline=50.0, treatment=40.0, consumer="paper_ranker", consumer_stage="score",
     )
+    _enable_legacy_paper_authority(monkeypatch, common["path_id"])
     shadow = apply_numeric_treatment(candidate_key="candidate:seed2", **common)
     db = get_db()
     was = db.in_transaction
@@ -557,6 +613,7 @@ def test_policy_epoch_ignores_code_only_rebuild_and_rotates_on_config_change(mon
     from aletheia.learning.ledger import get_record
 
     base_cfg = load_config()
+    _enable_legacy_paper_authority(monkeypatch, "ranker_factor_filter")
     monkeypatch.setattr(exp, "load_config", lambda: base_cfg)
 
     monkeypatch.setattr(build_info, "get_boot_commit", lambda: "commit-AAA")

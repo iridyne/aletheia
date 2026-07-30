@@ -337,7 +337,7 @@ def _project_path(path: Any) -> dict[str, Any]:
         "consumer": path.consumer,
         "consumer_wired": bool(path.consumer_wired),
         "settings_supported": bool(path.settings_supported),
-        "measurement_supported": path.path_id in SUPPORTED_PATH_IDS,
+        "measurement_supported": bool(path.measurement_supported),
         "authority": path.authority,
         "allowed_effects": list(path.allowed_effects),
         "fallback": path.fallback,

@@ -225,6 +225,20 @@ def test_lco_path_capabilities_remain_independent(tmp_path, monkeypatch):
     assert universe["consumer_wired"] is True
     assert universe["settings_supported"] is True
     assert universe["measurement_supported"] is True
+    observer = paths["observer_advisory_bundle"]
+    assert observer["consumer_wired"] is True
+    assert observer["settings_supported"] is True
+    assert observer["measurement_supported"] is False
+
+    from aletheia.learning.registry import paper_influence_path_options
+
+    observer_option = next(
+        option
+        for option in paper_influence_path_options()
+        if option["path_id"] == "observer_advisory_bundle"
+    )
+    assert observer_option["supported"] is False
+    assert observer_option["status"] == "measurement_unwired"
     assert any(
         len({
             path["consumer_wired"],

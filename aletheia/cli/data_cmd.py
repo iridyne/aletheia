@@ -74,6 +74,24 @@ def requeue_unobserved_settlements(
     ))
 
 
+@data_app.command("archive-unmeasurable-learning-experiments")
+def archive_unmeasurable_learning_experiments(
+    apply: bool = typer.Option(
+        False, "--apply",
+        help="Archive open experiments without a measurement adapter. Default is dry-run.",
+    ),
+):
+    """Soft-terminalize historical experiments that cannot produce verdicts."""
+    from aletheia.learning.maintenance import archive_unmeasurable_experiments
+    from aletheia.storage.migrations import run_migrations
+
+    run_migrations()
+    typer.echo(json.dumps(
+        archive_unmeasurable_experiments(dry_run=not apply),
+        indent=2, ensure_ascii=False, sort_keys=True,
+    ))
+
+
 @data_app.command("reconcile-paper-funding")
 def reconcile_paper_funding(
     position_ids: list[str] = typer.Option([], "--position-id"),

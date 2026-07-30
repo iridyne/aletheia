@@ -86,9 +86,9 @@ def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch):
 @spec_claim(
     SpecClaim(
         "LE-C16", "learning_evolution", "§10 prompt authority", "L2c",
-        "Observer and Operator Learning bundles stay empty unless the exact paper path has "
-        "prospective treatment authority; control retains the static prompt baseline and the "
-        "manifest records the stable assignment and exposure identity.",
+        "Observer and Operator Learning bundles stay empty unless the exact paper path is "
+        "measurable and has prospective treatment authority; an unmeasurable path retains "
+        "the static prompt baseline without creating a formal exposure.",
         status="implemented",
     )
 )
@@ -181,7 +181,10 @@ def test_prompt_bundles_use_exact_paper_authority(monkeypatch):
     assert observer_default[0] == ""
     assert observer_default[1]["components"] == {}
     assert observer_default[1]["authority"]["applied"] is False
-    assert observer_default[1]["authority"]["exposure_id"]
+    assert observer_default[1]["authority"]["reason"] == "measurement_unsupported"
+    assert observer_default[1]["authority"]["hypothesis_id"] is None
+    assert observer_default[1]["authority"]["experiment_id"] is None
+    assert observer_default[1]["authority"]["exposure_id"] is None
 
     calls = []
 
