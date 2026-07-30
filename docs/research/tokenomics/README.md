@@ -22,6 +22,7 @@ authoritative it moves into `design/proposals/`, `design/decisions/`, or
 | `system_prompt_patterns_2026-07-30.md` | Nine callers sampled: role → input contract → output contract → behavioural constraints. What every prompt is missing (time, run identity, budget-remaining, tool permissions) and a sketch of a Phase 5 harness environment header prepended in `helpers.py`. |
 | `existing_cli_audit_shape_2026-07-30.md` | Every `aletheia audit` subcommand, backing economics-module function, and exact JSON shape it emits. Sketches a straight-mirror Phase 1 endpoint layout that reuses the same functions the CLI does. |
 | `economics_test_fixtures_2026-07-30.md` | Autouse `conftest.py` fixtures every test inherits, the eight-step economics setup pattern from `test_economic_*.py`, the `httpx.AsyncClient` + `ASGITransport(app=app)` route test pattern, and what Phase 1 route tests should and should not assert. |
+| `route_registration_conventions_2026-07-30.md` | Router-per-file pattern (prefix on the router, `app.include_router` no double-prefix), response conventions, tag taxonomy. Includes concrete boilerplate for the Phase 1 `routes/economics.py` module. |
 
 ## Related current documents
 
