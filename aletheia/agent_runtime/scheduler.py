@@ -90,7 +90,10 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "news_analyze": 105.0,
     "lesson_reviewer": 300.0,
     "shadow_resolver": 60.0,
-    "outcome_settler": 120.0,
+    # Raised 120 -> 300 so the settler's 240s drain budget fits. The job runs on a
+    # 600s interval with max_instances=1, so a 300s ceiling still cannot overlap
+    # its own next fire.
+    "outcome_settler": 300.0,
     "paper_funding_settler": 60.0,
     "broker_funding_settler": 120.0,
     "learning_contribution_evaluator": 60.0,
@@ -2775,8 +2778,9 @@ def _run_universe_refresh():
 
 async def _async_settle_outcomes():
     from aletheia.universe.outcome_recorder import settle_due
-    # settle_due() now drains the full queue within a 100s time budget (safe under
-    # the 120s job timeout). It logs internally per batch; the total is returned.
+    # settle_due() drains within a 240s time budget (safe under the 300s job
+    # timeout) and yields if universe_refresh is already draining the same queues.
+    # It logs internally per batch; the total is returned.
     settled = await settle_due()
     logger.debug("outcome_settler: %d outcomes settled this cycle", settled)
 

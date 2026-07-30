@@ -52,7 +52,8 @@
 
 - `mfe_pct`：持有期内按方向计算的最大有利变化，最小为 0。
 - `mae_pct`：持有期内按方向计算的最大不利变化，最大为 0。
-- `settlement_price_source`：`horizon_ohlcv` / `near_due_ticker` / `late_ticker`。
+- `settlement_price_source`：`horizon_ohlcv` / `horizon_ohlcv_local` / `near_due_ticker` / `late_ticker`。
+  `horizon_ohlcv_local` 与 `horizon_ohlcv` 语义完全相同——都是在 `due_at` 或之前收盘的已收 K 线，过同一道新鲜度闸门，因此同样 `price_quality_ok=True`；区别只在于前者读自本地已持久化的 `market_ohlcv`（正是本结算器自己写入的那些 K 线），且必须"根数完整"才被采用，不完整则落回交易所。分成两个值是为了让本地命中率可以直接从账本查出来。
 - `settlement_lag_sec`：实际结算时间相对 `due_at` 的延迟。
 - `cost_model_version`：当前为 `v1`，使后续模型升级可分 cohort 比较，禁止静默改写历史。
 

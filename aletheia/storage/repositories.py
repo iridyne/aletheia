@@ -3964,7 +3964,57 @@ def prune_filter_candidate_outcomes(
     if min_experiment_started_at is None:
         min_experiment_started_at = min_open_experiment_exposure_at()
     cutoff = _effective_cutoff(days, min_experiment_started_at)
-    return _delete_by_rowid_batches("filter_candidate_outcomes", "entry_ts < ?", (cutoff,))
+
+    # A row still 'pending' at the cutoff was never measured, and deleting it
+    # leaves nothing behind that says so: every coverage aggregation matches
+    # status='settled', and doctor's stale-overdue count only counts rows that
+    # still exist, so a queue that never caught up ends up indistinguishable from
+    # one that drained. The gap closes itself and the ledger reads as complete.
+    #
+    # Deletion still has to happen — retention is what keeps the file bounded, and
+    # a row this old is past the settler's reach anyway (the 1m/5m bars its window
+    # needs expired days earlier). What must not happen is the silence. So record
+    # the loss in audit_events, which is deliberately outside _PRUNABLE and never
+    # pruned, before the rows go.
+    unmeasured = get_db().execute(
+        "SELECT horizon, COUNT(*) FROM filter_candidate_outcomes "
+        "WHERE status = 'pending' AND entry_ts < ? GROUP BY horizon",
+        (cutoff,),
+    ).fetchall()
+    dropped = sum(row[1] for row in unmeasured)
+    if dropped:
+        by_horizon = {str(row[0]): int(row[1]) for row in unmeasured}
+        _sqlite_logger.warning(
+            "prune_filter_candidate_outcomes: %d filter-outcome rows reached the "
+            "%s retention cutoff still unmeasured (%s) — the canonical settler is "
+            "not keeping up; deleting them and recording the loss in audit_events",
+            dropped,
+            cutoff,
+            " ".join(f"{k}={v}" for k, v in sorted(by_horizon.items())),
+        )
+        insert_audit_event(AuditEvent(
+            actor="system",
+            source="prune_filter_candidate_outcomes",
+            event_type="filter_outcome_evidence_dropped_unmeasured",
+            entity_type="filter_candidate_outcomes",
+            entity_id=cutoff,
+            after_state=json.dumps({
+                "dropped_unmeasured": dropped,
+                "by_horizon": by_horizon,
+                "cutoff": cutoff,
+                "retention_days": days,
+            }, sort_keys=True),
+            message=(
+                f"{dropped} filter-outcome rows were deleted at the {cutoff} "
+                f"retention cutoff while still 'pending'. Their counterfactual "
+                f"returns were never measured, so Learning contribution and filter "
+                f"feedback over any window containing them are computed on an "
+                f"incomplete population."
+            ),
+        ))
+    return _delete_by_rowid_batches(
+        "filter_candidate_outcomes", "entry_ts < ?", (cutoff,)
+    )
 
 
 def prune_operator_evaluation_events(days: int = 30) -> int:
@@ -5002,42 +5052,107 @@ def list_open_learning_outcome_candidate_keys(
     }
 
 
+_PRIORITY_SCAN_BATCH_ROWS = 2000
+# The open-experiment keys attach to RECENT candidates, so when a backlog exists the
+# priority rows sit at the new end of the due range and a short scan finds none of
+# them (measured: 0 matches in the oldest 60k of a 193k-row backlog). The cap must
+# therefore admit a whole realistic backlog; the caller's deadline is the real guard.
+_PRIORITY_SCAN_CAP_ROWS = 400000
+
+
 def list_pending_filter_candidate_outcomes_for_keys(
     before_ts: str,
     outcome_candidate_keys: set[str],
     limit: int = 200,
-) -> list[dict]:
-    """Return due canonical outcomes for exact horizon-suffixed Learning keys."""
-    if not outcome_candidate_keys or limit <= 0:
-        return []
+    *,
+    deadline: float | None = None,
+) -> tuple[list[dict], bool]:
+    """Return (due canonical outcomes for exact Learning keys, truncated).
 
-    by_horizon: dict[str, set[str]] = {}
+    Cost scales with ``limit``, NOT with the size of ``outcome_candidate_keys``.
+    It used to be the other way around: the key set was chunked 400 at a time into
+    ``outcome_candidate_key IN (...)`` queries, each of which fetched *all* its
+    matches before a final sort truncated to ``limit``. With ~34k open-experiment
+    keys and ~190k due rows that measured 33s — more than the caller's entire
+    settlement budget — so the settlement loop never ran an iteration. It returned
+    0 without raising and without logging, and canonical settlement stopped dead
+    for hours while the forward mirror kept draining normally.
+
+    Adding ``ORDER BY due_at LIMIT`` per chunk did NOT fix it (measured 36s): each
+    chunk's matches are spread across the whole due range, so SQLite still had to
+    walk almost all of it before the limit could stop it. The direction is
+    therefore inverted — walk the cheap ``(status, due_at)`` index in due order
+    and test key membership in Python. That reads only as far as it needs to
+    collect ``limit`` rows, and yields the most-overdue priority rows first
+    instead of an arbitrary chunk's worth.
+
+    ``deadline`` is a ``time.monotonic()`` value. ``truncated`` is True when the
+    walk stopped on the deadline or the scan cap, so the caller can say so instead
+    of presenting a partial priority set as the complete one.
+    """
+    if not outcome_candidate_keys or limit <= 0:
+        return [], False
+
+    wanted: set[tuple[str, str]] = set()
     for key in outcome_candidate_keys:
         base, separator, horizon = str(key).rpartition(":")
         if separator and horizon in {"15m", "1h", "4h", "24h"}:
-            by_horizon.setdefault(horizon, set()).add(base)
+            wanted.add((base, horizon))
+    if not wanted:
+        return [], False
 
-    found: dict[str, dict] = {}
     db = get_db()
-    chunk_size = 400
-    for horizon, base_keys in by_horizon.items():
-        ordered_keys = sorted(base_keys)
-        for offset in range(0, len(ordered_keys), chunk_size):
-            chunk = ordered_keys[offset:offset + chunk_size]
-            placeholders = ", ".join("?" for _ in chunk)
-            rows = db.execute(
-                "SELECT * FROM filter_candidate_outcomes "
-                "WHERE status='pending' AND due_at <= ? AND horizon=? "
-                f"AND outcome_candidate_key IN ({placeholders})",
-                (before_ts, horizon, *chunk),
-            ).fetchall()
-            for row in rows:
-                found[str(row["id"])] = dict(row)
+    matched_ids: list[str] = []
+    scanned = 0
+    truncated = False
+    # Keyset pagination over (due_at, id) so each batch is an ordered index range
+    # read rather than a growing OFFSET scan. Only the four columns needed to test
+    # membership are read here; full rows are fetched for matches alone.
+    last_due = ""
+    last_id = ""
+    while len(matched_ids) < limit:
+        if deadline is not None and time.monotonic() >= deadline:
+            truncated = True
+            break
+        if scanned >= _PRIORITY_SCAN_CAP_ROWS:
+            truncated = True
+            break
+        rows = db.execute(
+            "SELECT id, outcome_candidate_key, horizon, due_at "
+            "FROM filter_candidate_outcomes "
+            "WHERE status='pending' AND due_at <= ? "
+            "AND (due_at > ? OR (due_at = ? AND id > ?)) "
+            "ORDER BY due_at ASC, id ASC LIMIT ?",
+            (before_ts, last_due, last_due, last_id, _PRIORITY_SCAN_BATCH_ROWS),
+        ).fetchall()
+        if not rows:
+            break
+        for row in rows:
+            if (str(row["outcome_candidate_key"]), str(row["horizon"])) in wanted:
+                matched_ids.append(str(row["id"]))
+                if len(matched_ids) >= limit:
+                    break
+        scanned += len(rows)
+        last_due = str(rows[-1]["due_at"])
+        last_id = str(rows[-1]["id"])
+        if len(rows) < _PRIORITY_SCAN_BATCH_ROWS:
+            break  # reached the end of the due range
 
-    return sorted(
-        found.values(),
-        key=lambda row: (str(row.get("due_at") or ""), str(row.get("id") or "")),
-    )[:limit]
+    if not matched_ids:
+        return [], truncated
+
+    by_id: dict[str, dict] = {}
+    for offset in range(0, len(matched_ids), 400):
+        chunk = matched_ids[offset:offset + 400]
+        placeholders = ", ".join("?" for _ in chunk)
+        for row in db.execute(
+            f"SELECT * FROM filter_candidate_outcomes WHERE id IN ({placeholders})",
+            tuple(chunk),
+        ).fetchall():
+            by_id[str(row["id"])] = dict(row)
+
+    # Preserve the due_at order the scan established.
+    return [by_id[i] for i in matched_ids if i in by_id], truncated
 
 
 def settle_filter_candidate_outcome(

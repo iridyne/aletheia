@@ -112,6 +112,561 @@ def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
     assert shadow_row["resolved_at"]
 
 
+def _due_filter_outcome(key, *, horizon="24h", hours_ago=25):
+    """A canonical outcome whose 24h horizon is already past due."""
+    from aletheia.storage.models import FilterCandidateOutcome
+
+    entry = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+    return FilterCandidateOutcome(
+        outcome_candidate_key=key,
+        venue="okx",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        scanner_family="momentum",
+        horizon=horizon,
+        entry_price_usd=100.0,
+        entry_spread_bps=10.0,
+        entry_ts=entry.isoformat(),
+        due_at=(entry + timedelta(hours=24)).isoformat(),
+    )
+
+
+def _settling_observations():
+    async def observations(rows, *, now):
+        return {
+            row["id"]: {
+                "exit_price": 102.0,
+                "range_high": 103.0,
+                "range_low": 99.0,
+                "price_source": "horizon_ohlcv",
+                "price_quality_ok": True,
+                "settlement_lag_sec": 30.0,
+            }
+            for row in rows
+        }
+
+    return observations
+
+
+def test_slow_priority_prologue_still_settles_due_rows(monkeypatch):
+    """A prologue that overruns its slice must cost ORDER, never throughput.
+
+    This is the defect that stopped canonical settlement for hours: expanding the
+    open-experiment keys grew past the entire cycle budget, so the settlement loop
+    never ran an iteration, the function returned 0 without raising, and the only
+    log line fired exclusively when settled > 0.
+    """
+    import time
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe import filter_outcome_recorder as fr
+
+    outcome = _due_filter_outcome("opportunity:slow-prologue")
+    repo.insert_filter_candidate_outcomes_batch([outcome])
+
+    deadlines = []
+
+    def slow_priority(before_ts, keys, limit, deadline=None):
+        deadlines.append(deadline)
+        time.sleep(0.45)  # > 0.30 * 1.0s slice, < the 1.0s cycle budget
+        return [], True
+
+    monkeypatch.setattr(
+        fr.repo, "list_pending_filter_candidate_outcomes_for_keys", slow_priority
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
+        _settling_observations(),
+    )
+
+    settled = asyncio.run(fr.settle_due_filter_outcomes(max_rows=1, time_budget_sec=1.0))
+
+    assert settled == 1, "an overrunning prologue must not zero out settlement"
+    assert deadlines and deadlines[0] is not None, "prologue must be time-boxed"
+    row = get_db().execute(
+        "SELECT status FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)
+    ).fetchone()
+    assert row["status"] == "settled"
+
+
+def test_zero_throughput_cycle_with_work_outstanding_is_logged(caplog):
+    """A cycle that settles nothing while rows are due must be audible."""
+    import logging
+
+    from aletheia.storage import repositories as repo
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+
+    repo.insert_filter_candidate_outcomes_batch(
+        [_due_filter_outcome("opportunity:zero-throughput")]
+    )
+
+    with caplog.at_level(
+        logging.WARNING, logger="aletheia.universe.filter_outcome_recorder"
+    ):
+        assert asyncio.run(
+            settle_due_filter_outcomes(max_rows=500, time_budget_sec=0.0)
+        ) == 0
+
+    assert any("not draining" in r.getMessage() for r in caplog.records)
+
+
+def test_caught_up_queue_does_not_warn(monkeypatch, caplog):
+    """The zero-throughput warning must stay silent when nothing is due.
+
+    Otherwise it fires every cycle once the backlog is actually drained, and an
+    always-on warning is indistinguishable from no warning at all.
+    """
+    import logging
+
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
+        _settling_observations(),
+    )
+
+    with caplog.at_level(
+        logging.WARNING, logger="aletheia.universe.filter_outcome_recorder"
+    ):
+        assert asyncio.run(
+            settle_due_filter_outcomes(max_rows=500, time_budget_sec=5.0)
+        ) == 0
+
+    assert not [r for r in caplog.records if "not draining" in r.getMessage()]
+
+
+def _aligned_1h_window(*, hours_ago=0):
+    """An aligned, already-past one-hour window. Exactly 60 expected 1m bars."""
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    due_ms = (now_ms // 60_000) * 60_000 - 60_000 - hours_ago * 3_600_000
+    return due_ms - 3_600_000, due_ms
+
+
+def _hourly_filter_outcome(key, entry_ms, due_ms, *, venue="okx"):
+    from aletheia.storage.models import FilterCandidateOutcome
+
+    return FilterCandidateOutcome(
+        outcome_candidate_key=key,
+        venue=venue,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        scanner_family="momentum",
+        horizon="1h",
+        entry_price_usd=100.0,
+        entry_spread_bps=10.0,
+        entry_ts=datetime.fromtimestamp(entry_ms / 1000, tz=timezone.utc).isoformat(),
+        due_at=datetime.fromtimestamp(due_ms / 1000, tz=timezone.utc).isoformat(),
+    )
+
+
+def _seed_local_1m_spot(entry_ms, count=60, *, exchange="okx"):
+    """A complete local 1m window whose extremes match the network fixture."""
+    from aletheia.data.providers import Candle
+    from aletheia.storage.repositories import upsert_ohlcv_candles
+
+    candles = [
+        Candle(entry_ms + i * 60_000, 100, 101, 99, 100.5, 10) for i in range(count)
+    ]
+    candles[-1] = Candle(entry_ms + (count - 1) * 60_000, 100.5, 103, 100, 102, 12)
+    upsert_ohlcv_candles(
+        "BTC/USDT", "1m", candles, exchange=exchange, market_type="spot"
+    )
+
+
+def test_locally_answerable_rows_settle_without_any_exchange_request(monkeypatch):
+    """Phase A must settle off the persisted window and hold no exchange resource.
+
+    This is where the throughput comes from. Before the split, settlement cost one
+    live request per row, so the row cap and the external load were the same
+    number and the only way to drain faster was to fetch harder.
+
+    The economics asserted here are byte-for-byte the ones
+    test_filter_outcome_settlement_uses_net_economics gets from the network path.
+    That equality is the point: the two phases share one apply() and one window
+    reducer, so they cannot drift in cost model, guards, or shadow linkage.
+    """
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+
+    entry_ms, due_ms = _aligned_1h_window()
+    _seed_local_1m_spot(entry_ms)
+    outcome = _hourly_filter_outcome("opportunity:local-phase-a", entry_ms, due_ms)
+    repo.insert_filter_candidate_outcomes_batch([outcome])
+
+    async def refuse(rows, *, now):
+        raise AssertionError("a complete local window must not reach the exchange")
+
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._batch_fetch_market_observations", refuse
+    )
+
+    assert asyncio.run(settle_due_filter_outcomes(max_rows=8, max_fetches=0)) == 1
+    row = get_db().execute(
+        "SELECT * FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)
+    ).fetchone()
+    assert row["status"] == "settled"
+    assert row["settlement_price_source"] == "horizon_ohlcv_local"
+    assert row["gross_return_pct"] == pytest.approx(2.0)
+    assert row["net_return_pct"] == pytest.approx(1.68)
+    assert row["mfe_pct"] == pytest.approx(3.0)
+    assert row["mae_pct"] == pytest.approx(-1.0)
+
+
+def test_rows_past_the_fetch_ceiling_stay_pending_and_are_never_failed(monkeypatch):
+    """Budget exhaustion is not a measurement failure.
+
+    Both settle loops treat "no observation" as terminal and mark the row
+    ``failed``, which is correct for a row the exchange answered badly and wrong
+    for a row that was never asked. A deferred row must come back next cycle, so
+    the ceiling has to stop it before apply() ever sees it.
+    """
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+
+    # No local window seeded, so every row misses and phase B owns all of them.
+    entry_ms, due_ms = _aligned_1h_window()
+    outcome = _hourly_filter_outcome("opportunity:over-budget", entry_ms, due_ms)
+    repo.insert_filter_candidate_outcomes_batch([outcome])
+
+    calls = []
+
+    async def observations(rows, *, now):
+        calls.append(len(rows))
+        return {}
+
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
+        observations,
+    )
+
+    assert asyncio.run(settle_due_filter_outcomes(max_rows=8, max_fetches=0)) == 0
+    assert not calls, "a zero fetch ceiling must issue no exchange request at all"
+    row = get_db().execute(
+        "SELECT status FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)
+    ).fetchone()
+    assert row["status"] == "pending", (
+        "a row deferred for lack of budget must be retried, not written off"
+    )
+
+
+class _PersistingProvider:
+    """A provider that persists what it returns, exactly as ccxt_provider does.
+
+    ``get_ohlcv`` writes every bar to market_ohlcv unconditionally (only the
+    in-process cache is gated on ``since``), which is what makes one request able
+    to answer more than one row. A fake that returns bars without persisting them
+    would test a system that does not exist.
+    """
+
+    def __init__(self, entry_ms, bars=300):
+        from aletheia.data.providers import Candle
+
+        self.calls = []
+        self._candles = [
+            Candle(entry_ms + i * 60_000, 100, 103, 99, 102, 10) for i in range(bars)
+        ]
+
+    async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        from aletheia.storage.repositories import upsert_ohlcv_candles
+
+        self.calls.append((str(instrument), timeframe, limit, since))
+        upsert_ohlcv_candles(
+            instrument.symbol,
+            timeframe,
+            list(self._candles),
+            exchange=instrument.exchange,
+            market_type=instrument.market_type,
+        )
+        return list(self._candles)
+
+    async def get_ticker(self, instrument):
+        raise AssertionError("horizon OHLCV should avoid current-ticker settlement")
+
+    async def close(self):
+        pass
+
+
+def test_one_request_settles_every_row_it_brought_bars_for(monkeypatch):
+    """The fetch budget is spent per instrument, not per row.
+
+    Rows on one instrument ask the same endpoint for the same series and differ
+    only in which slice they need, and _FETCH_PLAN asks for far more bars than any
+    one window uses. So the oldest row's response already contains the later rows'
+    windows, and those settle off disk for free. Spending the budget per row
+    instead would buy one row per request and leave the same bars unused.
+
+    Both rows here settle under a ceiling of ONE request. That is the whole
+    capacity argument: throughput rises while external load does not.
+    """
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+
+    # The oldest row drives the fetch, so the sibling's window has to be both
+    # already past AND inside the 300 one-minute bars that fetch brings back.
+    entry_ms, due_ms = _aligned_1h_window(hours_ago=4)
+    sib_entry, sib_due = _aligned_1h_window(hours_ago=1)
+    assert sib_due <= entry_ms + 300 * 60_000, "sibling must fall inside the span"
+    repo.insert_filter_candidate_outcomes_batch([
+        _hourly_filter_outcome("opportunity:group-oldest", entry_ms, due_ms),
+        _hourly_filter_outcome("opportunity:group-sibling", sib_entry, sib_due),
+    ])
+    provider = _PersistingProvider(entry_ms)
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+    )
+
+    assert asyncio.run(settle_due_filter_outcomes(max_rows=8, max_fetches=1)) == 2
+    assert len(provider.calls) == 1, "one instrument must cost one request"
+    assert provider.calls[0][3] is not None, "the oldest member drives the fetch"
+    sources = {
+        row["outcome_candidate_key"]: row["settlement_price_source"]
+        for row in get_db().execute(
+            "SELECT outcome_candidate_key, settlement_price_source, status "
+            "FROM filter_candidate_outcomes"
+        ).fetchall()
+    }
+    assert sources["opportunity:group-oldest"] == "horizon_ohlcv"
+    assert sources["opportunity:group-sibling"] == "horizon_ohlcv_local", (
+        "the sibling must be harvested from the bars the request persisted"
+    )
+
+
+class _SinceHonouringProvider:
+    """Persists 300 bars starting at ``since``, and no further, like the real one.
+
+    _FETCH_PLAN asks for 300 one-minute bars from the row's own entry and OKX caps
+    history-candles at 300, so a request issued for an old row physically cannot
+    reach a window that sits hours later. That is the case the harvest cannot
+    answer, and it has to be a fetch rather than a shrug.
+    """
+
+    def __init__(self, span_bars=300):
+        self.calls = []
+        self._span = span_bars
+
+    async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        from aletheia.data.providers import Candle
+        from aletheia.storage.repositories import upsert_ohlcv_candles
+
+        self.calls.append((str(instrument), timeframe, limit, since))
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        start = int(since)
+        candles = [
+            Candle(start + i * 60_000, 100, 103, 99, 102, 10)
+            for i in range(self._span)
+            if start + i * 60_000 < now_ms
+        ]
+        upsert_ohlcv_candles(
+            instrument.symbol,
+            timeframe,
+            candles,
+            exchange=instrument.exchange,
+            market_type=instrument.market_type,
+        )
+        return candles
+
+    async def close(self):
+        return None
+
+
+def test_a_sibling_the_fetched_span_missed_is_fetched_not_starved(monkeypatch):
+    """Grouping defers a sibling; it must never abandon one.
+
+    Collapsing an instrument's rows onto one representative is a bet that the
+    representative's response covers the siblings. When the bet loses — the
+    sibling's window falls outside the 300 bars that came back — the sibling has to
+    be fetched on its own. Grouping exists to stretch a SCARCE request budget, so
+    it may not leave a row unmeasured while budget is still available.
+
+    Without the round loop this settled one row per cycle per instrument no matter
+    how much budget was free, which is a throughput regression disguised as
+    thrift: the queue would have kept growing while the ceiling went unspent.
+    """
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+
+    rep_entry, rep_due = _aligned_1h_window(hours_ago=10)
+    sib_entry, sib_due = _aligned_1h_window(hours_ago=1)
+    assert sib_due > rep_entry + 300 * 60_000, "sibling must fall OUTSIDE the span"
+    repo.insert_filter_candidate_outcomes_batch([
+        _hourly_filter_outcome("opportunity:span-oldest", rep_entry, rep_due),
+        _hourly_filter_outcome("opportunity:span-beyond", sib_entry, sib_due),
+    ])
+    provider = _SinceHonouringProvider()
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+    )
+
+    assert asyncio.run(settle_due_filter_outcomes(max_rows=8)) == 2
+    assert len(provider.calls) == 2, (
+        "the uncovered sibling must cost its own request rather than wait a cycle"
+    )
+    rows = {
+        row["outcome_candidate_key"]: (row["status"], row["settlement_price_source"])
+        for row in get_db().execute(
+            "SELECT outcome_candidate_key, status, settlement_price_source "
+            "FROM filter_candidate_outcomes"
+        ).fetchall()
+    }
+    assert rows["opportunity:span-oldest"] == ("settled", "horizon_ohlcv")
+    assert rows["opportunity:span-beyond"] == ("settled", "horizon_ohlcv")
+
+
+def test_an_uncovered_sibling_still_defers_when_the_budget_is_spent(monkeypatch):
+    """The round loop must not become a way around the request ceiling.
+
+    Same two rows as above, but only one request is affordable. The sibling the
+    span missed then stays 'pending' — deferred, not failed — because budget
+    exhaustion is not a measurement failure.
+    """
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+
+    rep_entry, rep_due = _aligned_1h_window(hours_ago=10)
+    sib_entry, sib_due = _aligned_1h_window(hours_ago=1)
+    repo.insert_filter_candidate_outcomes_batch([
+        _hourly_filter_outcome("opportunity:capped-oldest", rep_entry, rep_due),
+        _hourly_filter_outcome("opportunity:capped-beyond", sib_entry, sib_due),
+    ])
+    provider = _SinceHonouringProvider()
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+    )
+
+    assert asyncio.run(settle_due_filter_outcomes(max_rows=8, max_fetches=1)) == 1
+    assert len(provider.calls) == 1
+    statuses = {
+        row["outcome_candidate_key"]: row["status"]
+        for row in get_db().execute(
+            "SELECT outcome_candidate_key, status FROM filter_candidate_outcomes"
+        ).fetchall()
+    }
+    assert statuses["opportunity:capped-oldest"] == "settled"
+    assert statuses["opportunity:capped-beyond"] == "pending"
+
+
+def test_the_fetch_ceiling_holds_across_every_round(monkeypatch):
+    """The request ceiling is the load-safety property, so it must bound the TOTAL.
+
+    Rounds exist so a sibling the fetched span missed is not abandoned, but that
+    must not turn into a second helping of budget. Here six instruments each have
+    two rows whose windows cannot share a response, so every row wants its own
+    request and the harvest can never answer one. Under a ceiling of five, exactly
+    five requests may leave the process no matter how many rounds run.
+
+    This is what keeps 400 requests per cycle a real 0.67/sec rather than a
+    per-round figure multiplied by however many rounds a bad cycle needs.
+    """
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+
+    rep_entry, rep_due = _aligned_1h_window(hours_ago=10)
+    sib_entry, sib_due = _aligned_1h_window(hours_ago=1)
+    assert sib_due > rep_entry + 300 * 60_000, "the harvest must not be able to help"
+    rows = []
+    for n in range(6):
+        rows.append(
+            _hourly_filter_outcome(f"opportunity:cap-{n}-old", rep_entry, rep_due,
+                                   venue=f"venue{n}")
+        )
+        rows.append(
+            _hourly_filter_outcome(f"opportunity:cap-{n}-new", sib_entry, sib_due,
+                                   venue=f"venue{n}")
+        )
+    repo.insert_filter_candidate_outcomes_batch(rows)
+    provider = _SinceHonouringProvider()
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+    )
+
+    settled = asyncio.run(settle_due_filter_outcomes(max_rows=64, max_fetches=5))
+    assert len(provider.calls) == 5, (
+        f"the ceiling must bound total requests across rounds, got "
+        f"{len(provider.calls)}"
+    )
+    assert settled == 5
+    pending = get_db().execute(
+        "SELECT COUNT(*) AS n FROM filter_candidate_outcomes WHERE status='pending'"
+    ).fetchone()["n"]
+    assert pending == 7, "the seven unaffordable rows must be deferred, not failed"
+
+
+def test_each_distinct_instrument_costs_one_unit_of_the_fetch_budget(monkeypatch):
+    """The ceiling must bite mid-population, not only at zero.
+
+    Two rows on different instruments cannot share a response, so a ceiling of one
+    admits one of them and defers the other to the next cycle. Grouping must not
+    quietly turn the request cap into a per-instrument-free-for-all.
+    """
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+
+    entry_ms, due_ms = _aligned_1h_window()
+    repo.insert_filter_candidate_outcomes_batch([
+        _hourly_filter_outcome("opportunity:venue-a", entry_ms, due_ms, venue="okx"),
+        _hourly_filter_outcome(
+            "opportunity:venue-b", entry_ms, due_ms, venue="binance"
+        ),
+    ])
+    provider = _PersistingProvider(entry_ms)
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+    )
+
+    assert asyncio.run(settle_due_filter_outcomes(max_rows=8, max_fetches=1)) == 1
+    assert len(provider.calls) == 1
+    statuses = sorted(
+        row["status"]
+        for row in get_db().execute(
+            "SELECT status FROM filter_candidate_outcomes"
+        ).fetchall()
+    )
+    assert statuses == ["pending", "settled"]
+
+
+def test_pending_for_keys_is_bounded_by_limit_and_deadline():
+    """Cost must scale with `limit`, not with the number of open-experiment keys."""
+    import time
+
+    from aletheia.storage import repositories as repo
+
+    learning_keys = set()
+    rows = []
+    for i in range(5):
+        base = f"opportunity:bounded-{i}"
+        learning_keys.add(f"{base}:24h")
+        rows.append(_due_filter_outcome(base, hours_ago=30 + i))
+    repo.insert_filter_candidate_outcomes_batch(rows)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    selected, truncated = repo.list_pending_filter_candidate_outcomes_for_keys(
+        now_iso, learning_keys, limit=2,
+    )
+    assert truncated is False
+    # Later i means an earlier entry_ts, hence an earlier due_at: bounded-4 is the
+    # most overdue and must be settled first.
+    assert [r["outcome_candidate_key"] for r in selected] == [
+        "opportunity:bounded-4",
+        "opportunity:bounded-3",
+    ]
+
+    expired, expired_truncated = repo.list_pending_filter_candidate_outcomes_for_keys(
+        now_iso, learning_keys, limit=5, deadline=time.monotonic() - 1.0,
+    )
+    assert expired == []
+    assert expired_truncated is True
+
+
 def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
     from aletheia.analytics.filter_evidence import (
         filter_feedback_stats,
