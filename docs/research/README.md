@@ -14,6 +14,7 @@ Research files are evidence, audits, and explorations. They can guide work but d
 | `integrations/` | Demo/live parity and infrastructure integrations |
 | `knowledge-bases/` | Imported or synthesized domain knowledge bases |
 | `explorations/` | Smaller exploratory reports and postmortems |
+| `tokenomics/` | LLM harness and cost-control research feeding the `tokenomics` branch |
 
 ## Agent Rule
 
