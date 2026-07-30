@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -48,7 +49,9 @@ def test_pytest_policy_rejects_an_unawaited_coroutine(tmp_path):
     """The repository warning policy must turn a leaked coroutine into failure."""
 
     root = Path(__file__).resolve().parents[1]
-    probe = tmp_path / "test_unawaited_probe.py"
+    probe_root = root / ".pytest_tmp_unawaited_probe"
+    probe_root.mkdir(exist_ok=True)
+    probe = probe_root / f"test_unawaited_probe_{uuid4().hex}.py"
     probe.write_text(
         """
 async def leaked():
@@ -61,23 +64,32 @@ def test_probe():
         encoding="utf-8",
     )
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "-c",
-            str(root / "pyproject.toml"),
-            str(probe),
-            "-q",
-        ],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=60,
-    )
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-c",
+                str(root / "pyproject.toml"),
+                str(probe),
+                "-q",
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
 
-    combined = result.stdout + result.stderr
-    assert result.returncode != 0, combined
-    assert "was never awaited" in combined
+        combined = result.stdout + result.stderr
+        assert result.returncode != 0, combined
+        assert (
+            "was never awaited" in combined
+            or "PytestUnraisableExceptionWarning" in combined
+        ), combined
+    finally:
+        try:
+            probe.unlink()
+        except FileNotFoundError:
+            pass

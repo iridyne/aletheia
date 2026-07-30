@@ -8,6 +8,7 @@ non-Windows no-op, schtasks-missing graceful degradation, and audit on
 human-triggered enable/disable.
 """
 
+import os
 import sqlite3
 import plistlib
 from pathlib import Path
@@ -71,7 +72,7 @@ def _force_macos(monkeypatch, autostart, tmp_path):
     monkeypatch.setattr(autostart, "_launch_agents_dir", lambda: launch_agents)
     monkeypatch.setattr(autostart, "_PROJECT_ROOT", project_root)
     monkeypatch.setattr(autostart.sys, "executable", str(project_root / ".venv/bin/python"))
-    monkeypatch.setattr(autostart.os, "getuid", lambda: 501)
+    monkeypatch.setattr(autostart.os, "getuid", lambda: 501, raising=False)
     return launch_agents, project_root
 
 
@@ -619,7 +620,8 @@ def test_macos_enable_writes_plist_bootstraps_kickstarts_and_audits(tmp_path, mo
 
     plist_path = launch_agents / f"{autostart.LAUNCHD_LABEL}.plist"
     assert plist_path.exists()
-    assert plist_path.stat().st_mode & 0o777 == 0o644
+    if os.name != "nt":
+        assert plist_path.stat().st_mode & 0o777 == 0o644
     assert plistlib.loads(plist_path.read_bytes())["Label"] == autostart.LAUNCHD_LABEL
     assert any(call[1] == "bootstrap" for call in calls)
     assert any(call[1] == "kickstart" for call in calls)

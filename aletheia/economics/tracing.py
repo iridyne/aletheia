@@ -584,7 +584,7 @@ def list_cost_summary(
     db = ensure_economics_schema()
     where = [
         "replace(started_at,' ','T') >= replace(?,' ','T')",
-        "replace(started_at,' ','T') < replace(?,' ','T')",
+        "replace(started_at,' ','T') <= replace(?,' ','T')",
     ]
     params: list[Any] = [window_start, window_end]
     if run_id:
