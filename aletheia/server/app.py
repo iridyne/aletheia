@@ -633,6 +633,15 @@ _PROTECTED_PATHS = {
     # Capital events (deposit/withdraw) alter the capital baseline used by drawdown
     # and kill-switch calculations — fabricating one lowers the safety net.
     "/api/capital/events",
+    # #404: Local Paper account cash mutations and bulk-close controls alter the
+    # authoritative paper capital baseline and can force-close real paper positions.
+    # Unauthenticated access would allow fabricating deposits, draining capital,
+    # or contaminating Learning/attribution evidence without owner authentication.
+    "/api/settings/paper-account/credit",
+    "/api/settings/paper-account/debit",
+    "/api/settings/paper-account/set-balance",
+    "/api/settings/paper-account/close-all",
+    "/api/settings/paper-account/close-spot",
 }
 
 # #41 fix: whole path PREFIXES that must require the tunnel token when the tunnel

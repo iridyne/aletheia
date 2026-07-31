@@ -197,8 +197,11 @@ def _require_local_paper_mode() -> None:
 
 def _audit_paper_account_change(action: str, before: dict, after: dict, note: str) -> None:
     from aletheia.files.jsonl import write_audit
+    cfg = load_config()
+    tunnel_active = getattr(getattr(cfg, "tunnel", None), "enabled", False)
+    source = "tunnel_dashboard" if tunnel_active else "dashboard"
     write_audit({
-        "actor": "human", "source": "dashboard", "event_type": f"paper_account_{action}",
+        "actor": "human", "source": source, "event_type": f"paper_account_{action}",
         "entity_type": "paper_account", "before": before, "after": after,
         "message": f"Local paper account {action}: {note or 'manual operator action'}",
     })
@@ -271,12 +274,15 @@ def _close_local_positions(market_type: str | None) -> dict:
         close_local_positions_batch,
     )
 
+    cfg = load_config()
+    tunnel_active = getattr(getattr(cfg, "tunnel", None), "enabled", False)
+    decision_source = "tunnel_dashboard" if tunnel_active else "dashboard"
     try:
         result = close_local_positions_batch(
             market_type,
             reason="manual_bulk_close",
             decision_actor="human",
-            decision_source="dashboard",
+            decision_source=decision_source,
         )
     except LocalPaperClosePreflightError as exc:
         raise HTTPException(

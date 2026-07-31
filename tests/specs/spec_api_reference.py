@@ -16,6 +16,7 @@ Claim hierarchy
   API-S07  L2a  _PROTECTED_PATHS in app.py includes live-unlock and kill-switch
   API-S08  L2b  Tunnel enabled + no token → protected paths return 401 (fail-closed)
   API-S10  L2a  Exchange credential tests use private account endpoints
+  API-S11  L2a  _PROTECTED_PATHS includes all five Local Paper account mutation routes
 """
 
 import ast
@@ -201,6 +202,48 @@ def test_protected_paths_contains_live_unlock_and_kill_switch():
         "/api/settings/autonomous-learning must be in _PROTECTED_PATHS — "
         "the master Learning gate changes scheduler and lifecycle behavior"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "API-S11", "api_reference", "§trust-boundary paper-account mutations", "L2a",
+        "_PROTECTED_PATHS in app.py includes all five Local Paper account mutation routes",
+    ),
+)
+def test_protected_paths_contains_paper_account_mutations():
+    """AST-parse app.py and verify all Local Paper mutation paths are guarded.
+
+    These routes mutate the authoritative paper cash ledger or force-close paper
+    positions.  An unauthenticated tunnel caller must not be able to fabricate
+    deposits, drain capital, or contaminate Learning evidence.
+    """
+    src = _APP_PY.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    protected: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "_PROTECTED_PATHS"
+            and isinstance(node.value, ast.Set)
+        ):
+            for elt in node.value.elts:
+                if isinstance(elt, ast.Constant):
+                    protected.add(elt.value)
+
+    for path in (
+        "/api/settings/paper-account/credit",
+        "/api/settings/paper-account/debit",
+        "/api/settings/paper-account/set-balance",
+        "/api/settings/paper-account/close-all",
+        "/api/settings/paper-account/close-spot",
+    ):
+        assert path in protected, (
+            f"{path} must be in _PROTECTED_PATHS — "
+            "Local Paper cash mutations and bulk-close are owner-only economic actions"
+        )
 
 
 # ---------------------------------------------------------------------------
