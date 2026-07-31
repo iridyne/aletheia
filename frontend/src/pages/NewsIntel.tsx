@@ -41,8 +41,12 @@ export default function NewsIntel() {
   const analyzeMut = useMutation({
     mutationFn: (id: string) => api.analyzeNews(id),
     onSuccess: (data: any) => {
-      setAnalysis(data.analysis)
       qc.invalidateQueries({ queryKey: ['news'] })
+      if (data.success) {
+        setAnalysis(data.impact_summary || '')
+      } else {
+        toast('error', `Analysis failed (${data.status}). Will retry automatically.`)
+      }
     },
     onError: (e: any) => toast('error', `Analyze failed: ${e?.message || 'request failed'}`),
   })

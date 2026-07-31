@@ -505,3 +505,126 @@ def test_research_news_revalidates_historical_entity_tags(tmp_path, monkeypatch)
     assert "Solana validator demand rises" in rendered
     assert "[SOL/USDT]" in rendered
     assert "WRONG/USDT" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_manual_analyze_one_item_success_persists_all_structured_fields(
+    tmp_path, monkeypatch,
+):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.data import news_analyzer
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO news_items (id, title, source, summary, published_at, status) "
+        "VALUES ('manual-ok', 'Solana demand rises', 'fixture', 'sol summary', "
+        "'2026-07-19T00:00:00Z', 'new')"
+    )
+    db.commit()
+
+    async def good_analysis(**_kwargs):
+        return {
+            "sentiment": "bullish",
+            "symbols": ["DOGE/USDT"],
+            "relevance": 0.85,
+            "impact": "Price support expected.",
+        }, None
+
+    monkeypatch.setattr(news_analyzer, "llm_structured", good_analysis)
+
+    result = await news_analyzer.analyze_one_item("manual-ok")
+
+    assert result["success"] is True
+    assert result["status"] == "analyzed"
+    item = result["item"]
+    assert item["sentiment"] == "bullish"
+    assert item["relevance_score"] == pytest.approx(0.85)
+    assert item["impact_summary"] == "Price support expected."
+    assert item["analyzed_at"] is not None
+
+    row = db.execute(
+        "SELECT status, sentiment, relevance_score, impact_summary, symbols_mentioned, analyzed_at "
+        "FROM news_items WHERE id='manual-ok'"
+    ).fetchone()
+    assert row["status"] == "analyzed"
+    assert row["sentiment"] == "bullish"
+    assert row["relevance_score"] == pytest.approx(0.85)
+    assert row["impact_summary"] == "Price support expected."
+    assert row["analyzed_at"] is not None
+    # entity matcher is used, not the model's symbol guess
+    assert json.loads(row["symbols_mentioned"]) == ["SOL/USDT"]
+    # response matches DB
+    assert item["sentiment"] == row["sentiment"]
+    assert item["impact_summary"] == row["impact_summary"]
+
+
+@pytest.mark.asyncio
+async def test_manual_analyze_one_item_failure_never_marks_analyzed(
+    tmp_path, monkeypatch,
+):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.data import news_analyzer
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO news_items (id, title, source, summary, published_at, status) "
+        "VALUES ('manual-fail', 'Bitcoin update', 'fixture', '', "
+        "'2026-07-19T00:00:00Z', 'new')"
+    )
+    db.commit()
+
+    async def provider_error(**_kwargs):
+        return None, "provider unavailable"
+
+    monkeypatch.setattr(news_analyzer, "llm_structured", provider_error)
+
+    result = await news_analyzer.analyze_one_item("manual-fail")
+
+    assert result["success"] is False
+    assert result["status"] == "analysis_retry"
+    assert result["retry_eligible"] is True
+
+    row = db.execute(
+        "SELECT status FROM news_items WHERE id='manual-fail'"
+    ).fetchone()
+    assert row["status"] == "analysis_retry"
+
+
+@pytest.mark.asyncio
+async def test_manual_analyze_already_analyzed_returns_persisted_without_rerun(
+    tmp_path, monkeypatch,
+):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.data import news_analyzer
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO news_items "
+        "(id, title, source, summary, published_at, status, sentiment, "
+        " relevance_score, impact_summary, symbols_mentioned, analyzed_at) "
+        "VALUES ('manual-done', 'ETH upgrade', 'fixture', '', "
+        "'2026-07-19T00:00:00Z', 'analyzed', 'bullish', 0.9, 'Upgrade expected.', "
+        "'[\"ETH/USDT\"]', '2026-07-19T10:00:00Z')"
+    )
+    db.commit()
+
+    llm_calls = []
+
+    async def should_not_call(**_kwargs):
+        llm_calls.append(True)
+        return {"sentiment": "bearish", "symbols": [], "relevance": 0.1, "impact": "x"}, None
+
+    monkeypatch.setattr(news_analyzer, "llm_structured", should_not_call)
+
+    result = await news_analyzer.analyze_one_item("manual-done")
+
+    assert llm_calls == [], "LLM must not be called for already-analyzed items"
+    assert result["success"] is True
+    assert result["status"] == "analyzed"
+    item = result["item"]
+    assert item["sentiment"] == "bullish"
+    assert item["impact_summary"] == "Upgrade expected."
+    assert item["symbols_mentioned"] == ["ETH/USDT"]
