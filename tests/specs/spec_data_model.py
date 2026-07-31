@@ -113,6 +113,7 @@ def test_threads_get_different_connections(tmp_path, monkeypatch):
 
     conns: list[sqlite3.Connection] = []
     lock = threading.Lock()
+    ready = threading.Barrier(3)
 
     def get_conn(db_file):
         # Each thread builds a brand-new connection just like aletheia.storage.sqlite
@@ -130,7 +131,7 @@ def test_threads_get_different_connections(tmp_path, monkeypatch):
     t1 = threading.Thread(target=get_conn, args=(tmp_path / "t1.db",))
     t2 = threading.Thread(target=get_conn, args=(tmp_path / "t2.db",))
     t1.start(); t2.start()
-    t1.join(); t2.join()
+    ready.wait()
 
     try:
         assert len(conns) == 2
