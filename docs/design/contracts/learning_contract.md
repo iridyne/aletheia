@@ -442,13 +442,16 @@ current Contract behavior.
 ## 7. Guard Candidates And Promotion
 
 `guard_candidate` entries are candidate defensive rules. They may become
-`trading_guard` entries through two paths:
+`trading_guard` entries through owner review:
 
 1. **Manual review**: dashboard/API promotion through
-   `POST /knowledge/guard-candidates/{guard_id}/promote`.
-2. **Configured auto-promotion**: scheduled `guard_promotion` job, gated by
-   `config.guard.auto_promote_enabled`, promotes candidates only after evidence
-   thresholds are met.
+   `POST /knowledge/guard-candidates/{guard_id}/promote`. A shadow learned candidate
+   becomes active observation; this storage transition does not grant block or
+   score-penalty authority.
+
+`config.guard.auto_promote_enabled` is a legacy setting. The scheduled job cannot
+promote or unshadow normal auto-generated candidates, and manual/seed guards are
+excluded from that job. Historical match counts alone never grant authority.
 
 Promotion must preserve auditability:
 
@@ -456,11 +459,12 @@ Promotion must preserve auditability:
 - The source candidate is deprecated, not hard-deleted.
 - A `TRADING_GUARD_PROMOTED` event is written.
 
-The present promotion gate is evidence-gated but retrospective. Prospective
-blocked-candidate outcomes, supply-harm checks, continual holdout, and automatic
-demotion remain part of the
-[`learning_evolution.md`](../proposals/learning_evolution.md) design, not this
-current Contract.
+The current registry marks `ranker_learned_guard` measurement-unsupported, so
+learned guards remain observe-only and create no formal experiment authority.
+Prospective blocked-candidate outcomes, supply-harm checks, continual holdout, and
+automatic demotion remain part of the
+[`learning_evolution.md`](../proposals/learning_evolution.md) design, not current
+Contract behavior.
 
 Ranker enforcement keeps two authority classes separate:
 
@@ -469,12 +473,12 @@ Ranker enforcement keeps two authority classes separate:
   not disable these static safety rules;
 - learned guards are stored observe-only. Automatic creation preserves their explicit proposed
   block and score penalty in separate metadata instead of erasing it;
-- for every matching Opportunity, `ranker_learned_guard` uses the existing prospective assignment
-  adapter with baseline `0` and treatment `1`. The exposure records the candidate key,
-  Opportunity id, and the fixed-horizon outcome key when one exists. Control, missing identity,
-  disabled/unallowlisted influence, stale authority, or adapter failure remains observe-only;
-- only an exactly authorized treatment may restore that guard's preserved proposed block/penalty.
-  The treatment never grants Risk, Execution, exchange, or live authority.
+- matching Opportunities call the registered `ranker_learned_guard` adapter with baseline `0`,
+  but its current measurement-unsupported registry state returns the static baseline before any
+  hypothesis, experiment, exposure, or assignment is created;
+- a future path-specific program would need complete prospective measurement and explicit owner
+  admission before an exact treatment could restore the preserved proposed block/penalty. Such a
+  treatment could never grant Risk, Execution, exchange, or live authority.
 
 ---
 

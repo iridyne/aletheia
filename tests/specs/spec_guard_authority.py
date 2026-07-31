@@ -69,6 +69,128 @@ def test_guard_origin_classifies_provenance():
     assert guard_origin({"guard_id": "y", "auto_generated": True}) == "learned"
 
 
+@spec_claim(SpecClaim(
+    "GA-S12", "guard_authority", "§owner read model", "L2a",
+    "Guard API projection separates lifecycle, provenance, proposed effect, experiment context, assignment authority, and baseline effect."))
+def test_guard_api_projection_names_active_learned_guard_as_observe_only():
+    from aletheia.knowledge.guards import TradingGuard
+    from aletheia.server.routes.data import _guard_response
+
+    guard = TradingGuard(
+        guard_id="auto_momentum_btc",
+        title="Momentum losses",
+        status="active",
+        enforcement="blocking",
+        block_candidate=False,
+        score_penalty=0.0,
+        proposed_block_candidate=True,
+        proposed_score_penalty=12.0,
+        shadow_only=True,
+        tags=["auto-generated", "shadow-only"],
+    )
+
+    row = _guard_response(guard, {
+        "experiment_id": "experiment-1",
+        "stage": "paper_10",
+        "status": "active",
+    })
+
+    assert row["lifecycle_status"] == "active_observe"
+    assert row["origin"] == "learned"
+    assert row["shadow_only"] is True
+    assert row["proposed_effect"] == {"block_candidate": True, "score_penalty": 12.0}
+    assert row["experiment_id"] is None
+    assert row["experiment_stage"] is None
+    assert row["assignment"] is None
+    assert row["authority_granted"] is False
+    assert row["authority_scope"] == "unsupported"
+    assert row["actual_effect"] == {"block_candidate": False, "score_penalty": 0.0}
+    assert row["activation_effect"] == {"block_candidate": False, "score_penalty": 0.0}
+
+
+@spec_claim(SpecClaim(
+    "GA-S13", "guard_authority", "§owner read model", "L2a",
+    "Owner-authored active guards remain visibly distinct from learned experiment-gated guards."))
+def test_guard_api_projection_keeps_owner_guard_effect_truthful():
+    from aletheia.knowledge.guards import TradingGuard
+    from aletheia.server.routes.data import _guard_response
+
+    row = _guard_response(TradingGuard(
+        guard_id="manual-btc-guard",
+        title="Owner guard",
+        status="active",
+        enforcement="blocking",
+        block_candidate=True,
+        score_penalty=5.0,
+    ))
+
+    assert row["lifecycle_status"] == "active_enforced"
+    assert row["origin"] == "manual"
+    assert row["authority_granted"] is True
+    assert row["authority_scope"] == "guard"
+    assert row["actual_effect"] == {"block_candidate": True, "score_penalty": 5.0}
+
+    disabled = _guard_response(TradingGuard(
+        guard_id="manual-btc-guard",
+        title="Owner guard",
+        status="active",
+        enforcement="blocking",
+        block_candidate=True,
+        score_penalty=5.0,
+    ), evaluation_enabled=False)
+    assert disabled["lifecycle_status"] == "active_observe"
+    assert disabled["authority_granted"] is True
+    assert disabled["actual_effect"] == {"block_candidate": False, "score_penalty": 0.0}
+
+    candidate = _guard_response(TradingGuard(
+        guard_id="manual-new-guard",
+        title="Owner candidate",
+        status="candidate",
+    ), evaluation_enabled=False)
+    assert candidate["proposed_effect"] == {
+        "block_candidate": False,
+        "score_penalty": 0.0,
+    }
+    assert candidate["activation_effect"] == {
+        "block_candidate": True,
+        "score_penalty": 10.0,
+    }
+
+    manual_shadow = _guard_response(TradingGuard(
+        guard_id="manual-shadow",
+        title="Owner shadow candidate",
+        status="candidate",
+        shadow_only=True,
+        block_candidate=True,
+        score_penalty=7.0,
+    ))
+    assert manual_shadow["activation_effect"] == {
+        "block_candidate": False,
+        "score_penalty": 0.0,
+    }
+
+    negative = _guard_response(TradingGuard(
+        guard_id="manual-negative",
+        title="Owner negative candidate",
+        status="candidate",
+        score_penalty=-5.0,
+    ))
+    assert negative["proposed_effect"]["score_penalty"] == -5.0
+    assert negative["activation_effect"] == {
+        "block_candidate": True,
+        "score_penalty": -5.0,
+    }
+
+
+@spec_claim(SpecClaim(
+    "GA-S14", "guard_authority", "§owner read model", "L2a",
+    "Guard API exposes no experiment context while ranker_learned_guard is measurement-unsupported."))
+def test_guard_api_projection_has_no_unsupported_experiment_context():
+    from aletheia.server.routes.data import _guard_experiments_by_id
+
+    assert _guard_experiments_by_id() == {}
+
+
 @spec_claim(
     SpecClaim(
         "GA-S04", "guard_authority", "§enforcement seam", "L2b",

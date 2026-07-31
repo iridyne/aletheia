@@ -12,6 +12,7 @@ import { MeasuredPathSelector } from '../components/MeasuredPathSelector'
 import { Badge, Button, Card, CardHeader, Meter, StatusText } from '../components/ui'
 import type { StatusTone } from '../components/ui'
 import { fmtNum, fmtSigned, humanize, fmtTimestamp } from '../lib/format'
+import { guardActivationConfirmation, guardEffectText, type GuardRow } from '../lib/guards'
 import { deriveContributionViewState, measuredContributionPathIds } from '../lib/learningContribution'
 
 /**
@@ -491,12 +492,6 @@ type LessonRow = {
   activated_at?: string; dry_run_until?: string; expires_at?: string
 }
 
-// Guard row shape (matches /api/knowledge/guards output).
-type GuardRow = {
-  guard_id: string; title: string; description?: string
-  status?: string; scope?: string; enforcement?: string; severity?: string
-  score_penalty?: number; block_candidate?: boolean; tags?: string[]
-}
 const lessonCol = createColumnHelper<LessonRow>()
 const lessonColumns = [
   lessonCol.accessor('summary', { header: 'Summary', cell: info => <span>{(info.getValue() || '').slice(0, 120)}{(info.getValue() || '').length > 120 ? '…' : ''}</span> }),
@@ -511,9 +506,9 @@ const guardCol = createColumnHelper<GuardRow>()
 const guardColumns = [
   guardCol.accessor('title', { header: 'Guard', cell: info => <span>{info.getValue()}</span> }),
   guardCol.accessor('severity', { header: 'Severity', cell: info => <Badge tone={severityTone(info.getValue())}>{humanize(info.getValue() || '—')}</Badge> }),
-  guardCol.accessor('enforcement', { header: 'Mode', cell: info => <Badge tone={info.getValue() === 'blocking' ? 'red' : 'yellow'}>{humanize(info.getValue() || '—')}</Badge> }),
+  guardCol.accessor('lifecycle_status', { header: 'State', cell: info => <StatusBadge status={info.getValue() || ''} /> }),
   guardCol.accessor('scope', { header: 'Scope', cell: info => <Badge tone="blue">{humanize(info.getValue() || '—')}</Badge> }),
-  guardCol.accessor('score_penalty', { header: 'Penalty', cell: info => { const v = info.getValue(); return <span className="mono">{v ? `-${v}` : '—'}</span> } }),
+  guardCol.accessor(row => row.actual_effect?.score_penalty, { id: 'baselinePenalty', header: 'Baseline Penalty', cell: info => { const v = info.getValue(); return <span className="mono">{v ? `-${v}` : '—'}</span> } }),
 ]
 
 function KnowledgeTab() {
@@ -654,21 +649,33 @@ function KnowledgeTab() {
                   size="sm"
                   variant="primary"
                   disabled={guardAction.isPending}
-                  onClick={() => guardAction.mutate(selectedGuard.guard_id)}
+                  onClick={() => {
+                    if (!confirm(guardActivationConfirmation(selectedGuard))) return
+                    guardAction.mutate(selectedGuard.guard_id)
+                  }}
                 >
-                  Promote
+                  {selectedGuard.origin === 'learned' && selectedGuard.shadow_only ? 'Promote to Active Observation' : 'Activate Guard'}
                 </Button>
                 {guardAction.error && <p className="text-error text-sm">{guardAction.error.message}</p>}
               </DrawerSection>
             )}
             <DrawerSection label="Properties">
               <DrawerField label="Guard ID" value={selectedGuard.guard_id} mono />
-              <DrawerField label="Status" value={<StatusBadge status={selectedGuard.status || ''} />} />
+              <DrawerField label="Lifecycle State" value={<StatusBadge status={selectedGuard.lifecycle_status || selectedGuard.status || ''} />} />
+              <DrawerField label="Origin" value={humanize(selectedGuard.origin || '—')} />
               <DrawerField label="Severity" value={<Badge tone={severityTone(selectedGuard.severity)}>{humanize(selectedGuard.severity || '—')}</Badge>} />
-              <DrawerField label="Enforcement" value={<Badge tone={selectedGuard.enforcement === 'blocking' ? 'red' : 'yellow'}>{humanize(selectedGuard.enforcement || '—')}</Badge>} />
+              <DrawerField label="Stored Enforcement" value={humanize(selectedGuard.enforcement || '—')} />
+              <DrawerField label="Shadow Only" value={selectedGuard.shadow_only ? 'Yes' : 'No'} />
+              <DrawerField label="Authority" value={selectedGuard.authority_granted ? 'Granted at guard level' : humanize(selectedGuard.authority_scope || 'none')} />
+              <DrawerField label="Ranker Evaluation" value={selectedGuard.evaluation_enabled ? 'Enabled' : 'Disabled'} />
+              <DrawerField label="Proposed Effect" value={guardEffectText(selectedGuard.proposed_effect)} />
+              <DrawerField label="Activation Effect" value={guardEffectText(selectedGuard.activation_effect)} />
+              <DrawerField label="Current Baseline Effect" value={guardEffectText(selectedGuard.actual_effect)} />
+              <DrawerField label="Experiment" value={selectedGuard.experiment_id || 'Not registered'} mono={!!selectedGuard.experiment_id} />
+              <DrawerField label="Experiment Stage" value={humanize(selectedGuard.experiment_stage || '—')} />
+              <DrawerField label="Experiment Status" value={humanize(selectedGuard.experiment_status || '—')} />
+              <DrawerField label="Assignment" value={selectedGuard.assignment ? humanize(selectedGuard.assignment) : selectedGuard.authority_scope === 'unsupported' ? 'Not available; measurement unsupported' : 'Determined per trading candidate'} />
               <DrawerField label="Scope" value={<Badge tone="blue">{humanize(selectedGuard.scope || '—')}</Badge>} />
-              <DrawerField label="Score Penalty" value={selectedGuard.score_penalty ? `-${selectedGuard.score_penalty}` : '—'} />
-              <DrawerField label="Blocks Candidates" value={selectedGuard.block_candidate ? 'Yes' : 'No'} />
             </DrawerSection>
             {selectedGuard.tags && selectedGuard.tags.length > 0 && (
               <DrawerSection label="Tags">
