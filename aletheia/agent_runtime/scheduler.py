@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
 from apscheduler.executors.pool import ThreadPoolExecutor as APSchedulerThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 from aletheia.config.loader import load_config
 
@@ -1480,6 +1481,59 @@ def reschedule_universe_refresh(interval_min: int) -> bool:
         return True
     except Exception as e:  # noqa: BLE001 — config is already saved; never 500 the save
         logger.warning("Failed to reschedule universe_refresh (applies at next restart): %s", e)
+        return False
+
+
+def reschedule_learning_jobs(interval_min: int) -> bool:
+    """Apply the configured interval to both live Learning jobs."""
+    if _scheduler is None:
+        return False
+    job_ids = (
+        "learning_contribution_evaluator",
+        "learning_lifecycle_controller",
+    )
+    try:
+        with _SCHEDULER_JOB_LOCK:
+            jobs = {job_id: _scheduler.get_job(job_id) for job_id in job_ids}
+            if any(job is None for job in jobs.values()):
+                return False
+            previous = {
+                job_id: (job.trigger, job.next_run_time)
+                for job_id, job in jobs.items()
+                if job is not None
+            }
+            updated = []
+            try:
+                for job_id in job_ids:
+                    old_next_run = previous[job_id][1]
+                    trigger = IntervalTrigger(
+                        minutes=interval_min,
+                        timezone=_scheduler.timezone,
+                    )
+                    next_run = (
+                        None
+                        if old_next_run is None
+                        else trigger.get_next_fire_time(
+                            None, datetime.now(_scheduler.timezone),
+                        )
+                    )
+                    _scheduler.modify_job(
+                        job_id, trigger=trigger, next_run_time=next_run,
+                    )
+                    updated.append(job_id)
+            except Exception:
+                for job_id in reversed(updated):
+                    old_trigger, old_next_run = previous[job_id]
+                    _scheduler.modify_job(
+                        job_id,
+                        trigger=old_trigger,
+                        next_run_time=old_next_run,
+                    )
+                raise
+        logger.info("Rescheduled Learning jobs to every %d min", interval_min)
+        return True
+    except Exception as e:  # noqa: BLE001 — saved config still applies at restart
+        logger.warning("Failed to reschedule Learning jobs (applies at next restart): %s", e)
         return False
 
 

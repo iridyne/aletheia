@@ -736,12 +736,27 @@ async def update_learning_config(req: LearningConfigUpdate):
     for field, value in updates.items():
         setattr(cfg.learning, field, value)
     save_config(cfg)
+    rescheduled = False
+    if (
+        "evaluation_interval_minutes" in updates
+        and updates["evaluation_interval_minutes"] != old.get("evaluation_interval_minutes")
+    ):
+        from aletheia.agent_runtime.scheduler import reschedule_learning_jobs
+        from starlette.concurrency import run_in_threadpool
+        rescheduled = await run_in_threadpool(
+            reschedule_learning_jobs,
+            cfg.learning.evaluation_interval_minutes,
+        )
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "learning_config_changed",
                  "entity_type": "learning_config", "before": old,
                  "after": cfg.learning.model_dump(mode="json"),
                  "message": f"Learning experiment config updated: {list(updates.keys())}"})
-    return {"updated": updates, "learning": cfg.learning.model_dump(mode="json")}
+    return {
+        "updated": updates,
+        "rescheduled": rescheduled,
+        "learning": cfg.learning.model_dump(mode="json"),
+    }
 
 
 @router.get("/learning/experiments")
