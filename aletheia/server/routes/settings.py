@@ -723,12 +723,24 @@ async def update_controller_config(req: ControllerConfigUpdate):
                 raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
         setattr(cfg.controller, field, value)
     save_config(cfg)
+
+    _CONTROLLER_SCHEDULER_FIELDS = {"shadow_enabled", "observe_interval_hours"}
+    rescheduled = False
+    if _CONTROLLER_SCHEDULER_FIELDS.intersection(updates):
+        from aletheia.agent_runtime.scheduler import reconcile_filter_controller
+        from starlette.concurrency import run_in_threadpool
+        rescheduled = await run_in_threadpool(
+            reconcile_filter_controller,
+            cfg.controller.shadow_enabled,
+            cfg.controller.observe_interval_hours,
+        )
+
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "controller_config_changed",
                  "entity_type": "controller_config", "before": old,
                  "after": cfg.controller.model_dump(mode="json"),
                  "message": f"Controller config updated: {list(updates.keys())}"})
-    return {"updated": updates}
+    return {"updated": updates, "rescheduled": rescheduled}
 
 
 # ---------------------------------------------------------------------------
@@ -1135,12 +1147,24 @@ async def update_telegram_config(req: TelegramConfigUpdate):
     for field, value in updates.items():
         setattr(cfg.telegram, field, value)
     save_config(cfg)
+
+    rescheduled = False
+    if (
+        "daily_summary_hour_cst" in updates
+        and updates["daily_summary_hour_cst"] != old.get("daily_summary_hour_cst")
+    ):
+        from aletheia.agent_runtime.scheduler import reschedule_telegram_summary
+        from starlette.concurrency import run_in_threadpool
+        rescheduled = await run_in_threadpool(
+            reschedule_telegram_summary, cfg.telegram.daily_summary_hour_cst,
+        )
+
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "telegram_config_changed",
                  "entity_type": "telegram_config", "before": old,
                  "after": cfg.telegram.model_dump(mode="json"),
                  "message": f"Telegram config updated: {list(updates.keys())}"})
-    return {"updated": updates}
+    return {"updated": updates, "rescheduled": rescheduled}
 
 
 # ---------------------------------------------------------------------------
@@ -2182,13 +2206,29 @@ async def update_historical_data_config(req: HistoricalDataConfigUpdate):
                 raise HTTPException(400, f"'{field}' must be between {int(lo)} and {int(hi)}")
         setattr(cfg.historical_data, field, value)
     save_config(cfg)
+
+    _SCHEDULER_FIELDS = {
+        "nightly_backfill_enabled",
+        "nightly_backfill_hour_cst",
+        "active_universe_backfill_enabled",
+        "active_universe_backfill_interval_minutes",
+        "enabled",
+    }
+    rescheduled = False
+    if _SCHEDULER_FIELDS.intersection(updates):
+        from aletheia.agent_runtime.scheduler import reconcile_historical_data_jobs
+        from starlette.concurrency import run_in_threadpool
+        rescheduled = await run_in_threadpool(
+            reconcile_historical_data_jobs, cfg.historical_data,
+        )
+
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard",
                  "event_type": "historical_data_config_changed",
                  "entity_type": "historical_data_config", "before": old,
                  "after": cfg.historical_data.model_dump(mode="json"),
                  "message": f"Historical data config updated: {list(updates.keys())}"})
-    return {"updated": updates, "historical_data": cfg.historical_data.model_dump(mode="json")}
+    return {"updated": updates, "rescheduled": rescheduled, "historical_data": cfg.historical_data.model_dump(mode="json")}
 
 
 # ---------------------------------------------------------------------------
@@ -2270,9 +2310,21 @@ async def update_news_config(req: NewsConfigUpdate):
         from aletheia.config.schema import NewsFeedEntry
         cfg.news.feeds = [NewsFeedEntry(**f.model_dump()) for f in req.feeds]
     save_config(cfg)
+
+    rescheduled = False
+    if (
+        req.fetch_interval_minutes is not None
+        and req.fetch_interval_minutes != old.get("fetch_interval_minutes")
+    ):
+        from aletheia.agent_runtime.scheduler import reschedule_news_fetch
+        from starlette.concurrency import run_in_threadpool
+        rescheduled = await run_in_threadpool(
+            reschedule_news_fetch, cfg.news.fetch_interval_minutes,
+        )
+
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "news_config_changed",
                  "entity_type": "news_config", "before": old,
                  "after": cfg.news.model_dump(mode="json"),
                  "message": "News config updated"})
-    return {"news": cfg.news.model_dump(mode="json")}
+    return {"news": cfg.news.model_dump(mode="json"), "rescheduled": rescheduled}
