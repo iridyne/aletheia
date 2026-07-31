@@ -62,8 +62,10 @@ reviewer, promoter, controller, or learned rollout runs. Measurement-only
 `outcome_settler`, `paper_funding_settler`, `outcome_hook_replay`, `shadow_resolver`, and
 `learning_contribution_evaluator` continue so disabling
 Learning does not erase or delay outcome truth. The evaluator never changes stages or authority;
-the lifecycle controller is a separate gated consumer. Successful/failed/skipped runs and reviewer
-backlog health are persisted in `learning_job_health`. There is no scheduled
+the lifecycle controller is a separate gated consumer. Successful, partial/degraded, failed and
+skipped runs plus reviewer backlog health are persisted in `learning_job_health`. A controller cycle
+with one failed experiment continues the others but cannot be recorded as healthy. There is no
+scheduled
 `learning_verdict_runner`; any historical health row under that id remains audit history only.
 After recovery, `status` may be healthy and `last_error` clears, while `last_failed_at` and
 `last_failure_reason` preserve the most recent failure.

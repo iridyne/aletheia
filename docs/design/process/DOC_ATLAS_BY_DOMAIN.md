@@ -98,7 +98,7 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
   决定。`self_evolution_plan` 和更早修复计划同样只是历史证据。
 - **Issue**：剩余 owner projection 由 `LCO-*` claims 与 GitHub issue #489 跟踪；legacy
   `/settings/autonomous-learning` 主开关的 tunnel-token 缺口已由 #488 修复，scheduler
-  partial-health 见 #490，JSONL audit 可观测性见 #491；旧
+  partial-health 已由 #490 修复，JSONL audit 可观测性见 #491；旧
   `LEARNING_LOOP_AUDIT` 仅是历史证据。
 - **Current state**：A1 has permanent ledger, full-arm exact-key complete-cluster measurement,
   append-only metric history, lifecycle recommendation, evaluator + catch-up and durable failure
