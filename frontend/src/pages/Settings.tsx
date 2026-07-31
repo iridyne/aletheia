@@ -543,7 +543,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
     path_id: string
     label: string
     supported: boolean
-    status: 'supported' | 'consumer_unwired' | 'authority_unwired'
+    status: 'supported' | 'consumer_unwired' | 'measurement_unwired' | 'authority_unwired'
   }> : []
   const knownLearningPathIds = new Set(learningPathOptions.map(option => option.path_id))
   const unknownPaperInfluencePaths = paperInfluencePaths.filter(
@@ -620,7 +620,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
               learningMut.mutate({ paper_influence_enabled: v })
             }} disabled={learningMut.isPending} />
           </Row>
-          <Row label="Allowed paper paths" hint="Only paths with a wired consumer and prospective authority adapter can be selected. Unsupported design entries remain visible but disabled.">
+          <Row label="Allowed paper paths" hint="Only paths with a wired consumer, prospective measurement, and authority adapter can be selected. Unsupported design entries remain visible but disabled.">
             <div style={{ display: 'grid', gap: 6, minWidth: 320 }}>
               {learningPathOptions.map(option => (
                 <label key={option.path_id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -643,7 +643,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
                   <span>{option.label}</span>
                   <code>{option.path_id}</code>
                   <span style={{ color: option.status === 'supported' ? 'var(--green)' : 'var(--muted)' }}>
-                    {option.status === 'supported' ? 'Supported' : option.status === 'consumer_unwired' ? 'Consumer unwired' : 'Authority unwired'}
+                    {option.status === 'supported' ? 'Supported' : option.status === 'consumer_unwired' ? 'Consumer unwired' : option.status === 'measurement_unwired' ? 'Measurement unwired' : 'Authority unwired'}
                   </span>
                 </label>
               ))}

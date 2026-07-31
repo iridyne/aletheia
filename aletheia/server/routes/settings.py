@@ -709,7 +709,7 @@ def _validated_paper_influence_paths(values: list[str]) -> list[str]:
     if unsupported_paths:
         raise HTTPException(
             400,
-            "paper influence consumer is not wired for: "
+            "paper influence path is not fully supported for: "
             + ", ".join(unsupported_paths),
         )
     return requested_paths

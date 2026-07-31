@@ -228,6 +228,12 @@ async def test_learning_settings_persist_and_cap_active_paper_allocation(client)
         "/api/settings/learning", json={"paper_influence_paths": ["advisory_skill"]},
     )
     assert unsupported.status_code == 400
+    measurement_unwired = await client.post(
+        "/api/settings/learning",
+        json={"paper_influence_paths": ["ranker_learned_guard"]},
+    )
+    assert measurement_unwired.status_code == 400
+    assert "not fully supported" in measurement_unwired.json()["detail"]
     unknown = await client.post(
         "/api/settings/learning", json={"paper_influence_paths": ["made_up_path"]},
     )
@@ -236,7 +242,7 @@ async def test_learning_settings_persist_and_cap_active_paper_allocation(client)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.learning.paper_influence_enabled = False
-    cfg.learning.paper_influence_paths = ["advisory_skill"]
+    cfg.learning.paper_influence_paths = ["ranker_learned_guard"]
     save_config(cfg)
     toggle_only = await client.post(
         "/api/settings/learning", json={"paper_influence_enabled": True},

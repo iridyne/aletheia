@@ -417,7 +417,7 @@ export const api = {
       path_id: string
       label: string
       supported: boolean
-      status: 'supported' | 'consumer_unwired' | 'authority_unwired'
+      status: 'supported' | 'consumer_unwired' | 'measurement_unwired' | 'authority_unwired'
     }>
   }>('/settings'),
 
