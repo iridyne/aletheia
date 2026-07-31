@@ -288,7 +288,7 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/settings` | Full config as JSON plus `learning_path_options`, the registry-backed supported/unsupported paper-influence inventory used by the existing Settings page |
-| POST | `/settings/autonomous-learning` | Learning loop toggles |
+| POST | `/settings/autonomous-learning` | Legacy master Learning-loop toggle. Current implementation does not apply tunnel-token owner protection; treat as an open authorization defect tracked by #488, not as an authenticated owner surface. |
 | POST | `/settings/learning` | Paper-only Learning experiment controls: contribution measurement, lifecycle automation, registry-validated paper influence path allowlist, auto-refreeze, evaluation interval, and final-stage allocation. Unknown paths and paths without a wired consumer, Settings support, or prospective measurement are rejected (including when an old unsupported saved path is re-enabled through the master toggle). Lifecycle automation and paper influence default off; this endpoint cannot enable live trading. Protected by the tunnel owner token when a tunnel is enabled. |
 | POST | `/settings/learning/experiments/{experiment_id}/admit-trial` | Explicit owner admission from a current shadow verdict into one `paper_10` successor. Requires `verdict_id`, `expected_policy_epoch`, bounded `reason`, and `confirm_admission=true`; the server derives the actual epoch, checks every paper gate, writes one deduplicated lifecycle event and audits `human/dashboard`. Protected by the tunnel owner token when a tunnel is enabled. |
 | POST | `/settings/bypass-distress-gate` | Explicit operator bypass for distress gate checks |

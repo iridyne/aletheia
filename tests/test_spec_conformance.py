@@ -46,6 +46,7 @@ REQUIRED_CONTRACTS = [
     "operator_layer",
     "audit_chain_contract",
     "decision_lifecycle_contract",
+    "learning_contract",
     "learning_evolution",
     "learning_observability",
     # subsystem observer claims register under "agent_contracts" by design —
@@ -136,9 +137,12 @@ class TestConformanceStructure:
         # split, behavior consumers, and authoritative Risk loss. Three OI
         # reporting/history claims remain missing.
         # 2026-07-24: the first bounded Learning Contribution Observability slice
-        # implements six claims (cohort projection, identity/history, job-health
-        # sanitization, recommendation-only authority, trust-boundary imports and
-        # independent path capabilities). Seven LCO target claims remain explicit.
+        # implemented the first six claims. The 2026-07-31 reconciliation also
+        # recognizes the shipped GET-only summary and the partial frontend
+        # verdict/query-state proofs. Three LCO target claims remain missing;
+        # two frontend claims are partial until the complete workbench exists.
+        # #488 concerns the separate legacy master Learning toggle; the
+        # trial-admission lifecycle claim remains implemented.
         # PF-03/#419 adds one explicit RED tripwire for the absent
         # cash-flow-adjusted performance consumer. The current UI is honest
         # about that absence; the future analytics join remains intentionally
@@ -146,14 +150,14 @@ class TestConformanceStructure:
         # EX-04/#418 adds one RED tripwire for the missing join between the
         # experimental Live authority state and new-Proposal mode selection.
         # It keeps the gap visible without enabling autonomous live trading.
-        MAX_MISSING = 14
+        MAX_MISSING = 11
         # #153: 5 self-heal specs moved to partial (OL-C08, OL-S13, SH-S01, SH-C02, SH-B03).
         # TASK-2026-022 adds six explicitly bounded Learning-evolution claims whose
         # Phase-0 cores are implemented but whose consumer-wide persistence/UI/
         # authority adapters remain later-phase work: LE-B16/B21 and
         # LE-C06/C10/C11/C13. Keeping them partial is deliberate semantic honesty;
         # the target contract names the exact remaining boundary for each claim.
-        MAX_PARTIAL = 12
+        MAX_PARTIAL = 14
         MAX_SUPERSEDED = 1
 
         missing = counts.get("missing", 0)

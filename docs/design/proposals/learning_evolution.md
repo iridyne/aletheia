@@ -9,9 +9,12 @@ supersedes: []
 # Learning Evolution Proposal
 
 > Proposal status: accepted design, not a product implementation claim.
-> Current fact: A1 measurement-integrity claims are conforming/partial as
-> recorded in §12, behavior-changing experiment claims remain `missing`, and the owner-facing
-> `lco-v1` projection is specified separately but not implemented.
+> Current fact: the shared measured lifecycle is implemented for
+> `universe_family_calibration` and `operator_learning_bundle`; other declared
+> treatment hooks remain static and measurement-unsupported. The bounded
+> owner-facing `lco-v1` summary/default tab is partially implemented as recorded
+> in the separate observability Proposal. Production positive contribution is
+> still an empirical result, not a support claim.
 > Scope: every Learning-adjacent producer, store, consumer, outcome source, scheduler,
 > report, learned ranker/filter, prompt channel, guard, advisory skill, sizing policy,
 > causal-attribution path, and automatic rollback.
@@ -594,7 +597,7 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B18 | L2b | exit-policy advisor remains read-only with no settings or position-management consumer | implemented |
 | LE-B19 | L2b | automatic `block_*` recommendations enter guard shadow evaluation, not Risk Engine via category coercion | implemented |
 | LE-B20 | L2b | universe family calibration records clean prospective neutral/treatment exposures before score influence | implemented |
-| LE-B21 | L2b | concurrent policy/config changes version, stratify, pause, or invalidate affected experiments | partial — deterministic policy epochs now persist and stratify universe, factor, ranker, sizing, and Operator prompt-bundle exposures; other prompt-content policy changes remain |
+| LE-B21 | L2b | concurrent policy/config changes version, stratify, pause, or invalidate affected experiments | partial — deterministic policy epochs persist and stratify current Universe and Operator-bundle exposures; unsupported paths create no exposures, and other prompt-content policy changes remain |
 | LE-B22 | L2b | factor producer, Operator context, ranker trace, and exposure use the same stable `factor_key` identity | implemented |
 | LE-B23 | L2b | retrying one exposure dedup key stores one immutable influence record | implemented |
 | LE-B24 | L2b | a shadow cohort with no treatment applied is measurable but cannot produce a causal authority signal | implemented |
@@ -602,20 +605,20 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B26 | L2b | full-arm universe outcomes persist exact-key allocator selection and complete persisted assignment clusters, not selected survivors, are the statistical samples | implemented |
 | LE-B27 | L2b | policy epoch ignores code-only rebuilds, rotates on effective behavior change, and exposures retain running-build identity | implemented |
 | LE-B28 | L2b | conflicting settled values for one outcome identity invalidate/refreeze rather than selecting one copy | implemented |
-| LE-V01 | L2b | the only runtime verdict path reads canonical full-arm filter outcomes by exact key, calculates cluster intent-to-treat allocation utility, uses selected-member Universe rows only as mirror/fallback, and fails closed on disagreement | implemented — measurement-only evaluator; no empirical positive-contribution claim |
+| LE-V01 | L2b | the Universe runtime verdict adapter reads canonical full-arm filter outcomes by exact key, calculates cluster intent-to-treat allocation utility, uses selected-member Universe rows only as mirror/fallback, and fails closed on disagreement | implemented — measurement-only evaluator; Operator bundle uses its separate exact Opportunity 4h adapter; no empirical positive-contribution claim |
 | LE-V02 | L2c | deterministic verdict storage cannot alter Learning authority or experiment lifecycle | implemented — evaluator writes only its idempotent measurement record |
 | LE-V03 | L2c | shadow assignments with no actually applied treatment cannot produce a causal positive/negative verdict | implemented — exposure manifests feed cohort samples and return `insufficient_data/no_actual_intervention` |
 | LE-L01 | L2b | measurement verdicts map to distinct lifecycle actions without changing their vocabulary | implemented |
 | LE-L02 | L2c | stage transitions are transactional, idempotent, isolated, and default-closed for paper influence | implemented |
 | LE-L03 | L2c | measurement and lifecycle control use separate restart-safe single-instance schedules | implemented |
-| LE-L04 | L2c | shadow cannot auto-promote; the scheduled controller only recommends admission and no caller-provided actor string can cross the unavailable authenticated-owner boundary | implemented |
+| LE-L04 | L2c | shadow cannot auto-promote; the scheduled controller only recommends admission and the protected explicit-admission route requires confirmation, server-derived epoch identity and every paper gate | implemented; #488 concerns the separate legacy master Learning toggle, not trial admission |
 | LE-L05 | L2c | paper authority binds approved evidence to its same-hypothesis closed predecessor and declared horizon | implemented |
 | LE-C01 | L2c | no promotion without unique samples, time span, and outcome links | implemented |
 | LE-C02 | L2c | negative/unsafe holdout automatically demotes or refreezes | implemented |
 | LE-C03 | L2c | refreeze restores static baseline without deleting evidence | implemented |
 | LE-C04 | L2c | control arms retain all pre-existing safety checks | missing |
 | LE-C05 | L2c | Learning cannot change hard risk limits or execution authority | implemented |
-| LE-C06 | L2c | UI contribution status is derived from measured verdict, not counts | partial — Learning alpha read model is honest; UI contribution surface remains |
+| LE-C06 | L2c | UI/API contribution status is derived from measured verdict, not counts | partial — alpha diagnostics separate raw events from unique cohorts and the default Contribution tab uses backend measurement facts; the complete owner workbench remains incomplete |
 | LE-C07 | L2c | full close→learn→expose→settle→promote→demote chain is causal | missing |
 | LE-C08 | L2c | factor hard block/preference demotes to static behavior after negative holdout | missing |
 | LE-C09 | L2c | market-observer Learning influence is separated from downstream ranker/operator influence | implemented |
@@ -629,8 +632,9 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-C17 | L2c | active Operator diagnostic Learning context is curated, current, advisory and manifest-bearing without granting treatment authority | implemented |
 
 Owner-facing contribution observability is governed by the separate `LCO-S01..02`, `LCO-B01..05`
-and `LCO-C01..06` claims in `learning_observability_contract.md`. All thirteen are currently
-`missing`; `LE-C06` remains partial until the UI slice is GREEN.
+and `LCO-C01..06` claims in `learning_observability.md`. The bounded summary and default
+Contribution tab are implemented; `LCO-C03`, `LCO-C05` and `LCO-C06` remain missing for bounded
+detail/cache side-effect proof, full responsive accessibility and direct performance evidence.
 
 ## 13. Definition Of Positive Contribution
 

@@ -307,11 +307,12 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 ### 8.1 Ranker 权重调整（低风险）
 
 `paper_trader_ranker.py` 只检索可信的 `trade_case_study`，并另行读取最新 `trading_memo`。
-两者计算出的历史分值只是候选调整，必须分别经过 `ranker_case_score` 与
-`ranker_memo_score` 的前瞻 treatment/control 授权；没有足量、成本后净收益结果与正向结论时，实际调整固定为 0：
+两者计算出的历史分值只是诊断建议。`ranker_case_score` 与
+`ranker_memo_score` 当前均为 measurement-unsupported，因此不会创建 hypothesis、experiment
+或 exposure，实际调整固定为 0：
 - 历史案例负反馈（symbol + direction + scanner）→ 候选降权
 - memo 的 regime、symbol affinity 与 anti-pattern → 候选软调整
-- 每次候选都记录原始建议、实际增量、实验和 exposure id，两个来源不互相冒领贡献
+- 候选 trace 可记录原始建议与实际零增量，但不得伪造实验/exposure id，也不得让两个来源互相冒领贡献
 - **边界**：Ranker 调整只影响机会排序，不影响 risk_engine 关卡，不影响 sizing
 
 ### 8.2 System Operator system prompt 片段（中风险）

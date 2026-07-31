@@ -68,7 +68,7 @@
 | Opportunity/决策来源证据 | 原始 scanner trigger + Observer/System Operator 实际渲染 source identities | `opportunities.metadata.evidence_manifest` + `pi_decisions.evidence_manifest_json` | Operator、trace、case study、post-trade reviewer | ✅ `opportunity_information_integrity/v1` 分离 T0/T1；prediction divergence 写标准 T0；Observer 原始来源只留在 `opportunity_t1`，Operator direct 只记实际展示的技术/Position X；Serenity 按独立 id namespace 保存 exact Layer 3 evidence ids；历史缺失显示 unavailable，不按当前 latest row 反推 |
 | System Operator 无候选观察 | PI daemon 的 explicit zero-pending queue summary（5 分钟去重） | `operator_evaluation_events` | doctor `loop.skip_halt`、运行诊断与后续只读 Skip report | 🟡 observation-only；30 天 retention（详见 [`RETENTION_POLICY.md`](RETENTION_POLICY.md)）；不是 PiDecision、不进 candidate outcome、不改配置或交易权限 |
 | Broker 私有仓位/成交历史 | Bitget/OKX/Binance execution adapter 按完整 account+instrument identity 直查 | 不保存原始响应；只返回标准化 `VerifiedExitResult` | `execution.verified_exit` → 后续 RG-T07 verified/admin close 分流 | ✅ 只读、按 venue 分页；网络/权限/游标/时间窗/歧义失败统一 `inconclusive`，不影响下单路径 |
-| Measured Learning ledger + canonical/fallback outcome provenance | Learning consumers/evaluator 写入的内部事实；不是外部采集器 | 7 个永久 Learning 表 + `filter_candidate_outcomes` + selected-member `universe_forward_outcomes` mirror/fallback | 当前 evaluator/lifecycle/doctor 内部消费；目标 `lco-v1` owner-facing API/UI projection | 🟠 内部测量闭环已消费，owner projection 尚未实现；见 `learning_observability_contract.md`，不需要新增采集 DU claim |
+| Measured Learning ledger + canonical/fallback outcome provenance | 两条 measurement-supported Learning 路径与 evaluator 写入的内部事实；不是外部采集器 | 7 个永久 Learning 表 + `filter_candidate_outcomes` + selected-member `universe_forward_outcomes` mirror/fallback | evaluator/lifecycle/doctor + 有界只读 `lco-v1` summary/default dashboard tab | 🟠 Universe/Operator bundle 测量闭环与基础 owner projection 已实现；多路径选择、明细/分页、性能证据和完整无障碍仍缺失；不需要新增采集 DU claim |
 
 ---
 
@@ -85,10 +85,11 @@
 - **清算 + OI 历史（✅ key-guard 接通）**：CoinGlass 全面 paywall、Glassnode 无免费 tier、Bitget OI 历史死代码已确认（2026-06-30 产品定义）。CCXT 清算死代码（`_fetch_liquidations_ccxt` + `_CCXTLiquidationsUnsupported`）已从 `derivatives.py` 删除（GAP-DU-C02，锁定于 DU-C02）。`CoinalyzeCollector` 已建并接入 `data_collector_context`；有 `coinalyze_api_key` 时写入 `open_interest_snapshots(exchange='coinalyze')` 与 `liquidation_events(exchange='coinalyze')`，无 key 时返回 `errors=["no_key"]` 并诚实跳过。持久化路径锁定于 DU-T01。
 - **美股/xStocks（🟡）**：owner 明确 observation-only（不交易），符合 R1 的"显式标注"分支，非违反。
 - **xStock 上市状态（🟡）**：只在 ticker 失败后查询责任交易所 active spot market list；结果只维护 observation-only 采集配置，不进入排序、风控或执行。查询按 venue 单轮复用并有硬截止，任何不确定结果都保留用户配置。锁定于 DU-S24。
-- **Learning Contribution Observability（🟠）**：这里登记的是已有内部事实的缺失展示消费者，
-  不是 collected-but-unused 外部数据源。A1 evaluator/lifecycle 已消费这些表；缺口是把同一事实
-  通过有界、只读、诚实的 `lco-v1` 投影提供给 owner。不得为填页面新增采集、复制表或把 activity
-  counts 当 contribution。对应缺口由 `LCO-*` claims 管理，不新增 DU acquisition claim。
+- **Learning Contribution Observability（🟠）**：这里登记的是已有内部事实的展示消费者，
+  不是 collected-but-unused 外部数据源。A1 evaluator/lifecycle 已消费这些表；有界、只读、诚实的
+  `lco-v1` summary 与默认 dashboard contribution tab 已实现。多路径选择、明细/分页、性能/cache
+  证据和完整无障碍仍未实现。不得为填页面新增采集、复制表或把 activity counts 当 contribution。
+  对应剩余缺口由 `LCO-*` claims 与 GitHub issue #489 管理，不新增 DU acquisition claim。
 
 ---
 

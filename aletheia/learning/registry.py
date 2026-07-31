@@ -1,8 +1,8 @@
 """Declared inventory of Learning and Learning-adjacent behavior paths.
 
-The registry is intentionally static in Phase 0. It makes authority and fallback
-reviewable without changing any consumer behavior. Later phases attach durable
-experiments/exposures to these stable path ids.
+The registry keeps capability, authority, and fallback reviewable. Only paths
+with ``measurement_supported=True`` may attach durable experiments/exposures;
+consumer wiring or Settings visibility alone never grants that capability.
 """
 
 from __future__ import annotations
