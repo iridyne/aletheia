@@ -41,10 +41,8 @@ SUPPORTED_PATH_ID = "universe_family_calibration"
 # see _IDENTITY_EXCLUSION_REASONS) rather than measured, so keep them out until a
 # per-path cohort adapter exists. See issue #324 for the full audit.
 #
-# operator_learning_bundle is now measurement_supported via the _OPPORTUNITY_KEYED_PATHS
-# implicit-allocation adapter (allocation_selected=NULL treated as True). See #324.
-#
 # Paths blocked from measurement until per-path cohort adapters are implemented:
+#   operator_learning_bundle:   needs decision-utility outcome after prompt treatment
 #   observer_advisory_bundle:   needs path-specific statistical-unit/outcome contract
 #   ranker_case_score:          needs path-specific statistical-unit/outcome contract
 #   ranker_memo_score:          needs path-specific statistical-unit/outcome contract
@@ -52,16 +50,6 @@ SUPPORTED_PATH_ID = "universe_family_calibration"
 SUPPORTED_PATH_IDS = frozenset(
     path.path_id for path in LEARNING_PATHS if path.measurement_supported
 )
-
-# Paths that use opportunity-keyed outcomes (opportunity:{id}:{horizon}).
-# filter_candidate_outcomes rows for these paths have allocation_selected=NULL by
-# contract — they are emitted-opportunity observations, not Universe full-arm
-# allocation members.  The Universe mirror cannot supply allocation_selected
-# because it uses a different candidate identity.  Treat NULL as implicitly
-# allocated (True) rather than invalidating the experiment. (issue #324)
-_OPPORTUNITY_KEYED_PATHS = frozenset({
-    "operator_learning_bundle",
-})
 
 _ECONOMIC_FIELDS = (
     "horizon", "entry_ts", "venue", "symbol", "market_type", "direction",
@@ -519,13 +507,6 @@ def _load_exact_outcomes(
             if allocation_selected is None and universe_matches:
                 allocation_selected = True
                 allocation_selection_source = "universe_forward_outcomes_mirror_inference"
-            if allocation_selected is None and path_id in _OPPORTUNITY_KEYED_PATHS:
-                # Opportunity-keyed paths (e.g. operator_learning_bundle) emit
-                # filter_candidate_outcomes rows with allocation_selected=NULL by
-                # contract — they are observations of chosen opportunities, not
-                # Universe-allocated arms.  Treat as implicitly allocated. (#324)
-                allocation_selected = True
-                allocation_selection_source = "opportunity_keyed_path_implicit"
             if allocation_selected is None:
                 resolved[outcome_key] = (
                     None, "missing_allocation_result", 0, wrong_horizon_n, None, None,

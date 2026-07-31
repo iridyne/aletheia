@@ -113,8 +113,8 @@ from the Operator working set unless a `submitting` claim requires crash recover
 | `learning_policy_epochs` | Non-sensitive effective-policy attribution boundary | effective-values hash/JSON, affected paths, safety flag, interval |
 
 These tables were additive/observational in Phase 1. Only
-`universe_family_calibration` and `operator_learning_bundle` currently write
-measurement-supported exposures with path-specific outcomes. Factor, ranker,
+`universe_family_calibration` currently writes measurement-supported exposures with a
+path-specific causal outcome. Operator, factor, ranker,
 learned-guard, automatic Risk-lesson, Observer-bundle and persona-sizing hooks
 are consumer-wired but measurement-unsupported: they return static fallback and
 write no formal exposure. Only an active, stage-isolated paper experiment with

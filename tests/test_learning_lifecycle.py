@@ -1015,6 +1015,35 @@ def test_path_mismatch_cannot_fall_through_to_legacy_authority(monkeypatch):
     assert decision.reason == "hypothesis_path_mismatch"
 
 
+def test_retired_operator_path_cannot_recover_legacy_authority(monkeypatch):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "UPDATE learning_hypotheses SET path_id='operator_learning_bundle' "
+        "WHERE hypothesis_id=?",
+        (hypothesis.hypothesis_id,),
+    )
+    db.commit()
+    _configure(
+        monkeypatch,
+        _settings(automation=True, paper=True, paths=["operator_learning_bundle"]),
+    )
+    import aletheia.learning.authority as authority
+
+    def legacy_must_not_run(*_args, **_kwargs):
+        pytest.fail("the retired Operator path reached the legacy authority adapter")
+
+    monkeypatch.setattr(authority, "_legacy_authority_adapter", legacy_must_not_run)
+    decision = authority.resolve_learning_authority(
+        "operator_learning_bundle", experiment, "epoch-a",
+    )
+
+    assert decision.authorized is False
+    assert decision.reason == "measurement_unsupported"
+
+
 def test_canonical_defaults_keep_numeric_consumers_on_static_baseline(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
     import aletheia.learning.authority as authority

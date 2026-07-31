@@ -263,6 +263,12 @@ async def test_learning_settings_expose_only_measurable_paper_path_options(clien
         "supported": False,
         "status": "measurement_unwired",
     }
+    assert by_id["operator_learning_bundle"] == {
+        "path_id": "operator_learning_bundle",
+        "label": "memo/reasoning/calibration/reflection/lessons",
+        "supported": False,
+        "status": "measurement_unwired",
+    }
     assert by_id["advisory_skill"] == {
         "path_id": "advisory_skill",
         "label": "proven hypothesis skill",

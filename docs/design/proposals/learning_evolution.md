@@ -10,7 +10,7 @@ supersedes: []
 
 > Proposal status: accepted design, not a product implementation claim.
 > Current fact: the shared measured lifecycle is implemented for
-> `universe_family_calibration` and `operator_learning_bundle`; other declared
+> `universe_family_calibration`; all other declared
 > treatment hooks remain static and measurement-unsupported. The bounded
 > owner-facing `lco-v1` summary/default tab is partially implemented as recorded
 > in the separate observability Proposal. Production positive contribution is
@@ -590,14 +590,14 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B11 | L2b | missed scheduled windows catch up once and only once | implemented |
 | LE-B12 | L2b | stalled reviewer/backlog refreezes promotion | implemented |
 | LE-B13 | L2b | factor feedback uses clean exact-scope evidence and prospective exposure before influence | implemented |
-| LE-B14 | L2b | observer and operator prompt bundles persist exact manifests and causal outcome links | implemented |
+| LE-B14 | L2b | observer and operator prompt bundles persist exact manifests and causal outcome links | partial — manifests persist, but the current Operator Opportunity 4h outcome predates prompt exposure and is not a causal decision-utility link; formal Operator measurement is disabled |
 | LE-B15 | L2b | reflection cannot infer eligible outcomes from symbol-only or unbounded time matching | implemented |
 | LE-B16 | L2b | all paths share versioned cost-aware outcome eligibility and source precedence | implemented — behavior consumers use the central eligible cohort and stale derived reports fail closed |
 | LE-B17 | L2b | narrative/LLM artifacts cannot independently increase samples or promotion confidence | implemented |
 | LE-B18 | L2b | exit-policy advisor remains read-only with no settings or position-management consumer | implemented |
 | LE-B19 | L2b | automatic `block_*` recommendations enter guard shadow evaluation, not Risk Engine via category coercion | implemented |
 | LE-B20 | L2b | universe family calibration records clean prospective neutral/treatment exposures before score influence | implemented |
-| LE-B21 | L2b | concurrent policy/config changes version, stratify, pause, or invalidate affected experiments | partial — deterministic policy epochs persist and stratify current Universe and Operator-bundle exposures; unsupported paths create no exposures, and other prompt-content policy changes remain |
+| LE-B21 | L2b | concurrent policy/config changes version, stratify, pause, or invalidate affected experiments | partial — deterministic policy epochs persist and stratify current Universe exposures; unsupported paths create no exposures, and other prompt-content policy changes remain |
 | LE-B22 | L2b | factor producer, Operator context, ranker trace, and exposure use the same stable `factor_key` identity | implemented |
 | LE-B23 | L2b | retrying one exposure dedup key stores one immutable influence record | implemented |
 | LE-B24 | L2b | a shadow cohort with no treatment applied is measurable but cannot produce a causal authority signal | implemented |
@@ -605,7 +605,7 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B26 | L2b | full-arm universe outcomes persist exact-key allocator selection and complete persisted assignment clusters, not selected survivors, are the statistical samples | implemented |
 | LE-B27 | L2b | policy epoch ignores code-only rebuilds, rotates on effective behavior change, and exposures retain running-build identity | implemented |
 | LE-B28 | L2b | conflicting settled values for one outcome identity invalidate/refreeze rather than selecting one copy | implemented |
-| LE-V01 | L2b | the Universe runtime verdict adapter reads canonical full-arm filter outcomes by exact key, calculates cluster intent-to-treat allocation utility, uses selected-member Universe rows only as mirror/fallback, and fails closed on disagreement | implemented — measurement-only evaluator; Operator bundle uses its separate exact Opportunity 4h adapter; no empirical positive-contribution claim |
+| LE-V01 | L2b | the Universe runtime verdict adapter reads canonical full-arm filter outcomes by exact key, calculates cluster intent-to-treat allocation utility, uses selected-member Universe rows only as mirror/fallback, and fails closed on disagreement | implemented — measurement-only evaluator; the non-causal Operator Opportunity 4h adapter is disabled; no empirical positive-contribution claim |
 | LE-V02 | L2c | deterministic verdict storage cannot alter Learning authority or experiment lifecycle | implemented — evaluator writes only its idempotent measurement record |
 | LE-V03 | L2c | shadow assignments with no actually applied treatment cannot produce a causal positive/negative verdict | implemented — exposure manifests feed cohort samples and return `insufficient_data/no_actual_intervention` |
 | LE-L01 | L2b | measurement verdicts map to distinct lifecycle actions without changing their vocabulary | implemented |
@@ -628,11 +628,11 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-C13 | L2c | safety/operations tightening is never withheld or credited as Learning contribution | partial — epoch core enforces semantics; operator integration remains |
 | LE-C14 | L2c | disabling autonomous Learning restores declared prompt-consumer baselines without removing market/safety context | implemented |
 | LE-C15 | L2c | stale policy-epoch verdicts cannot authorize a new cohort | implemented |
-| LE-C16 | L2c | Observer and Operator bundles require exact prospective paper authority; control keeps the static prompt baseline | implemented |
+| LE-C16 | L2c | measurement-unsupported Observer and Operator bundles keep the static prompt baseline and create no authority identity | implemented |
 | LE-C17 | L2c | active Operator diagnostic Learning context is curated, current, advisory and manifest-bearing without granting treatment authority | implemented |
 
 Owner-facing contribution observability is governed by the separate `LCO-S01..02`, `LCO-B01..05`
-and `LCO-C01..06` claims in `learning_observability.md`. The bounded summary, multi-path
+and `LCO-C01..06` claims in `learning_observability.md`. The bounded summary, registry-backed measured-path
 Contribution selector, side-effect-free cached reads, current-surface responsive accessibility
 and direct Preview API performance evidence are implemented. Detail/pagination and the full
 workbench remain future slices.
