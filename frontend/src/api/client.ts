@@ -1552,6 +1552,21 @@ export const api = {
   // Generic helpers for pages that need simple get/post
   get: <T = any>(path: string) => fetchJson<T>(path),
   post: <T = any>(path: string, body?: unknown) => post<T>(path, body),
+
+  // Data export
+  getExportCatalog: () => fetchJson<{ datasets: Array<{ table: string; filename: string; presets: string[]; row_count: number }> }>('/export/catalog'),
+  downloadExport: async (body: { preset?: string; include_datasets?: string[]; include_config?: boolean }) => {
+    const res = await fetch(`${BASE}/export/download`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) throw new Error(await res.text())
+    const blob = await res.blob()
+    const cd = res.headers.get('Content-Disposition') ?? ''
+    const match = cd.match(/filename="([^"]+)"/)
+    return { blob, filename: match?.[1] ?? 'aletheia_export.zip' }
+  },
 }
 
 export interface TradeStatsSource {
