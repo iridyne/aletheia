@@ -26,7 +26,7 @@ from aletheia.storage.repositories import (
 )
 from aletheia.storage.models import ShadowTrade
 from aletheia.storage.sqlite import get_db
-from aletheia.analytics.shadow_trades import _compute_shadow_economics
+from aletheia.counterfactual.trades import _compute_shadow_economics
 
 
 def _fresh_shadow(**overrides) -> ShadowTrade:

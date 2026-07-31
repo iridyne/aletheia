@@ -9,7 +9,7 @@ close from market_ohlcv — NOT the current price (these are up to ~13 days old,
 "current price" would be a meaningless exit).
 
 It reuses the exact same logic as the periodic shadow_resolver scheduler job
-(aletheia.analytics.shadow_trades.resolve_stale_shadows) so the one-time backfill
+(aletheia.counterfactual.trades.resolve_stale_shadows) so the one-time backfill
 and the forward catch-up can never diverge.
 
 DATA op — set ALETHEIA_DATA_DIR explicitly when targeting a non-default runtime home;
@@ -47,7 +47,7 @@ def main() -> int:
     args = parser.parse_args()
 
     from aletheia.storage.migrations import run_migrations
-    from aletheia.analytics.shadow_trades import resolve_stale_shadows
+    from aletheia.counterfactual.trades import resolve_stale_shadows
 
     run_migrations()
 

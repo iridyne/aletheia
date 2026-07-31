@@ -1653,7 +1653,7 @@ def _run_shadow_resolver():
     slipped through, using each shadow's own 24h forward horizon (historical OHLCV).
     """
     try:
-        from aletheia.analytics.shadow_trades import resolve_stale_shadows
+        from aletheia.counterfactual.trades import resolve_stale_shadows
         counts = resolve_stale_shadows()
         if counts.get("resolved"):
             logger.info(

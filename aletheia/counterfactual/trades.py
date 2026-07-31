@@ -16,7 +16,7 @@ import math
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-logger = logging.getLogger("aletheia.analytics.shadow_trades")
+logger = logging.getLogger("aletheia.counterfactual.trades")
 
 # Market snapshots are collected every five minutes. A close-time
 # counterfactual may use at most two collection intervals of lag; anything older

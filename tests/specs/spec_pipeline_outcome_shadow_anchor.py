@@ -23,7 +23,7 @@ def test_partial_shadow_retry_reuses_first_price_and_close_time(
     from tests.specs.spec_pipeline_outcome_feedback import _setup_db
 
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.analytics import shadow_trades
+    from aletheia.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import ShadowTrade
@@ -168,7 +168,7 @@ def test_event_price_lookup_ignores_snapshots_after_position_close(
     from tests.specs.spec_pipeline_outcome_feedback import _setup_db
 
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.analytics.shadow_trades import _current_price
+    from aletheia.counterfactual.trades import _current_price
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import MarketSnapshot
 
@@ -200,7 +200,7 @@ def test_event_price_lookup_rejects_snapshot_older_than_freshness_window(
     from tests.specs.spec_pipeline_outcome_feedback import _setup_db
 
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.analytics.shadow_trades import _current_price
+    from aletheia.counterfactual.trades import _current_price
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import MarketSnapshot
 
@@ -235,7 +235,7 @@ def test_fixed_horizon_resolver_does_not_overwrite_outbox_price_anchor(
 
     _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.analytics.shadow_trades import resolve_stale_shadows
+    from aletheia.counterfactual.trades import resolve_stale_shadows
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import ShadowTrade
     from aletheia.storage.sqlite import get_db
