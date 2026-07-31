@@ -125,6 +125,17 @@ jobs:
         if: steps.rust.outputs.preinstalled != 'true'
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
 
+      - name: Ensure native build linker is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v cc >/dev/null 2>&1; then
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes build-essential
+          command -v cc
+
       - name: Test the platform-neutral native host
         working-directory: native/aletheia-host
         run: cargo test --locked --all-targets
