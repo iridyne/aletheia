@@ -967,8 +967,8 @@ function AgentModelsTab({ status, settings, qc }: any) {
         <InferenceAdmissionCard qc={qc} />
       </Section>
 
-      <Section title="LLM Cost & Usage" description="Live spend, broker headroom, and per-model cooldown state from the append-only economics ledger. Read-only.">
-        <EconomicsSnapshotCard />
+      <Section title="LLM Cost & Usage" description="Enable default-off budget shadow observation; spend, broker headroom, and cooldown records remain read-only.">
+        <EconomicsSnapshotCard economics={settings?.economics} qc={qc} />
       </Section>
     </div>
   )
@@ -4298,7 +4298,15 @@ function ModelProviderCard({ qc }: any) {
   )
 }
 
-function EconomicsSnapshotCard() {
+function EconomicsSnapshotCard({ economics, qc }: { economics: any; qc: any }) {
+  const [saveErr, setSaveErr] = useState<string | null>(null)
+  const economicsEnabled = economics?.enabled === true
+  const shadowEnabled = economics?.budgets_shadow_enabled === true
+  const economicsMut = useMutation({
+    mutationFn: (body: { enabled?: boolean; budgets_shadow_enabled?: boolean }) => api.updateEconomicsConfig(body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: (error: any) => setSaveErr(`Economics controls: ${error?.message || 'save failed'}`),
+  })
   const { data: status } = useQuery({
     queryKey: ['economics-status'],
     queryFn: api.getEconomicsStatus,
@@ -4342,6 +4350,27 @@ function EconomicsSnapshotCard() {
 
   return (
     <div>
+      {saveErr && <div className="settings-save-msg err">{saveErr}</div>}
+      <Row
+        label="Enable economics harness"
+        hint="Keeps LLM budget controls dormant until explicitly enabled. This does not block or reroute any model call."
+      >
+        <Toggle
+          checked={economicsEnabled}
+          onChange={enabled => economicsMut.mutate({ enabled })}
+          disabled={economicsMut.isPending}
+        />
+      </Row>
+      <Row
+        label="Budget shadow observation"
+        hint="Records calls that would exceed declared budgets. Calls still proceed; collect this evidence for two weeks before considering enforcement."
+      >
+        <Toggle
+          checked={shadowEnabled}
+          onChange={budgets_shadow_enabled => economicsMut.mutate({ budgets_shadow_enabled })}
+          disabled={!economicsEnabled || economicsMut.isPending}
+        />
+      </Row>
       {status && (status.tracing_enabled === false || status.audit_enabled === false) && (
         <p className="hint" style={{ marginBottom: '0.75rem' }}>
           {status.tracing_enabled === false && 'Cost tracing disabled (ALETHEIA_COST_TRACING=0). '}

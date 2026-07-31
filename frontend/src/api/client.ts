@@ -1087,6 +1087,8 @@ export const api = {
     runtime_continuity_shadow_port_offset: number
   }>) =>
     post<{ updated: Record<string, any> }>('/settings/runtime', body),
+  updateEconomicsConfig: (body: Partial<{ enabled: boolean; budgets_shadow_enabled: boolean }>) =>
+    post<{ updated: Record<string, any>; economics: Record<string, any> }>('/settings/economics', body),
   updateAppConfig: (body: Partial<{ auto_open_browser: boolean; equity_curve_mode: string }>) =>
     post<{ updated: Record<string, any> }>('/settings/app', body),
   updatePiDaemonConfig: (body: Partial<{ enabled: boolean; debounce_sec: number; cooldown_sec: number; heartbeat_sec: number }>) =>

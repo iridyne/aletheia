@@ -486,6 +486,32 @@ class RuntimeConfigUpdate(SettingsRequest):
     runtime_continuity_shadow_port_offset: Optional[int] = None
 
 
+class EconomicsConfigUpdate(SettingsRequest):
+    enabled: Optional[bool] = None
+    budgets_shadow_enabled: Optional[bool] = None
+
+
+@router.post("/economics")
+def update_economics_config(req: EconomicsConfigUpdate):
+    """Persist the default-off Phase 2 shadow-observation controls."""
+    cfg = load_config()
+    old = cfg.economics.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        setattr(cfg.economics, field, value)
+    if not cfg.economics.enabled:
+        cfg.economics.budgets_shadow_enabled = False
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({
+        "actor": "human", "source": "dashboard",
+        "event_type": "economics_config_changed", "entity_type": "economics_config",
+        "before": old, "after": cfg.economics.model_dump(mode="json"),
+        "message": f"Economics config updated: {list(updates.keys())}",
+    })
+    return {"updated": updates, "economics": cfg.economics.model_dump(mode="json")}
+
+
 @router.post("/runtime")
 async def update_runtime_config(req: RuntimeConfigUpdate):
     cfg = load_config()
