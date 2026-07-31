@@ -31,6 +31,9 @@ def reset_daemon_state():
     pd._coalescer = None
     pd._pending_events.clear()
     pd._generic_wake_pending = False
+    pd._task_generation = 0
+    pd._started_at = None
+    pd._active_params = None
     yield
     task = pd._daemon_task
     if task is not None and not task.done():
@@ -42,13 +45,23 @@ def reset_daemon_state():
     pd._coalescer = None
     pd._pending_events.clear()
     pd._generic_wake_pending = False
+    pd._task_generation = 0
+    pd._started_at = None
+    pd._active_params = None
 
 
 def test_notify_noop_when_not_started():
     """notify_pi_daemon() must never raise when the daemon is not running."""
     assert not is_daemon_running()
     assert notify_pi_daemon(source="test") is False
-    assert daemon_status() == {"running": False, "event_set": False, "lock_held": False}
+    assert daemon_status() == {
+        "running": False,
+        "event_set": False,
+        "lock_held": False,
+        "task_generation": 0,
+        "started_at": None,
+        "active_params": None,
+    }
 
 
 def test_notify_from_sync_thread():
