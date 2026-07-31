@@ -4,6 +4,16 @@ Historical replay may nominate a treatment, but every experiment starts after
 registration and uses only future first exposures. Reaching an evidence gate
 changes analytical status to ``ready_for_review``; production settings are
 never changed here.
+
+Two filter kinds currently register experiments:
+
+- ``family_ttl`` — 1-D TTL treatments. Ready marker is
+  ``ready_for_controlled_experiment``; the least-permissive winner is the
+  smallest treatment TTL strictly greater than the control TTL.
+- ``observer_pre_filter`` — 2-D (RSI × ATR) grid treatments. Ready marker is
+  ``ready_for_prospective_shadow``; the least-permissive winner is the grid
+  cell closest to the aggressive control (largest RSI and ATR values) still
+  meeting the evidence gate.
 """
 
 from __future__ import annotations
@@ -12,14 +22,20 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import uuid
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
-from aletheia.counterfactual.filter_replay import build_family_ttl_replay
+from aletheia.counterfactual.filter_replay import (
+    build_family_ttl_replay,
+    build_observer_pre_filter_replay,
+)
 from aletheia.storage import repositories as repo
 from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
 
 
+# Fallback gates when a replay does not declare its own gates in the top-level
+# dict. family_ttl currently relies on these; observer_pre_filter declares its
+# own stricter gates (0.80 coverage, 0.25 edge delta, 200 samples).
 _MIN_COVERAGE = 0.70
 _MIN_EDGE_DELTA_PCT = 0.05
 
@@ -33,13 +49,20 @@ def register_replay_ready_experiments(
     timestamp = _iso(now)
     summary = {"registered": 0, "already_registered": 0, "skipped": 0}
     for replay in replays:
-        alternative = _select_treatment(replay)
-        if alternative is None or replay.get("candidate_cap_reached"):
+        adapter = _ADAPTERS.get(str(replay.get("filter_name") or ""))
+        if adapter is None or replay.get("candidate_cap_reached"):
             summary["skipped"] += 1
             continue
+        alternative = adapter.select(replay.get("alternatives") or [])
+        if alternative is None:
+            summary["skipped"] += 1
+            continue
+        params = adapter.check(replay, alternative)
+        if params is None:
+            summary["skipped"] += 1
+            continue
+        control_param, treatment_param = params
         try:
-            control_ttl = int(replay["current_ttl_sec"])
-            treatment_ttl = int(alternative["ttl_sec"])
             scope = {
                 "filter_name": str(replay["filter_name"]),
                 "filter_version": str(replay["filter_version"]),
@@ -52,17 +75,12 @@ def register_replay_ready_experiments(
         except (KeyError, TypeError, ValueError):
             summary["skipped"] += 1
             continue
-        if (
-            scope["filter_name"] != "family_ttl"
-            or not all(scope.values())
-            or control_ttl <= 0
-            or treatment_ttl <= control_ttl
-        ):
+        if not all(scope.values()):
             summary["skipped"] += 1
             continue
 
-        control = _json({"ttl_sec": control_ttl})
-        treatment = _json({"ttl_sec": treatment_ttl})
+        control = _json(control_param)
+        treatment = _json(treatment_param)
         experiment_key = _experiment_key(scope, control, treatment)
         record = {
             "id": uuid.uuid4().hex,
@@ -75,8 +93,10 @@ def register_replay_ready_experiments(
             "assignment_policy": "prospective_first_exposure",
             "status": "collecting",
             "min_samples": max(20, int(replay.get("min_samples") or 20)),
-            "min_coverage": _MIN_COVERAGE,
-            "min_edge_delta_pct": _MIN_EDGE_DELTA_PCT,
+            "min_coverage": float(replay.get("min_coverage") or _MIN_COVERAGE),
+            "min_edge_delta_pct": float(
+                replay.get("min_edge_delta_pct") or _MIN_EDGE_DELTA_PCT
+            ),
             "source_replay": _json(replay),
             # This hard database constraint makes the observe-only boundary explicit.
             "production_mutation_allowed": 0,
@@ -142,27 +162,33 @@ def build_filter_shadow_experiment_report(limit: int = 50) -> list[dict[str, Any
 def _evaluate_one(
     experiment: dict[str, Any], timestamp: str
 ) -> tuple[dict[str, Any], str]:
-    control_ttl = int(_json_dict(experiment["control_parameter"])["ttl_sec"])
-    treatment_ttl = int(_json_dict(experiment["treatment_parameter"])["ttl_sec"])
-    replay = build_family_ttl_replay(
-        filter_version=experiment["filter_version"],
-        stage=experiment["stage"],
-        scanner_family=experiment["scanner_family"],
-        direction=experiment["direction"],
-        market_type=experiment["market_type"],
-        horizon=experiment["horizon"],
-        current_ttl_sec=control_ttl,
-        alternative_ttls=[treatment_ttl],
-        evaluated_after=experiment["started_at"],
-        min_samples=int(experiment["min_samples"]),
-    )
-    control = replay["current_pass"]
-    treatment = replay["alternatives"][0]
+    adapter = _ADAPTERS.get(str(experiment.get("filter_name") or ""))
+    if adapter is None:
+        return (
+            _empty_evaluation(
+                experiment,
+                timestamp,
+                "invalidated",
+                note=f"Unknown filter_name {experiment.get('filter_name')!r} — no evaluator adapter.",
+            ),
+            "invalidated",
+        )
+    control, treatment = adapter.rebuild(experiment)
+    if control is None or treatment is None:
+        return (
+            _empty_evaluation(
+                experiment,
+                timestamp,
+                "invalidated",
+                note="Replay could not reproduce the experiment's treatment cell.",
+            ),
+            "invalidated",
+        )
     enough = (
-        int(control["settled_n"]) >= int(experiment["min_samples"])
-        and int(treatment["settled_n"]) >= int(experiment["min_samples"])
-        and float(control["outcome_coverage"]) >= float(experiment["min_coverage"])
-        and float(treatment["outcome_coverage"]) >= float(experiment["min_coverage"])
+        int(control.get("settled_n") or 0) >= int(experiment["min_samples"])
+        and int(treatment.get("settled_n") or 0) >= int(experiment["min_samples"])
+        and float(control.get("outcome_coverage") or 0.0) >= float(experiment["min_coverage"])
+        and float(treatment.get("outcome_coverage") or 0.0) >= float(experiment["min_coverage"])
     )
     control_mean = control.get("raw_avg_net_pct")
     treatment_shrunk = treatment.get("shrunk_avg_net_pct")
@@ -193,13 +219,13 @@ def _evaluate_one(
         "created_at": timestamp,
         "evidence_through_at": timestamp,
         "disposition": disposition,
-        "control_candidate_count": int(control["candidate_count"]),
-        "control_settled_n": int(control["settled_n"]),
-        "control_outcome_coverage": float(control["outcome_coverage"]),
+        "control_candidate_count": int(control.get("candidate_count") or 0),
+        "control_settled_n": int(control.get("settled_n") or 0),
+        "control_outcome_coverage": float(control.get("outcome_coverage") or 0.0),
         "control_raw_avg_net_pct": control_mean,
-        "treatment_candidate_count": int(treatment["candidate_count"]),
-        "treatment_settled_n": int(treatment["settled_n"]),
-        "treatment_outcome_coverage": float(treatment["outcome_coverage"]),
+        "treatment_candidate_count": int(treatment.get("candidate_count") or 0),
+        "treatment_settled_n": int(treatment.get("settled_n") or 0),
+        "treatment_outcome_coverage": float(treatment.get("outcome_coverage") or 0.0),
         "treatment_raw_avg_net_pct": treatment.get("raw_avg_net_pct"),
         "treatment_shrunk_avg_net_pct": treatment_shrunk,
         "edge_delta_pct": edge_delta,
@@ -235,12 +261,172 @@ def _empty_evaluation(
     }
 
 
-def _select_treatment(replay: dict[str, Any]) -> dict[str, Any] | None:
+# ── Filter-kind adapters ──────────────────────────────────────────────────
+
+class _FilterAdapter:
+    """Per-filter-kind hook for treatment selection and replay reconstruction."""
+
+    def __init__(
+        self,
+        *,
+        ready_marker: str,
+        select: Callable[[list[dict[str, Any]]], dict[str, Any] | None],
+        check: Callable[
+            [dict[str, Any], dict[str, Any]],
+            tuple[dict[str, Any], dict[str, Any]] | None,
+        ],
+        rebuild: Callable[
+            [dict[str, Any]],
+            tuple[dict[str, Any] | None, dict[str, Any] | None],
+        ],
+    ) -> None:
+        self.ready_marker = ready_marker
+        self.select = select
+        self.check = check
+        self.rebuild = rebuild
+
+
+def _family_ttl_select(alternatives: list[dict[str, Any]]) -> dict[str, Any] | None:
     ready = [
-        row for row in replay.get("alternatives") or []
-        if row.get("readiness") == "ready_for_controlled_experiment"
+        alt for alt in alternatives
+        if alt.get("readiness") == "ready_for_controlled_experiment"
     ]
     return min(ready, key=lambda row: int(row["ttl_sec"])) if ready else None
+
+
+def _family_ttl_check(
+    replay: dict[str, Any], alternative: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    try:
+        control_ttl = int(replay["current_ttl_sec"])
+        treatment_ttl = int(alternative["ttl_sec"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if control_ttl <= 0 or treatment_ttl <= control_ttl:
+        return None
+    return {"ttl_sec": control_ttl}, {"ttl_sec": treatment_ttl}
+
+
+def _family_ttl_rebuild(
+    experiment: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    control_param = _json_dict(experiment["control_parameter"])
+    treatment_param = _json_dict(experiment["treatment_parameter"])
+    try:
+        control_ttl = int(control_param["ttl_sec"])
+        treatment_ttl = int(treatment_param["ttl_sec"])
+    except (KeyError, TypeError, ValueError):
+        return None, None
+    replay = build_family_ttl_replay(
+        filter_version=experiment["filter_version"],
+        stage=experiment["stage"],
+        scanner_family=experiment["scanner_family"],
+        direction=experiment["direction"],
+        market_type=experiment["market_type"],
+        horizon=experiment["horizon"],
+        current_ttl_sec=control_ttl,
+        alternative_ttls=[treatment_ttl],
+        evaluated_after=experiment["started_at"],
+        min_samples=int(experiment["min_samples"]),
+    )
+    if not replay.get("alternatives"):
+        return None, None
+    return replay["current_pass"], replay["alternatives"][0]
+
+
+def _observer_select(alternatives: list[dict[str, Any]]) -> dict[str, Any] | None:
+    ready = [
+        alt for alt in alternatives
+        if alt.get("readiness") == "ready_for_prospective_shadow"
+    ]
+    if not ready:
+        return None
+    # Least-permissive winner: grid cell closest to the aggressive control
+    # (largest rsi_deviation, then largest atr_pct).
+    return min(
+        ready,
+        key=lambda row: (-float(row["rsi_deviation"]), -float(row["atr_pct"])),
+    )
+
+
+def _observer_check(
+    replay: dict[str, Any], alternative: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    control_param = replay.get("control_parameter") or {}
+    try:
+        control_rsi = float(control_param["rsi_deviation"])
+        control_atr = float(control_param["atr_pct"])
+        treatment_rsi = float(alternative["rsi_deviation"])
+        treatment_atr = float(alternative["atr_pct"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    # Treatment must be strictly more permissive than control on at least one
+    # axis (grid values decrease as thresholds loosen).
+    if treatment_rsi > control_rsi or treatment_atr > control_atr:
+        return None
+    if treatment_rsi == control_rsi and treatment_atr == control_atr:
+        return None
+    return (
+        {"rsi_deviation": control_rsi, "atr_pct": control_atr},
+        {"rsi_deviation": treatment_rsi, "atr_pct": treatment_atr},
+    )
+
+
+def _observer_rebuild(
+    experiment: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    treatment_param = _json_dict(experiment["treatment_parameter"])
+    try:
+        treatment_rsi = float(treatment_param["rsi_deviation"])
+        treatment_atr = float(treatment_param["atr_pct"])
+    except (KeyError, TypeError, ValueError):
+        return None, None
+    replay = build_observer_pre_filter_replay(
+        filter_version=experiment["filter_version"],
+        scanner_family=experiment["scanner_family"],
+        direction=experiment["direction"],
+        market_type=experiment["market_type"],
+        evaluated_since=experiment["started_at"],
+        min_samples=int(experiment["min_samples"]),
+    )
+    match: dict[str, Any] | None = None
+    for alt in replay.get("alternatives") or []:
+        try:
+            alt_rsi = float(alt["rsi_deviation"])
+            alt_atr = float(alt["atr_pct"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if alt_rsi == treatment_rsi and alt_atr == treatment_atr:
+            match = alt
+            break
+    if match is None:
+        return None, None
+    # Project observer horizon_metrics into the flat shape expected by the
+    # evaluator. Use the 24h horizon as the primary evidence horizon (matching
+    # readiness definition in filter_replay); compare treatment_union against
+    # control since the union is what would be observed if the filter loosened.
+    primary = match.get("horizon_metrics", {}).get("24h") or {}
+    control = primary.get("control") or {}
+    treatment = primary.get("treatment_union") or {}
+    if not control or not treatment:
+        return None, None
+    return control, treatment
+
+
+_ADAPTERS: dict[str, _FilterAdapter] = {
+    "family_ttl": _FilterAdapter(
+        ready_marker="ready_for_controlled_experiment",
+        select=_family_ttl_select,
+        check=_family_ttl_check,
+        rebuild=_family_ttl_rebuild,
+    ),
+    "observer_pre_filter": _FilterAdapter(
+        ready_marker="ready_for_prospective_shadow",
+        select=_observer_select,
+        check=_observer_check,
+        rebuild=_observer_rebuild,
+    ),
+}
 
 
 def _experiment_key(scope: dict[str, str], control: str, treatment: str) -> str:

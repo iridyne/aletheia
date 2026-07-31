@@ -159,6 +159,98 @@ def test_shadow_evaluation_uses_only_future_first_exposures_and_never_mutates_co
     assert save_calls == []
 
 
+def _ready_observer_replay(*, filter_version: str) -> dict:
+    """A replay with three ready alternatives; the least-permissive is (10, 0.7)."""
+    return {
+        "read_only": True,
+        "gate_only": True,
+        "filter_name": "observer_pre_filter",
+        "filter_version": filter_version,
+        "stage": "observer_pre_filter",
+        "scanner_family": "momentum",
+        "direction": "long",
+        "market_type": "perp",
+        "horizon": "24h",
+        "candidate_cap_reached": False,
+        "min_samples": 200,
+        "min_coverage": 0.80,
+        "min_edge_delta_pct": 0.25,
+        "control_parameter": {"rsi_deviation": 12.0, "atr_pct": 0.8},
+        "alternatives": [
+            {
+                "rsi_deviation": 6.0,
+                "atr_pct": 0.5,
+                "newly_admitted_candidates": 250,
+                "readiness": "ready_for_prospective_shadow",
+            },
+            {
+                "rsi_deviation": 10.0,
+                "atr_pct": 0.7,
+                "newly_admitted_candidates": 210,
+                "readiness": "ready_for_prospective_shadow",
+            },
+            {
+                "rsi_deviation": 8.0,
+                "atr_pct": 0.7,
+                "newly_admitted_candidates": 220,
+                "readiness": "no_support",
+            },
+        ],
+    }
+
+
+def test_observer_pre_filter_replay_registers_least_permissive_winner():
+    from aletheia.counterfactual.filter_experiments import (
+        register_replay_ready_experiments,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    started_at = datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc)
+    replay = _ready_observer_replay(filter_version="obs-fixed-v1")
+
+    summary = register_replay_ready_experiments([replay], now=started_at)
+    rows = get_db().execute(
+        "SELECT * FROM filter_shadow_experiments "
+        "WHERE filter_name='observer_pre_filter'"
+    ).fetchall()
+
+    assert summary == {"registered": 1, "already_registered": 0, "skipped": 0}
+    assert len(rows) == 1
+    row = rows[0]
+    # Least-permissive winner: largest rsi_deviation among ready alternatives,
+    # tie-broken by largest atr_pct. Here (10.0, 0.7) beats (6.0, 0.5).
+    assert row["treatment_parameter"] == '{"atr_pct":0.7,"rsi_deviation":10.0}'
+    assert row["control_parameter"] == '{"atr_pct":0.8,"rsi_deviation":12.0}'
+    assert row["production_mutation_allowed"] == 0
+    # Observer replays declare their own stricter gates; the registration must
+    # honor them rather than falling back to the family_ttl 0.05 / 0.70 pair.
+    assert row["min_coverage"] == 0.80
+    assert row["min_edge_delta_pct"] == 0.25
+    assert row["min_samples"] == 200
+    assert row["stage"] == "observer_pre_filter"
+    assert row["horizon"] == "24h"
+
+
+def test_observer_replay_without_ready_alternatives_is_skipped():
+    from aletheia.counterfactual.filter_experiments import (
+        register_replay_ready_experiments,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    started_at = datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc)
+    replay = _ready_observer_replay(filter_version="obs-empty-v1")
+    for alt in replay["alternatives"]:
+        alt["readiness"] = "no_support"
+
+    summary = register_replay_ready_experiments([replay], now=started_at)
+    rows = get_db().execute(
+        "SELECT COUNT(*) FROM filter_shadow_experiments"
+    ).fetchone()
+
+    assert summary == {"registered": 0, "already_registered": 0, "skipped": 1}
+    assert rows[0] == 0
+
+
 def test_shadow_experiment_invalidates_when_production_filter_version_changes():
     from aletheia.counterfactual.filter_experiments import (
         evaluate_active_shadow_experiments,
