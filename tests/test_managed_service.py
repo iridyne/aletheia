@@ -238,3 +238,23 @@ def test_windows_stop_keeps_failure_when_the_task_survives(monkeypatch):
     assert result["ok"] is False
     assert result["reason"] == "schtasks_error"
     assert "エラー" in result["detail"]
+
+
+def test_linux_start_uses_notify_service_type(monkeypatch):
+    """T8: _start_linux must use --service-type=notify so systemd waits for the
+    sd_notify READY=1 signal before marking the unit active, rather than marking
+    it active the moment the process starts.
+    """
+    from aletheia.gateway import managed_service as service
+
+    monkeypatch.setattr(service, "_runner_command", lambda **_kwargs: ["/venv/bin/python", "/app/_gateway_runner.py", "--no-browser"])
+    calls: list[list[str]] = []
+    monkeypatch.setattr(service.subprocess, "run", lambda args, **_kwargs: calls.append(args) or _proc())
+
+    result = service._start_linux(no_browser=True)
+
+    assert result["ok"] is True
+    command = calls[0]
+    assert "--service-type=notify" in command
+    assert "--service-type=exec" not in command
+    assert "--property=TimeoutStartSec=120" in command

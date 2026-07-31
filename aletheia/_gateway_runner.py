@@ -194,7 +194,7 @@ def _ensure_frontdoor_running(cfg, backend_port: int, proc: subprocess.Popen | N
     return new_proc
 
 
-def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None = None, collector_holder: list | None = None, backend_holder: list | None = None) -> int:
+def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None = None, collector_holder: list | None = None, backend_holder: list | None = None, ready_emitter: list | None = None) -> int:
     """Spawn the inner uvicorn server as a child process; return its exit code.
 
     frontdoor_holder is a 1-element mutable list owned by run_supervised holding
@@ -294,6 +294,12 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
             if port_in_use(runtime_context["port"], runtime_context["host"]):
                 saw_listening_port = True
                 port_missing_since = None
+                # One-shot: emit the ready beacon the first time the backend port
+                # is confirmed alive.  T6: lets _verify_started short-circuit its
+                # HTTP polling loop instead of waiting for the full 60s deadline.
+                if ready_emitter is not None and not ready_emitter[0]:
+                    ready_emitter[0] = True
+                    _write_ready_beacon(cfg)
             else:
                 if saw_listening_port:
                     if port_missing_since is None:
@@ -491,6 +497,7 @@ def run_supervised(spawn_fn=None) -> dict:
             frontdoor_holder=frontdoor_holder,
             collector_holder=collector_holder,
             backend_holder=backend_holder,
+            ready_emitter=ready_emitter,
         )
     from aletheia.gateway.operator_shell import OperatorShellMonitor
     operator_monitor = OperatorShellMonitor(cfg)
@@ -506,6 +513,7 @@ def run_supervised(spawn_fn=None) -> dict:
     restart_times: list[float] = []
     restart_history: list[dict] = []   # T5: per-restart details for persistent log
     gave_up_flag: list[bool] = [False]  # T4: skip frontdoor kill on gave_up
+    ready_emitter: list[bool] = [False]  # T6: one-shot beacon — True once emitted
     shutdown_signal: dict = {"num": None}
     prev_handlers: dict = {}
     try:
@@ -605,6 +613,8 @@ def run_supervised(spawn_fn=None) -> dict:
                 clear_pid()
         except Exception:
             pass
+        # T6: clear the ready beacon so a stale file never misleads the next start.
+        _clear_ready_beacon()
         if shutdown_signal["num"] is not None:
             _record_signal_shutdown(shutdown_signal["num"])
         _restore_shutdown_handlers(prev_handlers)
@@ -695,6 +705,62 @@ def _write_restart_history(history: list[dict]) -> None:
         with path.open("a", encoding="utf-8") as fh:
             for entry in history:
                 fh.write(_json.dumps({"ts": ts, **entry}) + "\n")
+    except Exception:
+        pass
+
+
+def _ready_beacon_path():
+    """Return the path of the ready beacon file."""
+    return get_data_dir() / "gateway.ready"
+
+
+def _write_ready_beacon(cfg) -> None:
+    """Write a ready beacon that _verify_started can use as a fast-path signal.
+
+    The beacon contains the supervisor's PID so the reader can verify ownership
+    and reject a stale file from a previous run.  Written exactly once per
+    supervisor lifetime; cleared in finally so a subsequent start never sees a
+    leftover beacon.
+
+    Also emits sd_notify READY=1 for Linux systemd integration (T8). No-op on
+    Windows or when not running under systemd.
+    """
+    try:
+        import json as _json
+        import datetime as _dt
+        path = _ready_beacon_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "pid": os.getpid(),
+            "ts": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        }
+        path.write_text(_json.dumps(payload), encoding="utf-8")
+    except Exception:
+        pass
+    _emit_sd_notify()
+
+
+def _clear_ready_beacon() -> None:
+    """Delete the ready beacon file. Best-effort; never raises."""
+    try:
+        _ready_beacon_path().unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _emit_sd_notify() -> None:
+    """Emit READY=1 to systemd via the sd_notify protocol (Linux only).
+
+    No-op when:
+    - NOTIFY_SOCKET is not set (not under systemd supervision)
+    - sdnotify package is not installed (optional dependency)
+    - Any other error (always best-effort)
+    """
+    if not os.environ.get("NOTIFY_SOCKET"):
+        return
+    try:
+        import sdnotify  # optional dependency: sdnotify>=0.3.2
+        sdnotify.SystemdNotifier().notify("READY=1")
     except Exception:
         pass
 

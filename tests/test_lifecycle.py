@@ -386,6 +386,101 @@ def test_verify_started_surfaces_errors_log_tail(tmp_path, monkeypatch, capsys):
     assert "ImportError boom" in err
 
 
+def test_verify_started_fast_path_via_ready_beacon(tmp_path, monkeypatch):
+    """A valid ready beacon lets _verify_started skip the tcp-port check and go
+    straight to HTTP verification, confirming success without waiting for the normal
+    polling deadline.
+    """
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    cfg = lifecycle.load_config()
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: True)
+
+    # Simulate supervisor having emitted the beacon for pid 9999.
+    import json as _json
+    beacon_path = tmp_path / "gateway.ready"
+    beacon_path.write_text(_json.dumps({"pid": 9999, "ts": "2026-01-01T00:00:00+00:00"}), encoding="utf-8")
+    monkeypatch.setattr(lifecycle, "read_pid", lambda: 9999)
+
+    # port_in_use and is_running should not matter because beacon is present.
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": False)
+    monkeypatch.setattr(lifecycle, "_verify_api_ready_accessible", lambda cfg: True)
+    monkeypatch.setattr(lifecycle, "_verify_webui_accessible", lambda cfg: True)
+
+    # Should return immediately without killing anything.
+    killed: list[int] = []
+    monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: killed.append(pid))
+    lifecycle._verify_started(cfg, timeout=2.0, poll_interval=0.01)
+    assert killed == []
+
+
+def test_verify_started_beacon_ignored_when_pid_mismatch(tmp_path, monkeypatch):
+    """A beacon with a stale PID is rejected; normal polling applies."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    cfg = lifecycle.load_config()
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: True)
+
+    import json as _json
+    beacon_path = tmp_path / "gateway.ready"
+    beacon_path.write_text(_json.dumps({"pid": 1111, "ts": "2026-01-01T00:00:00+00:00"}), encoding="utf-8")
+    # Live pid differs from beacon pid → beacon must be rejected.
+    monkeypatch.setattr(lifecycle, "read_pid", lambda: 2222)
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": False)
+
+    import typer
+    with pytest.raises(typer.Exit):
+        lifecycle._verify_started(cfg, timeout=0.1, poll_interval=0.01)
+
+
+def test_circuit_break_auto_resets_after_stability_window(tmp_path, monkeypatch):
+    """After 30+ min of stability, do_start auto-clears the circuit-break file and
+    re-enables the watchdog without operator intervention.
+    """
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+
+    # Write a circuit-break state file timestamped 31 minutes ago.
+    import json as _json
+    import datetime as _dt
+    old_ts = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=31)).isoformat()
+    cb_path = tmp_path / "circuit_break.json"
+    cb_path.write_text(_json.dumps({"tripped_at": old_ts, "source": "circuit_breaker"}), encoding="utf-8")
+
+    autostart_enabled: list[str] = []
+
+    from aletheia.gateway import autostart as _autostart_mod
+    monkeypatch.setattr(_autostart_mod, "is_supported_platform", lambda: True)
+    monkeypatch.setattr(_autostart_mod, "enable", lambda source="api": autostart_enabled.append(source) or {"ok": True})
+
+    # No new spawn failures in audit log → reset should proceed.
+    lifecycle._check_circuit_break_auto_reset()
+
+    assert not cb_path.exists(), "circuit_break.json should have been deleted after auto-reset"
+    assert "auto_reset" in autostart_enabled, "watchdog should be re-enabled after auto-reset"
+
+    from aletheia.files.jsonl import read_jsonl
+    assert any(e.get("event_type") == "gateway_circuit_breaker_reset" for e in read_jsonl("audit.jsonl"))
+
+
+def test_circuit_break_does_not_reset_within_window(tmp_path, monkeypatch):
+    """Within the 30-min protection window the circuit-break file must not be removed."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+
+    import json as _json
+    import datetime as _dt
+    recent_ts = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=5)).isoformat()
+    cb_path = tmp_path / "circuit_break.json"
+    cb_path.write_text(_json.dumps({"tripped_at": recent_ts, "source": "circuit_breaker"}), encoding="utf-8")
+
+    lifecycle._check_circuit_break_auto_reset()
+
+    assert cb_path.exists(), "circuit_break.json must remain during the protection window"
+
+
 def test_do_logs_shows_all_operational_logs_redacted(tmp_path, monkeypatch, capsys):
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle
