@@ -183,24 +183,39 @@ def test_scheduler_executor_pool_names():
     )
 
 
-@spec_claim(
-    SpecClaim(
-        "AC-S10", "agent_contracts", "§1 job IDs unique", "L2a",
-        "All add_job() calls in scheduler.py carry unique id= values (no duplicate registrations)",
-    ),
-)
 def test_scheduler_job_ids_unique():
-    import re
+    import ast
     from collections import Counter
     from pathlib import Path
 
     src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
-    source = src.read_text(encoding="utf-8")
-    ids = re.findall(r'id="([^"]+)"', source)
-    assert ids, "No job id= values found in scheduler.py"
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+
+    # Only boot-time registrations (inside init_scheduler) must be unique.
+    # Reconciliation helpers use conditional add_job (guarded by get_job() is None)
+    # and are intentionally allowed to name the same IDs.
+    init_fn = next(
+        (n for n in ast.walk(tree)
+         if isinstance(n, ast.FunctionDef) and n.name == "init_scheduler"),
+        None,
+    )
+    assert init_fn is not None, "init_scheduler() not found in scheduler.py"
+
+    ids = []
+    for node in ast.walk(init_fn):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(getattr(node.func, "attr", None), str)
+            and node.func.attr == "add_job"
+        ):
+            for kw in node.keywords:
+                if kw.arg == "id" and isinstance(kw.value, ast.Constant):
+                    ids.append(kw.value.value)
+
+    assert ids, "No job id= values found in init_scheduler()"
     counts = Counter(ids)
     dupes = {k: v for k, v in counts.items() if v > 1}
-    assert not dupes, f"Duplicate scheduler job IDs found: {dupes}"
+    assert not dupes, f"Duplicate scheduler job IDs in init_scheduler(): {dupes}"
 
 
 @spec_claim(

@@ -3838,7 +3838,7 @@ function TelegramCard({ settings, qc }: any) {
         <Toggle checked={notifyFills} label="Trade fill notifications" onChange={v => { setNotifyFills(v); setMsg(null) }} />
       </div>
       <div className="settings-action-row settings-action-row-start">
-        <Toggle checked={notifySummary} label="Daily PnL summary (08:00 CST)" onChange={v => { setNotifySummary(v); setMsg(null) }} />
+        <Toggle checked={notifySummary} label={`Daily PnL summary (${String(summaryHour).padStart(2, '0')}:00 CST)`} onChange={v => { setNotifySummary(v); setMsg(null) }} />
       </div>
       {notifySummary && (
         <div className="form-grid mb-3">

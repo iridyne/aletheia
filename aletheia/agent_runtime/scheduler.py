@@ -1537,6 +1537,152 @@ def reschedule_learning_jobs(interval_min: int) -> bool:
         return False
 
 
+def reconcile_historical_data_jobs(historical_cfg) -> bool:
+    """Reconcile ohlcv_nightly_backfill and ohlcv_active_backfill against live config.
+
+    Both jobs are essential infrastructure; this function adds, removes, or
+    reschedules them immediately after a settings save so the UI reflects
+    actual runtime state. Returns True when the scheduler was reached (even if
+    no change was needed); False when the scheduler is absent or an error
+    occurred (the saved config still applies at next restart).
+    """
+    if _scheduler is None:
+        return False
+    try:
+        with _SCHEDULER_JOB_LOCK:
+            nightly_enabled = getattr(historical_cfg, "nightly_backfill_enabled", False)
+            nightly_hour = int(getattr(historical_cfg, "nightly_backfill_hour_cst", 2))
+            nightly_job = _scheduler.get_job("ohlcv_nightly_backfill")
+            if nightly_enabled:
+                if nightly_job is None:
+                    _scheduler.add_job(
+                        _guarded("ohlcv_nightly_backfill", _run_ohlcv_nightly_backfill),
+                        "cron", hour=nightly_hour, minute=30,
+                        id="ohlcv_nightly_backfill", misfire_grace_time=600,
+                        executor="io", timezone="Asia/Shanghai",
+                    )
+                    logger.info("Added ohlcv_nightly_backfill job at %02d:30 CST", nightly_hour)
+                else:
+                    _scheduler.reschedule_job(
+                        "ohlcv_nightly_backfill", trigger="cron",
+                        hour=nightly_hour, minute=30, timezone="Asia/Shanghai",
+                    )
+                    logger.info("Rescheduled ohlcv_nightly_backfill to %02d:30 CST", nightly_hour)
+            else:
+                if nightly_job is not None:
+                    _scheduler.remove_job("ohlcv_nightly_backfill")
+                    _selectively_paused_jobs.discard("ohlcv_nightly_backfill")
+                    logger.info("Removed ohlcv_nightly_backfill job")
+
+            hist_enabled = getattr(historical_cfg, "enabled", True)
+            active_enabled = hist_enabled and getattr(historical_cfg, "active_universe_backfill_enabled", True)
+            active_interval = int(getattr(historical_cfg, "active_universe_backfill_interval_minutes", 10))
+            active_job = _scheduler.get_job("ohlcv_active_backfill")
+            if active_enabled:
+                if active_job is None:
+                    _scheduler.add_job(
+                        _guarded("ohlcv_active_backfill", _run_active_ohlcv_backfill),
+                        "interval", minutes=active_interval,
+                        id="ohlcv_active_backfill", misfire_grace_time=120, executor="io",
+                    )
+                    logger.info("Added ohlcv_active_backfill job every %d min", active_interval)
+                else:
+                    _scheduler.reschedule_job(
+                        "ohlcv_active_backfill", trigger="interval", minutes=active_interval,
+                    )
+                    logger.info("Rescheduled ohlcv_active_backfill to every %d min", active_interval)
+            else:
+                if active_job is not None:
+                    _scheduler.remove_job("ohlcv_active_backfill")
+                    _selectively_paused_jobs.discard("ohlcv_active_backfill")
+                    logger.info("Removed ohlcv_active_backfill job")
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed to reconcile historical data jobs (applies at next restart): %s", e)
+        return False
+
+
+def reschedule_news_fetch(interval_min: int) -> bool:
+    """Apply a new fetch interval to the live news_fetch job.
+
+    Returns True if rescheduled; False if no running scheduler/job or on error
+    (the saved interval still applies at next boot). Never raises into callers.
+    """
+    if _scheduler is None:
+        return False
+    try:
+        with _SCHEDULER_JOB_LOCK:
+            if _scheduler.get_job("news_fetch") is None:
+                return False
+            _scheduler.reschedule_job("news_fetch", trigger="interval", minutes=interval_min)
+        logger.info("Rescheduled news_fetch to every %d min", interval_min)
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed to reschedule news_fetch (applies at next restart): %s", e)
+        return False
+
+
+def reconcile_filter_controller(shadow_enabled: bool, observe_interval_hours: float) -> bool:
+    """Add, remove, or reschedule the filter_controller_observe job.
+
+    This job is non-essential: newly added jobs are paused when layered pause
+    is active. Returns True when the scheduler was reached; False otherwise.
+    """
+    if _scheduler is None:
+        return False
+    try:
+        with _SCHEDULER_JOB_LOCK:
+            existing = _scheduler.get_job("filter_controller_observe")
+            if shadow_enabled:
+                interval_h = max(1, int(observe_interval_hours))
+                if existing is None:
+                    _scheduler.add_job(
+                        _guarded("filter_controller_observe", _run_filter_controller_observe),
+                        "interval", hours=interval_h,
+                        id="filter_controller_observe", misfire_grace_time=600, executor="io",
+                    )
+                    if _selectively_paused_jobs:
+                        _scheduler.pause_job("filter_controller_observe")
+                        _selectively_paused_jobs.add("filter_controller_observe")
+                    logger.info("Added filter_controller_observe job every %dh", interval_h)
+                else:
+                    _scheduler.reschedule_job(
+                        "filter_controller_observe", trigger="interval", hours=interval_h,
+                    )
+                    logger.info("Rescheduled filter_controller_observe to every %dh", interval_h)
+            else:
+                if existing is not None:
+                    _scheduler.remove_job("filter_controller_observe")
+                    _selectively_paused_jobs.discard("filter_controller_observe")
+                    logger.info("Removed filter_controller_observe job")
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed to reconcile filter_controller_observe (applies at next restart): %s", e)
+        return False
+
+
+def reschedule_telegram_summary(hour_cst: int) -> bool:
+    """Reschedule the daily_summary cron job to fire at the given hour (CST/UTC+8).
+
+    Returns True if rescheduled; False if no running scheduler/job or on error.
+    """
+    if _scheduler is None:
+        return False
+    try:
+        with _SCHEDULER_JOB_LOCK:
+            if _scheduler.get_job("daily_summary") is None:
+                return False
+            _scheduler.reschedule_job(
+                "daily_summary", trigger="cron",
+                hour=int(hour_cst), minute=0, timezone="Asia/Shanghai",
+            )
+        logger.info("Rescheduled daily_summary to %02d:00 CST", hour_cst)
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed to reschedule daily_summary (applies at next restart): %s", e)
+        return False
+
+
 def is_running() -> bool:
     return _scheduler is not None and _scheduler.running
 
