@@ -751,7 +751,7 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
         "completed_no_support": 0, "invalidated": 0,
     }
     try:
-        from aletheia.analytics.filter_replay import build_bounded_filter_replays
+        from aletheia.counterfactual.filter_replay import build_bounded_filter_replays
         from aletheia.counterfactual.filter_experiments import (
             evaluate_active_shadow_experiments,
             register_replay_ready_experiments,
@@ -839,7 +839,7 @@ def build_filter_controller_report(
             "error": type(exc).__name__,
         }
     try:
-        from aletheia.analytics.filter_replay import build_bounded_filter_replays
+        from aletheia.counterfactual.filter_replay import build_bounded_filter_replays
 
         bounded_replays = build_bounded_filter_replays(
             recs,
@@ -885,7 +885,7 @@ def build_filter_controller_report(
     # experiment or production mutation.
     stale_persistent: list[dict[str, Any]] = []
     try:
-        from aletheia.analytics.filter_replay import (
+        from aletheia.counterfactual.filter_replay import (
             build_observer_pre_filter_replay,
         )
 

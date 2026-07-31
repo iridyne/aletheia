@@ -141,7 +141,7 @@ def test_controller_report_renders_bounded_gate_only_replay(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "aletheia.analytics.filter_replay.build_bounded_filter_replays",
+        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *args, **kwargs: [replay],
     )
 
@@ -165,7 +165,7 @@ def test_controller_report_renders_registered_prospective_experiment(monkeypatch
         lambda **kwargs: {},
     )
     monkeypatch.setattr(
-        "aletheia.analytics.filter_replay.build_bounded_filter_replays",
+        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *args, **kwargs: [],
     )
     monkeypatch.setattr(
@@ -203,7 +203,7 @@ def test_observe_cycle_registers_and_evaluates_shadow_experiments(monkeypatch):
     calls = {"registered": 0, "evaluated": 0}
     monkeypatch.setattr(fc, "compute_filter_feedback", lambda min_samples=20: [])
     monkeypatch.setattr(
-        "aletheia.analytics.filter_replay.build_bounded_filter_replays",
+        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *args, **kwargs: [{"filter_name": "family_ttl"}],
     )
 

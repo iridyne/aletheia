@@ -147,7 +147,7 @@ def test_controller_report_surfaces_observer_rule_diagnostics(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "aletheia.analytics.filter_replay.build_bounded_filter_replays",
+        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *_args, **_kwargs: [],
     )
     monkeypatch.setattr(
@@ -174,7 +174,7 @@ def test_observer_replay_is_fixed_bounded_first_exposure_and_read_only(
 
     setup_env(tmp_path, monkeypatch)
     from aletheia.analytics.filter_evidence import record_filter_decision
-    from aletheia.analytics.filter_replay import build_observer_pre_filter_replay
+    from aletheia.counterfactual.filter_replay import build_observer_pre_filter_replay
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc)
@@ -307,7 +307,7 @@ def test_stale_persistent_observer_version_cannot_trigger_replay(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "aletheia.analytics.filter_replay.build_bounded_filter_replays",
+        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *_args, **_kwargs: [],
     )
 
@@ -315,7 +315,7 @@ def test_stale_persistent_observer_version_cannot_trigger_replay(monkeypatch):
         raise AssertionError("stale production version must not be replayed")
 
     monkeypatch.setattr(
-        "aletheia.analytics.filter_replay.build_observer_pre_filter_replay",
+        "aletheia.counterfactual.filter_replay.build_observer_pre_filter_replay",
         forbidden_replay,
     )
     monkeypatch.setattr(

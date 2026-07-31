@@ -1148,7 +1148,8 @@ def test_guard_filter_has_explicit_not_evaluated_states():
 def test_filter_feedback_first_exposure_and_replay_bounds_are_explicit():
     import inspect
 
-    from aletheia.analytics import filter_evidence, filter_replay
+    from aletheia.analytics import filter_evidence
+    from aletheia.counterfactual import filter_replay
 
     cte = filter_evidence.FIRST_EXPOSURE_CTE_SQL
     assert "ROW_NUMBER() OVER" in cte
@@ -1199,8 +1200,8 @@ def test_observer_diagnostics_and_replay_are_versioned_read_only_surfaces():
         filter_controller,
         filter_evidence,
         filter_registry,
-        filter_replay,
     )
+    from aletheia.counterfactual import filter_replay
 
     diagnostics = inspect.getsource(filter_evidence.observer_pre_filter_diagnostics)
     replay = inspect.getsource(filter_replay.build_observer_pre_filter_replay)
