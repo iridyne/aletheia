@@ -1,0 +1,46 @@
+name: Delete merged head branches
+
+# GitHub's built-in "Automatically delete head branches" repo setting does
+# not fire when the merging actor is a GITHUB_TOKEN-authenticated Actions
+# workflow (auto-merge.yml in this repo), because GitHub deliberately breaks
+# the workflow-triggers-workflow chain for that token.
+#
+# This workflow closes the gap: on any PR close, if the PR was actually
+# merged and the head lives in the same repository, delete the head branch
+# via the REST API. Fork branches are left alone (they belong to the
+# contributor's fork, not this repository).
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  delete:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref != github.event.repository.default_branch
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: ${{ github.event.pull_request.head.ref }}
+    steps:
+      - name: Delete head branch
+        run: |
+          # 422 (already gone) is not a failure — someone may have deleted it
+          # manually. Any other error we still surface via set -e.
+          set -e
+          status=$(gh api -X DELETE \
+            "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH" \
+            --silent 2>&1 && echo ok || echo fail)
+          if [ "$status" = "fail" ]; then
+            # Retry once — race conditions on rapid stacked merges have been
+            # observed to produce transient 409s.
+            sleep 3
+            gh api -X DELETE \
+              "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH" \
+              --silent || echo "branch $BRANCH already removed"
+          fi
