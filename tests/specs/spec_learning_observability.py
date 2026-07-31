@@ -183,7 +183,7 @@ def test_lco_admission_recommendation_is_read_only(tmp_path, monkeypatch):
     lifecycle = build_learning_contribution_projection()["items"][0]["lifecycle"]
     assert lifecycle["recommended_action"] == "admit_trial"
     assert lifecycle["authority_enabled"] is False
-    assert lifecycle["authority_block_reason"] == "read_only_projection"
+    assert lifecycle["authority_block_reason"] == "paper_influence_disabled"
     assert lifecycle["mutation_available"] is False
     assert lifecycle["mutation_unavailable_reason"] == "lifecycle_automation_disabled"
 

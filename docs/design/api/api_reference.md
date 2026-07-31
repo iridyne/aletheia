@@ -174,7 +174,7 @@ the same two completeness columns; it writes an empty realized-PnL cell rather t
 | GET | `/analytics/shadow-trades` | Shadow trade comparison data |
 | GET | `/analytics/strategy-performance` | Per-strategy KPIs (backtest summary removed with rules engine, Position C) |
 | GET | `/analytics/learning-funnel` | Learning write/consume visibility, lesson status counts, conservative contradiction count |
-| GET | `/analytics/learning-contribution` | Additive `lco-v1` bounded read-only owner summary for current Learning experiments, identity-matched measurement, cohort integrity, evaluator health and recommendation-only lifecycle state. `path_states` keeps each measurement-supported path's availability, empty/active state and freshness separate. Uses a 30-second monotonic process-local cache and emits `Server-Timing` (`ledger` or `cache_hit`, plus `total`). Legacy activity aggregates remain compatibility context, not contribution evidence. No evaluation or mutation is run. |
+| GET | `/analytics/learning-contribution` | Additive `lco-v1` bounded read-only owner summary for current Learning experiments, identity-matched measurement, cohort integrity, evaluator health, lifecycle readiness and the existing resolver's effective treatment-authority decision. GET performs no authority mutation. `path_states` keeps each measurement-supported path's availability, empty/active state and cadence-aware freshness separate. Uses a 30-second monotonic process-local cache and emits `Server-Timing` (`ledger` or `cache_hit`, plus `total`). Legacy activity aggregates remain compatibility context, not contribution evidence; `legacy_query_errors` and nullable counts distinguish read failure from genuine empty or zero activity. No evaluation or mutation is run. |
 
 ### Future Learning Contribution API
 
@@ -262,10 +262,10 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | GET | `/knowledge/research-notes` | Research notes only |
 | GET | `/knowledge/dreaming-logs` | Dreaming agent summaries |
 | GET | `/knowledge/strategy-memory` | Strategy-specific memory |
-| GET | `/knowledge/guards` | Active Guard storage rows plus separate lifecycle, origin, proposed effect, experiment, assignment, guard-level authority, and actual baseline-effect fields; current measurement-unsupported learned guards report no experiment or assignment |
-| GET | `/knowledge/guard-candidates` | Guard candidates with the same authority projection; candidate status never implies enforcement |
+| GET | `/knowledge/guards` | Active Guard storage rows plus separate lifecycle, origin, proposed effect, experiment, assignment, guard-level authority, and actual baseline-effect fields; current measurement-unsupported learned guards report no experiment or assignment. Read failure returns stable `503 guard_read_failed`, never HTTP 200 with an empty collection. |
+| GET | `/knowledge/guard-candidates` | Guard candidates with the same authority projection; candidate status never implies enforcement. Read failure returns stable `503 guard_read_failed`, never HTTP 200 with an empty collection. |
 | POST | `/knowledge/guard-candidates/{guard_id}/promote` | Manually move a candidate to active storage; a shadow learned Guard becomes `active_observe` and gains no enforcement authority |
-| GET | `/knowledge/guards/stats` | Guard activation statistics |
+| GET | `/knowledge/guards/stats` | Guard activation statistics; read failure returns stable `503 guard_stats_read_failed` rather than an empty success payload |
 | GET | `/knowledge/case-studies` | Case study analyses |
 | GET | `/knowledge/{item_id}/content` | Full content of knowledge item |
 | GET | `/dreaming/summary` | Dreaming session summary; recent knowledge collections contain active items only, while archived/deprecated memories are returned separately |

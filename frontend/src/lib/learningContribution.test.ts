@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { LearningContributionProjection } from '../api/client'
 import {
+  authorityLabel,
   deriveContributionViewState,
   measuredContributionPathIds,
 } from './learningContribution'
@@ -97,6 +98,14 @@ function projection(
     ...overrides,
   }
 }
+
+describe('authorityLabel', () => {
+  it('separates treatment authority from the read-only page boundary', () => {
+    expect(authorityLabel(true, null)).toBe('Enabled')
+    expect(authorityLabel(false, 'paper_influence_disabled')).toBe('Blocked')
+    expect(authorityLabel(false, 'authority_projection_failed')).toBe('Unavailable')
+  })
+})
 
 describe('deriveContributionViewState', () => {
   it('uses the backend measurement verdict rather than large activity counts', () => {

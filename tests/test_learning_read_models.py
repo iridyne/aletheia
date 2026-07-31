@@ -194,6 +194,74 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     assert item["lifecycle"]["authority_enabled"] is False
 
 
+def test_lco_projection_reports_resolved_treatment_authority(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+    from aletheia.learning.authority import AuthorityDecision
+    import aletheia.learning.authority as authority
+
+    monkeypatch.setattr(
+        authority,
+        "resolve_learning_authority",
+        lambda *_args, **_kwargs: AuthorityDecision(
+            True,
+            "current_stage_measurement_healthy",
+            "paper_10",
+            0.1,
+            "activation-verdict",
+            "current-verdict",
+        ),
+    )
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    lifecycle = build_learning_contribution_projection()["items"][0]["lifecycle"]
+
+    assert lifecycle["authority_enabled"] is True
+    assert lifecycle["authority_block_reason"] is None
+
+
+def test_lco_projection_marks_authority_read_failure_partial(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+    import aletheia.learning.authority as authority
+
+    monkeypatch.setattr(
+        authority,
+        "resolve_learning_authority",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("private")),
+    )
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    result = build_learning_contribution_projection()
+
+    assert result["availability"] == "partial"
+    assert result["path_states"][0]["availability"] == "partial"
+    assert result["path_states"][0]["unavailable_reason"] == (
+        "authority_projection_failed"
+    )
+    assert result["items"][0]["availability"] == "partial"
+    assert result["items"][0]["lifecycle"]["authority_block_reason"] == (
+        "authority_projection_failed"
+    )
+
+
+def test_lco_freshness_uses_configured_evaluation_cadence(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.learning.evaluation_interval_minutes = 180
+    save_config(cfg)
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    result = build_learning_contribution_projection()
+
+    assert result["data_freshness"]["stale_after_sec"] == 21_600
+    assert result["path_states"][0]["data_freshness"]["stale_after_sec"] == 21_600
+    assert result["items"][0]["data_freshness"]["stale_after_sec"] == 21_600
+
+
 def test_lco_projection_keeps_one_current_item_per_measurable_path(
     tmp_path,
     monkeypatch,
@@ -693,6 +761,7 @@ def test_unavailable_lco_envelope_does_not_invent_empty_success():
     assert result["availability"] == "unavailable"
     assert result["unavailable_reason"] == "projection_read_failed"
     assert result["data_freshness"]["state"] == "unavailable"
+    assert result["data_freshness"]["stale_after_sec"] is None
     assert result["operations"] is None
 
 
