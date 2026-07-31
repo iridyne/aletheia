@@ -37,6 +37,7 @@ PREVIOUS_STAGE = {
 MEASUREMENT_VERDICTS = frozenset({
     "positive", "neutral", "negative", "insufficient_data", "invalid",
 })
+_AUTHORITY_RETIRED_PATH_IDS = frozenset({"operator_learning_bundle"})
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,8 @@ def resolve_learning_authority(
         return blocked("hypothesis_not_found")
     if str(hypothesis.get("path_id") or "") != path_id:
         return blocked("hypothesis_path_mismatch")
+    if path_id in _AUTHORITY_RETIRED_PATH_IDS:
+        return blocked("measurement_unsupported")
     if path_id not in SUPPORTED_PATH_IDS:
         return _legacy_authority_adapter(experiment, current_policy_epoch, blocked)
     expected_horizon = str(hypothesis.get("target_horizon") or "")

@@ -64,8 +64,6 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
         "operator_learning_bundle", "memo/reasoning/calibration/reflection/lessons", "System Operator",
         "advisory paper decision context", ("prompt_advisory",), "operator",
         "decision-linked realized or fixed-horizon outcome", "no Learning prompt bundle",
-        measurement_supported=True,
-        behavior_contract_version="operator-learning-bundle/v2",
     ),
     LearningPath(
         "risk_lesson_constraint", "applied structured risk lesson", "Risk Engine",

@@ -394,7 +394,7 @@ def test_lco_multi_path_control_is_keyboard_native_and_responsive():
     assert 'id="lco-measured-path"' in selector
     assert "aria-label" not in selector
     assert "renderToStaticMarkup" in proof
-    assert "operator_learning_bundle" in proof
+    assert "universe_family_calibration" in proof
     assert "@media (max-width: 1100px)" in css
     assert "@media (max-width: 700px)" in css
 

@@ -75,7 +75,7 @@ surface look shipped.
 | Capability | Current fact | LCO target |
 | --- | --- | --- |
 | Measured ledger | Seven permanent Learning tables exist | Read-only typed projection |
-| Measurable path | `universe_family_calibration` and `operator_learning_bundle` have current cohort adapters | Explicit `measurement_supported` per path |
+| Measurable path | `universe_family_calibration` has a current causal cohort adapter; Operator remains consumer-wired but measurement-unsupported | Explicit `measurement_supported` per path |
 | Current metric | `universe_family_calibration_cluster_allocation_utility_v3` | Current identity plus append-only metric history |
 | Cohort inspection | Internal aggregate inspection exists | Bounded aggregate plus selected cluster detail |
 | Lifecycle inspection | Internal read function returns progress, recommendation and job health | Public sanitized projection |
@@ -694,7 +694,7 @@ data-model batch with its own spec/document update.
 
 ### Slice LCO-FE1 - Contribution and Operations (partially implemented)
 
-Typed client models, honest path-specific query states, multi-path selection,
+Typed client models, honest path-specific query states, registry-backed measured-path selection,
 cohort/recommendation panels and responsive native-control access are implemented.
 Status strip, history, Operations and responsive detail drawer remain. Preserve
 Dreaming/Knowledge taxonomies and keep their mutations outside LCO panels.
@@ -729,7 +729,7 @@ states. This is adjacent UI honesty work, not contribution authority.
 | LCO-S02 | L2a | LCO projection/routes have no Risk, Execution, exchange, secrets, permission or live imports | implemented |
 | LCO-B05 | L2b | consumer-wired, Settings-supported and measurement-supported remain separate path capabilities | implemented |
 | LCO-C04 | L2c | loading, genuine empty, unavailable, stale and partial states remain distinct; fetch failure never becomes zero/empty | partial — helper and Vitest proof exist for the current summary query only |
-| LCO-C05 | L2c | desktop/mobile layouts and keyboard/ARIA behavior preserve access to the current multi-path Contribution surface | implemented; future table/drawer slices retain their own acceptance obligation |
+| LCO-C05 | L2c | desktop/mobile layouts and keyboard/ARIA behavior preserve access to the current registry-backed Contribution surface | implemented; future table/drawer slices retain their own acceptance obligation |
 | LCO-C06 | L2c | server caps, monotonic TTL, `Server-Timing` and direct cold/warm latency evidence enforce the performance contract | implemented for current summary/list routes |
 
 Unimplemented claims remain strict xfail. A claim changes to `implemented` only
