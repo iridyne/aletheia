@@ -305,3 +305,202 @@ def test_transactional_authority_can_skip_only_sqlite_mirror(
     assert records[1]["_prev_hash"] == hashlib.sha256(
         json.dumps(records[0], default=str, ensure_ascii=False).encode("utf-8")
     ).hexdigest()
+
+
+@spec_claim(
+    SpecClaim(
+        "AU-C04",
+        "audit_chain_contract",
+        "§6.3 durable lifecycle audit mirror",
+        "L2c",
+        "A stable audit dedup id makes retries physically idempotent and the writer reports "
+        "whether the JSONL append succeeded.",
+        status="implemented",
+    ),
+)
+def test_audit_writer_reports_failure_and_deduplicates_retry(
+    audit_tmp,
+    monkeypatch,
+):
+    import aletheia.files.jsonl as jsonl_mod
+
+    event = {
+        "id": "learning-lifecycle:event-1",
+        "actor": "system",
+        "source": "learning_lifecycle",
+        "event_type": "learning_lifecycle_transition",
+    }
+    assert jsonl_mod.write_audit(
+        dict(event), mirror_db=False, dedup_id=event["id"],
+    ) is True
+    assert jsonl_mod.write_audit(
+        dict(event), mirror_db=False, dedup_id=event["id"],
+    ) is True
+
+    records = [
+        json.loads(line)
+        for line in (audit_tmp / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [row["id"] for row in records] == [event["id"]]
+
+    monkeypatch.setattr(
+        jsonl_mod,
+        "_append_jsonl_line",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    assert jsonl_mod.write_audit(
+        {**event, "id": "learning-lifecycle:event-2"},
+        mirror_db=False,
+        dedup_id="learning-lifecycle:event-2",
+    ) is False
+
+
+def test_audit_batch_scans_chain_once(audit_tmp, monkeypatch):
+    import aletheia.files.jsonl as jsonl_mod
+
+    scans = 0
+    real_scan = jsonl_mod._audit_record_ids
+
+    def tracked_scan(path, dedup_ids):
+        nonlocal scans
+        scans += 1
+        return real_scan(path, dedup_ids)
+
+    monkeypatch.setattr(jsonl_mod, "_audit_record_ids", tracked_scan)
+    events = [
+        {
+            "id": f"learning-lifecycle:batch-{index}",
+            "actor": "system",
+            "source": "learning_lifecycle",
+            "event_type": "learning_lifecycle_transition",
+        }
+        for index in range(3)
+    ]
+
+    assert jsonl_mod.write_audits_deduplicated(events) == {
+        event["id"] for event in events
+    }
+    assert scans == 1
+
+
+def test_audit_retry_repairs_partial_tail_by_appending_only(audit_tmp, monkeypatch):
+    import aletheia.files.jsonl as jsonl_mod
+
+    first = {
+        "id": "learning-lifecycle:complete",
+        "event_type": "learning_lifecycle_transition",
+    }
+    retry = {
+        "id": "learning-lifecycle:retry",
+        "event_type": "learning_lifecycle_transition",
+        "message": "审计恢复",
+    }
+    assert jsonl_mod.write_audits_deduplicated([first]) == {first["id"]}
+    real_append = jsonl_mod._append_jsonl_line
+
+    def partial_append(path, line):
+        encoded = line.encode("utf-8")
+        split_at = encoded.index("审".encode("utf-8")) + 1
+        with path.open("ab") as stream:
+            stream.write(encoded[:split_at])
+        raise OSError("disk full after partial write")
+
+    monkeypatch.setattr(jsonl_mod, "_append_jsonl_line", partial_append)
+    assert jsonl_mod.write_audits_deduplicated([retry]) == set()
+    monkeypatch.setattr(jsonl_mod, "_append_jsonl_line", real_append)
+
+    assert jsonl_mod.write_audits_deduplicated([retry]) == {retry["id"]}
+    records = [
+        json.loads(line)
+        for line in (audit_tmp / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["id"] for record in records] == [first["id"], retry["id"]]
+    assert records[1]["_prev_hash"] == hashlib.sha256(
+        json.dumps(records[0], default=str, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
+def test_audit_batch_partial_retry_excludes_already_complete_candidate(
+    audit_tmp, monkeypatch,
+):
+    import aletheia.files.jsonl as jsonl_mod
+
+    events = [
+        {
+            "id": f"learning-lifecycle:batch-partial-{index}",
+            "event_type": "learning_lifecycle_transition",
+            "timestamp": "2026-07-31T00:00:00+00:00",
+        }
+        for index in range(2)
+    ]
+    real_append = jsonl_mod._append_jsonl_line
+    writes = 0
+
+    def fail_second_append(path, line):
+        nonlocal writes
+        writes += 1
+        if writes == 1:
+            real_append(path, line)
+            return
+        with path.open("ab") as stream:
+            stream.write(line[:10].encode("utf-8"))
+        raise OSError("crash during second event")
+
+    monkeypatch.setattr(jsonl_mod, "_append_jsonl_line", fail_second_append)
+    assert jsonl_mod.write_audits_deduplicated(events) == {events[0]["id"]}
+    monkeypatch.setattr(jsonl_mod, "_append_jsonl_line", real_append)
+
+    assert jsonl_mod.write_audits_deduplicated(events) == {
+        event["id"] for event in events
+    }
+    records = [
+        json.loads(line)
+        for line in (audit_tmp / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["id"] for record in records] == [
+        event["id"] for event in events
+    ]
+
+
+def test_audit_retry_preserves_complete_record_missing_final_newline(audit_tmp):
+    import aletheia.files.jsonl as jsonl_mod
+
+    event = {
+        "id": "learning-lifecycle:complete-no-newline",
+        "event_type": "learning_lifecycle_transition",
+        "timestamp": "2026-07-31T00:00:00+00:00",
+        "_prev_hash": "0" * 64,
+    }
+    encoded = json.dumps(event, default=str, ensure_ascii=False)
+    (audit_tmp / "audit.jsonl").write_text(encoded, encoding="utf-8")
+
+    assert jsonl_mod.write_audits_deduplicated([dict(event)]) == {event["id"]}
+    assert (audit_tmp / "audit.jsonl").read_text(encoding="utf-8") == encoded + "\n"
+
+
+def test_ordinary_audit_does_not_guess_identity_of_partial_tail(audit_tmp):
+    import aletheia.files.jsonl as jsonl_mod
+
+    partial = b'{"actor": "human", "source": "dashboard"'
+    (audit_tmp / "audit.jsonl").write_bytes(partial)
+    event = {
+        "actor": "human",
+        "source": "dashboard",
+        "event_type": "different_event",
+    }
+
+    assert jsonl_mod.write_audit(event, mirror_db=False) is False
+    assert (audit_tmp / "audit.jsonl").read_bytes() == partial
+
+
+def test_audit_dedup_ignores_non_string_historical_id(audit_tmp):
+    import aletheia.files.jsonl as jsonl_mod
+
+    (audit_tmp / "audit.jsonl").write_text('{"id": []}\n', encoding="utf-8")
+    event = {
+        "id": "learning-lifecycle:valid",
+        "event_type": "learning_lifecycle_transition",
+    }
+
+    assert jsonl_mod.write_audits_deduplicated([event]) == {event["id"]}

@@ -24,7 +24,7 @@
 
 **启动时暂停**：`init_scheduler()` 在 `_scheduler.start()` 后检查 `cfg.runtime.paused`。当 `layered_pause_enabled=true` 时，只暂停开仓、观察者和 LLM/决策任务；下列 `_ESSENTIAL_JOBS` 仍派发，以维持市场价格、账户视图、保护性退出、对账、健康检查和数据维护。只有 `layered_pause_enabled=false` 的 blanket pause 才暂停整个 APScheduler。集合内任务不得再在函数体中因 `runtime.paused` 提前返回，这一一致性由 `tests/test_layered_pause.py` 锁定。
 
-当前 essential 集合：`market_data`、`data_collectors`、`data_collector_context`、`connectivity_monitor`、`portfolio_snapshot`、`price_feed`、`ohlcv_nightly_backfill`、`ohlcv_active_backfill`、`exchange_sync`、`health_check`、`cleanup`、`news_fetch`、`okx_demo_symbols`、`reconciliation`、`position_reconcile`、`tpsl_fill_check`、`outcome_settler`、`paper_funding_settler`、`outcome_hook_replay`、`shadow_resolver`、`learning_contribution_evaluator`、`learning_measurement_startup_catchup`。
+当前 essential 集合：`market_data`、`data_collectors`、`data_collector_context`、`connectivity_monitor`、`portfolio_snapshot`、`price_feed`、`ohlcv_nightly_backfill`、`ohlcv_active_backfill`、`exchange_sync`、`health_check`、`cleanup`、`news_fetch`、`okx_demo_symbols`、`reconciliation`、`position_reconcile`、`tpsl_fill_check`、`outcome_settler`、`paper_funding_settler`、`outcome_hook_replay`、`shadow_resolver`、`learning_contribution_evaluator`、`learning_measurement_startup_catchup`、`learning_lifecycle_audit_reconciler`。
 
 ---
 
@@ -117,6 +117,9 @@ not otherwise re-audited here.
   experiments but persists `degraded`, advances only `next_due_at`, and does not record a successful
   watermark. A later fully successful cycle may recover current health while preserving durable
   `last_failed_at` and `last_failure_reason`.
+- `learning_lifecycle_audit_reconciler` is an essential, non-behavioral 5-minute IO job with
+  `max_instances=1`, `coalesce=True`, and a 30-second timeout. It retries at most 100 pending/failed
+  lifecycle JSONL mirrors by stable event id and never reruns a lifecycle transition.
 - Job recovery clears current `last_error` and resets consecutive failures, but preserves durable
   `last_failed_at` and `last_failure_reason` for the most recent failure.
 

@@ -70,12 +70,16 @@ def test_archive_unmeasurable_experiments_is_dry_run_by_default_and_idempotent()
         (unsupported_hypothesis,),
     ).fetchone()[0] == "archived"
     event = db.execute(
-        "SELECT action, reason FROM learning_lifecycle_events WHERE experiment_id=?",
+        "SELECT action, reason, audit_actor, audit_source, audit_mirror_status "
+        "FROM learning_lifecycle_events WHERE experiment_id=?",
         (unsupported_experiment,),
     ).fetchone()
     assert tuple(event) == (
         "archive_unmeasurable",
         "owner_maintenance:measurement_unsupported",
+        "human",
+        "cli",
+        "mirrored",
     )
 
     supported = db.execute(
@@ -88,3 +92,37 @@ def test_archive_unmeasurable_experiments_is_dry_run_by_default_and_idempotent()
         (supported_hypothesis,),
     ).fetchone()[0] == "shadow"
     assert archive_unmeasurable_experiments(dry_run=False)["experiments"] == 0
+
+
+def test_archive_reconciles_its_event_ahead_of_existing_backlog():
+    from aletheia.learning.ledger import insert_lifecycle_event
+    from aletheia.learning.maintenance import archive_unmeasurable_experiments
+    from aletheia.learning.models import LearningLifecycleEvent
+    from aletheia.storage.sqlite import get_db
+
+    _, unsupported_experiment = _open_experiment(
+        "observer_advisory_bundle", "targeted"
+    )
+    backlog_hypothesis, backlog_experiment = _open_experiment(
+        "universe_family_calibration", "backlog"
+    )
+    backlog = LearningLifecycleEvent(
+        event_id="000-old-backlog",
+        dedup_key="old-backlog",
+        hypothesis_id=backlog_hypothesis,
+        experiment_id=backlog_experiment,
+        from_stage="shadow",
+        action="refreeze",
+        reason="test",
+    )
+    assert insert_lifecycle_event(backlog)
+
+    archive_unmeasurable_experiments(dry_run=False)
+
+    rows = get_db().execute(
+        "SELECT experiment_id, audit_mirror_status FROM learning_lifecycle_events "
+        "ORDER BY event_id"
+    ).fetchall()
+    statuses = {row["experiment_id"]: row["audit_mirror_status"] for row in rows}
+    assert statuses[backlog_experiment] == "pending"
+    assert statuses[unsupported_experiment] == "mirrored"

@@ -50,11 +50,12 @@ def archive_unmeasurable_experiments(*, dry_run: bool = True) -> dict[str, Any]:
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc).isoformat()
+    lifecycle_event_ids: list[str] = []
     with transaction(immediate=True, savepoint=True):
         rows = _unmeasurable_open_experiments()
         db = get_db()
         for row in rows:
-            insert_lifecycle_event(LearningLifecycleEvent(
+            event = LearningLifecycleEvent(
                 dedup_key=(
                     "owner_maintenance:archive_unmeasurable:"
                     f"{row['experiment_id']}"
@@ -64,8 +65,12 @@ def archive_unmeasurable_experiments(*, dry_run: bool = True) -> dict[str, Any]:
                 from_stage=str(row["stage"]),
                 action="archive_unmeasurable",
                 reason="owner_maintenance:measurement_unsupported",
+                audit_actor="human",
+                audit_source="cli",
                 created_at=now,
-            ))
+            )
+            if insert_lifecycle_event(event):
+                lifecycle_event_ids.append(event.event_id)
             db.execute(
                 "UPDATE learning_experiments "
                 "SET status='archived', ended_at=? "
@@ -77,4 +82,10 @@ def archive_unmeasurable_experiments(*, dry_run: bool = True) -> dict[str, Any]:
                 "SET status='archived', updated_at=? WHERE hypothesis_id=?",
                 (now, row["hypothesis_id"]),
             )
+    from aletheia.learning.lifecycle import reconcile_lifecycle_audits
+
+    reconcile_lifecycle_audits(
+        limit=min(max(len(lifecycle_event_ids), 1), 500),
+        event_ids=lifecycle_event_ids,
+    )
     return _summary(rows, dry_run=False)

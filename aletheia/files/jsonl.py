@@ -205,7 +205,110 @@ def _exclusive_file_lock(lock_path: Path):
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
-def write_audit(event: dict, *, mirror_db: bool = True) -> None:
+def _audit_record_ids(path: Path, dedup_ids: set[str]) -> set[str]:
+    """Return target ids already present in the audit chain."""
+    found: set[str] = set()
+    for candidate in _jsonl_paths_chronological(path):
+        with candidate.open("rb") as stream:
+            for line in stream:
+                try:
+                    event_id = json.loads(line.decode("utf-8")).get("id")
+                    if isinstance(event_id, str) and event_id in dedup_ids:
+                        found.add(event_id)
+                        if found == dedup_ids:
+                            return found
+                except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+                    continue
+    return found
+
+
+def _repair_incomplete_final_line(path: Path, events: list[dict]) -> None:
+    """Finish a provable short write using append-only operations."""
+    if not path.exists() or path.stat().st_size == 0:
+        return
+    with path.open("rb") as stream:
+        stream.seek(-1, os.SEEK_END)
+        if stream.read(1) == b"\n":
+            return
+        stream.seek(0)
+        data = stream.read()
+    last_newline = data.rfind(b"\n")
+    tail = data[last_newline + 1:]
+    try:
+        if not isinstance(json.loads(tail), dict):
+            raise ValueError("audit record must be an object")
+        suffix = b"\n"
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        previous_line = data[:last_newline].splitlines()[-1:] if last_newline >= 0 else []
+        previous_text = (
+            previous_line[0].decode("utf-8")
+            if previous_line
+            else _last_non_empty_line(_rotated_paths(path))
+        )
+        prev_hash = _hash_record(previous_text) if previous_text else _GENESIS_HASH
+        target_ids = {
+            str(event.get("id")) for event in events if event.get("id")
+        }
+        existing_ids = _audit_record_ids(path, target_ids) if target_ids else set()
+        matches: list[bytes] = []
+        for event in events:
+            if "timestamp" not in event or event.get("id") in existing_ids:
+                continue
+            candidate = {**event, "_prev_hash": prev_hash}
+            line = json.dumps(candidate, default=str, ensure_ascii=False).encode("utf-8")
+            if line.startswith(tail):
+                matches.append(line[len(tail):] + b"\n")
+        if len(matches) != 1:
+            raise OSError("audit chain ends with an unrepairable partial record")
+        suffix = matches[0]
+    with path.open("ab") as stream:
+        stream.write(suffix)
+
+
+def write_audits_deduplicated(events: list[dict]) -> set[str]:
+    """Append a durable-outbox batch once per stable event id.
+
+    The chain is scanned once and the entire batch is appended under one
+    cross-process lock. The returned ids are already present or were appended
+    successfully; a failed suffix remains absent for a later retry.
+    """
+    global _last_audit_hash
+    if not events:
+        return set()
+    event_ids = [str(event.get("id") or "") for event in events]
+    if any(not event_id for event_id in event_ids) or len(set(event_ids)) != len(event_ids):
+        raise ValueError("deduplicated audit events require unique non-empty ids")
+
+    audit_path = _log_dir() / "audit.jsonl"
+    completed: set[str] = set()
+    try:
+        with _audit_hash_lock:
+            with _exclusive_file_lock(_log_dir() / ".audit.lock"):
+                _repair_incomplete_final_line(audit_path, events)
+                completed = _audit_record_ids(audit_path, set(event_ids))
+                prev_hash = _get_last_audit_hash(use_cache=False)
+                for event, event_id in zip(events, event_ids, strict=True):
+                    if event_id in completed:
+                        continue
+                    if "timestamp" not in event:
+                        event["timestamp"] = datetime.now(timezone.utc).isoformat()
+                    event["_prev_hash"] = prev_hash
+                    line = json.dumps(event, default=str, ensure_ascii=False)
+                    _append_jsonl_line(audit_path, line)
+                    prev_hash = _hash_record(line)
+                    _last_audit_hash = prev_hash
+                    completed.add(event_id)
+    except OSError as e:
+        logger.warning("audit jsonl batch write failed: %s", e)
+    return completed
+
+
+def write_audit(
+    event: dict,
+    *,
+    mirror_db: bool = True,
+    dedup_id: str | None = None,
+) -> bool:
     """Write an audit event to audit.jsonl with hash chain.
 
     Each record includes `_prev_hash`: the SHA-256 of the previous line on disk.
@@ -214,14 +317,30 @@ def write_audit(event: dict, *, mirror_db: bool = True) -> None:
     Callers that already committed the same authoritative ``AuditEvent`` inside
     their state transaction may pass ``mirror_db=False`` to avoid duplicating
     that row; the append-only JSONL write and hash chain are unchanged.
+    Durable outbox callers may also pass a stable ``dedup_id`` matching
+    ``event['id']``; retries then check the chain under the same file lock and
+    return ``True`` without appending a duplicate. Deduplicated writes require
+    ``mirror_db=False`` because the caller already owns structured persistence.
     """
     global _last_audit_hash
+    if dedup_id is not None:
+        if mirror_db:
+            raise ValueError("dedup_id requires mirror_db=False")
+        if event.get("id") != dedup_id:
+            raise ValueError("dedup_id must match event['id']")
+        return dedup_id in write_audits_deduplicated([event])
     if "timestamp" not in event:
         event["timestamp"] = datetime.now(timezone.utc).isoformat()
 
+    jsonl_written = False
     try:
         with _audit_hash_lock:
             with _exclusive_file_lock(_log_dir() / ".audit.lock"):
+                audit_path = _log_dir() / "audit.jsonl"
+                # An ordinary event has no durable identity tying it to an
+                # earlier short write, so it may only finish a complete JSON
+                # record's missing newline. Invalid tails must fail closed.
+                _repair_incomplete_final_line(audit_path, [])
                 # This lock is cross-process, but _last_audit_hash is only
                 # process-local. Re-read the chain tail while holding the file
                 # lock so frontdoor/backend writes cannot continue from a stale
@@ -229,8 +348,9 @@ def write_audit(event: dict, *, mirror_db: bool = True) -> None:
                 prev_hash = _get_last_audit_hash(use_cache=False)
                 event["_prev_hash"] = prev_hash
                 line = json.dumps(event, default=str, ensure_ascii=False)
-                _append_jsonl_line(_log_dir() / "audit.jsonl", line)
+                _append_jsonl_line(audit_path, line)
                 _last_audit_hash = _hash_record(line)
+                jsonl_written = True
     except OSError as e:
         logger.warning("audit jsonl write failed: %s (event_type=%s)",
                        e, event.get("event_type", "?"))
@@ -241,6 +361,7 @@ def write_audit(event: dict, *, mirror_db: bool = True) -> None:
     # authoritative row inside their state transition.
     if mirror_db:
         _write_audit_row(event)
+    return jsonl_written
 
 
 def _write_audit_row(event: dict) -> None:

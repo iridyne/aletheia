@@ -169,7 +169,7 @@ one; B-class interventions always restart observation.
 | `learning_experiments` | stage, allocation, gates, activation and predecessor identity |
 | `learning_exposures` | assignment units, member identities, before/after influence and causal ids |
 | `learning_contribution_verdicts` | append-only measurement, confidence, metric and provenance history |
-| `learning_lifecycle_events` | applied/blocked lifecycle history and recommendation context |
+| `learning_lifecycle_events` | applied/blocked lifecycle history, recommendation context and JSONL mirror pending/failure state |
 | `learning_job_health` | current run state, watermark, backlog and durable last failure |
 | `learning_policy_epochs` | non-secret policy identity and affected paths |
 | `filter_candidate_outcomes` | canonical full-arm outcome and allocator selection truth |
@@ -609,6 +609,7 @@ Separate panels show:
 - effective Learning switches and global refreeze reason;
 - current evaluator status, last success, next due and catch-up state;
 - durable last failure even after recovery;
+- lifecycle audit-mirror current health, pending backlog and durable last failure;
 - real backlog/watermark fields where recorded;
 - outcome/source integrity counts from current measurements.
 

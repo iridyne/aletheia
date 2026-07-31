@@ -55,6 +55,7 @@
 | 39 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
 | 40 | learning_startup_catchup | once, 5min after gateway boot | agents | Run only the latest missed dreaming/memo/reviewer date-window; a durable success watermark prevents restart duplicates |
 | 41 | learning_measurement_startup_catchup | once, 2min after gateway boot | io | Before the first regular evaluator interval, re-run only the current missing contribution-measurement window through `learning_contribution_evaluator`; independent of autonomous Learning and paper influence |
+| 42 | learning_lifecycle_audit_reconciler | every 5min | io | Retry bounded pending lifecycle JSONL mirrors by stable event id; never replay a transition and continue during layered pause |
 
 Learning behavior jobs (rows 10–15, 26, 30–31, 38 and the Learning behavior catch-up) share
 `agent.autonomous_learning` as one backend gate. When disabled, no automatic producer,

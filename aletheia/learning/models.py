@@ -131,6 +131,11 @@ class LearningLifecycleEvent(BaseModel):
     action: str
     reason: str
     policy_epoch: str | None = None
+    audit_actor: str = "learning_lifecycle_controller"
+    audit_source: str = "learning_lifecycle"
+    audit_mirror_status: str = "pending"
+    audit_mirrored_at: str | None = None
+    audit_failure_reason: str | None = None
     created_at: str = Field(default_factory=_now)
 
 

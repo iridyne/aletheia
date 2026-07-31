@@ -19,13 +19,16 @@ from aletheia.learning.cohorts import SUPPORTED_PATH_ID, SUPPORTED_PATH_IDS
 from aletheia.learning.behavior_contracts import current_behavior_contract_hash
 from aletheia.learning.control import global_learning_refreeze_reason
 from aletheia.learning.ledger import (
+    count_unmirrored_lifecycle_events,
     get_latest_measurement_verdict,
     get_lifecycle_event_by_dedup_key,
     get_record,
     insert_lifecycle_event,
     insert_experiment,
+    list_unmirrored_lifecycle_events,
     list_open_experiments,
     list_lifecycle_events,
+    update_lifecycle_audit_mirror,
 )
 from aletheia.learning.models import (
     LearningExperiment,
@@ -51,6 +54,28 @@ STAGE_ALLOCATION = {
     "paper_25": 0.25,
     "paper_50": 0.50,
 }
+
+
+def _lifecycle_audit_payload(event: LearningLifecycleEvent) -> dict[str, Any]:
+    return {
+        "id": f"learning-lifecycle:{event.event_id}",
+        "actor": event.audit_actor,
+        "source": event.audit_source,
+        "event_type": "learning_lifecycle_transition",
+        "entity_type": "learning_experiment",
+        "entity_id": event.experiment_id,
+        "state_change": event.action,
+        "message": event.reason,
+        "metadata": event.model_dump(
+            mode="json",
+            exclude={
+                "audit_mirror_status",
+                "audit_mirrored_at",
+                "audit_failure_reason",
+            },
+        ),
+        "timestamp": event.created_at,
+    }
 LIFECYCLE_ACTIONS = frozenset({
     "admit_trial", "promote_stage", "hold", "refreeze", "invalidate",
 })
@@ -348,6 +373,8 @@ def _execute_trial_admission(
         action="admit_trial",
         reason=admitted_reason,
         policy_epoch=current_policy_epoch,
+        audit_actor="human",
+        audit_source="dashboard",
         created_at=now,
     )
     with transaction():
@@ -364,7 +391,7 @@ def _execute_trial_admission(
             (now, experiment.experiment_id),
         )
         insert_experiment(successor)
-    _write_lifecycle_audit(event, actor="human", source="dashboard")
+    _write_lifecycle_audit(event)
     return LifecycleResult(
         "admit_trial", "admit_trial", admitted_reason,
         experiment.experiment_id, successor.experiment_id, verdict_id,
@@ -783,25 +810,79 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _write_lifecycle_audit(
-    event: LearningLifecycleEvent,
-    *,
-    actor: str = "learning_lifecycle_controller",
-    source: str = "learning_lifecycle",
-) -> None:
+def _attempt_lifecycle_audit(event: LearningLifecycleEvent) -> bool:
+    audit_id = f"learning-lifecycle:{event.event_id}"
     try:
         from aletheia.files.jsonl import write_audit
-        write_audit({
-            "actor": actor,
-            "source": source,
-            "event_type": "learning_lifecycle_transition",
-            "entity_type": "learning_experiment",
-            "entity_id": event.experiment_id,
-            "state_change": event.action,
-            "message": event.reason,
-            "metadata": event.model_dump(mode="json"),
-        })
+        succeeded = write_audit(
+            _lifecycle_audit_payload(event),
+            mirror_db=False,
+            dedup_id=audit_id,
+        )
     except Exception:
-        # The durable DB event remains authoritative; audit append failures must
-        # not roll back a completed, safety-preserving state transition.
-        pass
+        succeeded = False
+        logger.warning(
+            "learning lifecycle audit append raised for event %s",
+            event.event_id,
+            exc_info=True,
+        )
+    update_lifecycle_audit_mirror(
+        event.event_id,
+        status="mirrored" if succeeded else "failed",
+        mirrored_at=_now() if succeeded else None,
+        failure_reason=None if succeeded else "jsonl_append_failed",
+    )
+    return succeeded
+
+
+def _write_lifecycle_audit(event: LearningLifecycleEvent) -> bool:
+    """Append the JSONL mirror without rolling back the authoritative DB event."""
+    succeeded = _attempt_lifecycle_audit(event)
+    if not succeeded:
+        from aletheia.learning.control import record_lifecycle_audit_result
+
+        record_lifecycle_audit_result(
+            pending=count_unmirrored_lifecycle_events(),
+            failed=1,
+        )
+    return succeeded
+
+
+def reconcile_lifecycle_audits(
+    *, limit: int = 100, event_ids: list[str] | None = None,
+) -> dict[str, int]:
+    """Retry pending JSONL mirrors by stable event id; never replay transitions."""
+    rows = list_unmirrored_lifecycle_events(limit=limit, event_ids=event_ids)
+    events = [LearningLifecycleEvent(**row) for row in rows]
+    try:
+        from aletheia.files.jsonl import write_audits_deduplicated
+
+        mirrored_ids = write_audits_deduplicated([
+            _lifecycle_audit_payload(event) for event in events
+        ])
+    except Exception:
+        mirrored_ids = set()
+        logger.warning("learning lifecycle audit reconciliation failed", exc_info=True)
+    mirrored = 0
+    for event in events:
+        audit_id = f"learning-lifecycle:{event.event_id}"
+        succeeded = audit_id in mirrored_ids
+        update_lifecycle_audit_mirror(
+            event.event_id,
+            status="mirrored" if succeeded else "failed",
+            mirrored_at=_now() if succeeded else None,
+            failure_reason=None if succeeded else "jsonl_append_failed",
+        )
+        mirrored += int(succeeded)
+    failed = len(events) - mirrored
+    pending = count_unmirrored_lifecycle_events()
+
+    from aletheia.learning.control import record_lifecycle_audit_result
+
+    record_lifecycle_audit_result(pending=pending, failed=failed)
+    return {
+        "attempted": len(rows),
+        "mirrored": mirrored,
+        "failed": failed,
+        "pending": pending,
+    }

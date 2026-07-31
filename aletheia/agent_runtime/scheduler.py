@@ -50,6 +50,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "shadow_resolver",
     "learning_contribution_evaluator",
     "learning_measurement_startup_catchup",
+    "learning_lifecycle_audit_reconciler",
 }
 
 # Market snapshot collection cadence. Exposed as a module constant so consumers
@@ -105,6 +106,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "broker_funding_settler": 120.0,
     "learning_contribution_evaluator": 60.0,
     "learning_lifecycle_controller": 60.0,
+    "learning_lifecycle_audit_reconciler": 30.0,
     # #90 fix: tpsl_fill_check runs every 90s and calls Bitget via
     # asyncio.run() internally. Without a bound, a stuck exchange session can
     # block the scheduler pool for the full IOCP drain (~255s on Windows) and
@@ -1129,6 +1131,15 @@ def init_scheduler() -> BackgroundScheduler | None:
         "interval", minutes=_learning_interval, id="learning_lifecycle_controller",
         misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
         next_run_time=datetime.now() + timedelta(minutes=4),
+    )
+    _scheduler.add_job(
+        _guarded(
+            "learning_lifecycle_audit_reconciler",
+            _run_learning_lifecycle_audit_reconciler,
+        ),
+        "interval", minutes=5, id="learning_lifecycle_audit_reconciler",
+        misfire_grace_time=120, max_instances=1, coalesce=True, executor="io",
+        next_run_time=datetime.now() + timedelta(minutes=5),
     )
     # Core collector lane: primary-venue orderbook/funding/OI every two minutes.
     # Cross-venue and macro context has a separate job below so it cannot inherit
@@ -2710,6 +2721,23 @@ def _run_learning_lifecycle_controller():
     except Exception as e:
         logger.warning("learning_lifecycle_controller failed: %s", e)
         _record_job_failure("learning_lifecycle_controller", str(e))
+
+
+def _run_learning_lifecycle_audit_reconciler():
+    try:
+        from aletheia.learning.lifecycle import reconcile_lifecycle_audits
+        return _run_sync_with_timeout(
+            "learning_lifecycle_audit_reconciler",
+            reconcile_lifecycle_audits,
+        )
+    except Exception as e:
+        logger.warning("learning_lifecycle_audit_reconciler failed: %s", e)
+        from aletheia.learning.control import record_measurement_job_failure
+        record_measurement_job_failure(
+            "learning_lifecycle_audit_reconciler",
+            "audit_reconciler_internal_failure",
+        )
+        _record_job_failure("learning_lifecycle_audit_reconciler", str(e))
 
 
 def _run_measurement_startup_catchup():

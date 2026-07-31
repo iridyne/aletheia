@@ -1743,6 +1743,11 @@ _ADDITIVE_COLUMNS = [
     ("behavior_contract_hash", "learning_contribution_verdicts", "TEXT"),
     ("last_failed_at", "learning_job_health", "TEXT"),
     ("last_failure_reason", "learning_job_health", "TEXT"),
+    ("audit_actor", "learning_lifecycle_events", "TEXT NOT NULL DEFAULT 'learning_lifecycle_controller'"),
+    ("audit_source", "learning_lifecycle_events", "TEXT NOT NULL DEFAULT 'learning_lifecycle'"),
+    ("audit_mirror_status", "learning_lifecycle_events", "TEXT NOT NULL DEFAULT 'mirrored'"),
+    ("audit_mirrored_at", "learning_lifecycle_events", "TEXT"),
+    ("audit_failure_reason", "learning_lifecycle_events", "TEXT"),
     ("leverage", "trade_proposals", "INTEGER"),
     ("market_type", "orderbook_snapshots", "TEXT NOT NULL DEFAULT 'unknown'"),
     # A13: link signal_pending pi_decisions back to their source opportunity
@@ -2197,6 +2202,8 @@ ON learning_exposures(
     experiment_id, concurrent_policy_epoch, experiment_stage,
     assignment, assignment_unit_key
 );
+CREATE INDEX IF NOT EXISTS idx_learning_lifecycle_audit_pending
+ON learning_lifecycle_events(audit_mirror_status, created_at, event_id);
 """
 
 
