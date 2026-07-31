@@ -501,6 +501,7 @@ def _run_job_guarded(job_id: str, fn):
             record_learning_job_skipped,
             record_learning_job_started,
             record_learning_job_success,
+            record_measurement_job_partial,
         )
         if is_autonomous_learning_job(job_id):
             gate_reason = learning_job_gate_reason(job_id)
@@ -512,7 +513,19 @@ def _run_job_guarded(job_id: str, fn):
         result = fn()
         if not getattr(_JOB_RUN_STATE, "failure_recorded", False):
             _record_job_success(job_id)
-            record_learning_job_success(job_id)
+            failed_experiments = (
+                result.get("failed_experiments", 0)
+                if job_id == "learning_lifecycle_controller"
+                and isinstance(result, dict)
+                else 0
+            )
+            if isinstance(failed_experiments, int) and failed_experiments > 0:
+                record_measurement_job_partial(
+                    job_id,
+                    f"experiment_lifecycle_failed:{failed_experiments}",
+                )
+            else:
+                record_learning_job_success(job_id)
         return result
     except Exception as e:
         logger.warning("%s job failed outside wrapper: %s", job_id, e)

@@ -113,6 +113,10 @@ not otherwise re-audited here.
 - Measurement remains essential under layered pause and independent of autonomous Learning.
   `learning_lifecycle_controller` is separate and default-closed; it cannot cross
   `shadow -> paper_10`, and may only recommend explicit owner admission.
+- A lifecycle-controller cycle with one or more isolated experiment failures completes the remaining
+  experiments but persists `degraded`, advances only `next_due_at`, and does not record a successful
+  watermark. A later fully successful cycle may recover current health while preserving durable
+  `last_failed_at` and `last_failure_reason`.
 - Job recovery clears current `last_error` and resets consecutive failures, but preserves durable
   `last_failed_at` and `last_failure_reason` for the most recent failure.
 

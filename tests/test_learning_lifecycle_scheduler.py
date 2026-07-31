@@ -52,6 +52,52 @@ def test_controller_is_skipped_for_global_integrity_or_runtime_pause(monkeypatch
     assert calls == []
 
 
+def test_controller_partial_cycle_is_degraded_then_recovers(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.learning import control
+    import aletheia.storage.sqlite as sqlite
+
+    cfg = _cfg(autonomous=True, lifecycle=True, paper=True)
+    monkeypatch.setattr(control, "load_config", lambda: cfg)
+    monkeypatch.setattr(control, "global_learning_refreeze_reason", lambda: None)
+    monkeypatch.setattr(sqlite, "close_db", lambda: None)
+    scheduler._consecutive_failures["learning_lifecycle_controller"] = 2
+
+    partial = scheduler._run_job_guarded(
+        "learning_lifecycle_controller",
+        lambda: {"experiments": 2, "failed_experiments": 1},
+    )
+
+    assert partial == {"experiments": 2, "failed_experiments": 1}
+    degraded = control.get_learning_job_health("learning_lifecycle_controller")
+    assert degraded.status == "degraded"
+    assert degraded.consecutive_failures == 1
+    assert degraded.last_succeeded_at is None
+    assert degraded.last_failure_reason == "experiment_lifecycle_failed:1"
+    assert degraded.next_due_at is not None
+    assert degraded.input_watermark is None
+    assert scheduler._consecutive_failures["learning_lifecycle_controller"] == 0
+
+    scheduler._run_job_guarded(
+        "risk_critic",
+        lambda: {"failed_experiments": 2},
+    )
+    assert control.get_learning_job_health("risk_critic").status == "healthy"
+
+    recovered = scheduler._run_job_guarded(
+        "learning_lifecycle_controller",
+        lambda: {"experiments": 3, "failed_experiments": 0},
+    )
+
+    assert recovered == {"experiments": 3, "failed_experiments": 0}
+    healthy = control.get_learning_job_health("learning_lifecycle_controller")
+    assert healthy.status == "healthy"
+    assert healthy.consecutive_failures == 0
+    assert healthy.last_succeeded_at is not None
+    assert healthy.last_failure_reason == "experiment_lifecycle_failed:1"
+    assert healthy.last_failed_at == degraded.last_failed_at
+
+
 def test_scheduler_registers_separate_single_instance_learning_jobs(monkeypatch):
     from aletheia.agent_runtime import scheduler
 
