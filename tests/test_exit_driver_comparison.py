@@ -1,6 +1,6 @@
-"""Tests for exit-outcome shadow comparison (M7, exit-intent plan)."""
+"""Tests for exit-driver realized-outcome comparison."""
 
-from aletheia.counterfactual.exits import (
+from aletheia.analytics.exit_driver_comparison import (
     compare_exit_outcomes,
     exit_driver,
     format_comparison,
