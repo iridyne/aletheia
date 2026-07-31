@@ -287,6 +287,9 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
     table_ready = db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runtime_cost_events'"
     ).fetchone()
+    budgets_table_ready = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='economics_budgets'"
+    ).fetchone()
     trigger_ready = db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='trg_agent_tool_call_cost_event'"
     ).fetchone()
@@ -294,7 +297,7 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_tool_calls'"
     ).fetchone()
 
-    if not table_ready:
+    if not table_ready or not budgets_table_ready:
         if db.in_transaction:
             raise RuntimeError(
                 "economics schema initialization refused inside an active transaction"

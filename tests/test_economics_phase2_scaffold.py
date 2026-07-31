@@ -69,6 +69,29 @@ def test_economics_budgets_table_exists_after_schema_init():
     assert row is not None
 
 
+def test_schema_adds_budgets_to_an_existing_pre_phase2_database():
+    """Phase 2 must migrate installations that already have cost events."""
+    legacy_db = sqlite3.connect(":memory:")
+    legacy_db.executescript("""
+        CREATE TABLE runtime_cost_events (
+            id TEXT PRIMARY KEY,
+            event_type TEXT NOT NULL,
+            run_id TEXT,
+            opportunity_id TEXT,
+            decision_id TEXT,
+            proposal_id TEXT,
+            started_at TEXT NOT NULL
+        );
+    """)
+
+    ensure_economics_schema(legacy_db)
+
+    row = legacy_db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='economics_budgets'"
+    ).fetchone()
+    assert row is not None
+
+
 def test_economics_budgets_columns_have_expected_shape():
     db = ensure_economics_schema()
     columns = _get_columns(db, "economics_budgets")
