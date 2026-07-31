@@ -111,6 +111,7 @@ const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
   { title: 'Serenity Research',        tab: 'agent', alt: ['serenity', 'auto promote', 'pi evaluation', 'long horizon', 'industrial chain'] },
   { title: 'Scheduler',                tab: 'agent', alt: ['jobs', 'cron', 'autostart agents'] },
   { title: 'AI Model Providers',       tab: 'agent', alt: ['llm', 'openai', 'anthropic', 'claude', 'codex'] },
+  { title: 'LLM Cost & Usage',         tab: 'agent', alt: ['tokenomics', 'spend', 'budget', 'economics', 'cooldown', 'broker', 'inference'] },
   // Execution
   { title: 'Exchange Connection',      tab: 'execution', alt: ['bitget', 'okx', 'binance', 'api key'] },
   { title: 'Trading Mode',             tab: 'execution', alt: ['demo', 'live unlock', 'paper'] },
@@ -992,6 +993,10 @@ function AgentModelsTab({ status, settings, qc }: any) {
 
       <Section title="AI Model Providers" description="LLM endpoints used by all agents. Verify & Save tests the connection before persisting. API keys are write-only.">
         <ModelProviderCard qc={qc} />
+      </Section>
+
+      <Section title="LLM Cost & Usage" description="Live spend, broker headroom, and per-model cooldown state from the append-only economics ledger. Read-only.">
+        <EconomicsSnapshotCard />
       </Section>
     </div>
   )
@@ -4319,6 +4324,138 @@ function ModelProviderCard({ qc }: any) {
         />
         )
       })}
+    </div>
+  )
+}
+
+function EconomicsSnapshotCard() {
+  const { data: status } = useQuery({
+    queryKey: ['economics-status'],
+    queryFn: api.getEconomicsStatus,
+    refetchInterval: 30_000,
+  })
+  const { data: costs } = useQuery({
+    queryKey: ['economics-costs-7d'],
+    queryFn: () => api.getEconomicsCosts({ days: 7 }),
+    refetchInterval: 30_000,
+  })
+  const { data: broker } = useQuery({
+    queryKey: ['economics-broker'],
+    queryFn: api.getInferenceBroker,
+    refetchInterval: 10_000,
+  })
+  const { data: modelHealth } = useQuery({
+    queryKey: ['economics-model-health'],
+    queryFn: api.getEconomicsModelHealth,
+    refetchInterval: 10_000,
+  })
+
+  const cooling = (modelHealth?.snapshot ?? []).filter(m => m.cooling_down)
+  const knownUsd = costs?.known_cost_subtotal_usd ?? 0
+  const unknownCount = costs?.unknown_event_count ?? 0
+  const eventCount = costs?.event_count ?? 0
+
+  const providerRows = broker?.providers ? Object.entries(broker.providers) : []
+
+  return (
+    <div>
+      {status && (status.tracing_enabled === false || status.audit_enabled === false) && (
+        <p className="hint" style={{ marginBottom: '0.75rem' }}>
+          {status.tracing_enabled === false && 'Cost tracing disabled (ALETHEIA_COST_TRACING=0). '}
+          {status.audit_enabled === false && 'Viability audit disabled (ALETHEIA_VIABILITY_AUDIT=0).'}
+        </p>
+      )}
+
+      <div className="settings-number-grid" style={{ marginBottom: '1rem' }}>
+        <label className="settings-field">
+          <span>Spent last 7 days (known)</span>
+          <input
+            readOnly
+            className="mono"
+            value={costs ? `$${knownUsd.toFixed(6)}` : 'loading…'}
+          />
+        </label>
+        <label className="settings-field">
+          <span>Events (7 days)</span>
+          <input
+            readOnly
+            className="mono"
+            value={costs ? String(eventCount) : 'loading…'}
+          />
+        </label>
+        <label className="settings-field">
+          <span>Unknown-cost events</span>
+          <input
+            readOnly
+            className="mono"
+            value={costs ? String(unknownCount) : 'loading…'}
+          />
+        </label>
+        <label className="settings-field">
+          <span>Models cooling down</span>
+          <input readOnly className="mono" value={String(cooling.length)} />
+        </label>
+      </div>
+
+      {unknownCount > 0 && (
+        <p className="hint" style={{ marginBottom: '1rem' }}>
+          {unknownCount} event(s) have unknown pricing. Set a snapshot with{' '}
+          <code>uv run aletheia audit pricing-set …</code> so future calls are priced.
+        </p>
+      )}
+
+      {providerRows.length > 0 && (
+        <div style={{ marginBottom: '1rem' }}>
+          <p className="hint" style={{ marginBottom: '0.5rem' }}>Broker headroom (per provider)</p>
+          <table className="mono" style={{ width: '100%', fontSize: '0.85em' }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left' }}>Provider</th>
+                <th style={{ textAlign: 'right' }}>Active</th>
+                <th style={{ textAlign: 'right' }}>Queued</th>
+                <th style={{ textAlign: 'right' }}>Cap</th>
+                <th style={{ textAlign: 'right' }}>RPM</th>
+                <th style={{ textAlign: 'right' }}>Rate-wait avg (ms)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {providerRows.map(([name, entry]) => {
+                const policy = entry.policy || {}
+                const metrics = entry.metrics || {}
+                return (
+                  <tr key={name}>
+                    <td>{name}</td>
+                    <td style={{ textAlign: 'right' }}>{metrics.active ?? 0}</td>
+                    <td style={{ textAlign: 'right' }}>{metrics.queued ?? 0}</td>
+                    <td style={{ textAlign: 'right' }}>{policy.queue_capacity ?? '—'}</td>
+                    <td style={{ textAlign: 'right' }}>{policy.requests_per_minute ?? '—'}</td>
+                    <td style={{ textAlign: 'right' }}>{Number(metrics.rate_wait_avg_ms ?? 0).toFixed(1)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {cooling.length > 0 && (
+        <div style={{ marginBottom: '0.5rem' }}>
+          <p className="hint" style={{ marginBottom: '0.5rem' }}>Models currently in cooldown</p>
+          <ul style={{ margin: 0, paddingLeft: '1.2rem' }}>
+            {cooling.map(m => (
+              <li key={`${m.provider}/${m.model}`} className="mono" style={{ fontSize: '0.85em' }}>
+                {m.provider}/{m.model} — {Math.round(m.cooldown_remaining_sec)}s remaining
+                {m.last_error && ` — ${m.last_error.slice(0, 80)}`}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <p className="hint">
+        Source: append-only <code>runtime_cost_events</code> ledger.
+        Full history via <code>uv run aletheia audit costs --json</code>.
+      </p>
     </div>
   )
 }

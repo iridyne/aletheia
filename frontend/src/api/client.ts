@@ -491,6 +491,96 @@ export const api = {
     running: boolean
     providers: Record<string, { policy: Record<string, number>; metrics: Record<string, number> }>
   }>('/model/broker'),
+
+  // Read-only economics surface (Phase 1 of the tokenomics harness).
+  // Mirrors `aletheia audit` CLI subcommands so operators can see LLM
+  // spend and cooldown state from the dashboard.
+  getEconomicsStatus: () => fetchJson<{
+    tracing_enabled: boolean
+    audit_enabled: boolean
+  }>('/economics/status'),
+  getEconomicsCosts: (params?: {
+    days?: number; run_id?: string; include_events?: boolean; event_limit?: number
+  }) => {
+    const qs = new URLSearchParams()
+    if (params?.days !== undefined) qs.set('days', String(params.days))
+    if (params?.run_id) qs.set('run_id', params.run_id)
+    if (params?.include_events) qs.set('include_events', 'true')
+    if (params?.event_limit !== undefined) qs.set('event_limit', String(params.event_limit))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return fetchJson<{
+      window_start: string; window_end: string
+      event_count: number
+      known_cost_subtotal_usd: number
+      unknown_event_count: number
+      by_type: Record<string, { event_count: number; known_cost_usd: number; unknown_count: number }>
+      events?: Array<Record<string, unknown>>
+    }>(`/economics/costs${suffix}`)
+  },
+  getEconomicsViability: (params: {
+    scope: 'system' | 'operator'
+    days?: number
+    execution_mode?: string
+    data_cost_usd?: number
+    infrastructure_cost_usd?: number
+    other_cost_usd?: number
+    as_of?: string
+  }) => {
+    const qs = new URLSearchParams()
+    qs.set('scope', params.scope)
+    if (params.days !== undefined) qs.set('days', String(params.days))
+    if (params.execution_mode) qs.set('execution_mode', params.execution_mode)
+    if (params.data_cost_usd !== undefined) qs.set('data_cost_usd', String(params.data_cost_usd))
+    if (params.infrastructure_cost_usd !== undefined) qs.set('infrastructure_cost_usd', String(params.infrastructure_cost_usd))
+    if (params.other_cost_usd !== undefined) qs.set('other_cost_usd', String(params.other_cost_usd))
+    if (params.as_of) qs.set('as_of', params.as_of)
+    return fetchJson<{
+      scope: string
+      window_start: string; window_end: string
+      verdict: 'positive' | 'neutral' | 'negative' | 'insufficient_data' | 'invalid'
+      viability_amount_usd: number | null
+      net_trading_result_usd: number | null
+      deployment_cost_usd: number | null
+      intelligence_cost_usd: number | null
+      tool_cost_usd: number | null
+      data_cost_usd: number | null
+      cost_completeness: string
+      sample_count: number
+      reason: string
+    }>(`/economics/viability?${qs.toString()}`)
+  },
+  getEconomicsViabilityReports: (params?: {
+    scope?: 'system' | 'operator'; limit?: number; offset?: number
+  }) => {
+    const qs = new URLSearchParams()
+    if (params?.scope) qs.set('scope', params.scope)
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit))
+    if (params?.offset !== undefined) qs.set('offset', String(params.offset))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return fetchJson<{
+      reports: Array<Record<string, unknown>>
+      limit: number
+      offset: number
+      total: number
+    }>(`/economics/viability/reports${suffix}`)
+  },
+  getEconomicsModelHealth: () => fetchJson<{
+    snapshot: Array<{
+      provider: string
+      model: string
+      consecutive_failures: number
+      cooldown_until: number
+      last_error: string | null
+      last_failure_at: number | null
+      last_success_at: number | null
+      cooling_down: boolean
+      cooldown_remaining_sec: number
+    }>
+  }>('/economics/model-health'),
+  getEconomicsPricing: () => fetchJson<{
+    models: Array<Record<string, unknown>>
+    tools: Array<Record<string, unknown>>
+  }>('/economics/pricing'),
   pingModel: () => post<{ ok: boolean; latency_ms: number; model: string; response: string; error: string | null }>('/model/ping'),
   setModelProvider: (body: {
     provider: string; base_url?: string; protocol?: string; model?: string
