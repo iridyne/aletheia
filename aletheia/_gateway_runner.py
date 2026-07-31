@@ -194,7 +194,7 @@ def _ensure_frontdoor_running(cfg, backend_port: int, proc: subprocess.Popen | N
     return new_proc
 
 
-def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None = None, collector_holder: list | None = None, backend_holder: list | None = None, ready_emitter: list | None = None) -> int:
+def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None = None, collector_holder: list | None = None, backend_holder: list | None = None) -> int:
     """Spawn the inner uvicorn server as a child process; return its exit code.
 
     frontdoor_holder is a 1-element mutable list owned by run_supervised holding
@@ -256,6 +256,7 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
         started_at = time.monotonic()
         saw_listening_port = False
         port_missing_since: float | None = None
+        ready_beacon_emitted = False  # T6: one-shot per _spawn_server lifetime
         if not hasattr(proc, "poll"):
             return proc.wait()
         while True:
@@ -297,8 +298,8 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
                 # One-shot: emit the ready beacon the first time the backend port
                 # is confirmed alive.  T6: lets _verify_started short-circuit its
                 # HTTP polling loop instead of waiting for the full 60s deadline.
-                if ready_emitter is not None and not ready_emitter[0]:
-                    ready_emitter[0] = True
+                if not ready_beacon_emitted:
+                    ready_beacon_emitted = True
                     _write_ready_beacon(cfg)
             else:
                 if saw_listening_port:
@@ -497,7 +498,6 @@ def run_supervised(spawn_fn=None) -> dict:
             frontdoor_holder=frontdoor_holder,
             collector_holder=collector_holder,
             backend_holder=backend_holder,
-            ready_emitter=ready_emitter,
         )
     from aletheia.gateway.operator_shell import OperatorShellMonitor
     operator_monitor = OperatorShellMonitor(cfg)
@@ -513,7 +513,6 @@ def run_supervised(spawn_fn=None) -> dict:
     restart_times: list[float] = []
     restart_history: list[dict] = []   # T5: per-restart details for persistent log
     gave_up_flag: list[bool] = [False]  # T4: skip frontdoor kill on gave_up
-    ready_emitter: list[bool] = [False]  # T6: one-shot beacon — True once emitted
     shutdown_signal: dict = {"num": None}
     prev_handlers: dict = {}
     try:
