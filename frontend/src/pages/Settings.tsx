@@ -132,6 +132,7 @@ const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
   // Runtime & System
   { title: 'App',                      tab: 'runtime', alt: ['theme', 'dashboard', 'shell', 'auto open browser', 'pnl mode'] },
   { title: 'Data & Retention',         tab: 'runtime', alt: ['backfill', 'ohlcv storage', 'backtest', 'prune', 'cleanup', 'telemetry'] },
+  { title: 'Data Export',              tab: 'runtime', alt: ['export', 'download', 'csv', 'zip', 'backup', 'migration', 'analysis', 'trade data'] },
   { title: 'Software Updates',         tab: 'runtime', alt: ['git pull', 'upgrade', 'self-update'] },
   // Signals
   { title: 'Market Data Sources',      tab: 'signals', alt: ['ohlcv', 'data provider', 'override', 'long short', 'lsr'] },
@@ -3349,6 +3350,12 @@ function RuntimeSystemTab({ status, settings, qc, onDirty }: any) {
         </Collapsible>
       </Section>
 
+      <Section title="Data Export" description="Download trading data as CSV archives. Use Analysis for sharing with external analysts; use Migration for transferring the full dataset to another instance.">
+        <Collapsible title="Export">
+          <DataExportCard />
+        </Collapsible>
+      </Section>
+
       <Section title="Software Updates" description="On-demand self-upgrade via git pull. Never runs automatically.">
         <UpdateCard settings={settings} qc={qc} />
       </Section>
@@ -5355,6 +5362,106 @@ function ClaudeOAuthPanel({ config, health, qc }: { config: any; health: any; qc
           <p className="hint mt-2">If this fails, use an API key via Anthropic Compatible provider instead.</p>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Data Export ───
+
+const EXPORT_PRESETS = [
+  {
+    id: 'analysis',
+    label: 'Analysis Export',
+    description: 'Trading history as CSV — suitable for sharing with external analysts or running your own analysis scripts.',
+    tables: ['trade_proposals', 'risk_decisions', 'orders', 'fills', 'positions', 'capital_events', 'paper_account_events'],
+    includeConfig: false,
+  },
+  {
+    id: 'migration',
+    label: 'Migration Export',
+    description: 'Full dataset plus a redacted config backup — for transferring this instance\'s history to a fresh installation.',
+    tables: ['trade_proposals', 'risk_decisions', 'orders', 'fills', 'positions', 'capital_events', 'paper_account_events', 'agent_runs', 'agent_run_steps', 'audit_events'],
+    includeConfig: true,
+  },
+] as const
+
+function DataExportCard() {
+  const { data: catalog } = useQuery({
+    queryKey: ['export-catalog'],
+    queryFn: api.getExportCatalog,
+    staleTime: 30_000,
+  })
+
+  const countMap = Object.fromEntries(
+    (catalog?.datasets ?? []).map(d => [d.table, d.row_count])
+  )
+
+  const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null)
+  const [downloading, setDownloading] = useState<string | null>(null)
+
+  const triggerDownload = async (preset: typeof EXPORT_PRESETS[number]) => {
+    setStatus(null)
+    setDownloading(preset.id)
+    try {
+      const { blob, filename } = await api.downloadExport({
+        preset: preset.id,
+        include_config: preset.includeConfig,
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+      setStatus({ ok: true, text: `✓ ${filename} downloaded` })
+    } catch (e: any) {
+      setStatus({ ok: false, text: `✗ ${e.message}` })
+    } finally {
+      setDownloading(null)
+    }
+  }
+
+  return (
+    <div className="card mb-0">
+      <div className="flex flex-col gap-4">
+        {EXPORT_PRESETS.map(preset => (
+          <div key={preset.id} className="border rounded p-3" style={{ borderColor: 'var(--border)' }}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-sm mb-1">{preset.label}</div>
+                <p className="hint mb-2">{preset.description}</p>
+                <div className="flex flex-wrap gap-1">
+                  {preset.tables.map(t => {
+                    const n = countMap[t]
+                    return (
+                      <span key={t} className="badge badge-neutral text-xs font-mono">
+                        {t.replace(/_/g, ' ')}{n != null && n >= 0 ? ` (${n.toLocaleString()})` : ''}
+                      </span>
+                    )
+                  })}
+                  {preset.includeConfig && (
+                    <span className="badge badge-neutral text-xs font-mono">config_backup.yaml</span>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => triggerDownload(preset)}
+                disabled={downloading !== null}
+                className="shrink-0"
+              >
+                {downloading === preset.id ? 'Preparing…' : 'Download ZIP'}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {status && (
+        <p className={`text-sm mt-3 ${status.ok ? 'text-success' : 'text-danger'}`}>{status.text}</p>
+      )}
+      <p className="hint mt-3">
+        Exports are generated on demand from the local SQLite database. Config backup has secrets redacted.
+        Large datasets (agent runs, audit log) may take a few seconds.
+      </p>
     </div>
   )
 }
