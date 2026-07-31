@@ -593,6 +593,13 @@ export default function App() {
     <div className={`layout${railCollapsed ? ' rail' : ''}`}>
       <FetchProgress />
       <CommandPalette />
+      {sidebarOpen && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
       <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="brand">
           <span className="brand-mark">◆</span>
