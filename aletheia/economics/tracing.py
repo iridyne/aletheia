@@ -136,6 +136,36 @@ def add_pricing_snapshot(
     return dict(stored) if stored else row
 
 
+def list_pricing_snapshots(
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """List currently persisted pricing snapshots for CLI/UI inspection.
+
+    Read-only. Immutable table by contract — this helper is for viewing,
+    not for reconciliation.
+    """
+    db = ensure_economics_schema()
+    where: list[str] = []
+    params: list[Any] = []
+    if provider:
+        where.append("provider=?")
+        params.append(provider)
+    if model:
+        where.append("model=?")
+        params.append(model)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    rows = db.execute(
+        f"SELECT * FROM pricing_snapshots {where_sql} "
+        f"ORDER BY provider, model, replace(effective_from,' ','T') DESC, created_at DESC "
+        f"LIMIT ?",
+        (*params, max(1, min(int(limit), 5_000))),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def resolve_pricing_snapshot(
     provider: str, model: str, at: str
 ) -> dict[str, Any] | None:
@@ -195,6 +225,31 @@ def add_tool_cost_profile(
         "SELECT * FROM tool_cost_profiles WHERE id=?", (profile_id,)
     ).fetchone()
     return dict(stored) if stored else row
+
+
+def list_tool_cost_profiles(
+    *,
+    tool_name: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """List currently persisted tool cost profiles for CLI/UI inspection.
+
+    Read-only. Immutable table by contract.
+    """
+    db = ensure_economics_schema()
+    where: list[str] = []
+    params: list[Any] = []
+    if tool_name:
+        where.append("tool_name=?")
+        params.append(tool_name)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    rows = db.execute(
+        f"SELECT * FROM tool_cost_profiles {where_sql} "
+        f"ORDER BY tool_name, replace(effective_from,' ','T') DESC, created_at DESC "
+        f"LIMIT ?",
+        (*params, max(1, min(int(limit), 5_000))),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def resolve_tool_cost_profile(tool_name: str, at: str) -> dict[str, Any] | None:

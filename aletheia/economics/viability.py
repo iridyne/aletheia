@@ -589,6 +589,45 @@ def build_operator_viability(
     return _persist(report) if persist else report
 
 
+def list_viability_reports(
+    *,
+    scope: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """List persisted viability reports for CLI/UI inspection."""
+    ensure_economics_schema()
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    where: list[str] = []
+    params: list[Any] = []
+    if scope:
+        if scope not in ("system", "operator"):
+            raise ValueError("scope must be 'system' or 'operator'")
+        where.append("scope=?")
+        params.append(scope)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    rows = db.execute(
+        f"SELECT * FROM viability_reports {where_sql} "
+        f"ORDER BY replace(window_end,' ','T') DESC, generated_at DESC "
+        f"LIMIT ? OFFSET ?",
+        (*params, max(1, min(int(limit), 500)), max(0, int(offset))),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_viability_report(report_id: str) -> dict[str, Any] | None:
+    """Fetch one persisted viability report by id."""
+    ensure_economics_schema()
+    from aletheia.storage.sqlite import get_db
+
+    row = get_db().execute(
+        "SELECT * FROM viability_reports WHERE id=?", (report_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def render_viability(report: dict[str, Any]) -> str:
     def money(value: Any) -> str:
         return "unknown" if value is None else f"${float(value):.6f}"
