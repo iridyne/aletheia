@@ -136,6 +136,57 @@ async def test_lesson_management_action_rejects_unknown_lesson(client):
 
 
 @pytest.mark.anyio
+async def test_tunnel_guard_protects_lesson_management_actions(client):
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.secrets import set_secret
+    from aletheia.learning.lessons import LessonStore
+
+    store = LessonStore()
+    cfg = load_config()
+    cfg.tunnel.enabled = True
+    save_config(cfg)
+    set_secret("tunnel_api_token", "LESSONOWNER42")
+
+    for action in ("accept", "reject", "archive"):
+        protected = store.create(
+            summary=f"Tunnel-protected {action} lesson",
+            source_type="trade_case_study",
+            source_id=f"case-tunnel-auth-{action}",
+        )
+        for token in (None, "wrong"):
+            headers = {} if token is None else {"X-Aletheia-Token": token}
+            response = await client.post(
+                f"/api/persistence/lessons/{protected.lesson_id}/{action}",
+                headers=headers,
+            )
+            assert response.status_code == 401
+            assert store.get(protected.lesson_id).status == "proposed"
+
+    lesson = store.create(
+        summary="Tunnel-authorized lesson",
+        source_type="trade_case_study",
+        source_id="case-tunnel-authorized",
+    )
+    assert (await client.get("/api/persistence/lessons")).status_code == 200
+    assert (
+        await client.get(f"/api/persistence/lessons/{lesson.lesson_id}")
+    ).status_code == 200
+
+    headers = {"X-Aletheia-Token": "LESSONOWNER42"}
+    for action, expected_status in (
+        ("accept", "accepted"),
+        ("reject", "rejected"),
+        ("archive", "archived"),
+    ):
+        response = await client.post(
+            f"/api/persistence/lessons/{lesson.lesson_id}/{action}",
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == expected_status
+
+
+@pytest.mark.anyio
 async def test_guard_candidate_can_be_listed_and_manually_promoted(client):
     from aletheia.knowledge.manager import create_guard_candidate
     from aletheia.knowledge.guards import load_trading_guards
