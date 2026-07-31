@@ -11,10 +11,36 @@ feature-keying invariants against regression.
 """
 
 import asyncio
+import ast
 from contextlib import nullcontext
 import inspect
+import textwrap
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
+
+
+def test_refresh_registers_full_scored_arm_with_selected_subset():
+    """Both publication branches must preserve the intent-to-treat denominator."""
+    from aletheia.universe.service import UniverseService
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(UniverseService.refresh)))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_register_experiment_candidate_outcomes"
+    ]
+
+    assert len(calls) == 2
+    for call in calls:
+        assert isinstance(call.args[0], ast.Name)
+        assert call.args[0].id == "pre_scored"
+        allocated = next(
+            keyword.value for keyword in call.keywords if keyword.arg == "allocated"
+        )
+        assert isinstance(allocated, ast.Name)
+        assert allocated.id == "allocated"
 
 
 def _assert_emission_failure_cannot_publish_partial_universe_refresh(
