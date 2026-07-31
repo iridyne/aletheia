@@ -144,9 +144,19 @@ no logic duplication):
 | `/api/economics/costs?days=&run_id=&include_events=&event_limit=` | `list_cost_summary` |
 | `/api/economics/viability?scope=&days=&data_cost=&as_of=` | `build_*_viability(persist=False)` |
 | `/api/economics/viability/reports?scope=&limit=&offset=` | direct query of `viability_reports` |
-| `/api/economics/broker` | `inference_broker.snapshot()` |
 | `/api/economics/model-health` | `fallback.get_model_health_snapshot()` |
 | `/api/economics/pricing` | direct query of `pricing_snapshots`, `tool_cost_profiles` |
+
+**Broker snapshot deviation.** An earlier draft of this Proposal listed
+`/api/economics/broker` as a seventh endpoint calling
+`inference_broker.snapshot()`. That endpoint already exists as
+`/api/model/broker` (registered in `aletheia/server/routes/model.py`)
+and is consumed by `frontend/src/api/client.ts::getInferenceBroker`.
+Duplicating it under the economics namespace would fork the caller
+contract for no gain. The Phase 1 implementation therefore ships six
+endpoints and the frontend uses the existing helper for broker
+metrics. This is a scope reduction, not a coverage gap: the same
+data reaches the UI through the same physical function call.
 
 Register in `aletheia/server/app.py` alongside the existing
 `app.include_router(...)` block.
