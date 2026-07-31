@@ -706,7 +706,9 @@ def test_protected_trial_admission_is_idempotent_and_audits_owner(monkeypatch):
     assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 1
     assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 2
     assert len(audits) == 1
-    assert audits[0][1] == {"actor": "human", "source": "dashboard"}
+    assert audits[0][1] == {}
+    assert audits[0][0].audit_actor == "human"
+    assert audits[0][0].audit_source == "dashboard"
     event = get_db().execute("SELECT * FROM learning_lifecycle_events").fetchone()
     assert "begin bounded paper trial" in event["reason"]
 
@@ -1597,3 +1599,122 @@ def test_lifecycle_controller_isolates_a_failing_experiment(monkeypatch):
     assert bad_exp.experiment_id in seen
     # Only the good experiment produced a lifecycle result.
     assert result["experiments"] == 1
+
+
+def test_lifecycle_audit_failure_is_durable_and_reconciles(monkeypatch):
+    from aletheia.files import jsonl
+    from aletheia.learning import lifecycle
+    from aletheia.learning.control import get_learning_job_health
+    from aletheia.learning.ledger import get_record, insert_lifecycle_event
+    from aletheia.learning.models import LearningLifecycleEvent
+
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.10)
+    event = LearningLifecycleEvent(
+        dedup_key="audit-failure:test",
+        hypothesis_id=hypothesis.hypothesis_id,
+        experiment_id=experiment.experiment_id,
+        from_stage="paper_10",
+        action="refreeze",
+        reason="negative_measurement_refreeze",
+        policy_epoch="epoch-test",
+        audit_actor="human",
+        audit_source="dashboard",
+    )
+    assert insert_lifecycle_event(event)
+
+    monkeypatch.setattr(jsonl, "write_audit", lambda *_args, **_kwargs: False)
+    assert lifecycle._write_lifecycle_audit(event) is False
+
+    failed = get_record("learning_lifecycle_events", event.event_id)
+    assert failed["audit_mirror_status"] == "failed"
+    assert failed["audit_mirrored_at"] is None
+    assert failed["audit_failure_reason"] == "jsonl_append_failed"
+    degraded = get_learning_job_health("learning_lifecycle_audit_reconciler")
+    assert degraded.status == "degraded"
+    assert degraded.last_failure_reason == "audit_append_failed:1;pending:1"
+    assert degraded.backlog_count == 1
+    assert degraded.next_due_at is not None
+
+    calls = []
+
+    def succeed(payloads):
+        calls.extend(payloads)
+        return {payload["id"] for payload in payloads}
+
+    monkeypatch.setattr(jsonl, "write_audits_deduplicated", succeed)
+    result = lifecycle.reconcile_lifecycle_audits()
+
+    assert result == {"attempted": 1, "mirrored": 1, "failed": 0, "pending": 0}
+    mirrored = get_record("learning_lifecycle_events", event.event_id)
+    assert mirrored["audit_mirror_status"] == "mirrored"
+    assert mirrored["audit_mirrored_at"] is not None
+    assert mirrored["audit_failure_reason"] is None
+    from aletheia.learning.ledger import update_lifecycle_audit_mirror
+
+    update_lifecycle_audit_mirror(
+        event.event_id,
+        status="failed",
+        mirrored_at=None,
+        failure_reason="late_failed_ack",
+    )
+    monotonic = get_record("learning_lifecycle_events", event.event_id)
+    assert monotonic["audit_mirror_status"] == "mirrored"
+    assert monotonic["audit_mirrored_at"] == mirrored["audit_mirrored_at"]
+    assert calls[0]["actor"] == "human"
+    assert calls[0]["source"] == "dashboard"
+    assert calls[0]["id"] == f"learning-lifecycle:{event.event_id}"
+    healthy = get_learning_job_health("learning_lifecycle_audit_reconciler")
+    assert healthy.status == "healthy"
+    assert healthy.backlog_count == 0
+    assert healthy.last_failure_reason == "audit_append_failed:1;pending:1"
+
+
+def test_lifecycle_audit_repairs_partial_write_after_status_changes(
+    tmp_path, monkeypatch,
+):
+    from aletheia.files import jsonl
+    from aletheia.learning import lifecycle
+    from aletheia.learning.ledger import get_record, insert_lifecycle_event
+    from aletheia.learning.models import LearningLifecycleEvent
+
+    audit_tmp = tmp_path / "logs"
+    audit_tmp.mkdir()
+    monkeypatch.setattr(jsonl, "_log_dir", lambda: audit_tmp)
+    monkeypatch.setattr(jsonl, "_last_audit_hash", None)
+
+    event = LearningLifecycleEvent(
+        dedup_key="audit-partial:status-change",
+        hypothesis_id="hypothesis-partial",
+        experiment_id="experiment-partial",
+        from_stage="shadow",
+        action="hold",
+        reason="test_partial_write",
+    )
+    assert insert_lifecycle_event(event)
+    real_append = jsonl._append_jsonl_line
+
+    def partial_append(path, line):
+        with path.open("ab") as stream:
+            stream.write(line[: len(line) // 2].encode("utf-8"))
+        raise OSError("disk full after partial lifecycle write")
+
+    monkeypatch.setattr(jsonl, "_append_jsonl_line", partial_append)
+    assert lifecycle._write_lifecycle_audit(event) is False
+    assert get_record(
+        "learning_lifecycle_events", event.event_id,
+    )["audit_mirror_status"] == "failed"
+
+    monkeypatch.setattr(jsonl, "_append_jsonl_line", real_append)
+    assert lifecycle.reconcile_lifecycle_audits() == {
+        "attempted": 1,
+        "mirrored": 1,
+        "failed": 0,
+        "pending": 0,
+    }
+    records = [
+        json.loads(line)
+        for line in (audit_tmp / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["id"] for record in records] == [
+        f"learning-lifecycle:{event.event_id}"
+    ]

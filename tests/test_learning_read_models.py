@@ -506,6 +506,23 @@ def test_lco_projection_sanitizes_failure_and_is_side_effect_free(
     assert universe["measurement_supported"] is True
 
 
+def test_lco_projection_exposes_lifecycle_audit_degradation(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+
+    from aletheia.learning.control import record_lifecycle_audit_result
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    record_lifecycle_audit_result(pending=1, failed=1)
+    audit = build_learning_contribution_projection()["operations"]["lifecycle_audit"]
+
+    assert audit["current_status"] == "degraded"
+    assert audit["last_failure_code"] == "audit_append_failed"
+    assert audit["backlog_count"] == 1
+    assert "last_error" not in audit
+    assert "last_failure_reason" not in audit
+
+
 def test_lco_projection_reports_an_overdue_evaluator_as_overdue(
     tmp_path,
     monkeypatch,

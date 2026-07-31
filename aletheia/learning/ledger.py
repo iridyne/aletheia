@@ -237,6 +237,55 @@ def list_lifecycle_events(experiment_id: str, *, limit: int = 100) -> list[dict]
     return [dict(row) for row in rows]
 
 
+def list_unmirrored_lifecycle_events(
+    *, limit: int = 100, event_ids: list[str] | None = None,
+) -> list[dict]:
+    clauses = ["audit_mirror_status IN ('pending', 'failed')"]
+    params: list[object] = []
+    if event_ids is not None:
+        if not event_ids:
+            return []
+        clauses.append(f"event_id IN ({','.join('?' for _ in event_ids)})")
+        params.extend(event_ids)
+    params.append(min(max(int(limit), 1), 500))
+    rows = get_db().execute(
+        "SELECT * FROM learning_lifecycle_events "
+        f"WHERE {' AND '.join(clauses)} "
+        "ORDER BY created_at, event_id LIMIT ?",
+        tuple(params),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def count_unmirrored_lifecycle_events() -> int:
+    row = get_db().execute(
+        "SELECT COUNT(*) FROM learning_lifecycle_events "
+        "WHERE audit_mirror_status IN ('pending', 'failed')"
+    ).fetchone()
+    return int(row[0] or 0)
+
+
+def update_lifecycle_audit_mirror(
+    event_id: str,
+    *,
+    status: str,
+    mirrored_at: str | None,
+    failure_reason: str | None,
+) -> None:
+    db = get_db()
+    was_in_tx = db.in_transaction
+    where = "event_id=?"
+    if status != "mirrored":
+        where += " AND audit_mirror_status!='mirrored'"
+    db.execute(
+        "UPDATE learning_lifecycle_events SET audit_mirror_status=?, "
+        f"audit_mirrored_at=?, audit_failure_reason=? WHERE {where}",
+        (status, mirrored_at, failure_reason, event_id),
+    )
+    if not was_in_tx:
+        db.commit()
+
+
 def get_trial_admission_event(successor_experiment_id: str) -> dict | None:
     row = get_db().execute(
         "SELECT * FROM learning_lifecycle_events "

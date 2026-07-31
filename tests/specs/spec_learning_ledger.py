@@ -36,6 +36,7 @@ def test_learning_ledger_tables_and_models_exist():
     assert "assignment_unit_key" in LearningExposure.model_fields
     assert "behavior_contract_hash" in LearningExposure.model_fields
     assert "behavior_contract_hash" in LearningContributionVerdict.model_fields
+    assert LearningLifecycleEvent.model_fields["audit_mirror_status"].default == "pending"
 
 
 def test_a1_additive_columns_are_present_after_migration():
@@ -48,6 +49,7 @@ def test_a1_additive_columns_are_present_after_migration():
             "learning_exposures",
             "learning_contribution_verdicts",
             "learning_job_health",
+            "learning_lifecycle_events",
             "filter_candidate_outcomes",
         )
     }
@@ -56,6 +58,25 @@ def test_a1_additive_columns_are_present_after_migration():
     assert "behavior_contract_hash" in columns["learning_exposures"]
     assert "behavior_contract_hash" in columns["learning_contribution_verdicts"]
     assert {"last_failed_at", "last_failure_reason"} <= columns["learning_job_health"]
+    assert {
+        "audit_actor",
+        "audit_source",
+        "audit_mirror_status",
+        "audit_mirrored_at",
+        "audit_failure_reason",
+    } <= columns["learning_lifecycle_events"]
+    lifecycle_info = {
+        row[1]: row for row in db.execute(
+            "PRAGMA table_info(learning_lifecycle_events)"
+        ).fetchall()
+    }
+    assert lifecycle_info["audit_mirror_status"][4] == "'mirrored'"
+    indexes = {
+        row[1] for row in db.execute(
+            "PRAGMA index_list(learning_lifecycle_events)"
+        ).fetchall()
+    }
+    assert "idx_learning_lifecycle_audit_pending" in indexes
     assert "allocation_selected" in columns["filter_candidate_outcomes"]
 
 

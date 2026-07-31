@@ -109,13 +109,33 @@ def test_scheduler_registers_separate_single_instance_learning_jobs(monkeypatch)
         job_ids = [job.id for job in started.get_jobs()]
         evaluator = started.get_job("learning_contribution_evaluator")
         controller = started.get_job("learning_lifecycle_controller")
-        assert evaluator is not None and controller is not None
+        audit_reconciler = started.get_job("learning_lifecycle_audit_reconciler")
+        assert evaluator is not None and controller is not None and audit_reconciler is not None
         assert job_ids.count("learning_contribution_evaluator") == 1
         assert "learning_verdict_runner" not in job_ids
         assert evaluator.max_instances == controller.max_instances == 1
+        assert audit_reconciler.max_instances == 1
         assert evaluator.coalesce is True and controller.coalesce is True
+        assert "learning_lifecycle_audit_reconciler" in scheduler._ESSENTIAL_JOBS
     finally:
         scheduler.stop_scheduler()
+
+
+def test_audit_reconciler_outer_failure_is_durable(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.learning import control
+
+    monkeypatch.setattr(
+        scheduler,
+        "_run_sync_with_timeout",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("test")),
+    )
+
+    scheduler._run_learning_lifecycle_audit_reconciler()
+
+    health = control.get_learning_job_health("learning_lifecycle_audit_reconciler")
+    assert health.status == "failed"
+    assert health.last_failure_reason == "audit_reconciler_internal_failure"
 
 
 def test_measurement_startup_catchup_only_claims_one_current_window(monkeypatch):

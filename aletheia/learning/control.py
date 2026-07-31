@@ -49,6 +49,7 @@ _SCHEDULE_KEYS: dict[str, str] = {
     "learning_startup_catchup": "startup:once",
     "learning_contribution_evaluator": "interval:config.learning.evaluation_interval_minutes",
     "learning_lifecycle_controller": "interval:config.learning.evaluation_interval_minutes",
+    "learning_lifecycle_audit_reconciler": "interval:5m",
 }
 
 _INTERVAL_HOURS = {
@@ -180,6 +181,8 @@ def job_health_view(
 
 
 def _next_due(job_id: str, now: datetime) -> str | None:
+    if job_id == "learning_lifecycle_audit_reconciler":
+        return (now + timedelta(minutes=5)).isoformat()
     if job_id in {"learning_contribution_evaluator", "learning_lifecycle_controller"}:
         try:
             minutes = max(15, int(load_config().learning.evaluation_interval_minutes))
@@ -403,3 +406,37 @@ def record_measurement_job_skipped(job_id: str, reason: str) -> None:
     upsert_job_health(health.model_copy(update={
         "status": reason, "last_error": None, "updated_at": now.isoformat(),
     }))
+
+
+def record_lifecycle_audit_result(*, pending: int, failed: int) -> None:
+    """Persist the lifecycle JSONL outbox state without claiming a watermark."""
+    job_id = "learning_lifecycle_audit_reconciler"
+    now = utc_now()
+    health = get_learning_job_health(job_id)
+    if pending > 0:
+        reason = (
+            f"audit_append_failed:{failed};pending:{pending}"
+            if failed > 0
+            else f"audit_backlog_pending:{pending}"
+        )
+        updates = {
+            "backlog_count": pending,
+            "next_due_at": _next_due(job_id, now),
+            "consecutive_failures": health.consecutive_failures + 1,
+            "status": "degraded",
+            "last_error": reason,
+            "last_failed_at": now.isoformat(),
+            "last_failure_reason": reason,
+            "updated_at": now.isoformat(),
+        }
+    else:
+        updates = {
+            "backlog_count": 0,
+            "last_succeeded_at": now.isoformat(),
+            "next_due_at": _next_due(job_id, now),
+            "consecutive_failures": 0,
+            "status": "healthy",
+            "last_error": None,
+            "updated_at": now.isoformat(),
+        }
+    upsert_job_health(health.model_copy(update=updates))

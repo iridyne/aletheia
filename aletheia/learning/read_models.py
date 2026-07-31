@@ -47,6 +47,7 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
         for row in rows
     ]
     evaluator = get_learning_job_health("learning_contribution_evaluator")
+    lifecycle_audit = get_learning_job_health("learning_lifecycle_audit_reconciler")
     last_success = evaluator.last_succeeded_at
     freshness = _freshness(last_success, generated_at)
 
@@ -78,6 +79,10 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
                 catchup_due=measurement_catchup_due(
                     "learning_contribution_evaluator"
                 ),
+            ),
+            "lifecycle_audit": _project_health(
+                job_health_view(lifecycle_audit),
+                catchup_due=False,
             ),
         },
     }
@@ -517,6 +522,10 @@ def _failure_code(value: Any) -> str | None:
     if not value:
         return None
     lowered = str(value).lower()
+    if "audit_append_failed" in lowered:
+        return "audit_append_failed"
+    if "audit_backlog_pending" in lowered:
+        return "audit_backlog_pending"
     if "timeout" in lowered or "timed out" in lowered:
         return "timeout"
     if "database" in lowered or "sqlite" in lowered:

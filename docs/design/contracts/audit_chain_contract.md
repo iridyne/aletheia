@@ -6,7 +6,7 @@
 >
 > **权威实现**: `aletheia/files/jsonl.py`（文件链）、`aletheia/storage/repositories.py:_compute_proposal_hash`（行链）
 >
-> **最后更新**: 2026-06-29
+> **最后更新**: 2026-07-31
 
 ---
 
@@ -188,6 +188,8 @@ detail 中包含: 总记录数、错误数、前 3 条错误的 `{文件名}:{�
 
 runtime-home `logs/audit.jsonl` 及其轮转存档**只允许追加写入**，禁止任何路径对文件执行 `truncate`、`overwrite`、或删除行。
 
+Durable lifecycle retry 遇到无终止换行的尾部时也遵守该约束：完整 JSON 仅追加换行；只有当尾部字节能由稳定 event payload 证明为同一记录前缀时才追加缺失后缀；否则 fail-closed 并保留 outbox backlog，不猜测或截断审计数据。
+
 - 实现保证: `write_audit()` 经 `_append_jsonl_line()` → `path.open("a", encoding="utf-8")` (`jsonl.py:59`)，以 `"a"` 模式打开，操作系统级别追加。
 - ⚠️ **无 truncate 防护**: 代码层面没有显式拒绝其他路径写入 audit 文件的机制；信任依赖进程隔离和 change-control 纪律（见 §8）。
 
@@ -210,8 +212,23 @@ runtime-home `logs/audit.jsonl` 及其轮转存档**只允许追加写入**，�
 | 凭证变更 | `secret_rotated` | `cli/secrets_cmd.py:46-50`；前端 Settings 路由另有审计 |
 | Agent Shell 命令执行（含拒绝） | `agent_shell_command` | `agent_shell/audit.py:37-44` |
 | 外部持仓认领（reconciler） | `position_adopted` | `portfolio/position_reconciler.py:361-382`；`after_state` 含 `commit_hash` + `parent_hash`（链入 §6.4 提案 hash chain，TaG P1-2） |
+| Learning lifecycle transition | `learning_lifecycle_transition` | `learning/lifecycle.py`；SQLite lifecycle event/state 先原子提交，JSONL mirror 使用 stable event id 幂等补写 |
 
 `FORBIDDEN_INTENTS` 集合中的意图（`agent_shell/registry.py:415-426`）在 `agent_shell/commands.py:167` 被拦截；被拦截时同路径写 `agent_shell_command` 审计记录，`message` 前缀为 `"DENIED"`。
+
+### §6.3a Learning lifecycle audit outbox
+
+`learning_lifecycle_events` 是 lifecycle transition 的权威 SQLite 事实和 JSONL outbox。状态转换
+与 event 在同一事务提交，文件故障不得回滚已完成的安全动作。新 event 以
+`audit_mirror_status=pending` 创建；历史 event 在 additive migration 中默认视为 `mirrored`，避免
+无法证明的全量重复回放。
+
+JSONL 使用 `learning-lifecycle:<event_id>` 作为 stable `id`。`write_audit(..., dedup_id=...)`
+在 audit 文件锁内检查所有轮转文件，因此进程在 append 后、SQLite acknowledgement 前崩溃时，
+重试不会追加第二条物理记录。成功后写 `audit_mirrored_at`；失败保留
+`audit_failure_reason=jsonl_append_failed`，并把 `learning_lifecycle_audit_reconciler` health 标为
+`degraded`。essential reconciler 每 5 分钟有界重试最多 100 条，不重放 transition。全部清空后
+当前 health 可恢复为 `healthy`，但 durable last-failure identity 保留。
 
 ### §6.4 提案级 hash chain（TaG P0-1，2026-06-29）
 
