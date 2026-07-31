@@ -56,7 +56,7 @@ _ECONOMIC_FIELDS = (
     "entry_price_usd", "exit_price_usd", "gross_return_pct",
     "directional_return_pct", "net_return_pct", "estimated_fee_pct",
     "estimated_spread_slippage_pct", "estimated_funding_pct", "mfe_pct",
-    "mae_pct", "settlement_price_source", "cost_model_version",
+    "mae_pct", "cost_model_version",
 )
 _MAX_CONFLICT_ROWS = 20
 
