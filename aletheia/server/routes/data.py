@@ -1544,7 +1544,7 @@ def get_guards():
             for g in guards
         ]
     except Exception as e:
-        return {"error": str(e), "guards": []}
+        raise HTTPException(503, "guard_read_failed") from e
 
 
 @router.get("/knowledge/guard-candidates")
@@ -1556,7 +1556,7 @@ def get_guard_candidates():
         experiments = _guard_experiments_by_id()
         return [_guard_response(g, experiments.get(g.guard_id), evaluation_enabled=False) for g in guards]
     except Exception as e:
-        return {"error": str(e), "guards": []}
+        raise HTTPException(503, "guard_read_failed") from e
 
 
 @router.post("/knowledge/guard-candidates/{guard_id}/promote")
@@ -1594,7 +1594,7 @@ def get_guard_stats():
         from aletheia.analytics.guard_effectiveness import compute_guard_stats
         return compute_guard_stats()
     except Exception as e:
-        return {"error": str(e), "stats": []}
+        raise HTTPException(503, "guard_stats_read_failed") from e
 
 
 @router.get("/knowledge/case-studies")

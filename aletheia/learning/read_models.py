@@ -32,14 +32,18 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
     generated_at = datetime.now(timezone.utc).isoformat()
 
     from aletheia.agent_runtime.build_info import get_boot_commit
-    from aletheia.config.loader import load_config
     from aletheia.learning.control import (
         get_learning_job_health,
         job_health_view,
         measurement_catchup_due,
     )
 
+    from aletheia.config.loader import load_config
+
     cfg = load_config(persist_migrations=False)
+    stale_after_sec = max(
+        1, int(cfg.learning.evaluation_interval_minutes),
+    ) * 2 * 60
     boot_commit = get_boot_commit()
     rows = _current_experiment_rows(bounded_limit, cfg.learning.paper_influence_paths)
     path_states = {
@@ -48,7 +52,9 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
             "availability": "available",
             "unavailable_reason": None,
             "state": "empty",
-            "data_freshness": _freshness(None, generated_at),
+            "data_freshness": _freshness(
+                None, generated_at, stale_after_sec=stale_after_sec,
+            ),
         }
         for path_id in sorted(SUPPORTED_PATH_IDS)
     }
@@ -60,6 +66,7 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
                 row,
                 boot_commit=boot_commit,
                 generated_at=generated_at,
+                stale_after_sec=stale_after_sec,
             )
             items.append(item)
             if path_id in path_states and path_states[path_id]["state"] == "empty":
@@ -67,7 +74,10 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
                     "path_id": path_id,
                     "availability": item["availability"],
                     "unavailable_reason": (
-                        "conflict_provenance_truncated"
+                        item["lifecycle"]["authority_block_reason"]
+                        if item["lifecycle"]["authority_block_reason"]
+                        == "authority_projection_failed"
+                        else "conflict_provenance_truncated"
                         if item["availability"] == "partial"
                         else None
                     ),
@@ -81,12 +91,16 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
                     "availability": "unavailable",
                     "unavailable_reason": "path_projection_failed",
                     "state": "unavailable",
-                    "data_freshness": _freshness(None, generated_at),
+                    "data_freshness": _freshness(
+                        None, generated_at, stale_after_sec=stale_after_sec,
+                    ),
                 }
     evaluator = get_learning_job_health("learning_contribution_evaluator")
     lifecycle_audit = get_learning_job_health("learning_lifecycle_audit_reconciler")
     last_success = evaluator.last_succeeded_at
-    freshness = _freshness(last_success, generated_at)
+    freshness = _freshness(
+        last_success, generated_at, stale_after_sec=stale_after_sec,
+    )
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -134,7 +148,19 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
     }
 
 
-def unavailable_learning_contribution_projection(reason: str) -> dict[str, Any]:
+def configured_learning_stale_after_sec() -> int:
+    """Return the configured freshness threshold without persisting migrations."""
+    from aletheia.config.loader import load_config
+
+    cfg = load_config(persist_migrations=False)
+    return max(1, int(cfg.learning.evaluation_interval_minutes)) * 2 * 60
+
+
+def unavailable_learning_contribution_projection(
+    reason: str,
+    *,
+    stale_after_sec: int | None = None,
+) -> dict[str, Any]:
     """Return an honest unavailable envelope without leaking exception text."""
     return {
         "schema_version": SCHEMA_VERSION,
@@ -144,7 +170,7 @@ def unavailable_learning_contribution_projection(reason: str) -> dict[str, Any]:
         "data_freshness": {
             "last_evaluated_at": None,
             "age_sec": None,
-            "stale_after_sec": 7200,
+            "stale_after_sec": stale_after_sec,
             "state": "unavailable",
         },
         "paths": [],
@@ -245,6 +271,7 @@ def _project_experiment(
     *,
     boot_commit: str | None,
     generated_at: str,
+    stale_after_sec: int,
 ) -> dict[str, Any]:
     path_id = str(row.get("path_id") or "")
     try:
@@ -332,6 +359,31 @@ def _project_experiment(
         )
         mutation_available = mutation_reason is None
 
+    authority_enabled = False
+    authority_projection_failed = False
+    authority_block_reason = identity_precondition_reason
+    if policy_epoch is not None:
+        try:
+            from aletheia.learning.authority import resolve_learning_authority
+            from aletheia.learning.models import LearningExperiment
+
+            experiment = LearningExperiment(**{
+                field: row.get(field)
+                for field in LearningExperiment.model_fields
+                if field in row
+            })
+            authority = resolve_learning_authority(
+                path_id,
+                experiment,
+                policy_epoch,
+                persist_config_migrations=False,
+            )
+            authority_enabled = authority.authorized
+            authority_block_reason = None if authority.authorized else authority.reason
+        except Exception:
+            authority_projection_failed = True
+            authority_block_reason = "authority_projection_failed"
+
     source_counts = _safe_int_dict(metrics.get("outcome_source_member_counts"))
     allocation_sources = _safe_int_dict(
         metrics.get("allocation_selection_source_member_counts")
@@ -355,12 +407,16 @@ def _project_experiment(
         "path_id": path_id,
         "availability": (
             "partial"
-            if bool(metrics.get("evidence_conflict_provenance_truncated"))
+            if (
+                bool(metrics.get("evidence_conflict_provenance_truncated"))
+                or authority_projection_failed
+            )
             else "available"
         ),
         "data_freshness": _freshness(
             (current_verdict or {}).get("created_at") if current else None,
             generated_at,
+            stale_after_sec=stale_after_sec,
         ),
         "hypothesis_id": row.get("hypothesis_id"),
         "experiment_id": row.get("experiment_id"),
@@ -454,8 +510,8 @@ def _project_experiment(
         "lifecycle": {
             "recommended_action": recommended,
             "recommendation_reason": measurement_reason,
-            "authority_enabled": False,
-            "authority_block_reason": "read_only_projection",
+            "authority_enabled": authority_enabled,
+            "authority_block_reason": authority_block_reason,
             "mutation_available": mutation_available,
             "mutation_unavailable_reason": mutation_reason,
         },
@@ -622,7 +678,12 @@ def _failure_code(value: Any) -> str | None:
     return "internal_failure"
 
 
-def _freshness(last_evaluated_at: str | None, generated_at: str) -> dict[str, Any]:
+def _freshness(
+    last_evaluated_at: str | None,
+    generated_at: str,
+    *,
+    stale_after_sec: int,
+) -> dict[str, Any]:
     age_sec = None
     state = "not_available"
     if last_evaluated_at:
@@ -634,13 +695,13 @@ def _freshness(last_evaluated_at: str | None, generated_at: str) -> dict[str, An
                 evaluated = evaluated.replace(tzinfo=timezone.utc)
             generated = datetime.fromisoformat(generated_at)
             age_sec = max(0, int((generated - evaluated).total_seconds()))
-            state = "fresh" if age_sec <= 7200 else "stale"
+            state = "fresh" if age_sec <= stale_after_sec else "stale"
         except (TypeError, ValueError):
             state = "unavailable"
     return {
         "last_evaluated_at": last_evaluated_at,
         "age_sec": age_sec,
-        "stale_after_sec": 7200,
+        "stale_after_sec": stale_after_sec,
         "state": state,
     }
 

@@ -8,6 +8,14 @@ export type ContributionViewState =
   | 'stale'
   | LearningContributionProjection['items'][number]['measurement']['state']
 
+export function authorityLabel(
+  enabled: boolean,
+  blockReason: string | null,
+): 'Enabled' | 'Blocked' | 'Unavailable' {
+  if (enabled) return 'Enabled'
+  return blockReason === 'authority_projection_failed' ? 'Unavailable' : 'Blocked'
+}
+
 export function deriveContributionViewState(input: {
   loading: boolean
   failed: boolean

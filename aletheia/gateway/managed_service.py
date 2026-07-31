@@ -271,10 +271,18 @@ def _status_linux() -> dict:
 
 
 def _start_linux(*, no_browser: bool) -> dict:
+    # T8: use Type=notify so systemd only marks the unit active after the supervisor
+    # emits sd_notify READY=1 (written the moment the backend port first binds).
+    # TimeoutStartSec=120 is 2× _SERVER_PORT_STARTUP_GRACE_SEC; gives the app ample
+    # time to emit the signal while still failing promptly on a genuine hang.
+    # Falls back gracefully on older systemd that ignores unknown service types —
+    # the unit just stays in activating state until the timeout, which is the same
+    # behaviour as the previous exec type.
     command = [
-        "systemd-run", "--user", "--unit", SYSTEMD_UNIT, "--service-type=exec",
+        "systemd-run", "--user", "--unit", SYSTEMD_UNIT, "--service-type=notify",
         "--property=Restart=no", "--property=StandardInput=null",
-        "--property=StandardOutput=journal", "--property=StandardError=journal", "--quiet",
+        "--property=StandardOutput=journal", "--property=StandardError=journal",
+        "--property=TimeoutStartSec=120", "--quiet",
         *_runner_command(no_browser=no_browser),
     ]
     try:

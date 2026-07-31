@@ -218,7 +218,7 @@ Every top-level response contains:
   "data_freshness": {
     "last_evaluated_at": null,
     "age_sec": null,
-    "stale_after_sec": 7200,
+    "stale_after_sec": 21600,
     "state": "not_available"
   }
 }
@@ -227,6 +227,10 @@ Every top-level response contains:
 Rules:
 
 - `generated_at` is projection generation time, not evaluator success time.
+- `stale_after_sec` is twice the configured evaluator interval; it is not a
+  fixed two-hour claim when the scheduler cadence differs. If configuration
+  itself cannot be read, an unavailable envelope reports this threshold as
+  `null` rather than inventing a cadence.
 - `availability` is `available`, `partial`, or `unavailable`.
 - A failed optional section yields `partial` and a section-specific reason; it is
   not silently replaced with an empty list or zero.
@@ -256,7 +260,8 @@ Current minimal slice:
   for compatible consumers;
 - reads at most 20 current open experiments and projects registry path
   capabilities, current identity, the latest historical verdict, cohort
-  integrity, evaluator health and recommendation-only lifecycle state;
+  integrity, evaluator health, lifecycle readiness and the effective treatment
+  authority decision from the existing authority resolver;
   open experiments whose `h.path_id` appears in
   `cfg.learning.paper_influence_paths` are ranked first (priority 0), followed by
   every registry-declared measurement-supported path (priority 1), then
@@ -270,6 +275,12 @@ Current minimal slice:
 - renders no mutation action. `mutation_available` is readiness information for
   the separately scoped Settings route and does not make the observability
   surface mutable or prove that route's owner-authentication boundary.
+- reports real treatment authority independently from the GET-only UI boundary.
+  A read-only page does not force an otherwise authorized experiment to appear
+  blocked, and resolving authority performs no admission or config mutation.
+- preserves legacy activity aggregates only as compatibility context. A failed
+  legacy query is named in `legacy_query_errors`; nullable counts remain `null`
+  rather than being presented as genuine empty or zero activity.
 
 The optional `path_id`, `status`, `limit` and `offset` query contract, TTL cache
 and `Server-Timing` proof remain target work under `LCO-C03` and `LCO-C06`. The
