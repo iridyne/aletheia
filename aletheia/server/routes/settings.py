@@ -156,7 +156,14 @@ def get_settings():
                    if k != "credentials_path"},
         "regime": cfg.regime.model_dump(mode="json"),
         "network": _redacted_network(cfg.network.model_dump(mode="json")),
-        "strategy_factory": cfg.strategy_factory.model_dump(mode="json"),
+        "strategy_factory": {
+            **cfg.strategy_factory.model_dump(mode="json"),
+            "_deprecated": True,
+            "_reason": (
+                "Strategy Factory subsystem removed with Position C (2026-07-02). "
+                "All fields are compatibility-only with no production consumer."
+            ),
+        },
         "historical_data": cfg.historical_data.model_dump(mode="json"),
         "event_triggers": cfg.event_triggers.model_dump(mode="json"),
         "pi_daemon": cfg.pi_daemon.model_dump(mode="json"),
@@ -1939,10 +1946,20 @@ async def update_universe_config(req: UniverseConfigUpdate):
 
 
 # ---------------------------------------------------------------------------
-# Strategy Factory config
+# Strategy Factory config  (DEPRECATED — subsystem removed 2026-07-02)
 # ---------------------------------------------------------------------------
 
-class StrategyFactoryConfigUpdate(SettingsRequest):
+_STRATEGY_FACTORY_DEPRECATED_FIELDS = [
+    "backtest_gate_enabled", "sweep_enabled", "sweep_max_variants",
+    "sweep_use_optuna", "sweep_n_trials", "sweep_optuna_timeout_sec", "sweep_top_k",
+    "event_driven_enabled", "event_cooldown_minutes", "event_min_score",
+    "walk_forward_enabled", "walk_forward_folds", "walk_forward_min_bars",
+    "high_trade_count_threshold", "min_runtime_days_relaxed",
+]
+
+# Accepts (but ignores) the old field set so old API callers don't get a hard 422.
+class StrategyFactoryConfigUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     backtest_gate_enabled: bool | None = None
     sweep_enabled: bool | None = None
     sweep_max_variants: int | None = None
@@ -1962,22 +1979,25 @@ class StrategyFactoryConfigUpdate(SettingsRequest):
 
 @router.post("/strategy_factory")
 async def update_strategy_factory_config(req: StrategyFactoryConfigUpdate):
-    """Update strategy factory parameters (generation velocity, validation gates)."""
-    cfg = load_config()
-    old = cfg.strategy_factory.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
+    """Strategy Factory subsystem was removed with Position C (2026-07-02).
 
-    for field, value in updates.items():
-        setattr(cfg.strategy_factory, field, value)
-
-    save_config(cfg)
-
-    from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "strategy_factory_config_changed",
-                 "entity_type": "strategy_factory_config", "before": old,
-                 "after": cfg.strategy_factory.model_dump(mode="json"),
-                 "message": f"Strategy factory config updated: {list(updates.keys())}"})
-    return {"updated": updates, "strategy_factory": cfg.strategy_factory.model_dump(mode="json")}
+    This endpoint is kept for backward compatibility but performs no mutation and
+    writes no audit event. The response explicitly signals that no runtime behavior
+    changed. The current authority chain is scanner-family opportunities → ranker /
+    System Operator → Proposal → Risk/Execution.
+    """
+    return {
+        "deprecated": True,
+        "supported": False,
+        "reason": (
+            "Strategy Factory subsystem removed with Position C (2026-07-02). "
+            "These fields have no production consumer and saving them does not alter "
+            "any runtime decision. Current path: scanner → ranker → System Operator "
+            "→ Proposal → Risk/Execution."
+        ),
+        "fields": _STRATEGY_FACTORY_DEPRECATED_FIELDS,
+        "updated": {},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2154,14 +2174,15 @@ class EventTriggerConfigUpdate(SettingsRequest):
     price_move_pct_threshold: float | None = None
     volume_surge_multiplier: float | None = None
     watch_universe_members: bool | None = None
-    trigger_strategy_design: bool | None = None
-    strategy_design_min_move_pct: float | None = None
+    # trigger_strategy_design and strategy_design_min_move_pct removed: DEAD CONFIG.
+    # strategy_designer was removed with Position C (2026-07-02). Callers that send
+    # these fields receive a 422 — the extra="forbid" SettingsRequest policy is
+    # intentionally strict so UI/API mismatches fail loudly rather than silently.
 
 
 _EVENT_TRIGGER_BOUNDS: dict[str, tuple[float, float]] = {
     "price_move_pct_threshold": (0.5, 20.0),
     "volume_surge_multiplier": (1.5, 20.0),
-    "strategy_design_min_move_pct": (1.0, 30.0),
 }
 
 

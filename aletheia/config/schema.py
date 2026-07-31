@@ -1134,7 +1134,13 @@ class EventTriggerConfig(BaseModel):
 
 
 class StrategyFactoryConfig(BaseModel):
-    """Controls strategy generation velocity and validation gates."""
+    """DEPRECATED — strategy FSM / backtest-orchestrator removed with Position C (2026-07-02).
+
+    All fields are compatibility-only: they load from existing config.yaml files without
+    error but have no production consumer. No scheduler, ranker, System Operator or
+    execution path reads these values. Do not add new consumers; the current authority
+    chain is scanner-family opportunities → ranker / System Operator → Proposal → Risk.
+    """
     backtest_gate_enabled: bool = True
     sweep_enabled: bool = True
     sweep_max_variants: int = 100

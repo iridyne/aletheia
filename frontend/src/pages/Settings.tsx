@@ -122,7 +122,6 @@ const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
   { title: 'Local Paper Account',      tab: 'execution', alt: ['no exchange', 'paper cash', 'available balance', 'close positions'] },
   // Risk & Universe
   { title: 'Universe Board',           tab: 'risk', alt: ['scanner', 'tradable universe'] },
-  { title: 'Strategy Factory',         tab: 'risk', alt: ['auto-strategy', 'designer'] },
   { title: 'Event Triggers',           tab: 'risk', alt: ['threshold', 'fire conditions'] },
   { title: 'Tradable Symbols',         tab: 'risk', alt: ['allowlist', 'symbol filter'] },
   { title: 'Risk Limits',              tab: 'risk', alt: ['notional cap', 'leverage', 'daily loss', 'margin ratio', 'kill switch', 'force close'] },
@@ -974,76 +973,6 @@ function AgentModelsTab({ status, settings, qc }: any) {
   )
 }
 
-// ─── Strategy Factory config ───
-
-function StrategyFactoryCard({ settings, qc }: any) {
-  const sf = settings?.strategy_factory as any
-  const [vals, setVals] = useState<Record<string, unknown>>({})
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  useEffect(() => {
-    if (!sf) return
-    setVals({
-      backtest_gate_enabled: sf.backtest_gate_enabled ?? true,
-      sweep_enabled: sf.sweep_enabled ?? true,
-      sweep_max_variants: sf.sweep_max_variants ?? 100,
-      sweep_use_optuna: sf.sweep_use_optuna ?? false,
-      sweep_n_trials: sf.sweep_n_trials ?? 60,
-      sweep_optuna_timeout_sec: sf.sweep_optuna_timeout_sec ?? 120,
-      sweep_top_k: sf.sweep_top_k ?? 10,
-      event_driven_enabled: sf.event_driven_enabled ?? true,
-      event_cooldown_minutes: sf.event_cooldown_minutes ?? 30,
-      event_min_score: sf.event_min_score ?? 60,
-      walk_forward_enabled: sf.walk_forward_enabled ?? true,
-      walk_forward_folds: sf.walk_forward_folds ?? 3,
-      walk_forward_min_bars: sf.walk_forward_min_bars ?? 150,
-      high_trade_count_threshold: sf.high_trade_count_threshold ?? 30,
-      min_runtime_days_relaxed: sf.min_runtime_days_relaxed ?? 3,
-    })
-  }, [sf])
-
-  const { mutate: save } = useMutation({
-    mutationFn: () => api.updateStrategyFactoryConfig(vals as any),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setMsg({ ok: true, text: 'Saved' }) },
-    onError: (e: any) => setMsg({ ok: false, text: e.message }),
-  })
-
-  if (!sf) return null
-
-  const boolFields: BoolField[] = [
-    { key: 'backtest_gate_enabled', label: 'Backtest gate' },
-    { key: 'sweep_enabled', label: 'Parameter sweep' },
-    { key: 'sweep_use_optuna', label: 'Optuna (Bayesian)' },
-    { key: 'event_driven_enabled', label: 'Event-driven design' },
-    { key: 'walk_forward_enabled', label: 'Walk-forward validation' },
-  ]
-
-  const numFields: NumField[] = [
-    { key: 'sweep_max_variants', label: 'Sweep max variants', unit: '', min: 10, max: 500, step: 10, isInt: true },
-    { key: 'sweep_n_trials', label: 'Optuna trials', unit: '', min: 10, max: 300, step: 10, isInt: true },
-    { key: 'sweep_optuna_timeout_sec', label: 'Optuna timeout', unit: 's', min: 30, max: 600, step: 10, isInt: false },
-    { key: 'sweep_top_k', label: 'Optuna top-K', unit: '', min: 3, max: 30, step: 1, isInt: true },
-    { key: 'event_cooldown_minutes', label: 'Event cooldown', unit: 'min', min: 5, max: 120, step: 1, isInt: true },
-    { key: 'event_min_score', label: 'Event min score', unit: '', min: 45, max: 80, step: 1, isInt: true },
-    { key: 'walk_forward_folds', label: 'Walk-forward folds', unit: '', min: 2, max: 10, step: 1, isInt: true },
-    { key: 'walk_forward_min_bars', label: 'Walk-forward min bars', unit: '', min: 60, max: 1000, step: 10, isInt: true },
-    { key: 'high_trade_count_threshold', label: 'High-trade threshold', unit: '', min: 10, max: 100, step: 1, isInt: true },
-    { key: 'min_runtime_days_relaxed', label: 'Min runtime days (relaxed)', unit: 'days', min: 1, max: 14, step: 1, isInt: true },
-  ]
-
-  const setBool = (key: string, value: boolean) => setVals(v => ({ ...v, [key]: value }))
-  const setNum = (key: string, value: number) => setVals(v => ({ ...v, [key]: value }))
-
-  return (
-    <div className="space-y-4">
-      <ToggleGrid fields={boolFields} vals={vals} set={setBool} />
-      <NumGrid fields={numFields} vals={vals} set={setNum} />
-      <button onClick={() => save()} className="btn btn-primary btn-sm mt-2">Save Strategy Factory</button>
-      <SaveMsg msg={msg} />
-    </div>
-  )
-}
-
 // ─── Historical Data config ───
 
 function HistoricalDataCard({ settings, qc }: any) {
@@ -1115,8 +1044,6 @@ function EventTriggerCard({ settings, qc }: any) {
       price_move_pct_threshold: et.price_move_pct_threshold ?? 3.0,
       volume_surge_multiplier: et.volume_surge_multiplier ?? 3.0,
       watch_universe_members: et.watch_universe_members ?? true,
-      trigger_strategy_design: et.trigger_strategy_design ?? true,
-      strategy_design_min_move_pct: et.strategy_design_min_move_pct ?? 5.0,
     })
   }, [et])
 
@@ -1131,12 +1058,10 @@ function EventTriggerCard({ settings, qc }: any) {
   const boolFields: BoolField[] = [
     { key: 'enabled', label: 'Enabled' },
     { key: 'watch_universe_members', label: 'Watch universe' },
-    { key: 'trigger_strategy_design', label: 'Trigger design' },
   ]
   const numFields: NumField[] = [
     { key: 'price_move_pct_threshold', label: 'Price move threshold', unit: '%', min: 0.5, max: 20, step: 0.5, isInt: false },
     { key: 'volume_surge_multiplier', label: 'Volume surge multiplier', unit: '×', min: 1.5, max: 20, step: 0.5, isInt: false },
-    { key: 'strategy_design_min_move_pct', label: 'Design trigger min move', unit: '%', min: 1, max: 30, step: 0.5, isInt: false },
   ]
 
   const setBool = (key: string, value: boolean) => setVals(v => ({ ...v, [key]: value }))
@@ -2739,17 +2664,8 @@ function RiskTab({ settings, qc, onDirty }: any) {
       </Section>
 
       <Section
-        title="Strategy Factory"
-        description="Controls how fast the system generates, validates, and eliminates trading strategies. Higher velocity = faster edge discovery."
-      >
-        <Collapsible title="Strategy Factory Parameters">
-          <StrategyFactoryCard settings={settings} qc={qc} />
-        </Collapsible>
-      </Section>
-
-      <Section
         title="Event Triggers"
-        description="Real-time price/volume breakout detection. Fires notifications and optionally triggers strategy design when thresholds are breached."
+        description="Real-time price/volume breakout detection. Fires notifications and wakes the System Operator when thresholds are breached."
       >
         <Collapsible title="Trigger Thresholds">
           <EventTriggerCard settings={settings} qc={qc} />
