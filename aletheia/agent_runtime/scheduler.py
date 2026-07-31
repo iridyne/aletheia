@@ -2402,6 +2402,16 @@ def _run_cleanup():
             get_db().execute("PRAGMA incremental_vacuum(1000)")
         except Exception as vac_err:  # noqa: BLE001 — best-effort reclaim
             logger.debug("incremental_vacuum skipped: %s", vac_err)
+        # WAL checkpoint: copy written WAL frames back to the main DB file.
+        # wal_autocheckpoint fires passively at 1000 pages but will not
+        # truncate the WAL while any reader holds an older snapshot.  An
+        # explicit PASSIVE checkpoint here (after prunes release rows) gives
+        # the WAL file a daily opportunity to shrink, preventing multi-month
+        # unbounded growth on a long-running CASI instance.
+        try:
+            get_db().execute("PRAGMA wal_checkpoint(PASSIVE)")
+        except Exception as chk_err:  # noqa: BLE001 — best-effort checkpoint
+            logger.debug("wal_checkpoint skipped: %s", chk_err)
         write_audit({
             "actor": "system", "source": "scheduler",
             "event_type": "data_pruned", "entity_type": "telemetry",
