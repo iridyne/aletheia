@@ -6,6 +6,7 @@ import {
   ChartCandlestick,
   ClipboardList,
   Command as CommandIcon,
+  Diamond,
   Globe,
   GraduationCap,
   LayoutDashboard,
@@ -603,7 +604,7 @@ export default function App() {
       )}
       <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="brand">
-          <span className="brand-mark">◆</span>
+          <Diamond size={14} className="brand-mark" aria-hidden="true" />
           <span className="brand-name">ALETHEIA</span>
           <span className="brand-sub">trading os</span>
         </div>

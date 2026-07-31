@@ -175,7 +175,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   height: var(--header-height); padding: 0 var(--space-5); border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-.brand-mark { color: var(--accent); font-size: 0.9rem; transform: translateY(-1px); }
+.brand-mark { color: var(--accent); transform: translateY(-1px); flex-shrink: 0; }
 .brand-name { font-family: var(--display); font-weight: 700; letter-spacing: 0.14em; font-size: 0.95rem; }
 .brand-sub { font-size: 0.6rem; color: var(--faint); letter-spacing: 0.2em; text-transform: uppercase; }
 
