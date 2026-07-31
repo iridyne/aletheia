@@ -257,6 +257,16 @@ def _project_experiment(
     conflict_fingerprints = metrics.get("evidence_conflict_fingerprints")
     if not isinstance(conflict_fingerprints, list):
         conflict_fingerprints = []
+    evidence_conflicts = [
+        value
+        for value in metrics.get("evidence_conflicts", [])
+        if isinstance(value, dict)
+    ]
+    historical_conflicts = [
+        value
+        for value in verdict_metrics.get("evidence_conflicts", [])
+        if isinstance(value, dict)
+    ]
 
     return {
         "path_id": path_id,
@@ -336,6 +346,12 @@ def _project_experiment(
             "exclusion_reasons": _safe_int_dict(metrics.get("exclusion_reasons")),
             "invalid_reasons": invalid_reasons,
             "conflict_count": len(conflict_fingerprints),
+            "evidence_conflicts": evidence_conflicts,
+            "evidence_conflict_provenance_truncated": bool(
+                metrics.get("evidence_conflict_provenance_truncated")
+            ),
+            "harm_state": str(metrics.get("harm_state") or "unknown"),
+            "harm_indeterminate_reason": metrics.get("harm_indeterminate_reason"),
             "harm_breached": bool(metrics.get("breached")),
             "breach_reasons": [
                 str(value)
@@ -400,12 +416,20 @@ def _project_experiment(
                 verdict_metrics.get("unique_assignment_unit_n")
             ),
             "raw_exposures": _safe_int(verdict_metrics.get("raw_exposure_n")),
+            "harm_state": str(verdict_metrics.get("harm_state") or "unknown"),
+            "harm_indeterminate_reason": verdict_metrics.get(
+                "harm_indeterminate_reason"
+            ),
             "harm_breached": bool(verdict_metrics.get("breached")),
             "breach_reasons": [
                 str(value)
                 for value in verdict_metrics.get("breach_reasons", [])
                 if isinstance(value, str)
             ],
+            "evidence_conflicts": historical_conflicts,
+            "evidence_conflict_provenance_truncated": bool(
+                verdict_metrics.get("evidence_conflict_provenance_truncated")
+            ),
         } if row.get("verdict_id") else None,
     }
 

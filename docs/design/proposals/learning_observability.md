@@ -76,7 +76,7 @@ surface look shipped.
 | --- | --- | --- |
 | Measured ledger | Seven permanent Learning tables exist | Read-only typed projection |
 | Measurable path | `universe_family_calibration` and `operator_learning_bundle` have current cohort adapters | Explicit `measurement_supported` per path |
-| Current metric | `universe_family_calibration_cluster_allocation_utility_v2` | Current identity plus append-only metric history |
+| Current metric | `universe_family_calibration_cluster_allocation_utility_v3` | Current identity plus append-only metric history |
 | Cohort inspection | Internal aggregate inspection exists | Bounded aggregate plus selected cluster detail |
 | Lifecycle inspection | Internal read function returns progress, recommendation and job health | Public sanitized projection |
 | Job health | Current and durable last-failure fields exist | Current, recovery and catch-up states remain separate |
@@ -290,7 +290,7 @@ Each item contains:
     "policy_epoch": "...",
     "target_horizon": "4h",
     "outcome_contract_version": "...",
-    "metric_version": "universe_family_calibration_cluster_allocation_utility_v2",
+    "metric_version": "universe_family_calibration_cluster_allocation_utility_v3",
     "behavior_contract_hash": "...",
     "code_commit": "...",
     "matches_running_cohort": true,
@@ -640,8 +640,9 @@ is visible on Contribution and Operations.
 | Stored JSON malformed | field-level decode failure; preserve row identity |
 | Running commit unavailable | current identity/authority unavailable; history readable |
 | Verdict belongs to old metric/epoch/stage/build | historical with mismatch reason |
-| Canonical/fallback economics disagree | `invalid`, conflict count/fingerprint visible |
-| Allocation selection disagrees | `invalid`; row contributes no evidence |
+| Canonical/fallback economics disagree | `invalid`; count, source row ids and exact differing fields visible |
+| Allocation selection disagrees | explicit exclusion with provenance; row contributes no evidence |
+| Harm sample gate is not met | `indeterminate`; authority blocked without claiming a breach |
 | Assignment cluster incomplete | excluded with exact reason; survivors are not samples |
 | Evaluator recovered after failure | current healthy plus durable prior failure |
 | Catch-up watermark missing/old | `catchup_due` or `unavailable`, never healthy by inference |
@@ -701,7 +702,7 @@ states. This is adjacent UI honesty work, not contribution authority.
 | --- | --- | --- | --- |
 | LCO-S01 | L2a | Typed GET-only `lco-v1` routes are indexed; no LCO mutation exists | missing |
 | LCO-B01 | L2b | Cohorts expose raw exposures, complete treatment/control assignment units, member/selected counts and stable exclusion/invalid reasons | implemented |
-| LCO-B02 | L2b | Canonical, fallback, matching mirror, allocation inference and proven disagreement are distinct; conflicts never become evidence | missing |
+| LCO-B02 | L2b | Canonical, fallback, matching mirror, allocation inference and proven disagreement are distinct; conflicts never become evidence | implemented |
 | LCO-B03 | L2b | Current metric/cohort identity is separate from append-only historical verdict versions | implemented |
 | LCO-B04 | L2b | Current job status, last success, next due, sanitized durable last failure, watermark and catch-up due state remain distinct; raw stored errors never leave the backend | implemented |
 | LCO-C01 | L2c | Observability remains read-only; protected owner admission readiness requires every paper gate | implemented |

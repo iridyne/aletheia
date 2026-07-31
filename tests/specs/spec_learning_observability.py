@@ -65,15 +65,37 @@ def test_lco_cluster_integrity_projection_is_distinct(tmp_path, monkeypatch):
     assert item["integrity"]["invalid_reasons"] == {}
 
 
-@_missing("LCO-B02")
 @spec_claim(SpecClaim(
     "LCO-B02", _CONTRACT, "§6.5 outcome provenance", "L2b",
     "Canonical outcomes, fallback rows, matching mirrors, allocation inference and proven conflicts "
     "remain distinct, and conflicting evidence contributes no sample.",
-    status="missing",
+    status="implemented",
 ))
-def test_lco_outcome_provenance_projection_is_not_implemented():
-    pytest.fail("LCO-B02 target behavior is intentionally missing")
+def test_lco_outcome_provenance_projection_is_exact_and_distinct(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    integrity = build_learning_contribution_projection()["items"][0]["integrity"]
+    assert integrity["outcome_source_member_counts"] == {
+        "filter_candidate_outcomes": 27,
+    }
+    assert integrity["matching_mirror_rows"] == 7
+    assert integrity["conflict_count"] == 1
+    assert integrity["evidence_conflict_provenance_truncated"] is False
+    conflict = integrity["evidence_conflicts"][0]
+    assert conflict["canonical"] == {
+        "source": "filter_candidate_outcomes",
+        "row_id": 41,
+    }
+    assert conflict["mirrors"] == [{
+        "source": "universe_forward_outcomes",
+        "row_id": 82,
+    }]
+    assert conflict["differing_fields"] == {
+        "net_return_pct": {"canonical": 1.0, "mirrors": [-1.0]},
+    }
 
 
 @spec_claim(SpecClaim(

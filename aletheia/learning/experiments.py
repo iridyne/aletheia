@@ -91,7 +91,10 @@ def _ensure_experiment(
             consumer=consumer,
             target_horizon=target_horizon,
             status="shadow",
-            harm_budget_json=json.dumps({"max_negative_delta": 0.0}),
+            harm_budget_json=json.dumps({
+                "max_loss_rate_increase": 0.15,
+                "max_mae_p95_worsening_pp": 0.25,
+            }, sort_keys=True),
         )
         insert_hypothesis(hypothesis)
         row = get_hypothesis_by_fingerprint(fingerprint)
@@ -112,7 +115,7 @@ def _ensure_experiment(
             min_samples_per_arm=50,
             min_market_days=7,
             promotion_gate_json=json.dumps({"prospective_only": True, "net_of_costs": True}),
-            harm_gate_json=json.dumps({"negative_holdout_refreeze": True}),
+            harm_gate_json="{}",
         )
         insert_experiment(experiment)
         experiment_row = get_open_experiment(hypothesis.hypothesis_id)

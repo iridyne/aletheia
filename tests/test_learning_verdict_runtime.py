@@ -35,7 +35,7 @@ def _experiment(
         consumer="universe_allocator",
         target_horizon="4h",
         effect_threshold=0.1,
-        harm_budget_json=json.dumps({"max_loss_rate_increase": 0.25, "max_mae_p95_worsening_pct": 0.25}),
+        harm_budget_json=json.dumps({"max_loss_rate_increase": 0.15, "max_mae_p95_worsening_pp": 0.25}),
     )
     assert insert_hypothesis(hypothesis)
     experiment = LearningExperiment(
@@ -44,7 +44,7 @@ def _experiment(
         assignment_salt="test-salt",
         min_samples_per_arm=min_samples,
         min_market_days=min_days,
-        harm_gate_json=json.dumps({"max_loss_rate_increase": 0.25, "max_mae_p95_worsening_pct": 0.25}),
+        harm_gate_json="{}",
         status="active",
         stage=stage,
     )
@@ -324,7 +324,21 @@ def test_canonical_and_selected_mirror_economic_disagreement_fails_closed():
     assert json.loads(verdict.harm_metrics_json)["invalid_reasons"] == {
         "conflicting_mirrored_outcome": 1,
     }
-    assert len(json.loads(verdict.harm_metrics_json)["evidence_conflict_fingerprints"]) == 1
+    metrics = json.loads(verdict.harm_metrics_json)
+    assert len(metrics["evidence_conflict_fingerprints"]) == 1
+    assert metrics["evidence_conflict_total_n"] == 1
+    assert metrics["evidence_conflict_provenance_truncated"] is False
+    conflict = metrics["evidence_conflicts"][0]
+    assert conflict["reason"] == "conflicting_mirrored_outcome"
+    assert conflict["outcome_candidate_key"] == "conflict:4h"
+    assert conflict["canonical"]["source"] == "filter_candidate_outcomes"
+    assert conflict["canonical"]["row_id"]
+    assert conflict["mirrors"][0]["source"] == "universe_forward_outcomes"
+    assert conflict["mirrors"][0]["row_id"]
+    assert conflict["differing_fields"]["net_return_pct"] == {
+        "canonical": 1.0,
+        "mirrors": [-1.0],
+    }
 
 
 def test_mirror_inferred_selection_and_explicit_selection_have_distinct_provenance():
@@ -781,7 +795,7 @@ def test_small_non_negative_effect_is_neutral_not_positive():
     assert _run(experiment.experiment_id)[0].verdict == "neutral"
 
 
-def test_positive_delta_with_harm_pass_records_reproducible_bootstrap():
+def test_positive_delta_records_reproducible_bootstrap_while_harm_is_indeterminate():
     hypothesis, experiment = _experiment(min_samples=2, min_days=1)
     for day, assignment, net in (
         (0, "treatment", 1.0), (1, "treatment", 1.2),
@@ -799,6 +813,7 @@ def test_positive_delta_with_harm_pass_records_reproducible_bootstrap():
     assert metrics["metric_version"]
     assert metrics["bootstrap_seed"] == 20260712
     assert metrics["bootstrap_resamples"] == 2000
+    assert metrics["harm_state"] == "indeterminate"
     assert metrics["breached"] is False
 
 
@@ -817,8 +832,144 @@ def test_negative_delta_or_harm_breach_is_negative():
 
     assert verdict.verdict == "negative"
     assert verdict.delta < 0
-    assert metrics["breached"] is True
-    assert metrics["breach_reasons"]
+    assert metrics["harm_state"] == "indeterminate"
+    assert metrics["breached"] is False
+    assert metrics["breach_reasons"] == []
+
+
+def test_underpowered_harm_is_indeterminate_and_does_not_claim_a_breach():
+    hypothesis, experiment = _experiment(min_samples=1)
+    for assignment, net, mae in (
+        ("treatment", -10.0, -10.0),
+        ("control", 10.0, -0.1),
+    ):
+        candidate = f"underpowered-{assignment}"
+        _exposure(experiment, hypothesis, candidate=candidate, assignment=assignment)
+        _outcome(candidate, net=net, mae=mae)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "negative"
+    assert metrics["harm_state"] == "indeterminate"
+    assert metrics["harm_indeterminate_reason"] == "insufficient_samples"
+    assert metrics["harm_required_per_arm"] == 50
+    assert metrics["breached"] is False
+    assert metrics["breach_reasons"] == []
+
+
+def test_loss_rate_gate_is_reachable_after_fifty_samples_per_arm():
+    hypothesis, experiment = _experiment(min_samples=50)
+    from aletheia.storage.sqlite import get_db
+    get_db().execute(
+        "UPDATE learning_hypotheses SET harm_budget_json=? WHERE hypothesis_id=?",
+        (json.dumps({"max_loss_rate_increase": 0.25}), hypothesis.hypothesis_id),
+    )
+    get_db().commit()
+    for index in range(50):
+        treatment_net = -0.1 if index < 10 else 1.0
+        for assignment, net in (("treatment", treatment_net), ("control", 0.1)):
+            candidate = f"loss-rate-{assignment}-{index}"
+            _exposure(experiment, hypothesis, candidate=candidate, assignment=assignment)
+            _outcome(candidate, net=net, mae=-0.1)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.delta > 0
+    assert verdict.verdict == "negative"
+    assert metrics["harm_state"] == "breached"
+    assert metrics["harm_gates"]["max_loss_rate_increase"] == 0.15
+    assert metrics["loss_rate_delta"] == pytest.approx(0.2)
+    assert metrics["breach_reasons"] == ["loss_rate_increase"]
+
+
+def test_conflict_provenance_bounds_rows_inside_one_conflict():
+    from aletheia.learning.cohorts import _conflict_provenance
+
+    rows = [
+        ("universe_forward_outcomes", {
+            "id": index,
+            "net_return_pct": float(index),
+        })
+        for index in range(30)
+    ]
+
+    conflict = _conflict_provenance(
+        "ambiguous_duplicate_outcome",
+        "bounded:4h",
+        rows,
+    )
+
+    assert conflict["row_count"] == 30
+    assert conflict["row_provenance_truncated"] is True
+    assert len(conflict["rows"]) == 20
+    assert len(conflict["differing_fields"]["net_return_pct"]) == 20
+
+
+def test_bounded_conflict_provenance_keeps_a_triggering_mirror():
+    from aletheia.learning.cohorts import _conflict_provenance
+
+    canonical = ("filter_candidate_outcomes", {"id": 1, "net_return_pct": 1.0})
+    matching = [
+        ("universe_forward_outcomes", {"id": index, "net_return_pct": 1.0})
+        for index in range(2, 24)
+    ]
+    differing = (
+        "universe_forward_outcomes",
+        {"id": 99, "net_return_pct": -1.0},
+    )
+
+    conflict = _conflict_provenance(
+        "conflicting_mirrored_outcome",
+        "bounded-trigger:4h",
+        [canonical, *matching, differing],
+        canonical_index=0,
+    )
+
+    assert conflict["row_provenance_truncated"] is True
+    assert conflict["differing_fields"]["net_return_pct"]["mirrors"][0] == -1.0
+    assert conflict["mirrors"][0]["row_id"] == 99
+
+
+def test_mae_harm_fields_are_absolute_percentage_points():
+    hypothesis, experiment = _experiment(min_samples=50)
+    for index in range(50):
+        for assignment, net, mae in (
+            ("treatment", 1.0, -0.36),
+            ("control", 0.1, -0.10),
+        ):
+            candidate = f"mae-pp-{assignment}-{index}"
+            _exposure(experiment, hypothesis, candidate=candidate, assignment=assignment)
+            _outcome(candidate, net=net, mae=mae)
+
+    metrics = json.loads(_run(experiment.experiment_id)[0].harm_metrics_json)
+
+    assert metrics["harm_state"] == "breached"
+    assert metrics["mae_p95_worsening_pp"] == pytest.approx(0.26)
+    assert metrics["harm_gates"]["max_mae_p95_worsening_pp"] == 0.25
+    assert "mae_p95_worsening_pct" not in metrics
+    assert metrics["breach_reasons"] == ["mae_p95_worsening"]
+
+
+def test_new_experiments_persist_the_evaluator_harm_budget_keys():
+    from aletheia.learning.experiments import _ensure_experiment
+
+    hypothesis, experiment = _ensure_experiment(
+        path_id="universe_family_calibration",
+        scope={"family": "momentum"},
+        action={"type": "opportunity_multiplier", "multiplier": 1.1},
+        source_cohort="phase3-default-budget",
+        target_horizon="4h",
+        consumer="universe_allocator",
+    )
+
+    assert json.loads(hypothesis.harm_budget_json) == {
+        "max_loss_rate_increase": 0.15,
+        "max_mae_p95_worsening_pp": 0.25,
+    }
+    assert experiment is not None
+    assert json.loads(experiment.harm_gate_json) == {}
 
 
 @pytest.mark.parametrize(

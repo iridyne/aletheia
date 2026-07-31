@@ -115,6 +115,7 @@ def _measurement(
             "outcome_contract_version": contract,
             "metric_version": metric,
             "breached": breached,
+            "harm_state": "breached" if breached else "clear",
             **({"breach_reasons": ["mae_p95_worsening"]} if breached else {}),
         }),
         verdict=verdict,
@@ -1192,8 +1193,8 @@ def test_harm_breach_does_not_suppress_the_safety_action_it_is_evidence_for(
     ).fetchone()[0] == 1
 
 
-def test_harm_breach_blocks_promotion_and_authority(monkeypatch):
-    """The same breach that must not stop a refreeze must still stop every grant."""
+def test_harm_breach_blocks_authority_and_refreezes_instead_of_promoting(monkeypatch):
+    """A determinate breach blocks the grant and drives the conservative withdrawal."""
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     _measurement(hypothesis, experiment, "positive", breached=True)
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
@@ -1208,12 +1209,140 @@ def test_harm_breach_blocks_promotion_and_authority(monkeypatch):
 
     assert decision.authorized is False
     assert decision.reason == "harm_gate_breached"
-    assert result.action == "hold"
-    assert result.recommended_action == "promote_stage"
-    assert result.reason == "harm_gate_breached"
+    assert result.action == "refreeze"
+    assert result.recommended_action == "refreeze"
+    assert result.reason == "negative_measurement_refreeze"
     assert persisted["stage"] == "paper_10"
-    assert persisted["ended_at"] is None
-    assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 0
+    assert persisted["ended_at"] is not None
+    assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("measurement", ["negative", "invalid"])
+def test_context_stale_safety_measurement_can_withdraw_authority(monkeypatch, measurement):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    _measurement(hypothesis, experiment, measurement, epoch="stale-epoch")
+    _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
+    from aletheia.learning.lifecycle import process_lifecycle
+    from aletheia.learning.ledger import get_record
+
+    result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
+
+    assert result.action == ("invalidate" if measurement == "invalid" else "refreeze")
+    assert result.reason == "stale_safety_measurement"
+    assert get_record("learning_experiments", experiment.experiment_id)["ended_at"] is not None
+
+
+def test_context_stale_harm_breach_can_withdraw_authority(monkeypatch):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    _measurement(hypothesis, experiment, "positive", epoch="stale-epoch", breached=True)
+    _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
+    from aletheia.learning.lifecycle import process_lifecycle
+
+    result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
+
+    assert result.action == "refreeze"
+    assert result.recommended_action == "refreeze"
+    assert result.reason == "stale_safety_measurement"
+
+
+def test_wrong_stage_stale_negative_cannot_mutate_current_experiment(monkeypatch):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    _measurement(
+        hypothesis,
+        experiment,
+        "negative",
+        stage="shadow",
+        epoch="stale-epoch",
+    )
+    _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
+    from aletheia.learning.lifecycle import process_lifecycle
+    from aletheia.learning.ledger import get_record
+
+    result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
+
+    assert result.action == "hold"
+    assert result.reason == "stage_mismatch"
+    assert get_record("learning_experiments", experiment.experiment_id)["ended_at"] is None
+
+
+def test_malformed_stale_negative_cannot_mutate_current_experiment(monkeypatch):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    verdict = _measurement(
+        hypothesis,
+        experiment,
+        "negative",
+        epoch="stale-epoch",
+    )
+    from aletheia.storage.sqlite import get_db
+    get_db().execute(
+        "UPDATE learning_contribution_verdicts SET harm_metrics_json='{not json' "
+        "WHERE verdict_id=?",
+        (verdict.verdict_id,),
+    )
+    get_db().commit()
+    _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
+    from aletheia.learning.lifecycle import process_lifecycle
+    from aletheia.learning.ledger import get_record
+
+    result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
+
+    assert result.action == "hold"
+    assert result.reason == "measurement_metadata_invalid"
+    assert get_record("learning_experiments", experiment.experiment_id)["ended_at"] is None
+
+
+@pytest.mark.parametrize("missing_field", ["policy_epoch", "behavior_contract_hash"])
+def test_missing_identity_stale_negative_cannot_mutate_current_experiment(
+    monkeypatch,
+    missing_field,
+):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    verdict = _measurement(
+        hypothesis,
+        experiment,
+        "negative",
+        epoch="stale-epoch",
+    )
+    from aletheia.storage.sqlite import get_db
+    metrics = {
+        "harm_state": "clear",
+        "breached": False,
+        "horizon": "4h",
+        "outcome_contract_version": "v1",
+        "metric_version": verdict.metric_version,
+    }
+    if missing_field != "policy_epoch":
+        metrics["policy_epoch"] = "stale-epoch"
+    get_db().execute(
+        f"UPDATE learning_contribution_verdicts SET {missing_field}=NULL, "
+        "harm_metrics_json=? WHERE verdict_id=?",
+        (json.dumps(metrics), verdict.verdict_id),
+    )
+    get_db().commit()
+    _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
+    from aletheia.learning.lifecycle import process_lifecycle
+    from aletheia.learning.ledger import get_record
+
+    result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
+
+    assert result.action == "hold"
+    assert result.reason == "measurement_metadata_invalid"
+    assert get_record("learning_experiments", experiment.experiment_id)["ended_at"] is None
+
+
+def test_indeterminate_harm_blocks_authority_without_claiming_breach():
+    from aletheia.learning.authority import measurement_harm_block_reason
+
+    verdict = {
+        "harm_metrics_json": json.dumps({
+            "harm_state": "indeterminate",
+            "harm_indeterminate_reason": "insufficient_samples",
+            "breached": False,
+            "breach_reasons": [],
+        }),
+    }
+
+    assert measurement_harm_block_reason(verdict) == "harm_gate_indeterminate"
 
 
 def test_measurement_identity_reason_is_identity_only(monkeypatch):
@@ -1236,7 +1365,7 @@ def test_measurement_identity_reason_is_identity_only(monkeypatch):
         "metric_version": METRIC_VERSION,
         "code_commit": "test-build",
         "behavior_contract_hash": "behavior-current",
-        "harm_metrics_json": _json.dumps({"breached": True}),
+        "harm_metrics_json": _json.dumps({"harm_state": "breached", "breached": True}),
     }
     kwargs = dict(
         expected_horizon="4h",
@@ -1247,7 +1376,7 @@ def test_measurement_identity_reason_is_identity_only(monkeypatch):
     assert measurement_identity_reason(verdict, "paper_10", "epoch-a", **kwargs) is None
     assert measurement_harm_block_reason(verdict) == "harm_gate_breached"
 
-    clean = {**verdict, "harm_metrics_json": _json.dumps({"breached": False})}
+    clean = {**verdict, "harm_metrics_json": _json.dumps({"harm_state": "clear", "breached": False})}
     assert measurement_harm_block_reason(clean) is None
     assert measurement_harm_block_reason({"harm_metrics_json": "{not json"}) == (
         "measurement_metadata_invalid"

@@ -100,13 +100,20 @@ loop contributes positively. Current behavior has these contract-relevant limita
   scanner-run plus feature-snapshot identity so change-suppressed features cannot merge distinct
   entry-price windows;
 - contribution metric version
-  `universe_family_calibration_cluster_allocation_utility_v2` applies only to new verdicts. Earlier
+  `universe_family_calibration_cluster_allocation_utility_v3` applies only to new verdicts. Earlier
   metric verdict rows remain immutable history. A verdict's `created_at` is evaluation time, while
   `window_start` and `window_end` remain observation bounds;
+- harm is determinate only after both arms reach the experiment's 50-assignment-unit gate. Before
+  that point the persisted state is `indeterminate`: it blocks authority but does not claim a
+  breach. Determinate loss-rate harm is an absolute increase above `0.15` (15 percentage points),
+  and MAE p95 worsening is an absolute percentage-point difference above `0.25pp`; MAE fields use
+  the `_pp` suffix rather than the ambiguous `_pct` suffix;
 - lifecycle, authority, and owner-facing progress consume only the exact current hypothesis, stage,
   policy epoch, horizon, outcome contract, metric version, and deterministic behavior-contract
   cohort. `code_commit` remains provenance and does not fragment behaviorally identical evidence.
-  Mismatched harmful history can explain a hold but cannot refreeze or invalidate the current
+  Context-stale negative/invalid/determinate-harm history for the same experiment and hypothesis
+  may conservatively refreeze or invalidate, but can never grant authority. Stage/hypothesis
+  mismatch or malformed identity remains wrong-subject evidence and cannot mutate the current
   experiment;
 - experiment registration is not an observation start. The first durable exposure atomically and
   idempotently changes an open experiment from `registered` to `active`, and `started_at` is always
@@ -141,6 +148,13 @@ loop contributes positively. Current behavior has these contract-relevant limita
   metric/statistical-unit version. A behavior version change starts a new from-zero cohort even on
   the same commit; an unrelated commit does not. Historical rows without a behavior hash remain
   auditable but cannot pool with or authorize a current cohort.
+- the Phase 3 harm contract is behavior version v2 for both measurement-supported paths. Its metric
+  and path-version change rotates the policy epoch and starts a fresh from-zero window.
+- canonical/mirror disagreement remains whole-cohort `invalid`; no conflicting sample is silently
+  excluded. Verdict metadata preserves every conflict fingerprint and up to 20 exact provenance
+  records, each bounded to 20 rows, containing source table, row id, timestamps, cost/source
+  identity and differing economic field values. Complete conflict/row counts and explicit
+  truncation flags remain visible.
 - commit provenance for a behavior cohort is a sorted source set plus an explicit unknown-source
   count/completeness flag. The scalar verdict `code_commit` is populated only when every exposure
   has the same known commit; mixed known/NULL provenance must remain visibly incomplete.

@@ -286,7 +286,13 @@ def measurement_harm_block_reason(verdict: dict[str, Any]) -> str | None:
         return "measurement_metadata_invalid"
     if not isinstance(metrics, dict):
         return "measurement_metadata_invalid"
-    return "harm_gate_breached" if bool(metrics.get("breached")) else None
+    if bool(metrics.get("breached")) or metrics.get("harm_state") == "breached":
+        return "harm_gate_breached"
+    if metrics.get("harm_state") == "indeterminate":
+        return "harm_gate_indeterminate"
+    if metrics.get("harm_state") != "clear":
+        return "measurement_metadata_invalid"
+    return None
 
 
 def measurement_identity_reason(
@@ -318,24 +324,30 @@ def measurement_identity_reason(
     ):
         return "measurement_hypothesis_mismatch"
     policy_epoch = verdict.get("policy_epoch") or metrics.get("policy_epoch")
-    if str(policy_epoch or "") != str(current_policy_epoch or ""):
-        return "stale_policy_epoch"
     target_horizon = verdict.get("target_horizon") or metrics.get("horizon")
-    if expected_horizon is not None and str(target_horizon or "") != expected_horizon:
-        return "horizon_mismatch"
     outcome_contract_version = (
         verdict.get("outcome_contract_version") or metrics.get("outcome_contract_version")
     )
-    if str(outcome_contract_version or "") != "v1":
-        return "outcome_contract_mismatch"
     metric_version = verdict.get("metric_version") or metrics.get("metric_version")
-    if str(metric_version or "") != METRIC_VERSION:
-        return "metric_version_mismatch"
+    behavior_contract_hash = verdict.get("behavior_contract_hash")
+    if not all((
+        policy_epoch,
+        target_horizon,
+        outcome_contract_version,
+        metric_version,
+        behavior_contract_hash,
+    )):
+        return "measurement_metadata_invalid"
     if expected_behavior_contract_hash is None:
         return "behavior_contract_unavailable"
-    if (
-        str(verdict.get("behavior_contract_hash") or "")
-        != expected_behavior_contract_hash
-    ):
+    if str(policy_epoch) != str(current_policy_epoch or ""):
+        return "stale_policy_epoch"
+    if expected_horizon is not None and str(target_horizon) != expected_horizon:
+        return "horizon_mismatch"
+    if str(outcome_contract_version) != "v1":
+        return "outcome_contract_mismatch"
+    if str(metric_version) != METRIC_VERSION:
+        return "metric_version_mismatch"
+    if str(behavior_contract_hash) != expected_behavior_contract_hash:
         return "behavior_contract_mismatch"
     return None

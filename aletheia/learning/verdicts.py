@@ -14,10 +14,11 @@ from typing import Any
 from aletheia.learning.cohorts import ContributionCohort, CohortSample
 
 
-METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v2"
+METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v3"
 BOOTSTRAP_SEED = 20260712
 BOOTSTRAP_RESAMPLES = 2000
 _PRACTICAL_NEUTRAL_DELTA_PCT = 0.10
+_HARM_MIN_SAMPLES_PER_ARM = 50
 
 
 @dataclass(frozen=True)
@@ -130,11 +131,21 @@ def _harm_metrics(
         if treatment_mae_p95 is not None and control_mae_p95 is not None else None
     )
     gates = _harm_gates(cohort)
+    required_per_arm = max(
+        _HARM_MIN_SAMPLES_PER_ARM,
+        int(cohort.experiment.min_samples_per_arm),
+    )
+    harm_indeterminate_reason = None
+    if len(treatment) < required_per_arm or len(control) < required_per_arm:
+        harm_indeterminate_reason = "insufficient_samples"
     breached: list[str] = []
-    if loss_rate_delta is not None and loss_rate_delta > gates["max_loss_rate_increase"]:
-        breached.append("loss_rate_increase")
-    if mae_p95_worsening is not None and mae_p95_worsening > gates["max_mae_p95_worsening_pct"]:
-        breached.append("mae_p95_worsening")
+    if harm_indeterminate_reason is None:
+        if loss_rate_delta is not None and loss_rate_delta > gates["max_loss_rate_increase"]:
+            breached.append("loss_rate_increase")
+        if mae_p95_worsening is None:
+            harm_indeterminate_reason = "mae_unavailable"
+        elif mae_p95_worsening > gates["max_mae_p95_worsening_pp"]:
+            breached.append("mae_p95_worsening")
     outcome_sources = Counter(
         source
         for sample in cohort.samples
@@ -176,6 +187,12 @@ def _harm_metrics(
         "evidence_conflict_fingerprints": sorted(
             cohort.evidence_conflict_fingerprints
         ),
+        "evidence_conflicts": [
+            cohort.evidence_conflicts[fingerprint]
+            for fingerprint in sorted(cohort.evidence_conflicts)[:20]
+        ],
+        "evidence_conflict_total_n": len(cohort.evidence_conflicts),
+        "evidence_conflict_provenance_truncated": len(cohort.evidence_conflicts) > 20,
         "allocation_selected_member_n": allocation_selected_member_n,
         "allocation_total_member_n": allocation_total_member_n,
         "allocation_selection_rate": (
@@ -190,20 +207,27 @@ def _harm_metrics(
         "treatment_loss_rate": treatment_loss_rate,
         "control_loss_rate": control_loss_rate,
         "loss_rate_delta": loss_rate_delta,
-        "treatment_mae_p95_abs_pct": treatment_mae_p95,
-        "control_mae_p95_abs_pct": control_mae_p95,
-        "mae_p95_worsening_pct": mae_p95_worsening,
+        "treatment_mae_p95_abs_pp": treatment_mae_p95,
+        "control_mae_p95_abs_pp": control_mae_p95,
+        "mae_p95_worsening_pp": mae_p95_worsening,
         "harm_gates": gates,
+        "harm_required_per_arm": required_per_arm,
+        "harm_state": (
+            "indeterminate"
+            if harm_indeterminate_reason is not None
+            else ("breached" if breached else "clear")
+        ),
+        "harm_indeterminate_reason": harm_indeterminate_reason,
         "net_delta_pct": delta,
-        "breached": bool(breached),
+        "breached": harm_indeterminate_reason is None and bool(breached),
         "breach_reasons": breached,
     }
 
 
 def _harm_gates(cohort: ContributionCohort) -> dict[str, float]:
     gates: dict[str, float] = {
-        "max_loss_rate_increase": 1.0,
-        "max_mae_p95_worsening_pct": 0.25,
+        "max_loss_rate_increase": 0.15,
+        "max_mae_p95_worsening_pp": 0.25,
     }
     # Hypothesis sets the baseline harm budget.
     try:
@@ -214,7 +238,7 @@ def _harm_gates(cohort: ContributionCohort) -> dict[str, float]:
         for key in tuple(gates):
             value = _finite_float(hypothesis_gates.get(key))
             if value is not None:
-                gates[key] = value
+                gates[key] = min(gates[key], value)
     # Experiment-level overrides may only tighten (smaller = more restrictive).
     # A misconfigured experiment must not silently widen the hypothesis safety envelope.
     try:

@@ -63,6 +63,15 @@ _OPPORTUNITY_KEYED_PATHS = frozenset({
     "operator_learning_bundle",
 })
 
+_ECONOMIC_FIELDS = (
+    "horizon", "entry_ts", "venue", "symbol", "market_type", "direction",
+    "entry_price_usd", "exit_price_usd", "gross_return_pct",
+    "directional_return_pct", "net_return_pct", "estimated_fee_pct",
+    "estimated_spread_slippage_pct", "estimated_funding_pct", "mfe_pct",
+    "mae_pct", "settlement_price_source", "cost_model_version",
+)
+_MAX_CONFLICT_ROWS = 20
+
 # Outcome-resolution reasons that mean "the outcome is still developing" — the
 # next cycle re-evaluates once real samples (or terminal signal) land.
 _TRANSIENT_EXCLUSION_REASONS = frozenset({
@@ -145,6 +154,7 @@ class ContributionCohort:
     duplicate_outcome_n: int = 0
     mirrored_universe_row_n: int = 0
     evidence_conflict_fingerprints: set[str] = field(default_factory=set)
+    evidence_conflicts: dict[str, dict[str, Any]] = field(default_factory=dict)
     exclusion_reasons: Counter[str] = field(default_factory=Counter)
     invalid_reasons: Counter[str] = field(default_factory=Counter)
     source_code_commits: set[str] = field(default_factory=set)
@@ -178,6 +188,12 @@ class ContributionCohort:
             "duplicate_outcome_n": self.duplicate_outcome_n,
             "mirrored_universe_row_n": self.mirrored_universe_row_n,
             "evidence_conflict_fingerprints": sorted(self.evidence_conflict_fingerprints),
+            "evidence_conflicts": [
+                self.evidence_conflicts[fingerprint]
+                for fingerprint in sorted(self.evidence_conflicts)[:20]
+            ],
+            "evidence_conflict_total_n": len(self.evidence_conflicts),
+            "evidence_conflict_provenance_truncated": len(self.evidence_conflicts) > 20,
             "authority_applied_treatment_n": sum(
                 sample.authority_applied for sample in self.treatment_samples
             ),
@@ -306,12 +322,21 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
             cohort.invalid_reasons["missing_exposure_time"] += 1
             continue
 
-        outcome, outcome_reason, duplicate_outcomes, wrong_horizon_n, evidence_fingerprint = outcome_resolutions.get(
+        (
+            outcome,
+            outcome_reason,
+            duplicate_outcomes,
+            wrong_horizon_n,
+            evidence_fingerprint,
+            evidence_conflict,
+        ) = outcome_resolutions.get(
             outcome_key,
-            (None, "missing_exact_outcome", 0, 0, None),
+            (None, "missing_exact_outcome", 0, 0, None, None),
         )
         if evidence_fingerprint:
             cohort.evidence_conflict_fingerprints.add(evidence_fingerprint)
+            if evidence_conflict is not None:
+                cohort.evidence_conflicts[evidence_fingerprint] = evidence_conflict
         if wrong_horizon_n and (key, outcome_key) not in seen_wrong_horizon_outcomes:
             cohort.exclusion_reasons["wrong_horizon"] += wrong_horizon_n
             seen_wrong_horizon_outcomes.add((key, outcome_key))
@@ -438,7 +463,17 @@ def _load_exact_outcomes(
     horizon: str,
     *,
     path_id: str | None = None,
-) -> dict[str, tuple[dict[str, Any] | None, str | None, int, int, str | None]]:
+) -> dict[
+    str,
+    tuple[
+        dict[str, Any] | None,
+        str | None,
+        int,
+        int,
+        str | None,
+        dict[str, Any] | None,
+    ],
+]:
     """Resolve all requested outcomes with two bounded, exact-key query sets."""
     requested = {key for key in outcome_candidate_keys if key}
     filter_keys = {_filter_base_key(key, horizon) for key in requested}
@@ -465,9 +500,17 @@ def _load_exact_outcomes(
         if filter_matches:
             distinct = {_outcome_fingerprint(row) for row in filter_matches}
             if len(distinct) > 1:
+                fingerprint = _conflict_fingerprint(
+                    "ambiguous_duplicate_outcome", filter_matches
+                )
                 resolved[outcome_key] = (
                     None, "ambiguous_duplicate_outcome", 0, wrong_horizon_n,
-                    _conflict_fingerprint("ambiguous_duplicate_outcome", filter_matches),
+                    fingerprint,
+                    _conflict_provenance(
+                        "ambiguous_duplicate_outcome",
+                        outcome_key,
+                        [("filter_candidate_outcomes", row) for row in filter_matches],
+                    ),
                 )
                 continue
             canonical = dict(filter_matches[0])
@@ -485,7 +528,7 @@ def _load_exact_outcomes(
                 allocation_selection_source = "opportunity_keyed_path_implicit"
             if allocation_selected is None:
                 resolved[outcome_key] = (
-                    None, "missing_allocation_result", 0, wrong_horizon_n, None,
+                    None, "missing_allocation_result", 0, wrong_horizon_n, None, None,
                 )
                 continue
             settled_mirrors = [
@@ -499,18 +542,46 @@ def _load_exact_outcomes(
                     for row in settled_mirrors
                 )
             ):
+                conflict_rows = [
+                    ("filter_candidate_outcomes", canonical),
+                    *(
+                        ("universe_forward_outcomes", row)
+                        for row in settled_mirrors
+                    ),
+                ]
+                fingerprint = _conflict_fingerprint(
+                    "conflicting_mirrored_outcome", [row for _, row in conflict_rows]
+                )
                 resolved[outcome_key] = (
                     None, "conflicting_mirrored_outcome", 0, wrong_horizon_n,
-                    _conflict_fingerprint(
-                        "conflicting_mirrored_outcome", [canonical, *settled_mirrors]
+                    fingerprint,
+                    _conflict_provenance(
+                        "conflicting_mirrored_outcome",
+                        outcome_key,
+                        conflict_rows,
+                        canonical_index=0,
                     ),
                 )
                 continue
             if not bool(allocation_selected) and universe_matches:
+                conflict_rows = [
+                    ("filter_candidate_outcomes", canonical),
+                    *(
+                        ("universe_forward_outcomes", row)
+                        for row in universe_matches
+                    ),
+                ]
+                fingerprint = _conflict_fingerprint(
+                    "conflicting_allocation_result", [row for _, row in conflict_rows]
+                )
                 resolved[outcome_key] = (
                     None, "conflicting_allocation_result", 0, wrong_horizon_n,
-                    _conflict_fingerprint(
-                        "conflicting_allocation_result", [canonical, *universe_matches]
+                    fingerprint,
+                    _conflict_provenance(
+                        "conflicting_allocation_result",
+                        outcome_key,
+                        conflict_rows,
+                        canonical_index=0,
                     ),
                 )
                 continue
@@ -526,15 +597,24 @@ def _load_exact_outcomes(
                 len(filter_matches) - 1,
                 wrong_horizon_n,
                 None,
+                None,
             )
             continue
 
         if universe_matches:
             distinct = {_outcome_fingerprint(row) for row in universe_matches}
             if len(distinct) > 1:
+                fingerprint = _conflict_fingerprint(
+                    "ambiguous_duplicate_outcome", universe_matches
+                )
                 resolved[outcome_key] = (
                     None, "ambiguous_duplicate_outcome", 0, wrong_horizon_n,
-                    _conflict_fingerprint("ambiguous_duplicate_outcome", universe_matches),
+                    fingerprint,
+                    _conflict_provenance(
+                        "ambiguous_duplicate_outcome",
+                        outcome_key,
+                        [("universe_forward_outcomes", row) for row in universe_matches],
+                    ),
                 )
                 continue
             resolved[outcome_key] = (
@@ -549,6 +629,7 @@ def _load_exact_outcomes(
                 len(universe_matches) - 1,
                 wrong_horizon_n,
                 None,
+                None,
             )
             continue
 
@@ -558,6 +639,7 @@ def _load_exact_outcomes(
             "wrong_horizon" if all_rows else "missing_exact_outcome",
             0,
             wrong_horizon_n,
+            None,
             None,
         )
     return resolved
@@ -684,7 +766,14 @@ def _exposure_fingerprint(exposure: dict[str, Any]) -> tuple[Any, ...]:
 def _exact_outcome(
     outcome_candidate_key: str,
     horizon: str,
-) -> tuple[dict[str, Any] | None, str | None, int, int, str | None]:
+) -> tuple[
+    dict[str, Any] | None,
+    str | None,
+    int,
+    int,
+    str | None,
+    dict[str, Any] | None,
+]:
     """Compatibility wrapper around the batched exact resolver."""
     return _load_exact_outcomes({outcome_candidate_key}, horizon)[outcome_candidate_key]
 
@@ -699,13 +788,7 @@ def _outcome_fingerprint(outcome: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def _economic_fingerprint(outcome: dict[str, Any]) -> tuple[Any, ...]:
-    return tuple(outcome.get(field) for field in (
-        "horizon", "entry_ts", "venue", "symbol", "market_type", "direction",
-        "entry_price_usd", "exit_price_usd", "gross_return_pct",
-        "directional_return_pct", "net_return_pct", "estimated_fee_pct",
-        "estimated_spread_slippage_pct", "estimated_funding_pct", "mfe_pct",
-        "mae_pct", "settlement_price_source", "cost_model_version",
-    ))
+    return tuple(outcome.get(field) for field in _ECONOMIC_FIELDS)
 
 
 def _conflict_fingerprint(reason: str, rows: list[dict[str, Any]]) -> str:
@@ -715,6 +798,73 @@ def _conflict_fingerprint(reason: str, rows: list[dict[str, Any]]) -> str:
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _conflict_provenance(
+    reason: str,
+    outcome_candidate_key: str,
+    rows: list[tuple[str, dict[str, Any]]],
+    *,
+    canonical_index: int | None = None,
+) -> dict[str, Any]:
+    """Return bounded, secret-free row provenance and exact differing values."""
+    total_row_n = len(rows)
+    bounded_rows = rows[:_MAX_CONFLICT_ROWS]
+    summaries = [_conflict_row(source, row) for source, row in bounded_rows]
+    result: dict[str, Any] = {
+        "reason": reason,
+        "outcome_candidate_key": outcome_candidate_key,
+        "row_count": total_row_n,
+        "row_provenance_truncated": total_row_n > len(bounded_rows),
+    }
+    if canonical_index is None:
+        result["rows"] = summaries
+        result["differing_fields"] = {
+            field: sorted(
+                {row.get(field) for _, row in bounded_rows},
+                key=lambda value: (type(value).__name__, str(value)),
+            )
+            for field in _ECONOMIC_FIELDS
+            if len({row.get(field) for _, row in bounded_rows}) > 1
+        }
+        return result
+
+    canonical_source, canonical = rows[canonical_index]
+    mirrors = [
+        row
+        for index, row in enumerate(rows)
+        if index != canonical_index
+    ]
+    canonical_economics = _economic_fingerprint(canonical)
+    mirrors.sort(
+        key=lambda sourced_row: (
+            _economic_fingerprint(sourced_row[1]) == canonical_economics,
+        )
+    )
+    mirrors = mirrors[:_MAX_CONFLICT_ROWS - 1]
+    result["canonical"] = _conflict_row(canonical_source, canonical)
+    result["mirrors"] = [_conflict_row(source, row) for source, row in mirrors]
+    result["differing_fields"] = {
+        field: {
+            "canonical": canonical.get(field),
+            "mirrors": [row.get(field) for _, row in mirrors],
+        }
+        for field in _ECONOMIC_FIELDS
+        if any(row.get(field) != canonical.get(field) for _, row in mirrors)
+    }
+    return result
+
+
+def _conflict_row(source: str, row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source": source,
+        "row_id": row.get("id"),
+        "status": row.get("status"),
+        "entry_ts": row.get("entry_ts"),
+        "settled_at": row.get("settled_at"),
+        "settlement_price_source": row.get("settlement_price_source"),
+        "cost_model_version": row.get("cost_model_version"),
+    }
 
 
 def _incomplete_cost_reason(outcome: dict[str, Any]) -> str | None:

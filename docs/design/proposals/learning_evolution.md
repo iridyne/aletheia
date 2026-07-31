@@ -306,15 +306,24 @@ dropped candidates plus the immutable allocator-selection result. One complete a
 uses intent-to-treat allocation utility: selected members contribute their net return and dropped
 members contribute zero. `universe_forward_outcomes` is the selected-member legacy mirror/fallback:
 an identical mirror is not counted twice, absence of a canonical row may use the legacy selected
-row, and any economic or selection disagreement fails closed. It persists deterministic confidence,
-harm, source provenance, and exclusion details. Its `positive` result is not an authority promotion
+row, and economic disagreement fails closed. Ambiguous allocation identity excludes only that
+sample and remains explicit. Proven economic conflict metadata includes source row ids and exact
+differing fields; it does not authorize sample-level conflict exclusion. The evaluator persists
+deterministic confidence, harm, source provenance, and exclusion details. Its `positive` result is not an authority promotion
 signal, so it cannot enable a treatment or alter a multiplier.
 
 The evaluator uses metric version
-`universe_family_calibration_cluster_allocation_utility_v2`. Existing verdicts under older metric
+`universe_family_calibration_cluster_allocation_utility_v3`. Existing verdicts under older metric
 versions remain append-only history and cannot satisfy a current metric-identity gate. Verdict
 `created_at` records evaluation time; `window_start` and `window_end` continue to bound the
 observations used.
+
+The current harm contract uses the experiment's 50 assignment units per arm as the minimum
+determinate sample. A smaller cohort persists `harm_state=indeterminate`, blocks authority, and
+does not assert a breach. After the gate, treatment loss-rate increase above `0.15` and MAE p95
+absolute worsening above `0.25` percentage points breach. MAE keys use `_pp` because the comparison
+is a subtraction in percentage points, not a proportional ratio. A determinate breach drives
+refreeze even when the stored verdict is otherwise labelled positive.
 
 The evaluator also reads `authority_applied` from each exposure manifest. A treatment assignment
 that stayed on its baseline is a shadow observation, not an intervention. When every treatment
@@ -366,8 +375,8 @@ Before any paper influence is used, the authority check binds the requested path
 the same hypothesis and its closed predecessor, then requires the activation verdict to belong to
 that predecessor and hypothesis. Both activation and current-stage measurements must also carry the hypothesis's
 declared horizon, current policy epoch, expected stage, outcome-contract version, metric version,
-and an unbreached harm result. Missing, foreign, or malformed identity always returns the static
-baseline.
+and a determinate, unbreached harm result. Missing, foreign, malformed, or indeterminate harm
+identity always returns the static baseline.
 
 Every applied transition has one durable, deduplicated lifecycle event with the source verdict,
 stage change, reason, effective policy epoch, and successor identity. The event and experiment
@@ -413,7 +422,9 @@ exposures, outcomes, or prior policy versions.
 For the current paper lifecycle, automatic refreeze is enabled by default but still respects the
 same controller safety gate above. Independently, the authority resolver returns the static
 baseline immediately when it sees a current `negative` or `invalid` measurement, even before a
-later controller run persists the lifecycle state.
+later controller run persists the lifecycle state. A context-stale negative, invalid, or determinate
+harm breach for the same experiment/hypothesis can persist the same conservative withdrawal; stale
+evidence never grants authority, and wrong-stage/wrong-hypothesis evidence remains non-mutating.
 
 ## 9. Consumer Contracts
 
