@@ -113,6 +113,8 @@ def test_threads_get_different_connections(tmp_path, monkeypatch):
 
     conns: list[int] = []
     lock = threading.Lock()
+    ready = threading.Barrier(3)
+    release = threading.Event()
 
     def get_conn(db_file):
         # Each thread builds a brand-new connection just like aletheia.storage.sqlite
@@ -124,15 +126,21 @@ def test_threads_get_different_connections(tmp_path, monkeypatch):
         conn.execute("PRAGMA busy_timeout=30000")
         with lock:
             conns.append(id(conn))
+        # Keep both connections alive until the main thread compares them: after
+        # close(), CPython may legitimately reuse an object's address.
+        ready.wait()
+        release.wait()
         conn.close()
 
     t1 = threading.Thread(target=get_conn, args=(tmp_path / "t1.db",))
     t2 = threading.Thread(target=get_conn, args=(tmp_path / "t2.db",))
     t1.start(); t2.start()
-    t1.join(); t2.join()
+    ready.wait()
 
     assert len(conns) == 2
     assert conns[0] != conns[1], "Different threads must get different connection objects"
+    release.set()
+    t1.join(); t2.join()
 
     # Also pin the contract symbol: storage/sqlite.py owns a threading.local
     import aletheia.storage.sqlite as sq

@@ -10,6 +10,7 @@ WORKFLOW_PATH = WORKFLOW_DIR / "ci.yml"
 AUTO_MERGE_WORKFLOW_PATH = WORKFLOW_DIR / "auto-merge.yml"
 DELETE_MERGED_WORKFLOW_PATH = WORKFLOW_DIR / "delete-merged-branch.yml"
 PINNED_ACTION_SHA_LENGTH = 40
+GITHUB_SCRIPT_ACTION = "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
 
 
 def _workflow() -> dict:
@@ -171,10 +172,12 @@ def test_auto_merge_queues_ready_master_pull_requests_without_running_their_code
     assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
     assert "draft == false" in job["if"]
     assert "do-not-auto-merge" in job["if"]
-    assert not any("uses" in step for step in job["steps"])
-    assert _run_commands(job).strip() == (
-        'gh pr merge "$PR_URL" --repo "$GITHUB_REPOSITORY" --auto --merge'
-    )
+    assert len(job["steps"]) == 1
+    enable_step = job["steps"][0]
+    assert enable_step["name"] == "Queue pull request"
+    assert enable_step["uses"] == GITHUB_SCRIPT_ACTION
+    assert "enablePullRequestAutoMerge" in enable_step["with"]["script"]
+    assert "PR_NODE_ID" in job["env"]
 
     disable_job = workflow["jobs"]["disable"]
     assert disable_job["runs-on"] == [
@@ -184,10 +187,12 @@ def test_auto_merge_queues_ready_master_pull_requests_without_running_their_code
         "ubuntu-24.04",
     ]
     assert "do-not-auto-merge" in disable_job["if"]
-    assert not any("uses" in step for step in disable_job["steps"])
-    disable_commands = _run_commands(disable_job)
-    assert "--json autoMergeRequest" in disable_commands
-    assert "--disable-auto" in disable_commands
+    assert len(disable_job["steps"]) == 1
+    disable_step = disable_job["steps"][0]
+    assert disable_step["name"] == "Remove pull request from auto-merge"
+    assert disable_step["uses"] == GITHUB_SCRIPT_ACTION
+    assert "disablePullRequestAutoMerge" in disable_step["with"]["script"]
+    assert "PR_NODE_ID" in disable_job["env"]
 
 
 def test_delete_merged_branch_only_touches_merged_same_repo_head_refs() -> None:
