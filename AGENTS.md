@@ -7,6 +7,23 @@ work.
 
 - DO NOT run any large or big scale pytest mission on macOS device, use ssh to run this work on other machines
 
+## Detect the runtime first
+
+Before your first repo-mutating action, decide whether you are inside an
+Orca-managed session. If ANY of these signals holds, you MUST use the Orca CLI
+for worktree creation, workspace status, terminals, and handoffs — **not** raw
+`git worktree`, and not ad-hoc terminal control:
+
+- the `ORCA_CLI_COMMAND` environment variable is set;
+- the current working directory is under `~/orca/workspaces/`;
+- your harness lists an `orca-cli` skill, tool, or system-reminder entry.
+
+When inside Orca, run `orca skills get orca-cli` once at session start and read
+[docs/operations/development/ORCA_CLI_WORKFLOW.md](docs/operations/development/ORCA_CLI_WORKFLOW.md)
+before your first repo mutation; that runbook covers worktree creation,
+Windows `uv` cache recovery, upstream handling, and PR auto-merge handoff. The
+"External agent orchestration" section below explains why this is a hard rule.
+
 ## Mission and priorities
 
 Aletheia is a local-first automated trading system. Its core path is:
@@ -114,12 +131,12 @@ state belong to the external development orchestrator (for example ORCA), not
 to Aletheia. This repository must not implement its own development-task
 database, worker lease, task packet, handoff ledger, or orchestration CLI.
 
-When the session is running inside Orca, use the version-matched Orca CLI for
-worktree creation, workspace status, terminals, and handoffs instead of raw
-`git worktree` or ad hoc terminal control. Read the
+When the session is running inside Orca (see "Detect the runtime first" at the
+top of this file for the exact signals), you MUST use the version-matched Orca
+CLI for worktree creation, workspace status, terminals, and handoffs — not raw
+`git worktree` or ad-hoc terminal control. The
 [Orca CLI development workflow](docs/operations/development/ORCA_CLI_WORKFLOW.md)
-before the first Orca-managed mutation; it includes new-worktree initialization,
-Windows `uv` cache recovery, upstream handling, and PR auto-merge handoff.
+is the deep-dive runbook; read it before the first Orca-managed mutation.
 
 Use an isolated worktree for non-trivial parallel changes and give each agent a
 clear prompt containing goal, allowed paths, excluded paths, acceptance checks,
