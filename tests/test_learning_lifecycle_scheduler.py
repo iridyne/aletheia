@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timezone
+
+
 def _cfg(*, autonomous: bool = False, lifecycle: bool = False, paper: bool = False):
     from aletheia.config.schema import AletheiaConfig
 
@@ -119,6 +123,101 @@ def test_scheduler_registers_separate_single_instance_learning_jobs(monkeypatch)
         assert "learning_lifecycle_audit_reconciler" in scheduler._ESSENTIAL_JOBS
     finally:
         scheduler.stop_scheduler()
+
+
+def test_reschedule_learning_jobs_updates_both_live_intervals(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+
+    calls = []
+
+    class FakeJob:
+        def __init__(self, next_run_time):
+            self.trigger = "old-trigger"
+            self.next_run_time = next_run_time
+
+    jobs = {
+        "learning_contribution_evaluator": FakeJob(datetime.now(timezone.utc)),
+        "learning_lifecycle_controller": FakeJob(None),
+    }
+
+    class FakeScheduler:
+        timezone = timezone.utc
+
+        def get_job(self, job_id):
+            return jobs.get(job_id)
+
+        def modify_job(self, job_id, **kwargs):
+            calls.append((job_id, kwargs))
+            jobs[job_id].trigger = kwargs["trigger"]
+            jobs[job_id].next_run_time = kwargs["next_run_time"]
+
+    monkeypatch.setattr(scheduler, "_scheduler", FakeScheduler())
+
+    assert scheduler.reschedule_learning_jobs(90) is True
+    assert [job_id for job_id, _kwargs in calls] == [
+        "learning_contribution_evaluator",
+        "learning_lifecycle_controller",
+    ]
+    assert all(call[1]["trigger"].interval.total_seconds() == 90 * 60 for call in calls)
+    assert calls[0][1]["next_run_time"] is not None
+    assert calls[1][1]["next_run_time"] is None
+
+
+def test_reschedule_learning_jobs_rolls_back_partial_failure(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+
+    class FakeJob:
+        trigger = "old-trigger"
+        next_run_time = datetime.now(timezone.utc)
+
+    jobs = {
+        "learning_contribution_evaluator": FakeJob(),
+        "learning_lifecycle_controller": FakeJob(),
+    }
+
+    class FakeScheduler:
+        timezone = timezone.utc
+
+        def get_job(self, job_id):
+            return jobs[job_id]
+
+        def modify_job(self, job_id, **kwargs):
+            if job_id == "learning_lifecycle_controller":
+                raise RuntimeError("simulated controller reschedule failure")
+            jobs[job_id].trigger = kwargs["trigger"]
+            jobs[job_id].next_run_time = kwargs["next_run_time"]
+
+    monkeypatch.setattr(scheduler, "_scheduler", FakeScheduler())
+
+    assert scheduler.reschedule_learning_jobs(90) is False
+    assert jobs["learning_contribution_evaluator"].trigger == "old-trigger"
+
+
+def test_learning_settings_reschedules_live_jobs_after_save(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.files import jsonl
+    from aletheia.server.routes import settings
+
+    cfg = _cfg()
+    saved = []
+    rescheduled = []
+    monkeypatch.setattr(settings, "load_config", lambda: cfg)
+    monkeypatch.setattr(settings, "save_config", lambda updated: saved.append(updated))
+    monkeypatch.setattr(jsonl, "write_audit", lambda _event: None)
+    monkeypatch.setattr(
+        scheduler,
+        "reschedule_learning_jobs",
+        lambda interval: rescheduled.append(interval) or True,
+    )
+
+    result = asyncio.run(settings.update_learning_config(
+        settings.LearningConfigUpdate(evaluation_interval_minutes=90),
+    ))
+
+    assert saved == [cfg]
+    assert rescheduled == [90]
+    assert result["rescheduled"] is True
+    assert result["learning"]["evaluation_interval_minutes"] == 90
 
 
 def test_audit_reconciler_outer_failure_is_durable(monkeypatch):
