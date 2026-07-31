@@ -35,12 +35,6 @@ import CommandCenter from './pages/CommandCenter'
 import SerenityLens from './pages/SerenityLens'
 import PredictionLens from './pages/PredictionLens'
 import Universe from './pages/Universe'
-// ActivityTimeline temporarily hidden — content overlapped Overview's Agent Activity
-// card (runs duplicated) and the global-shell strip lacked viewport-follow + click
-// drill-down. To revive: restore the import + the <ActivityTimeline /> mount below,
-// and rework as a viewport-fixed audit-only ticker (kill_switch / risk_blocked /
-// config events; agent runs already covered by Agent Activity).
-// import ActivityTimeline from './components/ActivityTimeline'
 import CommandPalette from './components/CommandPalette'
 import MarketTicker from './components/MarketTicker'
 import BackendConnectionGuard from './components/BackendConnectionGuard'
@@ -693,7 +687,6 @@ export default function App() {
             <Route path="/universe" element={<Universe />} />
           </Routes>
         </main>
-        {/* <ActivityTimeline /> — temporarily hidden, see import comment above */}
       </div>
     </div>
   )
