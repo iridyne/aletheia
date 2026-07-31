@@ -19,7 +19,14 @@ import httpx
 from aletheia.config.loader import load_config
 from aletheia.infra.events import emit_infra_event
 from aletheia.model_provider.base import ModelProvider, ModelRequest, ModelResponse
-from aletheia.model_provider.broker import brokered_complete
+from aletheia.model_provider.broker import (
+    InferenceBrokerClosed,
+    InferenceBrokerError,
+    InferenceQueueFull,
+    InferenceRateLimitExceeded,
+    InferenceTimeout,
+    brokered_complete,
+)
 from aletheia.model_provider import router as provider_router
 
 logger = logging.getLogger("aletheia.model_provider.fallback")
@@ -317,6 +324,177 @@ def _with_fallback_meta(
     return response
 
 
+def _emit_call_failure(
+    exc: BaseException,
+    *,
+    provider_name: str,
+    model: str,
+    attempted: list[str],
+    transient: bool,
+    exhausted: bool,
+) -> None:
+    """Emit exactly one infra event per terminal failure in complete_with_fallback.
+
+    Severity ladder (3-level scheme in aletheia.infra.events):
+
+    - ``critical``: BrokerClosed. The whole harness is shutting down; every
+      caller downstream will fail until the process restarts.
+    - ``warning``: everything else that reaches this function — a transient
+      call that ran out of retries, a broker admission ceiling that rejected
+      the request, or a non-transient provider error that kills this one
+      call. All are honest failures worth an operator seeing; none is
+      "the sky is falling" on its own.
+    - ``info``: unused here on purpose. Successful fallbacks already emit
+      their own ``llm_model_fallback_used`` (warning), and per-attempt
+      transient retries are recorded in the ledger — flooding the infra
+      buffer with an event per retry would drown out the terminal signals
+      the operator actually needs to see.
+
+    Each event carries the full provider/model/attempted-list context in
+    metadata so a dashboard consumer can reconstruct the attempt history
+    without querying anything else. Dedupe windows are 60s per
+    (provider, model, error class) — a single failure spike does not
+    replicate as N identical rows.
+    """
+    err_name = type(exc).__name__
+    err_text = str(exc)[:200]
+    entity = f"{provider_name}/{model}" if model else provider_name
+
+    if isinstance(exc, InferenceBrokerClosed):
+        emit_infra_event(
+            severity="critical",
+            source="llm",
+            code="llm_broker_closed",
+            entity_id=entity,
+            message=f"Inference broker is closed; LLM calls rejected for {entity}",
+            action="wait_for_gateway_restart",
+            metadata={
+                "provider": provider_name,
+                "model": model,
+                "attempted_models": attempted,
+                "error_type": err_name,
+                "error": err_text,
+            },
+            dedupe_sec=60,
+        )
+        return
+
+    if isinstance(exc, InferenceQueueFull):
+        emit_infra_event(
+            severity="warning",
+            source="llm",
+            code="llm_broker_queue_full",
+            entity_id=entity,
+            message=f"Inference broker queue full for {entity}",
+            action="raise_queue_capacity_or_reduce_load",
+            metadata={
+                "provider": provider_name,
+                "model": model,
+                "attempted_models": attempted,
+                "error_type": err_name,
+            },
+            dedupe_sec=60,
+        )
+        return
+
+    if isinstance(exc, InferenceRateLimitExceeded):
+        emit_infra_event(
+            severity="warning",
+            source="llm",
+            code="llm_broker_rate_limit_exceeded",
+            entity_id=entity,
+            message=(
+                f"Request exceeds provider TPM budget for {entity}: {err_text}"
+            ),
+            action="lower_max_tokens_or_raise_inference_tpm",
+            metadata={
+                "provider": provider_name,
+                "model": model,
+                "error_type": err_name,
+            },
+            dedupe_sec=60,
+        )
+        return
+
+    if isinstance(exc, InferenceTimeout):
+        emit_infra_event(
+            severity="warning",
+            source="llm",
+            code="llm_broker_timeout",
+            entity_id=entity,
+            message=f"Inference broker deadline expired for {entity}: {err_text}",
+            action="raise_inference_timeout_sec_or_reduce_load",
+            metadata={
+                "provider": provider_name,
+                "model": model,
+                "attempted_models": attempted,
+                "error_type": err_name,
+            },
+            dedupe_sec=60,
+        )
+        return
+
+    if isinstance(exc, InferenceBrokerError):
+        # Any other InferenceBrokerError subclass (defensive).
+        emit_infra_event(
+            severity="warning",
+            source="llm",
+            code="llm_broker_error",
+            entity_id=entity,
+            message=f"Inference broker error for {entity}: {err_name}: {err_text}",
+            action="investigate_broker_state",
+            metadata={
+                "provider": provider_name,
+                "model": model,
+                "attempted_models": attempted,
+                "error_type": err_name,
+            },
+            dedupe_sec=60,
+        )
+        return
+
+    if exhausted:
+        emit_infra_event(
+            severity="warning",
+            source="llm",
+            code="llm_call_exhausted",
+            entity_id=entity,
+            message=(
+                f"LLM call exhausted all {len(attempted)} candidate model(s) "
+                f"for {provider_name} with transient errors"
+            ),
+            action="review_provider_health_or_extend_fallback_list",
+            metadata={
+                "provider": provider_name,
+                "attempted_models": attempted,
+                "final_error_type": err_name,
+                "final_error": err_text,
+            },
+            dedupe_sec=60,
+        )
+        return
+
+    if not transient:
+        emit_infra_event(
+            severity="warning",
+            source="llm",
+            code="llm_call_non_transient_error",
+            entity_id=entity,
+            message=(
+                f"LLM call failed with non-transient error for {entity}: "
+                f"{err_name}: {err_text}"
+            ),
+            action="inspect_provider_response_or_credentials",
+            metadata={
+                "provider": provider_name,
+                "model": model,
+                "attempted_models": attempted,
+                "error_type": err_name,
+            },
+            dedupe_sec=60,
+        )
+
+
 async def complete_with_fallback(
     request: ModelRequest,
     *,
@@ -397,6 +575,14 @@ async def complete_with_fallback(
             if transient:
                 _record_model_failure(resolved_provider_name, model, exc)
             if not transient or idx == len(models_to_try) - 1:
+                _emit_call_failure(
+                    exc,
+                    provider_name=resolved_provider_name,
+                    model=model,
+                    attempted=attempted,
+                    transient=transient,
+                    exhausted=(transient and idx == len(models_to_try) - 1),
+                )
                 raise
             logger.warning(
                 "LLM model %s/%s transient failure on %s; trying fallback %s",
