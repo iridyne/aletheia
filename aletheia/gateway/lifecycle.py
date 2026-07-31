@@ -32,6 +32,10 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
     """Start the gateway (foreground or background)."""
     cfg = bootstrap()
 
+    # T7: If a circuit-break state file exists and 30 min of stability has elapsed,
+    # auto-clear the breaker and re-enable the watchdog before attempting a new start.
+    _check_circuit_break_auto_reset()
+
     # Preflight checks — fail fast if environment is broken
     from aletheia.gateway.preflight import run_preflight_checks, assert_preflight_or_exit
     preflight_result = run_preflight_checks()
@@ -149,6 +153,28 @@ def _verify_api_ready_accessible(cfg) -> bool:
         return False
 
 
+def _read_ready_beacon(cfg) -> bool:
+    """Return True when a valid ready beacon from the current supervisor exists.
+
+    Validates PID ownership so a stale file from a previous run is rejected.
+    Best-effort; returns False on any error.
+    """
+    try:
+        import json as _json
+        from aletheia.config.loader import get_data_dir
+        path = get_data_dir() / "gateway.ready"
+        if not path.exists():
+            return False
+        data = _json.loads(path.read_text(encoding="utf-8"))
+        beacon_pid = data.get("pid")
+        if beacon_pid is None:
+            return False
+        live_pid = read_pid()
+        return live_pid is not None and int(beacon_pid) == int(live_pid)
+    except Exception:
+        return False
+
+
 def _verify_started(cfg, *, timeout: float = 60.0, poll_interval: float = 0.3) -> None:
     """Block until the managed gateway is confirmed up, or handle timeout gracefully.
 
@@ -175,7 +201,11 @@ def _verify_started(cfg, *, timeout: float = 60.0, poll_interval: float = 0.3) -
     import time
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
+        # T6 fast path: supervisor wrote a ready beacon the moment backend port
+        # first appeared.  If the beacon is valid (pid matches live pid) we can
+        # skip straight to the HTTP checks — no need to wait for the next poll tick.
+        beacon_ready = _read_ready_beacon(cfg)
+        if beacon_ready or (is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host)):
             if not _verify_api_ready_accessible(cfg):
                 time.sleep(poll_interval)
                 continue
@@ -222,6 +252,105 @@ def _audit_slow_start(timeout: float) -> None:
         pass
 
 
+def _circuit_break_state_path():
+    """Return path of the circuit-breaker state file."""
+    return get_data_dir() / "circuit_break.json"
+
+
+def _write_circuit_break_state() -> None:
+    """Persist a circuit-break timestamp so auto-reset can evaluate elapsed time."""
+    try:
+        import json as _json
+        import datetime as _dt
+        path = _circuit_break_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            _json.dumps({
+                "tripped_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                "source": "circuit_breaker",
+            }),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _check_circuit_break_auto_reset() -> None:
+    """Auto-clear the circuit breaker if the system has been stable for 30 minutes.
+
+    When tripped, the circuit breaker disables the autostart watchdog to stop a
+    restart churn loop.  This function is called at the top of every do_start so
+    that the next manual restart attempt checks whether the protection window has
+    elapsed.  If it has, and no new spawn failures occurred in that window, the
+    state file is deleted and the watchdog is re-enabled — mirroring PM2's
+    "stable for 30 minutes → reset" behaviour.
+    """
+    _RESET_WINDOW_SEC = 1800  # 30 minutes — same as the circuit-breaker trip window
+
+    try:
+        import json as _json
+        import datetime as _dt
+        path = _circuit_break_state_path()
+        if not path.exists():
+            return
+        try:
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            tripped_ts = data.get("tripped_at", "")
+            tripped_at = _dt.datetime.fromisoformat(tripped_ts.replace("Z", "+00:00"))
+        except Exception:
+            path.unlink(missing_ok=True)
+            return
+
+        now = _dt.datetime.now(_dt.timezone.utc)
+        elapsed = (now - tripped_at).total_seconds()
+        if elapsed < _RESET_WINDOW_SEC:
+            return  # still within protection window
+
+        # Check that no new spawn failures occurred since the circuit tripped.
+        try:
+            from aletheia.files.jsonl import read_jsonl
+            events = list(read_jsonl("audit.jsonl"))
+            recent_failures = [
+                e for e in events
+                if e.get("event_type") == "gateway_spawn_failed"
+                and (
+                    _dt.datetime.fromisoformat(
+                        (e.get("ts") or e.get("timestamp") or "1970-01-01T00:00:00+00:00")
+                        .replace("Z", "+00:00")
+                    ) > tripped_at
+                )
+            ]
+        except Exception:
+            recent_failures = []
+
+        if recent_failures:
+            return  # new failures since the trip — leave the breaker closed
+
+        # Stable for >30 min with no new failures: reset.
+        path.unlink(missing_ok=True)
+        try:
+            from aletheia.files.jsonl import write_audit
+            write_audit({
+                "actor": "system", "source": "gateway_lifecycle",
+                "event_type": "gateway_circuit_breaker_reset",
+                "entity_type": "gateway", "entity_id": "gateway",
+                "message": (
+                    f"Circuit breaker auto-reset after {elapsed / 60:.0f} min of stability. "
+                    "Watchdog re-enabled."
+                ),
+            })
+        except Exception:
+            pass
+        try:
+            from aletheia.gateway import autostart
+            if autostart.is_supported_platform():
+                autostart.enable(source="auto_reset")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 def _check_spawn_circuit_breaker() -> None:
     """Disable the autostart watchdog if gateway_spawn_failed events are piling up.
 
@@ -260,12 +389,14 @@ def _check_spawn_circuit_breaker() -> None:
             from aletheia.gateway import autostart
             if autostart.is_supported_platform() and autostart.status().get("enabled"):
                 autostart.disable(source="circuit_breaker")
+                _write_circuit_break_state()  # T7: persist timestamp for auto-reset
                 _notify_gateway_problem(
                     "Aletheia Gateway autostart disabled by circuit breaker",
                     f"Gateway failed to start {_CIRCUIT_BREAKER_THRESHOLD} times in "
                     f"{_CIRCUIT_BREAKER_WINDOW_SEC // 60} minutes. Autostart watchdog "
                     "has been disabled to stop the restart loop. Fix the root cause and "
-                    "re-enable with `gateway autostart enable`.",
+                    "re-enable with `gateway autostart enable`, or wait 30 min for "
+                    "auto-reset.",
                     source="gateway_lifecycle",
                 )
         except Exception:
