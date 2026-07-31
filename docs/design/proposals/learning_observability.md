@@ -81,7 +81,7 @@ surface look shipped.
 | Lifecycle inspection | Internal read function returns progress, recommendation and job health | Public sanitized projection |
 | Job health | Current and durable last-failure fields exist | Current, recovery and catch-up states remain separate |
 | Public Learning API | Bounded additive `lco-v1` summary at `/analytics/learning-contribution`; no detail/list family | Contribution summary implemented; experiment/health/detail GET endpoints remain targets |
-| Learning UI | Contribution is the default tab and preserves honest verdict/query states; legacy Dreaming, Knowledge Base and Reports remain | Experiments and Operations surfaces, multi-path selection, detail and complete accessibility remain targets |
+| Learning UI | Contribution is the default tab, exposes every measurable path and preserves path-specific verdict/query states; legacy Dreaming, Knowledge Base and Reports remain | Experiments/Operations surfaces, detail/history and their accessibility proof remain targets |
 | Trial admission | Separate Settings POST exists, remains default-closed and is tunnel-token protected | Observability remains recommendation-only; no mutation action is rendered here. The separate legacy `/settings/autonomous-learning` master toggle is also tunnel-token protected. |
 
 `/analytics/learning-funnel` remains an artifact/activity report. It must not be
@@ -482,10 +482,10 @@ and causal ids. Arbitrary stored manifests are sanitized before response.
 
 ## 7. Query, Cache And Performance Contract
 
-Sections 7.1 and 7.2 are partially implemented by the fixed 20-experiment bound,
-read-only projection, synchronous FastAPI route and mutation regression tests.
-Parameterized caps, detail queries, cache and direct latency diagnostics remain
-targets; therefore `LCO-C03` and `LCO-C06` remain non-conforming.
+The summary and experiment reads enforce positive server caps and run as synchronous
+FastAPI handlers. The summary uses a 30-second monotonic process-local cache, emits
+`Server-Timing`, and has read-only/event-loop regression proof. Detail/pagination
+families beyond the current experiment endpoints remain future slices.
 
 ### 7.1 Bounded reads
 
@@ -521,9 +521,11 @@ FastAPI sends to its worker pool, or through an explicit thread offload. An
 
 ### 7.4 Measurement and diagnostics
 
-Responses emit `Server-Timing` phases such as `cache_hit`, `ledger`, `cohort`,
-`build`, and `total`. Implementation acceptance measures cold and warm requests
-directly on backend `:8788`:
+Responses emit `Server-Timing` phases such as `cache_hit`, `ledger`, and `total`.
+Before deployment, implementation acceptance measures cold and warm requests on the
+isolated Preview API port from `DEVELOPMENT_PREVIEW.md`; only the owning stable Runtime
+may be measured on reserved backend `:8788`. A Worktree must never bind `:8788` merely
+to satisfy performance evidence:
 
 - summary, paths, hypotheses, experiments and health: cold target under 100 ms;
 - one experiment detail: bounded and reported; any cold result above 100 ms must
@@ -533,11 +535,11 @@ directly on backend `:8788`:
 
 ## 8. Learning Workbench Information Architecture
 
-The current minimal UI ships the default Contribution tab and executable helper
-tests for backend-verdict honesty plus loading/unavailable/empty/stale/partial
-separation. The complete five-tab workbench, multi-path selection, history,
-drawers, Operations surface and the responsive/accessibility contract remain
-targets.
+The Contribution tab exposes every measurement-supported path through a labelled
+native selector, keeps verdict/query state path-specific, and polls no faster than
+30 seconds while mounted. Responsive 1100/700px layouts and browser accessibility
+proof cover this surface. The complete five-tab workbench, history, drawers and
+dedicated Operations surface remain targets.
 
 ### 8.1 Page structure
 
@@ -629,6 +631,11 @@ Each query distinguishes:
 - stale: last successful projection remains visible with timestamp and stale label;
 - partial: usable sections remain visible while failed sections name their reason.
 
+The summary carries one `path_states` entry for every measurement-supported path,
+including path-local availability, empty/active state, freshness and a stable
+unavailable reason. One failed path therefore makes the envelope partial without
+hiding a healthy path or relabelling its verdict.
+
 Failed queries never default to `[]` or `0`. Retry is explicit. Timestamp freshness
 is visible on Contribution and Operations.
 
@@ -687,11 +694,10 @@ data-model batch with its own spec/document update.
 
 ### Slice LCO-FE1 - Contribution and Operations (partially implemented)
 
-Typed client models, honest query states and a minimal default Contribution
-surface are implemented. Status strip, multi-path table,
-cohort/recommendation panels, history, Operations and responsive detail drawer
-remain. Preserve Dreaming/Knowledge taxonomies and keep their mutations outside
-LCO panels.
+Typed client models, honest path-specific query states, multi-path selection,
+cohort/recommendation panels and responsive native-control access are implemented.
+Status strip, history, Operations and responsive detail drawer remain. Preserve
+Dreaming/Knowledge taxonomies and keep their mutations outside LCO panels.
 
 ### Slice LCO-FE2 - Experiments and artifact honesty cleanup
 
@@ -719,12 +725,12 @@ states. This is adjacent UI honesty work, not contribution authority.
 | LCO-B04 | L2b | Current job status, last success, next due, sanitized durable last failure, watermark and catch-up due state remain distinct; raw stored errors never leave the backend | implemented |
 | LCO-C01 | L2c | Observability remains read-only; admission readiness is separate from owner-route authentication and every paper gate | implemented |
 | LCO-C02 | L2c | UI contribution state comes only from backend measurement facts; counts and PnL cannot imply effectiveness | partial — helper and Vitest proof exist; complete workbench does not |
-| LCO-C03 | L2c | Reads perform no writes/evaluation/lifecycle/authority action and blocking work stays off the event loop | missing |
+| LCO-C03 | L2c | Reads perform no writes/evaluation/lifecycle/authority action and blocking work stays off the event loop | implemented |
 | LCO-S02 | L2a | LCO projection/routes have no Risk, Execution, exchange, secrets, permission or live imports | implemented |
 | LCO-B05 | L2b | consumer-wired, Settings-supported and measurement-supported remain separate path capabilities | implemented |
 | LCO-C04 | L2c | loading, genuine empty, unavailable, stale and partial states remain distinct; fetch failure never becomes zero/empty | partial — helper and Vitest proof exist for the current summary query only |
-| LCO-C05 | L2c | desktop/mobile layouts and keyboard/ARIA behavior preserve access to tables, tabs and drawers | missing |
-| LCO-C06 | L2c | server caps, monotonic TTL, `Server-Timing` and direct cold/warm latency evidence enforce the performance contract | missing |
+| LCO-C05 | L2c | desktop/mobile layouts and keyboard/ARIA behavior preserve access to the current multi-path Contribution surface | implemented; future table/drawer slices retain their own acceptance obligation |
+| LCO-C06 | L2c | server caps, monotonic TTL, `Server-Timing` and direct cold/warm latency evidence enforce the performance contract | implemented for current summary/list routes |
 
 Unimplemented claims remain strict xfail. A claim changes to `implemented` only
 after its placeholder is replaced by a behavioral test. Source-string presence

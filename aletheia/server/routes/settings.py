@@ -745,35 +745,44 @@ async def update_learning_config(req: LearningConfigUpdate):
 
 
 @router.get("/learning/experiments")
-async def list_learning_experiments(limit: int = 100):
+def list_learning_experiments(limit: int = 100):
     """List all learning experiments with lightweight summary (path, stage, status)."""
     from aletheia.storage.sqlite import get_db
-    rows = get_db().execute(
-        "SELECT e.experiment_id, e.hypothesis_id, e.stage, e.status, "
-        "e.allocation_pct, e.min_samples_per_arm, e.activation_verdict_id, e.created_at, "
-        "h.path_id, h.target_horizon "
-        "FROM learning_experiments e "
-        "LEFT JOIN learning_hypotheses h ON e.hypothesis_id = h.hypothesis_id "
-        "ORDER BY datetime(e.created_at) DESC LIMIT ?",
-        (min(limit, 200),),
-    ).fetchall()
+    try:
+        rows = get_db().execute(
+            "SELECT e.experiment_id, e.hypothesis_id, e.stage, e.status, "
+            "e.allocation_pct, e.min_samples_per_arm, e.activation_verdict_id, "
+            "e.created_at, h.path_id, h.target_horizon "
+            "FROM learning_experiments e "
+            "LEFT JOIN learning_hypotheses h ON e.hypothesis_id = h.hypothesis_id "
+            "ORDER BY datetime(e.created_at) DESC LIMIT ?",
+            (min(max(limit, 1), 200),),
+        ).fetchall()
+    except Exception as exc:
+        raise HTTPException(503, "learning ledger unavailable") from exc
     return [dict(row) for row in rows]
 
 
 @router.get("/learning/experiments/{experiment_id}")
-async def get_learning_experiment(experiment_id: str):
+def get_learning_experiment(experiment_id: str):
     """Read-only lifecycle/operator view for one experiment."""
     from aletheia.learning.lifecycle import inspect_learning_experiment
     from aletheia.learning.experiments import (
         current_policy_epoch as resolve_current_policy_epoch,
     )
     from aletheia.learning.ledger import get_record
-    row = get_record("learning_experiments", experiment_id)
+    try:
+        row = get_record("learning_experiments", experiment_id)
+    except Exception as exc:
+        raise HTTPException(503, "learning ledger unavailable") from exc
     if row is None:
         raise HTTPException(404, f"experiment not found: {experiment_id}")
     hypothesis_row = get_record("learning_hypotheses", str(row.get("hypothesis_id") or ""))
     path_id = str((hypothesis_row or {}).get("path_id") or "")
-    policy_epoch = resolve_current_policy_epoch(path_id) if path_id else None
+    policy_epoch = resolve_current_policy_epoch(
+        path_id,
+        persist_config_migrations=False,
+    ) if path_id else None
     if policy_epoch is None:
         raise HTTPException(409, "current policy epoch is not available")
     return inspect_learning_experiment(

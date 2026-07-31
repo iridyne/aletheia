@@ -199,20 +199,83 @@ def test_lco_frontend_uses_backend_measurement_state():
     source = (root / "frontend/src/lib/learningContribution.ts").read_text()
     proof = (root / "frontend/src/lib/learningContribution.test.ts").read_text()
 
-    assert "return input.data.items[0].measurement.state" in source
+    assert "return item.measurement.state" in source
     assert "large activity counts" in proof
     assert "toBe('insufficient_data')" in proof
 
 
-@_missing("LCO-C03")
 @spec_claim(SpecClaim(
     "LCO-C03", _CONTRACT, "§7 bounded read path", "L2c",
     "Observability reads perform no write, evaluation, lifecycle or authority side effect and use "
     "bounded cached work outside the event loop.",
-    status="missing",
+    status="implemented",
 ))
-def test_lco_bounded_side_effect_free_reads_are_not_implemented():
-    pytest.fail("LCO-C03 target behavior is intentionally missing")
+@pytest.mark.anyio
+async def test_lco_reads_are_side_effect_free_and_off_the_event_loop(
+    tmp_path, monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+
+    from httpx import ASGITransport, AsyncClient
+    from aletheia.learning import lifecycle
+    from aletheia.server.app import app
+    from aletheia.server.routes import analytics, settings
+    from aletheia.storage.sqlite import get_db
+    import aletheia.config.loader as config_loader
+
+    config_loader.CONFIG_PATH.write_text(
+        "agent:\n  permission_mode: Research\n"
+        "operator:\n  permission_mode: Observe\n",
+        encoding="utf-8",
+    )
+    config_loader._config_cache = None
+    config_before = config_loader.CONFIG_PATH.read_bytes()
+
+    monkeypatch.setattr(
+        lifecycle,
+        "run_contribution_evaluator",
+        lambda: pytest.fail("read invoked evaluator"),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "run_lifecycle_controller",
+        lambda: pytest.fail("read invoked lifecycle controller"),
+    )
+    analytics._learning_contribution_cache.clear()
+    tables = (
+        "learning_hypotheses",
+        "learning_experiments",
+        "learning_exposures",
+        "learning_contribution_verdicts",
+        "learning_lifecycle_events",
+        "learning_job_health",
+        "learning_policy_epochs",
+        "audit_events",
+    )
+
+    def snapshot():
+        db = get_db()
+        return {
+            table: [tuple(row) for row in db.execute(f"SELECT * FROM {table}")]
+            for table in tables
+        }
+
+    before = snapshot()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+    ) as client:
+        assert (await client.get("/api/analytics/learning-contribution")).status_code == 200
+        assert (await client.get("/api/settings/learning/experiments?limit=20")).status_code == 200
+        detail = await client.get(
+            f"/api/settings/learning/experiments/{experiment_id}"
+        )
+        assert detail.status_code == 409
+    assert snapshot() == before
+    assert config_loader.CONFIG_PATH.read_bytes() == config_before
+    assert not inspect.iscoroutinefunction(analytics.get_learning_contribution)
+    assert not inspect.iscoroutinefunction(settings.list_learning_experiments)
+    assert not inspect.iscoroutinefunction(settings.get_learning_experiment)
 
 
 @spec_claim(SpecClaim(
@@ -311,23 +374,156 @@ def test_lco_query_states_have_executable_frontend_proof():
         assert f"toBe('{state}')" in proof
 
 
-@_missing("LCO-C05")
 @spec_claim(SpecClaim(
     "LCO-C05", _CONTRACT, "§8.7 responsive accessibility", "L2c",
     "Desktop and mobile layouts plus keyboard and ARIA behavior preserve access to LCO tabs, "
     "tables and detail drawers.",
-    status="missing",
+    status="implemented",
 ))
-def test_lco_responsive_accessibility_is_not_implemented():
-    pytest.fail("LCO-C05 target behavior is intentionally missing")
+def test_lco_multi_path_control_is_keyboard_native_and_responsive():
+    root = Path(__file__).resolve().parents[2]
+    selector = (
+        root / "frontend/src/components/MeasuredPathSelector.tsx"
+    ).read_text()
+    css = (root / "frontend/src/index.css").read_text()
+    proof = (
+        root / "frontend/src/components/MeasuredPathSelector.test.tsx"
+    ).read_text()
+
+    assert '<label htmlFor="lco-measured-path">' in selector
+    assert 'id="lco-measured-path"' in selector
+    assert "aria-label" not in selector
+    assert "renderToStaticMarkup" in proof
+    assert "operator_learning_bundle" in proof
+    assert "@media (max-width: 1100px)" in css
+    assert "@media (max-width: 700px)" in css
 
 
-@_missing("LCO-C06")
 @spec_claim(SpecClaim(
     "LCO-C06", _CONTRACT, "§7 query and performance", "L2c",
     "Server-enforced limits, monotonic TTL caching, Server-Timing and direct cold/warm backend "
     "measurements enforce the LCO performance contract.",
-    status="missing",
+    status="implemented",
 ))
-def test_lco_performance_evidence_is_not_implemented():
-    pytest.fail("LCO-C06 target behavior is intentionally missing")
+@pytest.mark.anyio
+async def test_lco_limits_monotonic_cache_and_server_timing(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+
+    from httpx import ASGITransport, AsyncClient
+    from aletheia.server.app import app
+    from aletheia.server.routes import analytics, settings
+
+    class _Rows:
+        def fetchall(self):
+            return []
+
+    class _LimitDB:
+        params = None
+
+        def execute(self, _sql, params):
+            self.params = params
+            return _Rows()
+
+    limit_db = _LimitDB()
+    import aletheia.storage.sqlite as sqlite_module
+    real_get_db = sqlite_module.get_db
+    monkeypatch.setattr(sqlite_module, "get_db", lambda: limit_db)
+    assert settings.list_learning_experiments(limit=-10) == []
+    assert limit_db.params == (1,)
+    monkeypatch.setattr(sqlite_module, "get_db", real_get_db)
+
+    ticks = iter((100.0, 100.0, 120.0, 131.0, 131.0))
+    monkeypatch.setattr(
+        analytics, "_learning_contribution_monotonic", lambda: next(ticks),
+    )
+    analytics._learning_contribution_cache.clear()
+    computes = 0
+    real_compute = analytics._compute_learning_contribution
+
+    def tracked_compute():
+        nonlocal computes
+        computes += 1
+        return real_compute()
+
+    monkeypatch.setattr(analytics, "_compute_learning_contribution", tracked_compute)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+    ) as client:
+        cold = await client.get("/api/analytics/learning-contribution")
+        warm = await client.get("/api/analytics/learning-contribution")
+        expired = await client.get("/api/analytics/learning-contribution")
+
+    assert computes == 2
+    assert "ledger;dur=" in cold.headers["server-timing"]
+    assert "cache_hit;dur=0.0" in warm.headers["server-timing"]
+    assert "ledger;dur=" in expired.headers["server-timing"]
+    assert cold.json()["generated_at"] == warm.json()["generated_at"]
+
+
+def test_lco_cache_values_are_not_shared_with_callers(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+
+    from fastapi import Response
+    from aletheia.server.routes import analytics
+
+    analytics._learning_contribution_cache.clear()
+    first = analytics.get_learning_contribution(Response())
+    first["schema_version"] = "caller-mutated"
+    first["items"].clear()
+
+    second = analytics.get_learning_contribution(Response())
+    assert second["schema_version"] == "lco-v1"
+    assert second["items"]
+
+
+def test_lco_older_concurrent_miss_cannot_overwrite_newer_projection(
+    tmp_path, monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+
+    from fastapi import Response
+    from threading import Event, Thread, current_thread
+    from aletheia.server.routes import analytics
+
+    older_started = Event()
+    newer_published = Event()
+    results: dict[str, dict] = {}
+
+    def monotonic():
+        name = current_thread().name
+        if name == "older-lco":
+            return 10.0
+        if name == "newer-lco":
+            return 20.0 if not newer_published.is_set() else 30.0
+        return 31.0
+
+    def compute():
+        if current_thread().name == "older-lco":
+            older_started.set()
+            assert newer_published.wait(2)
+            return {"generated_at": "older"}
+        assert older_started.wait(2)
+        return {"generated_at": "newer"}
+
+    def request(name: str):
+        results[name] = analytics.get_learning_contribution(Response())
+        if name == "newer":
+            newer_published.set()
+
+    monkeypatch.setattr(analytics, "_learning_contribution_monotonic", monotonic)
+    monkeypatch.setattr(analytics, "_compute_learning_contribution", compute)
+    analytics._learning_contribution_cache.clear()
+    older = Thread(target=request, args=("older",), name="older-lco")
+    newer = Thread(target=request, args=("newer",), name="newer-lco")
+    older.start()
+    newer.start()
+    older.join(2)
+    newer.join(2)
+
+    assert results == {
+        "newer": {"generated_at": "newer"},
+        "older": {"generated_at": "older"},
+    }
+    assert analytics.get_learning_contribution(Response())["generated_at"] == "newer"

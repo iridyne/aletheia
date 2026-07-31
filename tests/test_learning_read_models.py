@@ -194,6 +194,121 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     assert item["lifecycle"]["authority_enabled"] is False
 
 
+def test_lco_projection_keeps_one_current_item_per_measurable_path(
+    tmp_path,
+    monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+
+    from aletheia.learning.ledger import insert_experiment, insert_hypothesis
+    from aletheia.learning.models import LearningExperiment, LearningHypothesis
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    operator = LearningHypothesis(
+        fingerprint="lco-operator-fingerprint",
+        cohort_id="lco-operator-cohort",
+        path_id="operator_learning_bundle",
+        overlap_group="operator",
+        source_type="operator_learning_bundle:v1",
+        scope_json="{}",
+        action_json="{}",
+        consumer="system_operator",
+        target_horizon="4h",
+        status="shadow",
+    )
+    assert insert_hypothesis(operator)
+    assert insert_experiment(LearningExperiment(
+        experiment_id="operator-current-experiment",
+        hypothesis_id=operator.hypothesis_id,
+        assignment_salt="operator-salt",
+        status="active",
+        created_at="2026-07-01T00:00:00+00:00",
+    ))
+    for index in range(21):
+        universe = LearningHypothesis(
+            fingerprint=f"newer-universe-fingerprint-{index}",
+            cohort_id=f"newer-universe-cohort-{index}",
+            path_id="universe_family_calibration",
+            overlap_group="universe",
+            source_type="filter_candidate_outcomes:clean_net:v1",
+            scope_json="{}",
+            action_json="{}",
+            consumer="universe_allocator",
+            target_horizon="1h",
+            status="shadow",
+        )
+        assert insert_hypothesis(universe)
+        assert insert_experiment(LearningExperiment(
+            experiment_id=f"newer-universe-experiment-{index}",
+            hypothesis_id=universe.hypothesis_id,
+            assignment_salt=f"newer-universe-{index}",
+            status="active",
+            created_at=f"2026-07-25T00:{index:02d}:00+00:00",
+        ))
+
+    result = build_learning_contribution_projection()
+    assert {item["path_id"] for item in result["items"]} == {
+        "universe_family_calibration",
+        "operator_learning_bundle",
+    }
+    assert {
+        state["path_id"]: state["state"] for state in result["path_states"]
+    } == {
+        "operator_learning_bundle": "active",
+        "universe_family_calibration": "active",
+    }
+    latest_by_path = {
+        item["path_id"]: item
+        for item in reversed(result["items"])
+    }
+    states_by_path = {
+        state["path_id"]: state for state in result["path_states"]
+    }
+    latest_universe_id = latest_by_path["universe_family_calibration"][
+        "experiment_id"
+    ]
+    for path_id in states_by_path:
+        assert states_by_path[path_id]["data_freshness"] == (
+            latest_by_path[path_id]["data_freshness"]
+        )
+
+    import aletheia.learning.read_models as read_models
+    real_project = read_models._project_experiment
+
+    def fail_operator(row, **kwargs):
+        if row["path_id"] == "operator_learning_bundle":
+            raise ValueError("test path projection failure")
+        return real_project(row, **kwargs)
+
+    monkeypatch.setattr(read_models, "_project_experiment", fail_operator)
+    partial = build_learning_contribution_projection()
+    states = {state["path_id"]: state for state in partial["path_states"]}
+    assert partial["availability"] == "partial"
+    assert states["operator_learning_bundle"]["availability"] == "unavailable"
+    assert states["operator_learning_bundle"]["unavailable_reason"] == (
+        "path_projection_failed"
+    )
+    assert any(
+        item["path_id"] == "universe_family_calibration"
+        for item in partial["items"]
+    )
+
+    def fail_latest_universe(row, **kwargs):
+        if row["experiment_id"] == latest_universe_id:
+            raise ValueError("test latest projection failure")
+        return real_project(row, **kwargs)
+
+    monkeypatch.setattr(read_models, "_project_experiment", fail_latest_universe)
+    latest_failed = build_learning_contribution_projection()
+    latest_states = {
+        state["path_id"]: state for state in latest_failed["path_states"]
+    }
+    assert latest_states["universe_family_calibration"]["availability"] == (
+        "unavailable"
+    )
+
+
 def test_lco_projection_reports_protected_admission_readiness(
     tmp_path,
     monkeypatch,
@@ -205,7 +320,7 @@ def test_lco_projection_reports_protected_admission_readiness(
     monkeypatch.setattr(
         lifecycle,
         "trial_admission_gate_reason",
-        lambda _path_id: None,
+        lambda _path_id, **_kwargs: None,
     )
     from aletheia.learning.read_models import (
         build_learning_contribution_projection,
@@ -658,7 +773,9 @@ def test_lco_projection_prioritizes_influence_paths_when_window_is_full(
     # Part A: empty paper_influence_paths — the deployed configuration. A
     # measurement-supported path must still be visible, and the unmeasurable
     # filler path must be what gives up the slot.
-    monkeypatch.setattr(loader_mod, "load_config", lambda: AletheiaConfig())
+    monkeypatch.setattr(
+        loader_mod, "load_config", lambda **_kwargs: AletheiaConfig(),
+    )
 
     from aletheia.learning.read_models import build_learning_contribution_projection
 
@@ -676,7 +793,9 @@ def test_lco_projection_prioritizes_influence_paths_when_window_is_full(
     influence_cfg = AletheiaConfig(
         learning=LearningConfig(paper_influence_paths=["universe_family_calibration"])
     )
-    monkeypatch.setattr(loader_mod, "load_config", lambda: influence_cfg)
+    monkeypatch.setattr(
+        loader_mod, "load_config", lambda **_kwargs: influence_cfg,
+    )
 
     result_influence = build_learning_contribution_projection(limit=20)
     returned_ids_influence = {item["experiment_id"] for item in result_influence["items"]}

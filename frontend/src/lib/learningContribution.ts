@@ -12,13 +12,34 @@ export function deriveContributionViewState(input: {
   loading: boolean
   failed: boolean
   data?: LearningContributionProjection
+  pathId?: string
 }): ContributionViewState {
   if (input.loading) return 'loading'
-  if (input.failed || !input.data || input.data.availability === 'unavailable') {
+  if (!input.data || input.data.availability === 'unavailable') {
     return 'unavailable'
   }
-  if (input.data.items.length === 0) return 'empty'
-  if (input.data.data_freshness.state === 'stale') return 'stale'
-  if (input.data.availability === 'partial') return 'partial'
-  return input.data.items[0].measurement.state
+  const pathState = input.pathId
+    ? input.data.path_states.find(candidate => candidate.path_id === input.pathId)
+    : undefined
+  if (pathState?.availability === 'unavailable') return 'unavailable'
+  if (input.failed) return 'stale'
+  if (pathState?.state === 'empty') return 'empty'
+  if (pathState?.data_freshness.state === 'stale') return 'stale'
+  if (pathState?.availability === 'partial') return 'partial'
+  const item = input.pathId
+    ? input.data.items.find(candidate => candidate.path_id === input.pathId)
+    : input.data.items[0]
+  if (!item) return 'empty'
+  if (item.availability === 'unavailable') return 'unavailable'
+  if (item.data_freshness.state === 'stale') return 'stale'
+  if (item.availability === 'partial') return 'partial'
+  return item.measurement.state
+}
+
+export function measuredContributionPathIds(
+  data: LearningContributionProjection,
+): string[] {
+  return data.paths
+    .filter(path => path.measurement_supported)
+    .map(path => path.path_id)
 }

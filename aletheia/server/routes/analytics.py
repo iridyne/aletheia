@@ -1,6 +1,7 @@
 """Read-only analytics API routes."""
 from __future__ import annotations
 
+from copy import deepcopy
 import time
 from datetime import datetime, timedelta, timezone
 import json
@@ -1752,8 +1753,7 @@ def get_learning_funnel():
     }
 
 
-@router.get("/learning-contribution")
-def get_learning_contribution():
+def _compute_learning_contribution():
     """Read-only measured contribution plus compatibility activity aggregates.
 
     The ``lco-v1`` fields distinguish current measurement, integrity, operations
@@ -1891,3 +1891,51 @@ def get_learning_contribution():
             "projection_read_failed"
         )
     return {**legacy, **projection}
+
+
+_learning_contribution_cache: dict[tuple[str, str], tuple[float, dict]] = {}
+_learning_contribution_cache_lock = RLock()
+_LEARNING_CONTRIBUTION_CACHE_TTL_SEC = 30.0
+
+
+def _learning_contribution_monotonic() -> float:
+    return time.monotonic()
+
+
+@router.get("/learning-contribution")
+def get_learning_contribution(response: Response = None):
+    """Return the bounded owner projection with an explainable monotonic TTL."""
+    from aletheia.config.loader import get_data_dir
+
+    if response is None:
+        return _compute_learning_contribution()
+    started = _now_ms()
+    phases: dict[str, float] = {}
+    cache_key = (
+        "lco-v1",
+        str(get_data_dir()),
+    )
+    now_mono = _learning_contribution_monotonic()
+    with _learning_contribution_cache_lock:
+        cached = _learning_contribution_cache.get(cache_key)
+        if cached is not None and now_mono - cached[0] < _LEARNING_CONTRIBUTION_CACHE_TTL_SEC:
+            payload = deepcopy(cached[1])
+            phases["cache_hit"] = 0.0
+        else:
+            payload = None
+
+    if payload is None:
+        with _PhaseTimer(phases, "ledger"):
+            payload = _compute_learning_contribution()
+        with _learning_contribution_cache_lock:
+            current = _learning_contribution_cache.get(cache_key)
+            if current is None or current[0] <= now_mono:
+                _learning_contribution_cache[cache_key] = (
+                    _learning_contribution_monotonic(),
+                    deepcopy(payload),
+                )
+
+    phases["total"] = _now_ms() - started
+    if response is not None:
+        response.headers["Server-Timing"] = _format_server_timing(phases)
+    return payload

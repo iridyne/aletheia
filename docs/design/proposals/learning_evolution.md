@@ -632,9 +632,10 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-C17 | L2c | active Operator diagnostic Learning context is curated, current, advisory and manifest-bearing without granting treatment authority | implemented |
 
 Owner-facing contribution observability is governed by the separate `LCO-S01..02`, `LCO-B01..05`
-and `LCO-C01..06` claims in `learning_observability.md`. The bounded summary and default
-Contribution tab are implemented; `LCO-C03`, `LCO-C05` and `LCO-C06` remain missing for bounded
-detail/cache side-effect proof, full responsive accessibility and direct performance evidence.
+and `LCO-C01..06` claims in `learning_observability.md`. The bounded summary, multi-path
+Contribution selector, side-effect-free cached reads, current-surface responsive accessibility
+and direct Preview API performance evidence are implemented. Detail/pagination and the full
+workbench remain future slices.
 
 ## 13. Definition Of Positive Contribution
 
