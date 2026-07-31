@@ -127,6 +127,7 @@ def test_threads_get_different_connections(tmp_path, monkeypatch):
             # Keep both objects alive until the identity assertion. Storing only
             # id(conn) lets CPython reuse the first closed object's address.
             conns.append(conn)
+        ready.wait()
 
     t1 = threading.Thread(target=get_conn, args=(tmp_path / "t1.db",))
     t2 = threading.Thread(target=get_conn, args=(tmp_path / "t2.db",))
