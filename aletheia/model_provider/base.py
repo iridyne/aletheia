@@ -76,8 +76,17 @@ def _configured_provider_name(provider: Any) -> str:
     return resolved
 
 
-def _cost_metadata(provider: Any, *, mode: str | None = None) -> dict[str, Any]:
-    """Return explicit task-local accounting identity; never inspect the stack."""
+def _cost_metadata(
+    provider: Any, *, mode: str | None = None, request: Any = None
+) -> dict[str, Any]:
+    """Return explicit task-local accounting identity; never inspect the stack.
+
+    When `request` is provided, additionally reads
+    `_aletheia_would_block_observations` from it and merges those into the
+    metadata under a `would_block` key. This is the storage decision from
+    docs/research/tokenomics/phase2_design_decisions_2026-07-31.md:
+    would-block observations live in metadata_json, not a new column.
+    """
     metadata: dict[str, Any] = {"provider_class": type(provider).__name__}
     if mode:
         metadata[mode] = True
@@ -90,6 +99,10 @@ def _cost_metadata(provider: Any, *, mode: str | None = None) -> dict[str, Any]:
     if attribution:
         metadata.update(attribution)
         metadata["identity_source"] = "explicit_economic_context"
+    if request is not None:
+        observations = getattr(request, "_aletheia_would_block_observations", None)
+        if observations:
+            metadata["would_block"] = list(observations)
     return metadata
 
 
@@ -181,7 +194,7 @@ class ModelProvider:
                         "_aletheia_requested_model",
                         requested_model,
                     )
-                metadata = _cost_metadata(self)
+                metadata = _cost_metadata(self, request=cost_request)
                 if _ACTIVE_STRUCTURED_REQUEST.get() is not None:
                     metadata["structured"] = True
                 if _ACTIVE_STREAM_REQUEST.get() is not None:
@@ -298,7 +311,7 @@ class ModelProvider:
                                 raw_usage=None,
                                 error_type=type(exc).__name__,
                                 metadata={
-                                    **_cost_metadata(self, mode="structured"),
+                                    **_cost_metadata(self, mode="structured", request=request),
                                     "structured_direct": True,
                                 },
                             )
@@ -333,7 +346,7 @@ class ModelProvider:
                                 ) * 1000.0,
                                 raw_usage=None,
                                 metadata={
-                                    **_cost_metadata(self, mode="structured"),
+                                    **_cost_metadata(self, mode="structured", request=request),
                                     "structured_direct": True,
                                 },
                             )
@@ -393,7 +406,7 @@ class ModelProvider:
                                 raw_usage=final_usage,
                                 error_type=type(exc).__name__,
                                 metadata={
-                                    **_cost_metadata(self, mode="stream"),
+                                    **_cost_metadata(self, mode="stream", request=request),
                                     "stream_direct": True,
                                 },
                             )
@@ -423,7 +436,7 @@ class ModelProvider:
                                 ) * 1000.0,
                                 raw_usage=final_usage,
                                 metadata={
-                                    **_cost_metadata(self, mode="stream"),
+                                    **_cost_metadata(self, mode="stream", request=request),
                                     "stream_direct": True,
                                 },
                             )

@@ -581,6 +581,55 @@ export const api = {
     models: Array<Record<string, unknown>>
     tools: Array<Record<string, unknown>>
   }>('/economics/pricing'),
+  getEconomicsBudgets: (params?: {
+    scope?: 'system' | 'agent_run' | 'logical_agent' | 'provider' | 'provider_tier'
+    enabled_only?: boolean
+  }) => {
+    const qs = new URLSearchParams()
+    if (params?.scope) qs.set('scope', params.scope)
+    if (params?.enabled_only) qs.set('enabled_only', 'true')
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return fetchJson<{
+      budgets: Array<{
+        id: string
+        scope: string
+        subject: string | null
+        usd_cap: number
+        window: string
+        enabled: number
+        source: string
+        created_at: string
+        updated_at: string
+      }>
+    }>(`/economics/budgets${suffix}`)
+  },
+  getEconomicsBudgetsWouldBlock: (params?: {
+    days?: number
+    limit?: number
+    scope?: 'system' | 'agent_run' | 'logical_agent' | 'provider' | 'provider_tier'
+  }) => {
+    const qs = new URLSearchParams()
+    if (params?.days !== undefined) qs.set('days', String(params.days))
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit))
+    if (params?.scope) qs.set('scope', params.scope)
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return fetchJson<{
+      events: Array<Record<string, unknown> & {
+        would_block: Array<{
+          policy_id: string
+          scope: string
+          subject: string | null
+          window: string
+          usd_cap: number
+          spent_before_call_usd: number
+          projected_after_call_usd: number
+          over_by_usd: number
+        }>
+      }>
+      window_days: number
+      limit: number
+    }>(`/economics/budgets/would-block${suffix}`)
+  },
   pingModel: () => post<{ ok: boolean; latency_ms: number; model: string; response: string; error: string | null }>('/model/ping'),
   setModelProvider: (body: {
     provider: string; base_url?: string; protocol?: string; model?: string
