@@ -14,9 +14,10 @@ supersedes: []
 > Executable claim namespace: `LCO-*` in
 > `tests/specs/spec_learning_observability.py`.
 > Status: partially implemented. The bounded, GET-only
-> `/api/analytics/learning-contribution` owner summary and its default Learning
-> tab are implemented; the remaining drill-down APIs, caching/performance
-> contract and complete accessibility proof remain targets.
+> `/api/analytics/learning-contribution` owner summary, default Contribution tab,
+> current-summary cache/`Server-Timing`, measured-path selector, and current-surface
+> accessibility evidence are implemented. Dedicated drill-down APIs and the full
+> Experiments/Operations/history/detail workbench remain targets.
 > Historical sequencing alias: "Learning A2 Observability". Current normative
 > documents must use the canonical name above because `A2` has unrelated meanings
 > elsewhere in the repository.
@@ -80,7 +81,7 @@ surface look shipped.
 | Cohort inspection | Internal aggregate inspection exists | Bounded aggregate plus selected cluster detail |
 | Lifecycle inspection | Internal read function returns progress, recommendation and job health | Public sanitized projection |
 | Job health | Current and durable last-failure fields exist | Current, recovery and catch-up states remain separate |
-| Public Learning API | Bounded additive `lco-v1` summary at `/analytics/learning-contribution`; no detail/list family | Contribution summary implemented; experiment/health/detail GET endpoints remain targets |
+| Public Learning API | Bounded additive `lco-v1` summary at `/analytics/learning-contribution`; no dedicated LCO detail/list family. Legacy Settings experiment list/detail GETs use a different contract. | Contribution summary implemented; dedicated experiment/health/detail GET endpoints remain targets |
 | Learning UI | Contribution is the default tab, exposes every measurable path and preserves path-specific verdict/query states; legacy Dreaming, Knowledge Base and Reports remain | Experiments/Operations surfaces, detail/history and their accessibility proof remain targets |
 | Trial admission | Separate Settings POST exists, remains default-closed and is tunnel-token protected | Observability remains recommendation-only; no mutation action is rendered here. The separate legacy `/settings/autonomous-learning` master toggle is also tunnel-token protected. |
 
@@ -282,9 +283,10 @@ Current minimal slice:
   legacy query is named in `legacy_query_errors`; nullable counts remain `null`
   rather than being presented as genuine empty or zero activity.
 
-The optional `path_id`, `status`, `limit` and `offset` query contract, TTL cache
-and `Server-Timing` proof remain target work under `LCO-C03` and `LCO-C06`. The
-current server-side bound is fixed and cannot be enlarged by a client.
+The optional `path_id`, `status`, `limit` and `offset` query contract remains target work.
+The current fixed-bound summary already uses a 30-second monotonic process-local cache and emits
+`Server-Timing`; future endpoint-family cache and latency obligations remain scoped to those
+future slices. The current server-side bound cannot be enlarged by a client.
 
 Each item contains:
 
@@ -544,6 +546,10 @@ to satisfy performance evidence:
 - frontend polling: no faster than 30 seconds and only while the relevant Learning
   tab is visible.
 
+PR #506 recorded isolated Preview `:8791` evidence for the current summary: 37.290 ms cold and
+2.822 ms warm. Stable Runtime `:8788` evidence remains unavailable until an owning-runtime
+deployment and is not implied by that Preview measurement.
+
 ## 8. Learning Workbench Information Architecture
 
 The Contribution tab exposes every measurement-supported path through a labelled
@@ -735,13 +741,13 @@ states. This is adjacent UI honesty work, not contribution authority.
 | LCO-B03 | L2b | Current metric/cohort identity is separate from append-only historical verdict versions | implemented |
 | LCO-B04 | L2b | Current job status, last success, next due, sanitized durable last failure, watermark and catch-up due state remain distinct; raw stored errors never leave the backend | implemented |
 | LCO-C01 | L2c | Observability remains read-only; admission readiness is separate from owner-route authentication and every paper gate | implemented |
-| LCO-C02 | L2c | UI contribution state comes only from backend measurement facts; counts and PnL cannot imply effectiveness | partial — helper and Vitest proof exist; complete workbench does not |
-| LCO-C03 | L2c | Reads perform no writes/evaluation/lifecycle/authority action and blocking work stays off the event loop | implemented |
+| LCO-C02 | L2c | UI contribution state comes only from backend measurement facts; counts and PnL cannot imply effectiveness | partial — current Contribution verdict derivation is backend-only; Reports/PnL context labelling and remaining activity-surface honesty are incomplete |
+| LCO-C03 | L2c | Reads perform no writes, evaluation, lifecycle transition, or authority mutation and blocking work stays off the event loop | implemented |
 | LCO-S02 | L2a | LCO projection/routes have no Risk, Execution, exchange, secrets, permission or live imports | implemented |
 | LCO-B05 | L2b | consumer-wired, Settings-supported and measurement-supported remain separate path capabilities | implemented |
-| LCO-C04 | L2c | loading, genuine empty, unavailable, stale and partial states remain distinct; fetch failure never becomes zero/empty | partial — helper and Vitest proof exist for the current summary query only |
-| LCO-C05 | L2c | desktop/mobile layouts and keyboard/ARIA behavior preserve access to the current registry-backed Contribution surface | implemented; future table/drawer slices retain their own acceptance obligation |
-| LCO-C06 | L2c | server caps, monotonic TTL, `Server-Timing` and direct cold/warm latency evidence enforce the performance contract | implemented for current summary/list routes |
+| LCO-C04 | L2c | loading, genuine empty, unavailable, stale and partial states remain distinct; fetch failure never becomes zero/empty | partial — current Contribution query states are distinct, but optional operations failures collapse the projection and several legacy Learning queries still present failure as empty/null |
+| LCO-C05 | L2c | desktop/mobile layouts and native keyboard/label semantics preserve access to the current measured-path selector and Contribution summary | partial — component Vitest proof exists, but the Python executable claim still checks source/proof presence rather than running the UI behavior |
+| LCO-C06 | L2c | the current summary uses a monotonic TTL cache and emits explainable cold/cache-hit `Server-Timing` | implemented for the current summary route; immutable publication/order have adjacent tests, while future endpoint and stable-runtime latency slices retain separate obligations |
 
 Unimplemented claims remain strict xfail. A claim changes to `implemented` only
 after its placeholder is replaced by a behavioral test. Source-string presence
@@ -763,7 +769,7 @@ alone cannot make a behavioral claim GREEN.
 | Recommendation | `admit_trial` renders without a button or mutation invocation from the observability surface |
 | Path capability | Consumer/settings/measurement support booleans cannot collapse |
 | Empty/error honesty | Request failure is unavailable, not an empty cohort or zero count |
-| Performance | Limits enforced; cold/warm `:8788` measurements and `Server-Timing` recorded |
+| Performance | Current summary limits/cache/`Server-Timing` and cold/warm Preview evidence recorded; future endpoints and stable-runtime qualification retain separate proof |
 | Frontend | Typecheck, unit tests, desktop/mobile checks and `npm run build` pass |
 | Safety | Focused architecture test proves no Risk/Execution/exchange/live imports |
 

@@ -12,8 +12,8 @@ supersedes: []
 > Current fact: the shared measured lifecycle is implemented for
 > `universe_family_calibration`; all other declared
 > treatment hooks remain static and measurement-unsupported. The bounded
-> owner-facing `lco-v1` summary/default tab is partially implemented as recorded
-> in the separate observability Proposal. Production positive contribution is
+> owner-facing `lco-v1` summary and current Contribution surface are implemented;
+> the full workbench remains a target in the separate observability Proposal. Production positive contribution is
 > still an empirical result, not a support claim.
 > Scope: every Learning-adjacent producer, store, consumer, outcome source, scheduler,
 > report, learned ranker/filter, prompt channel, guard, advisory skill, sizing policy,
@@ -435,7 +435,8 @@ evidence never grants authority, and wrong-stage/wrong-hypothesis evidence remai
 
 - Score deltas are typed, bounded, and separately persisted.
 - The candidate trace records each hypothesis id and delta.
-- A guard block still registers all configured counterfactual outcome horizons.
+- A future measurement-supported Guard block must preserve registration and
+  settlement for every configured counterfactual outcome horizon.
 - Ranker learning failures return the static score, not a partially modified score.
 - Historical factor feedback is a learned filter: `hard_blocked`, `preferred`, and every future
   equivalent require clean-window evidence, an exposure, a prospective control, and a fallback.
@@ -570,6 +571,11 @@ operations and authority as four independent dimensions and exposes no mutation 
 These claims are target SDD. Each implementation batch must first add its claims with
 `status="missing"`, produce RED behavior tests, implement, then make them GREEN.
 
+Unless a claim explicitly governs unsupported-path behavior, its implementation status is
+evaluated over every path currently declared `measurement_supported`. A future path must satisfy
+all applicable claims before that registry capability can be enabled; declared but unsupported
+paths remain static and create no formal experiment, exposure, verdict, or authority identity.
+
 | Claim | Level | Requirement | Status |
 | --- | --- | --- | --- |
 | LE-S01 | L2a | hypothesis/exposure/experiment stores exist with stable ids | implemented |
@@ -584,7 +590,7 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B05 | L2b | stable assignment survives retries/restarts | implemented |
 | LE-B06 | L2b | every applied ranker delta stores before/after score and ids | implemented |
 | LE-B07 | L2b | every prompt decision stores its Learning manifest | implemented |
-| LE-B08 | L2b | blocked guard candidates continue shadow settlement | missing |
+| LE-B08 | L2b | a measurement-supported Guard block preserves every configured counterfactual outcome through settlement | missing — `ranker_learned_guard` remains measurement-unsupported/static, so this is not a UFC MVP gap |
 | LE-B09 | L2b | guard effectiveness consumes blocked shadow outcomes | implemented |
 | LE-B10 | L2b | sizing stores learned and baseline notional | implemented |
 | LE-B11 | L2b | missed scheduled windows catch up once and only once | implemented |
@@ -597,7 +603,7 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B18 | L2b | exit-policy advisor remains read-only with no settings or position-management consumer | implemented |
 | LE-B19 | L2b | automatic `block_*` recommendations enter guard shadow evaluation, not Risk Engine via category coercion | implemented |
 | LE-B20 | L2b | universe family calibration records clean prospective neutral/treatment exposures before score influence | implemented |
-| LE-B21 | L2b | concurrent policy/config changes version, stratify, pause, or invalidate affected experiments | partial — deterministic policy epochs persist and stratify current Universe exposures; unsupported paths create no exposures, and other prompt-content policy changes remain |
+| LE-B21 | L2b | every measurement-supported path versions and stratifies its declared effective behavior inputs; stale epoch/behavior evidence cannot authorize a new cohort | partial — UFC epoch/behavior primitives and stale-authority gates exist, but one executable current-path proof does not yet bind every declared UFC input through rotation and rejection |
 | LE-B22 | L2b | factor producer, Operator context, ranker trace, and exposure use the same stable `factor_key` identity | implemented |
 | LE-B23 | L2b | retrying one exposure dedup key stores one immutable influence record | implemented |
 | LE-B24 | L2b | a shadow cohort with no treatment applied is measurable but cannot produce a causal authority signal | implemented |
@@ -616,16 +622,16 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-C01 | L2c | no promotion without unique samples, time span, and outcome links | implemented |
 | LE-C02 | L2c | negative/unsafe holdout automatically demotes or refreezes | implemented |
 | LE-C03 | L2c | refreeze restores static baseline without deleting evidence | implemented |
-| LE-C04 | L2c | control arms retain all pre-existing safety checks | missing |
+| LE-C04 | L2c | control arms retain all pre-existing safety checks through the complete downstream pipeline | missing — UFC control retains the neutral allocator baseline and shared candidate pipeline, but full Risk/Execution-path proof is deliberately not claimed |
 | LE-C05 | L2c | Learning cannot change hard risk limits or execution authority | implemented |
-| LE-C06 | L2c | UI/API contribution status is derived from measured verdict, not counts | partial — alpha diagnostics separate raw events from unique cohorts and the default Contribution tab uses backend measurement facts; the complete owner workbench remains incomplete |
-| LE-C07 | L2c | full close→learn→expose→settle→promote→demote chain is causal | missing |
-| LE-C08 | L2c | factor hard block/preference demotes to static behavior after negative holdout | missing |
+| LE-C06 | L2c | UI/API contribution status is derived from measured verdict, not counts | partial — the current Contribution helper and Vitest prove verdict derivation, but the executable spec does not yet run that frontend behavior and broader workbench honesty remains under LCO claims |
+| LE-C07 | L2c | each measurement-supported path proves its source outcome→learned treatment→exposure→exact settlement→owner-admitted paper influence→negative/harm withdrawal→refreeze→static fallback chain end to end | missing — Phase 4 proves the causal lifecycle from a supplied UFC treatment onward, but not the preceding source-outcome→learned-treatment producer link |
+| LE-C08 | L2c | once Factor becomes measurement-supported, negative/invalid holdout restores the static disabled Factor behavior | missing — Factor authority is currently unavailable/static, not awaiting demotion; this is not a UFC MVP gap |
 | LE-C09 | L2c | market-observer Learning influence is separated from downstream ranker/operator influence | implemented |
-| LE-C10 | L2c | overlapping Learning channels cannot double-count one outcome as independent credit | partial — Observer and Operator persist separate bundle manifests and the common aggregator dedupes outcomes; controlled prompt exposure migration remains |
-| LE-C11 | L2c | data-quality or causal-link loss makes contribution unavailable and refreezes authority | partial — shared aggregator requests refreeze; consumer authority adapters remain |
+| LE-C10 | L2c | overlapping Learning channels cannot double-count one outcome as independent credit | partial — UFC rejects overlapping assignment/outcome identity and unsupported channels create no formal credit; cross-path arbitration is required before a second overlapping path becomes measurable |
+| LE-C11 | L2c | for every measurement-supported path, data-quality or causal-identity loss makes evidence non-authorizing and negative/invalid/harm evidence restores baseline and persists withdrawal | partial — UFC authority withdrawal and lifecycle persistence are proved for negative/harm evidence; one current-path proof still must join data-quality/causal loss to persisted withdrawal |
 | LE-C12 | L2c | negative/invalid family-calibration holdout restores neutral multiplier `1.0` | implemented |
-| LE-C13 | L2c | safety/operations tightening is never withheld or credited as Learning contribution | partial — epoch core enforces semantics; operator integration remains |
+| LE-C13 | L2c | safety/operations tightening is never withheld or credited as Learning contribution | partial — current safety controls are declared non-treatments and epoch core requires immediate application; production Operator/config integration remains absent |
 | LE-C14 | L2c | disabling autonomous Learning restores declared prompt-consumer baselines without removing market/safety context | implemented |
 | LE-C15 | L2c | stale policy-epoch verdicts cannot authorize a new cohort | implemented |
 | LE-C16 | L2c | measurement-unsupported Observer and Operator bundles keep the static prompt baseline and create no authority identity | implemented |

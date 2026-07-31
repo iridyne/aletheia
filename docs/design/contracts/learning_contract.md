@@ -160,9 +160,10 @@ loop contributes positively. Current behavior has these contract-relevant limita
   observer prompt bundles are measured exposure units.
 - learned trading guards and the advisory trust guard chain have different authority and must not
   be merged or reported as the same mechanism.
-- operator-loop safety/config changes can alter the same candidates/outcomes during a Learning
-  evaluation; current Universe exposures rotate durable policy epochs. Any
-  future measured path must do the same. These B-class behavior changes require a
+- safety/config changes can alter the same candidates/outcomes during a Learning evaluation;
+  current UFC exposures rotate durable policy epochs for their declared effective behavior inputs.
+  Any future measured path must register and version its own prompt, Operator, safety, and other
+  causal confounders before measurement support is enabled. These B-class behavior changes require a
   new policy epoch and a from-zero observation window before owner enablement; old-window evidence
   cannot authorize the new behavior. Safety tightening must never be withheld merely to make a
   cleaner experiment.

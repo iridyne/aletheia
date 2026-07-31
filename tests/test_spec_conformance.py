@@ -150,14 +150,15 @@ class TestConformanceStructure:
         # EX-04/#418 adds one RED tripwire for the missing join between the
         # experimental Live authority state and new-Proposal mode selection.
         # It keeps the gap visible without enabling autonomous live trading.
-        MAX_MISSING = 11
+        # LE-C07 now has an explicit RED tripwire for the source-outcome to
+        # learned-treatment producer link that precedes the proven Phase 4 E2E.
+        MAX_MISSING = 12
         # #153: 5 self-heal specs moved to partial (OL-C08, OL-S13, SH-S01, SH-C02, SH-B03).
-        # TASK-2026-022 adds six explicitly bounded Learning-evolution claims whose
-        # Phase-0 cores are implemented but whose consumer-wide persistence/UI/
-        # authority adapters remain later-phase work: LE-B16/B21 and
-        # LE-C06/C10/C11/C13. Keeping them partial is deliberate semantic honesty;
-        # the target contract names the exact remaining boundary for each claim.
-        MAX_PARTIAL = 14
+        # The Learning MVP reconciliation scopes conformance to currently
+        # measurement-supported paths without treating adjacent/source-linked
+        # tests as direct executable proof. LCO-C05 also remains partial until
+        # the executable claim runs its existing component-level behavior proof.
+        MAX_PARTIAL = 15
         MAX_SUPERSEDED = 1
 
         missing = counts.get("missing", 0)
