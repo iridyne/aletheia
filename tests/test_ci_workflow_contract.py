@@ -142,6 +142,8 @@ def test_python_regression_excludes_nightly_simulation_and_isolates_state() -> N
     assert "ALETHEIA_DATA_DIR=$RUNNER_TEMP" in commands
     assert "GITHUB_ENV" in commands
     assert "unzip" in commands
+    assert "python -m zipfile" in commands
+    assert "sudo" not in commands
 
 
 def test_superseded_pull_request_runs_are_cancelled() -> None:
@@ -180,6 +182,7 @@ def test_auto_merge_queues_ready_master_pull_requests_without_running_their_code
     enable_step = job["steps"][0]
     assert enable_step["name"] == "Queue pull request"
     assert enable_step["uses"] == GITHUB_SCRIPT_ACTION
+    assert enable_step["with"]["retries"] == "3"
     assert "enablePullRequestAutoMerge" in enable_step["with"]["script"]
     assert "PR_NODE_ID" in job["env"]
 
