@@ -647,6 +647,9 @@ _PROTECTED_PATH_PREFIXES = (
 
 _PROTECTED_MUTATION_PATHS = (
     ("/api/settings/learning/experiments/", "/admit-trial"),
+    ("/api/persistence/lessons/", "/accept"),
+    ("/api/persistence/lessons/", "/reject"),
+    ("/api/persistence/lessons/", "/archive"),
 )
 
 
