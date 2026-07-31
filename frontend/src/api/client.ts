@@ -1437,13 +1437,6 @@ export const api = {
     family_quota_by_regime: Record<string, Record<string, number>>;
   }>) => post<any>('/settings/universe', body),
 
-  // Strategy Factory config
-  updateStrategyFactoryConfig: (body: Partial<{
-    backtest_gate_enabled: boolean; sweep_enabled: boolean; sweep_max_variants: number;
-    event_driven_enabled: boolean; event_cooldown_minutes: number; event_min_score: number;
-    walk_forward_enabled: boolean; walk_forward_folds: number; walk_forward_min_bars: number;
-    high_trade_count_threshold: number; min_runtime_days_relaxed: number;
-  }>) => post<any>('/settings/strategy_factory', body),
   // Market data config
   updateMarketDataConfig: (body: Partial<{
     ccxt_exchange: string; ccxt_fallback: string;
@@ -1474,8 +1467,7 @@ export const api = {
   // Event trigger config
   updateEventTriggerConfig: (body: Partial<{
     enabled: boolean; price_move_pct_threshold: number; volume_surge_multiplier: number;
-    watch_universe_members: boolean; trigger_strategy_design: boolean;
-    strategy_design_min_move_pct: number;
+    watch_universe_members: boolean;
   }>) => post<any>('/settings/event_triggers', body),
 
   // Network / proxy config

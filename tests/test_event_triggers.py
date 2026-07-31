@@ -19,14 +19,12 @@ def _reset_cache():
     yield
 
 
-def _make_cfg(enabled=True, price_threshold=3.0, volume_mult=3.0, min_move=5.0):
+def _make_cfg(enabled=True, price_threshold=3.0, volume_mult=3.0):
     cfg = MagicMock()
     cfg.event_triggers.enabled = enabled
     cfg.event_triggers.price_move_pct_threshold = price_threshold
     cfg.event_triggers.volume_surge_multiplier = volume_mult
     cfg.event_triggers.watch_universe_members = True
-    cfg.event_triggers.trigger_strategy_design = True
-    cfg.event_triggers.strategy_design_min_move_pct = min_move
     return cfg
 
 
