@@ -118,6 +118,25 @@ CREATE TABLE IF NOT EXISTS viability_reports (
 );
 CREATE INDEX IF NOT EXISTS idx_viability_reports_scope_window
     ON viability_reports(scope, window_end DESC);
+
+-- Phase 2A scaffold (see docs/design/proposals/tokenomics_harness_phase_plan_2026-07-30.md).
+-- Idempotent CREATE. No writer wired yet; no check executed against it in the
+-- provider layer until Phase 2B ships the shadow-mode hook.
+CREATE TABLE IF NOT EXISTS economics_budgets (
+    id TEXT PRIMARY KEY,
+    scope TEXT NOT NULL CHECK(scope IN
+        ('system','agent_run','logical_agent','provider','provider_tier')),
+    subject TEXT,                 -- run_id / logical_agent name / provider name / tier; NULL for system-wide
+    usd_cap REAL NOT NULL CHECK(usd_cap > 0),
+    window TEXT NOT NULL CHECK(window IN ('daily','weekly','session')),
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+    source TEXT NOT NULL,         -- audit trail: 'cli:budget-set', 'system:seed', 'test'
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(scope, subject, window)
+);
+CREATE INDEX IF NOT EXISTS idx_economics_budgets_scope
+    ON economics_budgets(scope, subject, enabled);
 """
 
 _TOOL_COST_SELECT = """

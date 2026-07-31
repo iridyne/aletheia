@@ -164,6 +164,7 @@ def get_settings():
         "serenity": cfg.serenity.model_dump(mode="json"),
         "controller": cfg.controller.model_dump(mode="json"),
         "learning": cfg.learning.model_dump(mode="json"),
+        "economics": cfg.economics.model_dump(mode="json"),
         "learning_path_options": list(paper_influence_path_options()),
     }
 

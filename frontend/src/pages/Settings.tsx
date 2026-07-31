@@ -4349,8 +4349,21 @@ function EconomicsSnapshotCard() {
     queryFn: api.getEconomicsModelHealth,
     refetchInterval: 10_000,
   })
+  const { data: budgets } = useQuery({
+    queryKey: ['economics-budgets'],
+    queryFn: () => api.getEconomicsBudgets({ enabled_only: false }),
+    refetchInterval: 60_000,
+  })
+  const { data: wouldBlock } = useQuery({
+    queryKey: ['economics-would-block'],
+    queryFn: () => api.getEconomicsBudgetsWouldBlock({ days: 7, limit: 50 }),
+    refetchInterval: 30_000,
+  })
 
   const cooling = (modelHealth?.snapshot ?? []).filter(m => m.cooling_down)
+  const budgetList = budgets?.budgets ?? []
+  const enabledBudgetCount = budgetList.filter(b => b.enabled === 1).length
+  const wouldBlockCount = wouldBlock?.events?.length ?? 0
   const knownUsd = costs?.known_cost_subtotal_usd ?? 0
   const unknownCount = costs?.unknown_event_count ?? 0
   const eventCount = costs?.event_count ?? 0
@@ -4395,7 +4408,54 @@ function EconomicsSnapshotCard() {
           <span>Models cooling down</span>
           <input readOnly className="mono" value={String(cooling.length)} />
         </label>
+        <label className="settings-field">
+          <span>Declared budgets (enabled)</span>
+          <input readOnly className="mono" value={String(enabledBudgetCount)} />
+        </label>
+        <label className="settings-field">
+          <span>Would-block events (7d)</span>
+          <input readOnly className="mono" value={String(wouldBlockCount)} />
+        </label>
       </div>
+
+      {budgetList.length > 0 && (
+        <div style={{ marginBottom: '1rem' }}>
+          <p className="hint" style={{ marginBottom: '0.5rem' }}>
+            Declared budget policies (read-only; use{' '}
+            <code>uv run aletheia audit budget-set</code> to add or edit)
+          </p>
+          <table className="mono" style={{ width: '100%', fontSize: '0.85em' }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left' }}>Scope</th>
+                <th style={{ textAlign: 'left' }}>Subject</th>
+                <th style={{ textAlign: 'left' }}>Window</th>
+                <th style={{ textAlign: 'right' }}>USD cap</th>
+                <th style={{ textAlign: 'right' }}>Enabled</th>
+              </tr>
+            </thead>
+            <tbody>
+              {budgetList.map(b => (
+                <tr key={b.id}>
+                  <td>{b.scope}</td>
+                  <td>{b.subject ?? '—'}</td>
+                  <td>{b.window}</td>
+                  <td style={{ textAlign: 'right' }}>${b.usd_cap.toFixed(4)}</td>
+                  <td style={{ textAlign: 'right' }}>{b.enabled === 1 ? 'yes' : 'no'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {wouldBlockCount > 0 && (
+            <p className="hint" style={{ marginTop: '0.5rem' }}>
+              {wouldBlockCount} call(s) in the last 7 days would have breached a
+              budget. Shadow mode is on but no calls were blocked — see the
+              would-block observations in <code>runtime_cost_events.metadata_json</code>{' '}
+              for the exact policies triggered.
+            </p>
+          )}
+        </div>
+      )}
 
       {unknownCount > 0 && (
         <p className="hint" style={{ marginBottom: '1rem' }}>

@@ -17,6 +17,10 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
+from aletheia.economics.budgets import (
+    list_budgets,
+    list_recent_would_block_events,
+)
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.tracing import list_cost_summary, tracing_enabled
 from aletheia.economics.viability import (
@@ -134,6 +138,33 @@ def viability_reports(
 def model_health() -> dict:
     """Per-(provider, model) cooldown state from the fallback subsystem."""
     return {"snapshot": get_model_health_snapshot()}
+
+
+@router.get("/budgets")
+def budgets(
+    scope: Optional[str] = Query(
+        None,
+        pattern="^(system|agent_run|logical_agent|provider|provider_tier)$",
+    ),
+    enabled_only: bool = False,
+) -> dict:
+    """List declared budget policies (read-only; writers stay in the CLI)."""
+    rows = list_budgets(scope=scope, enabled_only=enabled_only)
+    return {"budgets": rows}
+
+
+@router.get("/budgets/would-block")
+def budgets_would_block(
+    days: int = Query(7, ge=1, le=90),
+    limit: int = Query(200, ge=1, le=5_000),
+    scope: Optional[str] = Query(
+        None,
+        pattern="^(system|agent_run|logical_agent|provider|provider_tier)$",
+    ),
+) -> dict:
+    """Recent shadow-mode observations of calls that would have been blocked."""
+    events = list_recent_would_block_events(days=days, limit=limit, scope=scope)
+    return {"events": events, "window_days": days, "limit": limit}
 
 
 @router.get("/pricing")

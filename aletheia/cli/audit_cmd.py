@@ -175,6 +175,83 @@ def tool_pricing_set(
     typer.echo(json.dumps(row, ensure_ascii=False, indent=2))
 
 
+@audit_app.command("budget-set")
+def budget_set(
+    scope: str = typer.Option(..., "--scope", help="One of: system, agent_run, logical_agent, provider, provider_tier."),
+    usd_cap: float = typer.Option(..., "--usd-cap", min=0.000001, help="USD ceiling for the window."),
+    window: str = typer.Option("daily", "--window", help="One of: daily, weekly, session."),
+    subject: Optional[str] = typer.Option(None, "--subject", help="Required unless scope=system. e.g. run_id / logical_agent name / provider name / tier."),
+    disabled: bool = typer.Option(False, "--disabled", help="Create the policy but leave it disabled. Defaults to enabled."),
+    source: str = typer.Option("cli:budget-set", "--source", help="Audit-trail label for who declared this policy."),
+):
+    """Declare a budget policy for the tokenomics harness (Phase 2 shadow mode)."""
+    from aletheia.economics.budgets import add_budget
+
+    row = add_budget(
+        scope=scope,
+        subject=subject,
+        usd_cap=usd_cap,
+        window=window,
+        enabled=not disabled,
+        source=source,
+    )
+    typer.echo(json.dumps(row, ensure_ascii=False, indent=2))
+
+
+@audit_app.command("budget-list")
+def budget_list(
+    scope: Optional[str] = typer.Option(None, "--scope", help="Restrict output to one scope."),
+    enabled_only: bool = typer.Option(False, "--enabled-only", help="Skip disabled policies."),
+    output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """List declared budget policies."""
+    from aletheia.economics.budgets import list_budgets
+
+    rows = list_budgets(scope=scope, enabled_only=enabled_only)
+    if output_json:
+        typer.echo(json.dumps(rows, ensure_ascii=False, indent=2))
+        return
+    if not rows:
+        typer.echo("No budget policies declared.")
+        return
+    header = f"{'ID':<24} {'SCOPE':<16} {'SUBJECT':<28} {'WINDOW':<8} {'USD_CAP':>10} {'ENABLED':>8}"
+    typer.echo(header)
+    typer.echo("-" * len(header))
+    for row in rows:
+        typer.echo(
+            f"{row['id']:<24} {row['scope']:<16} {str(row['subject'] or '-'): <28} "
+            f"{row['window']:<8} {float(row['usd_cap']):>10.4f} {'YES' if row['enabled'] else 'NO':>8}"
+        )
+
+
+@audit_app.command("budget-disable")
+def budget_disable(
+    budget_id: str = typer.Argument(..., help="Budget policy id from `audit budget-list`."),
+):
+    """Disable a budget policy without deleting it (history is preserved)."""
+    from aletheia.economics.budgets import set_budget_enabled
+
+    row = set_budget_enabled(budget_id=budget_id, enabled=False)
+    if row is None:
+        typer.echo(f"Unknown budget policy: {budget_id}")
+        raise typer.Exit(1)
+    typer.echo(json.dumps(row, ensure_ascii=False, indent=2))
+
+
+@audit_app.command("budget-enable")
+def budget_enable(
+    budget_id: str = typer.Argument(..., help="Budget policy id from `audit budget-list`."),
+):
+    """Re-enable a previously disabled budget policy."""
+    from aletheia.economics.budgets import set_budget_enabled
+
+    row = set_budget_enabled(budget_id=budget_id, enabled=True)
+    if row is None:
+        typer.echo(f"Unknown budget policy: {budget_id}")
+        raise typer.Exit(1)
+    typer.echo(json.dumps(row, ensure_ascii=False, indent=2))
+
+
 @audit_app.command("costs")
 def costs(
     days: int = typer.Option(7, "--days", min=1, help="Lookback window in days."),

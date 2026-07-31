@@ -1339,6 +1339,38 @@ class ControllerConfig(BaseModel):
     persistent_max_runs_lookback: int = 10
 
 
+class EconomicsConfig(BaseModel):
+    """Tokenomics harness configuration (Phase 2 scaffold; see #475).
+
+    All defaults preserve the current pre-tokenomics behaviour: nothing is
+    enabled, no budget declaration is enforced, no prompt header is
+    prepended. Operators opt in per phase via these flags.
+
+    - `enabled`: master switch. When False, every other flag here is
+      ignored — the tokenomics harness stays entirely dormant.
+    - `budgets_shadow_enabled`: turn on Phase 2B's shadow-mode
+      `would_block` observation on every LLM call. Requires `enabled`.
+      No enforcement even when True.
+    - `enforcement_mode`: Phase 3 decision surface. Default
+      `warn_only` means budget crossings are signals, never blocks.
+      `fallback_to_defaults` and `hard_block` are opt-in for
+      non-safety callers only; safety-relevant callers
+      (pi_trading_decision, risk_critic, paper_trader,
+      agent_shell/trading_decision) stay warn-only regardless.
+    - `harness_header_default_on`: Phase 5 feature flag. Off until an
+      ablation study (see docs/design/proposals/
+      tokenomics_harness_phase_plan_2026-07-30.md §4 Phase 5) clears
+      it. Not consumed yet.
+    """
+    enabled: bool = False
+    budgets_shadow_enabled: bool = False
+    enforcement_mode: str = Field(
+        default="warn_only",
+        pattern="^(warn_only|fallback_to_defaults|hard_block)$",
+    )
+    harness_header_default_on: bool = False
+
+
 class LearningConfig(BaseModel):
     """One default-closed configuration surface for paper Learning experiments."""
 
@@ -1383,3 +1415,4 @@ class AletheiaConfig(BaseModel):
     serenity: SerenityConfig = Field(default_factory=SerenityConfig)
     controller: ControllerConfig = Field(default_factory=ControllerConfig)
     learning: LearningConfig = Field(default_factory=LearningConfig)
+    economics: EconomicsConfig = Field(default_factory=EconomicsConfig)

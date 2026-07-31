@@ -173,6 +173,92 @@ def reset_model_health() -> None:
         _MODEL_HEALTH.clear()
 
 
+def _observe_would_block(
+    cfg,
+    request: ModelRequest,
+    provider: ModelProvider,
+    provider_name: str,
+) -> None:
+    """Attach Phase 2B-2 shadow-mode would-block observations to the request.
+
+    Runs before the fallback loop. Never raises: any failure is swallowed
+    so measurement cannot break the LLM call. Observations are stored on
+    the request object (rather than a ContextVar) because the request is
+    shared across all fallback attempts and any downstream broker loop,
+    where ContextVars set on the caller loop would not be visible.
+
+    Gated by ``EconomicsConfig.enabled and .budgets_shadow_enabled`` plus
+    the tracing kill switch. Off by default — no ledger row gets a
+    ``would_block`` key until an operator explicitly opts in.
+    """
+    try:
+        econ = getattr(cfg, "economics", None)
+        if econ is None or not econ.enabled or not econ.budgets_shadow_enabled:
+            return
+        # Repeat guard: skip when tracing itself is disabled — the resulting
+        # ledger row would be missing anyway, so a would_block observation
+        # against no persisted evidence would be misleading.
+        from aletheia.economics.tracing import tracing_enabled
+
+        if not tracing_enabled():
+            return
+        from aletheia.economics.budgets import check_would_block
+        from aletheia.economics.tracing import resolve_pricing_snapshot
+        from datetime import datetime, timezone
+
+        model = str(getattr(provider, "model", "") or "")
+        if not model:
+            return
+        now_iso = datetime.now(timezone.utc).isoformat()
+        pricing = resolve_pricing_snapshot(provider_name, model, now_iso)
+        if not pricing:
+            # No pricing snapshot means the ledger records cost_status='unknown';
+            # a hypothetical estimate would be dishonest here.
+            return
+        input_tokens_est = _estimate_input_tokens(request)
+        output_tokens_est = max(0, int(getattr(request, "max_tokens", 0) or 0))
+        input_rate = float(pricing.get("input_usd_per_million") or 0.0)
+        output_rate = float(pricing.get("output_usd_per_million") or 0.0)
+        estimated_cost_usd = (
+            input_tokens_est * input_rate / 1_000_000.0
+            + output_tokens_est * output_rate / 1_000_000.0
+        )
+        if not (estimated_cost_usd > 0):
+            return
+        try:
+            from aletheia.agent_runtime.run_context import (
+                current_agent_run_id,
+                current_economic_attribution,
+            )
+            run_id = current_agent_run_id()
+            attribution = current_economic_attribution()
+            logical_agent = attribution.get("logical_agent") if attribution else None
+        except Exception:
+            run_id = None
+            logical_agent = None
+        observations = check_would_block(
+            estimated_cost_usd=estimated_cost_usd,
+            run_id=run_id,
+            logical_agent=logical_agent,
+            provider=provider_name,
+        )
+        if observations:
+            setattr(
+                request, "_aletheia_would_block_observations", observations
+            )
+    except Exception as exc:  # noqa: BLE001 — observation must never break inference
+        logger.debug("would-block observation failed silently: %s", exc)
+
+
+def _estimate_input_tokens(request: ModelRequest) -> int:
+    """Character-count / 4 heuristic; conservative enough for shadow mode."""
+    chars = len(request.system or "")
+    for message in request.messages or []:
+        chars += len(str(message.get("role") or ""))
+        chars += len(str(message.get("content") or ""))
+    return max(1, chars // 4)
+
+
 async def _candidate_models(provider_name: str, provider: ModelProvider) -> list[str]:
     cfg = load_config()
     pcfg = cfg.models.providers.get(provider_name)
@@ -241,6 +327,7 @@ async def complete_with_fallback(
     cfg = load_config()
     resolved_provider_name = provider_name or cfg.models.default_provider
     provider = provider or provider_router.get_provider(resolved_provider_name)
+    _observe_would_block(cfg, request, provider, resolved_provider_name)
     models = await _candidate_models(resolved_provider_name, provider)
     if not models:
         return await brokered_complete(resolved_provider_name, provider, request)

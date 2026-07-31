@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from aletheia.economics.budgets import add_budget
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.tracing import add_pricing_snapshot, add_tool_cost_profile
 from aletheia.model_provider.fallback import reset_model_health
@@ -317,6 +318,140 @@ async def test_pricing_empty(client):
     data = resp.json()
     assert data["models"] == []
     assert data["tools"] == []
+
+
+# ── /api/economics/budgets ───────────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_budgets_empty(client):
+    resp = await client.get("/api/economics/budgets")
+    assert resp.status_code == 200
+    assert resp.json()["budgets"] == []
+
+
+@pytest.mark.anyio
+async def test_budgets_returns_declared_policies(client):
+    add_budget(scope="system", subject=None, usd_cap=10.0, window="daily")
+    add_budget(
+        scope="logical_agent",
+        subject="market_observer",
+        usd_cap=1.0,
+        window="daily",
+    )
+
+    resp = await client.get("/api/economics/budgets")
+    assert resp.status_code == 200
+    rows = resp.json()["budgets"]
+    assert len(rows) == 2
+
+
+@pytest.mark.anyio
+async def test_budgets_scope_filter(client):
+    add_budget(scope="system", subject=None, usd_cap=10.0, window="daily")
+    add_budget(
+        scope="logical_agent",
+        subject="market_observer",
+        usd_cap=1.0,
+        window="daily",
+    )
+
+    resp = await client.get("/api/economics/budgets?scope=logical_agent")
+    assert resp.status_code == 200
+    rows = resp.json()["budgets"]
+    assert len(rows) == 1
+    assert rows[0]["subject"] == "market_observer"
+
+
+@pytest.mark.anyio
+async def test_budgets_enabled_only(client):
+    add_budget(
+        scope="system", subject=None, usd_cap=10.0, window="daily", enabled=False
+    )
+    resp = await client.get("/api/economics/budgets?enabled_only=true")
+    assert resp.status_code == 200
+    assert resp.json()["budgets"] == []
+
+
+# ── /api/economics/budgets/would-block ───────────────────────────────────────
+
+
+def _seed_would_block_event(
+    db,
+    *,
+    event_id: str,
+    observations: list[dict],
+    scope: str | None = None,
+) -> None:
+    now = _now()
+    metadata = {"would_block": observations}
+    db.execute(
+        """INSERT INTO runtime_cost_events (
+            id,event_type,run_id,call_id,provider,model_or_tool,attempt_index,status,
+            started_at,finished_at,usage_json,estimated_cost_usd,currency,cost_status,
+            metadata_json,created_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            event_id, "llm", None, event_id, "test", "model", 0, "success",
+            now, now, "{}", 0.1, "USD", "known",
+            __import__("json").dumps(metadata), now,
+        ),
+    )
+
+
+@pytest.mark.anyio
+async def test_budgets_would_block_empty(client):
+    resp = await client.get("/api/economics/budgets/would-block")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["events"] == []
+    assert body["window_days"] == 7
+
+
+@pytest.mark.anyio
+async def test_budgets_would_block_returns_events_with_observations(client):
+    from aletheia.storage.sqlite import get_db
+
+    _seed_would_block_event(
+        get_db(),
+        event_id="wb-1",
+        observations=[
+            {"policy_id": "p1", "scope": "system", "usd_cap": 1.0,
+             "spent_before_call_usd": 0.5, "projected_after_call_usd": 1.2,
+             "over_by_usd": 0.2, "subject": None, "window": "daily"}
+        ],
+    )
+
+    resp = await client.get("/api/economics/budgets/would-block?days=7")
+    assert resp.status_code == 200
+    events = resp.json()["events"]
+    assert len(events) == 1
+    assert events[0]["would_block"][0]["policy_id"] == "p1"
+
+
+@pytest.mark.anyio
+async def test_budgets_would_block_scope_filter(client):
+    from aletheia.storage.sqlite import get_db
+
+    _seed_would_block_event(
+        get_db(),
+        event_id="sys-wb",
+        observations=[{"policy_id": "p_sys", "scope": "system"}],
+    )
+    _seed_would_block_event(
+        get_db(),
+        event_id="la-wb",
+        observations=[{"policy_id": "p_la", "scope": "logical_agent"}],
+    )
+
+    resp = await client.get("/api/economics/budgets/would-block?scope=logical_agent")
+    assert resp.status_code == 200
+    events = resp.json()["events"]
+    assert len(events) == 1
+    assert events[0]["would_block"][0]["policy_id"] == "p_la"
+
+
+# ── /api/economics/pricing ───────────────────────────────────────────────────
 
 
 @pytest.mark.anyio
