@@ -544,6 +544,20 @@ Primary executable claims:
 - `tests/specs/spec_learning_observability.py` (`LCO-*`, target/missing)
 - `tests/e2e/test_pipeline_feedback_loop.py`
 - `tests/e2e/test_pipeline_guard_promotion.py`
+- `tests/e2e/test_learning_paper_lifecycle.py`
+
+The isolated Paper Learning lifecycle E2E uses the real Universe score consumer, canonical full-arm
+registration seam, cost-aware settler, contribution evaluator, protected owner admission route,
+unfiltered 10% paper assignment stream, v3 cluster aggregation with selected and dropped members,
+harm evaluator, lifecycle refreeze and static fallback. A shared deterministic test clock advances
+event time without sleeping; only external market
+observation I/O is replaced. The test proves production timestamps remain causally ordered across a
+real seven-day evidence window and that no proposal, risk decision, order, fill, position or paper
+account event is created. The adjacent Universe pipeline spec locks the service-to-registration
+wiring with the full scored arm and selected subset. This is separate from and does not modify the
+frozen active-mainline Golden Path. It proves causal plumbing and safety fallback, not positive
+contribution, profitability, Live readiness or admission eligibility for the production
+qualification cohort.
 
 Important tripwires:
 
