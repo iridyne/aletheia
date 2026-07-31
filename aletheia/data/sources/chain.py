@@ -80,8 +80,10 @@ class FallbackChainProvider:
 
         eligible = []
         for provider in providers:
-            venue = getattr(provider, "venue_name", None)
-            if venue and not is_venue_available(venue):
+            # Read only a provider class declaration. Mock instances fabricate
+            # arbitrary attributes, which must not turn them into a venue adapter.
+            venue = getattr(type(provider), "venue_name", None)
+            if isinstance(venue, str) and venue and not is_venue_available(venue):
                 logger.info("market-data fallback skipping cooling venue %s", venue)
                 continue
             eligible.append(provider)

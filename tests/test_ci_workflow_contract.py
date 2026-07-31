@@ -124,6 +124,7 @@ def test_review_checks_cover_each_language_without_release_builds() -> None:
     assert "npm run lint" in commands
     assert "npm test" in commands
     assert "npx tsc -b" in commands
+    assert "build-essential" in commands
     assert "cargo test --locked --all-targets" in commands
     assert "cargo build" not in commands
 
