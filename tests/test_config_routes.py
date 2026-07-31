@@ -62,6 +62,29 @@ async def test_get_inference_broker_metrics_is_sanitized(client):
 
 
 @pytest.mark.anyio
+async def test_economics_shadow_settings_are_explicit_and_default_off(client):
+    settings = (await client.get("/api/settings")).json()
+    assert settings["economics"] == {
+        "enabled": False,
+        "budgets_shadow_enabled": False,
+        "enforcement_mode": "warn_only",
+        "harness_header_default_on": False,
+    }
+
+    enabled = await client.post("/api/settings/economics", json={
+        "enabled": True,
+        "budgets_shadow_enabled": True,
+    })
+    assert enabled.status_code == 200
+    assert enabled.json()["economics"]["budgets_shadow_enabled"] is True
+
+    disabled = await client.post("/api/settings/economics", json={"enabled": False})
+    assert disabled.status_code == 200
+    assert disabled.json()["economics"]["enabled"] is False
+    assert disabled.json()["economics"]["budgets_shadow_enabled"] is False
+
+
+@pytest.mark.anyio
 async def test_set_model_provider(client):
     resp = await client.post("/api/settings/model", json={
         "provider": "openai_compatible",
