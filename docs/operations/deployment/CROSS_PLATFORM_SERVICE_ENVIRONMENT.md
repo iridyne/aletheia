@@ -27,6 +27,13 @@ can run the same command.
 3. stable fnm, Volta, asdf, mise, Homebrew, or `/usr/local` locations
 4. literal `node`, so process startup still produces an explicit audited error
 
+`operator_shell_root()` also supports:
+
+5. `ALETHEIA_OPERATOR_SHELL_ROOT` (absolute path to the local operator-shell checkout)
+
+This is a scheme-B layout compatibility knob: when set, gateway supervision starts the
+TS operator process from that directory instead of `<repo>/operator-shell`.
+
 The macOS fallback deliberately uses fnm's `aliases/default` path, not a
 `fnm_multishells` path created for one terminal session.
 
