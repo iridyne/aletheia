@@ -240,6 +240,36 @@ async def test_guard_candidate_promote_rejects_missing_guard(client):
 
 
 @pytest.mark.anyio
+async def test_guard_reads_fail_with_stable_unavailable_response(client, monkeypatch):
+    import aletheia.knowledge.guards as guards
+    import aletheia.analytics.guard_effectiveness as guard_effectiveness
+
+    monkeypatch.setattr(
+        guards,
+        "load_trading_guards",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("private/path must not leak")
+        ),
+    )
+
+    for path in ("/api/knowledge/guards", "/api/knowledge/guard-candidates"):
+        response = await client.get(path)
+        assert response.status_code == 503
+        assert response.json() == {"detail": "guard_read_failed"}
+        assert "private/path" not in response.text
+
+    monkeypatch.setattr(
+        guard_effectiveness,
+        "compute_guard_stats",
+        lambda: (_ for _ in ()).throw(RuntimeError("private/path must not leak")),
+    )
+    response = await client.get("/api/knowledge/guards/stats")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "guard_stats_read_failed"}
+    assert "private/path" not in response.text
+
+
+@pytest.mark.anyio
 async def test_learning_funnel_reports_contradictions(client):
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import insert_knowledge_item

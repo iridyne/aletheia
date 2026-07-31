@@ -13,7 +13,7 @@ import { Badge, Button, Card, CardHeader, Meter, StatusText } from '../component
 import type { StatusTone } from '../components/ui'
 import { fmtNum, fmtSigned, humanize, fmtTimestamp } from '../lib/format'
 import { guardActivationConfirmation, guardEffectText, type GuardRow } from '../lib/guards'
-import { deriveContributionViewState, measuredContributionPathIds } from '../lib/learningContribution'
+import { authorityLabel, deriveContributionViewState, measuredContributionPathIds } from '../lib/learningContribution'
 
 /**
  * Learning — measured contribution first, then the memory & evolution surfaces.
@@ -256,11 +256,12 @@ function ContributionTab() {
         </Card>
 
         <Card>
-          <CardHeader title="Lifecycle boundary" meta="Recommendation only · no mutation authority" />
+          <CardHeader title="Lifecycle boundary" meta="Read-only inspection · treatment authority shown separately" />
           <div className="lco-facts">
             <ContributionRow label="Recommendation" value={humanize(lifecycle.recommended_action)} />
             <ContributionRow label="Paper influence" value={data.operations?.config.paper_influence_enabled ? 'Enabled' : 'Disabled'} />
-            <ContributionRow label="Authority" value={lifecycle.authority_enabled ? 'Enabled' : 'Read only'} />
+            <ContributionRow label="Authority" value={authorityLabel(lifecycle.authority_enabled, lifecycle.authority_block_reason)} />
+            <ContributionRow label="Authority reason" value={humanize(lifecycle.authority_block_reason || 'authority granted')} />
             <ContributionRow label="Mutation available" value={lifecycle.mutation_available ? 'Yes' : 'No'} />
           </div>
           <p className="lco-note">
@@ -518,7 +519,7 @@ function KnowledgeTab() {
   const [selectedLesson, setSelectedLesson] = useState<LessonRow | null>(null)
   const [selectedGuard, setSelectedGuard] = useState<GuardRow | null>(null)
   const active = KB_TABS.find(t => t.key === tab)!
-  const { data = [] } = useQuery({ queryKey: ['knowledge', tab], queryFn: active.fn })
+  const { data = [], isError } = useQuery({ queryKey: ['knowledge', tab], queryFn: active.fn })
   const isLessons = tab === 'lessons'
   const isGuards = tab === 'guards'
   const isGuardCandidates = tab === 'guardCandidates'
@@ -573,7 +574,9 @@ function KnowledgeTab() {
         ))}
       </div>
       <Card>
-        {isLessons ? (
+        {isError ? (
+          <div role="alert" className="text-error text-sm">{active.label} unavailable. The read failed; this is not an empty collection.</div>
+        ) : isLessons ? (
           <DataTable data={rows as LessonRow[]} columns={lessonColumns} onRowClick={setSelectedLesson} emptyMessage="No lessons yet." />
         ) : isGuardRows ? (
           <DataTable

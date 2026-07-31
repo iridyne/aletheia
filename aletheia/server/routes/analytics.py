@@ -1764,6 +1764,7 @@ def _compute_learning_contribution():
     from aletheia.learning.control import get_learning_job_health, job_health_view
 
     db = get_db()
+    legacy_query_errors: dict[str, str] = {}
 
     # Exposure counts by path_id
     exposures_by_path: list[dict] = []
@@ -1781,7 +1782,7 @@ def _compute_learning_contribution():
                 "latest_exposed_at": r["latest_exposed_at"],
             })
     except Exception:
-        pass
+        legacy_query_errors["exposures_by_path"] = "read_failed"
 
     # Verdict distribution — keyed by the actual `verdict` column (not `classification`).
     # Schema errors surface in the `error` key (not silently as total=0).
@@ -1803,6 +1804,7 @@ def _compute_learning_contribution():
     except Exception:
         verdicts_error = "read_failed"
         total_verdicts = None  # type: ignore[assignment]
+        legacy_query_errors["verdicts"] = "read_failed"
 
     # Experiment stage distribution
     experiments_by_stage: list[dict] = []
@@ -1817,20 +1819,21 @@ def _compute_learning_contribution():
                 "n": int(r["n"]),
             })
     except Exception:
-        pass
+        legacy_query_errors["experiments_by_stage"] = "read_failed"
 
     # Lifecycle events written (non-zero = lifecycle controller is active)
-    lifecycle_event_n = 0
+    lifecycle_event_n: int | None = 0
     try:
         lifecycle_event_n = int(
             db.execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0]
         )
     except Exception:
-        pass
+        lifecycle_event_n = None
+        legacy_query_errors["lifecycle_event_n"] = "read_failed"
 
     # authority_applied rate (treatment applied vs total treatment exposures)
-    authority_applied_n = 0
-    total_treatment_n = 0
+    authority_applied_n: int | None = 0
+    total_treatment_n: int | None = 0
     try:
         r = db.execute(
             "SELECT COUNT(*) total, "
@@ -1841,7 +1844,9 @@ def _compute_learning_contribution():
             total_treatment_n = int(r["total"] or 0)
             authority_applied_n = int(r["applied"] or 0)
     except Exception:
-        pass
+        authority_applied_n = None
+        total_treatment_n = None
+        legacy_query_errors["authority_applied"] = "read_failed"
 
     # Job health for the four key learning jobs
     job_health: dict[str, dict] = {}
@@ -1872,9 +1877,14 @@ def _compute_learning_contribution():
         "authority_applied": {
             "treatment_n": total_treatment_n,
             "applied_n": authority_applied_n,
-            "applied_rate": round(authority_applied_n / total_treatment_n, 4) if total_treatment_n else None,
+            "applied_rate": (
+                round(authority_applied_n / total_treatment_n, 4)
+                if authority_applied_n is not None and total_treatment_n
+                else None
+            ),
         },
         "job_health": job_health,
+        "legacy_query_errors": legacy_query_errors,
     }
     try:
         from aletheia.learning.read_models import (
@@ -1884,11 +1894,17 @@ def _compute_learning_contribution():
         projection = build_learning_contribution_projection()
     except Exception:
         from aletheia.learning.read_models import (
+            configured_learning_stale_after_sec,
             unavailable_learning_contribution_projection,
         )
 
+        try:
+            stale_after_sec = configured_learning_stale_after_sec()
+        except Exception:
+            stale_after_sec = None
         projection = unavailable_learning_contribution_projection(
-            "projection_read_failed"
+            "projection_read_failed",
+            stale_after_sec=stale_after_sec,
         )
     return {**legacy, **projection}
 

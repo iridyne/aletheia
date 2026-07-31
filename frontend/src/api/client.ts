@@ -11,7 +11,7 @@ export interface LearningContributionProjection {
   data_freshness: {
     last_evaluated_at: string | null
     age_sec: number | null
-    stale_after_sec: number
+    stale_after_sec: number | null
     state: 'fresh' | 'stale' | 'not_available' | 'unavailable'
   }
   paths: Array<{
