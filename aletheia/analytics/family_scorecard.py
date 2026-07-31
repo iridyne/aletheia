@@ -78,17 +78,20 @@ def compute_family_scorecard() -> list[dict]:
             hours = (closed - opened).total_seconds() / 3600.0
             f["total_hold_hours"] += hours
 
-    # Count shadow trades per family
-    shadow_rows = db.execute(
-        "SELECT scanner_family, count(*) as cnt "
-        "FROM shadow_trades WHERE scanner_family IS NOT NULL "
-        "GROUP BY scanner_family"
-    ).fetchall()
+    # Count shadow candidates per family, deduped by outcome_candidate_key so
+    # long-lived candidates (many re-scans, same identity) are not over-counted.
+    # The window matches the shadow_trades retention (90 days).
+    from aletheia.counterfactual.trades import list_deduped_shadows
+
+    shadow_rows = list_deduped_shadows(
+        days=90,
+        columns=("scanner_family",),
+    )
     for sr in shadow_rows:
-        family = sr["scanner_family"] or "unknown"
+        family = sr.get("scanner_family") or "unknown"
         if family not in families:
             families[family] = _empty_family(family)
-        families[family]["shadow_count"] = sr["cnt"]
+        families[family]["shadow_count"] += 1
 
     # Compute final metrics
     result = []
