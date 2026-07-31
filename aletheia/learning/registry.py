@@ -173,5 +173,10 @@ def supported_paper_influence_path_ids() -> frozenset[str]:
     return frozenset(
         path.path_id
         for path in LEARNING_PATHS
-        if path.is_learning_treatment and path.consumer_wired and path.settings_supported
+        if (
+            path.is_learning_treatment
+            and path.consumer_wired
+            and path.settings_supported
+            and path.measurement_supported
+        )
     )

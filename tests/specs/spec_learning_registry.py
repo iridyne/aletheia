@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 from pathlib import Path
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
@@ -76,15 +77,34 @@ def test_learning_behavior_paths_are_declared_with_safe_fallbacks():
     assert fpt.overlap_group == "filter_parameter"
     assert supported_paper_influence_path_ids() == {
         "universe_family_calibration",
-        "observer_advisory_bundle",
-        "ranker_case_score",
-        "ranker_memo_score",
-        "ranker_factor_filter",
-        "ranker_learned_guard",
         "operator_learning_bundle",
-        "risk_lesson_constraint",
-        "persona_sizing",
     }
+
+
+def test_paper_influence_support_requires_every_capability(monkeypatch):
+    from aletheia.learning import registry
+    from aletheia.learning.registry import LearningPath
+
+    supported = LearningPath(
+        path_id="supported",
+        producer="producer",
+        consumer="consumer",
+        authority="paper authority",
+        allowed_effects=("score_adjustment",),
+        overlap_group="test",
+        outcome_source="settled outcome",
+        fallback="static fallback",
+        measurement_supported=True,
+    )
+    monkeypatch.setattr(registry, "LEARNING_PATHS", (
+        supported,
+        replace(supported, path_id="not_treatment", is_learning_treatment=False),
+        replace(supported, path_id="consumer_unwired", consumer_wired=False),
+        replace(supported, path_id="settings_unsupported", settings_supported=False),
+        replace(supported, path_id="measurement_unwired", measurement_supported=False),
+    ))
+
+    assert registry.supported_paper_influence_path_ids() == {"supported"}
 
 
 @spec_claim(SpecClaim(
@@ -101,11 +121,13 @@ def test_learning_settings_uses_registry_backed_path_checkboxes():
     section = settings[start:end]
     assert 'type="checkbox"' in section
     assert "learning_path_options" in settings
-    # Status is rendered tri-value (supported / consumer_unwired / authority_unwired)
+    # Every backend capability state has a truthful, distinct UI label.
     assert "Consumer unwired" in section
+    assert "Measurement unwired" in section
     assert "Authority unwired" in section
     assert ".split(',')" not in section
     assert "consumer_unwired" in client
+    assert "measurement_unwired" in client
 
 
 @spec_claim(
