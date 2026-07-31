@@ -80,53 +80,30 @@ class AnalyzeRequest(BaseModel):
 async def analyze_news(news_id: str, req: AnalyzeRequest = AnalyzeRequest()):
     _ensure_db()
     db = get_db()
-    row = db.execute("SELECT * FROM news_items WHERE id = ?", (news_id,)).fetchone()
+    row = db.execute("SELECT id FROM news_items WHERE id = ?", (news_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="News item not found")
 
-    item = dict(row)
-    title = item.get("title", "")
-    summary = item.get("summary", "")
+    from aletheia.data.news_analyzer import analyze_one_item
+    result = await analyze_one_item(news_id)
 
-    # #85 fix: llm_complete returns a (content, error) tuple. The previous
-    # code assigned the whole tuple to `analysis` and serialized it as a JSON
-    # array in the response — ugly and misleading. Unpack and surface the
-    # content OR a friendly error string.
-    try:
-        from aletheia.agents.helpers import llm_complete
-        prompt = (
-            f"Analyze this crypto news for trading impact:\n"
-            f"Title: {title}\n"
-            f"Summary: {summary}\n\n"
-            f"Provide a brief (2-3 sentence) impact assessment for crypto markets. "
-            f"Focus on: affected assets, direction of impact, and confidence level."
-        )
-        content, error = await llm_complete("Market impact analysis", prompt)
-        if error:
-            logger.info("news analysis: llm returned error: %s", error)
-            analysis = f"Analysis unavailable — {error}"
-        else:
-            analysis = content or "Analysis unavailable — model returned empty response."
-    except Exception as e:
-        logger.warning("LLM analysis failed: %s", e)
-        analysis = "Analysis unavailable — model provider not configured or unreachable."
-
-    # #110 fix: research_worker consumes news_items with status='analyzed'
-    # (aletheia/agents/research_worker.py:102). Setting status='reviewed' here
-    # meant the LLM's impact analysis never reached the research pipeline. The
-    # user-facing status column stays honest — a row that was auto-analysed by
-    # the LLM IS the 'analyzed' state; NewsIntel UI already knows this filter
-    # bucket after #168.
-    db.execute(
-        "UPDATE news_items SET status = ? WHERE id = ?",
-        ("analyzed", news_id),
-    )
-    db.commit()
-
+    if result["success"]:
+        item = result["item"]
+        return {
+            "news_id": news_id,
+            "success": True,
+            "status": item["status"],
+            "sentiment": item.get("sentiment"),
+            "relevance_score": item.get("relevance_score"),
+            "impact_summary": item.get("impact_summary"),
+            "symbols_mentioned": item.get("symbols_mentioned") or [],
+            "analyzed_at": item.get("analyzed_at"),
+        }
     return {
         "news_id": news_id,
-        "analysis": analysis,
-        "analyzed_at": datetime.now(timezone.utc).isoformat(),
+        "success": False,
+        "status": result["status"],
+        "retry_eligible": result.get("retry_eligible", False),
     }
 
 
