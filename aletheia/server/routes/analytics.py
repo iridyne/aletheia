@@ -1625,6 +1625,7 @@ def get_learning_funnel():
     """
     from aletheia.storage.sqlite import get_db
     db = get_db()
+    query_errors: dict[str, str] = {}
 
     # Full-table item_type distribution
     type_total: list[dict] = []
@@ -1644,7 +1645,7 @@ def get_learning_funnel():
             cnt[r["item_type"]] += 1
         pi_window_30 = [{"item_type": k, "count": v} for k, v in cnt.most_common()]
     except Exception:
-        pass
+        query_errors["pi_guards_window"] = "read_failed"
 
     # Most recent 20 (what PI's lessons-window sees)
     pi_window_20: list[dict] = []
@@ -1656,10 +1657,15 @@ def get_learning_funnel():
             cnt20[r["item_type"]] += 1
         pi_window_20 = [{"item_type": k, "count": v} for k, v in cnt20.most_common()]
     except Exception:
-        pass
+        query_errors["pi_lessons_window"] = "read_failed"
 
     # ps_lessons summary (status + freshness)
-    ps_summary: dict = {"total": 0, "by_status": [], "latest_created_at": None}
+    ps_summary: dict = {
+        "availability": "available",
+        "total": 0,
+        "by_status": [],
+        "latest_created_at": None,
+    }
     try:
         ps_summary["total"] = int(db.execute("SELECT COUNT(*) FROM ps_lessons").fetchone()[0])
         for r in db.execute("SELECT status, COUNT(*) n FROM ps_lessons GROUP BY status"):
@@ -1668,16 +1674,23 @@ def get_learning_funnel():
             "SELECT MAX(created_at) FROM ps_lessons"
         ).fetchone()[0]
     except Exception:
-        pass
+        ps_summary = {
+            "availability": "unavailable",
+            "total": None,
+            "by_status": None,
+            "latest_created_at": None,
+        }
+        query_errors["ps_lessons"] = "read_failed"
 
     # Serenity opportunities active count (already directly consumed by PI; useful as reference)
-    serenity_active = 0
+    serenity_active: int | None = 0
     try:
         serenity_active = int(db.execute(
             "SELECT COUNT(*) FROM serenity_opportunities WHERE status='active'"
         ).fetchone()[0])
     except Exception:
-        pass
+        serenity_active = None
+        query_errors["serenity_opportunities"] = "read_failed"
 
     # Layer3 actual visibility: what PI really reads each cycle.
     # L-Bug-A fix (b9ad957): layer3 lessons = trade_case_study (not the old
@@ -1692,6 +1705,7 @@ def get_learning_funnel():
     layer3_guards_in_window = min(int(total_by_type.get("guard_candidate", 0)), 3)
 
     contradictions: list[dict] = []
+    contradictions_checked = True
     try:
         from aletheia.knowledge.manager import detect_contradictions
         from aletheia.knowledge.guards import load_trading_guards
@@ -1732,6 +1746,8 @@ def get_learning_funnel():
         contradictions = detect_contradictions(contradiction_items)
     except Exception:
         contradictions = []
+        contradictions_checked = False
+        query_errors["contradictions"] = "read_failed"
 
     return {
         "knowledge_items_by_type": type_total,
@@ -1745,11 +1761,12 @@ def get_learning_funnel():
         "ps_lessons": ps_summary,
         "serenity_opportunities_active": serenity_active,
         "contradictions": {
-            "checked": True,
-            "count": len(contradictions),
+            "checked": contradictions_checked,
+            "count": len(contradictions) if contradictions_checked else None,
             "items": contradictions[:10],
             "note": "Conservative support-vs-block detector; findings require human review.",
         },
+        "query_errors": query_errors,
     }
 
 

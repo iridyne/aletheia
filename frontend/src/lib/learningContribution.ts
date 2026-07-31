@@ -8,6 +8,36 @@ export type ContributionViewState =
   | 'stale'
   | LearningContributionProjection['items'][number]['measurement']['state']
 
+export function contributionPartialCopy(input: {
+  fetchFailed: boolean
+  itemStale: boolean
+  selectedPathPartial: boolean
+  operationsFailed: boolean
+}): { title: string; detail: string } {
+  if (input.fetchFailed || input.itemStale) {
+    return {
+      title: 'Measurement is stale',
+      detail: 'The last successful evidence remains visible, but the latest refresh failed.',
+    }
+  }
+  if (input.selectedPathPartial) {
+    return {
+      title: 'Measurement is partial',
+      detail: 'The selected path evidence is preserved, but it must not be treated as a complete current effectiveness claim.',
+    }
+  }
+  if (input.operationsFailed) {
+    return {
+      title: 'Projection is partial',
+      detail: 'The selected path measurement remains available, but one or more operational health reads failed.',
+    }
+  }
+  return {
+    title: 'Projection is partial',
+    detail: 'The selected path measurement remains available, but another projection section is unavailable.',
+  }
+}
+
 export function authorityLabel(
   enabled: boolean,
   blockReason: string | null,

@@ -282,6 +282,9 @@ Current minimal slice:
 - preserves legacy activity aggregates only as compatibility context. A failed
   legacy query is named in `legacy_query_errors`; nullable counts remain `null`
   rather than being presented as genuine empty or zero activity.
+- preserves measurement when an operations health read fails. Operations names
+  failed evaluator/audit sections in `query_errors`, retains successful/config
+  sections, and makes the envelope partial rather than unavailable.
 
 The optional `path_id`, `status`, `limit` and `offset` query contract remains target work.
 The current fixed-bound summary already uses a 30-second monotonic process-local cache and emits
@@ -741,11 +744,11 @@ states. This is adjacent UI honesty work, not contribution authority.
 | LCO-B03 | L2b | Current metric/cohort identity is separate from append-only historical verdict versions | implemented |
 | LCO-B04 | L2b | Current job status, last success, next due, sanitized durable last failure, watermark and catch-up due state remain distinct; raw stored errors never leave the backend | implemented |
 | LCO-C01 | L2c | Observability remains read-only; admission readiness is separate from owner-route authentication and every paper gate | implemented |
-| LCO-C02 | L2c | UI contribution state comes only from backend measurement facts; counts and PnL cannot imply effectiveness | partial — current Contribution verdict derivation is backend-only; Reports/PnL context labelling and remaining activity-surface honesty are incomplete |
+| LCO-C02 | L2c | UI contribution state comes only from backend measurement facts; counts and PnL cannot imply effectiveness | partial — current Contribution verdict derivation and rendered Workbench activity/PnL context are behaviorally covered by Vitest; the Python executable-claim registry does not yet execute that frontend proof |
 | LCO-C03 | L2c | Reads perform no writes, evaluation, lifecycle transition, or authority mutation and blocking work stays off the event loop | implemented |
 | LCO-S02 | L2a | LCO projection/routes have no Risk, Execution, exchange, secrets, permission or live imports | implemented |
 | LCO-B05 | L2b | consumer-wired, Settings-supported and measurement-supported remain separate path capabilities | implemented |
-| LCO-C04 | L2c | loading, genuine empty, unavailable, stale and partial states remain distinct; fetch failure never becomes zero/empty | partial — current Contribution query states are distinct, but optional operations failures collapse the projection and several legacy Learning queries still present failure as empty/null |
+| LCO-C04 | L2c | loading, genuine empty, unavailable, stale and partial states remain distinct; fetch failure never becomes zero/empty | partial — current Contribution and legacy Workbench reads now preserve loading/error/stale/partial and nullable optional sections with backend/frontend behavioral tests; the Python executable-claim registry does not yet execute the frontend proof |
 | LCO-C05 | L2c | desktop/mobile layouts and native keyboard/label semantics preserve access to the current measured-path selector and Contribution summary | partial — component Vitest proof exists, but the Python executable claim still checks source/proof presence rather than running the UI behavior |
 | LCO-C06 | L2c | the current summary uses a monotonic TTL cache and emits explainable cold/cache-hit `Server-Timing` | implemented for the current summary route; immutable publication/order have adjacent tests, while future endpoint and stable-runtime latency slices retain separate obligations |
 
