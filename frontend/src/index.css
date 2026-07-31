@@ -135,6 +135,9 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   .layout.rail .content { margin-left: 0; }
   .main { padding: var(--space-3) var(--space-4); }
   .hamburger { display: inline-flex !important; }
+  /* Rail toggle is desktop-only — under the mobile breakpoint the sidebar
+     forces itself back to 240px, so the button would do nothing. */
+  .sidebar-toggle { display: none; }
 }
 
 /* ---------- Rail (fully-collapsed) sidebar — desktop only ---------- */
