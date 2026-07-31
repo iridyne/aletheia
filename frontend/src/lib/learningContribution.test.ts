@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { LearningContributionProjection } from '../api/client'
 import {
   authorityLabel,
+  contributionPartialCopy,
   deriveContributionViewState,
   measuredContributionPathIds,
 } from './learningContribution'
@@ -107,6 +108,23 @@ describe('authorityLabel', () => {
   })
 })
 
+describe('contributionPartialCopy', () => {
+  it('keeps selected-path and envelope partial explanations separate', () => {
+    expect(contributionPartialCopy({
+      fetchFailed: false, itemStale: false, selectedPathPartial: false, operationsFailed: false,
+    })).toEqual({
+      title: 'Projection is partial',
+      detail: 'The selected path measurement remains available, but another projection section is unavailable.',
+    })
+    expect(contributionPartialCopy({
+      fetchFailed: false, itemStale: false, selectedPathPartial: true, operationsFailed: true,
+    }).title).toBe('Measurement is partial')
+    expect(contributionPartialCopy({
+      fetchFailed: false, itemStale: false, selectedPathPartial: false, operationsFailed: true,
+    }).detail).toContain('operational health reads failed')
+  })
+})
+
 describe('deriveContributionViewState', () => {
   it('uses the backend measurement verdict rather than large activity counts', () => {
     expect(deriveContributionViewState({
@@ -208,5 +226,17 @@ describe('deriveContributionViewState', () => {
       failed: false,
       data: partial,
     })).toBe('partial')
+    expect(deriveContributionViewState({
+      loading: false,
+      failed: false,
+      data: projection({ availability: 'partial' }),
+      pathId: 'universe_family_calibration',
+    })).toBe('insufficient_data')
+    expect(deriveContributionViewState({
+      loading: false,
+      failed: false,
+      data: projection({ availability: 'partial', items: [] }),
+      pathId: 'universe_family_calibration',
+    })).toBe('empty')
   })
 })

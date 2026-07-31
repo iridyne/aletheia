@@ -95,12 +95,61 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
                         None, generated_at, stale_after_sec=stale_after_sec,
                     ),
                 }
-    evaluator = get_learning_job_health("learning_contribution_evaluator")
-    lifecycle_audit = get_learning_job_health("learning_lifecycle_audit_reconciler")
-    last_success = evaluator.last_succeeded_at
-    freshness = _freshness(
-        last_success, generated_at, stale_after_sec=stale_after_sec,
-    )
+    operations_errors: dict[str, str] = {}
+    evaluator_view = None
+    lifecycle_audit_view = None
+    try:
+        evaluator = get_learning_job_health("learning_contribution_evaluator")
+        freshness = _freshness(
+            evaluator.last_succeeded_at,
+            generated_at,
+            stale_after_sec=stale_after_sec,
+        )
+        evaluator_view = _project_health(
+            job_health_view(evaluator),
+            catchup_due=False,
+        )
+        try:
+            evaluator_view["catchup_due"] = measurement_catchup_due(
+                "learning_contribution_evaluator",
+                persist_config_migrations=False,
+            )
+        except Exception:
+            evaluator_view["catchup_due"] = None
+            operations_errors["evaluator_catchup"] = "read_failed"
+    except Exception:
+        operations_errors["evaluator"] = "read_failed"
+        freshness = {
+            **_freshness(None, generated_at, stale_after_sec=stale_after_sec),
+            "state": "unavailable",
+        }
+    try:
+        lifecycle_audit = get_learning_job_health("learning_lifecycle_audit_reconciler")
+        lifecycle_audit_view = _project_health(
+            job_health_view(lifecycle_audit),
+            catchup_due=False,
+        )
+    except Exception:
+        operations_errors["lifecycle_audit"] = "read_failed"
+
+    operations = {
+        "availability": "partial" if operations_errors else "available",
+        "query_errors": operations_errors,
+        "config": {
+            "contribution_evaluation_enabled": bool(
+                cfg.learning.contribution_evaluation_enabled
+            ),
+            "autonomous_learning_enabled": bool(cfg.agent.autonomous_learning),
+            "lifecycle_automation_enabled": bool(
+                cfg.learning.lifecycle_automation_enabled
+            ),
+            "paper_influence_enabled": bool(
+                cfg.learning.paper_influence_enabled
+            ),
+        },
+        "evaluator": evaluator_view,
+        "lifecycle_audit": lifecycle_audit_view,
+    }
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -111,40 +160,17 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
                 state["availability"] in {"partial", "unavailable"}
                 for state in path_states.values()
             )
+            or bool(operations_errors)
             else "available"
         ),
-        "unavailable_reason": None,
+        "unavailable_reason": (
+            "operations_projection_failed" if operations_errors else None
+        ),
         "data_freshness": freshness,
         "paths": [_project_path(path) for path in LEARNING_PATHS],
         "path_states": list(path_states.values()),
         "items": items,
-        "operations": {
-            "config": {
-                "contribution_evaluation_enabled": bool(
-                    cfg.learning.contribution_evaluation_enabled
-                ),
-                "autonomous_learning_enabled": bool(
-                    cfg.agent.autonomous_learning
-                ),
-                "lifecycle_automation_enabled": bool(
-                    cfg.learning.lifecycle_automation_enabled
-                ),
-                "paper_influence_enabled": bool(
-                    cfg.learning.paper_influence_enabled
-                ),
-            },
-            "evaluator": _project_health(
-                job_health_view(evaluator),
-                catchup_due=measurement_catchup_due(
-                    "learning_contribution_evaluator",
-                    persist_config_migrations=False,
-                ),
-            ),
-            "lifecycle_audit": _project_health(
-                job_health_view(lifecycle_audit),
-                catchup_due=False,
-            ),
-        },
+        "operations": operations,
     }
 
 

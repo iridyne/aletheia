@@ -13,7 +13,8 @@ import { Badge, Button, Card, CardHeader, Meter, StatusText } from '../component
 import type { StatusTone } from '../components/ui'
 import { fmtNum, fmtSigned, humanize, fmtTimestamp } from '../lib/format'
 import { guardActivationConfirmation, guardEffectText, type GuardRow } from '../lib/guards'
-import { authorityLabel, deriveContributionViewState, measuredContributionPathIds } from '../lib/learningContribution'
+import { authorityLabel, contributionPartialCopy, deriveContributionViewState, measuredContributionPathIds } from '../lib/learningContribution'
+import { PORTFOLIO_CONTEXT_LABEL, learningPulseValue, learningReadState, optionalBooleanLabel, type LearningReadState } from '../lib/learningWorkbench'
 
 /**
  * Learning — measured contribution first, then the memory & evolution surfaces.
@@ -24,8 +25,8 @@ import { authorityLabel, deriveContributionViewState, measuredContributionPathId
  *               cognition session (tools it called, how long it thought, what it produced),
  *               then this cycle's outputs grouped by kind. This narrative IS the signature.
  *   KNOWLEDGE — "What does it know?"  The §4 type taxonomy as sub-tabs, searchable library.
- *   REPORTS   — "Is it getting better?"  Portfolio PnL + a strategy-promotion board showing
- *               each paper strategy's distance to its next lifecycle gate.
+ *   REPORTS   — "What context surrounds Learning?" Portfolio PnL is account context, while
+ *               reviews and diagnostics remain activity rather than contribution evidence.
  *
  * Honesty (CLAUDE.md): the §4 taxonomy is preserved — each Knowledge sub-tab queries its real
  * item_type, no laundering. Every empty/missing/file-not-found state is carried verbatim.
@@ -53,13 +54,17 @@ export default function Learning() {
 }
 
 /* ============================ PULSE BAND ============================ */
-// A quiet read-out strip — four live numbers that answer "is the system still learning,
-// and how much?" at a glance. Deliberately NOT a hero state-word band (that's the Risk
-// page's signature); here the four metrics are the point.
-function LearningPulse() {
-  const { data: summary } = useQuery({ queryKey: ['dreaming-summary'], queryFn: api.getDreamingSummary })
-  const { data: strategies = [] } = useQuery({ queryKey: ['strategies'], queryFn: api.getStrategies })
-  const { data: lessons = [] } = useQuery({ queryKey: ['lessons-all'], queryFn: () => api.getLessons(100) })
+// Activity-only read-outs. They never claim measured contribution and failed reads stay unavailable.
+export function LearningPulse() {
+  const summaryQuery = useQuery({ queryKey: ['dreaming-summary'], queryFn: api.getDreamingSummary })
+  const strategiesQuery = useQuery({ queryKey: ['strategies'], queryFn: api.getStrategies })
+  const lessonsQuery = useQuery({ queryKey: ['lessons-all'], queryFn: () => api.getLessons(100) })
+  const summaryState = learningReadState(summaryQuery.isLoading, summaryQuery.isError, summaryQuery.data != null)
+  const strategiesState = learningReadState(strategiesQuery.isLoading, strategiesQuery.isError, strategiesQuery.data != null)
+  const lessonsState = learningReadState(lessonsQuery.isLoading, lessonsQuery.isError, lessonsQuery.data != null)
+  const summary = summaryQuery.data
+  const strategies = strategiesQuery.data ?? []
+  const lessons = lessonsQuery.data ?? []
 
   const runs = (summary?.recent_dreaming_runs as any[]) || []
   const lastRun = runs[0]
@@ -75,12 +80,12 @@ function LearningPulse() {
     <section className="learn-pulse">
       <PulseStat
         label="Activity · last consolidation"
-        value={lastRun ? fmtRelative(lastRun.started_at) : 'Never'}
-        tone={runTone(lastRun?.status)}
+        value={learningPulseValue(summaryState, lastRun ? fmtRelative(lastRun.started_at) : 'Never')}
+        tone={summaryState === 'unavailable' ? 'red' : runTone(lastRun?.status)}
       />
-      <PulseStat label="Activity · new knowledge 24h" value={new24h} tone={new24h > 0 ? 'blue' : 'muted'} />
-      <PulseStat label="Activity · strategies in paper" value={active.length} tone={active.length > 0 ? 'blue' : 'muted'} />
-      <PulseStat label="Activity · lessons logged" value={lessonCount} tone={lessonCount > 0 ? 'yellow' : 'muted'} />
+      <PulseStat label="Activity · new knowledge 24h" value={learningPulseValue(summaryState, new24h)} tone={summaryState === 'unavailable' ? 'red' : new24h > 0 ? 'blue' : 'muted'} />
+      <PulseStat label="Activity · strategies in paper" value={learningPulseValue(strategiesState, active.length)} tone={strategiesState === 'unavailable' ? 'red' : active.length > 0 ? 'blue' : 'muted'} />
+      <PulseStat label="Activity · lessons logged" value={learningPulseValue(lessonsState, lessonCount)} tone={lessonsState === 'unavailable' ? 'red' : lessonCount > 0 ? 'yellow' : 'muted'} />
     </section>
   )
 }
@@ -146,6 +151,13 @@ function ContributionTab() {
     return (
       <section className="lco-stack" aria-label="Learning measured contribution">
         {pathSelector}
+        {data.availability === 'partial' && (
+          <ContributionMessage
+            tone="yellow"
+            title="Projection is partial"
+            detail="The selected path has no current experiment, and one or more other projection sections are unavailable."
+          />
+        )}
         <ContributionMessage
           tone={stale ? 'yellow' : 'muted'}
           title={stale ? 'Measurement is stale' : 'No current experiment for this path'}
@@ -159,13 +171,21 @@ function ContributionTab() {
   const measurement = item.measurement
   const integrity = item.integrity
   const lifecycle = item.lifecycle
-  const evaluator = data.operations?.evaluator
+  const operations = data.operations
+  const evaluator = operations?.evaluator
   const required = Math.max(item.samples.required_per_arm, 1)
   const treatmentPct = item.samples.treatment_assignment_units / required * 100
   const controlPct = item.samples.control_assignment_units / required * 100
   const excluded = sumCounts(integrity.exclusion_reasons)
   const invalid = sumCounts(integrity.invalid_reasons)
-  const partial = viewState === 'partial' || viewState === 'stale'
+  const envelopePartial = data.availability === 'partial'
+  const partial = envelopePartial || viewState === 'partial' || viewState === 'stale'
+  const partialCopy = contributionPartialCopy({
+    fetchFailed: query.isError,
+    itemStale: item.data_freshness.state === 'stale',
+    selectedPathPartial: item.availability === 'partial' || activePathState?.availability === 'partial',
+    operationsFailed: data.unavailable_reason === 'operations_projection_failed',
+  })
 
   return (
     <section className="lco-stack" aria-label="Learning measured contribution">
@@ -173,10 +193,8 @@ function ContributionTab() {
       {partial && (
         <ContributionMessage
           tone="yellow"
-          title={query.isError || item.data_freshness.state === 'stale' ? 'Measurement is stale' : 'Measurement is partial'}
-          detail={query.isError
-            ? 'The last successful evidence remains visible, but the latest refresh failed.'
-            : 'The evidence below is preserved, but it must not be treated as a current effectiveness claim.'}
+          title={partialCopy.title}
+          detail={partialCopy.detail}
         />
       )}
 
@@ -245,21 +263,26 @@ function ContributionTab() {
       <div className="lco-grid">
         <Card>
           <CardHeader title="Evaluator continuity" meta="Operational health is not effectiveness" />
-          <div className="lco-facts">
-            <ContributionRow label="Current status" value={humanize(evaluator?.current_status || 'not available')} />
-            <ContributionRow label="Last success" value={fmtTimestamp(evaluator?.last_succeeded_at)} />
-            <ContributionRow label="Next due" value={fmtTimestamp(evaluator?.next_due_at)} />
-            <ContributionRow label="Backlog" value={evaluator?.backlog_count ?? '—'} />
-            <ContributionRow label="Catch-up due" value={evaluator?.catchup_due == null ? '—' : evaluator.catchup_due ? 'Yes' : 'No'} />
-            <ContributionRow label="Last failure" value={humanize(evaluator?.last_failure_code || 'none recorded')} />
-          </div>
+          {evaluator ? (
+            <div className="lco-facts">
+              <ContributionRow label="Current status" value={humanize(evaluator.current_status)} />
+              <ContributionRow label="Last success" value={fmtTimestamp(evaluator.last_succeeded_at)} />
+              <ContributionRow label="Next due" value={fmtTimestamp(evaluator.next_due_at)} />
+              <ContributionRow label="Backlog" value={evaluator.backlog_count} />
+              <ContributionRow label="Catch-up due" value={optionalBooleanLabel(evaluator.catchup_due)} />
+              <ContributionRow label="Last failure" value={humanize(evaluator.last_failure_code || 'none recorded')} />
+              <ContributionRow label="Audit mirror" value={humanize(operations?.lifecycle_audit?.current_status || 'unavailable')} />
+            </div>
+          ) : (
+            <LearningReadMessage state="unavailable" subject="Evaluator continuity" />
+          )}
         </Card>
 
         <Card>
           <CardHeader title="Lifecycle boundary" meta="Read-only inspection · treatment authority shown separately" />
           <div className="lco-facts">
             <ContributionRow label="Recommendation" value={humanize(lifecycle.recommended_action)} />
-            <ContributionRow label="Paper influence" value={data.operations?.config.paper_influence_enabled ? 'Enabled' : 'Disabled'} />
+            <ContributionRow label="Paper influence" value={operations == null ? 'Unavailable' : operations.config.paper_influence_enabled ? 'Enabled' : 'Disabled'} />
             <ContributionRow label="Authority" value={authorityLabel(lifecycle.authority_enabled, lifecycle.authority_block_reason)} />
             <ContributionRow label="Authority reason" value={humanize(lifecycle.authority_block_reason || 'authority granted')} />
             <ContributionRow label="Mutation available" value={lifecycle.mutation_available ? 'Yes' : 'No'} />
@@ -346,10 +369,14 @@ function PulseStat({ label, value, tone }: { label: string; value: ReactNode; to
 }
 
 /* ============================ DREAMING ============================ */
-function DreamingTab() {
-  const { data: summary } = useQuery({ queryKey: ['dreaming-summary'], queryFn: api.getDreamingSummary })
-  const { data: allLogs = [] } = useQuery({ queryKey: ['dreaming'], queryFn: api.getDreamingLogs })
+export function DreamingTab() {
+  const summaryQuery = useQuery({ queryKey: ['dreaming-summary'], queryFn: api.getDreamingSummary })
+  const logsQuery = useQuery({ queryKey: ['dreaming'], queryFn: api.getDreamingLogs })
   const [selectedItem, setSelectedItem] = useState<any>(null)
+  const summaryState = learningReadState(summaryQuery.isLoading, summaryQuery.isError, summaryQuery.data != null)
+  const logsState = learningReadState(logsQuery.isLoading, logsQuery.isError, logsQuery.data != null)
+  const summary = summaryQuery.data
+  const allLogs = logsQuery.data ?? []
 
   const runs = (summary?.recent_dreaming_runs as any[]) || []
   const research = (summary?.recent_research_notes as any[]) || []
@@ -362,12 +389,19 @@ function DreamingTab() {
       {/* Signature — dreaming runs as cognition sessions */}
       <Card>
         <CardHeader title="Dreaming sessions" meta="What the agent consolidated · most recent first" />
-        {runs.length === 0 ? (
-          <p className="text-muted text-sm">No dreaming runs in the last 24 hours.</p>
+        {summaryState === 'loading' || summaryState === 'unavailable' ? (
+          <LearningReadMessage state={summaryState} subject="Dreaming sessions" />
         ) : (
-          <div className="dream-sessions">
-            {runs.map((r: any) => <DreamSession key={r.id} run={r} />)}
-          </div>
+          <>
+            {summaryState !== 'available' && <LearningReadMessage state={summaryState} subject="Dreaming sessions" />}
+            {runs.length === 0 ? (
+              <p className="text-muted text-sm">No dreaming runs in the last 24 hours.</p>
+            ) : (
+              <div className="dream-sessions">
+                {runs.map((r: any) => <DreamSession key={r.id} run={r} />)}
+              </div>
+            )}
+          </>
         )}
       </Card>
 
@@ -384,21 +418,21 @@ function DreamingTab() {
         <div className="learn-col-main">
           <Card>
             <CardHeader title="Research notes" meta="24h" />
-            <ItemList items={research} onSelect={setSelectedItem} empty="No new research notes in the last 24 hours." />
+            <ItemList state={summaryState} items={research} onSelect={setSelectedItem} empty="No new research notes in the last 24 hours." />
           </Card>
           <Card>
             <CardHeader title="Strategy hypotheses" meta="24h" />
-            <ItemList items={hypotheses} onSelect={setSelectedItem} empty="No new strategy hypotheses in the last 24 hours." />
+            <ItemList state={summaryState} items={hypotheses} onSelect={setSelectedItem} empty="No new strategy hypotheses in the last 24 hours." />
           </Card>
         </div>
         <div className="learn-col-aside">
           <Card>
             <CardHeader title="Consolidations" />
-            <ItemList items={logs} onSelect={setSelectedItem} empty="No consolidations yet." />
+            <ItemList state={summary?.recent_dreaming_logs?.length ? summaryState : logsState} items={logs} onSelect={setSelectedItem} empty="No consolidations yet." />
           </Card>
           <Card>
             <CardHeader title="Deprecated memories" meta="7d" />
-            <ItemList items={deprecated} onSelect={setSelectedItem} empty="No memories deprecated in the last 7 days." />
+            <ItemList state={summaryState} items={deprecated} onSelect={setSelectedItem} empty="No memories deprecated in the last 7 days." />
           </Card>
         </div>
       </div>
@@ -451,17 +485,22 @@ function DreamSession({ run }: { run: any }) {
 }
 
 /** Compact clickable list of knowledge items — title + timestamp (type is the group header). */
-function ItemList({ items, onSelect, empty }: { items: any[]; onSelect: (item: any) => void; empty: string }) {
-  if (!items || items.length === 0) return <p className="text-muted text-sm">{empty}</p>
+function ItemList({ state = 'available', items, onSelect, empty }: { state?: LearningReadState; items: any[]; onSelect: (item: any) => void; empty: string }) {
+  if (state === 'loading' || state === 'unavailable') return <LearningReadMessage state={state} subject="Items" />
+  const warning = state !== 'available' ? <LearningReadMessage state={state} subject="Items" /> : null
+  if (!items || items.length === 0) return <>{warning}<p className="text-muted text-sm">{empty}</p></>
   return (
-    <ul className="learn-items">
-      {items.map((item: any) => (
-        <li key={item.id} className="learn-item clickable" onClick={() => onSelect(item)}>
-          <span className="learn-item-title">{item.title || '(untitled)'}</span>
-          <span className="learn-item-meta mono">{fmtTimestamp(item.created_at)}</span>
-        </li>
-      ))}
-    </ul>
+    <>
+      {warning}
+      <ul className="learn-items">
+        {items.map((item: any) => (
+          <li key={item.id} className="learn-item clickable" onClick={() => onSelect(item)}>
+            <span className="learn-item-title">{item.title || '(untitled)'}</span>
+            <span className="learn-item-meta mono">{fmtTimestamp(item.created_at)}</span>
+          </li>
+        ))}
+      </ul>
+    </>
   )
 }
 
@@ -512,36 +551,43 @@ const guardColumns = [
   guardCol.accessor(row => row.actual_effect?.score_penalty, { id: 'baselinePenalty', header: 'Baseline Penalty', cell: info => { const v = info.getValue(); return <span className="mono">{v ? `-${v}` : '—'}</span> } }),
 ]
 
-function KnowledgeTab() {
+export function KnowledgeTab() {
   const queryClient = useQueryClient()
   const [tab, setTab] = useState<typeof KB_TABS[number]['key']>('research')
   const [selected, setSelected] = useState<KnowledgeItem | null>(null)
   const [selectedLesson, setSelectedLesson] = useState<LessonRow | null>(null)
   const [selectedGuard, setSelectedGuard] = useState<GuardRow | null>(null)
   const active = KB_TABS.find(t => t.key === tab)!
-  const { data = [], isError } = useQuery({ queryKey: ['knowledge', tab], queryFn: active.fn })
+  const activeQuery = useQuery({ queryKey: ['knowledge', tab], queryFn: active.fn })
+  const data = activeQuery.data ?? []
+  const activeState = learningReadState(activeQuery.isLoading, activeQuery.isError, activeQuery.data != null)
   const isLessons = tab === 'lessons'
   const isGuards = tab === 'guards'
   const isGuardCandidates = tab === 'guardCandidates'
   const isGuardRows = isGuards || isGuardCandidates
   const rows = isLessons ? (data as unknown as LessonRow[]) : isGuardRows ? (data as unknown as GuardRow[]) : (data as KnowledgeItem[])
 
-  const { data: d0 } = useQuery({ queryKey: ['knowledge', KB_TABS[0].key], queryFn: KB_TABS[0].fn, staleTime: 60_000 })
-  const { data: d1 } = useQuery({ queryKey: ['knowledge', KB_TABS[1].key], queryFn: KB_TABS[1].fn, staleTime: 60_000 })
-  const { data: d2 } = useQuery({ queryKey: ['knowledge', KB_TABS[2].key], queryFn: KB_TABS[2].fn, staleTime: 60_000 })
-  const { data: d3 } = useQuery({ queryKey: ['knowledge', KB_TABS[3].key], queryFn: KB_TABS[3].fn, staleTime: 60_000 })
-  const { data: d4 } = useQuery({ queryKey: ['knowledge', KB_TABS[4].key], queryFn: KB_TABS[4].fn, staleTime: 60_000 })
-  const { data: d5 } = useQuery({ queryKey: ['knowledge', KB_TABS[5].key], queryFn: KB_TABS[5].fn, staleTime: 60_000 })
-  const { data: d6 } = useQuery({ queryKey: ['knowledge', KB_TABS[6].key], queryFn: KB_TABS[6].fn, staleTime: 60_000 })
+  const q0 = useQuery({ queryKey: ['knowledge', KB_TABS[0].key], queryFn: KB_TABS[0].fn, staleTime: 60_000 })
+  const q1 = useQuery({ queryKey: ['knowledge', KB_TABS[1].key], queryFn: KB_TABS[1].fn, staleTime: 60_000 })
+  const q2 = useQuery({ queryKey: ['knowledge', KB_TABS[2].key], queryFn: KB_TABS[2].fn, staleTime: 60_000 })
+  const q3 = useQuery({ queryKey: ['knowledge', KB_TABS[3].key], queryFn: KB_TABS[3].fn, staleTime: 60_000 })
+  const q4 = useQuery({ queryKey: ['knowledge', KB_TABS[4].key], queryFn: KB_TABS[4].fn, staleTime: 60_000 })
+  const q5 = useQuery({ queryKey: ['knowledge', KB_TABS[5].key], queryFn: KB_TABS[5].fn, staleTime: 60_000 })
+  const q6 = useQuery({ queryKey: ['knowledge', KB_TABS[6].key], queryFn: KB_TABS[6].fn, staleTime: 60_000 })
+  const countQueries = [q0, q1, q2, q3, q4, q5, q6]
   const counts: Record<string, number | undefined> = {
-    [KB_TABS[0].key]: Array.isArray(d0) ? d0.length : undefined,
-    [KB_TABS[1].key]: Array.isArray(d1) ? d1.length : undefined,
-    [KB_TABS[2].key]: Array.isArray(d2) ? d2.length : undefined,
-    [KB_TABS[3].key]: Array.isArray(d3) ? d3.length : undefined,
-    [KB_TABS[4].key]: Array.isArray(d4) ? d4.length : undefined,
-    [KB_TABS[5].key]: Array.isArray(d5) ? d5.length : undefined,
-    [KB_TABS[6].key]: Array.isArray(d6) ? d6.length : undefined,
+    [KB_TABS[0].key]: Array.isArray(q0.data) ? q0.data.length : undefined,
+    [KB_TABS[1].key]: Array.isArray(q1.data) ? q1.data.length : undefined,
+    [KB_TABS[2].key]: Array.isArray(q2.data) ? q2.data.length : undefined,
+    [KB_TABS[3].key]: Array.isArray(q3.data) ? q3.data.length : undefined,
+    [KB_TABS[4].key]: Array.isArray(q4.data) ? q4.data.length : undefined,
+    [KB_TABS[5].key]: Array.isArray(q5.data) ? q5.data.length : undefined,
+    [KB_TABS[6].key]: Array.isArray(q6.data) ? q6.data.length : undefined,
   }
+  const countStates = Object.fromEntries(KB_TABS.map((item, index) => {
+    const query = countQueries[index]
+    return [item.key, learningReadState(query.isLoading, query.isError, query.data != null)]
+  })) as Record<typeof KB_TABS[number]['key'], LearningReadState>
   const lessonAction = useMutation({
     mutationFn: ({ lessonId, action }: { lessonId: string; action: 'accept' | 'reject' | 'archive' }) => {
       if (action === 'accept') return api.acceptLesson(lessonId)
@@ -569,24 +615,28 @@ function KnowledgeTab() {
       <div className="kb-subtabs">
         {KB_TABS.map(t => (
           <Button key={t.key} variant={tab === t.key ? 'primary' : 'secondary'} size="sm" onClick={() => setTab(t.key)}>
-            {t.label}{counts[t.key] != null && counts[t.key]! > 0 && <span className="tab-badge">{counts[t.key]}</span>}
+            {t.label}
+            {countStates[t.key] === 'loading' && <span className="tab-badge" aria-label={`${t.label} count loading`}>…</span>}
+            {countStates[t.key] === 'unavailable' && <span className="tab-badge" aria-label={`${t.label} count unavailable`}>!</span>}
+            {counts[t.key] != null && counts[t.key]! > 0 && <span className="tab-badge">{counts[t.key]}{countStates[t.key] === 'stale' ? '~' : ''}</span>}
           </Button>
         ))}
       </div>
       <Card>
-        {isError ? (
-          <div role="alert" className="text-error text-sm">{active.label} unavailable. The read failed; this is not an empty collection.</div>
-        ) : isLessons ? (
-          <DataTable data={rows as LessonRow[]} columns={lessonColumns} onRowClick={setSelectedLesson} emptyMessage="No lessons yet." />
-        ) : isGuardRows ? (
-          <DataTable
-            data={rows as GuardRow[]}
-            columns={guardColumns}
-            onRowClick={setSelectedGuard}
-            emptyMessage={isGuardCandidates ? 'No guard candidates awaiting review.' : 'No active guards yet.'}
-          />
-        ) : (
-          <DataTable data={rows as KnowledgeItem[]} columns={kbColumns} onRowClick={setSelected} emptyMessage={`No ${active.label.toLowerCase()} yet.`} />
+        {activeState !== 'available' && <LearningReadMessage state={activeState} subject={active.label} />}
+        {activeState !== 'loading' && activeState !== 'unavailable' && (
+          isLessons ? (
+            <DataTable data={rows as LessonRow[]} columns={lessonColumns} onRowClick={setSelectedLesson} emptyMessage="No lessons yet." />
+          ) : isGuardRows ? (
+            <DataTable
+              data={rows as GuardRow[]}
+              columns={guardColumns}
+              onRowClick={setSelectedGuard}
+              emptyMessage={isGuardCandidates ? 'No guard candidates awaiting review.' : 'No active guards yet.'}
+            />
+          ) : (
+            <DataTable data={rows as KnowledgeItem[]} columns={kbColumns} onRowClick={setSelected} emptyMessage={`No ${active.label.toLowerCase()} yet.`} />
+          )
         )}
       </Card>
 
@@ -719,15 +769,18 @@ function KnowledgeTab() {
 }
 
 /* ============================ REPORTS ============================ */
-function ReportsTab() {
-  const { data: dreaming = [] } = useQuery({ queryKey: ['dreaming'], queryFn: api.getDreamingLogs })
-  const { data: reviews = [] } = useQuery({ queryKey: ['reviews'], queryFn: () => api.getKnowledge('daily_review') })
-  const { data: postTradeReviews = [] } = useQuery({ queryKey: ['post-trade-reviews'], queryFn: api.getPostTradeReviews })
+export function ReportsTab() {
+  const dreamingQuery = useQuery({ queryKey: ['dreaming'], queryFn: api.getDreamingLogs })
+  const reviewsQuery = useQuery({ queryKey: ['reviews'], queryFn: () => api.getKnowledge('daily_review') })
+  const postTradeReviewsQuery = useQuery({ queryKey: ['post-trade-reviews'], queryFn: api.getPostTradeReviews })
+  const dreaming = dreamingQuery.data ?? []
+  const reviews = reviewsQuery.data ?? []
+  const postTradeReviews = postTradeReviewsQuery.data ?? []
 
   return (
     <>
       <Card>
-        <CardHeader title="Portfolio PnL" />
+        <CardHeader title="Portfolio PnL" meta={PORTFOLIO_CONTEXT_LABEL} />
         <PnLChart />
       </Card>
 
@@ -738,15 +791,15 @@ function ReportsTab() {
       <div className="learn-grid">
         <Card>
           <CardHeader title="Daily reviews" />
-          <ReviewList items={reviews as any[]} empty="No daily reviews yet — generated by the dreaming cycle." />
+          <ReviewList state={learningReadState(reviewsQuery.isLoading, reviewsQuery.isError, reviewsQuery.data != null)} items={reviews as any[]} empty="No daily reviews yet — generated by the dreaming cycle." />
         </Card>
         <Card>
           <CardHeader title="Post-trade reviews" />
-          <ReviewList items={postTradeReviews as any[]} empty="No post-trade reviews yet." />
+          <ReviewList state={learningReadState(postTradeReviewsQuery.isLoading, postTradeReviewsQuery.isError, postTradeReviewsQuery.data != null)} items={postTradeReviews as any[]} empty="No post-trade reviews yet." />
         </Card>
         <Card>
           <CardHeader title="Recent consolidations" />
-          <ReviewList items={(dreaming as any[]).slice(0, 10)} empty="No consolidations yet." />
+          <ReviewList state={learningReadState(dreamingQuery.isLoading, dreamingQuery.isError, dreamingQuery.data != null)} items={(dreaming as any[]).slice(0, 10)} empty="No consolidations yet." />
         </Card>
       </div>
     </>
@@ -776,7 +829,7 @@ function FilterControllerPersistentCard() {
       </Card>
     )
   }
-  if (isError || !data) {
+  if (!data) {
     return (
       <Card>
         <CardHeader title="Filter controller — persistent signals" />
@@ -795,6 +848,7 @@ function FilterControllerPersistentCard() {
         title="Filter controller — persistent signals"
         meta={meta}
       />
+      {isError && <LearningReadMessage state="stale" subject="Filter controller signals" />}
       <p className="text-muted text-sm mt-0 mb-2">
         Cells whose observational verdict has held across multiple consecutive
         controller runs. Human-review signal only — no live learning path
@@ -854,17 +908,22 @@ function FilterControllerPersistentCard() {
 }
 
 /** Compact title + timestamp list for periodic reviews (read-only). */
-function ReviewList({ items, empty }: { items: any[]; empty: string }) {
-  if (!items || items.length === 0) return <p className="text-muted text-sm">{empty}</p>
+function ReviewList({ state = 'available', items, empty }: { state?: LearningReadState; items: any[]; empty: string }) {
+  if (state === 'loading' || state === 'unavailable') return <LearningReadMessage state={state} subject="Reviews" />
+  const warning = state !== 'available' ? <LearningReadMessage state={state} subject="Reviews" /> : null
+  if (!items || items.length === 0) return <>{warning}<p className="text-muted text-sm">{empty}</p></>
   return (
-    <ul className="learn-items">
-      {items.slice(0, 10).map((r: any) => (
-        <li key={r.id} className="learn-item">
-          <span className="learn-item-title">{r.title || '(untitled)'}</span>
-          <span className="learn-item-meta mono">{fmtTimestamp(r.created_at)}</span>
-        </li>
-      ))}
-    </ul>
+    <>
+      {warning}
+      <ul className="learn-items">
+        {items.slice(0, 10).map((r: any) => (
+          <li key={r.id} className="learn-item">
+            <span className="learn-item-title">{r.title || '(untitled)'}</span>
+            <span className="learn-item-meta mono">{fmtTimestamp(r.created_at)}</span>
+          </li>
+        ))}
+      </ul>
+    </>
   )
 }
 
@@ -875,16 +934,21 @@ function ConfidenceBadge({ value }: { value: unknown }) {
 }
 
 // shared markdown content (read from /knowledge/{id}/content)
-function MarkdownContent({ itemId }: { itemId: string }) {
-  const { data, isLoading } = useQuery({
+export function MarkdownContent({ itemId }: { itemId: string }) {
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['knowledge-content', itemId],
     queryFn: () => api.getKnowledgeContent(itemId),
     enabled: !!itemId,
   })
   if (isLoading) return <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
-  if (!data || data.error) return <p className="text-muted text-sm">{data?.error === 'file_not_found' ? 'File not found on disk.' : 'No content available.'}</p>
-  if (!data.content) return <p className="text-muted text-sm">Empty file.</p>
-  return <div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(data.content) }} />
+  if (isError && !data) return <LearningReadMessage state="unavailable" subject="Knowledge content" />
+  const warning = isError ? <LearningReadMessage state="stale" subject="Knowledge content" /> : null
+  if (!data || data.error) return <>{warning}<p className="text-muted text-sm">{data?.error === 'file_not_found' ? 'File not found on disk.' : 'No content available.'}</p></>
+  if (!data.content) return <>{warning}<p className="text-muted text-sm">Empty file.</p></>
+  return <>
+    {warning}
+    <div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(data.content) }} />
+  </>
 }
 
 // Minimal markdown→HTML (escapes first, then a small subset).
@@ -997,8 +1061,15 @@ const ITEM_TYPE_LABEL: Record<string, string> = {
   calibration_report: 'Calibration Report',
 }
 
-function LearningFunnelPanel() {
-  const { data, isLoading } = useQuery({ queryKey: ['learning-funnel'], queryFn: api.getLearningFunnel, staleTime: 120000 })
+function LearningReadMessage({ state, subject }: { state: Exclude<LearningReadState, 'available'>; subject: string }) {
+  if (state === 'loading') return <p className="text-muted text-sm">Loading {subject.toLowerCase()}...</p>
+  if (state === 'stale') return <p role="status" className="text-warning text-sm">{subject} is stale. Retained data may not reflect the latest read.</p>
+  if (state === 'partial') return <p role="status" className="text-warning text-sm">{subject} is partial. Available sections remain visible.</p>
+  return <p role="alert" className="text-error text-sm">{subject} unavailable. The read failed; this is not an empty result.</p>
+}
+
+export function LearningFunnelPanel() {
+  const { data, isLoading, isError } = useQuery({ queryKey: ['learning-funnel'], queryFn: api.getLearningFunnel, staleTime: 120000 })
 
   if (isLoading) return (
     <Card>
@@ -1006,24 +1077,34 @@ function LearningFunnelPanel() {
       <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
     </Card>
   )
-  if (!data) return null
+  if ((isError && !data) || !data) return (
+    <Card>
+      <CardHeader title="Knowledge Funnel" />
+      <LearningReadMessage state="unavailable" subject="Knowledge funnel" />
+    </Card>
+  )
 
   const totalItems = data.knowledge_items_by_type.reduce((s, x) => s + x.count, 0)
   const visibility = data.pi_actual_visibility
   const ps = data.ps_lessons
-  const lessonApplied = ps.by_status.find(x => x.status === 'applied')?.count ?? 0
-  const lessonProposed = ps.by_status.find(x => x.status === 'proposed')?.count ?? 0
-  const contradictionCount = data.contradictions?.count ?? 0
+  const lessonApplied = ps.availability === 'available' ? ps.by_status?.find(x => x.status === 'applied')?.count ?? 0 : null
+  const lessonProposed = ps.availability === 'available' ? ps.by_status?.find(x => x.status === 'proposed')?.count ?? 0 : null
+  const contradictionCount = data.contradictions?.count
+  const funnelState = learningReadState(false, isError, true, Object.keys(data.query_errors).length > 0)
 
   return (
     <Card>
       <CardHeader title="Knowledge Funnel" meta={`${totalItems.toLocaleString()} items`} />
+      {funnelState !== 'available' && <LearningReadMessage state={funnelState} subject="Knowledge funnel" />}
+      {Object.keys(data.query_errors).length > 0 && (
+        <p className="text-warning text-sm">Unavailable sections: {Object.keys(data.query_errors).map(key => humanize(key)).join(', ')}.</p>
+      )}
       <div className="lf-meta-row">
         <span className="lf-meta-pill">System Operator lessons (case studies): <strong>{visibility.layer3_lesson_hits}</strong></span>
         <span className="lf-meta-pill">Guards available: <strong>{visibility.layer3_guards_available}</strong></span>
-        <span className="lf-meta-pill">Lessons applied: <strong>{lessonApplied}</strong> / proposed: <strong>{lessonProposed}</strong></span>
-        <span className="lf-meta-pill">Serenity active: <strong>{data.serenity_opportunities_active}</strong></span>
-        <span className="lf-meta-pill">Contradictions needing review: <strong>{contradictionCount}</strong></span>
+        <span className="lf-meta-pill">Lessons applied: <strong>{lessonApplied ?? 'Unavailable'}</strong> / proposed: <strong>{lessonProposed ?? 'Unavailable'}</strong></span>
+        <span className="lf-meta-pill">Serenity active: <strong>{data.serenity_opportunities_active ?? 'Unavailable'}</strong></span>
+        <span className="lf-meta-pill">Contradictions needing review: <strong>{data.contradictions.checked ? contradictionCount ?? 0 : 'Unavailable'}</strong></span>
       </div>
       <div className="lf-bars">
         {data.knowledge_items_by_type.map(({ item_type, count }) => {

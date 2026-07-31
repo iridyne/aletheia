@@ -198,10 +198,13 @@ def test_lco_frontend_uses_backend_measurement_state():
     root = Path(__file__).resolve().parents[2]
     source = (root / "frontend/src/lib/learningContribution.ts").read_text()
     proof = (root / "frontend/src/lib/learningContribution.test.ts").read_text()
+    workbench_proof = (root / "frontend/src/pages/Learning.test.tsx").read_text()
 
     assert "return item.measurement.state" in source
     assert "large activity counts" in proof
     assert "toBe('insufficient_data')" in proof
+    assert "not Learning attribution" in workbench_proof
+    assert "not.toContain('Contradictions needing review: <strong>0</strong>')" in workbench_proof
 
 
 @spec_claim(SpecClaim(
@@ -368,10 +371,13 @@ def test_lco_query_states_have_executable_frontend_proof():
     root = Path(__file__).resolve().parents[2]
     source = (root / "frontend/src/lib/learningContribution.ts").read_text()
     proof = (root / "frontend/src/lib/learningContribution.test.ts").read_text()
+    workbench_proof = (root / "frontend/src/pages/Learning.test.tsx").read_text()
 
     for state in ("loading", "unavailable", "empty", "stale", "partial"):
         assert f"'{state}'" in source
         assert f"toBe('{state}')" in proof
+    assert "renders failed reads as unavailable" in workbench_proof
+    assert "renders initial reads as loading" in workbench_proof
 
 
 @spec_claim(SpecClaim(

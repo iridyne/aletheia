@@ -298,6 +298,49 @@ async def test_learning_funnel_reports_contradictions(client):
 
 
 @pytest.mark.anyio
+async def test_learning_funnel_optional_read_failures_are_not_zero(client, monkeypatch):
+    import aletheia.storage.sqlite as sqlite_module
+
+    real_db = sqlite_module.get_db()
+
+    class FailingOptionalReads:
+        def execute(self, sql, *args, **kwargs):
+            if any(fragment in sql for fragment in (
+                "ORDER BY rowid DESC LIMIT 30",
+                "ORDER BY rowid DESC LIMIT 20",
+                "FROM ps_lessons",
+                "FROM serenity_opportunities",
+                "WHERE status='active'",
+            )):
+                raise RuntimeError("private optional read failure")
+            return real_db.execute(sql, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite_module, "get_db", lambda: FailingOptionalReads())
+
+    response = await client.get("/api/analytics/learning-funnel")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ps_lessons"] == {
+        "availability": "unavailable",
+        "total": None,
+        "by_status": None,
+        "latest_created_at": None,
+    }
+    assert body["serenity_opportunities_active"] is None
+    assert body["contradictions"]["checked"] is False
+    assert body["contradictions"]["count"] is None
+    assert body["query_errors"] == {
+        "contradictions": "read_failed",
+        "pi_guards_window": "read_failed",
+        "pi_lessons_window": "read_failed",
+        "ps_lessons": "read_failed",
+        "serenity_opportunities": "read_failed",
+    }
+    assert "private optional read failure" not in response.text
+
+
+@pytest.mark.anyio
 async def test_pause_resume(client, monkeypatch):
     from aletheia.agent_runtime import resume_gate
 

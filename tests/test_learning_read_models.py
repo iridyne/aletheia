@@ -245,6 +245,93 @@ def test_lco_projection_marks_authority_read_failure_partial(tmp_path, monkeypat
     )
 
 
+def test_lco_projection_keeps_measurement_when_operations_read_fails(
+    tmp_path, monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+    import aletheia.learning.control as control
+
+    monkeypatch.setattr(
+        control,
+        "get_learning_job_health",
+        lambda _job_id: (_ for _ in ()).throw(RuntimeError("private operations failure")),
+    )
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    result = build_learning_contribution_projection()
+
+    assert result["availability"] == "partial"
+    assert result["unavailable_reason"] == "operations_projection_failed"
+    assert result["operations"]["availability"] == "partial"
+    assert result["operations"]["query_errors"] == {
+        "evaluator": "read_failed",
+        "lifecycle_audit": "read_failed",
+    }
+    assert result["operations"]["evaluator"] is None
+    assert result["operations"]["lifecycle_audit"] is None
+    assert result["operations"]["config"]["paper_influence_enabled"] is False
+    assert result["data_freshness"]["state"] == "unavailable"
+    assert result["items"]
+    assert "private operations failure" not in str(result)
+
+
+def test_lco_projection_preserves_evaluator_when_audit_health_read_fails(
+    tmp_path, monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+    import aletheia.learning.control as control
+
+    real_get_health = control.get_learning_job_health
+
+    def get_health(job_id):
+        if job_id == "learning_lifecycle_audit_reconciler":
+            raise RuntimeError("private audit failure")
+        return real_get_health(job_id)
+
+    monkeypatch.setattr(control, "get_learning_job_health", get_health)
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    result = build_learning_contribution_projection()
+
+    assert result["availability"] == "partial"
+    assert result["operations"]["evaluator"] is not None
+    assert result["operations"]["lifecycle_audit"] is None
+    assert result["operations"]["query_errors"] == {
+        "lifecycle_audit": "read_failed",
+    }
+    assert result["data_freshness"]["state"] != "unavailable"
+
+
+def test_lco_projection_preserves_evaluator_when_catchup_read_fails(
+    tmp_path, monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+    import aletheia.learning.control as control
+
+    monkeypatch.setattr(
+        control,
+        "measurement_catchup_due",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("private catchup failure")
+        ),
+    )
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    result = build_learning_contribution_projection()
+
+    assert result["availability"] == "partial"
+    assert result["operations"]["evaluator"] is not None
+    assert result["operations"]["evaluator"]["catchup_due"] is None
+    assert result["operations"]["query_errors"] == {
+        "evaluator_catchup": "read_failed",
+    }
+    assert result["data_freshness"]["state"] != "unavailable"
+    assert "private catchup failure" not in str(result)
+
+
 def test_lco_freshness_uses_configured_evaluation_cadence(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     _seed_current_experiment(monkeypatch)

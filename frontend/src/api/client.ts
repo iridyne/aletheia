@@ -130,6 +130,8 @@ export interface LearningContributionProjection {
     } | null
   }>
   operations: {
+    availability: 'available' | 'partial'
+    query_errors: Record<string, string>
     config: {
       contribution_evaluation_enabled: boolean
       autonomous_learning_enabled: boolean
@@ -148,8 +150,22 @@ export interface LearningContributionProjection {
       consecutive_failures: number
       last_failed_at: string | null
       last_failure_code: string | null
+      catchup_due: boolean | null
+    } | null
+    lifecycle_audit: {
+      job_id: string
+      current_status: string
+      last_started_at: string | null
+      last_succeeded_at: string | null
+      next_due_at: string | null
+      input_watermark: string | null
+      backlog_count: number
+      oldest_backlog_at: string | null
+      consecutive_failures: number
+      last_failed_at: string | null
+      last_failure_code: string | null
       catchup_due: boolean
-    }
+    } | null
   } | null
 }
 
@@ -974,9 +990,10 @@ export const api = {
   getLearningFunnel: () => fetchJson<{
     knowledge_items_by_type: Array<{ item_type: string; count: number }>
     pi_actual_visibility: { layer3_lesson_hits: number; layer3_guards_available: number; note: string }
-    ps_lessons: { total: number; by_status: Array<{ status: string; count: number }>; latest_created_at: string | null }
-    serenity_opportunities_active: number
-    contradictions: { checked: boolean; count: number; items: any[]; note: string }
+    ps_lessons: { availability: 'available' | 'unavailable'; total: number | null; by_status: Array<{ status: string; count: number }> | null; latest_created_at: string | null }
+    serenity_opportunities_active: number | null
+    contradictions: { checked: boolean; count: number | null; items: any[]; note: string }
+    query_errors: Record<string, string>
   }>('/analytics/learning-funnel'),
   getLearningContribution: () =>
     fetchJson<LearningContributionProjection>('/analytics/learning-contribution'),
