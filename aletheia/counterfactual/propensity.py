@@ -208,6 +208,41 @@ def _stratified_folds(
 # Public API
 # ---------------------------------------------------------------------------
 
+def score_rows(
+    rows: list[dict],
+    *,
+    l2: float = _L2,
+    k_folds: int = _K_FOLDS,
+    clip_lo: float = _CLIP_LO,
+    clip_hi: float = _CLIP_HI,
+) -> tuple[list[float], dict[str, int], list[str]]:
+    """Fit propensity model on *rows* and return ``(scores, vocab, feature_names)``.
+
+    Scores are clipped to ``[clip_lo, clip_hi]`` and aligned 1-to-1 with *rows*.
+    The returned *vocab* enables consistent feature encoding when an outcome
+    model is trained on the same data (used by ``estimators.compute_ope_scores``).
+
+    Returns ``([0.5, ...], {}, [])`` when *rows* has fewer than ``k_folds * 2``
+    entries (insufficient for stratified splitting).
+    """
+    min_for_cv = k_folds * 2
+    if len(rows) < min_for_cv:
+        return [0.5] * len(rows), {}, []
+
+    X, y, vocab, feature_names = _encode(rows)
+    oos = [0.0] * len(rows)
+    for train_idx, val_idx in _stratified_folds(y, k=k_folds):
+        if not train_idx or not val_idx:
+            continue
+        w = _fit([X[i] for i in train_idx], [y[i] for i in train_idx], l2=l2)
+        preds = _predict([X[i] for i in val_idx], w)
+        for j, p in zip(val_idx, preds):
+            oos[j] = p
+
+    clipped = [max(clip_lo, min(clip_hi, s)) for s in oos]
+    return clipped, vocab, feature_names
+
+
 def build_propensity_report(
     *,
     days: int = 30,
