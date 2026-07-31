@@ -66,6 +66,7 @@ L5  人工治理：在风险与运行约束下决定是否另开 policy epoch。
 
 相关的既有契约与当前 Skip 专项材料：
 
+- [反事实分析契约](../contracts/counterfactual_contract.md) — 本指引在 `aletheia/counterfactual/` 模块内的具体落法。
 - [机会固定时点结果契约](../contracts/opportunity_outcome_contract.md)
 - [筛选证据契约](../contracts/filter_evidence_contract.md)
 - [Learning Contract](../contracts/learning_contract.md)
