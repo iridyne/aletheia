@@ -150,27 +150,27 @@ def _verify_api_ready_accessible(cfg) -> bool:
 
 
 def _verify_started(cfg, *, timeout: float = 60.0, poll_interval: float = 0.3) -> None:
-    """Block until the managed gateway is confirmed up, or raise typer.Exit(1).
+    """Block until the managed gateway is confirmed up, or handle timeout gracefully.
 
-    Four outcomes:
-      - pid file written + port listening     → confirmed up; verify WebUI accessible.
-      - timeout with neither                   → never came up; capture why.
-      - WebUI returns 404                      → static files missing (should be caught by preflight).
+    Three outcomes:
+      - pid + port + /api/ready 200 + WebUI HTML before timeout  → confirmed up; return.
+      - timeout but process alive (pid present or port held)      → slow start; audit and
+        return without killing. Supervisor + self-heal own the recovery path.
+      - timeout with no process and no port                       → genuine failure; Exit(1).
 
-    Timeout budget: this only has to cover the manager-owned supervisor + inner-uvicorn process
-    startup up to the port BIND — run_migrations + init_tool_registry + init_scheduler,
-    then uvicorn opens the socket. The LLM provider probe (up to _PROBE_TIMEOUT_SEC
-    PER provider) used to run inline BEFORE the bind and routinely blew past this
-    window, causing false `gateway_spawn_failed` reports on a healthy-but-slow boot;
-    it now runs as a post-yield background task (see server/app.py _llm_startup_gate),
-    so the port binds promptly. 60s is a generous margin on slow-start hosts
-    (cold migrations, cold filesystem cache, Windows Defender scan of a fresh
-    process) — earlier 15s tripped `gateway_spawn_failed` on a healthy-but-slow
-    boot and the lifecycle command then cleaned up a healthy-but-slow gateway.
-    Do NOT couple this to the LLM probe budget — they are independent again.
+    The "alive at timeout" path deliberately does NOT kill the process. Killing from
+    the CLI start command is premature: the gateway may complete its initialization
+    (migrations, LLM probe, scheduler boot) shortly after the CLI deadline. The
+    supervisor restart policy and self-heal mechanism are the right owners for
+    detecting and recovering from a gateway that stays unhealthy long-term.
 
-    On failure, surface the tail of errors.log (the inner uvicorn's stderr sink)
-    and audit a `gateway_spawn_failed` event so the death is never silent again.
+    Timeout budget: covers supervisor + uvicorn startup to port BIND. LLM probes
+    now run as post-yield background tasks, so the port binds promptly on healthy
+    hosts. 60s is a generous margin for cold migrations / Windows Defender scan.
+    Do NOT couple this to the LLM probe budget — they are independent.
+
+    On genuine failure (no process, no port), surface errors.log and audit so the
+    death is never silent.
     """
     import time
     deadline = time.monotonic() + timeout
@@ -189,28 +189,87 @@ def _verify_started(cfg, *, timeout: float = 60.0, poll_interval: float = 0.3) -
                 pass
         time.sleep(poll_interval)
 
-    if is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
-        _stop_failed_gateway(cfg)
-        _fail_spawn(
-            "gateway port came up but API/WebUI readiness did not pass; "
-            "dashboard_static may be missing or mid-build"
+    # Timeout — distinguish "process alive" from "process truly dead".
+    if is_running() or port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
+        # Process is alive or port is held — this is a slow start, not a failure.
+        # Leave it running. The supervisor restart policy and health self-heal
+        # will detect and correct any persistent unhealthy state.
+        _audit_slow_start(timeout)
+        _echo_stdout_safe(
+            f"Gateway process started (readiness not confirmed within {timeout:.0f}s; "
+            "still initializing — run `gateway status` to check)"
         )
+        return
+
+    # No process and no port: genuine failure.
     _fail_spawn(f"gateway did not come up within {timeout:.0f}s (no pid file / port not listening)")
 
 
-def _stop_failed_gateway(cfg) -> None:
-    """Stop a just-started gateway that failed spawn verification.
-
-    If we leave an API-only process running, a later explicit start sees it as
-    already running while users get a broken dashboard. Kill only the tracked
-    Aletheia gateway tree, then clear the pid after the port is free.
-    """
+def _audit_slow_start(timeout: float) -> None:
+    """Best-effort audit of a slow-start event. Never raises."""
     try:
-        pid = read_pid()
-        if pid:
-            kill_pid_tree(pid)
-        wait_port_free(cfg.app.dashboard_port, cfg.app.bind_host, timeout=5.0)
-        clear_pid()
+        from aletheia.files.jsonl import write_audit
+        write_audit({
+            "actor": "system", "source": "gateway_lifecycle",
+            "event_type": "gateway_slow_start",
+            "entity_type": "gateway", "entity_id": "gateway",
+            "message": (
+                f"Gateway did not complete readiness checks within {timeout:.0f}s "
+                "but the process is alive; left running for self-heal / supervisor to monitor."
+            ),
+        })
+    except Exception:
+        pass
+
+
+def _check_spawn_circuit_breaker() -> None:
+    """Disable the autostart watchdog if gateway_spawn_failed events are piling up.
+
+    If the last _CIRCUIT_BREAKER_THRESHOLD consecutive spawn failures all occurred
+    within _CIRCUIT_BREAKER_WINDOW_SEC, the gateway has a persistent startup problem
+    that repeated watchdog ticks will not fix. Disable the watchdog to stop the churn
+    loop and send an operator alert. The operator can re-enable after fixing the root
+    cause.
+    """
+    _CIRCUIT_BREAKER_THRESHOLD = 3
+    _CIRCUIT_BREAKER_WINDOW_SEC = 1800  # 30 minutes
+
+    try:
+        import time
+        from aletheia.files.jsonl import read_jsonl
+        events = list(read_jsonl("audit.jsonl"))
+        spawn_failures = [
+            e for e in events
+            if e.get("event_type") == "gateway_spawn_failed"
+        ]
+        if len(spawn_failures) < _CIRCUIT_BREAKER_THRESHOLD:
+            return
+        recent = spawn_failures[-_CIRCUIT_BREAKER_THRESHOLD:]
+        # Timestamps in audit events are ISO strings; parse them.
+        import datetime as _dt
+        now = _dt.datetime.now(_dt.timezone.utc)
+        oldest_ts = recent[0].get("ts") or recent[0].get("timestamp") or ""
+        try:
+            oldest = _dt.datetime.fromisoformat(oldest_ts.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return
+        if (now - oldest).total_seconds() > _CIRCUIT_BREAKER_WINDOW_SEC:
+            return
+        # Threshold hit within window — disable watchdog and alert.
+        try:
+            from aletheia.gateway import autostart
+            if autostart.is_supported_platform() and autostart.status().get("enabled"):
+                autostart.disable(source="circuit_breaker")
+                _notify_gateway_problem(
+                    "Aletheia Gateway autostart disabled by circuit breaker",
+                    f"Gateway failed to start {_CIRCUIT_BREAKER_THRESHOLD} times in "
+                    f"{_CIRCUIT_BREAKER_WINDOW_SEC // 60} minutes. Autostart watchdog "
+                    "has been disabled to stop the restart loop. Fix the root cause and "
+                    "re-enable with `gateway autostart enable`.",
+                    source="gateway_lifecycle",
+                )
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -248,6 +307,7 @@ def _fail_spawn(reason: str) -> None:
     if tail:
         msg += f"\n--- errors.log (tail) ---\n{tail}"
     _echo_safe(msg)
+    _check_spawn_circuit_breaker()
     raise typer.Exit(1)
 
 
