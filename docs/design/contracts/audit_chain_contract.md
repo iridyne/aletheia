@@ -190,6 +190,8 @@ runtime-home `logs/audit.jsonl` 及其轮转存档**只允许追加写入**，�
 
 Durable lifecycle retry 遇到无终止换行的尾部时也遵守该约束：完整 JSON 仅追加换行；只有当尾部字节能由稳定 event payload 证明为同一记录前缀时才追加缺失后缀；否则 fail-closed 并保留 outbox backlog，不猜测或截断审计数据。
 
+每条新 lifecycle event 在同一 SQLite 事务中以 `learning-lifecycle:<event_id>` 写入结构化 `audit_events`；outbox 仅负责同一 stable ID 的 append-only JSONL mirror，重试不得重复结构化审计。
+
 - 实现保证: `write_audit()` 经 `_append_jsonl_line()` → `path.open("a", encoding="utf-8")` (`jsonl.py:59`)，以 `"a"` 模式打开，操作系统级别追加。
 - ⚠️ **无 truncate 防护**: 代码层面没有显式拒绝其他路径写入 audit 文件的机制；信任依赖进程隔离和 change-control 纪律（见 §8）。
 

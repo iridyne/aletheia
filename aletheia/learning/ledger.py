@@ -80,7 +80,34 @@ def insert_exposure(record) -> bool:
 
 
 def insert_lifecycle_event(record) -> bool:
-    return insert_record("learning_lifecycle_events", record, ignore_duplicates=True)
+    data = record.model_dump()
+    with transaction(savepoint=True):
+        db = get_db()
+        columns = ", ".join(data)
+        placeholders = ", ".join("?" for _ in data)
+        cursor = db.execute(
+            f"INSERT OR IGNORE INTO learning_lifecycle_events ({columns}) "
+            f"VALUES ({placeholders})",
+            tuple(data.values()),
+        )
+        inserted = bool(cursor.rowcount)
+        if inserted:
+            db.execute(
+                "INSERT INTO audit_events "
+                "(id,timestamp,actor,source,event_type,entity_type,entity_id,message) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    f"learning-lifecycle:{record.event_id}",
+                    record.created_at,
+                    record.audit_actor,
+                    record.audit_source,
+                    "learning_lifecycle_transition",
+                    "learning_experiment",
+                    record.experiment_id,
+                    record.reason,
+                ),
+            )
+    return inserted
 
 
 def upsert_job_health(record) -> None:

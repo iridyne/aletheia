@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 
@@ -78,6 +79,72 @@ def test_a1_additive_columns_are_present_after_migration():
     }
     assert "idx_learning_lifecycle_audit_pending" in indexes
     assert "allocation_selected" in columns["filter_candidate_outcomes"]
+
+
+def test_lifecycle_event_atomically_creates_stable_structured_audit():
+    from aletheia.learning.ledger import insert_lifecycle_event
+    from aletheia.learning.models import LearningLifecycleEvent
+    from aletheia.storage.sqlite import get_db
+
+    event = LearningLifecycleEvent(
+        event_id="lifecycle-structured-audit",
+        dedup_key="structured-audit",
+        hypothesis_id="hypothesis-structured-audit",
+        experiment_id="experiment-structured-audit",
+        from_stage="shadow",
+        action="hold",
+        reason="structured_audit_proof",
+        audit_actor="human",
+        audit_source="dashboard",
+    )
+
+    assert insert_lifecycle_event(event) is True
+    assert insert_lifecycle_event(event) is False
+    rows = get_db().execute(
+        "SELECT id,actor,source,event_type,entity_id,message FROM audit_events "
+        "WHERE id=?",
+        (f"learning-lifecycle:{event.event_id}",),
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [(
+        f"learning-lifecycle:{event.event_id}",
+        "human",
+        "dashboard",
+        "learning_lifecycle_transition",
+        event.experiment_id,
+        event.reason,
+    )]
+
+
+def test_lifecycle_event_rolls_back_on_structured_audit_id_conflict():
+    from aletheia.learning.ledger import get_record, insert_lifecycle_event
+    from aletheia.learning.models import LearningLifecycleEvent
+    from aletheia.storage.sqlite import get_db
+
+    event = LearningLifecycleEvent(
+        event_id="lifecycle-audit-conflict",
+        dedup_key="audit-conflict",
+        hypothesis_id="hypothesis-audit-conflict",
+        experiment_id="experiment-audit-conflict",
+        from_stage="shadow",
+        action="hold",
+        reason="expected_message",
+    )
+    get_db().execute(
+        "INSERT INTO audit_events "
+        "(id,timestamp,actor,source,event_type,message) VALUES (?,?,?,?,?,?)",
+        (
+            f"learning-lifecycle:{event.event_id}",
+            event.created_at,
+            "wrong_actor",
+            "wrong_source",
+            "wrong_event",
+            "wrong_message",
+        ),
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_lifecycle_event(event)
+    assert get_record("learning_lifecycle_events", event.event_id) is None
 
 
 @spec_claim(SpecClaim(
