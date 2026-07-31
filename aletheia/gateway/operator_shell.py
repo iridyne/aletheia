@@ -19,6 +19,9 @@ CREATE_NO_WINDOW = 0x08000000
 
 
 def operator_shell_root() -> Path:
+    configured = os.environ.get("ALETHEIA_OPERATOR_SHELL_ROOT", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
     return Path(__file__).resolve().parents[2] / "operator-shell"
 
 

@@ -2,6 +2,42 @@ import sqlite3
 from pathlib import Path
 
 
+def test_operator_shell_root_can_be_overridden(tmp_path, monkeypatch):
+    from aletheia.gateway import operator_shell
+
+    custom = tmp_path / "operator-shell"
+    custom.mkdir()
+    monkeypatch.setenv("ALETHEIA_OPERATOR_SHELL_ROOT", str(custom))
+
+    assert operator_shell.operator_shell_root() == custom
+
+
+def test_build_operator_shell_command_uses_env_root_override(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.config.loader import load_config
+    from aletheia.gateway import operator_shell
+
+    root = tmp_path / "operator-shell-env"
+    preflight = root / "node_modules" / "tsx" / "dist" / "preflight.cjs"
+    loader = root / "node_modules" / "tsx" / "dist" / "loader.mjs"
+    entry = root / "src" / "index.ts"
+    preflight.parent.mkdir(parents=True, exist_ok=True)
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    preflight.write_text("// tsx preflight", encoding="utf-8")
+    loader.write_text("// tsx loader", encoding="utf-8")
+    entry.write_text("console.log('ok')", encoding="utf-8")
+
+    monkeypatch.setenv("ALETHEIA_OPERATOR_SHELL_ROOT", str(root))
+    monkeypatch.setattr(operator_shell, "resolve_node_executable", lambda: "node")
+
+    cmd = operator_shell.build_operator_shell_command(load_config())
+
+    assert cmd[2] == str(preflight)
+    assert cmd[4] == loader.as_uri()
+    assert cmd[5] == str(entry)
+
+
 def setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
