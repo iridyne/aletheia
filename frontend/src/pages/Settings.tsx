@@ -111,6 +111,7 @@ const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
   { title: 'Serenity Research',        tab: 'agent', alt: ['serenity', 'auto promote', 'pi evaluation', 'long horizon', 'industrial chain'] },
   { title: 'Scheduler',                tab: 'agent', alt: ['jobs', 'cron', 'autostart agents'] },
   { title: 'AI Model Providers',       tab: 'agent', alt: ['llm', 'openai', 'anthropic', 'claude', 'codex'] },
+  { title: 'Inference Admission',      tab: 'agent', alt: ['broker', 'rate limit', 'rpm', 'tpm', 'concurrency', 'queue', 'inference limits', 'admission control', 'timeout'] },
   { title: 'LLM Cost & Usage',         tab: 'agent', alt: ['tokenomics', 'spend', 'budget', 'economics', 'cooldown', 'broker', 'inference'] },
   // Execution
   { title: 'Exchange Connection',      tab: 'execution', alt: ['bitget', 'okx', 'binance', 'api key'] },
@@ -993,6 +994,10 @@ function AgentModelsTab({ status, settings, qc }: any) {
 
       <Section title="AI Model Providers" description="LLM endpoints used by all agents. Verify & Save tests the connection before persisting. API keys are write-only.">
         <ModelProviderCard qc={qc} />
+      </Section>
+
+      <Section title="Inference Admission" description="Per-provider rate limits, concurrency, and queue admission. Every LLM call routed through a provider is governed by these ceilings before it reaches the model. Independent of the provider's identity/model settings above.">
+        <InferenceAdmissionCard qc={qc} />
       </Section>
 
       <Section title="LLM Cost & Usage" description="Live spend, broker headroom, and per-model cooldown state from the append-only economics ledger. Read-only.">
@@ -4265,7 +4270,6 @@ function NetworkCard({ settings, qc }: any) {
 function ModelProviderCard({ qc }: any) {
   const { data } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
   const { data: health = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 30000 })
-  const { data: broker } = useQuery({ queryKey: ['model-broker'], queryFn: api.getInferenceBroker, refetchInterval: 30000 })
   const [expanded, setExpanded] = useState<string | null>(null)
 
   if (!data) return <p className="hint">Loading providers…</p>
@@ -4314,7 +4318,6 @@ function ModelProviderCard({ qc }: any) {
           anthroConfig={anthroConfig}
           health={cardHealth}
           allHealth={health as any[]}
-          broker={broker}
           isDefault={cardIsDefault}
           isDeep={cardIsDeep}
           isFast={cardIsFast}
@@ -4539,12 +4542,10 @@ function ModelPingButton({ configured }: { configured: boolean }) {
   )
 }
 
-function ProviderCard({ name, config, anthroConfig, health, allHealth, broker, isDefault, isDeep, isFast, isExpanded, onToggle, qc }: {
+function ProviderCard({ name, config, anthroConfig, health, allHealth, isDefault, isDeep, isFast, isExpanded, onToggle, qc }: {
   name: string; config: any; anthroConfig?: any; health: any; allHealth: any[]; isDefault: boolean; isDeep: boolean; isFast: boolean;
-  broker?: any;
   isExpanded: boolean; onToggle: () => void; qc: any
 }) {
-  const [showInferenceLimits, setShowInferenceLimits] = useState(false)
   const isHTTP = HTTP_PROVIDERS.has(name)
   const isOAuth = OAUTH_PROVIDERS.has(name)
   const isCLI = !isHTTP
@@ -4676,31 +4677,91 @@ function ProviderCard({ name, config, anthroConfig, health, allHealth, broker, i
           ) : (
             <ClaudeCLIPanel config={config} health={health} isDefault={isDefault} qc={qc} />
           )}
-          <div style={{ marginTop: '0.75rem', borderTop: '1px solid var(--border)', paddingTop: '0.5rem' }}>
-            <button
-              className="secondary"
-              style={{ fontSize: '0.75rem', width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-              onClick={() => setShowInferenceLimits(v => !v)}
-            >
-              <span style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>{showInferenceLimits ? '▾' : '▸'}</span>
-              Inference admission
-              {!showInferenceLimits && broker?.providers?.[effectiveToggleProvider]?.metrics && (
-                <span className="hint mono" style={{ marginLeft: 'auto', fontSize: '0.7rem' }}>
-                  active {broker.providers[effectiveToggleProvider].metrics.active ?? 0}
-                </span>
-              )}
-            </button>
-            {showInferenceLimits && (
-              <InferenceLimitsForm
-                name={effectiveToggleProvider}
-                config={effectiveToggleProvider === 'anthropic_compatible' ? anthroConfig : config}
-                metrics={broker?.providers?.[effectiveToggleProvider]?.metrics}
-                qc={qc}
-              />
-            )}
-          </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inference Admission — sibling Section to AI Model Providers.
+// The broker's rate limit / concurrency / queue policy is a control-plane
+// concern separate from provider identity. Rendered as its own Section so
+// the semantic decoupling shows up in the operator's UI, not just the code.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function InferenceAdmissionCard({ qc }: { qc: any }) {
+  const { data } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
+  const { data: broker } = useQuery({
+    queryKey: ['model-broker'],
+    queryFn: api.getInferenceBroker,
+    refetchInterval: 10_000,
+  })
+
+  if (!data) return <p className="hint">Loading provider list…</p>
+
+  const providers = Object.entries((data as any).providers ?? {}) as Array<[string, any]>
+  const enabled = providers.filter(([, cfg]) => cfg?.enabled === true)
+
+  if (enabled.length === 0) {
+    return (
+      <p className="hint">
+        No providers enabled. Enable a provider under "AI Model Providers" above
+        to configure its inference admission.
+      </p>
+    )
+  }
+
+  const running = broker?.running ?? false
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="hint mono" style={{ fontSize: '0.72rem' }}>
+        Broker: {running ? 'running' : 'not yet started'}
+        {broker && ` · ${Object.keys(broker.providers ?? {}).length} lane(s) tracked`}
+        · 0 RPM / 0 TPM means unlimited
+      </div>
+      {enabled.map(([name, cfg]) => {
+        const metrics = broker?.providers?.[name]?.metrics
+        const label = PROVIDER_LABELS[name] || name
+        const compactModel = cfg?.model && cfg.model !== 'default' ? ` · model: ${cfg.model}` : ''
+        return (
+          <div
+            key={name}
+            style={{
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--r)',
+              padding: '0.7rem 0.9rem',
+              background: 'var(--surface)',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                marginBottom: '0.5rem',
+              }}
+            >
+              <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>{label}</span>
+              <span className="hint mono" style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>
+                {name}
+                {compactModel}
+              </span>
+              {metrics && (
+                <span
+                  className="hint mono"
+                  style={{ marginLeft: 'auto', fontSize: '0.72rem' }}
+                >
+                  active {metrics.active ?? 0} · queued {metrics.queued ?? 0} · wait avg{' '}
+                  {Math.round((metrics.queue_wait_avg_ms as number) ?? 0)}ms
+                </span>
+              )}
+            </div>
+            <InferenceLimitsForm name={name} config={cfg} metrics={metrics} qc={qc} />
+          </div>
+        )
+      })}
     </div>
   )
 }
