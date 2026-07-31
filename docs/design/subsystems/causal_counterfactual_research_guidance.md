@@ -70,3 +70,5 @@ L5  人工治理：在风险与运行约束下决定是否另开 policy epoch。
 - [筛选证据契约](../contracts/filter_evidence_contract.md)
 - [Learning Contract](../contracts/learning_contract.md)
 - [PI Skip 反事实研究与恢复设计](../research/skip-remediation/README.md)
+
+实现代码：`aletheia/counterfactual/`（`trades.py` 是核心 Top-N shadow-trade 账本，`exits.py` 是出场路径反事实，`filter_experiments.py` 是筛选门槛观察实验）；表 schema 与 repo 函数保留在 `aletheia/storage/`。
