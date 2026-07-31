@@ -322,6 +322,57 @@ def check_would_block(
     return observations
 
 
+def list_recent_would_block_events(
+    *,
+    days: int = 7,
+    limit: int = 200,
+    scope: str | None = None,
+) -> list[dict[str, Any]]:
+    """Query `runtime_cost_events` for rows whose metadata carries a `would_block` key.
+
+    Returned rows include the base ledger fields plus a parsed `would_block`
+    list. Used by the read-only Settings surface and by the
+    `/api/economics/budgets/would-block` endpoint.
+
+    `scope` filters to events where at least one observation targets the
+    given scope. Filtering is done in Python (SQLite's JSON1 predicates
+    against nested arrays require complex WHERE clauses; a small per-page
+    filter here is simpler and correct).
+    """
+    ensure_economics_schema()
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=max(1, days))
+    from aletheia.economics.schema import ensure_economics_schema as _ensure
+
+    db = _ensure()
+    rows = db.execute(
+        """SELECT * FROM runtime_cost_events
+           WHERE replace(started_at,' ','T') >= replace(?,' ','T')
+             AND json_valid(metadata_json)
+             AND json_extract(metadata_json,'$.would_block') IS NOT NULL
+           ORDER BY started_at DESC
+           LIMIT ?""",
+        (start.isoformat(), max(1, min(int(limit), 5_000))),
+    ).fetchall()
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        entry = dict(row)
+        try:
+            import json as _json
+
+            metadata = _json.loads(entry.get("metadata_json") or "{}")
+            observations = metadata.get("would_block") or []
+        except Exception:
+            observations = []
+        if scope and not any(obs.get("scope") == scope for obs in observations):
+            continue
+        entry["would_block"] = observations
+        results.append(entry)
+    return results
+
+
 def budgets_applicable_to(
     *,
     run_id: str | None = None,
