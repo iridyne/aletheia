@@ -43,6 +43,13 @@ uv run aletheia gateway start | restart | enable-autostart
 uv run aletheia doctor    # single source of truth: real local state
 ```
 
+## Dev preview
+
+For UI-only iteration on a worktree, use Vite HMR on `http://127.0.0.1:5173`
+(read-only proxy to the stable `:8787` API by default). Contract, isolated
+backend, and Windows commands live in
+[Development preview](docs/operations/development/DEVELOPMENT_PREVIEW.md).
+
 ## Find your document
 
 | Task | Read |
