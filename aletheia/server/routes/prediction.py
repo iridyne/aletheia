@@ -242,19 +242,42 @@ async def update_prediction_preferences(body: dict):
     return {"status": "ok", "categories": cfg.market_data.observed_prediction_markets}
 
 
-@router.post("/refresh")
+@router.post("/refresh", status_code=202)
 async def trigger_prediction_refresh():
-    """Manually trigger a prediction observer run."""
+    """Manually trigger a prediction observer run via the durable job queue."""
     _ensure_db()
     from aletheia.config.loader import load_config
     cfg = load_config()
+    if not cfg.market_data.prediction_enabled:
+        raise HTTPException(400, "Prediction market module is disabled")
     if not cfg.market_data.observed_prediction_markets:
         raise HTTPException(400, "No prediction markets configured")
 
-    from aletheia.agents import get_agent
-    agent_fn = get_agent("prediction_observer")
-    if not agent_fn:
-        raise HTTPException(500, "prediction_observer agent not found")
+    from aletheia.agent_runtime.job_queue import (
+        AgentJobManagerClosed,
+        AgentJobQueueFull,
+        get_agent_job_manager,
+    )
 
-    result = await agent_fn(permission_mode=cfg.agent.permission_mode)
-    return {"status": "completed", "result": result}
+    manager = get_agent_job_manager()
+    try:
+        run = manager.enqueue("prediction_observer")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except AgentJobQueueFull as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "prediction_refresh_in_progress",
+                "job_id": exc.run_id,
+                "capacity": exc.capacity,
+            },
+        ) from exc
+    except AgentJobManagerClosed as exc:
+        raise HTTPException(status_code=503, detail="agent_job_manager_unavailable") from exc
+    return {
+        "job_id": run.id,
+        "run_id": run.id,
+        "status": "queued",
+        "queue": manager.snapshot(),
+    }
