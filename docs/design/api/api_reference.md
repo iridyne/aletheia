@@ -182,6 +182,8 @@ Only the implemented endpoint indexed above is part of the current API
 reference. Additional routes are design proposals in
 [`learning_observability.md`](../proposals/learning_observability.md) and must
 not appear in current UI, OpenAPI expectations, or owner instructions.
+Proposed paths, hypothesis, experiment, and health routes remain specified there; the exposure
+detail target is repeated below for API-family visibility.
 | GET | `/learning/exposures/{entity_id}` | Bounded indexed influence explanation for an explicit entity type |
 
 The targets are GET-only cached read projections. They run no evaluator or

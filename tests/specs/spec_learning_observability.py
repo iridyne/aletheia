@@ -206,7 +206,7 @@ def test_lco_frontend_uses_backend_measurement_state():
 
 @spec_claim(SpecClaim(
     "LCO-C03", _CONTRACT, "§7 bounded read path", "L2c",
-    "Observability reads perform no write, evaluation, lifecycle or authority side effect and use "
+    "Observability reads perform no write, evaluation, lifecycle transition or authority mutation and use "
     "bounded cached work outside the event loop.",
     status="implemented",
 ))
@@ -376,9 +376,9 @@ def test_lco_query_states_have_executable_frontend_proof():
 
 @spec_claim(SpecClaim(
     "LCO-C05", _CONTRACT, "§8.7 responsive accessibility", "L2c",
-    "Desktop and mobile layouts plus keyboard and ARIA behavior preserve access to LCO tabs, "
-    "tables and detail drawers.",
-    status="implemented",
+    "Desktop and mobile layouts plus native keyboard and label semantics preserve access to the "
+    "current measured-path selector and Contribution summary.",
+    status="partial",
 ))
 def test_lco_multi_path_control_is_keyboard_native_and_responsive():
     root = Path(__file__).resolve().parents[2]
@@ -401,8 +401,8 @@ def test_lco_multi_path_control_is_keyboard_native_and_responsive():
 
 @spec_claim(SpecClaim(
     "LCO-C06", _CONTRACT, "§7 query and performance", "L2c",
-    "Server-enforced limits, monotonic TTL caching, Server-Timing and direct cold/warm backend "
-    "measurements enforce the LCO performance contract.",
+    "The current summary uses monotonic TTL caching and emits explainable cold/cache-hit "
+    "Server-Timing.",
     status="implemented",
 ))
 @pytest.mark.anyio
