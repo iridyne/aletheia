@@ -72,9 +72,20 @@ class FallbackChainProvider:
         InstrumentId.market_type. CoinGecko/BinancePublic are spot adapters; using
         them after a perpetual miss silently changes the instrument being priced.
         """
+        providers = self._providers
         if isinstance(symbol, InstrumentId) and symbol.market_type != MARKET_SPOT:
-            return self._providers[:1]
-        return self._providers
+            providers = providers[:1]
+
+        from aletheia.data.venue_health import is_venue_available
+
+        eligible = []
+        for provider in providers:
+            venue = getattr(provider, "venue_name", None)
+            if venue and not is_venue_available(venue):
+                logger.info("market-data fallback skipping cooling venue %s", venue)
+                continue
+            eligible.append(provider)
+        return eligible
 
     async def get_ticker(self, symbol) -> Ticker:
         last_err: Exception | None = None
