@@ -80,12 +80,16 @@ def build_calibration(
     days: int = 8,
     symbols: list[str] | None = None,
     policy_epoch_id: str | None = None,
+    scanner_family: str | None = None,
 ) -> dict[str, Any]:
     """Build the JSON-serializable calibration report. Read-only.
 
     Passing ``policy_epoch_id`` restricts the window to shadow rows written
     under the same policy epoch, which is the correct partition whenever the
     caller could otherwise straddle an epoch rotation.
+
+    Passing ``scanner_family`` restricts to a single scanner family
+    (e.g. ``"momentum"``, ``"short_bias"``).
     """
     import aletheia.storage.sqlite as sqlite_store
 
@@ -94,6 +98,7 @@ def build_calibration(
         "window_days": days,
         "symbols": symbols or "ALL",
         "policy_epoch_id": policy_epoch_id,
+        "scanner_family": scanner_family or "ALL",
         "conviction_gate": gate,
         "bands": [],
         "selection_check": {},
@@ -116,6 +121,7 @@ def build_calibration(
             days=days,
             symbols=symbols,
             policy_epoch_id=policy_epoch_id,
+            scanner_family=scanner_family,
         )
     except sqlite3.OperationalError as exc:
         report["errors"].append(f"Query failed (missing table/column?): {exc}")

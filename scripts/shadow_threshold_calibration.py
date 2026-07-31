@@ -11,6 +11,8 @@ Usage
     uv run python scripts/shadow_threshold_calibration.py --days 14
     uv run python scripts/shadow_threshold_calibration.py --symbol SOXL/USDT --symbol CHZ/USDT
     uv run python scripts/shadow_threshold_calibration.py --policy-epoch <id>
+    uv run python scripts/shadow_threshold_calibration.py --family momentum
+    uv run python scripts/shadow_threshold_calibration.py --family short_bias --days 30
     uv run python scripts/shadow_threshold_calibration.py --json
 """
 from __future__ import annotations
@@ -40,6 +42,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Restrict to shadow rows written under this policy epoch id.",
     )
+    parser.add_argument(
+        "--family",
+        dest="scanner_family",
+        default=None,
+        help="Restrict to a single scanner family (e.g. momentum, short_bias).",
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of text.")
     args = parser.parse_args(argv)
 
@@ -47,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         days=args.days,
         symbols=args.symbols,
         policy_epoch_id=args.policy_epoch_id,
+        scanner_family=args.scanner_family,
     )
     if args.json:
         print(json.dumps(report, indent=2, ensure_ascii=False))
