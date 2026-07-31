@@ -392,7 +392,9 @@ def _current_price(
 
 def list_deduped_shadows(
     *,
-    days: int,
+    days: int | None = None,
+    since_iso: str | None = None,
+    until_iso: str | None = None,
     symbols: list[str] | None = None,
     policy_epoch_id: str | None = None,
     columns: tuple[str, ...] = (
@@ -412,8 +414,19 @@ def list_deduped_shadows(
     consumer maintained its own ``PARTITION BY outcome_candidate_key`` CTE,
     which was memory-flagged as an easy-to-forget correctness trap.
 
+    Time window is one of:
+
+    - ``days=N`` — rows with ``created_at >= now - N days`` (legacy shortcut).
+    - ``since_iso[, until_iso]`` — absolute ISO timestamps. ``until_iso`` is
+      exclusive; when omitted, the window is open-ended on the right.
+
+    Passing both ``days`` and ``since_iso`` is an error; passing neither is
+    also an error (no implicit "all history" mode — window intent must be
+    explicit).
+
     Args:
-        days: lookback window in days (``created_at >= now-days``).
+        days: lookback window in days.
+        since_iso, until_iso: absolute ISO datetime window.
         symbols: canonical symbol filter (e.g. ``["BTC/USDT"]``); ``None`` for all.
         policy_epoch_id: when set, restrict to rows written under the same
             policy epoch — required whenever the caller crosses an epoch
@@ -422,7 +435,23 @@ def list_deduped_shadows(
     """
     from aletheia.storage.sqlite import get_db
 
-    params: list[object] = [f"-{int(days)} days"]
+    if (days is None) == (since_iso is None):
+        raise ValueError(
+            "list_deduped_shadows requires exactly one of days= or since_iso="
+        )
+
+    params: list[object] = []
+    time_clauses: list[str] = []
+    if since_iso is not None:
+        time_clauses.append("created_at >= ?")
+        params.append(since_iso)
+        if until_iso is not None:
+            time_clauses.append("created_at < ?")
+            params.append(until_iso)
+    else:
+        time_clauses.append("created_at >= datetime('now', ?)")
+        params.append(f"-{int(days)} days")
+
     symbol_clause = ""
     if symbols:
         placeholders = ",".join("?" for _ in symbols)
@@ -434,6 +463,7 @@ def list_deduped_shadows(
         params.append(policy_epoch_id)
 
     projection = ", ".join(columns)
+    time_where = " AND ".join(time_clauses)
     sql = f"""
         WITH resolved AS (
             SELECT
@@ -446,7 +476,7 @@ def list_deduped_shadows(
             FROM shadow_trades
             WHERE net_pnl_pct IS NOT NULL
               AND outcome_candidate_key IS NOT NULL
-              AND created_at >= datetime('now', ?)
+              AND {time_where}
               {symbol_clause}
               {epoch_clause}
         )
