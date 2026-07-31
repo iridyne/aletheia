@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from uuid import uuid4
 
 from aletheia.agent_runtime.wake_events import WakeCoalescer, WakeEvent
@@ -39,6 +40,10 @@ _uvicorn_loop: asyncio.AbstractEventLoop | None = None  # captured at startup
 _coalescer: WakeCoalescer | None = None
 _pending_events: list[WakeEvent] = []
 _generic_wake_pending: bool = False
+# Runtime tracking: updated by start/stop, exposed via daemon_status().
+_task_generation: int = 0
+_started_at: float | None = None   # monotonic timestamp of last start
+_active_params: dict | None = None  # debounce/cooldown/heartbeat in effect
 
 # A negative value cannot collide with the non-negative queue depth returned by
 # evaluate_trading_opportunity(). The loop treats it as work still pending so a
@@ -94,6 +99,9 @@ def daemon_status() -> dict:
         "running": is_daemon_running(),
         "event_set": _signal_event.is_set() if _signal_event else False,
         "lock_held": _eval_lock.locked() if _eval_lock else False,
+        "task_generation": _task_generation,
+        "started_at": _started_at,
+        "active_params": _active_params,
     }
 
 
@@ -106,10 +114,17 @@ def start_pi_daemon(
     wake_capacity: float = 15,
     wake_refill_per_hour: float = 15.0,
 ) -> "asyncio.Task | None":
-    global _daemon_task, _uvicorn_loop
+    global _daemon_task, _uvicorn_loop, _task_generation, _started_at, _active_params
     if _daemon_task is not None and not _daemon_task.done():
         return _daemon_task
     _uvicorn_loop = loop
+    _task_generation += 1
+    _started_at = time.monotonic()
+    _active_params = {
+        "debounce_sec": debounce_sec,
+        "cooldown_sec": cooldown_sec,
+        "heartbeat_sec": heartbeat_sec,
+    }
     _daemon_task = loop.create_task(
         _pi_daemon_loop(
             debounce_sec, cooldown_sec, heartbeat_sec,
@@ -118,21 +133,112 @@ def start_pi_daemon(
         name="pi_daemon",
     )
     logger.info(
-        "pi_daemon: started (debounce=%.0fs, cooldown=%.0fs, heartbeat=%.0fs, "
+        "pi_daemon: started (gen=%d, debounce=%.0fs, cooldown=%.0fs, heartbeat=%.0fs, "
         "coalesce=%.1fs, wake_bucket=%.0f/%.0fh)",
-        debounce_sec, cooldown_sec, heartbeat_sec,
+        _task_generation, debounce_sec, cooldown_sec, heartbeat_sec,
         coalesce_window_sec, wake_capacity, wake_refill_per_hour,
     )
     return _daemon_task
 
 
 def stop_pi_daemon() -> None:
-    global _daemon_task, _uvicorn_loop
+    global _daemon_task, _uvicorn_loop, _started_at, _active_params
     if _daemon_task is not None and not _daemon_task.done():
         _daemon_task.cancel()
         logger.info("pi_daemon: cancelled")
     _daemon_task = None
     _uvicorn_loop = None
+    _started_at = None
+    _active_params = None
+
+
+async def reconfigure_pi_daemon(
+    enabled: bool,
+    debounce_sec: float,
+    cooldown_sec: float,
+    heartbeat_sec: float,
+    loop: asyncio.AbstractEventLoop,
+) -> dict:
+    """Apply new pi_daemon config to the running process without a gateway restart.
+
+    Called from POST /api/settings/pi_daemon after the config is persisted.
+    Returns {"configured": bool, "running": bool, "blocker": str | None}.
+    A non-None blocker names the gate that prevented the requested state.
+
+    Pending wake events (_pending_events / _generic_wake_pending) survive a
+    controlled restart because they are module-level, not owned by the task.
+    """
+    global _daemon_task, _uvicorn_loop, _started_at, _active_params
+
+    currently_running = is_daemon_running()
+
+    if not enabled:
+        if currently_running:
+            _daemon_task.cancel()
+            try:
+                await _daemon_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            _daemon_task = None
+            _uvicorn_loop = None
+            _started_at = None
+            _active_params = None
+            logger.info("pi_daemon: stopped via settings reconfigure (enabled=false)")
+        return {"configured": False, "running": False, "blocker": None}
+
+    # Gates must pass before starting or restarting.
+    try:
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+    except Exception as exc:
+        return {"configured": True, "running": currently_running, "blocker": f"config_load_error:{exc}"}
+
+    try:
+        from aletheia.agent_runtime.startup_behavior_gate import gate_allows_startup
+        if not gate_allows_startup(cfg):
+            logger.info("pi_daemon: enable blocked by startup_behavior_gate")
+            return {"configured": True, "running": False, "blocker": "startup_behavior_gate"}
+    except Exception:
+        pass  # permissive on gate-check failure
+
+    if cfg.runtime.paused:
+        return {"configured": True, "running": False, "blocker": "runtime_paused"}
+    if cfg.agent.permission_mode not in ("Paper", "Full"):
+        return {
+            "configured": True,
+            "running": False,
+            "blocker": f"permission_mode:{cfg.agent.permission_mode}",
+        }
+
+    # Skip restart when already running with the exact same parameters.
+    requested = {
+        "debounce_sec": debounce_sec,
+        "cooldown_sec": cooldown_sec,
+        "heartbeat_sec": heartbeat_sec,
+    }
+    if currently_running and _active_params == requested:
+        return {"configured": True, "running": True, "blocker": None}
+
+    # Controlled restart: cancel the current task but keep _uvicorn_loop intact
+    # so notify_pi_daemon() stays callable between the cancel and the new start.
+    if currently_running:
+        _daemon_task.cancel()
+        try:
+            await _daemon_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        _daemon_task = None
+        _started_at = None
+        _active_params = None
+        logger.info("pi_daemon: stopped for parameter reconfigure")
+
+    task = start_pi_daemon(
+        loop=loop,
+        debounce_sec=debounce_sec,
+        cooldown_sec=cooldown_sec,
+        heartbeat_sec=heartbeat_sec,
+    )
+    return {"configured": True, "running": task is not None, "blocker": None}
 
 
 # ---------------------------------------------------------------------------

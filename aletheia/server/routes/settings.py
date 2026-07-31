@@ -625,7 +625,33 @@ async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
                  "entity_type": "pi_daemon_config", "before": old,
                  "after": cfg.pi_daemon.model_dump(mode="json"),
                  "message": f"System Operator daemon config updated: {list(updates.keys())}"})
-    return {"updated": updates}
+
+    # Apply the runtime transition immediately so the running daemon reflects
+    # the saved config without requiring a gateway restart.
+    runtime_status: dict | None = None
+    affects_runtime = bool(updates)  # any field change can affect daemon state
+    if affects_runtime:
+        try:
+            from aletheia.agent_runtime.pi_daemon import reconfigure_pi_daemon
+            loop = asyncio.get_event_loop()
+            runtime_status = await reconfigure_pi_daemon(
+                enabled=cfg.pi_daemon.enabled,
+                debounce_sec=cfg.pi_daemon.debounce_sec,
+                cooldown_sec=cfg.pi_daemon.cooldown_sec,
+                heartbeat_sec=cfg.pi_daemon.heartbeat_sec,
+                loop=loop,
+            )
+        except Exception as exc:
+            runtime_status = {
+                "configured": cfg.pi_daemon.enabled,
+                "running": False,
+                "blocker": f"reconfigure_error:{exc}",
+            }
+
+    response: dict = {"updated": updates}
+    if runtime_status is not None:
+        response["runtime_status"] = runtime_status
+    return response
 
 
 # ---------------------------------------------------------------------------
