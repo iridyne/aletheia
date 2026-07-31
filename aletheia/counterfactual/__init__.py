@@ -12,6 +12,8 @@ Concrete implementations of the framework's counterfactual capability
                         (preregistered assignment, evidence gates)
 - calibration         — L2 descriptive report: conviction-gate calibration
                         report from resolved shadow rows
+- advisories          — L5 back-linkage: passive rotation-review advisories
+                        derived from calibration evidence (observe-only)
 
 Storage-layer helpers for the shadow_trades / filter_shadow_experiments
 tables remain in ``aletheia.storage.repositories``; this package is the

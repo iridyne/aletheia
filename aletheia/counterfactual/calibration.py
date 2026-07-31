@@ -18,6 +18,11 @@ import sqlite3
 from statistics import mean, median
 from typing import Any
 
+from aletheia.counterfactual.advisories import (
+    advisory_to_dict,
+    build_rotation_advisories,
+    render_advisories,
+)
 from aletheia.counterfactual.trades import list_deduped_shadows
 
 # Band edges (trade_score). Chosen to straddle the gate so the sign flip is
@@ -153,6 +158,13 @@ def build_calibration(
     report["notes"].append(
         "Read avg_net alongside median_net and win_rate; treat low-n bands as inconclusive."
     )
+
+    # L5 back-linkage: attach any rotation advisories derived from this report.
+    # Advisories are observe-only (see counterfactual.advisories); attaching
+    # them here does not authorize any action.
+    report["rotation_advisories"] = [
+        advisory_to_dict(a) for a in build_rotation_advisories(calibration_report=report)
+    ]
     return report
 
 
@@ -229,4 +241,12 @@ def render_text(report: dict[str, Any]) -> str:
         lines.append("")
         for note in report["notes"]:
             lines.append(f"note: {note}")
+
+    advisories_raw = report.get("rotation_advisories") or []
+    if advisories_raw:
+        from aletheia.counterfactual.advisories import RotationAdvisory
+
+        advisories = [RotationAdvisory(**a) for a in advisories_raw]
+        lines.append("")
+        lines.append(render_advisories(advisories))
     return "\n".join(lines)
