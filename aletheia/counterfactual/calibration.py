@@ -75,17 +75,43 @@ def _summarize_band(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+_OPE_COLUMNS: tuple[str, ...] = (
+    "symbol",
+    "direction",
+    "trade_score",
+    "net_pnl_pct",
+    "was_selected",
+    "rank",
+    "scanner_family",
+)
+
+
 def build_calibration(
     *,
     days: int = 8,
     symbols: list[str] | None = None,
     policy_epoch_id: str | None = None,
+    scanner_family: str | None = None,
+    method: str = "naive",
 ) -> dict[str, Any]:
     """Build the JSON-serializable calibration report. Read-only.
 
     Passing ``policy_epoch_id`` restricts the window to shadow rows written
     under the same policy epoch, which is the correct partition whenever the
     caller could otherwise straddle an epoch rotation.
+
+    Passing ``scanner_family`` restricts to a single scanner family
+    (e.g. ``"momentum"``, ``"short_bias"``).
+
+    ``method`` controls the estimator used for band-level averages:
+
+    * ``"naive"`` (default) — ``statistics.mean`` of resolved rows; subject to
+      selection bias but always available.
+    * ``"dr"`` — Doubly Robust estimator (propensity × outcome model); unbiased
+      under correct specification of either model.  Adds ``ips_avg_net_pct``,
+      ``dr_avg_net_pct``, and ``dm_avg_net_pct`` keys to each band dict.
+      Requires ≥ 10 resolved rows; falls back to ``"naive"`` with a note if
+      the propensity model cannot be fitted.
     """
     import aletheia.storage.sqlite as sqlite_store
 
@@ -94,7 +120,9 @@ def build_calibration(
         "window_days": days,
         "symbols": symbols or "ALL",
         "policy_epoch_id": policy_epoch_id,
+        "scanner_family": scanner_family or "ALL",
         "conviction_gate": gate,
+        "estimation_method": method,
         "bands": [],
         "selection_check": {},
         "crossover_band": None,
@@ -116,6 +144,8 @@ def build_calibration(
             days=days,
             symbols=symbols,
             policy_epoch_id=policy_epoch_id,
+            scanner_family=scanner_family,
+            columns=_OPE_COLUMNS,
         )
     except sqlite3.OperationalError as exc:
         report["errors"].append(f"Query failed (missing table/column?): {exc}")
@@ -126,16 +156,46 @@ def build_calibration(
         report["notes"].append("No resolved shadow candidates in this window/scope.")
         return report
 
+    # --- OPE scores (propensity + outcome) when method="dr" ---
+    ope_propensities: list[float] = []
+    ope_outcome_preds: list[float] = []
+    band_indices: dict[str, list[int]] = {}  # band_label → row indices in `rows`
+
+    if method == "dr":
+        try:
+            from aletheia.counterfactual.estimators import compute_ope_scores
+            ope_propensities, ope_outcome_preds = compute_ope_scores(rows)
+        except Exception as exc:
+            report["notes"].append(
+                f"DR estimation failed ({exc}); falling back to naive mean."
+            )
+            report["estimation_method"] = "naive"
+
     banded: dict[str, list[dict[str, Any]]] = {}
-    for r in rows:
+    for idx, r in enumerate(rows):
         label = _band_label(float(r["trade_score"]), _BAND_EDGES)
         banded.setdefault(label, []).append(r)
+        band_indices.setdefault(label, []).append(idx)
 
     bands_out = []
     for label in sorted(banded, key=_band_order_key):
         summary = _summarize_band(banded[label])
         summary["band"] = label
         summary["at_or_above_gate"] = _band_order_key(label) >= gate
+
+        if report["estimation_method"] == "dr" and ope_propensities:
+            from aletheia.counterfactual.estimators import dr_estimate, ips_estimate
+            idxs = band_indices[label]
+            b_rows = banded[label]
+            b_props = [ope_propensities[i] for i in idxs]
+            b_preds = [ope_outcome_preds[i] for i in idxs]
+            summary.update(ips_estimate(b_rows, b_props))
+            summary.update(dr_estimate(b_rows, b_props, b_preds))
+        else:
+            summary["ips_avg_net_pct"] = None
+            summary["dr_avg_net_pct"] = None
+            summary["dm_avg_net_pct"] = None
+
         bands_out.append(summary)
     report["bands"] = bands_out
 

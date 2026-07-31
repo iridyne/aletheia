@@ -22,6 +22,7 @@ dependencies = [
     "aiohttp-socks>=0.9",   # SOCKS5 proxy connector for aiohttp/ccxt (net.aiohttp_session)
     "optuna>=3.6",
     "feedparser>=6.0",
+    "numpy>=2.4.6",
 ]
 
 [project.scripts]

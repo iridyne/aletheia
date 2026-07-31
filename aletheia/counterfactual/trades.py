@@ -397,6 +397,7 @@ def list_deduped_shadows(
     until_iso: str | None = None,
     symbols: list[str] | None = None,
     policy_epoch_id: str | None = None,
+    scanner_family: str | None = None,
     columns: tuple[str, ...] = (
         "symbol",
         "direction",
@@ -431,6 +432,7 @@ def list_deduped_shadows(
         policy_epoch_id: when set, restrict to rows written under the same
             policy epoch — required whenever the caller crosses an epoch
             rotation (see counterfactual guidance L0 completeness).
+        scanner_family: restrict to one scanner family (e.g. ``"momentum"``).
         columns: projection list. Every column must exist in ``shadow_trades``.
     """
     from aletheia.storage.sqlite import get_db
@@ -461,6 +463,10 @@ def list_deduped_shadows(
     if policy_epoch_id:
         epoch_clause = "AND policy_epoch_id = ?"
         params.append(policy_epoch_id)
+    family_clause = ""
+    if scanner_family:
+        family_clause = "AND scanner_family = ?"
+        params.append(scanner_family)
 
     projection = ", ".join(columns)
     time_where = " AND ".join(time_clauses)
@@ -479,6 +485,7 @@ def list_deduped_shadows(
               AND {time_where}
               {symbol_clause}
               {epoch_clause}
+              {family_clause}
         )
         SELECT {projection}
         FROM resolved
