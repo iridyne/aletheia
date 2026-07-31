@@ -9,6 +9,7 @@ import {
   Globe,
   GraduationCap,
   LayoutDashboard,
+  Menu,
   Newspaper,
   PanelLeftClose,
   PanelLeftOpen,
@@ -647,7 +648,9 @@ export default function App() {
       <div className="content">
         <header className="topbar">
           {/* Hamburger for mobile sidebar toggle (L1) */}
-          <button className="topbar-btn hamburger" onClick={() => setSidebarOpen(o => !o)} aria-label="Toggle menu">☰</button>
+          <button className="topbar-btn hamburger" onClick={() => setSidebarOpen(o => !o)} aria-label="Toggle menu">
+            <Menu size={18} aria-hidden="true" />
+          </button>
           {/* Bloomberg-style ticker replaces the breadcrumb (which duplicated brand+sidebar
               "you-are-here" cues). The active sidebar item + each page's PageHeader title
               cover navigation context; the topbar now adds market-state context instead. */}
