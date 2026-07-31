@@ -120,6 +120,7 @@ def _outcome(
     entry_at: str | None = None,
     status: str = "settled",
     cost_model_version: str | None = "cost-v1",
+    settlement_price_source: str = "horizon_ohlcv",
     suffix: str = "",
 ):
     from aletheia.storage.sqlite import get_db
@@ -134,9 +135,9 @@ def _outcome(
         "(id, outcome_candidate_key, member_id, snapshot_id, symbol, venue, market_type, "
         "scanner_family, direction, horizon, entry_price_usd, entry_ts, due_at, settled_at, "
         "net_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
-        "mae_pct, cost_model_version, status) "
+        "mae_pct, settlement_price_source, cost_model_version, status) "
         "VALUES (?, ?, ?, ?, 'BTC/USDT', 'test', 'perp', 'momentum', 'long', ?, 100, ?, ?, ?, ?, "
-        "0.1, 0.1, 0.0, ?, ?, ?)",
+        "0.1, 0.1, 0.0, ?, ?, ?, ?)",
         (
             f"outcome-{candidate}-{horizon}-{suffix or 'primary'}",
             candidate,
@@ -148,6 +149,7 @@ def _outcome(
             settled,
             net,
             mae,
+            settlement_price_source,
             cost_model_version,
             status,
         ),
@@ -164,6 +166,7 @@ def _filter_outcome(
     status: str = "settled",
     cost_model_version: str | None = "cost-v1",
     allocation_selected: bool | None = True,
+    settlement_price_source: str = "horizon_ohlcv",
     suffix: str = "",
 ):
     from aletheia.storage.sqlite import get_db
@@ -177,9 +180,9 @@ def _filter_outcome(
         "(id, outcome_candidate_key, venue, symbol, market_type, scanner_family, direction, "
         "horizon, allocation_selected, entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
         "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, mae_pct, "
-        "cost_model_version, status) "
+        "settlement_price_source, cost_model_version, status) "
         "VALUES (?, ?, 'test', 'BTC/USDT', 'perp', 'momentum', 'long', ?, ?, 100, ?, ?, ?, ?, "
-        "0.1, 0.1, 0.0, ?, ?, ?)",
+        "0.1, 0.1, 0.0, ?, ?, ?, ?)",
         (
             f"filter-outcome-{candidate}-{horizon}-{suffix or 'primary'}",
             candidate,
@@ -190,6 +193,7 @@ def _filter_outcome(
             settled,
             net,
             mae,
+            settlement_price_source,
             cost_model_version,
             status,
         ),
@@ -339,6 +343,31 @@ def test_canonical_and_selected_mirror_economic_disagreement_fails_closed():
         "canonical": 1.0,
         "mirrors": [-1.0],
     }
+
+
+def test_canonical_and_mirror_source_label_difference_is_not_an_economic_conflict():
+    hypothesis, experiment = _experiment()
+    _exposure(
+        experiment, hypothesis, candidate="source-label-treatment", assignment="treatment",
+        outcome_key="source-label-treatment:4h",
+    )
+    _exposure(
+        experiment, hypothesis, candidate="source-label-control", assignment="control",
+        outcome_key="source-label-control:4h",
+    )
+    _filter_outcome("source-label-treatment", net=1.0)
+    _outcome(
+        "source-label-treatment:4h",
+        net=1.0,
+        settlement_price_source="horizon_ohlcv_local",
+    )
+    _filter_outcome("source-label-control", net=0.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict != "invalid"
+    assert "conflicting_mirrored_outcome" not in metrics["invalid_reasons"]
 
 
 def test_mirror_inferred_selection_and_explicit_selection_have_distinct_provenance():
