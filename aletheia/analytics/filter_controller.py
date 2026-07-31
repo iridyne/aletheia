@@ -752,7 +752,7 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
     }
     try:
         from aletheia.analytics.filter_replay import build_bounded_filter_replays
-        from aletheia.analytics.filter_shadow_experiments import (
+        from aletheia.counterfactual.filter_experiments import (
             evaluate_active_shadow_experiments,
             register_replay_ready_experiments,
         )
@@ -850,7 +850,7 @@ def build_filter_controller_report(
         logger.warning("filter_controller: bounded replay unavailable: %s", exc)
         bounded_replays = []
     try:
-        from aletheia.analytics.filter_shadow_experiments import (
+        from aletheia.counterfactual.filter_experiments import (
             build_filter_shadow_experiment_report,
         )
 

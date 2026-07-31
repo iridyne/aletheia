@@ -82,7 +82,7 @@ def _record_ttl_candidate(
 
 
 def test_replay_ready_plan_is_registered_once_and_starts_prospectively():
-    from aletheia.analytics.filter_shadow_experiments import (
+    from aletheia.counterfactual.filter_experiments import (
         register_replay_ready_experiments,
     )
     from aletheia.storage.sqlite import get_db
@@ -108,7 +108,7 @@ def test_replay_ready_plan_is_registered_once_and_starts_prospectively():
 
 
 def test_shadow_evaluation_uses_only_future_first_exposures_and_never_mutates_config(monkeypatch):
-    from aletheia.analytics.filter_shadow_experiments import (
+    from aletheia.counterfactual.filter_experiments import (
         evaluate_active_shadow_experiments,
         register_replay_ready_experiments,
     )
@@ -160,7 +160,7 @@ def test_shadow_evaluation_uses_only_future_first_exposures_and_never_mutates_co
 
 
 def test_shadow_experiment_invalidates_when_production_filter_version_changes():
-    from aletheia.analytics.filter_shadow_experiments import (
+    from aletheia.counterfactual.filter_experiments import (
         evaluate_active_shadow_experiments,
         register_replay_ready_experiments,
     )

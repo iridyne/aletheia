@@ -1172,7 +1172,7 @@ def test_filter_feedback_first_exposure_and_replay_bounds_are_explicit():
 def test_filter_shadow_experiments_are_prospective_and_observe_only():
     import inspect
 
-    from aletheia.analytics import filter_shadow_experiments
+    from aletheia.counterfactual import filter_experiments as filter_shadow_experiments
 
     source = inspect.getsource(filter_shadow_experiments)
     assert "prospective_first_exposure" in source

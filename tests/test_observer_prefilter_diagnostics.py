@@ -151,7 +151,7 @@ def test_controller_report_surfaces_observer_rule_diagnostics(monkeypatch):
         lambda *_args, **_kwargs: [],
     )
     monkeypatch.setattr(
-        "aletheia.analytics.filter_shadow_experiments."
+        "aletheia.counterfactual.filter_experiments."
         "build_filter_shadow_experiment_report",
         lambda: [],
     )
@@ -319,7 +319,7 @@ def test_stale_persistent_observer_version_cannot_trigger_replay(monkeypatch):
         forbidden_replay,
     )
     monkeypatch.setattr(
-        "aletheia.analytics.filter_shadow_experiments."
+        "aletheia.counterfactual.filter_experiments."
         "build_filter_shadow_experiment_report",
         lambda: [],
     )
