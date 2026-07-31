@@ -166,6 +166,17 @@ jobs:
       - name: Synchronize locked dependencies
         run: uv sync --locked --all-groups
 
+      - name: Ensure archive extraction tool is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v unzip >/dev/null 2>&1; then
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes unzip
+          command -v unzip
+
       - name: Run isolated review regression tiers
         shell: bash
         run: |

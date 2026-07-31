@@ -139,6 +139,7 @@ def test_python_regression_excludes_nightly_simulation_and_isolates_state() -> N
     assert "--dist loadfile" in commands
     assert "ALETHEIA_DATA_DIR=$RUNNER_TEMP" in commands
     assert "GITHUB_ENV" in commands
+    assert "unzip" in commands
 
 
 def test_superseded_pull_request_runs_are_cancelled() -> None:
