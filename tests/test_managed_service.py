@@ -195,6 +195,31 @@ def test_windows_stop_is_idempotent_with_localized_not_found_bytes(monkeypatch):
     assert result["managed"] is False
 
 
+def test_windows_task_xml_uses_s4u_not_interactive_token(monkeypatch):
+    """LogonType must be S4U so the task runs without an active interactive session.
+
+    InteractiveToken requires the user to hold Session 1+ (a live interactive desktop
+    session). SSH-only users (SessionId=0) never have one, so the task scheduler
+    launches the process and it exits immediately — silently — producing no pid file
+    and no listening port.  S4U allows the task to run in a non-interactive context
+    while still running as the user, not as SYSTEM.
+
+    Regression for: [gateway][runtime] Managed Gateway start fails without registering
+    or listening (introduced by commit 7dabe1e1 which correctly fixed the principal
+    resolution from WORKGROUP\\user to COMPUTERNAME\\user but did not change the logon
+    type, leaving the task able to be created but unable to execute under SSH).
+    """
+    from aletheia.gateway import managed_service as service
+
+    monkeypatch.setattr(service, "_windows_program_and_arguments", lambda **_kwargs: (r"C:\Python\pythonw.exe", r"C:\app\_gateway_runner.py"))
+    monkeypatch.setattr(service, "_current_user", lambda: r"CASI-AI\yixian")
+
+    xml = service._build_windows_task_xml(no_browser=True)
+
+    assert "<LogonType>S4U</LogonType>" in xml
+    assert "<LogonType>InteractiveToken</LogonType>" not in xml
+
+
 def test_windows_stop_keeps_failure_when_the_task_survives(monkeypatch):
     """An unrecognized delete failure is only forgiven when the task is really gone."""
     from aletheia.gateway import console_text, managed_service as service
