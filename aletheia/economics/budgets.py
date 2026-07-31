@@ -115,6 +115,26 @@ def list_budgets(
     return [dict(row) for row in rows]
 
 
+def remove_budget(*, budget_id: str) -> dict[str, Any] | None:
+    """Hard-delete a budget policy.
+
+    Returns the deleted row (as it was before deletion) or None if unknown.
+    Budgets are policy, not accounting facts — deletion is safe. Historic
+    would-block observations already in `runtime_cost_events.metadata_json`
+    reference the policy_id in-place and remain intact; they are not
+    rewritten when the policy row disappears.
+    """
+    db = ensure_economics_schema()
+    row = db.execute(
+        "SELECT * FROM economics_budgets WHERE id=?", (budget_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    deleted = dict(row)
+    db.execute("DELETE FROM economics_budgets WHERE id=?", (budget_id,))
+    return deleted
+
+
 def set_budget_enabled(*, budget_id: str, enabled: bool) -> dict[str, Any] | None:
     """Toggle a policy on or off. Returns the updated row, or None if unknown id."""
     db = ensure_economics_schema()

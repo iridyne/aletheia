@@ -175,6 +175,64 @@ def tool_pricing_set(
     typer.echo(json.dumps(row, ensure_ascii=False, indent=2))
 
 
+@audit_app.command("pricing-list")
+def pricing_list(
+    provider: Optional[str] = typer.Option(None, "--provider", help="Filter by exact provider name."),
+    model: Optional[str] = typer.Option(None, "--model", help="Filter by exact model id."),
+    limit: int = typer.Option(50, "--limit", min=1, max=5_000),
+    output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """List currently persisted pricing snapshots (immutable table)."""
+    from aletheia.economics.tracing import list_pricing_snapshots
+
+    rows = list_pricing_snapshots(provider=provider, model=model, limit=limit)
+    if output_json:
+        typer.echo(json.dumps(rows, ensure_ascii=False, indent=2))
+        return
+    if not rows:
+        typer.echo("No pricing snapshots recorded.")
+        return
+    header = f"{'PROVIDER':<24} {'MODEL':<28} {'EFFECTIVE_FROM':<26} {'IN $/M':>10} {'OUT $/M':>10} {'SOURCE':<12}"
+    typer.echo(header)
+    typer.echo("-" * len(header))
+    for row in rows:
+        typer.echo(
+            f"{str(row['provider'])[:24]:<24} {str(row['model'])[:28]:<28} "
+            f"{str(row['effective_from'])[:26]:<26} "
+            f"{float(row['input_usd_per_million']):>10.4f} "
+            f"{float(row['output_usd_per_million']):>10.4f} "
+            f"{str(row['source'])[:12]:<12}"
+        )
+
+
+@audit_app.command("tool-pricing-list")
+def tool_pricing_list(
+    tool_name: Optional[str] = typer.Option(None, "--tool", help="Filter by exact tool name."),
+    limit: int = typer.Option(50, "--limit", min=1, max=5_000),
+    output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """List currently persisted per-call tool cost profiles (immutable table)."""
+    from aletheia.economics.tracing import list_tool_cost_profiles
+
+    rows = list_tool_cost_profiles(tool_name=tool_name, limit=limit)
+    if output_json:
+        typer.echo(json.dumps(rows, ensure_ascii=False, indent=2))
+        return
+    if not rows:
+        typer.echo("No tool cost profiles recorded.")
+        return
+    header = f"{'TOOL':<32} {'EFFECTIVE_FROM':<26} {'$/CALL':>12} {'SOURCE':<12}"
+    typer.echo(header)
+    typer.echo("-" * len(header))
+    for row in rows:
+        typer.echo(
+            f"{str(row['tool_name'])[:32]:<32} "
+            f"{str(row['effective_from'])[:26]:<26} "
+            f"{float(row['usd_per_call']):>12.6f} "
+            f"{str(row['source'])[:12]:<12}"
+        )
+
+
 @audit_app.command("budget-set")
 def budget_set(
     scope: str = typer.Option(..., "--scope", help="One of: system, agent_run, logical_agent, provider, provider_tier."),
@@ -250,6 +308,79 @@ def budget_enable(
         typer.echo(f"Unknown budget policy: {budget_id}")
         raise typer.Exit(1)
     typer.echo(json.dumps(row, ensure_ascii=False, indent=2))
+
+
+@audit_app.command("budget-remove")
+def budget_remove(
+    budget_id: str = typer.Argument(..., help="Budget policy id from `audit budget-list`."),
+    force: bool = typer.Option(False, "--force", help="Skip the confirmation prompt."),
+):
+    """Hard-delete a budget policy.
+
+    Historic would-block observations in the runtime_cost_events ledger keep
+    the referenced policy_id in place and are NOT rewritten.
+    """
+    from aletheia.economics.budgets import remove_budget
+
+    if not force:
+        confirm = typer.confirm(
+            f"Delete budget policy {budget_id}? Historic observations will keep the reference."
+        )
+        if not confirm:
+            typer.echo("Aborted.")
+            raise typer.Exit(1)
+    row = remove_budget(budget_id=budget_id)
+    if row is None:
+        typer.echo(f"Unknown budget policy: {budget_id}")
+        raise typer.Exit(1)
+    typer.echo(json.dumps(row, ensure_ascii=False, indent=2))
+
+
+@audit_app.command("viability-list")
+def viability_list(
+    scope: Optional[str] = typer.Option(None, "--scope", help="Restrict to system or operator."),
+    limit: int = typer.Option(20, "--limit", min=1, max=500),
+    offset: int = typer.Option(0, "--offset", min=0),
+    output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """List persisted viability reports."""
+    from aletheia.economics.viability import list_viability_reports
+
+    rows = list_viability_reports(scope=scope, limit=limit, offset=offset)
+    if output_json:
+        typer.echo(json.dumps(rows, ensure_ascii=False, indent=2))
+        return
+    if not rows:
+        typer.echo("No viability reports persisted.")
+        return
+    header = f"{'ID':<28} {'SCOPE':<10} {'WINDOW_END':<26} {'VERDICT':<18} {'AMOUNT_USD':>14}"
+    typer.echo(header)
+    typer.echo("-" * len(header))
+    for row in rows:
+        amount = row.get("viability_amount_usd")
+        typer.echo(
+            f"{str(row['id'])[:28]:<28} {str(row['scope'])[:10]:<10} "
+            f"{str(row['window_end'])[:26]:<26} {str(row['verdict'])[:18]:<18} "
+            f"{('' if amount is None else f'{float(amount):.6f}'):>14}"
+        )
+
+
+@audit_app.command("viability-show")
+def viability_show(
+    report_id: str = typer.Argument(..., help="Report id from `audit viability-list`."),
+    output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """Show one persisted viability report."""
+    from aletheia.economics.viability import get_viability_report, render_viability
+
+    row = get_viability_report(report_id)
+    if row is None:
+        typer.echo(f"Unknown viability report: {report_id}")
+        raise typer.Exit(1)
+    if output_json:
+        typer.echo(json.dumps(row, ensure_ascii=False, indent=2))
+        return
+    typer.echo(render_viability(row))
 
 
 @audit_app.command("costs")
