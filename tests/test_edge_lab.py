@@ -137,7 +137,7 @@ class TestShadowTrades:
     """P1: shadow trade persistence."""
 
     def test_persist_shadow_batch(self):
-        from aletheia.analytics.shadow_trades import persist_shadow_batch
+        from aletheia.counterfactual.trades import persist_shadow_batch
         from aletheia.storage.repositories import list_shadow_trades
 
         candidates = [
@@ -150,7 +150,7 @@ class TestShadowTrades:
         ]
         selected = candidates[0]
 
-        with patch("aletheia.analytics.shadow_trades._current_price", return_value=50000.0):
+        with patch("aletheia.counterfactual.trades._current_price", return_value=50000.0):
             ids = persist_shadow_batch(candidates, selected, top_n=3)
 
         assert len(ids) == 3
@@ -165,7 +165,7 @@ class TestShadowTrades:
         assert len(batch_ids) == 1
 
     def test_persist_empty_candidates(self):
-        from aletheia.analytics.shadow_trades import persist_shadow_batch
+        from aletheia.counterfactual.trades import persist_shadow_batch
         ids = persist_shadow_batch([], None, top_n=5)
         assert ids == []
 

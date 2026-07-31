@@ -45,7 +45,7 @@ def _record_ttl_decision(
 
 
 def test_family_ttl_replay_is_fixed_version_incremental_and_bounded():
-    from aletheia.analytics.filter_replay import build_family_ttl_replay
+    from aletheia.counterfactual.filter_replay import build_family_ttl_replay
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc)
@@ -97,7 +97,7 @@ def test_family_ttl_replay_uses_first_exposure_and_rejects_invalid_scope():
     import pytest
 
     from aletheia.analytics.filter_evidence import record_filter_decision
-    from aletheia.analytics.filter_replay import build_family_ttl_replay
+    from aletheia.counterfactual.filter_replay import build_family_ttl_replay
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc)

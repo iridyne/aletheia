@@ -106,7 +106,7 @@ def test_resolve_stale_shadows_uses_historical_bar():
 
     from aletheia.storage.sqlite import get_db
     from aletheia.storage.models import new_id
-    from aletheia.analytics.shadow_trades import resolve_stale_shadows
+    from aletheia.counterfactual.trades import resolve_stale_shadows
 
     db = get_db()
     entry_dt = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)

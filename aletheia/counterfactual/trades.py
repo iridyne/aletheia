@@ -16,12 +16,24 @@ import math
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-logger = logging.getLogger("aletheia.analytics.shadow_trades")
+logger = logging.getLogger("aletheia.counterfactual.trades")
 
-# Market snapshots are collected every five minutes. A close-time
-# counterfactual may use at most two collection intervals of lag; anything older
-# is not evidence of the market at the Position close event.
-_MAX_EVENT_SNAPSHOT_AGE_SECONDS = 10 * 60
+
+def _max_event_snapshot_age_seconds() -> int:
+    """Two market_data collection intervals worth of lag.
+
+    A close-time counterfactual may use at most two collection intervals of
+    market_snapshot lag; anything older is not evidence of the market at the
+    Position close event. Reads the cadence from the scheduler so a change to
+    the ``market_data`` job interval stays in sync automatically instead of
+    silently drifting.
+    """
+    try:
+        from aletheia.agent_runtime.scheduler import MARKET_DATA_INTERVAL_MINUTES
+
+        return int(MARKET_DATA_INTERVAL_MINUTES) * 60 * 2
+    except Exception:
+        return 10 * 60
 
 
 def persist_shadow_batch(
@@ -48,6 +60,7 @@ def persist_shadow_batch(
     batch_id = uuid4().hex[:12]
     now_iso = datetime.now(timezone.utc).isoformat()
     regime = _current_regime()
+    policy_epoch_id = _current_policy_epoch()
     try:
         from aletheia.config.loader import load_config
 
@@ -108,6 +121,7 @@ def persist_shadow_batch(
             outcome_candidate_key=outcome_candidate_key,
             regime_tag=regime,
             was_selected=(opp_id is not None and opp_id in selected_opp_ids),
+            policy_epoch_id=policy_epoch_id,
         )
         try:
             insert_shadow_trade(shadow)
@@ -307,7 +321,7 @@ def _current_price(
             if event_dt is None:
                 return None
             oldest_usable = (
-                event_dt - timedelta(seconds=_MAX_EVENT_SNAPSHOT_AGE_SECONDS)
+                event_dt - timedelta(seconds=_max_event_snapshot_age_seconds())
             ).isoformat()
 
             canonical = to_canonical(symbol)
@@ -376,6 +390,73 @@ def _current_price(
         return None
 
 
+def list_deduped_shadows(
+    *,
+    days: int,
+    symbols: list[str] | None = None,
+    policy_epoch_id: str | None = None,
+    columns: tuple[str, ...] = (
+        "symbol",
+        "direction",
+        "trade_score",
+        "net_pnl_pct",
+        "was_selected",
+    ),
+) -> list[dict]:
+    """Return one resolved shadow row per candidate (latest tick per ``outcome_candidate_key``).
+
+    A candidate is re-scanned many times, appending a shadow row each tick;
+    reading the raw table therefore over-weights long-lived candidates. Every
+    analytics/reporting consumer must collapse to one vote per candidate — this
+    helper is the canonical implementation. Prior to its introduction each
+    consumer maintained its own ``PARTITION BY outcome_candidate_key`` CTE,
+    which was memory-flagged as an easy-to-forget correctness trap.
+
+    Args:
+        days: lookback window in days (``created_at >= now-days``).
+        symbols: canonical symbol filter (e.g. ``["BTC/USDT"]``); ``None`` for all.
+        policy_epoch_id: when set, restrict to rows written under the same
+            policy epoch — required whenever the caller crosses an epoch
+            rotation (see counterfactual guidance L0 completeness).
+        columns: projection list. Every column must exist in ``shadow_trades``.
+    """
+    from aletheia.storage.sqlite import get_db
+
+    params: list[object] = [f"-{int(days)} days"]
+    symbol_clause = ""
+    if symbols:
+        placeholders = ",".join("?" for _ in symbols)
+        symbol_clause = f"AND symbol IN ({placeholders})"
+        params.extend(symbols)
+    epoch_clause = ""
+    if policy_epoch_id:
+        epoch_clause = "AND policy_epoch_id = ?"
+        params.append(policy_epoch_id)
+
+    projection = ", ".join(columns)
+    sql = f"""
+        WITH resolved AS (
+            SELECT
+                {projection},
+                outcome_candidate_key,
+                ROW_NUMBER() OVER (
+                    PARTITION BY outcome_candidate_key
+                    ORDER BY created_at DESC
+                ) AS rn
+            FROM shadow_trades
+            WHERE net_pnl_pct IS NOT NULL
+              AND outcome_candidate_key IS NOT NULL
+              AND created_at >= datetime('now', ?)
+              {symbol_clause}
+              {epoch_clause}
+        )
+        SELECT {projection}
+        FROM resolved
+        WHERE rn = 1
+    """
+    return [dict(r) for r in get_db().execute(sql, params).fetchall()]
+
+
 def _current_regime() -> str:
     """Return the current macro regime tag from the latest macro snapshot."""
     try:
@@ -386,6 +467,24 @@ def _current_regime() -> str:
     except Exception:
         pass
     return "unknown"
+
+
+def _current_policy_epoch() -> str | None:
+    """Return the currently active policy epoch for cross-epoch partitioning.
+
+    Reuses the skip-remediation epoch because it captures the operator + ranker
+    + threshold state that also governs which candidates land in a shadow batch;
+    a new policy that could shift shadow-trade interpretation rotates this
+    epoch. Returns None on failure so shadow persistence still succeeds — a
+    row without ``policy_epoch_id`` degrades gracefully into a legacy partition.
+    """
+    try:
+        from aletheia.agent_shell.skip_policy import ensure_skip_remediation_policy_epoch
+
+        return ensure_skip_remediation_policy_epoch()
+    except Exception as exc:
+        logger.debug("policy_epoch unavailable for shadow batch: %s", exc)
+        return None
 
 
 def _normalized_market_type(value: object) -> str | None:

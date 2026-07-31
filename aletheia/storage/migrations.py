@@ -1938,6 +1938,11 @@ _ADDITIVE_COLUMNS = [
     ("settlement_price_source", "shadow_trades", "TEXT"),
     ("settlement_lag_sec", "shadow_trades", "REAL"),
     ("cost_model_version", "shadow_trades", "TEXT"),
+    # Counterfactual L0-completeness (causal_counterfactual_research_guidance.md):
+    # bind each shadow row to the policy epoch active when it was recorded so cross-
+    # epoch comparisons (threshold calibration, family scorecard) can partition
+    # correctly. NULL for historical rows written before this column existed.
+    ("policy_epoch_id", "shadow_trades", "TEXT"),
     ("venue", "alpha_control_observations", "TEXT"),
     ("market_type", "alpha_control_observations", "TEXT NOT NULL DEFAULT 'spot'"),
     ("scanner_family", "alpha_control_observations", "TEXT"),

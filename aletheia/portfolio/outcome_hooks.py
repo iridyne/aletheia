@@ -203,7 +203,7 @@ def _hook_applicability_reason(hook_type: str, position: dict) -> str | None:
 
 def _execute_hook(hook_type: str, position: dict) -> None:
     if hook_type == SHADOW_TRADES_HOOK:
-        from aletheia.analytics.shadow_trades import (
+        from aletheia.counterfactual.trades import (
             resolve_shadow_trades_for_position,
         )
 

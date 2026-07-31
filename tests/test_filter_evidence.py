@@ -1128,7 +1128,7 @@ def test_controller_persists_new_observational_verdict_through_legacy_schema(mon
 
 
 def test_shadow_batch_includes_actual_selection_beyond_top_n(monkeypatch):
-    from aletheia.analytics.shadow_trades import persist_shadow_batch
+    from aletheia.counterfactual.trades import persist_shadow_batch
     from aletheia.storage import repositories as repo
 
     candidates = [
@@ -1142,7 +1142,7 @@ def test_shadow_batch_includes_actual_selection_beyond_top_n(monkeypatch):
         for index in range(6)
     ]
     monkeypatch.setattr(
-        "aletheia.analytics.shadow_trades._current_price",
+        "aletheia.counterfactual.trades._current_price",
         lambda *args, **kwargs: 100.0,
     )
 

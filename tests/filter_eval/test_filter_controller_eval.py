@@ -141,7 +141,7 @@ def test_controller_report_renders_bounded_gate_only_replay(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "aletheia.analytics.filter_replay.build_bounded_filter_replays",
+        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *args, **kwargs: [replay],
     )
 
@@ -165,11 +165,11 @@ def test_controller_report_renders_registered_prospective_experiment(monkeypatch
         lambda **kwargs: {},
     )
     monkeypatch.setattr(
-        "aletheia.analytics.filter_replay.build_bounded_filter_replays",
+        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *args, **kwargs: [],
     )
     monkeypatch.setattr(
-        "aletheia.analytics.filter_shadow_experiments.build_filter_shadow_experiment_report",
+        "aletheia.counterfactual.filter_experiments.build_filter_shadow_experiment_report",
         lambda: [{
             "filter_name": "family_ttl",
             "scanner_family": "momentum",
@@ -203,7 +203,7 @@ def test_observe_cycle_registers_and_evaluates_shadow_experiments(monkeypatch):
     calls = {"registered": 0, "evaluated": 0}
     monkeypatch.setattr(fc, "compute_filter_feedback", lambda min_samples=20: [])
     monkeypatch.setattr(
-        "aletheia.analytics.filter_replay.build_bounded_filter_replays",
+        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *args, **kwargs: [{"filter_name": "family_ttl"}],
     )
 
@@ -222,11 +222,11 @@ def test_observe_cycle_registers_and_evaluates_shadow_experiments(monkeypatch):
         }
 
     monkeypatch.setattr(
-        "aletheia.analytics.filter_shadow_experiments.register_replay_ready_experiments",
+        "aletheia.counterfactual.filter_experiments.register_replay_ready_experiments",
         fake_register,
     )
     monkeypatch.setattr(
-        "aletheia.analytics.filter_shadow_experiments.evaluate_active_shadow_experiments",
+        "aletheia.counterfactual.filter_experiments.evaluate_active_shadow_experiments",
         fake_evaluate,
     )
 

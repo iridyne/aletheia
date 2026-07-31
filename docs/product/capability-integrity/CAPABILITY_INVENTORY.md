@@ -133,7 +133,7 @@ Discovery surfaces:
 | LN-07 | Skill drafting and review | Create draft skills from eligible lessons without automatic activation | Persistence API, Learning | skill store and lesson reviewer |
 | LN-08 | Learned guard generation and enforcement | Generate, review/promote, and consume trading guards in candidate decisions | Learning, Settings, scheduler | `knowledge/guards.py`, `guard_promotion` |
 | LN-09 | Confidence calibration | Compare prediction confidence with realized outcomes | Learning, analytics, scheduler | `analytics/confidence_calibration.py` |
-| LN-10 | Shadow trades and counterfactual resolution | Record non-selected candidates and later settle their counterfactual outcomes | CLI, analytics, scheduler | `analytics/shadow_trades.py`, `shadow_resolver` |
+| LN-10 | Shadow trades and counterfactual resolution | Record non-selected candidates and later settle their counterfactual outcomes | CLI, analytics, scheduler | `counterfactual/trades.py`, `shadow_resolver` |
 | LN-11 | Filter controller observation | Measure filter outcomes and produce shadow recommendations without mutating config | Learning, Settings, scheduler | `analytics/filter_controller.py` |
 | LN-12 | Measured Learning contribution | Separate treatment/control evidence, cohort integrity, and evaluator health from activity | Learning UI, API, scheduler | `learning/evidence.py`, contribution routes |
 | LN-13 | Learning lifecycle automation | Advance/refreeze authorized paper experiments only when all gates hold | Settings, scheduler | `learning/lifecycle.py`, lifecycle controller |

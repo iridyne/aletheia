@@ -757,7 +757,7 @@ def test_paper_close_failure_rolls_back_all_state_and_side_effects(
     conn = _setup_db(tmp_path, monkeypatch)
     _patch_config(monkeypatch)
 
-    from aletheia.analytics import shadow_trades
+    from aletheia.counterfactual import trades as shadow_trades
     from aletheia.execution import paper_broker
     from aletheia.files import jsonl
     import aletheia.notifications as notifications_module

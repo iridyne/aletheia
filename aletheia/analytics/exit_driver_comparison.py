@@ -1,18 +1,23 @@
-"""Exit-outcome shadow comparison (M7, exit-intent plan).
+"""Exit-driver realized-outcome comparison.
 
-Validates the whole exit-intent hypothesis — "AI-discretionary exits do at least as
-well as rule exits" — from realized data. It groups CLOSED positions by what DROVE the
-exit and reports outcome quality (count, win rate, avg / total realized PnL, avg hold)
-per driver:
+Answers "AI-discretionary exits do at least as well as rule exits" from
+realized data. Groups CLOSED positions by what DROVE the exit and reports
+outcome quality (count, win rate, avg / total realized PnL, avg hold) per
+driver:
 
-  • operator — the System Operator proactively exited (operator_close / operator_limit_exit)
-  • rule     — a deterministic strategy rule fired (stop_loss / take_profit / max_hold /
+  • operator — System Operator proactively exited (operator_close / operator_limit_exit)
+  • rule     — deterministic strategy rule fired (stop_loss / take_profit / max_hold /
                thesis_invalidated / market_signal_exit)
-  • safety   — a Layer-0 hard control fired (catastrophic_stop / liquidation_proximity)
+  • safety   — Layer-0 hard control fired (catastrophic_stop / liquidation_proximity)
   • other    — administrative / maintenance / unclassified
 
-If a rule-driven category consistently beats the operator, that category should stay in
-Layer 1 as pure execution (plan §M7). Read-only; no behavior change.
+If a rule-driven category consistently beats the operator, that category
+should stay in Layer 1 as pure execution. Read-only; no behavior change.
+
+This is realized-outcome attribution, NOT a counterfactual — it compares
+actual closes, never "what would have happened if a different driver had
+fired." Complements ``exit_attribution.py`` (closure-category distribution);
+the two modules are candidates for a future merge.
 """
 
 from __future__ import annotations

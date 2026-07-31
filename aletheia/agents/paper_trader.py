@@ -722,7 +722,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     # Counterfactual selection must reflect candidates actually emitted after all
     # occupancy/cooldown checks, not the theoretical rank-1 before those checks.
     try:
-        from aletheia.analytics.shadow_trades import persist_shadow_batch
+        from aletheia.counterfactual.trades import persist_shadow_batch
 
         persist_shadow_batch(eligible, emitted_candidates, top_n=5)
     except Exception as _shadow_err:
