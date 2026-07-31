@@ -154,6 +154,7 @@ class ShadowTrade(BaseModel):
     cost_model_version: str | None = None
     btc_return_pct: float | None = None
     resolved_at: str | None = None
+    policy_epoch_id: str | None = None
 
 
 class FilterDecision(BaseModel):

@@ -52,6 +52,13 @@ _ESSENTIAL_JOBS: set[str] = {
     "learning_measurement_startup_catchup",
 }
 
+# Market snapshot collection cadence. Exposed as a module constant so consumers
+# whose semantics depend on the freshness bound of a snapshot (e.g. the
+# counterfactual close-time price lookup in aletheia.counterfactual.trades)
+# can reference the same source of truth and stay in sync when the interval
+# changes here.
+MARKET_DATA_INTERVAL_MINUTES = 5
+
 # Track which jobs were selectively paused (for targeted resume).
 _selectively_paused_jobs: set[str] = set()
 
@@ -893,7 +900,8 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
 
     _scheduler.add_job(
-        _guarded("market_data", _run_market_data), "interval", minutes=5, id="market_data",
+        _guarded("market_data", _run_market_data), "interval",
+        minutes=MARKET_DATA_INTERVAL_MINUTES, id="market_data",
         misfire_grace_time=60, executor="io",
     )
     _scheduler.add_job(
