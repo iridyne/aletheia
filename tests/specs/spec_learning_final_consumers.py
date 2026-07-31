@@ -86,15 +86,13 @@ def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch):
 @spec_claim(
     SpecClaim(
         "LE-C16", "learning_evolution", "§10 prompt authority", "L2c",
-        "Observer and Operator Learning bundles stay empty unless the exact paper path is "
-        "measurable and has prospective treatment authority; an unmeasurable path retains "
-        "the static prompt baseline without creating a formal exposure.",
+        "Measurement-unsupported Observer and Operator Learning bundles retain the static "
+        "prompt baseline without creating a formal exposure or authority identity.",
         status="implemented",
     )
 )
-def test_prompt_bundles_use_exact_paper_authority(monkeypatch):
+def test_unsupported_prompt_bundles_keep_static_baselines(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
-    from aletheia.learning.experiments import InfluenceDecision
     from aletheia.learning import prompt_bundles
 
     cfg = AletheiaConfig()
@@ -119,60 +117,10 @@ def test_prompt_bundles_use_exact_paper_authority(monkeypatch):
     assert default_off["layer2"]["reflection"] is None
     assert default_off["layer3"]["lessons"] == []
     assert default_off["learning_manifest"]["authority"]["applied"] is False
-    assert default_off["learning_manifest"]["authority"]["exposure_id"]
-    from aletheia.analytics.filter_evidence import record_candidate_filter_trace
-    from aletheia.learning.ledger import get_record, linked_settled_exposure_counts
-    from aletheia.storage.sqlite import get_db
-    assert record_candidate_filter_trace({
-        "opportunity_id": "opp-authority",
-        "symbol": "BTC/USDT",
-        "market_type": "spot",
-        "direction": "long",
-        "entry_price_usd": 60_000.0,
-        "filter_trace": [{
-            "filter_name": "execution_eligibility",
-            "stage": "paper_ranker",
-            "decision": "passed",
-            "reason_code": "eligible",
-        }],
-    }, raise_on_error=True) == 1
-    operator_exposure = get_record(
-        "learning_exposures",
-        default_off["learning_manifest"]["authority"]["exposure_id"],
-    )
-    assert operator_exposure["outcome_candidate_key"] == "opportunity:opp-authority:4h"
-    operator_epoch = get_db().execute(
-        "SELECT effective_values_json FROM learning_policy_epochs WHERE epoch_id=?",
-        (operator_exposure["concurrent_policy_epoch"],),
-    ).fetchone()
-    assert operator_epoch is not None
-    operator_policy = json.loads(operator_epoch["effective_values_json"])
-    # Superset check: skip_policy generations are backward-compatible supersets
-    # (b1.4 → b1.5 Phase C defer semantics → b1.6 #321 material-dedup flags). Any
-    # of these is a valid predecessor snapshot for a learning bundle; this test
-    # locks authority attribution, not a specific policy revision.
-    assert operator_policy["operator_decision_context"]["version"] in {
-        "b1.4", "b1.5", "b1.6",
-    }
-    assert operator_policy["operator_decision_context"][
-        "candidate_feature_refresh_wakes_operator"
-    ] is True
-    operator_outcome = get_db().execute(
-        "SELECT id FROM filter_candidate_outcomes "
-        "WHERE outcome_candidate_key='opportunity:opp-authority' AND horizon='4h'",
-    ).fetchone()
-    assert operator_outcome is not None
-    get_db().execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.2, "
-        "cost_model_version='test-v1', settled_at=datetime('now') WHERE id=?",
-        (operator_outcome["id"],),
-    )
-    get_db().commit()
-    operator_counts = linked_settled_exposure_counts(
-        operator_exposure["experiment_id"],
-        policy_epoch=operator_exposure["concurrent_policy_epoch"],
-    )
-    assert operator_counts[operator_exposure["assignment"]] == 1
+    assert default_off["learning_manifest"]["authority"]["reason"] == "measurement_unsupported"
+    assert default_off["learning_manifest"]["authority"]["hypothesis_id"] is None
+    assert default_off["learning_manifest"]["authority"]["experiment_id"] is None
+    assert default_off["learning_manifest"]["authority"]["exposure_id"] is None
 
     observer_default = prompt_bundles.authorize_observer_learning_bundle(
         "learned observer memo", "learned symbol guard",
@@ -185,66 +133,6 @@ def test_prompt_bundles_use_exact_paper_authority(monkeypatch):
     assert observer_default[1]["authority"]["hypothesis_id"] is None
     assert observer_default[1]["authority"]["experiment_id"] is None
     assert observer_default[1]["authority"]["exposure_id"] is None
-
-    calls = []
-
-    def control(**kwargs):
-        calls.append(kwargs)
-        return InfluenceDecision(
-            value=0.0, applied=False, assignment="control", reason="baseline:authorized",
-            hypothesis_id="hyp-operator", experiment_id="exp-operator",
-            exposure_id="exposure-control",
-        )
-
-    monkeypatch.setattr("aletheia.learning.experiments.apply_boolean_treatment", control)
-    controlled = prompt_bundles.authorize_operator_learning_context(_operator_prompt_context())
-    assert controlled["layer2"]["reflection"] is None
-    assert controlled["learning_manifest"]["authority"] == {
-        "path_id": "operator_learning_bundle",
-        "candidate_key": calls[0]["candidate_key"],
-        "assignment": "control",
-        "applied": False,
-        "reason": "baseline:authorized",
-        "hypothesis_id": "hyp-operator",
-        "experiment_id": "exp-operator",
-        "exposure_id": "exposure-control",
-    }
-    assert calls[0]["candidate_key"].startswith("operator_candidate:")
-    assert calls[0]["outcome_candidate_key"] == "opportunity:opp-authority:4h"
-    observer_control = prompt_bundles.authorize_observer_learning_bundle(
-        "learned observer memo", "learned symbol guard",
-        candidate_key="observer_member:snapshot-1:member-1:spot",
-    )
-    assert observer_control[0] == ""
-    assert observer_control[1]["components"] == {}
-    assert observer_control[1]["authority"]["assignment"] == "control"
-
-    def treatment(**kwargs):
-        return InfluenceDecision(
-            value=1.0, applied=True, assignment="treatment", reason="authorized",
-            hypothesis_id="hyp-operator", experiment_id="exp-operator",
-            exposure_id="exposure-treatment",
-        )
-
-    monkeypatch.setattr("aletheia.learning.experiments.apply_boolean_treatment", treatment)
-    treated = prompt_bundles.authorize_operator_learning_context(_operator_prompt_context())
-    assert treated["layer2"]["reflection"] == "learned reflection"
-    assert treated["learning_manifest"]["authority"]["assignment"] == "treatment"
-    assert treated["learning_manifest"]["authority"]["exposure_id"] == "exposure-treatment"
-    from aletheia.agent_shell.reflection import _build_pi_decision
-    final = _build_pi_decision({
-        "action": "skip", "symbol": "BTC/USDT", "direction": "long",
-        "market_type": "spot", "opportunity_id": "opp-authority",
-        "learning_manifest": treated["learning_manifest"],
-    })
-    assert json.loads(final.learning_manifest_json)["authority"]["exposure_id"] == "exposure-treatment"
-
-    observer_treatment = prompt_bundles.authorize_observer_learning_bundle(
-        "learned observer memo", "learned symbol guard",
-        candidate_key="observer_member:snapshot-1:member-1:spot",
-    )
-    assert observer_treatment[0] == "learned observer memo\nlearned symbol guard"
-    assert observer_treatment[1]["authority"]["path_id"] == "observer_advisory_bundle"
 
     from aletheia.agents.market_observer import _observer_learning_candidate_key
     member_first = _observer_learning_candidate_key(

@@ -252,14 +252,11 @@ durably queued and independently retried by `outcome_hook_replay`.
   (`market_observer` Layer 1 wins on tie; `serenity` Layer 3 is the fallback). `signal_source`
   disambiguates the two bare-uuid id spaces. Phase 2 of Serenity Option A.
 - **Learning attribution**: reflection, memo, reasoning, calibration, trade cases, and structured
-  lessons are one `operator_learning_bundle`. It is injected only for an exact allowlisted,
-  authoritative treatment assignment; control/default/error leaves every learned component absent.
-  Authorization occurs after the context is scoped to exactly one market-observer carrier. The
-  stable candidate key, assignment, hypothesis/experiment and exposure id are persisted on
-  `pi_decisions.learning_manifest_json`, and the exposure links to that Opportunity's real 4h
-  fixed-horizon outcome. Mixed/Serenity queues fail closed without emitting an unattributed
-  exposure. Opportunity and Proposal columns remain the causal anchors, and the observer bundle
-  stays a separate upstream unit.
+  lessons are declared as one `operator_learning_bundle`, but the path is currently
+  measurement-unsupported and the static no-Learning prompt baseline applies. The existing
+  Opportunity 4h market outcome is created before Operator prompt exposure and cannot measure the
+  resulting trade/skip decision utility. Mixed/Serenity queues also fail closed. A future measured
+  path requires a decision-linked causal outcome contract before any exposure or authority.
 - **Actions**: active entry decision only `trade` / `skip`. The separate portfolio review exposes only `hold` / `close_one` for an explicit Position.
 - **Unsupported legacy outputs**: `close` / `reduce` / `watch` / `scale_in` / `flip` on the entry surface are normalized to an evidenced `skip` and never execute. `reduce_exposure` on portfolio review is treated as `hold`, never as a silent full close.
 - **Availability semantics**: missing/incomplete/stale exact candidate technical context is detected before model inference; missing assessment, a required debate side, a fresh exact local-paper mark, or complete entry reasons is also retryable unavailability. No final PiDecision is written and no pending signal is consumed. A newly persisted exact feature snapshot changes the candidate fingerprint and Universe refresh immediately nudges the daemon to retry.

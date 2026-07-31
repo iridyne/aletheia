@@ -103,7 +103,7 @@ def test_enable_builds_correct_argv_and_xml(tmp_path, monkeypatch):
     assert "<TimeTrigger>" in xml
     assert "<Interval>PT1M</Interval>" in xml
     assert "<StopAtDurationEnd>false</StopAtDurationEnd>" in xml
-    assert "<LogonType>InteractiveToken</LogonType>" in xml
+    assert "<LogonType>S4U</LogonType>" in xml
     assert "<RunLevel>LeastPrivilege</RunLevel>" in xml
     assert "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>" in xml
     assert "gateway" in xml and "start" in xml and "--no-browser" in xml

@@ -107,14 +107,8 @@ describe('deriveContributionViewState', () => {
     })).toBe('insufficient_data')
   })
 
-  it('keeps every measurable path selectable without conflating verdicts', () => {
+  it('excludes consumer-wired paths that are not measurement-supported', () => {
     const universe = projection().items[0]
-    const operator = {
-      ...universe,
-      path_id: 'operator_learning_bundle',
-      experiment_id: 'operator-experiment',
-      measurement: { ...universe.measurement, state: 'positive' as const },
-    }
     const data = projection({
       paths: [
         {
@@ -124,7 +118,7 @@ describe('deriveContributionViewState', () => {
         },
         {
           path_id: 'operator_learning_bundle', producer: 'operator', consumer: 'operator',
-          consumer_wired: true, settings_supported: true, measurement_supported: true,
+          consumer_wired: true, settings_supported: true, measurement_supported: false,
           authority: 'paper', allowed_effects: [], fallback: 'static', outcome_source: 'outcomes',
         },
       ],
@@ -136,55 +130,22 @@ describe('deriveContributionViewState', () => {
           state: 'active',
           data_freshness: universe.data_freshness,
         },
-        {
-          path_id: 'operator_learning_bundle',
-          availability: 'available',
-          unavailable_reason: null,
-          state: 'active',
-          data_freshness: operator.data_freshness,
-        },
       ],
-      items: [universe, operator],
+      items: [universe],
     })
 
     expect(measuredContributionPathIds(data)).toEqual([
       'universe_family_calibration',
-      'operator_learning_bundle',
     ])
     expect(deriveContributionViewState({
       loading: false, failed: false, data, pathId: 'universe_family_calibration',
     })).toBe('insufficient_data')
     expect(deriveContributionViewState({
       loading: false, failed: false, data, pathId: 'operator_learning_bundle',
-    })).toBe('positive')
+    })).toBe('empty')
     expect(deriveContributionViewState({
       loading: false, failed: false, data, pathId: 'missing_measured_path',
     })).toBe('empty')
-    expect(deriveContributionViewState({
-      loading: false,
-      failed: false,
-      pathId: 'operator_learning_bundle',
-      data: {
-        ...data,
-        path_states: data.path_states.map(state => state.path_id === 'operator_learning_bundle'
-          ? { ...state, availability: 'partial' as const }
-          : state),
-      },
-    })).toBe('partial')
-    expect(deriveContributionViewState({
-      loading: false,
-      failed: false,
-      pathId: 'operator_learning_bundle',
-      data: {
-        ...data,
-        path_states: data.path_states.map(state => state.path_id === 'operator_learning_bundle'
-          ? {
-              ...state,
-              data_freshness: { ...state.data_freshness, state: 'stale' as const },
-            }
-          : state),
-      },
-    })).toBe('stale')
   })
 
   it('keeps loading, fetch failure, genuine empty, stale and partial distinct', () => {

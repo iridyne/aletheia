@@ -147,8 +147,9 @@ def _build_task_xml() -> str:
     """Build the Task Scheduler definition XML.
 
     LogonTrigger + indefinite 1-minute repetition (omitting <Duration> with
-    StopAtDurationEnd=false means repeat forever). InteractiveToken + the omission
-    of /RU SYSTEM keeps creation non-elevated; LeastPrivilege keeps the started
+    StopAtDurationEnd=false means repeat forever). S4U keeps creation non-elevated
+    and allows the task to run without an active interactive session (required for
+    SSH-only users who never hold Session 1+); LeastPrivilege keeps the started
     gateway unprivileged. MultipleInstancesPolicy=IgnoreNew guards the only
     realistic double-fire (logon coinciding with the first repetition tick).
     """
@@ -186,7 +187,7 @@ def _build_task_xml() -> str:
         "  <Principals>\n"
         '    <Principal id="Author">\n'
         f"      <UserId>{user}</UserId>\n"
-        "      <LogonType>InteractiveToken</LogonType>\n"
+        "      <LogonType>S4U</LogonType>\n"
         "      <RunLevel>LeastPrivilege</RunLevel>\n"
         "    </Principal>\n"
         "  </Principals>\n"

@@ -105,7 +105,7 @@ Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_cou
 | ranker case/memo Learning | trade_case_study + latest trading_memo | paper_trader_ranker score | 🟡 consumer hook 已接，但 measurement-unsupported；实际增量固定为 0，不创建 formal exposure |
 | persona sizing Learning | clean realized regime cohort + causal opportunity outcome | trading/sizing → System Operator proposal rationale | 🟡 可显示静态/学习建议/实际金额，但 measurement-unsupported；实际金额保持静态 baseline，不创建 formal exposure |
 | ps_skills (SkillStore) | lesson_reviewer(applied lesson→draft skill), persistence API | persistence API / manual review | ✅ draft producer 已接入;不会自动 activate(见 knowledge_contract §6.A2) |
-| measured Learning ledger / `lco-v1` | Universe calibration 与 Operator bundle 写受支持 exposure；evaluator/lifecycle 写 7 个永久 Learning 表；canonical full-arm filter outcomes + selected-member Universe mirror/fallback | 内部 inspection/doctor + cached `/api/analytics/learning-contribution` summary + Learning 多路径 contribution selector | 🟡 有界只读 summary、多路径选择、cache/timing 与当前 surface 响应式无障碍已实现；明细/分页与完整 workbench 仍缺失；不运行 evaluator/lifecycle、不提供 admission mutation、不改 Paper/Risk/Execution/Live |
+| measured Learning ledger / `lco-v1` | Universe calibration 写受支持 exposure；Operator bundle 与其他 hooks 返回 static fallback；evaluator/lifecycle 写 7 个永久 Learning 表；canonical full-arm filter outcomes + selected-member Universe mirror/fallback | 内部 inspection/doctor + cached `/api/analytics/learning-contribution` summary + Learning measured-path selector | 🟡 有界只读 summary、registry-backed 选择、cache/timing 与当前 surface 响应式无障碍已实现；明细/分页与完整 workbench 仍缺失；不运行 evaluator/lifecycle、不提供 admission mutation、不改 Paper/Risk/Execution/Live |
 
 ---
 
