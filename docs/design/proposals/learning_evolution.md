@@ -611,7 +611,7 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-L01 | L2b | measurement verdicts map to distinct lifecycle actions without changing their vocabulary | implemented |
 | LE-L02 | L2c | stage transitions are transactional, idempotent, isolated, and default-closed for paper influence | implemented |
 | LE-L03 | L2c | measurement and lifecycle control use separate restart-safe single-instance schedules | implemented |
-| LE-L04 | L2c | shadow cannot auto-promote; the scheduled controller only recommends admission and the protected explicit-admission route requires confirmation, server-derived epoch identity and every paper gate | implemented; #488 concerns the separate legacy master Learning toggle, not trial admission |
+| LE-L04 | L2c | shadow cannot auto-promote; the scheduled controller only recommends admission and the protected explicit-admission route requires confirmation, server-derived epoch identity and every paper gate | implemented; the separate legacy master Learning toggle is also tunnel-token protected |
 | LE-L05 | L2c | paper authority binds approved evidence to its same-hypothesis closed predecessor and declared horizon | implemented |
 | LE-C01 | L2c | no promotion without unique samples, time span, and outcome links | implemented |
 | LE-C02 | L2c | negative/unsafe holdout automatically demotes or refreezes | implemented |

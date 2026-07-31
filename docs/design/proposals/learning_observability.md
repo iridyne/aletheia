@@ -82,7 +82,7 @@ surface look shipped.
 | Job health | Current and durable last-failure fields exist | Current, recovery and catch-up states remain separate |
 | Public Learning API | Bounded additive `lco-v1` summary at `/analytics/learning-contribution`; no detail/list family | Contribution summary implemented; experiment/health/detail GET endpoints remain targets |
 | Learning UI | Contribution is the default tab and preserves honest verdict/query states; legacy Dreaming, Knowledge Base and Reports remain | Experiments and Operations surfaces, multi-path selection, detail and complete accessibility remain targets |
-| Trial admission | Separate Settings POST exists, remains default-closed and is tunnel-token protected | Observability remains recommendation-only; no mutation action is rendered here. The separate legacy `/settings/autonomous-learning` master toggle has the open token defect #488. |
+| Trial admission | Separate Settings POST exists, remains default-closed and is tunnel-token protected | Observability remains recommendation-only; no mutation action is rendered here. The separate legacy `/settings/autonomous-learning` master toggle is also tunnel-token protected. |
 
 `/analytics/learning-funnel` remains an artifact/activity report. It must not be
 renamed, reused, or presented as the contribution projection.
@@ -344,7 +344,7 @@ identity-matched `admit_trial` recommendation plus all default-closed paper
 gates. This observability surface remains GET-only and renders no mutation
 button; the separately scoped, tunnel-token-protected trial-admission Settings
 route owns the explicit owner action. The legacy master Learning toggle is a
-different endpoint and retains the open token defect #488.
+different endpoint and is protected by the same tunnel owner token.
 
 `matching_mirror_rows` is the persisted count of Universe rows that matched a
 canonical outcome identity. It does not claim every row reached a settled

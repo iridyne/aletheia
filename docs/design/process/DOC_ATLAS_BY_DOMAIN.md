@@ -97,8 +97,8 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
   保存交付顺序和当时的运行 checkpoint；当前语义只由上述 contracts/proposals
   决定。`self_evolution_plan` 和更早修复计划同样只是历史证据。
 - **Issue**：剩余 owner projection 由 `LCO-*` claims 与 GitHub issue #489 跟踪；legacy
-  `/settings/autonomous-learning` 主开关的 tunnel-token 缺口见 #488，scheduler partial-health
-  见 #490，JSONL audit 可观测性见 #491；旧
+  `/settings/autonomous-learning` 主开关的 tunnel-token 缺口已由 #488 修复，scheduler
+  partial-health 见 #490，JSONL audit 可观测性见 #491；旧
   `LEARNING_LOOP_AUDIT` 仅是历史证据。
 - **Current state**：A1 has permanent ledger, full-arm exact-key complete-cluster measurement,
   append-only metric history, lifecycle recommendation, evaluator + catch-up and durable failure
@@ -106,8 +106,8 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
   measurement-supported paths; other declared hooks return static fallback and write no exposure.
   The bounded `lco-v1` API summary and default contribution tab expose measured facts, while
   multi-path selection, detail/pagination, performance evidence and full accessibility remain open.
-  `paper_influence_enabled` and lifecycle automation remain default-off. The trial-admission POST
-  is tunnel-token protected; #488 applies only to the separate legacy master Learning toggle.
+  `paper_influence_enabled` and lifecycle automation remain default-off. Both trial admission and
+  the separate legacy master Learning toggle are tunnel-token protected.
 
 ## D7 · 系统监管 / Operator
 
