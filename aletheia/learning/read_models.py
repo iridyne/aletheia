@@ -222,12 +222,16 @@ def _current_experiment_rows(
     if exclusions:
         exclusion_sql = f"AND e.experiment_id NOT IN ({', '.join('?' * len(exclusions))}) "
         params.extend(exclusions)
+    eligible_paths = sorted(SUPPORTED_PATH_IDS)
+    path_sql = f"AND h.path_id IN ({', '.join('?' * len(eligible_paths))}) "
+    params.extend(eligible_paths)
     params.extend(case_params)
     tier_sql = f"CASE {' '.join(cases)} ELSE 2 END ASC, " if cases else ""
     params.append(remaining)
     filler_rows = db.execute(
         base_sql
         + exclusion_sql
+        + path_sql
         + f"ORDER BY {tier_sql}datetime(e.created_at) DESC, "
         + "e.experiment_id DESC LIMIT ?",
         tuple(params),

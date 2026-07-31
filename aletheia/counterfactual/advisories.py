@@ -10,29 +10,52 @@ deciding whether to rotate the policy epoch.
 Advisories are:
 
 - **surfaced in reports** and returned from a pure function; they never write
-  DB rows, never call ``ensure_skip_remediation_policy_epoch``, and never
+  DB rows, never call the mutation entry points for policy epochs, and never
   reach any config mutation path;
 - **suggestive, not prescriptive** — every advisory is stamped with
   ``observe_only=True`` and the recommendation text says so;
 - **schemaful and versioned** — a fixed ``advisory_type`` and ``version``
   allow future consumers to filter safely.
 
-Current signals are deliberately conservative and few. The set is expected to
-grow after owner calibration of what "significant" means for each signal
-(#497 Phase 3 follow-up).
+Signals shipped
+---------------
+- ``calibration_no_positive_band`` (info) — the calibration report has bands
+  but no crossover band. The bounded window carries no profitable expectancy;
+  either regime shifted or the cost model drifted, both worth owner review.
+- ``harm_signal`` (concern / strong_concern) — the current window's avg_net
+  dropped materially versus the *same* policy_epoch's opening window. Uses
+  epoch-scoped self-comparison to stay inside the CF-I04 partition and
+  refuses to fire until the epoch is old enough for the two windows to be
+  disjoint.
+
+Deferred (needs owner input on threshold semantics)
+---------------------------------------------------
+- ``calibration_drift`` (crossover band moved ≥N against a reference epoch).
+  See #497 Phase 3 follow-up.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from aletheia.counterfactual.trades import list_deduped_shadows
 
 
 ADVISORY_TYPE = "policy_epoch_rotation"
 ADVISORY_VERSION = "v1"
 
 _VALID_SEVERITIES = ("info", "concern", "strong_concern")
+
+# Harm-signal defaults. Chosen conservatively — the false-positive cost is
+# owner attention, so the gate is set to catch clear drops without flagging
+# ordinary week-to-week noise. See #497 Phase 3.5 for the justification.
+_HARM_WINDOW_DAYS = 8
+_HARM_CONCERN_PP = 0.3
+_HARM_STRONG_PP = 0.7
+_HARM_CONCERN_MIN_N = 50
+_HARM_STRONG_MIN_N = 100
 
 
 @dataclass(frozen=True)
@@ -63,26 +86,10 @@ def build_rotation_advisories(
 
     Pure function. Reads the input report(s), emits advisories. No DB write,
     no config mutation, no scheduler side-effect.
-
-    Currently emits:
-
-    - ``calibration_no_positive_band``: the calibration report has bands but
-      no trade_score band whose avg_net turned positive over the current
-      window. This is one condition an owner might want to review the epoch
-      over — a bounded window without a profitable band is compatible with
-      either "regime shifted" or "cost model drifted", both of which are
-      owner questions.
-
-    Signals expected to be added after owner calibration (thresholds intentionally
-    deferred): ``calibration_drift`` (crossover band moved by ≥N against a
-    reference epoch), ``harm_signal`` (avg_net dropped ≥N vs a baseline
-    window). Both require an owner-defined "N" and reference selection, so
-    they are not shipped in the initial skeleton.
     """
     advisories: list[RotationAdvisory] = []
-    stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(
-        timespec="microseconds"
-    )
+    now_dt = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    stamp = now_dt.isoformat(timespec="microseconds")
 
     if calibration_report and not calibration_report.get("errors"):
         crossover = calibration_report.get("crossover_band")
@@ -123,7 +130,150 @@ def build_rotation_advisories(
                 )
             )
 
+        epoch_id = calibration_report.get("policy_epoch_id")
+        if epoch_id:
+            try:
+                harm = _harm_signal_from_epoch_windows(
+                    policy_epoch_id=str(epoch_id),
+                    now=now_dt,
+                )
+            except Exception:
+                # Observe-only invariant: any failure to compute the signal is
+                # a silent no-advisory. Never let advisory failures propagate
+                # into report failures.
+                harm = None
+            if harm is not None:
+                advisories.append(harm)
+
     return advisories
+
+
+def _harm_signal_from_epoch_windows(
+    *,
+    policy_epoch_id: str,
+    now: datetime,
+    window_days: int = _HARM_WINDOW_DAYS,
+    concern_pp: float = _HARM_CONCERN_PP,
+    strong_concern_pp: float = _HARM_STRONG_PP,
+    concern_min_n: int = _HARM_CONCERN_MIN_N,
+    strong_concern_min_n: int = _HARM_STRONG_MIN_N,
+) -> RotationAdvisory | None:
+    """Emit a harm_signal advisory when current expectancy drops vs epoch opening.
+
+    Reference baseline is the *same* policy_epoch's opening window; the module
+    never compares across policy epochs (CF-I04 partitioning). If the epoch is
+    younger than ``2 * window_days``, the baseline and current windows would
+    overlap and the signal returns None instead of firing on noise.
+
+    Returns None when:
+    - the epoch has no shadow rows,
+    - the epoch is too young to separate the two windows,
+    - either window has fewer than concern_min_n samples,
+    - the current avg_net has not dropped by at least concern_pp.
+
+    Otherwise returns a RotationAdvisory with severity ``strong_concern`` when
+    the drop is at least strong_concern_pp *and* both windows have at least
+    strong_concern_min_n samples; ``concern`` in every other qualifying case.
+    """
+    epoch_start = _epoch_start(policy_epoch_id)
+    if epoch_start is None:
+        return None
+
+    baseline_end = epoch_start + timedelta(days=window_days)
+    current_start = now - timedelta(days=window_days)
+    if current_start <= baseline_end:
+        return None
+
+    baseline_rows = list_deduped_shadows(
+        since_iso=epoch_start.isoformat(),
+        until_iso=baseline_end.isoformat(),
+        policy_epoch_id=policy_epoch_id,
+        columns=("net_pnl_pct",),
+    )
+    current_rows = list_deduped_shadows(
+        since_iso=current_start.isoformat(),
+        until_iso=now.isoformat(),
+        policy_epoch_id=policy_epoch_id,
+        columns=("net_pnl_pct",),
+    )
+    baseline_n = len(baseline_rows)
+    current_n = len(current_rows)
+    if baseline_n < concern_min_n or current_n < concern_min_n:
+        return None
+
+    baseline_avg = sum(float(r["net_pnl_pct"]) for r in baseline_rows) / baseline_n
+    current_avg = sum(float(r["net_pnl_pct"]) for r in current_rows) / current_n
+    delta_pp = round(current_avg - baseline_avg, 3)
+
+    if delta_pp > -concern_pp:
+        return None
+
+    is_strong = (
+        delta_pp <= -strong_concern_pp
+        and baseline_n >= strong_concern_min_n
+        and current_n >= strong_concern_min_n
+    )
+    severity = "strong_concern" if is_strong else "concern"
+
+    return RotationAdvisory(
+        advisory_type=ADVISORY_TYPE,
+        version=ADVISORY_VERSION,
+        produced_at=now.astimezone(timezone.utc).isoformat(timespec="microseconds"),
+        policy_epoch_id=policy_epoch_id,
+        severity=severity,
+        signal="harm_signal",
+        evidence={
+            "reference": "epoch_opening_window",
+            "window_days": window_days,
+            "baseline_avg_net_pct": round(baseline_avg, 3),
+            "baseline_n": baseline_n,
+            "baseline_range": [
+                epoch_start.isoformat(),
+                baseline_end.isoformat(),
+            ],
+            "current_avg_net_pct": round(current_avg, 3),
+            "current_n": current_n,
+            "current_range": [
+                current_start.isoformat(),
+                now.astimezone(timezone.utc).isoformat(),
+            ],
+            "delta_pp": delta_pp,
+            "concern_threshold_pp": -concern_pp,
+            "strong_concern_threshold_pp": -strong_concern_pp,
+        },
+        recommendation=(
+            f"Net expectancy dropped by {abs(delta_pp)}pp between the opening "
+            f"{window_days}-day window and the most recent {window_days} days "
+            f"within the same policy_epoch. Owner may wish to review whether "
+            f"market regime shifted enough to warrant a fresh policy epoch."
+        ),
+        observe_only=True,
+    )
+
+
+def _epoch_start(policy_epoch_id: str) -> datetime | None:
+    """Return the earliest shadow_trades.created_at for a given policy epoch.
+
+    Used as the effective epoch-activation time for windowed comparison.
+    Approximates true policy_epoch activation closely enough (the gap between
+    activation and the first shadow row is bounded by one paper_trader tick).
+    """
+    from aletheia.storage.sqlite import get_db
+
+    row = get_db().execute(
+        "SELECT MIN(created_at) FROM shadow_trades WHERE policy_epoch_id = ?",
+        (policy_epoch_id,),
+    ).fetchone()
+    raw = row[0] if row else None
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace(" ", "T"))
+    except (ValueError, AttributeError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def render_advisories(advisories: list[RotationAdvisory]) -> str:

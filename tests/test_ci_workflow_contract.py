@@ -8,6 +8,7 @@ import yaml
 WORKFLOW_DIR = Path(__file__).resolve().parents[1] / ".github" / "workflows"
 WORKFLOW_PATH = WORKFLOW_DIR / "ci.yml"
 AUTO_MERGE_WORKFLOW_PATH = WORKFLOW_DIR / "auto-merge.yml"
+DELETE_MERGED_WORKFLOW_PATH = WORKFLOW_DIR / "delete-merged-branch.yml"
 PINNED_ACTION_SHA_LENGTH = 40
 
 
@@ -22,6 +23,13 @@ def _auto_merge_workflow() -> dict:
     )
 
 
+def _delete_merged_workflow() -> dict:
+    return yaml.load(
+        DELETE_MERGED_WORKFLOW_PATH.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+
 def _run_commands(job: dict) -> str:
     return "\n".join(
         str(step.get("run") or "")
@@ -30,10 +38,11 @@ def _run_commands(job: dict) -> str:
     )
 
 
-def test_only_ci_and_auto_merge_workflows_are_active() -> None:
+def test_only_expected_workflows_are_active() -> None:
     assert sorted(path.name for path in WORKFLOW_DIR.glob("*.yml")) == [
         "auto-merge.yml",
         "ci.yml",
+        "delete-merged-branch.yml",
     ]
 
 
@@ -179,3 +188,31 @@ def test_auto_merge_queues_ready_master_pull_requests_without_running_their_code
     disable_commands = _run_commands(disable_job)
     assert "--json autoMergeRequest" in disable_commands
     assert "--disable-auto" in disable_commands
+
+
+def test_delete_merged_branch_only_touches_merged_same_repo_head_refs() -> None:
+    workflow = _delete_merged_workflow()
+    triggers = workflow["on"]
+
+    assert set(triggers) == {"pull_request_target"}
+    assert triggers["pull_request_target"]["types"] == ["closed"]
+    assert workflow["permissions"] == {"contents": "write"}
+
+    assert set(workflow["jobs"]) == {"delete"}
+    job = workflow["jobs"]["delete"]
+    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
+
+    guard = job["if"]
+    # Three guards must all be present or the workflow risks deleting the
+    # wrong branch. Any change to these strings should be intentional.
+    assert "merged == true" in guard
+    assert "head.repo.full_name == github.repository" in guard
+    assert "head.ref != github.event.repository.default_branch" in guard
+
+    # The job must not check out any untrusted code from the PR — it only
+    # invokes the REST API.
+    assert not any("uses" in step for step in job["steps"])
+
+    commands = _run_commands(job)
+    assert "gh api -X DELETE" in commands
+    assert "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH" in commands

@@ -9,7 +9,9 @@
 ## Conventions
 
 - **Base URL**: `http://localhost:8787/api/` (via frontdoor proxy)
-- **Auth**: None (local network only; tunnel requires separate Cloudflare auth)
+- **Auth**: None for local-default reads and ordinary routes. When the configured tunnel is
+  enabled, trust-boundary mutations require `X-Aletheia-Token` in addition to any external
+  tunnel access control; protected routes fail closed if that token secret is missing.
 - **Error format**: `{"detail": "message"}` with appropriate HTTP status
 - **Pagination**: `?limit=N&offset=M` where supported
 - **Timestamps**: ISO 8601 UTC strings in request/response bodies
@@ -651,9 +653,9 @@ reconciled.
 | POST | `/persistence/import` | Import data |
 | GET | `/persistence/lessons` | List lessons (LessonStore) |
 | GET | `/persistence/lessons/{id}` | Get lesson detail |
-| POST | `/persistence/lessons/{id}/accept` | Accept a proposed lesson and stamp dry-run/expiry timestamps |
-| POST | `/persistence/lessons/{id}/reject` | Reject a lesson |
-| POST | `/persistence/lessons/{id}/archive` | Archive a superseded lesson without hard deletion |
+| POST | `/persistence/lessons/{id}/accept` | Accept a proposed lesson and stamp dry-run/expiry timestamps; requires `X-Aletheia-Token` when tunnel is enabled |
+| POST | `/persistence/lessons/{id}/reject` | Reject a lesson; requires `X-Aletheia-Token` when tunnel is enabled |
+| POST | `/persistence/lessons/{id}/archive` | Archive a superseded lesson without hard deletion; requires `X-Aletheia-Token` when tunnel is enabled |
 | GET | `/persistence/skills` | List skills (SkillStore) |
 | GET | `/persistence/policies` | List policies |
 | GET | `/persistence/policies/{type}` | Get policy by type |

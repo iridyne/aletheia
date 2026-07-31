@@ -8,7 +8,7 @@ _CONTRACT = "learning_contract"
 
 @spec_claim(SpecClaim(
     "LC-S01", _CONTRACT, "§1.2 measured-path maturity", "L2a",
-    "Only Universe calibration and Operator bundle are measurement-supported; consumer wiring "
+    "Only Universe calibration is measurement-supported; consumer wiring "
     "and Settings visibility do not imply measurement or authority.",
     status="implemented",
 ))
@@ -20,10 +20,7 @@ def test_only_declared_closed_loops_are_measurement_supported():
         for path in LEARNING_PATHS
         if path.measurement_supported
     }
-    assert supported == {
-        "universe_family_calibration",
-        "operator_learning_bundle",
-    }
+    assert supported == {"universe_family_calibration"}
     assert any(
         path.consumer_wired and not path.measurement_supported
         for path in LEARNING_PATHS
@@ -57,16 +54,16 @@ def test_measurement_unsupported_path_cannot_create_ledger_authority(monkeypatch
     }
 
     decision = experiments.apply_numeric_treatment(
-        path_id="observer_advisory_bundle",
-        scope={"symbol": "BTC/USDT"},
-        action={"type": "prompt_advisory"},
-        source_cohort="observer:contract-test",
+        path_id="operator_learning_bundle",
+        scope={"consumer": "system_operator"},
+        action={"type": "prompt_bundle", "enabled": True},
+        source_cohort="operator:contract-test",
         target_horizon="4h",
         candidate_key="opportunity:contract-test",
         baseline=0.0,
         treatment=1.0,
-        consumer="market_observer",
-        consumer_stage="prompt",
+        consumer="system_operator",
+        consumer_stage="prompt_context",
     )
 
     assert decision.value == 0.0

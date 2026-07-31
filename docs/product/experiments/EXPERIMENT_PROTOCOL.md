@@ -103,6 +103,12 @@
 > b1.4 candidate decisions and Learning contribution only inside their new policy
 > epochs; b1.3 and unlinked prompt-bundle observations are historical baselines and
 > must not be pooled.
+>
+> **Current measurement status**: the Opportunity 4h market return does not measure
+> prompt-driven trade/skip decision utility. `operator_learning_bundle` is therefore
+> measurement-unsupported and returns the static prompt baseline without creating a
+> hypothesis, experiment, exposure, or policy epoch. The b1.4 record above remains
+> historical evidence and does not authorize current Operator measurement.
 
 > **2026-07-19 Opportunity information integrity epoch**:
 > `opportunity_information_integrity/v1` closes every earlier information-input

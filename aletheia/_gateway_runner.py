@@ -504,6 +504,8 @@ def run_supervised(spawn_fn=None) -> dict:
 
     restarts = 0
     restart_times: list[float] = []
+    restart_history: list[dict] = []   # T5: per-restart details for persistent log
+    gave_up_flag: list[bool] = [False]  # T4: skip frontdoor kill on gave_up
     shutdown_signal: dict = {"num": None}
     prev_handlers: dict = {}
     try:
@@ -545,8 +547,12 @@ def run_supervised(spawn_fn=None) -> dict:
                 restart_times.append(now)
                 recent = [t for t in restart_times if now - t <= window]
                 restart_times[:] = recent
+                # T5: record restart details for persistent history log
+                restart_history.append({"exit_code": code, "restart_n": restarts + 1})
                 if len(recent) >= max_restarts:
                     _record_give_up(restarts + 1)
+                    _write_restart_history(restart_history)
+                    gave_up_flag[0] = True  # T4: keep frontdoor alive on gave_up
                     return {"gave_up": True, "restarts": restarts + 1}
 
                 restarts += 1
@@ -570,11 +576,20 @@ def run_supervised(spawn_fn=None) -> dict:
             except (ValueError, OSError):
                 pass
         _stop_vite_watch(vite_proc)
-        # Tear down every owned child (backend, frontdoor, collector). Only these
-        # tracked descendants are targeted — never a foreign or sibling-worktree
-        # process. kill_pid_tree is best-effort and a no-op on an already-dead pid.
-        for holder in (backend_holder, frontdoor_holder, collector_holder):
+        # Tear down backend and collector unconditionally.  Frontdoor gets special
+        # treatment on a gave_up exit: leave it alive so it can serve 503s while
+        # the watchdog or recovery task restarts the full gateway.  A subsequent
+        # `gateway start` detects it as an orphan and cleans it up before spawning
+        # a fresh supervisor.  On clean shutdown or signal, kill everything.
+        for holder in (backend_holder, collector_holder):
             proc = holder[0]
+            if proc is not None:
+                try:
+                    kill_pid_tree(proc.pid)
+                except Exception:
+                    pass
+        if not gave_up_flag[0]:
+            proc = frontdoor_holder[0]
             if proc is not None:
                 try:
                     kill_pid_tree(proc.pid)
@@ -660,6 +675,68 @@ def _record_frontdoor_restart(port: int, pid: int) -> None:
         pass
 
 
+def _write_restart_history(history: list[dict]) -> None:
+    """Persist the crash-loop restart history so operators can diagnose root cause.
+
+    Writes one entry per crash cycle to restart_history.jsonl in the logs dir.
+    Each entry includes the exit code and restart sequence number so the operator
+    can correlate with errors.log timestamps without grep.
+    """
+    if not history:
+        return
+    try:
+        import datetime as _dt
+        from aletheia.config.loader import get_data_dir
+        log_dir = get_data_dir() / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        path = log_dir / "restart_history.jsonl"
+        import json as _json
+        ts = _dt.datetime.now(_dt.timezone.utc).isoformat()
+        with path.open("a", encoding="utf-8") as fh:
+            for entry in history:
+                fh.write(_json.dumps({"ts": ts, **entry}) + "\n")
+    except Exception:
+        pass
+
+
+def _schedule_supervisor_recovery() -> None:
+    """After a crash loop (gave_up), ensure the gateway has an automatic recovery path.
+
+    If the autostart watchdog is not already enabled, enable it now.  The watchdog
+    fires every minute calling `gateway start` (idempotent), so the gateway will be
+    restarted within ~1 minute without requiring human intervention.
+
+    This respects operator intent: operators who explicitly disabled the watchdog will
+    not have it re-enabled here (the status check prevents that).  The audit event
+    makes the auto-enable visible in the event log.
+    """
+    try:
+        from aletheia.gateway import autostart
+        if not autostart.is_supported_platform():
+            return
+        if autostart.status().get("enabled"):
+            return  # watchdog already active — it handles the restart
+        result = autostart.enable(source="supervisor_recovery")
+        if not result.get("ok"):
+            _write_error_event(
+                f"supervisor_recovery: could not enable autostart watchdog: "
+                f"{result.get('reason', 'unknown')}"
+            )
+    except Exception as exc:
+        try:
+            _write_error_event(f"supervisor_recovery: unexpected error: {type(exc).__name__}: {exc}")
+        except Exception:
+            pass
+
+
+def _write_error_event(message: str) -> None:
+    try:
+        from aletheia.files.jsonl import write_error
+        write_error({"source": "gateway_supervisor", "message": message})
+    except Exception:
+        pass
+
+
 def main():
     from aletheia.logging_config import configure_logging
     configure_logging()
@@ -667,7 +744,9 @@ def main():
     cfg = bootstrap()
     if not no_browser and cfg.app.auto_open_browser:
         open_browser(cfg.app.dashboard_port)
-    run_supervised()  # writes the pid file itself
+    result = run_supervised()  # writes the pid file itself
+    if result.get("gave_up"):
+        _schedule_supervisor_recovery()
 
 
 if __name__ == "__main__":

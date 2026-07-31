@@ -102,9 +102,9 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
   `LEARNING_LOOP_AUDIT` 仅是历史证据。
 - **Current state**：A1 has permanent ledger, full-arm exact-key complete-cluster measurement,
   append-only metric history, lifecycle recommendation, evaluator + catch-up and durable failure
-  identity. `universe_family_calibration` and `operator_learning_bundle` are the only
-  measurement-supported paths; other declared hooks return static fallback and write no exposure.
-  The bounded `lco-v1` API summary and multi-path contribution selector expose measured facts;
+  identity. `universe_family_calibration` is the only measurement-supported path;
+  Operator and other declared hooks return static fallback and write no exposure.
+  The bounded `lco-v1` API summary and measured-path selector expose measured facts;
   current-route cache/performance/accessibility are implemented, while detail/pagination and the
   full workbench remain open.
   `paper_influence_enabled` and lifecycle automation remain default-off. Both trial admission and

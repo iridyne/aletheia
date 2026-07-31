@@ -1290,13 +1290,7 @@ def test_unsupported_learning_path_is_not_processed_or_persisted():
     assert get_db().execute("SELECT COUNT(*) FROM learning_contribution_verdicts").fetchone()[0] == 0
 
 
-def test_operator_learning_bundle_null_allocation_is_implicitly_selected():
-    """operator_learning_bundle filter outcomes carry allocation_selected=NULL by contract.
-
-    These rows represent chosen opportunities (emitted-opportunity observations), not
-    Universe full-arm allocation members.  The cohort builder must treat NULL as
-    implicitly True rather than failing with missing_allocation_result.  See issue #324.
-    """
+def test_operator_learning_bundle_is_not_measured_from_candidate_market_return():
     hypothesis, experiment = _experiment(path_id="operator_learning_bundle")
     opp_key = "opportunity:test-opp-abc123"
     _exposure(
@@ -1310,10 +1304,4 @@ def test_operator_learning_bundle_null_allocation_is_implicitly_selected():
     from aletheia.learning.cohorts import build_experiment_cohorts
     cohorts = build_experiment_cohorts(experiment.experiment_id)
 
-    assert len(cohorts) == 1
-    assert len(cohorts[0].samples) == 1
-    sample = cohorts[0].samples[0]
-    assert sample.allocation_selected is True
-    assert sample.allocation_selection_source == "opportunity_keyed_path_implicit"
-    assert sample.assignment == "treatment"
-    assert sample.net_return_pct == pytest.approx(0.05)
+    assert cohorts == []

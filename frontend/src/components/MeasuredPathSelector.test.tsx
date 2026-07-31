@@ -6,8 +6,8 @@ describe('MeasuredPathSelector', () => {
   it('renders every measured path as one labelled native keyboard control', () => {
     const html = renderToStaticMarkup(
       <MeasuredPathSelector
-        pathIds={['universe_family_calibration', 'operator_learning_bundle']}
-        activePath="operator_learning_bundle"
+        pathIds={['universe_family_calibration']}
+        activePath="universe_family_calibration"
         generatedLabel="Jul 31"
         onChange={() => undefined}
       />,
@@ -16,6 +16,6 @@ describe('MeasuredPathSelector', () => {
     expect(html).toContain('<label for="lco-measured-path">Measured path</label>')
     expect(html).not.toContain('aria-label=')
     expect(html).toContain('value="universe_family_calibration"')
-    expect(html).toContain('value="operator_learning_bundle" selected=""')
+    expect(html).toContain('value="universe_family_calibration" selected=""')
   })
 })

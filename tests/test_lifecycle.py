@@ -281,8 +281,13 @@ def test_verify_started_returns_when_gateway_comes_up(tmp_path, monkeypatch):
     lifecycle._verify_started(cfg, timeout=1.0)
 
 
-def test_verify_started_waits_for_api_ready_before_success(tmp_path, monkeypatch):
-    """A listening socket alone is not readiness: require the cheap API probe."""
+def test_verify_started_leaves_process_alive_when_api_not_ready_at_timeout(tmp_path, monkeypatch):
+    """A slow-starting process (alive + port up but /api/ready not yet 200) must not be killed.
+
+    Previously the verifier killed the process and exited nonzero, which destroyed a
+    gateway that was still running migrations or initializing the scheduler.  The new
+    behaviour leaves it running and returns cleanly (slow-start audit event written).
+    """
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle
     cfg = lifecycle.load_config()
@@ -291,9 +296,15 @@ def test_verify_started_waits_for_api_ready_before_success(tmp_path, monkeypatch
     monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": True)
     monkeypatch.setattr(lifecycle, "_verify_api_ready_accessible", lambda cfg: False)
     monkeypatch.setattr(lifecycle, "_verify_webui_accessible", lambda cfg: True)
+    killed: list[int] = []
+    monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: killed.append(pid))
 
-    with pytest.raises(typer.Exit):
-        lifecycle._verify_started(cfg, timeout=0.1, poll_interval=0.01)
+    # Must return without raising — slow start is not a failure.
+    lifecycle._verify_started(cfg, timeout=0.1, poll_interval=0.01)
+
+    assert killed == [], "alive process must not be killed on readiness timeout"
+    from aletheia.files.jsonl import read_jsonl
+    assert any(e.get("event_type") == "gateway_slow_start" for e in read_jsonl("audit.jsonl"))
 
 
 def test_verify_started_raises_when_gateway_never_comes_up(tmp_path, monkeypatch, capsys):
@@ -326,12 +337,14 @@ def test_verify_started_raises_on_timeout_when_never_up(tmp_path, monkeypatch):
         lifecycle._verify_started(cfg, timeout=0.6, poll_interval=0.01)
 
 
-def test_verify_started_kills_api_only_gateway_when_webui_missing(tmp_path, monkeypatch):
-    """API-only startup is not success: clean it up after a failed start.
+def test_verify_started_leaves_process_alive_when_webui_missing_at_timeout(tmp_path, monkeypatch):
+    """API up + WebUI missing at timeout must not kill the process.
 
-    Regression: if dashboard_static/index.html disappeared during frontend build,
-    uvicorn could bind /api while "/" stayed 404. The old verifier returned
-    success, leaving users with an unreachable UI forever.
+    Previously the verifier killed the process on this path.  The new behaviour
+    leaves it running so the operator can diagnose, and the self-heal mechanism
+    can detect and restart a gateway whose dashboard_static is genuinely absent.
+    The gateway's own 503 page (served by the frontdoor's dashboard_unavailable
+    handler) informs the user while recovery is in progress.
     """
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle
@@ -348,11 +361,13 @@ def test_verify_started_kills_api_only_gateway_when_webui_missing(tmp_path, monk
     monkeypatch.setattr(lifecycle, "clear_pid", lambda: cleared.append(True))
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
 
-    with pytest.raises(typer.Exit):
-        lifecycle._verify_started(cfg, timeout=0.1)
+    # Must return without raising — WebUI missing is handled by self-heal, not CLI kill.
+    lifecycle._verify_started(cfg, timeout=0.1)
 
-    assert killed == [4242]
-    assert cleared == [True]
+    assert killed == [], "process must not be killed when only WebUI is missing"
+    assert cleared == []
+    from aletheia.files.jsonl import read_jsonl
+    assert any(e.get("event_type") == "gateway_slow_start" for e in read_jsonl("audit.jsonl"))
 
 
 def test_verify_started_surfaces_errors_log_tail(tmp_path, monkeypatch, capsys):

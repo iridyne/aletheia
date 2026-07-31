@@ -349,24 +349,22 @@ def test_shadow_cohort_is_not_causally_eligible():
 
 @spec_claim(SpecClaim(
     "LE-B29", _CONTRACT, "§measurement-support gate: paths without cohort adapters excluded (#324)", "L2b",
-    "observer_advisory_bundle and ranker paths must not appear in SUPPORTED_PATH_IDS — "
+    "operator_learning_bundle, observer_advisory_bundle and ranker paths must not appear in SUPPORTED_PATH_IDS — "
     "their filter_candidate_outcomes rows have allocation_selected=NULL by contract "
     "with no cohort adapter to handle it, so the cohort builder would emit "
-    "missing_allocation_result for pending outcomes. operator_learning_bundle is exempt: "
-    "it has the _OPPORTUNITY_KEYED_PATHS implicit-allocation adapter (#324 follow-up).",
+    "missing_allocation_result for pending outcomes. Operator prompt contribution also lacks "
+    "a decision-utility outcome that the prompt can causally change.",
     status="implemented",
 ))
 def test_paths_without_cohort_adapters_excluded_from_supported_path_ids():
     """Paths without cohort adapters must remain out of SUPPORTED_PATH_IDS.
 
-    operator_learning_bundle is now admitted via the _OPPORTUNITY_KEYED_PATHS
-    implicit-allocation adapter (allocation_selected=NULL → True). The remaining
-    paths (observer_advisory_bundle, ranker_*) still lack adapters and must
-    stay out.
+    These paths lack a causal path-specific outcome adapter and must stay out.
     """
     from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
 
     _PATHS_WITHOUT_ADAPTERS = {
+        "operator_learning_bundle",
         "observer_advisory_bundle",
         "ranker_case_score",
         "ranker_memo_score",

@@ -347,7 +347,7 @@ def _build_windows_task_xml(*, no_browser: bool) -> str:
         f'<Task version="1.2" xmlns="{_XML_NS}">\n'
         "  <RegistrationInfo><Description>Aletheia gateway on-demand user service.</Description></RegistrationInfo>\n"
         "  <Principals><Principal id=\"Author\">\n"
-        f"    <UserId>{user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel>\n"
+        f"    <UserId>{user}</UserId><LogonType>S4U</LogonType><RunLevel>LeastPrivilege</RunLevel>\n"
         "  </Principal></Principals>\n"
         "  <Settings>\n"
         "    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><AllowStartOnDemand>true</AllowStartOnDemand>\n"
