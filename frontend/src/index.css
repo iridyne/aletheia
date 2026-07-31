@@ -119,20 +119,35 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 
 .sidebar {
   width: 240px; background: var(--surface); border-right: 1px solid var(--border);
-  position: fixed; top: 0; bottom: 0; left: 0; overflow-y: auto;
+  position: fixed; top: 0; bottom: 0; left: 0; overflow-y: auto; overflow-x: hidden;
   display: flex; flex-direction: column; padding: 0;
+  transition: width 0.15s ease;
 }
-.content { margin-left: 240px; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
+.content { margin-left: 240px; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; transition: margin-left 0.15s ease; }
 .main { flex: 1; padding: var(--space-4) var(--space-5); background: var(--bg-2); overflow-y: auto; overflow-x: hidden; }
 /* Collapse sidebar on narrow viewports (L1); hamburger toggle handled in App.tsx */
 .hamburger { display: none !important; }
 @media (max-width: 700px) {
-  .sidebar { transform: translateX(-100%); transition: transform 0.2s ease; z-index: 50; }
+  .sidebar { transform: translateX(-100%); transition: transform 0.2s ease; z-index: 50; width: 240px; }
   .sidebar.open { transform: translateX(0); }
   .content { margin-left: 0; }
+  .layout.rail .sidebar { width: 240px; }
+  .layout.rail .content { margin-left: 0; }
   .main { padding: var(--space-3) var(--space-4); }
   .hamburger { display: inline-flex !important; }
 }
+
+/* ---------- Rail (fully-collapsed) sidebar — desktop only ---------- */
+.layout.rail .sidebar { width: 56px; }
+.layout.rail .content { margin-left: 56px; }
+.layout.rail .brand { padding: 0; justify-content: center; }
+.layout.rail .brand-name,
+.layout.rail .brand-sub { display: none; }
+.layout.rail .sidebar nav a .nav-label,
+.layout.rail .sidebar-toggle .nav-label { display: none; }
+.layout.rail .sidebar nav a { justify-content: center; padding: 0.4rem 0; margin: 2px 6px; }
+.layout.rail .sidebar nav a.active { border-left-color: transparent; padding-left: 0; background: rgba(34,211,238,0.20); border-radius: var(--r-sm); }
+.layout.rail .nav-group-divider { height: 1px; background: var(--border); margin: 0.5rem 12px; }
 
 /* ---------- Brand ---------- */
 /* Height + border match .topbar so sidebar header and content header share one
@@ -161,16 +176,34 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 .chev-closed { transform: rotate(-90deg); }
 
 .sidebar nav a {
-  display: block; padding: 0.35rem 0.75rem; margin: 1px 0;
+  display: flex; align-items: center; gap: 0.55rem;
+  padding: 0.35rem 0.75rem; margin: 1px 0;
   color: var(--muted); font-size: 0.8rem; border-radius: var(--r-sm);
   border-left: 2px solid transparent; transition: background 80ms, color 80ms;
 }
+.sidebar nav a .nav-icon { flex-shrink: 0; opacity: 0.85; }
 .sidebar nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
+.sidebar nav a:hover .nav-icon { opacity: 1; }
 .sidebar nav a.active {
   background: rgba(34,211,238,0.20);
   color: var(--accent); border-left: 2px solid var(--accent);
   padding-left: calc(0.75rem); font-weight: 600;
 }
+.sidebar nav a.active .nav-icon { opacity: 1; color: var(--accent); }
+
+/* Sidebar rail toggle (bottom-anchored) */
+.sidebar-toggle {
+  margin-top: auto;
+  display: flex; align-items: center; gap: 0.55rem;
+  width: calc(100% - 12px);
+  margin-left: 6px; margin-right: 6px; margin-bottom: var(--space-3);
+  padding: 0.5rem 0.7rem;
+  background: none; border: 1px solid var(--border); border-radius: var(--r-sm);
+  color: var(--muted); font-family: var(--sans); font-size: 0.75rem;
+  cursor: pointer; transition: background 80ms, color 80ms, border-color 80ms;
+}
+.sidebar-toggle:hover { background: var(--surface-2); color: var(--text); border-color: var(--muted); }
+.layout.rail .sidebar-toggle { justify-content: center; padding: 0.5rem 0; }
 
 /* ---------- Topbar (breadcrumb + global status) ---------- */
 .topbar {
