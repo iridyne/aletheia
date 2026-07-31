@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { LearningContributionProjection } from '../api/client'
-import { deriveContributionViewState } from './learningContribution'
+import {
+  deriveContributionViewState,
+  measuredContributionPathIds,
+} from './learningContribution'
 
 function projection(
   overrides: Partial<LearningContributionProjection> = {},
@@ -17,8 +20,16 @@ function projection(
       state: 'fresh',
     },
     paths: [],
+    path_states: [],
     items: [{
       path_id: 'universe_family_calibration',
+      availability: 'available',
+      data_freshness: {
+        last_evaluated_at: null,
+        age_sec: null,
+        stale_after_sec: 7200,
+        state: 'fresh',
+      },
       hypothesis_id: 'hypothesis',
       experiment_id: 'experiment',
       stage: 'shadow',
@@ -96,9 +107,122 @@ describe('deriveContributionViewState', () => {
     })).toBe('insufficient_data')
   })
 
+  it('keeps every measurable path selectable without conflating verdicts', () => {
+    const universe = projection().items[0]
+    const operator = {
+      ...universe,
+      path_id: 'operator_learning_bundle',
+      experiment_id: 'operator-experiment',
+      measurement: { ...universe.measurement, state: 'positive' as const },
+    }
+    const data = projection({
+      paths: [
+        {
+          path_id: 'universe_family_calibration', producer: 'universe', consumer: 'universe',
+          consumer_wired: true, settings_supported: true, measurement_supported: true,
+          authority: 'paper', allowed_effects: [], fallback: 'static', outcome_source: 'outcomes',
+        },
+        {
+          path_id: 'operator_learning_bundle', producer: 'operator', consumer: 'operator',
+          consumer_wired: true, settings_supported: true, measurement_supported: true,
+          authority: 'paper', allowed_effects: [], fallback: 'static', outcome_source: 'outcomes',
+        },
+      ],
+      path_states: [
+        {
+          path_id: 'universe_family_calibration',
+          availability: 'available',
+          unavailable_reason: null,
+          state: 'active',
+          data_freshness: universe.data_freshness,
+        },
+        {
+          path_id: 'operator_learning_bundle',
+          availability: 'available',
+          unavailable_reason: null,
+          state: 'active',
+          data_freshness: operator.data_freshness,
+        },
+      ],
+      items: [universe, operator],
+    })
+
+    expect(measuredContributionPathIds(data)).toEqual([
+      'universe_family_calibration',
+      'operator_learning_bundle',
+    ])
+    expect(deriveContributionViewState({
+      loading: false, failed: false, data, pathId: 'universe_family_calibration',
+    })).toBe('insufficient_data')
+    expect(deriveContributionViewState({
+      loading: false, failed: false, data, pathId: 'operator_learning_bundle',
+    })).toBe('positive')
+    expect(deriveContributionViewState({
+      loading: false, failed: false, data, pathId: 'missing_measured_path',
+    })).toBe('empty')
+    expect(deriveContributionViewState({
+      loading: false,
+      failed: false,
+      pathId: 'operator_learning_bundle',
+      data: {
+        ...data,
+        path_states: data.path_states.map(state => state.path_id === 'operator_learning_bundle'
+          ? { ...state, availability: 'partial' as const }
+          : state),
+      },
+    })).toBe('partial')
+    expect(deriveContributionViewState({
+      loading: false,
+      failed: false,
+      pathId: 'operator_learning_bundle',
+      data: {
+        ...data,
+        path_states: data.path_states.map(state => state.path_id === 'operator_learning_bundle'
+          ? {
+              ...state,
+              data_freshness: { ...state.data_freshness, state: 'stale' as const },
+            }
+          : state),
+      },
+    })).toBe('stale')
+  })
+
   it('keeps loading, fetch failure, genuine empty, stale and partial distinct', () => {
+    const stale = projection()
+    stale.items[0] = {
+      ...stale.items[0],
+      data_freshness: { ...stale.items[0].data_freshness, state: 'stale' },
+    }
+    const partial = projection()
+    partial.items[0] = { ...partial.items[0], availability: 'partial' }
+
     expect(deriveContributionViewState({ loading: true, failed: false })).toBe('loading')
     expect(deriveContributionViewState({ loading: false, failed: true })).toBe('unavailable')
+    expect(deriveContributionViewState({
+      loading: false,
+      failed: true,
+      data: projection(),
+    })).toBe('stale')
+    const unavailablePath = projection({
+      path_states: [{
+        path_id: 'universe_family_calibration',
+        availability: 'unavailable',
+        unavailable_reason: 'path_projection_failed',
+        state: 'unavailable',
+        data_freshness: {
+          last_evaluated_at: null,
+          age_sec: null,
+          stale_after_sec: 7200,
+          state: 'unavailable',
+        },
+      }],
+    })
+    expect(deriveContributionViewState({
+      loading: false,
+      failed: true,
+      data: unavailablePath,
+      pathId: 'universe_family_calibration',
+    })).toBe('unavailable')
     expect(deriveContributionViewState({
       loading: false,
       failed: false,
@@ -107,19 +231,12 @@ describe('deriveContributionViewState', () => {
     expect(deriveContributionViewState({
       loading: false,
       failed: false,
-      data: projection({
-        data_freshness: {
-          last_evaluated_at: '2026-07-23T00:00:00Z',
-          age_sec: 9000,
-          stale_after_sec: 7200,
-          state: 'stale',
-        },
-      }),
+      data: stale,
     })).toBe('stale')
     expect(deriveContributionViewState({
       loading: false,
       failed: false,
-      data: projection({ availability: 'partial' }),
+      data: partial,
     })).toBe('partial')
   })
 })

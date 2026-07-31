@@ -398,11 +398,17 @@ def _execute_trial_admission(
     )
 
 
-def _promotion_gate_reason(path_id: str) -> str | None:
+def _promotion_gate_reason(
+    path_id: str, *, persist_config_migrations: bool = True,
+) -> str | None:
     try:
         if global_learning_refreeze_reason() is not None:
             return "reconciliation_integrity_incident"
-        cfg = load_config()
+        cfg = (
+            load_config()
+            if persist_config_migrations
+            else load_config(persist_migrations=False)
+        )
         learning = cfg.learning
     except Exception:
         return "learning_config_unavailable"
@@ -419,13 +425,23 @@ def _promotion_gate_reason(path_id: str) -> str | None:
     return None
 
 
-def trial_admission_gate_reason(path_id: str) -> str | None:
+def trial_admission_gate_reason(
+    path_id: str, *, persist_config_migrations: bool = True,
+) -> str | None:
     """Return the first default-closed gate blocking owner trial admission."""
-    gate_reason = _promotion_gate_reason(path_id)
+    gate_reason = _promotion_gate_reason(
+        path_id,
+        persist_config_migrations=persist_config_migrations,
+    )
     if gate_reason is not None:
         return gate_reason
     try:
-        if not bool(load_config().learning.contribution_evaluation_enabled):
+        cfg = (
+            load_config()
+            if persist_config_migrations
+            else load_config(persist_migrations=False)
+        )
+        if not bool(cfg.learning.contribution_evaluation_enabled):
             return "contribution_evaluation_disabled"
     except Exception:
         return "learning_config_unavailable"
@@ -643,7 +659,12 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
             )
         ):
             recommended = "admit_trial"
-    authority = resolve_learning_authority(hypothesis.path_id, experiment, current_policy_epoch)
+    authority = resolve_learning_authority(
+        hypothesis.path_id,
+        experiment,
+        current_policy_epoch,
+        persist_config_migrations=False,
+    )
     from aletheia.learning.cohorts import build_experiment_cohorts
     from aletheia.learning.control import get_learning_job_health, job_health_view
     cohorts = [] if expected_behavior_contract_hash is None else [

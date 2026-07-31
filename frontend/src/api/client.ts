@@ -25,8 +25,17 @@ export interface LearningContributionProjection {
     fallback: string
     outcome_source: string
   }>
+  path_states: Array<{
+    path_id: string
+    availability: 'available' | 'partial' | 'unavailable'
+    unavailable_reason: string | null
+    state: 'active' | 'empty' | 'unavailable'
+    data_freshness: LearningContributionProjection['data_freshness']
+  }>
   items: Array<{
     path_id: string
+    availability: 'available' | 'partial' | 'unavailable'
+    data_freshness: LearningContributionProjection['data_freshness']
     hypothesis_id: string
     experiment_id: string
     stage: string

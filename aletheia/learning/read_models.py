@@ -39,13 +39,50 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
         measurement_catchup_due,
     )
 
-    cfg = load_config()
+    cfg = load_config(persist_migrations=False)
     boot_commit = get_boot_commit()
     rows = _current_experiment_rows(bounded_limit, cfg.learning.paper_influence_paths)
-    items = [
-        _project_experiment(row, boot_commit=boot_commit)
-        for row in rows
-    ]
+    path_states = {
+        path_id: {
+            "path_id": path_id,
+            "availability": "available",
+            "unavailable_reason": None,
+            "state": "empty",
+            "data_freshness": _freshness(None, generated_at),
+        }
+        for path_id in sorted(SUPPORTED_PATH_IDS)
+    }
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        path_id = str(row.get("path_id") or "")
+        try:
+            item = _project_experiment(
+                row,
+                boot_commit=boot_commit,
+                generated_at=generated_at,
+            )
+            items.append(item)
+            if path_id in path_states and path_states[path_id]["state"] == "empty":
+                path_states[path_id] = {
+                    "path_id": path_id,
+                    "availability": item["availability"],
+                    "unavailable_reason": (
+                        "conflict_provenance_truncated"
+                        if item["availability"] == "partial"
+                        else None
+                    ),
+                    "state": "active",
+                    "data_freshness": item["data_freshness"],
+                }
+        except Exception:
+            if path_id in path_states and path_states[path_id]["state"] == "empty":
+                path_states[path_id] = {
+                    "path_id": path_id,
+                    "availability": "unavailable",
+                    "unavailable_reason": "path_projection_failed",
+                    "state": "unavailable",
+                    "data_freshness": _freshness(None, generated_at),
+                }
     evaluator = get_learning_job_health("learning_contribution_evaluator")
     lifecycle_audit = get_learning_job_health("learning_lifecycle_audit_reconciler")
     last_success = evaluator.last_succeeded_at
@@ -54,10 +91,18 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated_at,
-        "availability": "available",
+        "availability": (
+            "partial"
+            if any(
+                state["availability"] in {"partial", "unavailable"}
+                for state in path_states.values()
+            )
+            else "available"
+        ),
         "unavailable_reason": None,
         "data_freshness": freshness,
         "paths": [_project_path(path) for path in LEARNING_PATHS],
+        "path_states": list(path_states.values()),
         "items": items,
         "operations": {
             "config": {
@@ -77,7 +122,8 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
             "evaluator": _project_health(
                 job_health_view(evaluator),
                 catchup_due=measurement_catchup_due(
-                    "learning_contribution_evaluator"
+                    "learning_contribution_evaluator",
+                    persist_config_migrations=False,
                 ),
             ),
             "lifecycle_audit": _project_health(
@@ -102,6 +148,7 @@ def unavailable_learning_contribution_projection(reason: str) -> dict[str, Any]:
             "state": "unavailable",
         },
         "paths": [],
+        "path_states": [],
         "items": [],
         "operations": None,
     }
@@ -138,45 +185,69 @@ def _current_experiment_rows(
         ") "
         "WHERE e.ended_at IS NULL "
     )
-    # Visibility tiers.  ``paper_influence_paths`` is an *authority* allowlist and
-    # ships empty, so tiering on it alone left this window ordered purely by
-    # recency — and ``observer_advisory_bundle``, which opens ~10 experiments an
-    # hour and is not in SUPPORTED_PATH_IDS, buried every measured experiment past
-    # the LIMIT.  Those rows are not idle (485 open, 7083 exposures) but they are
-    # unmeasurable: none of them can ever produce a verdict, and none has.  With
-    # 485 of them the owner projection returned zero universe_family_calibration
-    # items at the default limit of 20, i.e. nothing at all about the only path
-    # being measured.  Measurement-supported paths are the only ones that can
-    # produce a verdict, so they keep a tier above unmeasurable ones regardless of
-    # the allowlist.
-    influence = tuple(dict.fromkeys(priority_paths or ()))
-    measured = tuple(
+    influence = [
+        path for path in dict.fromkeys(priority_paths or ())
+        if path in SUPPORTED_PATH_IDS
+    ]
+    ordered_paths = influence + [
         path for path in sorted(SUPPORTED_PATH_IDS) if path not in set(influence)
-    )
+    ]
+    db = get_db()
+    rows: list[dict[str, Any]] = []
+    for path_id in ordered_paths[:limit]:
+        row = db.execute(
+            base_sql
+            + "AND h.path_id=? "
+            + "ORDER BY datetime(e.created_at) DESC, e.experiment_id DESC LIMIT 1",
+            (path_id,),
+        ).fetchone()
+        if row is not None:
+            rows.append(dict(row))
+    remaining = limit - len(rows)
+    if remaining <= 0:
+        return rows
+
+    measured = [
+        path for path in sorted(SUPPORTED_PATH_IDS) if path not in set(influence)
+    ]
     cases: list[str] = []
-    params: list[Any] = []
+    case_params: list[Any] = []
     for rank, paths in ((0, influence), (1, measured)):
-        if not paths:
-            continue
-        cases.append(f"WHEN h.path_id IN ({', '.join('?' * len(paths))}) THEN {rank}")
-        params.extend(paths)
+        if paths:
+            cases.append(f"WHEN h.path_id IN ({', '.join('?' * len(paths))}) THEN {rank}")
+            case_params.extend(paths)
+    exclusions = [str(row["experiment_id"]) for row in rows]
+    exclusion_sql = ""
+    params: list[Any] = []
+    if exclusions:
+        exclusion_sql = f"AND e.experiment_id NOT IN ({', '.join('?' * len(exclusions))}) "
+        params.extend(exclusions)
+    params.extend(case_params)
     tier_sql = f"CASE {' '.join(cases)} ELSE 2 END ASC, " if cases else ""
-    params.append(limit)
-    order_sql = (
-        f"ORDER BY {tier_sql}datetime(e.created_at) DESC, e.experiment_id DESC LIMIT ?"
-    )
-    rows = get_db().execute(base_sql + order_sql, tuple(params)).fetchall()
-    return [dict(row) for row in rows]
+    params.append(remaining)
+    filler_rows = db.execute(
+        base_sql
+        + exclusion_sql
+        + f"ORDER BY {tier_sql}datetime(e.created_at) DESC, "
+        + "e.experiment_id DESC LIMIT ?",
+        tuple(params),
+    ).fetchall()
+    rows.extend(dict(row) for row in filler_rows)
+    return rows
 
 
 def _project_experiment(
     row: dict[str, Any],
     *,
     boot_commit: str | None,
+    generated_at: str,
 ) -> dict[str, Any]:
     path_id = str(row.get("path_id") or "")
     try:
-        policy_epoch = current_policy_epoch(path_id)
+        policy_epoch = current_policy_epoch(
+            path_id,
+            persist_config_migrations=False,
+        )
         policy_reason = (
             None if policy_epoch is not None else "current_policy_epoch_unavailable"
         )
@@ -251,7 +322,10 @@ def _project_experiment(
     if recommended == "admit_trial" and current:
         from aletheia.learning.lifecycle import trial_admission_gate_reason
 
-        mutation_reason = trial_admission_gate_reason(path_id)
+        mutation_reason = trial_admission_gate_reason(
+            path_id,
+            persist_config_migrations=False,
+        )
         mutation_available = mutation_reason is None
 
     source_counts = _safe_int_dict(metrics.get("outcome_source_member_counts"))
@@ -275,6 +349,15 @@ def _project_experiment(
 
     return {
         "path_id": path_id,
+        "availability": (
+            "partial"
+            if bool(metrics.get("evidence_conflict_provenance_truncated"))
+            else "available"
+        ),
+        "data_freshness": _freshness(
+            (current_verdict or {}).get("created_at") if current else None,
+            generated_at,
+        ),
         "hypothesis_id": row.get("hypothesis_id"),
         "experiment_id": row.get("experiment_id"),
         "stage": row.get("stage"),

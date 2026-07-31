@@ -104,8 +104,9 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
   append-only metric history, lifecycle recommendation, evaluator + catch-up and durable failure
   identity. `universe_family_calibration` and `operator_learning_bundle` are the only
   measurement-supported paths; other declared hooks return static fallback and write no exposure.
-  The bounded `lco-v1` API summary and default contribution tab expose measured facts, while
-  multi-path selection, detail/pagination, performance evidence and full accessibility remain open.
+  The bounded `lco-v1` API summary and multi-path contribution selector expose measured facts;
+  current-route cache/performance/accessibility are implemented, while detail/pagination and the
+  full workbench remain open.
   `paper_influence_enabled` and lifecycle automation remain default-off. Both trial admission and
   the separate legacy master Learning toggle are tunnel-token protected.
 

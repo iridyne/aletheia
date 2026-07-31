@@ -74,7 +74,7 @@ results can influence a later trading judgment, even when it lives outside `alet
 | Persona learning | `trading/persona.py`, `persona_rollout.py`, `sizing_policy.py`, `trading/sizing.py` | clean realized history can calculate a bounded proposal, but `persona_sizing` is measurement-unsupported and actual notional remains the static baseline; downstream Risk caps remain unchanged |
 | Exit diagnostics | `analytics/exit_policy_advisor.py` | read-only advice only; no automatic mutation |
 | Filter diagnostics | `analytics/filter_registry.py`, `filter_replay.py`, `filter_controller.py`, `filter_shadow_experiments.py` | shadow recommendations/observe-only experiments; no production mutation |
-| Contribution/health | measured Learning ledger/evaluator plus `lco-v1`, alpha, memo, guard impact/effectiveness, learning-funnel analytics, doctor and scheduler | bounded `lco-v1` summary and the default measured-contribution tab are shipped; multi-path selection, detail/pagination, cache/performance evidence and complete accessibility remain unimplemented |
+| Contribution/health | measured Learning ledger/evaluator plus `lco-v1`, alpha, memo, guard impact/effectiveness, learning-funnel analytics, doctor and scheduler | bounded cached `lco-v1` summary and multi-path measured-contribution selection are shipped with timing/responsive accessibility proof; detail/pagination and the broader five-tab workbench remain future slices |
 | Supporting audits | trade insights/stats, family scorecard, opportunity flow, debate impact, thesis lineage, go-live scorecard | read models/gates; some are outcome sources or concurrent controls, not Learning treatments |
 | Operator control loop | `agent_shell/operator_loop.py` | may tighten confidence, size/risk cap, stop or scanner settings under its own safety contract; loosening requires higher authority |
 
@@ -95,7 +95,7 @@ outcome adapter, can be measured, or can receive authority. Current measured mat
 | Lesson → policy → draft skill | wired artifact loop | reviewed realized evidence, not measured-ledger exposure | artifact lifecycle only | implemented; draft skills have no automatic activation or authority |
 | `advisory_skill` | unwired | unsupported | unsupported | declared placeholder with no production consumer |
 | `filter_parameter_tune` | unwired skeleton | unsupported | unsupported | deferred design; no override table, producer or authority |
-| `lco-v1` owner projection | read-only consumer | reads existing ledger | no mutation authority | summary/default tab implemented; drill-down, multi-path UI and performance contract incomplete |
+| `lco-v1` owner projection | read-only consumer | reads existing ledger | no mutation authority | summary, multi-path UI and current-route performance contract implemented; drill-down/full workbench incomplete |
 
 Only `universe_family_calibration` and `operator_learning_bundle` are currently
 `measurement_supported`. Adding another path requires its own causal unit, outcome adapter,

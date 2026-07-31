@@ -144,9 +144,15 @@ def _code_fingerprint() -> str | None:
         return None
 
 
-def _policy_epoch_definition(path_id: str) -> PolicyEpoch:
+def _policy_epoch_definition(
+    path_id: str, *, persist_config_migrations: bool = True,
+) -> PolicyEpoch:
     try:
-        cfg = load_config()
+        cfg = (
+            load_config()
+            if persist_config_migrations
+            else load_config(persist_migrations=False)
+        )
         values = {
             "behavior_contract_version": get_learning_path(
                 path_id
@@ -239,11 +245,16 @@ def _policy_epoch_definition(path_id: str) -> PolicyEpoch:
     )
 
 
-def current_policy_epoch(path_id: str) -> str | None:
+def current_policy_epoch(
+    path_id: str, *, persist_config_migrations: bool = True,
+) -> str | None:
     """Resolve the current persisted epoch without creating or rotating state."""
     from aletheia.learning.policy_epochs import find_open_policy_epoch
 
-    return find_open_policy_epoch(_policy_epoch_definition(path_id))
+    return find_open_policy_epoch(_policy_epoch_definition(
+        path_id,
+        persist_config_migrations=persist_config_migrations,
+    ))
 
 
 def _policy_epoch(path_id: str) -> str:

@@ -53,6 +53,8 @@ def resolve_learning_authority(
     path_id: str,
     experiment: LearningExperiment,
     current_policy_epoch: str,
+    *,
+    persist_config_migrations: bool = True,
 ) -> AuthorityDecision:
     """Return the only authority decision used by Learning consumers.
 
@@ -71,7 +73,11 @@ def resolve_learning_authority(
         global_reason = global_learning_refreeze_reason()
         if global_reason is not None:
             return blocked(global_reason.split(":", 1)[0])
-        cfg = load_config()
+        cfg = (
+            load_config()
+            if persist_config_migrations
+            else load_config(persist_migrations=False)
+        )
         learning = cfg.learning
     except Exception:
         return blocked("learning_config_unavailable")

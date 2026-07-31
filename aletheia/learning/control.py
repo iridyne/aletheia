@@ -219,10 +219,19 @@ def current_measurement_window(job_id: str, *, now: datetime | None = None) -> s
     return f"{job_id}:{current.strftime('%Y-%m-%dT%H')}"
 
 
-def measurement_catchup_due(job_id: str, *, now: datetime | None = None) -> bool:
+def measurement_catchup_due(
+    job_id: str,
+    *,
+    now: datetime | None = None,
+    persist_config_migrations: bool = True,
+) -> bool:
     """Measurement ignores behavior gates but respects its explicit enable flag."""
     try:
-        cfg = load_config()
+        cfg = (
+            load_config()
+            if persist_config_migrations
+            else load_config(persist_migrations=False)
+        )
         if not bool(cfg.learning.contribution_evaluation_enabled):
             return False
     except Exception:

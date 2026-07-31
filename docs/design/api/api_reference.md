@@ -172,7 +172,7 @@ the same two completeness columns; it writes an empty realized-PnL cell rather t
 | GET | `/analytics/shadow-trades` | Shadow trade comparison data |
 | GET | `/analytics/strategy-performance` | Per-strategy KPIs (backtest summary removed with rules engine, Position C) |
 | GET | `/analytics/learning-funnel` | Learning write/consume visibility, lesson status counts, conservative contradiction count |
-| GET | `/analytics/learning-contribution` | Additive `lco-v1` bounded read-only owner summary for current Learning experiments, identity-matched measurement, cohort integrity, evaluator health and recommendation-only lifecycle state. Legacy activity aggregates remain for compatibility but are not contribution evidence. No evaluation or mutation is run. |
+| GET | `/analytics/learning-contribution` | Additive `lco-v1` bounded read-only owner summary for current Learning experiments, identity-matched measurement, cohort integrity, evaluator health and recommendation-only lifecycle state. `path_states` keeps each measurement-supported path's availability, empty/active state and freshness separate. Uses a 30-second monotonic process-local cache and emits `Server-Timing` (`ledger` or `cache_hit`, plus `total`). Legacy activity aggregates remain compatibility context, not contribution evidence. No evaluation or mutation is run. |
 
 ### Future Learning Contribution API
 

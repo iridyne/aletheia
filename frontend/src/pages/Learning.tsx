@@ -8,10 +8,11 @@ import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDr
 import Tabs from '../components/Tabs'
 import PnLChart from '../charts/PnLChart'
 import PageHeader from '../components/PageHeader'
+import { MeasuredPathSelector } from '../components/MeasuredPathSelector'
 import { Badge, Button, Card, CardHeader, Meter, StatusText } from '../components/ui'
 import type { StatusTone } from '../components/ui'
 import { fmtNum, fmtSigned, humanize, fmtTimestamp } from '../lib/format'
-import { deriveContributionViewState } from '../lib/learningContribution'
+import { deriveContributionViewState, measuredContributionPathIds } from '../lib/learningContribution'
 
 /**
  * Learning — measured contribution first, then the memory & evolution surfaces.
@@ -85,35 +86,75 @@ function LearningPulse() {
 
 /* ======================= MEASURED CONTRIBUTION ======================= */
 function ContributionTab() {
+  const [selectedPath, setSelectedPath] = useState('')
   const query = useQuery({
     queryKey: ['learning-contribution', 'lco-v1'],
     queryFn: api.getLearningContribution,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
   })
-  const viewState = deriveContributionViewState({
-    loading: query.isLoading,
-    failed: query.isError,
-    data: query.data,
-  })
-
-  if (viewState === 'loading') {
+  if (query.isLoading) {
     return <ContributionMessage tone="blue" title="Loading measured contribution" detail="Reading persisted experiment evidence. No evaluation or lifecycle action is being run." />
   }
-  if (viewState === 'unavailable' && !query.data) {
+  if (query.isError && !query.data) {
     return <ContributionMessage tone="red" title="Contribution unavailable" detail="The contribution read failed. This is not an empty cohort or a zero result." />
   }
 
   const data = query.data
-  if (!data || viewState === 'unavailable') {
+  if (!data || data.availability === 'unavailable') {
     return <ContributionMessage tone="red" title="Contribution unavailable" detail={humanize(data?.unavailable_reason || 'projection unavailable')} />
   }
-  if (viewState === 'empty') {
-    return <ContributionMessage tone="muted" title="No open Learning experiment" detail="The projection succeeded, but there is no current experiment to measure." />
+  const pathIds = measuredContributionPathIds(data)
+  if (pathIds.length === 0) {
+    return <ContributionMessage tone="muted" title="No measurable Learning path" detail="The projection succeeded, but no path currently has a measurement adapter." />
   }
-
-  const item =
-    data.items.find(candidate => candidate.path_id === 'universe_family_calibration') ??
-    data.items[0]
-  const freshness = data.data_freshness
+  const defaultPath = pathIds.includes('universe_family_calibration')
+    ? 'universe_family_calibration'
+    : pathIds[0]
+  const activePath = pathIds.includes(selectedPath) ? selectedPath : defaultPath
+  const activePathState = data.path_states.find(state => state.path_id === activePath)
+  const item = data.items.find(candidate => candidate.path_id === activePath)
+  const viewState = deriveContributionViewState({
+    loading: false,
+    failed: query.isError,
+    data,
+    pathId: activePath,
+  })
+  const pathSelector = (
+    <MeasuredPathSelector
+      pathIds={pathIds}
+      activePath={activePath}
+      generatedLabel={fmtTimestamp(data.generated_at)}
+      onChange={setSelectedPath}
+    />
+  )
+  if (viewState === 'unavailable') {
+    return (
+      <section className="lco-stack" aria-label="Learning measured contribution">
+        {pathSelector}
+        <ContributionMessage
+          tone="red"
+          title="Contribution unavailable for this path"
+          detail={humanize(activePathState?.unavailable_reason || 'path projection unavailable')}
+        />
+      </section>
+    )
+  }
+  if (!item) {
+    const stale = viewState === 'stale'
+    return (
+      <section className="lco-stack" aria-label="Learning measured contribution">
+        {pathSelector}
+        <ContributionMessage
+          tone={stale ? 'yellow' : 'muted'}
+          title={stale ? 'Measurement is stale' : 'No current experiment for this path'}
+          detail={stale
+            ? 'The last successful projection had no current experiment, and the latest refresh failed.'
+            : 'This measurable path is available, but the projection returned no open experiment for it.'}
+        />
+      </section>
+    )
+  }
   const measurement = item.measurement
   const integrity = item.integrity
   const lifecycle = item.lifecycle
@@ -127,11 +168,14 @@ function ContributionTab() {
 
   return (
     <section className="lco-stack" aria-label="Learning measured contribution">
+      {pathSelector}
       {partial && (
         <ContributionMessage
           tone="yellow"
-          title={freshness.state === 'stale' ? 'Measurement is stale' : 'Measurement is partial'}
-          detail="The evidence below is preserved, but it must not be treated as a current effectiveness claim."
+          title={query.isError || item.data_freshness.state === 'stale' ? 'Measurement is stale' : 'Measurement is partial'}
+          detail={query.isError
+            ? 'The last successful evidence remains visible, but the latest refresh failed.'
+            : 'The evidence below is preserved, but it must not be treated as a current effectiveness claim.'}
         />
       )}
 
