@@ -497,24 +497,76 @@ async def test_tunnel_guard_protects_operator_command_surfaces(client):
 
 
 @pytest.mark.anyio
-async def test_tunnel_guard_protects_learning_authority_mutations_only(client):
+async def test_tunnel_guard_protects_learning_mutations_before_side_effects(
+    client,
+    monkeypatch,
+):
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.secrets import set_secret
+    import aletheia.files.jsonl as jsonl
+    import aletheia.server.routes.settings as settings_routes
 
     cfg = load_config()
     cfg.tunnel.enabled = True
+    cfg.agent.autonomous_learning = False
     save_config(cfg)
-    set_secret("tunnel_api_token", "LEARNINGOWNER42")
+
+    saved = []
+    audited = []
+    real_save_config = settings_routes.save_config
+    real_write_audit = jsonl.write_audit
+
+    def tracked_save_config(updated):
+        saved.append(updated.agent.autonomous_learning)
+        return real_save_config(updated)
+
+    def tracked_write_audit(event):
+        audited.append(event)
+        return real_write_audit(event)
+
+    monkeypatch.setattr(settings_routes, "save_config", tracked_save_config)
+    monkeypatch.setattr(jsonl, "write_audit", tracked_write_audit)
 
     config = await client.post("/api/settings/learning", json={})
     admission = await client.post(
         "/api/settings/learning/experiments/example/admit-trial",
         json={},
     )
+    master_toggle_without_secret = await client.post(
+        "/api/settings/autonomous-learning",
+        json={"enabled": True},
+    )
     assert config.status_code == 401
     assert admission.status_code == 401
+    assert master_toggle_without_secret.status_code == 401
+    assert saved == []
+    assert audited == []
+    assert load_config().agent.autonomous_learning is False
+
+    set_secret("tunnel_api_token", "LEARNINGOWNER42")
+    master_toggle_wrong_token = await client.post(
+        "/api/settings/autonomous-learning",
+        json={"enabled": True},
+        headers={"X-Aletheia-Token": "wrong"},
+    )
+    assert master_toggle_wrong_token.status_code == 401
+    assert saved == []
+    assert audited == []
+    assert load_config().agent.autonomous_learning is False
 
     headers = {"X-Aletheia-Token": "LEARNINGOWNER42"}
+    master_toggle = await client.post(
+        "/api/settings/autonomous-learning",
+        json={"enabled": True},
+        headers=headers,
+    )
+    assert master_toggle.status_code == 200
+    assert saved == [True]
+    assert [event["event_type"] for event in audited] == [
+        "autonomous_learning_changed",
+    ]
+    assert load_config().agent.autonomous_learning is True
+
     assert (await client.post(
         "/api/settings/learning",
         json={},
@@ -530,6 +582,25 @@ async def test_tunnel_guard_protects_learning_authority_mutations_only(client):
     # accessible without the tunnel credential.
     read = await client.get("/api/settings/learning/experiments/example")
     assert read.status_code != 401
+
+
+@pytest.mark.anyio
+async def test_autonomous_learning_toggle_remains_local_without_tunnel(client):
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.tunnel.enabled = False
+    cfg.agent.autonomous_learning = False
+    save_config(cfg)
+
+    response = await client.post(
+        "/api/settings/autonomous-learning",
+        json={"enabled": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"old": False, "new": True}
+    assert load_config().agent.autonomous_learning is True
 
 
 @pytest.mark.anyio

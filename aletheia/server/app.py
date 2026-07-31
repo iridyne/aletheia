@@ -621,7 +621,7 @@ _PROTECTED_PATHS = {
     # permission mode), so they must require the tunnel token too — otherwise the
     # protection on /api/risk/kill-switch is trivially bypassed via /settings/risk.
     "/api/settings/risk", "/api/settings/exchange-mode", "/api/settings/permission-mode",
-    "/api/settings/learning",
+    "/api/settings/learning", "/api/settings/autonomous-learning",
     "/api/gateway/restart", "/api/gateway/stop",
     # #42 completion: operator command surfaces can trigger the AI to execute trades
     # (even under permission-gate #40, the gate only checks the configured mode —

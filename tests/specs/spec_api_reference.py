@@ -159,8 +159,8 @@ def test_credentials_get_helpers_omit_value_key():
 @spec_claim(
     SpecClaim(
         "API-S07", "api_reference", "§trust-boundary tunnel guard", "L2a",
-        "_PROTECTED_PATHS in app.py includes /api/settings/live-unlock "
-        "and /api/risk/kill-switch",
+        "_PROTECTED_PATHS in app.py includes live-unlock, kill-switch, and the "
+        "legacy Autonomous Learning mutation",
     ),
 )
 def test_protected_paths_contains_live_unlock_and_kill_switch():
@@ -196,6 +196,10 @@ def test_protected_paths_contains_live_unlock_and_kill_switch():
     assert "/api/risk/kill-switch" in protected, (
         "/api/risk/kill-switch must be in _PROTECTED_PATHS — "
         "kill-switch is a safety-critical action that must be tunnel-gated"
+    )
+    assert "/api/settings/autonomous-learning" in protected, (
+        "/api/settings/autonomous-learning must be in _PROTECTED_PATHS — "
+        "the master Learning gate changes scheduler and lifecycle behavior"
     )
 
 
