@@ -17,22 +17,37 @@ jobs:
       !contains(github.event.pull_request.labels.*.name, 'do-not-auto-merge')
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     env:
-      GH_TOKEN: ${{ github.token }}
-      PR_URL: ${{ github.event.pull_request.html_url }}
+      PR_NODE_ID: ${{ github.event.pull_request.node_id }}
     steps:
       - name: Queue pull request
-        run: gh pr merge "$PR_URL" --repo "$GITHUB_REPOSITORY" --auto --merge
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
+        with:
+          script: |
+            await github.graphql(
+              `mutation($pullRequestId: ID!) {
+                enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: MERGE}) {
+                  pullRequest { number }
+                }
+              }`,
+              { pullRequestId: process.env.PR_NODE_ID },
+            );
 
   disable:
     name: Disable auto-merge
     if: contains(github.event.pull_request.labels.*.name, 'do-not-auto-merge')
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     env:
-      GH_TOKEN: ${{ github.token }}
-      PR_URL: ${{ github.event.pull_request.html_url }}
+      PR_NODE_ID: ${{ github.event.pull_request.node_id }}
     steps:
       - name: Remove pull request from auto-merge
-        run: |
-          if [ "$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')" = "true" ]; then
-            gh pr merge "$PR_URL" --repo "$GITHUB_REPOSITORY" --disable-auto
-          fi
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
+        with:
+          script: |
+            await github.graphql(
+              `mutation($pullRequestId: ID!) {
+                disablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId}) {
+                  pullRequest { number }
+                }
+              }`,
+              { pullRequestId: process.env.PR_NODE_ID },
+            );
