@@ -30,6 +30,8 @@ _TF_MAP = {
 class BinancePublicProvider:
     """MarketDataProvider backed by Binance public REST (no auth)."""
 
+    venue_name = "binance"
+
     async def get_ticker(self, symbol) -> Ticker:
         from aletheia.data.symbols import canonical_of
         from aletheia.data.sources.symbol_map import to_binance_symbol
@@ -38,13 +40,23 @@ class BinancePublicProvider:
         canon = canonical_of(symbol)
         bn_sym = to_binance_symbol(canon)
 
-        async with httpx_client(timeout=10) as client:
-            resp = await client.get(
-                f"{_SPOT_BASE}/ticker/24hr",
-                params={"symbol": bn_sym},
-            )
-            resp.raise_for_status()
-            raw = resp.json()
+        try:
+            async with httpx_client(timeout=10) as client:
+                resp = await client.get(
+                    f"{_SPOT_BASE}/ticker/24hr",
+                    params={"symbol": bn_sym},
+                )
+                resp.raise_for_status()
+                raw = resp.json()
+        except Exception as exc:
+            from aletheia.data.venue_health import is_venue_refusal, record_venue_failure
+
+            if is_venue_refusal(exc):
+                record_venue_failure(self.venue_name, exc)
+            raise
+        from aletheia.data.venue_health import record_venue_success
+
+        record_venue_success(self.venue_name)
 
         return Ticker(
             symbol=canon,
@@ -79,10 +91,20 @@ class BinancePublicProvider:
         if since is not None:
             params["startTime"] = since
 
-        async with httpx_client(timeout=15) as client:
-            resp = await client.get(f"{_SPOT_BASE}/klines", params=params)
-            resp.raise_for_status()
-            rows = resp.json()
+        try:
+            async with httpx_client(timeout=15) as client:
+                resp = await client.get(f"{_SPOT_BASE}/klines", params=params)
+                resp.raise_for_status()
+                rows = resp.json()
+        except Exception as exc:
+            from aletheia.data.venue_health import is_venue_refusal, record_venue_failure
+
+            if is_venue_refusal(exc):
+                record_venue_failure(self.venue_name, exc)
+            raise
+        from aletheia.data.venue_health import record_venue_success
+
+        record_venue_success(self.venue_name)
 
         candles = [
             Candle(

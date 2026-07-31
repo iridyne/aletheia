@@ -40,6 +40,13 @@ from typing import Any
 
 from aletheia.data.providers import Candle, Ticker
 from aletheia.data.symbols import InstrumentId, to_canonical
+from aletheia.data.venue_health import (
+    VenueCoolingDownError,
+    is_venue_available,
+    is_venue_refusal,
+    record_venue_failure,
+    record_venue_success,
+)
 
 logger = logging.getLogger("aletheia.ccxt_provider")
 
@@ -148,8 +155,12 @@ class CCXTProvider:
             (self._primary_name, self._ensure_primary),
             (self._fallback_name, self._ensure_fallback),
         ):
+            if not is_venue_available(name):
+                last_err = VenueCoolingDownError(f"market-data venue cooling down: {name}")
+                continue
             try:
                 raw = await ensure().fetch_ticker(ccxt_symbol)
+                record_venue_success(name)
                 return Ticker(
                     symbol=canon,
                     last_price=float(raw.get("last") or raw.get("close") or 0.0),
@@ -161,6 +172,8 @@ class CCXTProvider:
                 )
             except Exception as e:  # noqa: BLE001 — try fallback, then re-raise
                 last_err = e
+                if is_venue_refusal(e):
+                    record_venue_failure(name, e)
                 logger.warning("ticker fetch failed on %s for %s: %s", name, ccxt_symbol, e)
         raise last_err if last_err else RuntimeError("ticker fetch failed")
 
@@ -188,10 +201,14 @@ class CCXTProvider:
             (self._primary_name, self._ensure_primary),
             (self._fallback_name, self._ensure_fallback),
         ):
+            if not is_venue_available(name):
+                last_err = VenueCoolingDownError(f"market-data venue cooling down: {name}")
+                continue
             try:
                 raw = await ensure().fetch_ohlcv(
                     ccxt_symbol, timeframe=timeframe, since=since, limit=limit
                 )
+                record_venue_success(name)
                 candles = [
                     Candle(
                         timestamp=int(row[0]),
@@ -231,6 +248,8 @@ class CCXTProvider:
                 return candles
             except Exception as e:  # noqa: BLE001 — try fallback, then re-raise
                 last_err = e
+                if is_venue_refusal(e):
+                    record_venue_failure(name, e)
                 logger.warning("ohlcv fetch failed on %s for %s: %s", name, ccxt_symbol, e)
         raise last_err if last_err else RuntimeError("ohlcv fetch failed")
 
