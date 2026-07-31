@@ -12,6 +12,7 @@ import ast
 import inspect
 import json
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -29,14 +30,30 @@ def _missing(claim_id: str):
     )
 
 
-@_missing("LCO-S01")
 @spec_claim(SpecClaim(
     "LCO-S01", _CONTRACT, "§6 target read APIs", "L2a",
     "A typed GET-only lco-v1 projection is indexed and introduces no Learning mutation endpoint.",
-    status="missing",
+    status="implemented",
 ))
-def test_lco_get_only_projection_is_not_implemented():
-    pytest.fail("LCO-S01 target behavior is intentionally missing")
+def test_lco_projection_is_indexed_and_get_only(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+
+    from aletheia.learning.read_models import build_learning_contribution_projection
+    from aletheia.server.app import app
+
+    routes = [
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/api/analytics/learning-contribution"
+    ]
+    assert len(routes) == 1
+    assert routes[0].methods == {"GET"}
+    assert build_learning_contribution_projection()["schema_version"] == "lco-v1"
+    assert all(
+        set(getattr(route, "methods", set())) <= {"GET", "HEAD"}
+        for route in app.routes
+        if "learning-contribution" in getattr(route, "path", "")
+    )
 
 
 @spec_claim(SpecClaim(
@@ -153,8 +170,8 @@ def test_lco_scheduler_recovery_projection_is_sanitized(tmp_path, monkeypatch):
 
 @spec_claim(SpecClaim(
     "LCO-C01", _CONTRACT, "§1 authority boundary", "L2c",
-    "The observability UI remains read-only; admission readiness is true only when the separately "
-    "protected owner route and every default-closed paper gate are ready.",
+    "The observability UI remains read-only; admission readiness is separate from owner-route "
+    "authentication and every default-closed paper gate.",
     status="implemented",
 ))
 def test_lco_admission_recommendation_is_read_only(tmp_path, monkeypatch):
@@ -171,15 +188,20 @@ def test_lco_admission_recommendation_is_read_only(tmp_path, monkeypatch):
     assert lifecycle["mutation_unavailable_reason"] == "lifecycle_automation_disabled"
 
 
-@_missing("LCO-C02")
 @spec_claim(SpecClaim(
     "LCO-C02", _CONTRACT, "§8 UI honesty", "L2c",
     "The UI derives contribution state only from backend measurement facts; counts, activity, PnL "
     "and evaluator health cannot imply effectiveness.",
-    status="missing",
+    status="partial",
 ))
-def test_lco_frontend_honesty_states_are_not_implemented():
-    pytest.fail("LCO-C02 target behavior is intentionally missing")
+def test_lco_frontend_uses_backend_measurement_state():
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "frontend/src/lib/learningContribution.ts").read_text()
+    proof = (root / "frontend/src/lib/learningContribution.test.ts").read_text()
+
+    assert "return input.data.items[0].measurement.state" in source
+    assert "large activity counts" in proof
+    assert "toBe('insufficient_data')" in proof
 
 
 @_missing("LCO-C03")
@@ -273,15 +295,20 @@ def test_lco_path_capabilities_remain_independent(tmp_path, monkeypatch):
     )
 
 
-@_missing("LCO-C04")
 @spec_claim(SpecClaim(
     "LCO-C04", _CONTRACT, "§8.6 query states", "L2c",
     "Loading, genuine empty, unavailable, stale and partial remain distinct, and a failed fetch "
     "never becomes a zero or empty result.",
-    status="missing",
+    status="partial",
 ))
-def test_lco_query_state_honesty_is_not_implemented():
-    pytest.fail("LCO-C04 target behavior is intentionally missing")
+def test_lco_query_states_have_executable_frontend_proof():
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "frontend/src/lib/learningContribution.ts").read_text()
+    proof = (root / "frontend/src/lib/learningContribution.test.ts").read_text()
+
+    for state in ("loading", "unavailable", "empty", "stale", "partial"):
+        assert f"'{state}'" in source
+        assert f"toBe('{state}')" in proof
 
 
 @_missing("LCO-C05")

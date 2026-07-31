@@ -102,10 +102,10 @@ Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_cou
 | knowledge_items + knowledge_fts | post_trade_reviewer, risk_critic, dreaming_agent, insight_synthesizer | retrieve_lessons() → LLM prompts (市观/paper_trader_ranker/trading_decision(PI)) | ✅ |
 | trading_guards + guard_candidates | universe_refresh(Tier1 auto-gen), dreaming_agent | active guard → paper_trader_ranker；automatic lesson block → shadow-only candidate（历史自动晋级跳过） | ✅ 不伪装成 Risk Engine lesson |
 | ps_lessons (LessonStore) | dreaming_agent → lesson_reviewer | trading_context Layer3 → System Operator prompt → risk engine #15(applied, non-expired) | ✅ 晋级/推翻只认同标的、同方向、同 scanner 的干净净收益；全局样本只作背景，不能代替窄范围门槛 |
-| ranker case/memo Learning | trade_case_study + latest trading_memo | paper_trader_ranker score | ✅ 原始历史分只作候选；无合格前瞻对照结论时实际增量固定为 0，并记录独立路径证据 |
-| persona sizing Learning | clean realized regime cohort + causal opportunity outcome | trading/sizing → System Operator proposal rationale | ✅ 同时记录静态/学习建议/实际金额；无因果键、无授权或记录故障均回到静态金额 |
+| ranker case/memo Learning | trade_case_study + latest trading_memo | paper_trader_ranker score | 🟡 consumer hook 已接，但 measurement-unsupported；实际增量固定为 0，不创建 formal exposure |
+| persona sizing Learning | clean realized regime cohort + causal opportunity outcome | trading/sizing → System Operator proposal rationale | 🟡 可显示静态/学习建议/实际金额，但 measurement-unsupported；实际金额保持静态 baseline，不创建 formal exposure |
 | ps_skills (SkillStore) | lesson_reviewer(applied lesson→draft skill), persistence API | persistence API / manual review | ✅ draft producer 已接入;不会自动 activate(见 knowledge_contract §6.A2) |
-| measured Learning ledger / `lco-v1` | evaluator/lifecycle 写 7 个永久 Learning 表；canonical full-arm filter outcomes + selected-member Universe mirror/fallback | 当前仅内部 inspection/doctor；目标 `/api/analytics/learning-contribution` + `/api/learning/*` + Learning workbench | ❌ owner projection 尚未实现；目标只读、有界、缓存，不运行 evaluator/lifecycle，不提供 admission mutation，不改 Paper/Risk/Execution/Live |
+| measured Learning ledger / `lco-v1` | Universe calibration 与 Operator bundle 写受支持 exposure；evaluator/lifecycle 写 7 个永久 Learning 表；canonical full-arm filter outcomes + selected-member Universe mirror/fallback | 内部 inspection/doctor + `/api/analytics/learning-contribution` summary + Learning 默认 contribution tab | 🟡 有界只读 owner summary/tab 已实现；多路径选择、明细/分页、cache/performance 证据与完整无障碍仍缺失；不运行 evaluator/lifecycle、不提供 admission mutation、不改 Paper/Risk/Execution/Live |
 
 ---
 

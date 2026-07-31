@@ -21,7 +21,7 @@
 | 8 | tpsl_fill_check | 90s | io | Check exchange TP/SL order fills |
 | 9 | position_reconcile | 5min | io | Reconcile local vs exchange positions |
 | 10 | post_trade_reviewer | 4h | agents | Review closed trades for lessons |
-| 11 | risk_critic | 6h | agents | Evaluate risk exposure, flag violations |
+| 11 | risk_critic | 6h | agents | Evaluate risk exposure and write an advisory research note |
 | 12 | dreaming_daily | cron 02:00 CST | agents | Synthesize daily knowledge summary |
 | 13 | lesson_reviewer | cron 03:00 CST | agents | Overturn/renew accepted lessons after outcome review |
 | 14 | insight_synthesizer | cron 02:30 CST | agents | Cross-agent insight synthesis |
@@ -230,7 +230,7 @@ durably queued and independently retried by `outcome_hook_replay`.
   per-snapshot generated rows and splits `universe_snapshot_superseded` from true
   `ttl_expired`; raw `status='expired'` is never sufficient to claim TTL expiry.
 - **Key invariant**: Never calls LLM; never executes orders directly; never submits proposals (signal collector only)
-- **Learning authority**: factor history and raw case/memo scores are diagnostic proposals only. Each ranker component has a separate candidate-linked exposure; score/filter influence stays at the static baseline unless a durable prospective treatment/control verdict has enough linked net outcomes. Control candidates retain the same venue, eligibility, static-risk-flag, learned-guard, and downstream Risk Engine checks.
+- **Learning authority**: factor history and raw case/memo scores are diagnostic proposals only. Their experiment hooks are currently measurement-unsupported, so they create no formal exposure and score/filter influence stays at the static baseline. Any future measured implementation must retain the same venue, eligibility, static-risk-flag, learned-guard, and downstream Risk Engine checks for control candidates.
 
 #### System Operator — Trading Decision Daemon (pi_trading_decision / pi_daemon)
 
@@ -309,8 +309,8 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 - **Trigger**: scheduler every 6h; disabled when `agent.autonomous_learning=false`
 - **Inputs**: Open positions, risk config, recent violations, portfolio exposure
 - **LLM**: Yes (risk assessment)
-- **Outputs**: knowledge_items (item_type=**research_note**, metadata.subtype=risk_lesson — `risk_critic.py:42` calls `create_research_note()`; `risk_lesson` is not a top-level item_type, see `knowledge_contract.md §2.1`), risk flag annotations on opportunities
-- **Side effects**: May flag opportunities as risk_blocked; writes risk_decisions
+- **Outputs**: knowledge_items (item_type=**research_note**, metadata.subtype=risk_lesson — `risk_critic.py:42` calls `create_research_note()`; `risk_lesson` is not a top-level item_type, see `knowledge_contract.md §2.1`)
+- **Side effects**: Writes one medium-confidence advisory research note. It does not flag opportunities or write `risk_decisions`; those facts remain owned by the Risk Engine. Automatic Risk lessons remain advisory because `risk_lesson_constraint` is not measurement-supported.
 
 #### dreaming_daily
 

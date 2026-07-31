@@ -112,10 +112,15 @@ from the Operator working set unless a `submitting` claim requires crash recover
 | `learning_job_health` | Durable expected-run/backlog health; current error may clear on recovery while last failure identity persists | schedule, watermarks, consecutive_failures, status, last_error, last_failed_at, last_failure_reason |
 | `learning_policy_epochs` | Non-sensitive effective-policy attribution boundary | effective-values hash/JSON, affected paths, safety flag, interval |
 
-These tables were additive/observational in Phase 1. Current universe, factor, ranker, and sizing
-consumers now write refrozen prospective exposures; only an active, stage-isolated paper
-experiment with enough linked cost-aware outcomes and separately validated lifecycle authority may
-apply a treatment. The ledger grants no risk, execution, credential, or live authority.
+These tables were additive/observational in Phase 1. Only
+`universe_family_calibration` and `operator_learning_bundle` currently write
+measurement-supported exposures with path-specific outcomes. Factor, ranker,
+learned-guard, automatic Risk-lesson, Observer-bundle and persona-sizing hooks
+are consumer-wired but measurement-unsupported: they return static fallback and
+write no formal exposure. Only an active, stage-isolated paper experiment with
+enough linked cost-aware outcomes and separately validated owner/lifecycle
+authority may apply a supported treatment. The ledger grants no risk,
+execution, credential, or live authority.
 
 For current universe contribution measurement, `filter_candidate_outcomes` is the canonical
 full-arm source. `universe_forward_outcomes` is a selected-member legacy mirror/fallback; matching
@@ -129,7 +134,9 @@ an assignment unit remain permanent and auditable but are excluded, never inferr
 ### C-ter. Learning Contribution projection boundary
 
 The current data model adds no `lco-v1` table, materialized projection, config
-field, data source, retention rule, or migration. Any broader derived model is
+field, data source, retention rule, or migration. `lco-v1` is a bounded
+read-only projection over the existing ledger and is implemented for summary
+and the default dashboard contribution tab. Any broader derived model is
 defined only in the
 [`learning_observability`](../proposals/learning_observability.md) Proposal
 until it becomes current behavior.

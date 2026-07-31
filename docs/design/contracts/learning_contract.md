@@ -1,7 +1,7 @@
 # Learning Subsystem Contract
 
 > Contract level: L2. This file is normative for the Learning subsystem.
-> Last aligned: 2026-07-19 A1 contribution-measurement integrity.
+> Last aligned: 2026-07-31 measured-path and owner-observability reconciliation.
 > Reference intent: [Product Direction - evidence-to-learning loop](../../product/definition/DIRECTION.md#2-complete-the-evidence-to-learning-loop).
 > Future designs:
 > [`learning_evolution.md`](../proposals/learning_evolution.md) and
@@ -54,40 +54,65 @@ results can influence a later trading judgment, even when it lives outside `alet
 | --- | --- | --- |
 | Outcome joins | `analytics/trade_attribution.py`, `trade_path.py` | read-only realized-trade joins |
 | Candidate counterfactuals | `analytics/shadow_trades.py`, `filter_evidence.py`, `universe/filter_outcome_recorder.py` | `filter_candidate_outcomes` is the canonical full-arm fixed-horizon source; `universe_forward_outcomes` is a selected-member legacy mirror/fallback, and economic disagreement fails closed |
-| Outcome economics | `learning/outcomes.py`, `universe/outcome_economics.py`, `analytics/outcome_semantics.py`, `close_reasons.py`, `learning_window.py` | shared fail-closed cost/quality contract governs factor, universe, reviewer, ranker and sizing exposure authority; observer, Operator and automatic Risk-lesson boolean treatments use the same immutable exposure ledger and only link to real fixed-horizon candidate outcomes |
+| Outcome economics | `learning/outcomes.py`, `universe/outcome_economics.py`, `analytics/outcome_semantics.py`, `close_reasons.py`, `learning_window.py` | shared fail-closed cost/quality rules govern diagnostic evidence and supported measured outcomes. Only Universe calibration and Operator bundle currently attach outcomes to the immutable exposure ledger. |
 | Universe family calibration | `universe/allocator.py::get_family_multipliers`, `learning/experiments.py`, `universe/service.py` | 50-sample retrospective cohorts may propose a bounded 0.9/1.1 shadow treatment; actual paper influence requires stable prospective arms, linked net outcomes, minimum time, and a positive verdict; fallback is 1.0 |
 | Structured cases | `analytics/trade_case_builder.py` | deterministic high-confidence cases and guard candidates |
 | Universe guard producer | `universe/outcome_recorder.py` | derives candidate guards from settled rejected/pass outcomes |
 | Narrative review | `agents/post_trade_reviewer.py` | medium-confidence prose; also triggers deterministic case building |
-| Risk critique and lesson constraint | `agents/risk_critic.py`, `risk/engine.py`, `learning/experiments.py` | critique remains advisory; manual/owner/human Risk lessons remain static safety rules, while an automatic applied lesson stays advisory unless the exact `risk_lesson_constraint` prospective treatment is authorized for that Proposal |
+| Risk critique and lesson constraint | `agents/risk_critic.py`, `risk/engine.py`, `learning/experiments.py` | `risk_critic` writes a medium-confidence advisory research note only. Manual/owner/human Risk lessons remain static safety rules. The automatic-lesson experiment hook is measurement-unsupported, so automatic lessons currently remain advisory and cannot acquire blocking authority. |
 | Lesson extraction/review | `agents/dreaming_agent.py`, `agents/lesson_reviewer.py` | promotion/overturn requires clean cost-aware outcomes matching every populated symbol/direction/scanner dimension; global history is context only |
 | Memo synthesis | `analytics/insight_synthesizer.py`, `memo_effectiveness.py` | memo reaches observer prompt, ranker score, and Operator prompt |
-| Factor feedback | `analytics/factor_feedback.py`, `learning/experiments.py` | exact clean history is diagnostic and proposes shadow treatments; ranker score/filter authority requires a prospective positive verdict and otherwise stays neutral |
+| Factor feedback | `analytics/factor_feedback.py`, `learning/experiments.py` | exact clean history is diagnostic. The `ranker_factor_filter` hook is measurement-unsupported, creates no formal exposure, and returns the static watch/neutral behavior. |
 | Reasoning feedback | `analytics/reasoning_feedback.py` | Operator prompt advice |
 | Confidence calibration | `analytics/confidence_calibration.py` | Operator prompt advice |
 | Last-decision reflection | `agent_shell/reflection.py` | Operator prompt advice; only exact proposal→position or opportunity→fixed-horizon/shadow outcomes are rendered |
-| Learned guards | `knowledge/guards.py`, `analytics/guard_promotion.py` | active paper-entry candidate blocks |
+| Operator Learning bundle | `learning/prompt_bundles.py`, `agent_shell/trading_decision.py` | one of two measurement-supported paths: exact single-carrier treatment/control exposure, Opportunity 4h outcome, verdict and shared paper lifecycle; authority remains default-off |
+| Learned guards | `knowledge/guards.py`, `analytics/guard_promotion.py` | seed/manual guards retain their static safety class. Learned guards remain observe-only because `ranker_learned_guard` is measurement-unsupported; retrospective matches alone cannot grant block/penalty authority. |
 | Trust guard chain | `trust/guard_chain.py` | pre-risk observability only; even a `block` verdict does not block execution |
-| Case/memo score | `agents/paper_trader_ranker.py`, `learning/experiments.py` | retrospective case/memo values only propose bounded score deltas; static zero is used until a prospective paper verdict is authorized, and each candidate carries the two separate exposure traces |
-| Advisory retrieval | `knowledge/router.py`, `knowledge/retrieval.py` | market-observer and decision context |
-| Persona learning | `trading/persona.py`, `persona_rollout.py`, `sizing_policy.py`, `trading/sizing.py` | clean realized history proposes a bounded notional; static, learned and actual values are recorded and actual stays static without prospective authority; risk caps remain downstream and unchanged |
+| Case/memo score | `agents/paper_trader_ranker.py`, `learning/experiments.py` | retrospective case/memo values are diagnostics only. Both ranker paths are measurement-unsupported, create no formal exposure, and return static zero deltas. |
+| Advisory retrieval | `knowledge/router.py`, `knowledge/retrieval.py` | ordinary advisory context remains available; the separate `observer_advisory_bundle` treatment hook is measurement-unsupported and injects no experimental bundle |
+| Persona learning | `trading/persona.py`, `persona_rollout.py`, `sizing_policy.py`, `trading/sizing.py` | clean realized history can calculate a bounded proposal, but `persona_sizing` is measurement-unsupported and actual notional remains the static baseline; downstream Risk caps remain unchanged |
 | Exit diagnostics | `analytics/exit_policy_advisor.py` | read-only advice only; no automatic mutation |
 | Filter diagnostics | `analytics/filter_registry.py`, `filter_replay.py`, `filter_controller.py`, `filter_shadow_experiments.py` | shadow recommendations/observe-only experiments; no production mutation |
-| Contribution/health | measured Learning ledger/evaluator plus alpha, memo, guard impact/effectiveness, learning-funnel analytics, doctor and scheduler | A1 contribution facts exist internally; current public Learning surfaces remain activity/diagnostic reports, and the `lco-v1` owner projection is missing |
+| Contribution/health | measured Learning ledger/evaluator plus `lco-v1`, alpha, memo, guard impact/effectiveness, learning-funnel analytics, doctor and scheduler | bounded `lco-v1` summary and the default measured-contribution tab are shipped; multi-path selection, detail/pagination, cache/performance evidence and complete accessibility remain unimplemented |
 | Supporting audits | trade insights/stats, family scorecard, opportunity flow, debate impact, thesis lineage, go-live scorecard | read models/gates; some are outcome sources or concurrent controls, not Learning treatments |
 | Operator control loop | `agent_shell/operator_loop.py` | may tighten confidence, size/risk cap, stop or scanner settings under its own safety contract; loosening requires higher authority |
 
-### 1.2 Current-path caveats
+### 1.2 Measured-path maturity
+
+`consumer_wired` means a call site exists. It does not mean the path creates an exposure, has an
+outcome adapter, can be measured, or can receive authority. Current measured maturity is:
+
+| Path/capability | Consumer | Exposure + outcome | Measurement/authority | Current conclusion |
+| --- | --- | --- | --- | --- |
+| `universe_family_calibration` | wired | full-arm canonical outcomes plus mirror/fallback | supported; owner-gated paper lifecycle | code-level causal loop complete; production contribution is collecting, not proven |
+| `operator_learning_bundle` | wired | exact single-Opportunity 4h outcome | supported; owner-gated paper lifecycle | code-level measured loop exists; UI and production maturity are behind Universe calibration |
+| `observer_advisory_bundle` | wired | unsupported | unsupported | static observer context; no experimental bundle or exposure |
+| `ranker_case_score`, `ranker_memo_score`, `ranker_factor_filter` | wired | unsupported | unsupported | static score/filter baseline |
+| `ranker_learned_guard` | wired | unsupported | unsupported | learned guards observe only; seed/manual guards are a separate static safety class |
+| `risk_lesson_constraint` | wired | unsupported | unsupported | automatic lessons advisory-only; manual/owner lessons are non-experimental static constraints |
+| `persona_sizing` | wired | unsupported | unsupported | learned proposal may be displayed; applied notional remains static |
+| Lesson → policy → draft skill | wired artifact loop | reviewed realized evidence, not measured-ledger exposure | artifact lifecycle only | implemented; draft skills have no automatic activation or authority |
+| `advisory_skill` | unwired | unsupported | unsupported | declared placeholder with no production consumer |
+| `filter_parameter_tune` | unwired skeleton | unsupported | unsupported | deferred design; no override table, producer or authority |
+| `lco-v1` owner projection | read-only consumer | reads existing ledger | no mutation authority | summary/default tab implemented; drill-down, multi-path UI and performance contract incomplete |
+
+Only `universe_family_calibration` and `operator_learning_bundle` are currently
+`measurement_supported`. Adding another path requires its own causal unit, outcome adapter,
+behavior contract, failure semantics, focused tests and a new from-zero observation window; changing
+only a registry flag is forbidden.
+
+### 1.3 Current-path caveats
 
 Existing tests prove individual behaviors and safety tripwires; they do not prove that the full
 loop contributes positively. Current behavior has these contract-relevant limitations:
 
-- factor and universe authority are now refrozen on existing retrospective data; they will remain
-  behaviorally neutral until sufficient prospective treatment/control outcomes exist;
-- factor identity is standardized as `factor_key` through producer, ranker, Operator context and
-  prompt rendering, with immutable before/after exposure records;
-- the only scheduled contribution evaluator measures prospective
-  `universe_family_calibration` exposures through bounded exact-key reads. It uses
+- factor, ranker, learned-guard, automatic Risk-lesson, Observer-bundle and persona hooks remain
+  behaviorally static because they are measurement-unsupported; they create no formal exposure;
+- factor identity is standardized as `factor_key` through producer, ranker and Operator context,
+  but its unsupported experiment hook emits no before/after exposure;
+- the only scheduled contribution evaluator measures the two supported paths through their
+  path-specific cohort adapters. The Universe adapter uses
   `filter_candidate_outcomes` as the canonical full-arm source and
   `universe_forward_outcomes` only as a selected-member legacy mirror/fallback; conflicting
   economic copies invalidate the observation instead of choosing one;
@@ -118,28 +143,28 @@ loop contributes positively. Current behavior has these contract-relevant limita
 - experiment registration is not an observation start. The first durable exposure atomically and
   idempotently changes an open experiment from `registered` to `active`, and `started_at` is always
   repaired to the earliest durable exposure;
-- the evaluator persists positive/neutral/negative/insufficient/invalid measurement verdicts but
-  does not emit the authority adapter's `promote`/`refreeze` values, so the multiplier remains
-  refrozen at its static baseline;
+- the evaluator persists positive/neutral/negative/insufficient/invalid measurement verdicts and
+  never mutates authority itself. A protected owner admission plus the separate lifecycle/authority
+  gates are required before a paper treatment can apply;
 - automatic lesson `block_*` suggestions are rewritten as non-blocking `shadow-only` guard
   candidates, never coerced into Risk Engine category `risk`, and excluded from historical
   auto-promotion until prospective evaluation or explicit owner action;
-- memo guidance reaches three stages; observer and Operator persist separate bundle manifests,
-  while the ranker now uses its own `ranker_memo_score` treatment/exposure instead of inheriting
-  observer credit;
+- memo guidance reaches ordinary advisory consumers. Only the Operator bundle currently creates a
+  measured exposure; Observer and ranker treatment hooks remain measurement-unsupported;
 - reflection now fails closed when proposal/opportunity causal ids or eligible outcomes are absent;
 - narrative review, memo, reasoning, calibration, lesson, and guard artifacts use different evidence
   units and confidence conventions;
 - position-only historical guard replays cannot see successful blocks; Phase 0 now augments guard
   effectiveness with cost-aware `filter_candidate_outcomes` for actually blocked candidates;
 - applied artifact counts and retrieval visibility show activity/influence, not contribution;
-- overlapping Operator prompt channels now persist one bundle manifest; observer memory is a
-  separate manifest on the causal Opportunity, so the two stages cannot masquerade as one exposure.
+- overlapping Operator prompt channels now persist one bundle manifest; ordinary observer memory is
+  a separate upstream manifest, not a measured exposure, so the two stages cannot masquerade as one
+  influence unit.
 - learned trading guards and the advisory trust guard chain have different authority and must not
   be merged or reported as the same mechanism.
 - operator-loop safety/config changes can alter the same candidates/outcomes during a Learning
-  evaluation; factor, universe, ranker, sizing, Observer bundle, Operator bundle and automatic
-  Risk-lesson exposures all rotate durable policy epochs. These B-class behavior changes require a
+  evaluation; current Universe and Operator-bundle exposures rotate durable policy epochs. Any
+  future measured path must do the same. These B-class behavior changes require a
   new policy epoch and a from-zero observation window before owner enablement; old-window evidence
   cannot authorize the new behavior. Safety tightening must never be withheld merely to make a
   cleaner experiment.
@@ -148,6 +173,8 @@ loop contributes positively. Current behavior has these contract-relevant limita
   metric/statistical-unit version. A behavior version change starts a new from-zero cohort even on
   the same commit; an unrelated commit does not. Historical rows without a behavior hash remain
   auditable but cannot pool with or authorize a current cohort.
+- historical experiments/exposures created before measurement-support enforcement remain immutable
+  and visible for audit, but cannot produce a current verdict or authority.
 - the Phase 3 harm contract is behavior version v2 for both measurement-supported paths. Its metric
   and path-version change rotates the policy epoch and starts a fresh from-zero window.
 - canonical/mirror disagreement remains whole-cohort `invalid`; no conflicting sample is silently
@@ -177,14 +204,12 @@ loop contributes positively. Current behavior has these contract-relevant limita
   artifact/funnel counts remain activity-oriented and cannot establish
   contribution.
 
-The broader lifecycle, prospective experiments, overlap handling, and automatic
-fallback are proposed in
-[`learning_evolution.md`](../proposals/learning_evolution.md). They are not
-normative current behavior. The current Phase 0 measurement facts are recorded
-below; behavior-changing paths remain unavailable unless promoted into this
-Contract and Product Truth.
+The shared measured lifecycle and static fallback are current for the two measurement-supported
+paths. Broader path expansion, overlap arbitration, artifact demotion and skill/filter evolution
+remain proposed in [`learning_evolution.md`](../proposals/learning_evolution.md); they are not
+normative current behavior.
 
-### 1.3 Phase 0 measurement-integrity baseline
+### 1.4 Phase 0 measurement-integrity baseline
 
 The first target slice is implemented without changing trading behavior:
 
@@ -201,14 +226,14 @@ The first target slice is implemented without changing trading behavior:
 - Learning alpha reports raw artifact events separately from unique cohorts/outcomes, so duplicate
   lessons no longer manufacture sample confidence;
 - guard effectiveness includes successfully blocked candidates from fixed-horizon net outcomes;
-- `learning/policy_epochs.py` defines deterministic, secret-free concurrent-policy semantics;
-  persistence and operator/consumer integration remain future work;
+- `learning/policy_epochs.py` defines and persists deterministic, secret-free concurrent-policy
+  windows for the current measured paths;
 - alpha read models distinguish directional evidence from measured prospective contribution.
 
-This historical Phase 0 slice improved measurement honesty only. Later implemented slices now
-create refrozen paper exposures for ranker, sizing and prompt proposals. Automatic Risk lessons may
-become blocking only through their separate prospective `risk_lesson_constraint` treatment; the
-default/control/error path is advisory. No Learning path grants Execution, exchange or live authority.
+This historical Phase 0 slice improved measurement honesty only. Later slices completed measured
+Universe and Operator-bundle exposures. Ranker, sizing, Observer-bundle, learned-guard and automatic
+Risk-lesson experiment hooks still return their static fallback because they are not measurement
+supported. No Learning path grants Execution, exchange or live authority.
 
 ---
 

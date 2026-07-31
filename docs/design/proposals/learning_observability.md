@@ -20,7 +20,7 @@ supersedes: []
 > Historical sequencing alias: "Learning A2 Observability". Current normative
 > documents must use the canonical name above because `A2` has unrelated meanings
 > elsewhere in the repository.
-> Last aligned with code: 2026-07-19, after Learning A1 integrity PR #135.
+> Last aligned with code: 2026-07-31, after the measured-path and owner-surface reconciliation.
 
 This proposal defines the intended owner-facing, read-only projection of the measured
 Learning loop. Current behavior remains defined by
@@ -80,9 +80,9 @@ surface look shipped.
 | Cohort inspection | Internal aggregate inspection exists | Bounded aggregate plus selected cluster detail |
 | Lifecycle inspection | Internal read function returns progress, recommendation and job health | Public sanitized projection |
 | Job health | Current and durable last-failure fields exist | Current, recovery and catch-up states remain separate |
-| Public Learning API | Activity-only `/analytics/learning-funnel` | New contribution/experiment/health GET endpoints |
-| Learning UI | Dreaming, Knowledge Base and activity-oriented Reports | Contribution, Experiments and Operations surfaces |
-| Trial admission | `admit_shadow_trial()` fails closed as unavailable | Recommendation only; `mutation_available=false` |
+| Public Learning API | Bounded additive `lco-v1` summary at `/analytics/learning-contribution`; no detail/list family | Contribution summary implemented; experiment/health/detail GET endpoints remain targets |
+| Learning UI | Contribution is the default tab and preserves honest verdict/query states; legacy Dreaming, Knowledge Base and Reports remain | Experiments and Operations surfaces, multi-path selection, detail and complete accessibility remain targets |
+| Trial admission | Separate Settings POST exists, remains default-closed and is tunnel-token protected | Observability remains recommendation-only; no mutation action is rendered here. The separate legacy `/settings/autonomous-learning` master toggle has the open token defect #488. |
 
 `/analytics/learning-funnel` remains an artifact/activity report. It must not be
 renamed, reused, or presented as the contribution projection.
@@ -258,30 +258,28 @@ Current minimal slice:
   capabilities, current identity, the latest historical verdict, cohort
   integrity, evaluator health and recommendation-only lifecycle state;
   open experiments whose `h.path_id` appears in
-  `cfg.learning.paper_influence_paths` are ranked first (priority 0) before
-  the global newest-first order so a protected path is never displaced by an
-  unrelated experiment; an empty allowlist preserves the existing newest-first
-  behavior;
+  `cfg.learning.paper_influence_paths` are ranked first (priority 0), followed by
+  every registry-declared measurement-supported path (priority 1), then
+  unsupported paths (priority 2); rows are newest-first inside each tier, so an
+  empty allowlist still keeps measurable experiments ahead of unsupported ones;
 - performs no evaluation, lifecycle transition, admission or config mutation;
 - resolves only an already-open matching policy epoch on GET; epoch creation or
   rotation remains confined to behavior-producing and owner-mutation paths;
 - returns an honest `availability=unavailable` envelope when the new projection
   fails rather than converting failure into an empty/zero contribution;
-- keeps `mutation_available=false`; there is no owner mutation route or action
-  in this slice.
+- renders no mutation action. `mutation_available` is readiness information for
+  the separately scoped Settings route and does not make the observability
+  surface mutable or prove that route's owner-authentication boundary.
 
 The optional `path_id`, `status`, `limit` and `offset` query contract, TTL cache
-and `Server-Timing` proof remain target work under `LCO-S01`, `LCO-C03` and
-`LCO-C06`. The current server-side bound is fixed and cannot be enlarged by a
-client.
+and `Server-Timing` proof remain target work under `LCO-C03` and `LCO-C06`. The
+current server-side bound is fixed and cannot be enlarged by a client.
 
 Each item contains:
 
 ```json
 {
   "path_id": "universe_family_calibration",
-  "measurement_supported": true,
-  "consumer_wired": true,
   "hypothesis_id": "...",
   "experiment_id": "...",
   "stage": "shadow",
@@ -344,8 +342,9 @@ never be displayed as treatment/control sample size.
 `mutation_available=true` is readiness information only. It requires a current
 identity-matched `admit_trial` recommendation plus all default-closed paper
 gates. This observability surface remains GET-only and renders no mutation
-button; the separately scoped protected Settings route owns the explicit owner
-action.
+button; the separately scoped, tunnel-token-protected trial-admission Settings
+route owns the explicit owner action. The legacy master Learning toggle is a
+different endpoint and retains the open token defect #488.
 
 `matching_mirror_rows` is the persisted count of Universe rows that matched a
 canonical outcome identity. It does not claim every row reached a settled
@@ -483,6 +482,11 @@ and causal ids. Arbitrary stored manifests are sanitized before response.
 
 ## 7. Query, Cache And Performance Contract
 
+Sections 7.1 and 7.2 are partially implemented by the fixed 20-experiment bound,
+read-only projection, synchronous FastAPI route and mutation regression tests.
+Parameterized caps, detail queries, cache and direct latency diagnostics remain
+targets; therefore `LCO-C03` and `LCO-C06` remain non-conforming.
+
 ### 7.1 Bounded reads
 
 - Summary/list endpoints use indexed ledger reads and persisted verdict/harm facts.
@@ -528,6 +532,12 @@ directly on backend `:8788`:
   tab is visible.
 
 ## 8. Learning Workbench Information Architecture
+
+The current minimal UI ships the default Contribution tab and executable helper
+tests for backend-verdict honesty plus loading/unavailable/empty/stale/partial
+separation. The complete five-tab workbench, multi-path selection, history,
+drawers, Operations surface and the responsive/accessibility contract remain
+targets.
 
 ### 8.1 Page structure
 
@@ -647,23 +657,22 @@ is visible on Contribution and Operations.
 | Evaluator recovered after failure | current healthy plus durable prior failure |
 | Catch-up watermark missing/old | `catchup_due` or `unavailable`, never healthy by inference |
 | Scheduler job absent | `registered=false`; durable old health does not override |
-| `admit_trial` recommended | recommendation visible; `mutation_available=false` |
+| `admit_trial` recommended | recommendation visible; no mutation control; readiness remains distinct from owner authentication |
 | Path consumer wired but evaluator unsupported | both booleans shown separately |
 | API response cached | generation/source freshness visible |
 
 ## 10. Implementation Slices And File Boundary
 
-The future implementation is split so a review can prove one boundary at a time.
+Implemented and remaining slices are split so a review can prove one boundary at a time.
 
-### Slice LCO-BE1 - summary, paths and health
+### Slice LCO-BE1 - summary, paths and health (partially implemented)
 
 Expected files:
 
-- new `aletheia/learning/read_models.py`;
-- new `aletheia/server/routes/learning.py`;
-- route mount in `aletheia/server/app.py`;
-- thin summary route in `aletheia/server/routes/analytics.py`;
-- focused route/read-model tests.
+- `aletheia/learning/read_models.py` and the thin summary route in
+  `aletheia/server/routes/analytics.py` are implemented with focused tests;
+- separate paths, experiment and health routes plus their route mount remain
+  target work.
 
 No scheduler behavior or schema change. If per-job registration is needed, add a
 sanitized read-only scheduler snapshot helper only.
@@ -675,11 +684,13 @@ manifest projection and cache diagnostics. Do not add an index in this slice
 unless direct `:8788` measurements prove the need; any new index is an additive
 data-model batch with its own spec/document update.
 
-### Slice LCO-FE1 - Contribution and Operations
+### Slice LCO-FE1 - Contribution and Operations (partially implemented)
 
-Add typed client models, honest query states, status strip, Contribution table,
-cohort/recommendation panels, history and responsive detail drawer. Preserve
-Dreaming/Knowledge taxonomies and keep their mutations outside LCO panels.
+Typed client models, honest query states and a minimal default Contribution
+surface are implemented. Status strip, multi-path table,
+cohort/recommendation panels, history, Operations and responsive detail drawer
+remain. Preserve Dreaming/Knowledge taxonomies and keep their mutations outside
+LCO panels.
 
 ### Slice LCO-FE2 - Experiments and artifact honesty cleanup
 
@@ -700,17 +711,17 @@ states. This is adjacent UI honesty work, not contribution authority.
 
 | Claim | Level | Requirement | Current status |
 | --- | --- | --- | --- |
-| LCO-S01 | L2a | Typed GET-only `lco-v1` routes are indexed; no LCO mutation exists | missing |
+| LCO-S01 | L2a | The typed GET-only `lco-v1` summary route is indexed; no LCO mutation exists | implemented |
 | LCO-B01 | L2b | Cohorts expose raw exposures, complete treatment/control assignment units, member/selected counts and stable exclusion/invalid reasons | implemented |
 | LCO-B02 | L2b | Canonical, fallback, matching mirror, allocation inference and proven disagreement are distinct; conflicts never become evidence | implemented |
 | LCO-B03 | L2b | Current metric/cohort identity is separate from append-only historical verdict versions | implemented |
 | LCO-B04 | L2b | Current job status, last success, next due, sanitized durable last failure, watermark and catch-up due state remain distinct; raw stored errors never leave the backend | implemented |
-| LCO-C01 | L2c | Observability remains read-only; protected owner admission readiness requires every paper gate | implemented |
-| LCO-C02 | L2c | UI contribution state comes only from backend measurement facts; counts and PnL cannot imply effectiveness | missing |
+| LCO-C01 | L2c | Observability remains read-only; admission readiness is separate from owner-route authentication and every paper gate | implemented |
+| LCO-C02 | L2c | UI contribution state comes only from backend measurement facts; counts and PnL cannot imply effectiveness | partial — helper and Vitest proof exist; complete workbench does not |
 | LCO-C03 | L2c | Reads perform no writes/evaluation/lifecycle/authority action and blocking work stays off the event loop | missing |
 | LCO-S02 | L2a | LCO projection/routes have no Risk, Execution, exchange, secrets, permission or live imports | implemented |
 | LCO-B05 | L2b | consumer-wired, Settings-supported and measurement-supported remain separate path capabilities | implemented |
-| LCO-C04 | L2c | loading, genuine empty, unavailable, stale and partial states remain distinct; fetch failure never becomes zero/empty | missing |
+| LCO-C04 | L2c | loading, genuine empty, unavailable, stale and partial states remain distinct; fetch failure never becomes zero/empty | partial — helper and Vitest proof exist for the current summary query only |
 | LCO-C05 | L2c | desktop/mobile layouts and keyboard/ARIA behavior preserve access to tables, tabs and drawers | missing |
 | LCO-C06 | L2c | server caps, monotonic TTL, `Server-Timing` and direct cold/warm latency evidence enforce the performance contract | missing |
 
@@ -731,7 +742,7 @@ alone cannot make a behavioral claim GREEN.
 | Metric history | Old metric/build/epoch verdict remains history, never current |
 | Scheduler recovery | Healthy current state can coexist with a visible durable last failure |
 | Catch-up | Current window, watermark and due state are independently asserted |
-| Recommendation | `admit_trial` renders without a button or mutation route |
+| Recommendation | `admit_trial` renders without a button or mutation invocation from the observability surface |
 | Path capability | Consumer/settings/measurement support booleans cannot collapse |
 | Empty/error honesty | Request failure is unavailable, not an empty cohort or zero count |
 | Performance | Limits enforced; cold/warm `:8788` measurements and `Server-Timing` recorded |

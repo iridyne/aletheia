@@ -6,7 +6,7 @@
 
 > **用途**：以**功能域**为切口索引全部文档——与 [README](../README.md)（按契约对象）、[SYSTEM_MAP](../architecture/SYSTEM_MAP.md)（按模块/管道）、[DOC_SYSTEM_PLAN](../../product/documentation/DOC_SYSTEM_PLAN.md)（按金字塔层 L0–L4）互补，是第四种导航视角。
 > **状态标记**：✅金标准 / 🟡契约(部分实现) / 🔄in-flight / ⏳planned / ⛔open-gap / 📦process-artifact。历史状态对账见归档的 [REMAINING_WORK_2026-06-30](../../archive/legacy/status/snapshots/REMAINING_WORK_2026-06-30.md)。
-> Last synced for D2/D6/D10/D12: 2026-07-19. Other domain status remains point-in-time and must be verified against its contract and `aletheia doctor`.
+> Last synced for D2/D6/D10/D12: 2026-07-31. Other domain status remains point-in-time and must be verified against its contract and `aletheia doctor`.
 
 ---
 
@@ -19,7 +19,7 @@
 | D3 | 平仓与持仓管理 | stop/TP/trailing/max-hold/退出 | ✅ 齐全(本会话补 §10) |
 | D4 | 风控与执行（信任边界） | 20 关风控 + Gateway 唯一通路 + 审计链 | ✅✅ 最强 |
 | D5 | 策略生命周期 | 策略池 → 晋级门 → 退役 | 🟡 有契约，**核心执行缺口(2A)** |
-| D6 | 知识·学习·自进化 | outcome → hypothesis/exposure/verdict + lesson/guard/memo → 反哺决策 | 🟡 A1 测量事实已落地，owner observability 待实现 |
+| D6 | 知识·学习·自进化 | outcome → hypothesis/exposure/verdict + lesson/guard/memo → 反哺决策 | 🟡 两条 measured path + 基础 owner summary/tab 已实现；扩展路径和完整 observability 待实现 |
 | D7 | 系统监管 / Operator | MAPE-K 控制面 + 命令注册表 | 🟡 概念契约，TS 实现领先文档 |
 | D8 | 持久化·同步·恢复 | 重启不丢单/仓/经验 | 🟡 有 L2 契约，恢复 FSM 尚未接 runtime |
 | D9 | 运行时与稳定性 | 调度/自愈/连通性/Provider | ✅ scheduler 契约，余为 ops/plan |
@@ -88,7 +88,7 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
   artifact taxonomy/FTS/two-store paths.
 - **Spec**：`spec_learning_{registry,attribution,ledger,contribution,authority,lifecycle,continuity,verdict_runtime,final_consumers}`
   + `spec_learning_pipeline` + adjacent lesson/guard/factor/outcome specs. Owner projection is
-  `spec_learning_observability` (`LCO-*`, strict xfail/missing). The direct conformance matrix must
+  `spec_learning_observability` (`LCO-*`, implemented and remaining strict xfail/missing claims). The direct conformance matrix must
   import this complete family; do not rely on incidental collection order.
 - **历史实施证据**：归档的
   [`learning_positive_contribution_implementation_plan_2026-07-12`](../../archive/legacy/plans/learning/learning_positive_contribution_implementation_plan_2026-07-12.md)
@@ -96,14 +96,18 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
   [`universe_family_calibration_execution_plan_2026-07-24`](../../archive/legacy/plans/learning/universe_family_calibration_execution_plan_2026-07-24.md)
   保存交付顺序和当时的运行 checkpoint；当前语义只由上述 contracts/proposals
   决定。`self_evolution_plan` 和更早修复计划同样只是历史证据。
-- **Issue**：`LCO-BE-01` / `LCO-FE-01` are the current owner-projection gaps; older
-  `LEARNING_LOOP_AUDIT` remains historical evidence.
+- **Issue**：剩余 owner projection 由 `LCO-*` claims 与 GitHub issue #489 跟踪；legacy
+  `/settings/autonomous-learning` 主开关的 tunnel-token 缺口见 #488，scheduler partial-health
+  见 #490，JSONL audit 可观测性见 #491；旧
+  `LEARNING_LOOP_AUDIT` 仅是历史证据。
 - **Current state**：A1 has permanent ledger, full-arm exact-key complete-cluster measurement,
-  append-only metric history, lifecycle recommendation, one evaluator + catch-up and durable
-  failure identity. Public UI/API still shows artifacts/activity rather than those measured facts.
-  `paper_influence_enabled` and lifecycle automation remain default-off. A POST admission route
-  exists in code, but it is not yet aligned with the authenticated-owner contract/spec boundary;
-  it remains unavailable for an authorized experiment until that drift is repaired and proven.
+  append-only metric history, lifecycle recommendation, evaluator + catch-up and durable failure
+  identity. `universe_family_calibration` and `operator_learning_bundle` are the only
+  measurement-supported paths; other declared hooks return static fallback and write no exposure.
+  The bounded `lco-v1` API summary and default contribution tab expose measured facts, while
+  multi-path selection, detail/pagination, performance evidence and full accessibility remain open.
+  `paper_influence_enabled` and lifecycle automation remain default-off. The trial-admission POST
+  is tunnel-token protected; #488 applies only to the separate legacy master Learning toggle.
 
 ## D7 · 系统监管 / Operator
 
