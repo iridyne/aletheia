@@ -903,6 +903,25 @@ def _probe_market_data(report: Report) -> None:
         report.add("data.market", "ok", detail)
 
 
+def _probe_market_data_venue_health(report: Report) -> None:
+    """Report in-process venue cooldowns instead of hiding an active outage."""
+    from aletheia.data.venue_health import get_venue_health_snapshot
+
+    cooling = [item for item in get_venue_health_snapshot() if item["cooling_down"]]
+    if not cooling:
+        return
+    detail = ", ".join(
+        f"{item['venue']} ({item['cooldown_remaining_sec']:.0f}s remaining)"
+        for item in cooling
+    )
+    report.add(
+        "data.market_venue_health",
+        "warn",
+        f"market-data venue cooldown active: {detail}",
+        "wait for the cooldown or resolve the venue's rate-limit/IP-ban response",
+    )
+
+
 def _probe_collector_health(report: Report) -> None:
     """Surface whether scheduled domains ran, timed out, or lost the shared budget."""
     try:
@@ -3575,6 +3594,7 @@ def build_report(*, probe_llm: bool = False) -> Report:
         _probe_credentials,
         functools.partial(_probe_llm_inference, active_probe=probe_llm),
         _probe_market_data,
+        _probe_market_data_venue_health,
         _probe_collector_health,
         _probe_universe_market_coverage,
         _probe_orderbook,
