@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import ConnectionStatus, { ConnState } from '../components/ConnectionStatus'
+import { GuardAuthorityNotice } from '../components/GuardAuthorityNotice'
 import PageHeader from '../components/PageHeader'
 import {
   CollapsibleSection as Collapsible,
@@ -553,7 +554,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
   const evaluationInterval = Number(learningCfg.evaluation_interval_minutes ?? 60)
   const paperActiveAllocation = Number(learningCfg.paper_active_allocation_pct ?? 0.80)
   const guardCfg = (settings?.guard ?? {}) as any
-  const guardAutoPromote = guardCfg.auto_promote_enabled !== false
+  const legacyGuardAutoPromote = !!guardCfg.auto_promote_enabled
 
   const guardMut = useMutation({
     mutationFn: (body: any) => api.updateGuardConfig(body),
@@ -670,15 +671,11 @@ function AgentModelsTab({ status, settings, qc }: any) {
             }} disabled={learningMut.isPending} className="w-24" />
           </Row>
         </Collapsible>
-        <Collapsible title="Guard Promotion">
-          <p className="hint mb-2">Post-trade lesson guards learned by the dreaming agent. Candidates that accumulate enough matching trades are promoted to active guards that block future trades.</p>
-          {/* #36 fix: previously only `auto_promote_enabled` was visible even though the
-              backend GuardConfig carries `enabled` / `enforce_in_paper_ranker` /
-              `min_matching_trades` / `max_score_penalty`. The API accepts all four,
-              so hiding them left the settings page mismatched with backend truth. */}
+        <Collapsible title="Trading Guards">
+          <GuardAuthorityNotice legacyAutoPromoteEnabled={legacyGuardAutoPromote} />
           <Row
             label="Guards enabled"
-            hint="Master switch. When OFF, guards do nothing — no scoring penalty, no auto-promotion, no candidate accumulation."
+            hint="Master evaluation switch. When OFF, guards do not block or subtract score in the paper ranker. Candidate creation and expiry maintenance are separate."
           >
             <Toggle
               checked={guardCfg.enabled !== false}
@@ -694,36 +691,6 @@ function AgentModelsTab({ status, settings, qc }: any) {
               checked={guardCfg.enforce_in_paper_ranker !== false}
               onChange={v => guardMut.mutate({ enforce_in_paper_ranker: v })}
               disabled={guardMut.isPending}
-            />
-          </Row>
-          <Row
-            label="Auto-promote guard candidates"
-            hint="When ON, the lesson_reviewer promotes guard_candidate entries to active trading guards automatically. When OFF, guards are promoted manually only."
-          >
-            <Toggle
-              checked={guardAutoPromote}
-              onChange={v => {
-                if (v && !confirm('Enable auto-promote for lesson guards? Candidates that accumulate enough matching trades will block future trades without human review.')) return
-                guardMut.mutate({ auto_promote_enabled: v })
-              }}
-              disabled={guardMut.isPending}
-            />
-          </Row>
-          <Row
-            label="Min matching trades before promotion"
-            hint="A candidate guard needs at least this many matching trades before auto-promotion considers it. Higher = more evidence required, slower promotions."
-          >
-            <input
-              type="number"
-              min={1}
-              max={20}
-              value={Number(guardCfg.min_matching_trades ?? 3)}
-              onChange={e => {
-                const n = Math.max(1, Math.min(20, Math.round(Number(e.target.value) || 0)))
-                guardMut.mutate({ min_matching_trades: n })
-              }}
-              disabled={guardMut.isPending}
-              style={{ width: 80 }}
             />
           </Row>
           <Row

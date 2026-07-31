@@ -1413,24 +1413,148 @@ def get_strategy_memory():
     return repo.list_knowledge_items(item_type="strategy_memory")
 
 
+def _guard_experiments_by_id() -> dict[str, dict]:
+    """Return the latest experiment metadata per learned Guard without mutating state."""
+    from aletheia.learning.registry import get_learning_path
+
+    if not get_learning_path("ranker_learned_guard").measurement_supported:
+        return {}
+    try:
+        rows = get_db().execute(
+            "SELECT e.experiment_id, e.stage, e.status, e.created_at, h.scope_json "
+            "FROM learning_experiments e JOIN learning_hypotheses h "
+            "ON h.hypothesis_id=e.hypothesis_id "
+            "WHERE h.path_id='ranker_learned_guard' AND e.ended_at IS NULL "
+            "ORDER BY datetime(e.created_at) DESC, e.experiment_id DESC"
+        ).fetchall()
+    except Exception:
+        logger.debug("Guard experiment metadata is unavailable", exc_info=True)
+        return {}
+
+    result: dict[str, dict] = {}
+    for raw in rows:
+        row = dict(raw)
+        try:
+            guard_id = str(json.loads(row.pop("scope_json") or "{}").get("guard_id") or "")
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if guard_id and guard_id not in result:
+            result[guard_id] = row
+    return result
+
+
+def _guard_response(
+    guard, experiment: dict | None = None, *, evaluation_enabled: bool = True,
+) -> dict:
+    """Project storage state separately from authority and effective baseline behavior."""
+    from aletheia.knowledge.guards import guard_origin
+    from aletheia.learning.registry import get_learning_path
+
+    row = guard.model_dump()
+    origin = guard_origin(guard)
+    learned_measurement_supported = get_learning_path(
+        "ranker_learned_guard"
+    ).measurement_supported
+    if origin == "learned" and not learned_measurement_supported:
+        experiment = None
+    proposed_block = guard.proposed_block_candidate
+    if proposed_block is None:
+        proposed_block = guard.pre_shadow_block_candidate
+    if proposed_block is None:
+        proposed_block = guard.block_candidate
+    proposed_penalty = guard.proposed_score_penalty
+    if proposed_penalty is None:
+        proposed_penalty = guard.pre_shadow_score_penalty
+    if proposed_penalty is None:
+        proposed_penalty = guard.score_penalty
+    proposed_penalty_value = float(proposed_penalty or 0.0)
+    if origin == "learned":
+        proposed_penalty_value = max(0.0, proposed_penalty_value)
+
+    active = guard.status == "active"
+    guard_authority = active and not guard.shadow_only and origin != "learned"
+    effect_enabled = guard_authority and evaluation_enabled
+    actual_effect = {
+        "block_candidate": bool(guard.block_candidate) if effect_enabled else False,
+        "score_penalty": float(guard.score_penalty or 0.0) if effect_enabled else 0.0,
+    }
+    if active:
+        lifecycle_status = (
+            "active_enforced"
+            if actual_effect["block_candidate"] or actual_effect["score_penalty"] != 0
+            else "active_observe"
+        )
+    else:
+        lifecycle_status = guard.status
+
+    activation_effect = {
+        "block_candidate": bool(proposed_block),
+        "score_penalty": proposed_penalty_value,
+    }
+    if guard.status == "candidate":
+        if origin == "learned" or guard.shadow_only:
+            activation_effect = {"block_candidate": False, "score_penalty": 0.0}
+        else:
+            # Manual promotion currently fills these exact defaults when omitted.
+            activation_effect = {
+                "block_candidate": True,
+                "score_penalty": float(guard.score_penalty or 0.0) or 10.0,
+            }
+    else:
+        activation_effect = actual_effect
+
+    row.update({
+        "lifecycle_status": lifecycle_status,
+        "origin": origin,
+        "proposed_effect": {
+            "block_candidate": bool(proposed_block),
+            "score_penalty": proposed_penalty_value,
+        },
+        "activation_effect": activation_effect,
+        "experiment_id": experiment.get("experiment_id") if experiment else None,
+        "experiment_stage": experiment.get("stage") if experiment else None,
+        "experiment_status": experiment.get("status") if experiment else None,
+        # Assignment is unavailable now; a future supported path would resolve it per candidate.
+        "assignment": None,
+        "authority_granted": guard_authority,
+        "authority_scope": (
+            "exact_candidate_treatment" if learned_measurement_supported else "unsupported"
+        ) if origin == "learned" else (
+            "guard" if guard_authority else "none"
+        ),
+        "evaluation_enabled": evaluation_enabled,
+        "actual_effect": actual_effect,
+    })
+    return row
+
+
 @router.get("/knowledge/guards")
 def get_guards():
-    """List all active trading guards."""
+    """List active guards with lifecycle and authority projected separately."""
     try:
         from aletheia.knowledge.guards import load_trading_guards
         guards = load_trading_guards(status="active")
-        return [g.model_dump() for g in guards]
+        experiments = _guard_experiments_by_id()
+        cfg = load_config(persist_migrations=False)
+        evaluation_enabled = bool(cfg.guard.enabled and cfg.guard.enforce_in_paper_ranker)
+        return [
+            _guard_response(
+                g, experiments.get(g.guard_id), evaluation_enabled=evaluation_enabled,
+            )
+            for g in guards
+        ]
     except Exception as e:
         return {"error": str(e), "guards": []}
 
 
 @router.get("/knowledge/guard-candidates")
 def get_guard_candidates():
-    """List guard candidates awaiting manual review."""
+    """List guard candidates with proposed effects and no implied authority."""
     try:
         from aletheia.knowledge.guards import load_trading_guards
         guards = load_trading_guards(status="candidate")
-        return [g.model_dump() for g in guards]
+        experiments = _guard_experiments_by_id()
+        return [_guard_response(g, experiments.get(g.guard_id), evaluation_enabled=False) for g in guards]
     except Exception as e:
         return {"error": str(e), "guards": []}
 
@@ -1454,7 +1578,13 @@ def promote_guard_candidate(guard_id: str):
     promoted = [g for g in load_trading_guards(status="active") if g.guard_id == guard_id]
     if not promoted:
         raise HTTPException(500, "Guard promotion did not create an active guard")
-    return promoted[0].model_dump()
+    experiments = _guard_experiments_by_id()
+    cfg = load_config(persist_migrations=False)
+    return _guard_response(
+        promoted[0],
+        experiments.get(guard_id),
+        evaluation_enabled=bool(cfg.guard.enabled and cfg.guard.enforce_in_paper_ranker),
+    )
 
 
 @router.get("/knowledge/guards/stats")

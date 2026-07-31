@@ -176,12 +176,13 @@ Guards 是 YAML frontmatter Markdown 文件，不是代码。文件目录：`dat
 
 Guard 的生产路径由 `trust_and_change_control.md §4.2` 定义：
 
-- **Tier 1（自动生成）**: Dreaming Agent 或 Self-evolution 机制写 `guard_candidate`（`medium_confidence`），不可检索，需人工确认才能晋升
+- **Tier 1（自动生成）**: Dreaming Agent 或 Self-evolution 机制写 `guard_candidate`（`medium_confidence`），不可检索，保持 `shadow_only`；人工晋升只会进入 active observation，不授予执行效果
 - **Tier 2/3（人工确认/seed）**: 通过 `create_trading_guard()` 写入 `trading_guard`（`high_confidence`），进入 FTS 索引，参与决策检索
 
-从 `guard_candidate` 到 `trading_guard` 的晋升路径有两类：
-- 人工确认：Dashboard/API 调用 `POST /knowledge/guard-candidates/{guard_id}/promote`。
-- 配置开启后的自动晋升：`guard_promotion` 定时任务在 `guard.auto_promote_enabled=True` 且证据达标时晋升。
+从 `guard_candidate` 到 `trading_guard` 的当前有效晋升路径是人工确认：Dashboard/API
+调用 `POST /knowledge/guard-candidates/{guard_id}/promote`。自动生成候选在晋升后仍为
+`shadow_only`，API/UI 将其命名为 `active_observe`。`guard.auto_promote_enabled` 是 legacy
+配置；定时任务不得晋升或 unshadow 普通 learned candidate，历史证据阈值也不构成 authority。
 
 无论哪条路径，都必须保留原候选记录并写审计事件。
 
@@ -261,11 +262,10 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 ### B2. guard_candidate → trading_guard 晋升
 
-`guard_candidate` 可以通过两条路径晋升为 `trading_guard`：
-
-1. 人工路径：`POST /knowledge/guard-candidates/{guard_id}/promote`。
-2. 自动路径：`guard_promotion` 定时任务，受 `config.guard.auto_promote_enabled`
-   控制，并要求满足历史交易证据阈值。
+`guard_candidate` 当前通过人工路径
+`POST /knowledge/guard-candidates/{guard_id}/promote` 转为 active storage。Learned candidate
+保留 `shadow_only`，因此该动作只启用观察，不授予 block/penalty。Legacy
+`config.guard.auto_promote_enabled` 不得让历史交易证据自动产生 authority。
 
 晋升时必须保留审计链：创建 active `trading_guard`，把原候选标为 `deprecated`，
 并写入 `TRADING_GUARD_PROMOTED` 事件。硬删除候选记录是违规行为。

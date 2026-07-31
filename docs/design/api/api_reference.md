@@ -262,9 +262,9 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | GET | `/knowledge/research-notes` | Research notes only |
 | GET | `/knowledge/dreaming-logs` | Dreaming agent summaries |
 | GET | `/knowledge/strategy-memory` | Strategy-specific memory |
-| GET | `/knowledge/guards` | Guard rules (learned constraints) |
-| GET | `/knowledge/guard-candidates` | Guard candidates awaiting review |
-| POST | `/knowledge/guard-candidates/{guard_id}/promote` | Manually promote a guard candidate to active guard |
+| GET | `/knowledge/guards` | Active Guard storage rows plus separate lifecycle, origin, proposed effect, experiment, assignment, guard-level authority, and actual baseline-effect fields; current measurement-unsupported learned guards report no experiment or assignment |
+| GET | `/knowledge/guard-candidates` | Guard candidates with the same authority projection; candidate status never implies enforcement |
+| POST | `/knowledge/guard-candidates/{guard_id}/promote` | Manually move a candidate to active storage; a shadow learned Guard becomes `active_observe` and gains no enforcement authority |
 | GET | `/knowledge/guards/stats` | Guard activation statistics |
 | GET | `/knowledge/case-studies` | Case study analyses |
 | GET | `/knowledge/{item_id}/content` | Full content of knowledge item |

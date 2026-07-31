@@ -1,4 +1,5 @@
 import type { InfraEvent, SystemStatus, ThesisLineageRecord } from '../types'
+import type { GuardRow } from '../lib/guards'
 
 const BASE = '/api'
 
@@ -449,31 +450,9 @@ export const api = {
   rejectLesson: (lessonId: string) => post<any>(`/persistence/lessons/${lessonId}/reject`),
   archiveLesson: (lessonId: string) => post<any>(`/persistence/lessons/${lessonId}/archive`),
 
-  // Trading guards: accepted lessons promoted to active blocking/advisory constraints.
-  getGuards: () => fetchJson<Array<{
-    guard_id: string
-    title: string
-    description?: string
-    status?: string
-    scope?: string
-    enforcement?: string
-    severity?: string
-    score_penalty?: number
-    block_candidate?: boolean
-    tags?: string[]
-  }>>('/knowledge/guards'),
-  getGuardCandidates: () => fetchJson<Array<{
-    guard_id: string
-    title: string
-    description?: string
-    status?: string
-    scope?: string
-    enforcement?: string
-    severity?: string
-    score_penalty?: number
-    block_candidate?: boolean
-    tags?: string[]
-  }>>('/knowledge/guard-candidates'),
+  // Guard rows include storage lifecycle and effective authority as separate fields.
+  getGuards: () => fetchJson<GuardRow[]>('/knowledge/guards'),
+  getGuardCandidates: () => fetchJson<GuardRow[]>('/knowledge/guard-candidates'),
   promoteGuardCandidate: (guardId: string) => post<any>(`/knowledge/guard-candidates/${guardId}/promote`),
   getGuardStats: () => fetchJson<Array<{
     guard_id: string
