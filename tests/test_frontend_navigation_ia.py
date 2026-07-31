@@ -19,11 +19,14 @@ def test_sidebar_uses_trading_desk_ia_with_global_entries():
     assert "group: 'Evolve'" not in nav_text
     assert "group: 'Operate'" not in nav_text
 
-    top = re.search(r"items: \[\s*\{ to: '/', label: 'Overview' \},\s*\{ to: '/command-center', label: 'Command Center' \},\s*\]", nav_text, re.S)
+    # Each item pattern below allows arbitrary extra keys after `label:`
+    # (e.g. `icon: LayoutDashboard`) — this test guards IA (which items go
+    # where), not the exact literal shape of a NavItem.
+    top = re.search(r"items: \[\s*\{ to: '/', label: 'Overview'[^}]*\},\s*\{ to: '/command-center', label: 'Command Center'[^}]*\},\s*\]", nav_text, re.S)
     research = re.search(r"group: 'Research'.*?group: 'Decision'", nav_text, re.S)
     decision = re.search(r"group: 'Decision'.*?group: 'Portfolio'", nav_text, re.S)
-    portfolio = re.search(r"group: 'Portfolio'.*?\{ to: '/learning', label: 'Learning' \}", nav_text, re.S)
-    bottom = re.search(r"items: \[\s*\{ to: '/learning', label: 'Learning' \},\s*\{ to: '/settings', label: 'Settings' \},\s*\]", nav_text, re.S)
+    portfolio = re.search(r"group: 'Portfolio'.*?\{ to: '/learning', label: 'Learning'[^}]*\}", nav_text, re.S)
+    bottom = re.search(r"items: \[\s*\{ to: '/learning', label: 'Learning'[^}]*\},\s*\{ to: '/settings', label: 'Settings'[^}]*\},\s*\]", nav_text, re.S)
 
     assert top, "Overview and Command Center must be top-level global entries"
     assert research, "Research nav group is missing"
@@ -31,17 +34,20 @@ def test_sidebar_uses_trading_desk_ia_with_global_entries():
     assert portfolio, "Portfolio nav group is missing"
     assert bottom, "Learning and Settings must be top-level global entries"
 
-    assert "{ to: '/universe', label: 'Universe Board' }" in research.group(0)
-    assert "{ to: '/serenity-lens', label: 'Serenity Lens' }" in research.group(0)
-    assert "{ to: '/news', label: 'News Intel' }" in research.group(0)
+    def _has_item(scope: str, to: str, label: str) -> bool:
+        return bool(re.search(rf"\{{ to: '{re.escape(to)}', label: '{re.escape(label)}'[^}}]*\}}", scope))
+
+    assert _has_item(research.group(0), "/universe", "Universe Board")
+    assert _has_item(research.group(0), "/serenity-lens", "Serenity Lens")
+    assert _has_item(research.group(0), "/news", "News Intel")
     # 2026-07-18 Blotter migration: the Decide row now points at /blotter.
     # The old '/proposals → Approval Desk' entry has been retired and its
     # route rewired to `<Navigate to="/blotter" replace />` for legacy
     # bookmarks (verified by test_proposals_route_redirects_to_blotter below).
-    assert "{ to: '/blotter', label: 'Blotter' }" in decision.group(0)
+    assert _has_item(decision.group(0), "/blotter", "Blotter")
     assert "Approval Desk" not in decision.group(0)
-    assert "{ to: '/trades', label: 'Trades & Positions' }" in portfolio.group(0)
-    assert "{ to: '/risk', label: 'Risk & Controls' }" in portfolio.group(0)
+    assert _has_item(portfolio.group(0), "/trades", "Trades & Positions")
+    assert _has_item(portfolio.group(0), "/risk", "Risk & Controls")
     assert "group: 'Learning'" not in nav_text
     assert "group: 'Settings'" not in nav_text
     assert "Strategy Lifecycle" not in nav_text

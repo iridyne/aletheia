@@ -1,6 +1,26 @@
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  Activity,
+  ChartCandlestick,
+  ClipboardList,
+  Command as CommandIcon,
+  Diamond,
+  Globe,
+  GraduationCap,
+  LayoutDashboard,
+  Menu,
+  Newspaper,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Settings as SettingsIcon,
+  ShieldAlert,
+  Telescope,
+  TrendingUp,
+  Wallet,
+  type LucideIcon,
+} from 'lucide-react'
 import { api } from './api/client'
 import Overview from './pages/Overview'
 import AgentActivity from './pages/AgentActivity'
@@ -15,12 +35,6 @@ import CommandCenter from './pages/CommandCenter'
 import SerenityLens from './pages/SerenityLens'
 import PredictionLens from './pages/PredictionLens'
 import Universe from './pages/Universe'
-// ActivityTimeline temporarily hidden — content overlapped Overview's Agent Activity
-// card (runs duplicated) and the global-shell strip lacked viewport-follow + click
-// drill-down. To revive: restore the import + the <ActivityTimeline /> mount below,
-// and rework as a viewport-fixed audit-only ticker (kill_switch / risk_blocked /
-// config events; agent runs already covered by Agent Activity).
-// import ActivityTimeline from './components/ActivityTimeline'
 import CommandPalette from './components/CommandPalette'
 import MarketTicker from './components/MarketTicker'
 import BackendConnectionGuard from './components/BackendConnectionGuard'
@@ -31,7 +45,7 @@ import { deriveMasterState, getOperatorDisplayStatus } from './lib/systemState'
 import { devPreviewLabel } from './dev-preview'
 import { useRealtimeUpdates } from './lib/useRealtimeUpdates'
 
-export type NavItem = { to: string; label: string }
+export type NavItem = { to: string; label: string; icon: LucideIcon }
 export type NavGroup = { group: string; items: NavItem[] }
 
 // Nav follows the owner-approved trading-desk IA:
@@ -41,20 +55,20 @@ export const NAV: NavGroup[] = [
   {
     group: '',
     items: [
-      { to: '/', label: 'Overview' },
-      { to: '/command-center', label: 'Command Center' },
+      { to: '/', label: 'Overview', icon: LayoutDashboard },
+      { to: '/command-center', label: 'Command Center', icon: CommandIcon },
     ],
   },
   {
     group: 'Research',
     items: [
-      { to: '/universe', label: 'Universe Board' },
-      { to: '/charts', label: 'Markets' },
-      { to: '/prediction-markets', label: 'Prediction Markets' },
+      { to: '/universe', label: 'Universe Board', icon: Globe },
+      { to: '/charts', label: 'Markets', icon: ChartCandlestick },
+      { to: '/prediction-markets', label: 'Prediction Markets', icon: TrendingUp },
       // Serenity Lens is a supply-chain research/discovery path (a way to observe
       // the world for opportunities), not a learning/evolution loop — belongs here.
-      { to: '/serenity-lens', label: 'Serenity Lens' },
-      { to: '/news', label: 'News Intel' },
+      { to: '/serenity-lens', label: 'Serenity Lens', icon: Telescope },
+      { to: '/news', label: 'News Intel', icon: Newspaper },
     ],
   },
   {
@@ -63,25 +77,27 @@ export const NAV: NavGroup[] = [
       // Blotter (BLOTTER_DESIGN.md) merges the four Overview decision cards +
       // the legacy /proposals page into one sell-side-style workstation. The
       // /proposals route is preserved below as a legacy redirect target.
-      { to: '/blotter', label: 'Blotter' },
-      { to: '/agent-activity', label: 'Agent Activity' },
+      { to: '/blotter', label: 'Blotter', icon: ClipboardList },
+      { to: '/agent-activity', label: 'Agent Activity', icon: Activity },
     ],
   },
   {
     group: 'Portfolio',
     items: [
-      { to: '/trades', label: 'Trades & Positions' },
-      { to: '/risk', label: 'Risk & Controls' },
+      { to: '/trades', label: 'Trades & Positions', icon: Wallet },
+      { to: '/risk', label: 'Risk & Controls', icon: ShieldAlert },
     ],
   },
   {
     group: '',
     items: [
-      { to: '/learning', label: 'Learning' },
-      { to: '/settings', label: 'Settings' },
+      { to: '/learning', label: 'Learning', icon: GraduationCap },
+      { to: '/settings', label: 'Settings', icon: SettingsIcon },
     ],
   },
 ]
+
+const RAIL_STORAGE_KEY = 'sidebar:collapsed'
 
 
 /**
@@ -556,6 +572,13 @@ function StatusBar() {
 export default function App() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem(RAIL_STORAGE_KEY) === 'true' } catch { return false }
+  })
+
+  useEffect(() => {
+    try { localStorage.setItem(RAIL_STORAGE_KEY, String(railCollapsed)) } catch { /* ignore */ }
+  }, [railCollapsed])
 
   const toggle = (g: string) => setCollapsed(c => ({ ...c, [g]: !c[g] }))
   const previewLabel = devPreviewLabel()
@@ -563,37 +586,66 @@ export default function App() {
   useRealtimeUpdates()
 
   return (
-    <div className="layout">
+    <div className={`layout${railCollapsed ? ' rail' : ''}`}>
       <FetchProgress />
       <CommandPalette />
+      {sidebarOpen && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
       <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="brand">
-          <span className="brand-mark">◆</span>
+          <Diamond size={14} className="brand-mark" aria-hidden="true" />
           <span className="brand-name">ALETHEIA</span>
           <span className="brand-sub">trading os</span>
         </div>
         <nav>
           {NAV.map(({ group, items }) => (
             <div key={group || items.map(i => i.to).join('|')} className="nav-group">
-              {group && (
+              {group && !railCollapsed && (
                 <button className="nav-group-label" onClick={() => toggle(group)}>
                   <span>{group}</span>
                   <span className={`chev ${collapsed[group] ? 'chev-closed' : ''}`}>▾</span>
                 </button>
               )}
-              {!collapsed[group] && items.map(n => (
-                <NavLink key={n.to} to={n.to} end={n.to === '/'} onClick={() => setSidebarOpen(false)}>
-                  {n.label}
-                </NavLink>
-              ))}
+              {group && railCollapsed && <div className="nav-group-divider" aria-hidden="true" />}
+              {(railCollapsed || !collapsed[group]) && items.map(n => {
+                const Icon = n.icon
+                return (
+                  <NavLink
+                    key={n.to}
+                    to={n.to}
+                    end={n.to === '/'}
+                    onClick={() => setSidebarOpen(false)}
+                    title={railCollapsed ? n.label : undefined}
+                  >
+                    <Icon size={16} className="nav-icon" aria-hidden="true" />
+                    <span className="nav-label">{n.label}</span>
+                  </NavLink>
+                )
+              })}
             </div>
           ))}
         </nav>
+        <button
+          className="sidebar-toggle"
+          onClick={() => setRailCollapsed(c => !c)}
+          aria-label={railCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={railCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {railCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          <span className="nav-label">Collapse</span>
+        </button>
       </aside>
       <div className="content">
         <header className="topbar">
           {/* Hamburger for mobile sidebar toggle (L1) */}
-          <button className="topbar-btn hamburger" onClick={() => setSidebarOpen(o => !o)} aria-label="Toggle menu">☰</button>
+          <button className="topbar-btn hamburger" onClick={() => setSidebarOpen(o => !o)} aria-label="Toggle menu">
+            <Menu size={18} aria-hidden="true" />
+          </button>
           {/* Bloomberg-style ticker replaces the breadcrumb (which duplicated brand+sidebar
               "you-are-here" cues). The active sidebar item + each page's PageHeader title
               cover navigation context; the topbar now adds market-state context instead. */}
@@ -635,7 +687,6 @@ export default function App() {
             <Route path="/universe" element={<Universe />} />
           </Routes>
         </main>
-        {/* <ActivityTimeline /> — temporarily hidden, see import comment above */}
       </div>
     </div>
   )
