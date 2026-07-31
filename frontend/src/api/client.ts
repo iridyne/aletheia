@@ -73,6 +73,19 @@ export interface LearningContributionProjection {
       exclusion_reasons: Record<string, number>
       invalid_reasons: Record<string, number>
       conflict_count: number
+      evidence_conflicts: Array<{
+        reason: string
+        outcome_candidate_key: string
+        row_count: number
+        row_provenance_truncated: boolean
+        canonical?: { source: string; row_id: number | string | null }
+        mirrors?: Array<{ source: string; row_id: number | string | null }>
+        rows?: Array<{ source: string; row_id: number | string | null }>
+        differing_fields: Record<string, unknown>
+      }>
+      evidence_conflict_provenance_truncated: boolean
+      harm_state: 'indeterminate' | 'clear' | 'breached' | 'unknown'
+      harm_indeterminate_reason: string | null
       harm_breached: boolean
       breach_reasons: string[]
     }
@@ -98,6 +111,10 @@ export interface LearningContributionProjection {
       source_code_commits: string[]
       source_code_commit_unknown_n: number
       code_commit_provenance_complete: boolean
+      harm_state: 'indeterminate' | 'clear' | 'breached' | 'unknown'
+      harm_indeterminate_reason: string | null
+      evidence_conflicts: Array<Record<string, unknown>>
+      evidence_conflict_provenance_truncated: boolean
       current: boolean
       mismatch_reason: string | null
     } | null

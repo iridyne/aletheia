@@ -257,9 +257,10 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
         policy_epoch=epoch,
         target_horizon="4h",
         outcome_contract_version="v1",
-        metric_version=METRIC_VERSION,
-        code_commit="older-build",
-        behavior_contract_hash=behavior_contract_hash,
+            metric_version=METRIC_VERSION,
+            code_commit="older-build",
+            behavior_contract_hash=behavior_contract_hash,
+            harm_metrics_json='{"harm_state":"clear","breached":false}',
     )
     assert insert_record("learning_contribution_verdicts", activation)
     db = get_db()
@@ -309,8 +310,9 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
         unique_treatment_n=1, unique_control_n=1, verdict="positive", reason="positive",
         created_at=(now + timedelta(seconds=1)).isoformat(), policy_epoch=epoch,
         stage="paper_10", target_horizon="4h", outcome_contract_version="v1",
-        metric_version=METRIC_VERSION, code_commit="newer-build",
-        behavior_contract_hash=behavior_contract_hash,
+            metric_version=METRIC_VERSION, code_commit="newer-build",
+            behavior_contract_hash=behavior_contract_hash,
+            harm_metrics_json='{"harm_state":"clear","breached":false}',
     )
     insert_record("learning_contribution_verdicts", positive)
     authorized_candidate = next(

@@ -126,13 +126,26 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
     if measurement not in MEASUREMENT_VERDICTS:
         return LifecycleResult("hold", "hold", "unknown_measurement_verdict", experiment_id)
     recommended = measurement_to_lifecycle_action(measurement)
+    harm_reason = measurement_harm_block_reason(verdict)
+    if harm_reason == "harm_gate_breached" and recommended != "invalidate":
+        recommended = "refreeze"
     identity_reason = measurement_identity_reason(
         verdict, experiment.stage, current_policy_epoch,
         expected_horizon=hypothesis.target_horizon,
         expected_behavior_contract_hash=expected_behavior_contract_hash,
         expected_hypothesis_id=hypothesis.hypothesis_id,
     )
-    if identity_reason:
+    stale_safety_reasons = {
+        "stale_policy_epoch",
+        "horizon_mismatch",
+        "outcome_contract_mismatch",
+        "metric_version_mismatch",
+        "behavior_contract_mismatch",
+    }
+    if identity_reason and not (
+        recommended in {"refreeze", "invalidate"}
+        and identity_reason in stale_safety_reasons
+    ):
         return LifecycleResult("hold", recommended, identity_reason, experiment_id, verdict_id=verdict["verdict_id"])
 
     # A harm breach must never suppress the safety action it is evidence for.
@@ -140,7 +153,6 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
     # holding a refreeze/invalidate because the result was harmful exempted the
     # worst experiments from being stopped at all.
     if recommended not in {"refreeze", "invalidate"}:
-        harm_reason = measurement_harm_block_reason(verdict)
         if harm_reason:
             return LifecycleResult(
                 "hold", recommended, harm_reason, experiment_id,
@@ -162,7 +174,14 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
     if recommended == "hold":
         return LifecycleResult("hold", "hold", f"measurement_{measurement}", experiment_id, verdict_id=verdict["verdict_id"])
     if recommended in {"refreeze", "invalidate"}:
-        return _apply_safety_action(experiment, hypothesis, verdict, recommended, current_policy_epoch)
+        return _apply_safety_action(
+            experiment,
+            hypothesis,
+            verdict,
+            recommended,
+            current_policy_epoch,
+            reason=("stale_safety_measurement" if identity_reason else None),
+        )
     if experiment.stage == "shadow":
         return LifecycleResult(
             "hold", "admit_trial", "shadow_requires_explicit_trial_admission",
@@ -473,6 +492,8 @@ def _apply_safety_action(
     verdict: dict[str, Any],
     action: str,
     policy_epoch: str,
+    *,
+    reason: str | None = None,
 ) -> LifecycleResult:
     try:
         gate_reason = _safety_action_gate_reason()
@@ -495,7 +516,11 @@ def _apply_safety_action(
         verdict_id=str(verdict["verdict_id"]),
         from_stage=experiment.stage,
         action=action,
-        reason=("invalid_measurement_refreeze" if action == "invalidate" else "negative_measurement_refreeze"),
+        reason=reason or (
+            "invalid_measurement_refreeze"
+            if action == "invalidate"
+            else "negative_measurement_refreeze"
+        ),
         policy_epoch=policy_epoch,
         created_at=now,
     )

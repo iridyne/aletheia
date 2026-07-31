@@ -176,12 +176,23 @@ function ContributionTab() {
             <ContributionRow label="Invalid" value={invalid} />
             <ContributionRow label="Proven conflicts" value={integrity.conflict_count} />
             <ContributionRow label="Matching mirror rows" value={integrity.matching_mirror_rows} />
-            <ContributionRow label="Harm boundary" value={integrity.harm_breached ? 'Breached' : 'Not breached'} />
+            <ContributionRow label="Harm boundary" value={humanize(integrity.harm_state)} />
           </div>
           {(excluded > 0 || invalid > 0 || integrity.conflict_count > 0) && (
             <p className="lco-note">
               Exclusions: {formatCounts(integrity.exclusion_reasons)} · Invalid: {formatCounts(integrity.invalid_reasons)}
             </p>
+          )}
+          {integrity.harm_state === 'indeterminate' && (
+            <p className="lco-note">Harm is not yet measurable: {humanize(integrity.harm_indeterminate_reason || 'insufficient evidence')}.</p>
+          )}
+          {integrity.evidence_conflicts.map((conflict) => (
+            <p className="lco-note" key={`${conflict.reason}:${conflict.outcome_candidate_key}`}>
+              Conflict {conflict.outcome_candidate_key}: {Object.keys(conflict.differing_fields).map((field) => humanize(field)).join(', ') || 'proven row disagreement'} · canonical {conflict.canonical ? `${conflict.canonical.source}#${conflict.canonical.row_id ?? 'unknown'}` : 'not designated'} · mirrors {conflict.mirrors?.map((row) => `${row.source}#${row.row_id ?? 'unknown'}`).join(', ') || 'not applicable'}{conflict.row_provenance_truncated ? ` · showing 20 of ${conflict.row_count} rows` : ''}
+            </p>
+          ))}
+          {integrity.evidence_conflict_provenance_truncated && (
+            <p className="lco-note">Conflict provenance is truncated; the conflict count remains complete.</p>
           )}
         </Card>
       </div>

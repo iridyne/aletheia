@@ -101,7 +101,26 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
             },
             "exclusion_reasons": {"unsettled": 2},
             "invalid_reasons": {},
-            "evidence_conflict_fingerprints": [],
+            "evidence_conflict_fingerprints": ["conflict-fingerprint"],
+            "evidence_conflicts": [{
+                "reason": "conflicting_mirrored_outcome",
+                "outcome_candidate_key": "candidate:1h",
+                "canonical": {
+                    "source": "filter_candidate_outcomes",
+                    "row_id": 41,
+                },
+                "mirrors": [{
+                    "source": "universe_forward_outcomes",
+                    "row_id": 82,
+                }],
+                "differing_fields": {
+                    "net_return_pct": {"canonical": 1.0, "mirrors": [-1.0]},
+                },
+            }],
+            "evidence_conflict_total_n": 1,
+            "evidence_conflict_provenance_truncated": False,
+            "harm_state": "indeterminate",
+            "harm_indeterminate_reason": "insufficient_samples",
             "breached": False,
             "breach_reasons": [],
             "source_code_commits": ["commit-current"],
@@ -168,6 +187,8 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     assert item["integrity"]["outcome_source_member_counts"] == {
         "filter_candidate_outcomes": 27,
     }
+    assert item["integrity"]["harm_state"] == "indeterminate"
+    assert item["integrity"]["harm_indeterminate_reason"] == "insufficient_samples"
     assert item["lifecycle"]["recommended_action"] == "admit_trial"
     assert item["lifecycle"]["mutation_available"] is False
     assert item["lifecycle"]["authority_enabled"] is False

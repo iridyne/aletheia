@@ -348,7 +348,7 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 - **Outcome precedence**: `filter_candidate_outcomes` is canonical full-arm truth;
   `universe_forward_outcomes` is a selected-member mirror/fallback and disagreement fails closed
 - **Outputs**: append-only verdicts under
-  `universe_family_calibration_cluster_allocation_utility_v2`; old metric verdicts remain history
+  `universe_family_calibration_cluster_allocation_utility_v3`; old metric verdicts remain history
 - **Time semantics**: verdict `created_at` is evaluation time; window fields are observation bounds
 - **Authority**: measurement only; cannot change experiment stage, multiplier, paper authority,
   Risk, Execution, exchange, or live state
