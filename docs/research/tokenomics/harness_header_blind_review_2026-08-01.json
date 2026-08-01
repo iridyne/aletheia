@@ -1,0 +1,902 @@
+[
+  {
+    "case_id": "pi_trading_decision-000",
+    "case_facts": {
+      "price": 60000.0,
+      "rsi": 30,
+      "momentum": -0.8,
+      "spread": 0.4,
+      "proposals": 8,
+      "rejections": 0,
+      "wins": 3,
+      "losses": 2,
+      "avg_pnl": -0.35
+    },
+    "response_a": "```json\n{\n  \"action\": \"trade\",\n  \"direction\": \"long\",\n  \"conviction\": 0.72,\n  \"reasoning\": \"RSI1h at 30 indicates oversold conditions on 1-hour timeframe, suggesting mean reversion opportunity. Negative 4h momentum (-0.8) confirms downtrend exhaustion. Tight spread (0.4 bps) provides favorable entry conditions. Confluence of oversold RSI and momentum divergence supports long entry. Conviction tempered by ongoing negative momentum; position sizing should reflect this.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"trade\",\n  \"direction\": \"long\",\n  \"conviction\": 0.72,\n  \"reasoning\": \"RSI(1h)=30 indicates oversold conditions on hourly timeframe. Negative momentum(4h)=-0.8 suggests downtrend, but extreme RSI reading presents mean-reversion opportunity. Tight spread(0.4bps) enables efficient entry. Conviction tempered by conflicting signals across timeframes. Suitable for paper trading validation of oversold bounce hypothesis.\",\n  \"entry_signal\": \"RSI_oversold_1h\",\n  \"risk_note\": \"Momentum headwind requires tight stop discipline; defer to risk checks for position sizing\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-001",
+    "case_facts": {
+      "price": 60017.25,
+      "rsi": 31,
+      "momentum": -0.7,
+      "spread": 0.55,
+      "proposals": 9,
+      "rejections": 1,
+      "wins": 4,
+      "losses": 5,
+      "avg_pnl": -0.3
+    },
+    "response_a": "```json\n{\n  \"action\": \"trade\",\n  \"direction\": \"long\",\n  \"conviction\": 0.72,\n  \"reasoning\": \"RSI1h at 31 indicates oversold conditions on 1h timeframe. Negative 4h momentum (-0.7) suggests recent downside exhaustion. Spread at 0.55bps is tight and acceptable for entry. Oversold RSI combined with momentum divergence presents asymmetric risk/reward setup for long entry. Conviction tempered by ongoing negative momentum requiring confirmation.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"trade\",\n  \"direction\": \"long\",\n  \"conviction\": 0.72,\n  \"reasoning\": \"RSI1h=31 indicates oversold conditions on 1h timeframe, suggesting mean reversion opportunity. Negative 4h momentum (-0.7) confirms downtrend exhaustion. Tight spread (0.55bps) supports execution efficiency. Entry justified on confluence of oversold RSI and momentum divergence. Risk checks deferred to downstream validation.\",\n  \"instrument\": \"BTC/USDT\",\n  \"contract_type\": \"perp\",\n  \"entry_signal_strength\": \"moderate_reversal\",\n  \"caveats\": \"Conviction assumes risk checks pass; 4h momentum remains negative so position sizing should reflect trend context\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-002",
+    "case_facts": {
+      "price": 60034.5,
+      "rsi": 32,
+      "momentum": -0.6,
+      "spread": 0.7,
+      "proposals": 10,
+      "rejections": 2,
+      "wins": 5,
+      "losses": 8,
+      "avg_pnl": -0.25
+    },
+    "response_a": "```json\n{\n  \"action\": \"trade\",\n  \"direction\": \"long\",\n  \"conviction\": 0.72,\n  \"reasoning\": \"RSI1h=32 indicates oversold conditions on 1h timeframe; momentum4h=-0.6 suggests recent downside exhaustion; spread_bps=0.7 is acceptable for perp entry. Oversold RSI combined with negative momentum reversal setup presents asymmetric risk/reward. Conviction moderated by lack of positive confirmation signal (no uptick in momentum yet). Risk checks deferred to execution layer.\",\n  \"entry_signal\": \"oversold_reversal\",\n  \"timeframe_alignment\": \"1h oversold + 4h momentum divergence\",\n  \"caveats\": \"Awaiting risk checks; position sizing deferred to risk module\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"trade\",\n  \"direction\": \"long\",\n  \"conviction\": 0.72,\n  \"reasoning\": \"RSI1h=32 indicates oversold conditions on 1h timeframe; momentum4h=-0.6 shows bearish pressure but not extreme; spread_bps=0.7 is acceptable for perp execution; oversold RSI presents mean-reversion opportunity with 4h momentum divergence suggesting potential bounce; entry justified on tactical oversold signal\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-003",
+    "case_facts": {
+      "price": 60051.75,
+      "rsi": 33,
+      "momentum": -0.5,
+      "spread": 0.85,
+      "proposals": 11,
+      "rejections": 3,
+      "wins": 6,
+      "losses": 3,
+      "avg_pnl": -0.2
+    },
+    "response_a": "```json\n{\n  \"action\": \"trade\",\n  \"direction\": \"long\",\n  \"conviction\": 0.72,\n  \"reasoning\": \"RSI1h=33 indicates oversold conditions on 1h timeframe, suggesting mean reversion opportunity. Negative 4h momentum (-0.5) confirms pullback phase but not trend reversal yet. Spread at 0.85bps is acceptable for perp entry. Confluence of oversold RSI with 4h consolidation supports tactical long bias. Conviction moderated from higher levels due to lack of positive momentum confirmation.\",\n  \"entry_signal_strength\": \"moderate\",\n  \"risk_profile\": \"standard\",\n  \"notes\": \"Recommend tight stop-loss given momentum headwind. Monitor 4h for momentum inflection before scaling.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"trade\",\n  \"direction\": \"long\",\n  \"conviction\": 0.72,\n  \"reasoning\": \"RSI1h at 33 indicates oversold conditions on 1h timeframe, suggesting mean reversion opportunity. Negative 4h momentum (-0.5) confirms downtrend exhaustion. Tight spread (0.85 bps) provides favorable entry conditions. Confluence of oversold RSI and momentum divergence supports long entry. Risk checks deferred to later stage.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-004",
+    "case_facts": {
+      "price": 60069.0,
+      "rsi": 34,
+      "momentum": -0.4,
+      "spread": 1.0,
+      "proposals": 12,
+      "rejections": 4,
+      "wins": 7,
+      "losses": 6,
+      "avg_pnl": -0.15
+    },
+    "response_a": "```json\n{\n  \"action\": \"trade\",\n  \"direction\": \"long\",\n  \"conviction\": 0.72,\n  \"reasoning\": \"RSI1h=34 indicates oversold conditions on 1h timeframe; momentum4h=-0.4 suggests recent downside exhaustion rather than continuation risk. Tight spread (1.0 bps) supports execution efficiency. Oversold RSI combined with negative momentum divergence presents asymmetric risk/reward for mean reversion long. Conviction moderated from higher levels due to lack of positive confirmation signal (no bullish divergence, no volume spike data provided). Paper trading context allows position sizing flexibility for risk management.\",\n  \"entry_type\": \"limit_or_market\",\n  \"notes\": \"Monitor 4h momentum for reversal confirmation; exit if RSI climbs above 70 without price follow-through or if 4h momentum deteriorates further below -0.5\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"trade\",\n  \"direction\": \"long\",\n  \"conviction\": 0.72,\n  \"reasoning\": \"RSI1h at 34 indicates oversold conditions on 1h timeframe, suggesting mean reversion opportunity. Negative 4h momentum (-0.4) confirms recent downside exhaustion. Tight spread (1.0 bps) provides favorable entry conditions. Confluence of oversold RSI and negative momentum reversal supports long entry. Risk checks deferred to later stage.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-005",
+    "case_facts": {
+      "price": 60086.25,
+      "rsi": 35,
+      "momentum": -0.3,
+      "spread": 1.15,
+      "proposals": 13,
+      "rejections": 5,
+      "wins": 8,
+      "losses": 9,
+      "avg_pnl": -0.1
+    },
+    "response_a": "```json\n{\n  \"action\": \"trade\",\n  \"direction\": \"long\",\n  \"conviction\": 0.72,\n  \"reasoning\": \"RSI1h=35 indicates oversold conditions on 1h timeframe, suggesting mean reversion opportunity. Negative 4h momentum (-0.3) confirms pullback phase but not trend reversal yet. Spread at 1.15bps is acceptable for perp entry. Confluence of oversold RSI with momentum divergence supports long bias. Conviction moderated from higher levels due to: (1) momentum still negative, (2) no confirmation of reversal yet, (3) perp leverage risk. Entry justified on tactical oversold bounce; position sizing and risk management deferred to execution layer.\",\n  \"entry_signal_strength\": \"moderate_oversold\",\n  \"key_risks\": [\n    \"momentum_still_negative\",\n    \"no_higher_timeframe_confirmation\",\n    \"perp_liquidation_risk\"\n  ]\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"trade\",\n  \"direction\": \"long\",\n  \"conviction\": 0.72,\n  \"reasoning\": \"RSI1h at 35 indicates oversold conditions on 1-hour timeframe, suggesting mean reversion opportunity. Negative 4h momentum (-0.3) confirms recent downside exhaustion. Tight spread (1.15 bps) supports execution efficiency. Entry justified on oversold bounce setup with 4h confirmation of momentum divergence. Conviction tempered by lack of positive confirmation signal; recommend tight stop-loss given momentum still negative.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-006",
+    "case_facts": {
+      "price": 60103.5,
+      "rsi": 36,
+      "momentum": -0.2,
+      "spread": 1.3,
+      "proposals": 14,
+      "rejections": 6,
+      "wins": 9,
+      "losses": 4,
+      "avg_pnl": -0.05
+    },
+    "response_a": "```json\n{\n  \"action\": \"trade\",\n  \"direction\": \"long\",\n  \"conviction\": 0.65,\n  \"reasoning\": \"RSI1h at 36 indicates oversold conditions on 1h timeframe, suggesting mean reversion opportunity. Negative 4h momentum (-0.2) confirms weakness but not reversal confirmation yet. Tight spread (1.3 bps) supports execution efficiency. Entry justified on oversold bounce setup with 1h RSI divergence. Conviction moderate due to lack of positive momentum confirmation on 4h; recommend scaling position size accordingly pending risk checks.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"trade\",\n  \"direction\": \"long\",\n  \"conviction\": 0.72,\n  \"reasoning\": \"RSI1h=36 indicates oversold conditions on 1h timeframe; momentum4h=-0.2 suggests recent bearish pressure but not extreme. Spread at 1.3bps is acceptable for perp entry. Oversold RSI presents mean-reversion opportunity with defined risk. Conviction moderate due to negative 4h momentum\u2014suggests waiting for confirmation, but entry signal present.\",\n  \"entry_signal\": \"oversold_rsi_mean_reversion\",\n  \"risk_factors\": [\n    \"negative_4h_momentum\",\n    \"no_bullish_confirmation_yet\"\n  ],\n  \"suggested_approach\": \"Consider scaling entry or waiting for 4h momentum to turn positive for higher conviction\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-007",
+    "case_facts": {
+      "price": 60120.75,
+      "rsi": 37,
+      "momentum": -0.1,
+      "spread": 1.45,
+      "proposals": 15,
+      "rejections": 0,
+      "wins": 10,
+      "losses": 7,
+      "avg_pnl": 0.0
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h=37 indicates oversold conditions suggesting potential bounce, but momentum4h=-0.1 shows weak negative momentum on longer timeframe. Conflicting signals between mean-reversion (RSI) and trend (momentum) create ambiguity. Spread of 1.45bps is acceptable but insufficient to justify entry without stronger directional conviction. Recommend monitoring for momentum confirmation before initiating position.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI(1h)=37 indicates oversold conditions typically favoring long entry, but momentum(4h)=-0.1 shows negative directional bias on intermediate timeframe. Conflicting signals across timeframes create ambiguity. Spread of 1.45bps is acceptable but insufficient to justify entry without stronger directional confluence. Recommend monitoring for either: (1) RSI bounce confirmation with momentum inflection, or (2) clearer directional alignment before committing capital.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-008",
+    "case_facts": {
+      "price": 60138.0,
+      "rsi": 38,
+      "momentum": 0.0,
+      "spread": 1.6,
+      "proposals": 16,
+      "rejections": 1,
+      "wins": 11,
+      "losses": 2,
+      "avg_pnl": 0.05
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 38 indicates oversold conditions but momentum4h at 0.0 shows no directional bias. Spread is acceptable at 1.6bps, but lack of momentum confirmation combined with oversold RSI creates ambiguous signal. Insufficient confluence for entry decision. Recommend monitoring for momentum confirmation before trading.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"trade\",\n  \"direction\": \"long\",\n  \"conviction\": 0.72,\n  \"reasoning\": \"RSI1h=38 indicates oversold conditions on 1h timeframe, suggesting mean reversion opportunity. Momentum4h=0.0 shows neutral 4h trend, reducing downside risk. Spread at 1.6bps is tight, favorable for entry. Price at 60138 near recent support levels. Conviction moderated from higher due to neutral 4h momentum\u2014not a strong trend confirmation, but oversold 1h with tight spread justifies long entry for mean reversion play.\",\n  \"entry_signal_strength\": \"moderate_oversold\",\n  \"risk_factors\": [\n    \"neutral_4h_momentum_limits_upside\",\n    \"rsi_extreme_may_extend_lower\"\n  ]\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-009",
+    "case_facts": {
+      "price": 60155.25,
+      "rsi": 39,
+      "momentum": 0.1,
+      "spread": 1.75,
+      "proposals": 17,
+      "rejections": 2,
+      "wins": 3,
+      "losses": 5,
+      "avg_pnl": 0.1
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 39 indicates oversold conditions but momentum4h at 0.1 shows weak directional conviction. Spread of 1.75bps is acceptable but insufficient signal strength to justify entry. Momentum reading near zero suggests consolidation rather than directional opportunity. Recommend monitoring for either RSI recovery with momentum confirmation (bullish setup) or further weakness with momentum divergence (bearish setup).\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h=39 indicates oversold conditions but momentum4h=0.1 shows weak directional conviction. Spread at 1.75bps is acceptable but insufficient signal strength to justify entry. Momentum reading near zero suggests consolidation rather than directional opportunity. Recommend monitoring for either RSI bounce confirmation or momentum acceleration before trading.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-010",
+    "case_facts": {
+      "price": 60172.5,
+      "rsi": 40,
+      "momentum": 0.2,
+      "spread": 1.9,
+      "proposals": 18,
+      "rejections": 3,
+      "wins": 4,
+      "losses": 8,
+      "avg_pnl": 0.15
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h=40 indicates oversold conditions but momentum4h=0.2 shows weak directional conviction. Spread at 1.9bps is acceptable but insufficient signal strength to justify entry. Momentum reading below 0.5 threshold suggests consolidation rather than directional bias. Recommend monitoring for momentum confirmation above 0.5 or RSI mean reversion setup before reconsidering.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 40 indicates oversold conditions but lacks confirmation. Momentum4h at 0.2 is weak and insufficient to establish directional bias. Spread at 1.9bps is acceptable but entry signal quality is poor. Insufficient confluence of indicators for trade initiation. Recommend monitoring for stronger momentum development or RSI divergence before entry.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-011",
+    "case_facts": {
+      "price": 60189.75,
+      "rsi": 41,
+      "momentum": 0.3,
+      "spread": 2.05,
+      "proposals": 19,
+      "rejections": 4,
+      "wins": 5,
+      "losses": 3,
+      "avg_pnl": 0.2
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h=41 indicates neutral-to-weak momentum (below 50, not oversold <30). Momentum4h=0.3 is minimal positive signal. Spread at 2.05bps is acceptable but insufficient to offset weak directional confluence. No clear edge present. Recommend monitoring for RSI compression or momentum acceleration before entry.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 41 indicates neither oversold nor overbought conditions. Momentum4h at 0.3 is weak and insufficient to establish directional bias. Spread at 2.05bps is acceptable but lacks confluence of signals to justify entry. Insufficient edge for trade initiation.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-012",
+    "case_facts": {
+      "price": 60207.0,
+      "rsi": 42,
+      "momentum": 0.4,
+      "spread": 2.2,
+      "proposals": 20,
+      "rejections": 5,
+      "wins": 6,
+      "losses": 6,
+      "avg_pnl": 0.25
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 42 indicates neutral-to-weak momentum without clear directional bias. Momentum4h at 0.4 is minimal and insufficient to establish conviction. Spread at 2.2bps is acceptable but insufficient to overcome weak signal quality. Insufficient confluence of indicators to justify trade initiation.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h=42 indicates neutral-to-weak momentum (not oversold <30, not overbought >70). Momentum4h=0.4 is marginal positive signal. Spread at 2.2bps is acceptable but combined with weak directional conviction, risk/reward unfavorable. Insufficient confluence of signals for entry. Recommend monitoring for RSI divergence or momentum acceleration before reconsidering.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-013",
+    "case_facts": {
+      "price": 60224.25,
+      "rsi": 43,
+      "momentum": 0.5,
+      "spread": 0.4,
+      "proposals": 8,
+      "rejections": 6,
+      "wins": 7,
+      "losses": 9,
+      "avg_pnl": 0.3
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 43 indicates neutral momentum without clear directional bias. Momentum4h at 0.5 is weak and insufficient to establish conviction. Spread at 0.4bps is acceptable but insufficient to overcome weak signal confluence. Lack of multiple confirming indicators warrants waiting for stronger setup.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h=43 indicates neutral momentum (neither overbought nor oversold), insufficient directional bias. Momentum4h=0.5 is weak positive signal. Spread at 0.4bps is acceptable but combined with weak technical confluence, risk/reward unfavorable for entry. Recommend watch status until RSI approaches extremes (>70 or <30) or momentum4h strengthens above 1.0.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-014",
+    "case_facts": {
+      "price": 60241.5,
+      "rsi": 44,
+      "momentum": 0.6,
+      "spread": 0.55,
+      "proposals": 9,
+      "rejections": 0,
+      "wins": 8,
+      "losses": 4,
+      "avg_pnl": 0.35
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h=44 indicates neutral momentum (neither overbought nor oversold), insufficient directional bias. Momentum4h=0.6 is weak positive signal but insufficient to overcome neutral RSI. Spread at 0.55bps is acceptable but entry signal quality is marginal. Recommend monitoring for stronger confluence: RSI approaching extremes (>70 or <30) or momentum4h strengthening above 1.5+ before initiating position.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 44 indicates neutral momentum without clear directional bias. Momentum4h at 0.6 is weak and insufficient to establish conviction. Spread at 0.55bps is acceptable but insufficient to overcome weak signal confluence. Lack of clear technical setup warrants waiting for stronger confirmation before entry.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-015",
+    "case_facts": {
+      "price": 60258.75,
+      "rsi": 45,
+      "momentum": 0.7,
+      "spread": 0.7,
+      "proposals": 10,
+      "rejections": 1,
+      "wins": 9,
+      "losses": 7,
+      "avg_pnl": -0.35
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h=45 indicates neutral momentum without directional bias. Momentum4h=0.7 is weak positive signal but insufficient to overcome RSI neutrality. Spread at 0.7bps is acceptable but entry signal lacks conviction. Price at 60258.75 shows no clear technical setup. Recommend monitoring for RSI divergence or momentum strengthening before entry.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI at 45 indicates neutral momentum without directional bias. Momentum4h at 0.7 is weak positive signal insufficient to overcome neutral RSI. Spread at 0.7bps is acceptable but signal quality does not justify entry. Insufficient confluence for trade decision.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-016",
+    "case_facts": {
+      "price": 60276.0,
+      "rsi": 46,
+      "momentum": 0.8,
+      "spread": 0.85,
+      "proposals": 11,
+      "rejections": 2,
+      "wins": 10,
+      "losses": 2,
+      "avg_pnl": -0.3
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 46 indicates neutral momentum without directional bias. Momentum4h of 0.8 is weak and insufficient to overcome neutral RSI signal. Spread of 0.85bps is acceptable but entry signal quality is poor. Insufficient confluence for trade initiation.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h=46 indicates neutral momentum (neither overbought nor oversold), insufficient directional bias. Momentum4h=0.8 is weak positive signal but insufficient to overcome RSI neutrality. Spread at 0.85bps is acceptable but entry signal quality is marginal. Recommend monitoring for clearer directional confirmation before entry.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-017",
+    "case_facts": {
+      "price": 60293.25,
+      "rsi": 47,
+      "momentum": -0.8,
+      "spread": 1.0,
+      "proposals": 12,
+      "rejections": 3,
+      "wins": 11,
+      "losses": 5,
+      "avg_pnl": -0.25
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 47 indicates neutral momentum without directional bias. Negative 4h momentum (-0.8) conflicts with any bullish setup. Insufficient confluence of signals to justify entry. Spread is acceptable (1.0 bps) but signal quality does not warrant trade initiation. Recommend watch status pending RSI directional break or momentum reversal confirmation.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 47 indicates neutral momentum without directional bias. Negative 4h momentum (-0.8) suggests weakness but insufficient for conviction entry. Spread is tight (1.0 bps) but signal quality is marginal. Awaiting clearer directional confirmation before committing capital.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-018",
+    "case_facts": {
+      "price": 60310.5,
+      "rsi": 48,
+      "momentum": -0.7,
+      "spread": 1.15,
+      "proposals": 13,
+      "rejections": 4,
+      "wins": 3,
+      "losses": 8,
+      "avg_pnl": -0.2
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 48 indicates neutral momentum without directional bias. Negative 4h momentum (-0.7) conflicts with any bullish setup. Spread at 1.15bps is acceptable but insufficient to overcome weak signal confluence. No clear edge present. Recommend monitoring for RSI extremes (<30 or >70) and momentum reversal before reconsidering entry.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 48 indicates neutral momentum without directional bias. Negative 4h momentum (-0.7) suggests weakness but insufficient for conviction entry. Spread at 1.15bps is acceptable but combined with neutral technicals and lack of clear directional signal, risk/reward is unfavorable. Recommend watch for RSI divergence or momentum confirmation before entry.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-019",
+    "case_facts": {
+      "price": 60327.75,
+      "rsi": 49,
+      "momentum": -0.6,
+      "spread": 1.3,
+      "proposals": 14,
+      "rejections": 5,
+      "wins": 4,
+      "losses": 3,
+      "avg_pnl": -0.15
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 49 indicates neutral momentum without directional bias. Negative 4h momentum (-0.6) conflicts with any bullish setup. Spread at 1.3bps is acceptable but insufficient to justify entry without stronger directional confluence. Insufficient signal strength for conviction-based trade initiation.\",\n  \"timestamp\": \"2026-08-01T00:00:00Z\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 49 indicates neutral momentum with no directional bias. Negative 4h momentum (-0.6) suggests weakness but insufficient for conviction entry. Spread at 1.3bps is acceptable but lacks confluence of signals. Price near middle of RSI range with conflicting timeframe signals warrants patience for clearer setup.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-020",
+    "case_facts": {
+      "price": 60345.0,
+      "rsi": 50,
+      "momentum": -0.5,
+      "spread": 1.45,
+      "proposals": 15,
+      "rejections": 6,
+      "wins": 5,
+      "losses": 6,
+      "avg_pnl": -0.1
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI at 50 indicates neutral momentum with no directional bias. Negative 4h momentum (-0.5) suggests weakness but insufficient for conviction given neutral RSI. Spread of 1.45 bps is acceptable but entry signal quality is poor. Insufficient confluence of indicators to justify trade initiation.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": 0.0,\n  \"reasoning\": \"RSI at 50 indicates neutral momentum with no directional bias. Negative 4h momentum (-0.5) suggests weakness but insufficient for conviction entry. Spread at 1.45bps is acceptable but signal quality too low to justify trade initiation. Recommend watch status pending stronger directional confirmation or RSI divergence.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-021",
+    "case_facts": {
+      "price": 60362.25,
+      "rsi": 51,
+      "momentum": -0.4,
+      "spread": 1.6,
+      "proposals": 16,
+      "rejections": 0,
+      "wins": 6,
+      "losses": 9,
+      "avg_pnl": -0.05
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 51 indicates neutral momentum with no directional bias. Negative 4h momentum (-0.4) conflicts with any bullish setup. Spread at 1.6bps is acceptable but insufficient to justify entry without stronger directional confluence. No clear edge present. Recommend monitoring for RSI divergence or momentum reversal before reconsidering.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI at 51 indicates neutral momentum with no directional bias. Negative 4h momentum (-0.4) suggests weakness but insufficient for conviction given neutral RSI. Spread at 1.6bps is acceptable but lacks confluence of signals to justify entry. Recommend monitoring for clearer directional setup before trading.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-022",
+    "case_facts": {
+      "price": 60379.5,
+      "rsi": 52,
+      "momentum": -0.3,
+      "spread": 1.75,
+      "proposals": 17,
+      "rejections": 1,
+      "wins": 7,
+      "losses": 4,
+      "avg_pnl": 0.0
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI at 52 indicates neutral momentum with no directional bias. Negative 4h momentum (-0.3) suggests weakness but insufficient for conviction. Spread of 1.75 bps is acceptable but combined with neutral technicals and lack of clear directional signal, risk/reward is unfavorable. Insufficient confluence for trade initiation.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 52 indicates neutral momentum without directional bias. Negative 4h momentum (-0.3) conflicts with any bullish setup. Spread at 1.75bps is acceptable but insufficient to justify entry without stronger directional confluence. Recommend monitoring for RSI divergence or momentum reversal before reconsidering.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-023",
+    "case_facts": {
+      "price": 60396.75,
+      "rsi": 53,
+      "momentum": -0.2,
+      "spread": 1.9,
+      "proposals": 18,
+      "rejections": 2,
+      "wins": 8,
+      "losses": 7,
+      "avg_pnl": 0.05
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI at 53 indicates neutral momentum with no directional bias. Negative 4h momentum (-0.2) suggests mild bearish pressure but insufficient for conviction entry. Spread at 1.9bps is acceptable but combined with neutral technicals and lack of clear directional catalyst, risk/reward is unfavorable. Recommend monitoring for clearer signal development.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 53 indicates neutral momentum without directional bias. Negative 4h momentum (-0.2) conflicts with any bullish setup. Spread at 1.9bps is acceptable but insufficient to justify entry without stronger directional confluence. No clear edge present. Recommend monitoring for RSI extremes (>70 or <30) or momentum reversal before reconsidering.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-024",
+    "case_facts": {
+      "price": 60414.0,
+      "rsi": 54,
+      "momentum": -0.1,
+      "spread": 2.05,
+      "proposals": 19,
+      "rejections": 3,
+      "wins": 9,
+      "losses": 2,
+      "avg_pnl": 0.1
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI at 54 indicates neutral momentum without directional bias. Negative 4h momentum (-0.1) suggests mild bearish pressure but insufficient for conviction. Spread at 2.05 bps is acceptable but combined with neutral technicals and lack of clear directional signal, entry criteria not met. Recommend watch for clearer setup.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI at 54 indicates neutral momentum (neither overbought nor oversold). Negative 4h momentum (-0.1) suggests weakening upside but insufficient for directional conviction. Spread at 2.05bps is acceptable but combined with ambiguous technicals, risk/reward is unfavorable. Insufficient signal confluence to justify entry. Recommend monitoring for clearer directional setup.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-025",
+    "case_facts": {
+      "price": 60431.25,
+      "rsi": 55,
+      "momentum": 0.0,
+      "spread": 2.2,
+      "proposals": 20,
+      "rejections": 4,
+      "wins": 10,
+      "losses": 5,
+      "avg_pnl": 0.15
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI at 55 indicates neutral momentum (neither overbought nor oversold). 4h momentum at 0.0 shows no directional bias. Spread of 2.2 bps is acceptable but insufficient to overcome the lack of clear directional signal. No confluence of indicators to justify entry. Conditions warrant observation rather than execution.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h at 55 indicates neutral momentum (neither overbought nor oversold). Momentum4h at 0.0 shows no directional bias on the 4h timeframe. Spread of 2.2bps is acceptable but insufficient to justify entry without clear directional conviction. Lack of confluence between timeframes argues against trade initiation at this time.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-026",
+    "case_facts": {
+      "price": 60448.5,
+      "rsi": 56,
+      "momentum": 0.1,
+      "spread": 0.4,
+      "proposals": 8,
+      "rejections": 5,
+      "wins": 11,
+      "losses": 8,
+      "avg_pnl": 0.2
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI at 56 indicates neutral momentum (neither overbought nor oversold). Momentum4h at 0.1 is minimal, suggesting weak directional bias. Spread of 0.4 bps is acceptable but insufficient to justify entry without stronger signal confluence. Insufficient edge to initiate position.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI at 56 indicates neutral momentum (neither overbought nor oversold). Momentum4h at 0.1 is weak and insufficient to establish directional bias. Spread at 0.4bps is acceptable but lacks confluence with price action signals. No clear edge present. Recommend monitoring for stronger momentum confirmation or RSI extremes before entry.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-027",
+    "case_facts": {
+      "price": 60465.75,
+      "rsi": 57,
+      "momentum": 0.2,
+      "spread": 0.55,
+      "proposals": 9,
+      "rejections": 6,
+      "wins": 3,
+      "losses": 3,
+      "avg_pnl": 0.25
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI at 57 indicates neutral momentum (neither overbought nor oversold). Momentum4h at 0.2 is weak and insufficient to establish directional bias. Spread of 0.55 bps is acceptable but lacks confluence with price action signals. Insufficient edge to initiate position. Recommend monitoring for stronger momentum confirmation or RSI extremes before entry.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI1h=57 indicates neutral zone (neither overbought nor oversold); momentum4h=0.2 shows weak positive momentum insufficient for directional conviction; spread_bps=0.55 is acceptable but combined with weak technicals does not justify entry; insufficient edge for paper trading decision\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-028",
+    "case_facts": {
+      "price": 60483.0,
+      "rsi": 58,
+      "momentum": 0.3,
+      "spread": 0.7,
+      "proposals": 10,
+      "rejections": 0,
+      "wins": 4,
+      "losses": 6,
+      "avg_pnl": 0.3
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI at 58 indicates neither overbought nor oversold conditions (neutral zone 40-60). Momentum at 0.3 is weak and insufficient to establish directional bias. Spread at 0.7bps is acceptable but lacks confluence with price action signals. No clear edge present. Recommend monitoring for stronger momentum divergence or RSI extremes before entry consideration.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI at 58 indicates neutral momentum without clear directional bias. Momentum4h at 0.3 is weak and insufficient to establish conviction. Spread at 0.7bps is acceptable but insufficient to overcome weak signal quality. No actionable edge present.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  },
+  {
+    "case_id": "pi_trading_decision-029",
+    "case_facts": {
+      "price": 60500.25,
+      "rsi": 59,
+      "momentum": 0.4,
+      "spread": 0.85,
+      "proposals": 11,
+      "rejections": 1,
+      "wins": 5,
+      "losses": 9,
+      "avg_pnl": 0.35
+    },
+    "response_a": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI at 59 indicates neutral momentum (not overbought/oversold). Momentum at 0.4 is weak and insufficient for directional conviction. Spread of 0.85 bps is acceptable but combined with weak technicals does not justify entry. Insufficient signal confluence for trade initiation.\"\n}\n```",
+    "response_b": "```json\n{\n  \"action\": \"skip\",\n  \"direction\": null,\n  \"conviction\": null,\n  \"reasoning\": \"RSI at 59 indicates neutral momentum (not overbought/oversold). Momentum4h at 0.4 is weak positive signal. Spread at 0.85bps is acceptable but combined with weak technicals and lack of clear directional bias, risk/reward is unfavorable. Insufficient confluence for entry decision. Recommend monitoring for stronger signal development.\"\n}\n```",
+    "scores": {
+      "response_a": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "response_b": {
+        "evidence_fidelity_1_5": null,
+        "calibration_1_5": null,
+        "decision_quality_1_5": null
+      },
+      "preferred": null,
+      "notes": ""
+    }
+  }
+]
