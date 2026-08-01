@@ -40,8 +40,8 @@ async def test_health(client):
     resp = await client.get("/api/health")
     assert resp.status_code == 200
     data = resp.json()
-    # /api/health now reports real health: "healthy" or "degraded".
-    assert data["status"] in ("healthy", "degraded")
+    # /api/health reports tri-state health: "healthy", "degraded", or "initializing".
+    assert data["status"] in ("healthy", "degraded", "initializing")
     assert "version" in data
 
 

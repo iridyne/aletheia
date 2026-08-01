@@ -7,7 +7,9 @@ Alerts go through the local operator notification sink (Windows toast and Telegr
 """
 
 import logging
+import math
 import os
+import time
 
 from aletheia.config.loader import load_config
 from aletheia.files.jsonl import write_audit
@@ -42,6 +44,10 @@ _self_heal_suppressed_alerted = False
 # is fine: a restart re-probes the provider on the next agent run anyway.
 _llm_consecutive_failures = 0
 
+# Process start time for warmup-window calculations (monotonic — not affected by
+# clock adjustments or manual time changes between restarts).
+_process_start_time: float = time.monotonic()
+
 
 def record_llm_failure() -> None:
     global _llm_consecutive_failures
@@ -64,32 +70,30 @@ def get_llm_consecutive_failures() -> int:
 
 
 def _market_data_stale_minutes(cfg) -> float | None:
-    """Minutes since the newest market snapshot, or None if not applicable.
+    """Minutes since the newest market snapshot, None if not applicable.
 
-    Returns None (i.e. "do not flag") when paused, when the scheduler is
-    disabled, when no snapshot exists yet, or when the timestamp can't be parsed
-    — staleness only means something when the feed is supposed to be updating.
+    Returns None when paused or scheduler disabled (non-applicable).
+    Returns float('inf') when the scheduler is active but no snapshot has ever
+    been collected — the caller decides whether that is initializing or degraded.
+    Exceptions propagate so the caller can distinguish probe errors from the
+    not-applicable / never-collected cases.
     """
     if cfg.runtime.paused or not cfg.runtime.scheduler_enabled:
         return None
-    try:
-        from datetime import datetime, timezone
-        from aletheia.storage.repositories import list_market_snapshots
-        rows = list_market_snapshots(limit=1)
-        if not rows:
-            return None  # never collected yet — "not started", not "stale"
-        snapshot_at = rows[0].get("snapshot_at")
-        if not snapshot_at:
-            return None
-        ts = datetime.fromisoformat(snapshot_at)
-        # Snapshots are stored as tz-aware UTC isoformat; older rows may be naive.
-        # Normalize both sides to aware-UTC before subtracting.
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - ts).total_seconds() / 60.0
-    except Exception as e:
-        logger.warning("market-data staleness check failed: %s", e)
-        return None
+    from datetime import datetime, timezone
+    from aletheia.storage.repositories import list_market_snapshots
+    rows = list_market_snapshots(limit=1)
+    if not rows:
+        return float("inf")  # scheduler active but snapshot never collected
+    snapshot_at = rows[0].get("snapshot_at")
+    if not snapshot_at:
+        return float("inf")
+    ts = datetime.fromisoformat(snapshot_at)
+    # Snapshots are stored as tz-aware UTC isoformat; older rows may be naive.
+    # Normalize both sides to aware-UTC before subtracting.
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts).total_seconds() / 60.0
 
 
 def _mo_ran_in_current_session() -> bool:
@@ -139,28 +143,93 @@ def _observer_stale_minutes() -> float | None:
     except Exception:
         return None
 
+def _observer_latest_session_run_info() -> dict | None:
+    """Info about the latest market_observer run in the current runtime session.
 
-def _exchange_reachable(cfg=None) -> bool:
+    Returns a dict with:
+      - status: run status string (completed/failed/running/…)
+      - latest_opp_age_min: minutes since the newest session opportunity, or
+        None if no opportunity was created in this session.
+
+    Returns None when no MO run exists in the current session, or on any DB
+    error (caller should treat this as unknown/initializing, not healthy).
+    """
+    try:
+        from datetime import datetime, timezone
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        session_row = db.execute(
+            "SELECT started_at FROM runtime_sessions WHERE ended_at IS NULL"
+            " ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()
+        if not session_row or not session_row[0]:
+            return None
+        session_start = session_row[0]
+        run_row = db.execute(
+            "SELECT status FROM agent_runs"
+            " WHERE agent_name='market_observer' AND started_at >= ?"
+            " ORDER BY rowid DESC LIMIT 1",
+            (session_start,),
+        ).fetchone()
+        if not run_row:
+            return None
+        opp_row = db.execute(
+            "SELECT MAX(created_at) AS t FROM opportunities WHERE created_at >= ?",
+            (session_start,),
+        ).fetchone()
+        latest_opp_age_min: float | None = None
+        if opp_row and opp_row["t"]:
+            dt = datetime.fromisoformat(opp_row["t"].replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            latest_opp_age_min = (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+        return {"status": run_row["status"], "latest_opp_age_min": latest_opp_age_min}
+    except Exception:
+        return None
+
+
+def _exchange_reachable(cfg=None) -> bool | None:
     """Return the last cached exchange probe result.
 
     Health/status endpoints are dashboard hot paths. They must not run an
     external exchange request on every frontend poll; the scheduler/startup
     connectivity monitor owns that probe and keeps the last result in memory.
+
+    Returns:
+        True   — a cached probe confirmed reachability.
+        False  — a cached probe confirmed failure.
+        None   — no probe has ever completed (unknown state), or the
+                 connectivity module raised; callers must not treat this as
+                 reachable.
     """
     try:
         from aletheia.agent_runtime.connectivity import get_status
         result = (get_status().get("last_probe") or {})
         if not result:
-            return True
+            return None  # no probe has run yet — unknown, not reachable
         return result.get("reachable", False)
     except Exception:
-        return False
+        return None  # module error → unknown, not False
 
 
 def compute_health() -> dict:
-    """Compute current health from real backend data. Returns {healthy, issues}."""
+    """Compute current health from real backend data.
+
+    Returns a dict with:
+      - healthy (bool): True only when status is "healthy".
+      - status (str): "healthy" | "degraded" | "initializing".
+          "healthy"      — all critical signals have recent positive observations.
+          "degraded"     — at least one signal confirmed a negative state.
+          "initializing" — no degraded signals, but one or more critical signals
+                           lack sufficient evidence (fresh boot, warmup, probe
+                           error). Health is not yet established; do not treat
+                           as healthy.
+      - issues (list[str]): all signal strings, prefixed with "initializing_"
+                            for initializing-state entries.
+    """
     cfg = load_config()
     issues: list[str] = []
+    initializing: list[str] = []
 
     runs = list_agent_runs(limit=20)
     if runs:
@@ -196,27 +265,64 @@ def compute_health() -> dict:
     except Exception:
         pass
 
-    stale_min = _market_data_stale_minutes(cfg)
-    if stale_min is not None and stale_min > cfg.health.market_data_max_staleness_min:
-        issues.append(f"market_data_stale:{stale_min:.0f}min")
+    # Market data freshness: distinguish paused/disabled (non-applicable),
+    # never collected (initializing or degraded depending on uptime), and stale.
+    try:
+        stale_min = _market_data_stale_minutes(cfg)
+    except Exception as e:
+        logger.warning("market-data staleness probe error: %s", e)
+        stale_min = None
+        if not cfg.runtime.paused and cfg.runtime.scheduler_enabled:
+            initializing.append("market_data_probe_error")
+    else:
+        if stale_min is None:
+            pass  # paused or scheduler disabled — non-applicable
+        elif math.isinf(stale_min):
+            # Scheduler active but snapshot never collected: initializing within
+            # the expected first-run window, degraded once that window is past.
+            _uptime = time.monotonic() - _process_start_time
+            if _uptime > cfg.health.market_data_max_staleness_min * 60:
+                issues.append("market_data_never_collected")
+            else:
+                initializing.append("market_data_initializing")
+        elif stale_min > cfg.health.market_data_max_staleness_min:
+            issues.append(f"market_data_stale:{stale_min:.0f}min")
 
     if _llm_consecutive_failures >= cfg.health.llm_unavailable_alert_after:
         issues.append(f"llm_unavailable:{_llm_consecutive_failures}")
 
-    # Observer stale: Market Observer should produce opportunities every ~15 min.
-    # Only check after MO has completed at least one run in the current session —
-    # before that, the scheduler is still warming up after a restart (manual,
-    # git-hook, or self-heal).  Keying on agent_runs rather than session uptime
-    # means high-churn restart periods don't permanently suppress the alert.
+    # Observer freshness: check the latest Market Observer run's outcome and
+    # session-scoped opportunity staleness instead of a global MAX(created_at)
+    # that could be satisfied by prior-session data.
     if not cfg.runtime.paused and cfg.runtime.scheduler_enabled:
-        if _mo_ran_in_current_session():
-            obs_age = _observer_stale_minutes()
-            if obs_age is not None and obs_age > 45:
-                issues.append(f"observer_stale:{obs_age:.0f}min")
+        if not _mo_ran_in_current_session():
+            # Scheduler has not yet completed the first MO run — still warming up.
+            initializing.append("observer_initializing")
+        else:
+            run_info = _observer_latest_session_run_info()
+            if run_info is None:
+                # DB error or session/run mismatch — can't determine state.
+                initializing.append("observer_run_unknown")
+            elif run_info["status"] in _FAILED_STATUSES:
+                issues.append("observer_run_failed")
+            elif run_info["status"] == "running":
+                pass  # still in progress; evaluate after completion
+            else:
+                # Run completed. Check session opportunity age.
+                age = run_info["latest_opp_age_min"]
+                if age is not None and age > 45:
+                    issues.append(f"observer_stale:{age:.0f}min")
+                # age is None → no opportunities this session; that is a valid
+                # zero-eligible result when the run completed cleanly.
 
-    # Exchange connectivity: can't trade if the exchange API is unreachable.
+    # Exchange connectivity: no cached probe → unknown (initializing), not healthy.
+    # paper_internal has no external endpoint so its probe resolves quickly;
+    # until then it is initializing rather than assumed reachable.
     if not cfg.runtime.paused:
-        if not _exchange_reachable(cfg):
+        reachable = _exchange_reachable(cfg)
+        if reachable is None:
+            initializing.append("exchange_connectivity_unknown")
+        elif not reachable:
             issues.append("exchange_unreachable")
 
     # Stale-process guard: disk source committed past what this process booted on.
@@ -236,7 +342,18 @@ def compute_health() -> dict:
     except Exception:
         pass
 
-    return {"healthy": len(issues) == 0, "issues": issues}
+    if not issues and not initializing:
+        status = "healthy"
+    elif not issues:
+        status = "initializing"
+    else:
+        status = "degraded"
+
+    return {
+        "healthy": status == "healthy",
+        "status": status,
+        "issues": issues + initializing,
+    }
 
 
 def _send_alert(message: str) -> None:
@@ -606,7 +723,7 @@ def run_health_check() -> dict:
         # If exchange is unreachable, restart won't help — let connectivity
         # monitor handle pause/resume. Only restart when network is fine but
         # data is still stale (implies a process/code bug).
-        if not _exchange_reachable(cfg):
+        if _exchange_reachable(cfg) is False:
             logger.info("market_data_stale but exchange unreachable — "
                         "deferring to connectivity_monitor (no restart)")
         else:

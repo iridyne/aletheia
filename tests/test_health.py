@@ -25,8 +25,20 @@ def setup_env(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
     from aletheia.agent_runtime import health
+    # Capture the real function before patching so callers can restore it.
+    real_market_stale = health._market_data_stale_minutes
     health.reset_llm_failures()
     monkeypatch.setattr(health, "_exchange_reachable", lambda cfg=None: True)
+    # Patch new tri-state helpers to healthy defaults so tests focused on
+    # unrelated signals (LLM, code drift, …) get a clean baseline.
+    monkeypatch.setattr(health, "_mo_ran_in_current_session", lambda: True)
+    monkeypatch.setattr(
+        health,
+        "_observer_latest_session_run_info",
+        lambda: {"status": "completed", "latest_opp_age_min": 5.0},
+    )
+    monkeypatch.setattr(health, "_market_data_stale_minutes", lambda cfg: 5.0)
+    return real_market_stale
 
 
 def _add_run(status):
@@ -72,6 +84,7 @@ def test_compute_health_healthy(tmp_path, monkeypatch):
         _add_run("completed")
     h = health.compute_health()
     assert h["healthy"] is True
+    assert h["status"] == "healthy"
     assert h["issues"] == []
 
 
@@ -161,8 +174,9 @@ def test_fresh_market_data_not_stale(tmp_path, monkeypatch):
 
 
 def test_stale_market_data_flagged(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
+    real_fn = setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
+    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
     _add_snapshot(_isoformat_minutes_ago(120))  # 2h old, far past 30m default
     h = health.compute_health()
     assert h["healthy"] is False
@@ -170,10 +184,11 @@ def test_stale_market_data_flagged(tmp_path, monkeypatch):
 
 
 def test_stale_market_data_not_flagged_when_paused(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
+    real_fn = setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.runtime.paused = True; save_config(cfg)
     from aletheia.agent_runtime import health
+    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
     _add_snapshot(_isoformat_minutes_ago(120))
     h = health.compute_health()
     # Paused means data is expected to stop updating — must not false-alarm.
@@ -181,11 +196,18 @@ def test_stale_market_data_not_flagged_when_paused(tmp_path, monkeypatch):
 
 
 def test_no_snapshots_is_not_stale(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
+    import time
+    real_fn = setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
-    # Never collected any data yet — that is "not started", not "stale".
+    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
+    # Pin _process_start_time to now so uptime is always well within the warmup
+    # window regardless of how long the test process has been running.
+    monkeypatch.setattr(health, "_process_start_time", time.monotonic())
+    # Never collected any data yet — "not started", which is initializing, not stale.
     h = health.compute_health()
     assert not any("market_data_stale" in i for i in h["issues"])
+    assert h["status"] == "initializing"
+    assert any("market_data_initializing" in i for i in h["issues"])
 
 
 # --- LLM consecutive-failure counter (fulfils llm_unavailable_alert_after) ---
@@ -349,3 +371,140 @@ def test_code_drift_first_time_still_restarts(tmp_path, monkeypatch):
 
     health.run_health_check()
     assert restarted_for == ["code_drift"]
+
+
+# ---------------------------------------------------------------------------
+# Tri-state health: initializing / unknown states (Issue #393)
+# ---------------------------------------------------------------------------
+
+def test_exchange_no_probe_is_unknown_not_healthy(tmp_path, monkeypatch):
+    """No cached exchange probe must NOT be treated as reachable (issue #393)."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    # Override the default exchange patch to return None (unknown / no probe).
+    monkeypatch.setattr(health, "_exchange_reachable", lambda cfg=None: None)
+    h = health.compute_health()
+    assert h["status"] == "initializing"
+    assert h["healthy"] is False
+    assert any("exchange_connectivity_unknown" in i for i in h["issues"])
+    assert not any("exchange_unreachable" in i for i in h["issues"])
+
+
+def test_exchange_confirmed_unreachable_is_degraded(tmp_path, monkeypatch):
+    """A cached probe that reported failure must surface as degraded, not unknown."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    monkeypatch.setattr(health, "_exchange_reachable", lambda cfg=None: False)
+    h = health.compute_health()
+    assert h["status"] == "degraded"
+    assert any("exchange_unreachable" in i for i in h["issues"])
+
+
+def test_market_data_never_collected_is_initializing_within_warmup(tmp_path, monkeypatch):
+    """Scheduler active + no snapshot + within warmup window → initializing, not degraded."""
+    import time
+    real_fn = setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
+    # Fresh process: uptime is well below the staleness threshold.
+    monkeypatch.setattr(health, "_process_start_time", time.monotonic())
+    # No snapshots in DB.
+    h = health.compute_health()
+    assert h["status"] == "initializing"
+    assert any("market_data_initializing" in i for i in h["issues"])
+    assert not any("market_data_never_collected" in i for i in h["issues"])
+
+
+def test_market_data_never_collected_becomes_degraded_after_deadline(tmp_path, monkeypatch):
+    """Scheduler active + no snapshot + past warmup deadline → degraded."""
+    import time
+    real_fn = setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    from aletheia.config.loader import load_config
+    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
+    # Pin process start time far in the past so deadline is exceeded.
+    threshold_sec = load_config().health.market_data_max_staleness_min * 60
+    monkeypatch.setattr(health, "_process_start_time", time.monotonic() - threshold_sec - 60)
+    # No snapshots in DB.
+    h = health.compute_health()
+    assert h["status"] == "degraded"
+    assert any("market_data_never_collected" in i for i in h["issues"])
+
+
+def test_market_data_probe_error_surfaces_as_initializing(tmp_path, monkeypatch):
+    """An exception in the staleness probe must not be silently dropped."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+
+    def _boom(cfg):
+        raise RuntimeError("db gone")
+
+    monkeypatch.setattr(health, "_market_data_stale_minutes", _boom)
+    h = health.compute_health()
+    assert h["status"] == "initializing"
+    assert any("market_data_probe_error" in i for i in h["issues"])
+
+
+def test_observer_no_run_is_initializing(tmp_path, monkeypatch):
+    """Before MO runs in the current session, health must be initializing, not healthy."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    # Override: MO has not run yet.
+    monkeypatch.setattr(health, "_mo_ran_in_current_session", lambda: False)
+    h = health.compute_health()
+    assert h["status"] == "initializing"
+    assert any("observer_initializing" in i for i in h["issues"])
+
+
+def test_observer_valid_zero_opportunities_is_healthy(tmp_path, monkeypatch):
+    """After MO completes with zero eligible opportunities, health must remain healthy."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    monkeypatch.setattr(health, "_mo_ran_in_current_session", lambda: True)
+    # Latest run completed, no opportunities produced — a legitimate zero result.
+    monkeypatch.setattr(
+        health,
+        "_observer_latest_session_run_info",
+        lambda: {"status": "completed", "latest_opp_age_min": None},
+    )
+    h = health.compute_health()
+    assert h["status"] == "healthy"
+    assert h["healthy"] is True
+    assert not any("observer" in i for i in h["issues"])
+
+
+def test_observer_run_failed_is_degraded(tmp_path, monkeypatch):
+    """A failed MO run in the current session must surface as degraded."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    monkeypatch.setattr(health, "_mo_ran_in_current_session", lambda: True)
+    monkeypatch.setattr(
+        health,
+        "_observer_latest_session_run_info",
+        lambda: {"status": "failed", "latest_opp_age_min": None},
+    )
+    h = health.compute_health()
+    assert h["status"] == "degraded"
+    assert any("observer_run_failed" in i for i in h["issues"])
+
+
+def test_fresh_boot_before_probes_is_initializing(tmp_path, monkeypatch):
+    """Simulation of a completely fresh boot: no probe, no snapshot, no MO run.
+
+    Health must be 'initializing', never 'healthy', before any evidence exists.
+    """
+    import time
+    real_market_fn = setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    # Restore real staleness fn to simulate fresh boot with no snapshot.
+    monkeypatch.setattr(health, "_market_data_stale_minutes", real_market_fn)
+    monkeypatch.setattr(health, "_process_start_time", time.monotonic())  # just started
+    monkeypatch.setattr(health, "_exchange_reachable", lambda cfg=None: None)  # no probe yet
+    monkeypatch.setattr(health, "_mo_ran_in_current_session", lambda: False)  # no MO run yet
+    h = health.compute_health()
+    assert h["status"] == "initializing"
+    assert h["healthy"] is False
+    # The payload must NOT appear as degraded (no hard failures yet).
+    assert not any(
+        i in h["issues"] for i in ("exchange_unreachable", "market_data_stale", "observer_run_failed")
+    )
