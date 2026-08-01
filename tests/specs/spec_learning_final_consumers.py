@@ -57,7 +57,7 @@ def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch):
                 severity="warning",
                 summary="Require stronger evidence before a parameter proposal.",
                 created_at="2026-07-14T00:00:00+00:00",
-                expires_at="2026-08-01T00:00:00+00:00",
+                expires_at="2027-08-01T00:00:00+00:00",
             ),
             SimpleNamespace(
                 lesson_id="expired-reviewed-lesson",
