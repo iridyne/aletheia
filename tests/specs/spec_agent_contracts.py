@@ -243,7 +243,7 @@ def test_gateway_session_service_has_safe_macos_launchd_contract():
 
 @spec_claim(
     SpecClaim(
-        "AC-S12", "agent_contracts", "OS service lifecycle", "L2c",
+        "AC-S14", "agent_contracts", "§1 OS service lifecycle", "L2c",
         "Gateway service installation, enablement, and runtime are independent; "
         "machine installation never collects an administrator password.",
         status="implemented",

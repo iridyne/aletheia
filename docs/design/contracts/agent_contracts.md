@@ -90,6 +90,8 @@ durably queued and independently retried by `outcome_hook_replay`.
   service manager and distinguishes an absent registration from an unreadable
   manager state.
 - Git operations never start or restart the gateway. Applying new checkout code
+  requires an explicit owner-controlled `gateway restart`; legacy
+  Aletheia-managed auto-restart hooks are removed without touching foreign hooks.
 
 ### OS Service-lifecycle Contract
 
@@ -111,8 +113,6 @@ durably queued and independently retried by `outcome_hook_replay`.
   Aletheia never asks for or stores an administrator password and never copies
   the interactive user's credentials into the machine runtime.
 - Service lifecycle commands remain unavailable to LLM-driven agent tools.
-  requires an explicit owner-controlled `gateway restart`; legacy
-  Aletheia-managed auto-restart hooks are removed without touching foreign hooks.
 
 ---
 

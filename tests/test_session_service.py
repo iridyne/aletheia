@@ -34,6 +34,62 @@ def test_windows_install_falls_back_only_after_s4u_access_denied(monkeypatch):
     assert len(calls) == 2
 
 
+def test_windows_export_normalization_preserves_owned_task(monkeypatch):
+    from aletheia.gateway import session_service
+
+    sid = "S-1-5-21-111-222-333-1001"
+    monkeypatch.setattr(session_service._managed, "_current_user", lambda: r"HOST\user")
+    monkeypatch.setattr(session_service, "_windows_current_user_ids", lambda: {r"host\user", sid.casefold()})
+    monkeypatch.setattr(
+        session_service,
+        "_windows_program_and_arguments",
+        lambda: (r"C:\Aletheia\aletheia.exe", "__packaged_gateway_runner --no-browser"),
+    )
+    exported = (
+        session_service._build_windows_task_xml(enabled=False)
+        .replace(r"HOST\user", sid)
+        .replace("<LogonType>S4U</LogonType>", "<LogonType>InteractiveToken</LogonType>")
+        .replace("<RunLevel>LeastPrivilege</RunLevel>", "")
+    )
+    parsed = session_service._parse_windows_task(exported)
+    assert parsed["owned"] is True
+    assert parsed["config_valid"] is True
+
+
+def test_windows_export_omitted_enabled_setting_means_enabled(monkeypatch):
+    from aletheia.gateway import session_service
+
+    monkeypatch.setattr(session_service._managed, "_current_user", lambda: r"HOST\user")
+    monkeypatch.setattr(session_service, "_windows_current_user_ids", lambda: {r"host\user"})
+    monkeypatch.setattr(
+        session_service,
+        "_windows_program_and_arguments",
+        lambda: (r"C:\Aletheia\aletheia.exe", "__packaged_gateway_runner --no-browser"),
+    )
+    exported = session_service._build_windows_task_xml(enabled=True).replace(
+        "<Enabled>true</Enabled><Hidden>true</Hidden>", "<Hidden>true</Hidden>"
+    )
+    parsed = session_service._parse_windows_task(exported)
+    assert parsed["enabled"] is True
+    assert parsed["config_valid"] is True
+
+
+def test_windows_export_normalization_rejects_foreign_sid(monkeypatch):
+    from aletheia.gateway import session_service
+
+    monkeypatch.setattr(session_service._managed, "_current_user", lambda: r"HOST\user")
+    monkeypatch.setattr(session_service, "_windows_current_user_ids", lambda: {r"host\user", "s-1-5-21-111-222-333-1001"})
+    monkeypatch.setattr(
+        session_service,
+        "_windows_program_and_arguments",
+        lambda: (r"C:\Aletheia\aletheia.exe", "__packaged_gateway_runner --no-browser"),
+    )
+    exported = session_service._build_windows_task_xml().replace(
+        r"HOST\user", "S-1-5-21-999-888-777-1001"
+    )
+    assert session_service._parse_windows_task(exported)["owned"] is False
+
+
 def test_windows_enable_does_not_start(monkeypatch):
     from aletheia.gateway import session_service
     monkeypatch.setattr(session_service, "_status_windows", lambda: session_service._result(backend="task_scheduler", installed=True, enabled=False, owned=True, config_valid=True))

@@ -20,6 +20,7 @@ from pathlib import Path
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
 from aletheia.gateway import managed_service as _managed
 from aletheia.gateway.pidfile import is_running
+from aletheia.gateway.windows_identity import current_windows_user_ids as _windows_current_user_ids
 
 WINDOWS_TASK_NAME = "Aletheia Trading OS Gateway Service"
 MACOS_LABEL = "com.aletheia.trading-os.gateway.service"
@@ -111,6 +112,7 @@ def _parse_windows_task(xml: str) -> dict:
         return (node.text or "").strip() if node is not None else ""
 
     command, arguments = _windows_program_and_arguments()
+    enabled_value = value(".//t:Settings/t:Enabled").casefold()
     actual = {
         "command": value(".//t:Actions/t:Exec/t:Command"),
         "arguments": value(".//t:Actions/t:Exec/t:Arguments"),
@@ -118,7 +120,9 @@ def _parse_windows_task(xml: str) -> dict:
         "user": value(".//t:Principals/t:Principal/t:UserId"),
         "logon_type": value(".//t:Principals/t:Principal/t:LogonType"),
         "run_level": value(".//t:Principals/t:Principal/t:RunLevel"),
-        "enabled": value(".//t:Settings/t:Enabled").lower() == "true",
+        # Task Scheduler omits Enabled after /ENABLE because true is the schema default.
+        "enabled": enabled_value in {"", "true", "1"},
+        "enabled_value_valid": enabled_value in {"", "true", "false", "1", "0"},
         "has_logon_trigger": root.find(".//t:Triggers/t:LogonTrigger", ns) is not None,
         "has_repetition": root.find(".//t:Repetition", ns) is not None,
         "has_time_trigger": root.find(".//t:Triggers/t:TimeTrigger", ns) is not None,
@@ -127,12 +131,13 @@ def _parse_windows_task(xml: str) -> dict:
         actual["command"] == command
         and actual["arguments"] == arguments
         and actual["working_directory"] == str(_PROJECT_ROOT)
-        and actual["user"] == _managed._current_user()
+        and actual["user"].casefold() in _windows_current_user_ids()
         and actual["logon_type"] in {"S4U", "InteractiveToken"}
-        and actual["run_level"] == "LeastPrivilege"
+        and actual["run_level"] in {"", "LeastPrivilege"}
     )
     actual["config_valid"] = (
         actual["owned"]
+        and actual["enabled_value_valid"]
         and actual["has_logon_trigger"]
         and not actual["has_repetition"]
         and not actual["has_time_trigger"]

@@ -23,7 +23,10 @@ from pathlib import Path, PureWindowsPath
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
 from aletheia.gateway.console_text import decode_console
 from aletheia.gateway.pidfile import _no_window_kwargs, _resolve_real_python, is_running
-from aletheia.gateway.windows_identity import current_windows_user as _current_user
+from aletheia.gateway.windows_identity import (
+    current_windows_user as _current_user,
+    current_windows_user_ids as _current_user_ids,
+)
 from aletheia.packaged_process import gateway_runner_command, is_frozen_runtime
 
 MACOS_LABEL = "com.aletheia.trading-os.gateway.session"
@@ -174,9 +177,9 @@ def _windows_task_definition_matches(xml: str) -> bool:
     return (
         (command, arguments) in expected
         and value(".//t:Actions/t:Exec/t:WorkingDirectory") == str(_PROJECT_ROOT)
-        and value(".//t:Principals/t:Principal/t:UserId") == _current_user()
+        and value(".//t:Principals/t:Principal/t:UserId").casefold() in _current_user_ids()
         and value(".//t:Principals/t:Principal/t:LogonType") in {"S4U", "InteractiveToken"}
-        and value(".//t:Principals/t:Principal/t:RunLevel") == "LeastPrivilege"
+        and value(".//t:Principals/t:Principal/t:RunLevel") in {"", "LeastPrivilege"}
     )
 
 
