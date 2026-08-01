@@ -108,9 +108,49 @@ def test_do_stop_reports_when_port_stuck(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [])
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: False)
 
-    lifecycle.do_stop()
+    with pytest.raises(typer.Exit):
+        lifecycle.do_stop()
     err = capsys.readouterr().err
-    assert "still in use" in err.lower()
+    assert "refusing to terminate an unverified holder" in err.lower()
+
+
+def test_do_stop_blocks_on_service_manager_denial_without_killing_processes(tmp_path, monkeypatch, capsys):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    from aletheia.gateway import managed_service
+
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
+    monkeypatch.setattr(
+        managed_service, "stop",
+        lambda: {"ok": False, "platform": "task_scheduler", "reason": "access_denied"},
+    )
+    killed = []
+    monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: killed.append(pid))
+
+    with pytest.raises(typer.Exit):
+        lifecycle.do_stop()
+
+    assert killed == []
+    assert "stop blocked by task_scheduler: access_denied" in capsys.readouterr().err.lower()
+
+
+def test_do_start_refuses_unverified_port_holder(tmp_path, monkeypatch, capsys):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(lifecycle, "wait_port_free", lambda *args, **kwargs: False)
+    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [])
+    monkeypatch.setattr(lifecycle, "find_port_holders", lambda port: [999])
+    killed = []
+    monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: killed.append(pid))
+
+    with pytest.raises(typer.Exit):
+        lifecycle.do_start(no_browser=True)
+
+    assert killed == []
+    assert "refusing to terminate unverified holder" in capsys.readouterr().err.lower()
 
 
 def test_do_stop_not_running_message(tmp_path, monkeypatch, capsys):

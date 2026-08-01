@@ -167,6 +167,7 @@ def test_windows_start_then_stop_runs_and_removes_the_task(monkeypatch):
     from aletheia.gateway import managed_service as service
 
     monkeypatch.setattr(service, "_build_windows_task_xml", lambda **_kwargs: "<Task />")
+    monkeypatch.setattr(service, "_status_windows", lambda: {"managed": False})
     calls: list[list[str]] = []
     monkeypatch.setattr(service.subprocess, "run", lambda args, **_kwargs: calls.append(args) or _proc())
 
@@ -238,6 +239,54 @@ def test_windows_stop_keeps_failure_when_the_task_survives(monkeypatch):
     assert result["ok"] is False
     assert result["reason"] == "schtasks_error"
     assert "エラー" in result["detail"]
+
+
+def test_windows_stop_reports_access_denied_without_deleting_task(monkeypatch):
+    """A scheduler ownership denial must remain actionable, not become a generic error."""
+    from aletheia.gateway import managed_service as service
+
+    calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        return _proc(returncode=1, stderr=b"ERROR: Access is denied.\r\n")
+
+    monkeypatch.setattr(service.subprocess, "run", fake_run)
+
+    result = service._stop_windows()
+
+    assert result["ok"] is False
+    assert result["managed"] is None
+    assert result["reason"] == "access_denied"
+    assert calls == [["schtasks", "/End", "/TN", service.WINDOWS_TASK_NAME]]
+
+
+def test_windows_status_keeps_access_denied_as_unknown_ownership(monkeypatch):
+    from aletheia.gateway import managed_service as service
+
+    monkeypatch.setattr(
+        service.subprocess, "run",
+        lambda *args, **_kwargs: _proc(returncode=1, stderr=b"ERROR: Access is denied.\r\n"),
+    )
+
+    result = service._status_windows()
+
+    assert result["managed"] is None
+    assert result["reason"] == "access_denied"
+
+
+def test_windows_start_refuses_to_replace_unverified_same_named_task(monkeypatch):
+    from aletheia.gateway import managed_service as service
+
+    monkeypatch.setattr(service, "_status_windows", lambda: {"managed": None, "reason": "ownership_conflict"})
+    calls: list[list[str]] = []
+    monkeypatch.setattr(service.subprocess, "run", lambda args, **_kwargs: calls.append(args) or _proc())
+
+    result = service._start_windows(no_browser=True)
+
+    assert result["ok"] is False
+    assert result["reason"] == "ownership_conflict"
+    assert calls == []
 
 
 def test_linux_start_uses_notify_service_type(monkeypatch):

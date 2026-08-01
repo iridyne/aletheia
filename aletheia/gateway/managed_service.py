@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path, PureWindowsPath
 
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
@@ -144,6 +145,39 @@ def _is_not_found(detail: str) -> bool:
         "does not exist", "cannot find the file",
         "找不到", "不存在",
     ))
+
+
+def _is_access_denied(detail: str) -> bool:
+    """Return True for the access-denied wording emitted by supported managers."""
+    low = (detail or "").lower()
+    return "access is denied" in low or "access denied" in low or "拒绝访问" in detail
+
+
+def _windows_task_definition_matches(xml: str) -> bool:
+    """Verify that a same-named task belongs to this runtime before managing it."""
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return False
+    ns = {"t": _XML_NS}
+
+    def value(path: str) -> str:
+        node = root.find(path, ns)
+        return (node.text or "").strip() if node is not None else ""
+
+    command = value(".//t:Actions/t:Exec/t:Command")
+    arguments = value(".//t:Actions/t:Exec/t:Arguments")
+    expected = {
+        _windows_program_and_arguments(no_browser=no_browser)
+        for no_browser in (False, True)
+    }
+    return (
+        (command, arguments) in expected
+        and value(".//t:Actions/t:Exec/t:WorkingDirectory") == str(_PROJECT_ROOT)
+        and value(".//t:Principals/t:Principal/t:UserId") == _current_user()
+        and value(".//t:Principals/t:Principal/t:LogonType") == "S4U"
+        and value(".//t:Principals/t:Principal/t:RunLevel") == "LeastPrivilege"
+    )
 
 
 def _parse_launchctl(output: str) -> dict:
@@ -411,11 +445,39 @@ def _status_windows() -> dict:
     except Exception as exc:
         return {"supported": True, "managed": None, "platform": "task_scheduler", "reason": "schtasks_error", "detail": type(exc).__name__}
     if proc.returncode != 0:
-        return {"supported": True, "managed": False, "platform": "task_scheduler"}
+        detail = (proc.stderr or "").strip()[:200]
+        if _is_access_denied(proc.stderr):
+            return {"supported": True, "managed": None, "platform": "task_scheduler", "reason": "access_denied", "detail": detail}
+        if _is_not_found(proc.stderr):
+            return {"supported": True, "managed": False, "platform": "task_scheduler"}
+        return {"supported": True, "managed": None, "platform": "task_scheduler", "reason": "schtasks_error", "detail": detail}
+    if not _windows_task_definition_matches(proc.stdout):
+        return {"supported": True, "managed": None, "platform": "task_scheduler", "reason": "ownership_conflict"}
     return {"supported": True, "managed": True, "platform": "task_scheduler", "running": is_running()}
 
 
 def _start_windows(*, no_browser: bool) -> dict:
+    current = _status_windows()
+    if current.get("managed") is None:
+        return {
+            "supported": True, "managed": None, "ok": False,
+            "platform": "task_scheduler", "reason": current.get("reason", "ownership_conflict"),
+            **({"detail": current["detail"]} if current.get("detail") else {}),
+        }
+    if current.get("managed") is True:
+        if current.get("running"):
+            return {"supported": True, "managed": True, "ok": True, "platform": "task_scheduler", "already_running": True}
+        try:
+            started = _run_schtasks(["schtasks", "/Run", "/TN", WINDOWS_TASK_NAME])
+        except FileNotFoundError:
+            return {"supported": False, "managed": False, "ok": False, "platform": "task_scheduler", "reason": "schtasks_unavailable"}
+        except Exception as exc:
+            return {"supported": True, "managed": None, "ok": False, "platform": "task_scheduler", "reason": "schtasks_error", "detail": type(exc).__name__}
+        if started.returncode != 0:
+            reason = "access_denied" if _is_access_denied(started.stderr) else "schtasks_error"
+            return {"supported": True, "managed": True, "ok": False, "platform": "task_scheduler", "reason": reason, "detail": (started.stderr or "").strip()[:200]}
+        return {"supported": True, "managed": True, "ok": True, "platform": "task_scheduler"}
+
     xml = _build_windows_task_xml(no_browser=no_browser)
     temp_path: str | None = None
     try:
@@ -426,10 +488,12 @@ def _start_windows(*, no_browser: bool) -> dict:
             ["schtasks", "/Create", "/TN", WINDOWS_TASK_NAME, "/XML", temp_path, "/F"]
         )
         if created.returncode != 0:
-            return {"supported": True, "managed": False, "ok": False, "platform": "task_scheduler", "reason": "schtasks_error", "detail": (created.stderr or "").strip()[:200]}
+            reason = "access_denied" if _is_access_denied(created.stderr) else "schtasks_error"
+            return {"supported": True, "managed": False, "ok": False, "platform": "task_scheduler", "reason": reason, "detail": (created.stderr or "").strip()[:200]}
         started = _run_schtasks(["schtasks", "/Run", "/TN", WINDOWS_TASK_NAME])
         if started.returncode != 0:
-            return {"supported": True, "managed": True, "ok": False, "platform": "task_scheduler", "reason": "schtasks_error", "detail": (started.stderr or "").strip()[:200]}
+            reason = "access_denied" if _is_access_denied(started.stderr) else "schtasks_error"
+            return {"supported": True, "managed": True, "ok": False, "platform": "task_scheduler", "reason": reason, "detail": (started.stderr or "").strip()[:200]}
     except FileNotFoundError:
         return {"supported": False, "managed": False, "ok": False, "platform": "task_scheduler", "reason": "schtasks_unavailable"}
     except Exception as exc:
@@ -446,6 +510,12 @@ def _start_windows(*, no_browser: bool) -> dict:
 def _stop_windows() -> dict:
     try:
         ended = _run_schtasks(["schtasks", "/End", "/TN", WINDOWS_TASK_NAME])
+        if ended.returncode != 0 and _is_access_denied(ended.stderr):
+            return {
+                "supported": True, "managed": None, "ok": False,
+                "platform": "task_scheduler", "reason": "access_denied",
+                "detail": (ended.stderr or "").strip()[:200],
+            }
         deleted = _run_schtasks(["schtasks", "/Delete", "/TN", WINDOWS_TASK_NAME, "/F"])
     except FileNotFoundError:
         return {"supported": False, "managed": False, "ok": False, "platform": "task_scheduler", "reason": "schtasks_unavailable"}
@@ -453,6 +523,12 @@ def _stop_windows() -> dict:
         return {"supported": True, "managed": None, "ok": False, "platform": "task_scheduler", "reason": "schtasks_error", "detail": type(exc).__name__}
     # _is_not_found only recognizes some locales' wording, so an unrecognized
     # failure is checked against the task's real existence before it is called one.
+    if deleted.returncode != 0 and _is_access_denied(deleted.stderr):
+        return {
+            "supported": True, "managed": None, "ok": False,
+            "platform": "task_scheduler", "reason": "access_denied",
+            "detail": (deleted.stderr or "").strip()[:200],
+        }
     if (
         deleted.returncode != 0
         and not _is_not_found(deleted.stderr)
@@ -462,34 +538,49 @@ def _stop_windows() -> dict:
     return {"supported": True, "managed": False, "ok": True, "platform": "task_scheduler", "end_requested": ended.returncode == 0}
 
 
+def _with_state(result: dict) -> dict:
+    """Add a stable cross-platform lifecycle state without removing legacy fields."""
+    if not result.get("supported"):
+        state = "unsupported"
+    elif result.get("reason") in {"access_denied", "ownership_conflict"}:
+        state = result["reason"]
+    elif result.get("managed") is True:
+        state = "running" if result.get("running", result.get("ok", False)) else "stopped"
+    elif result.get("managed") is False:
+        state = "stopped"
+    else:
+        state = "manager_error"
+    return {**result, "state": state}
+
+
 def status() -> dict:
     """Return the live ownership state without claiming a platform fallback."""
     if _is_macos():
-        return _status_macos()
+        return _with_state(_status_macos())
     if _is_linux():
-        return _status_linux()
+        return _with_state(_status_linux())
     if _is_windows():
-        return _status_windows()
-    return {"supported": False, "managed": False, "reason": f"unsupported_platform:{platform.system().lower()}"}
+        return _with_state(_status_windows())
+    return _with_state({"supported": False, "managed": False, "reason": f"unsupported_platform:{platform.system().lower()}"})
 
 
 def start(*, no_browser: bool) -> dict:
     """Create and start exactly one non-restarting user service."""
     if _is_macos():
-        return _start_macos(no_browser=no_browser)
+        return _with_state(_start_macos(no_browser=no_browser))
     if _is_linux():
-        return _start_linux(no_browser=no_browser)
+        return _with_state(_start_linux(no_browser=no_browser))
     if _is_windows():
-        return _start_windows(no_browser=no_browser)
-    return {"supported": False, "managed": False, "ok": False, "reason": f"unsupported_platform:{platform.system().lower()}"}
+        return _with_state(_start_windows(no_browser=no_browser))
+    return _with_state({"supported": False, "managed": False, "ok": False, "reason": f"unsupported_platform:{platform.system().lower()}"})
 
 
 def stop() -> dict:
     """Stop and unregister the on-demand user service; never enable a watchdog."""
     if _is_macos():
-        return _stop_macos()
+        return _with_state(_stop_macos())
     if _is_linux():
-        return _stop_linux()
+        return _with_state(_stop_linux())
     if _is_windows():
-        return _stop_windows()
-    return {"supported": False, "managed": False, "ok": False, "reason": f"unsupported_platform:{platform.system().lower()}"}
+        return _with_state(_stop_windows())
+    return _with_state({"supported": False, "managed": False, "ok": False, "reason": f"unsupported_platform:{platform.system().lower()}"})
