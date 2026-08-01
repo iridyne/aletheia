@@ -984,7 +984,7 @@ def test_learning_context_exposes_only_applied_unexpired_lessons(mock_lessons, m
             severity="warning",
             summary="Recent opportunities need stricter evidence.",
             created_at="2026-07-14T00:00:00+00:00",
-            expires_at="2026-08-01T00:00:00+00:00",
+            expires_at="2027-08-01T00:00:00+00:00",
         ),
         SimpleNamespace(
             lesson_id="applied-expired",

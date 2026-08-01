@@ -408,3 +408,67 @@ async def test_local_account_credit_rejects_finite_balance_overflow(
     )
     assert after == before
     assert repo.get_paper_account_cash_balance() == sys.float_info.max
+
+
+@pytest.mark.anyio
+async def test_tunnel_guard_rejects_unauthenticated_paper_account_mutations(tmp_path, monkeypatch):
+    """Tunnel enabled + missing/wrong token must return 401 with zero economic side effects.
+
+    Regression guard for #404: before the fix, these routes were absent from
+    _PROTECTED_PATHS, allowing any tunneled caller to mutate the paper capital
+    baseline or force-close positions without X-Aletheia-Token.
+    """
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.secrets import set_secret
+    from aletheia.server.app import app
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.tunnel.enabled = True
+    save_config(cfg)
+    set_secret("tunnel_api_token", "PAPEROWNER42")
+
+    mutation_routes = [
+        ("/api/settings/paper-account/credit", {"amount_usdt": 10.0}),
+        ("/api/settings/paper-account/debit", {"amount_usdt": 5.0}),
+        ("/api/settings/paper-account/set-balance", {"cash_balance_usdt": 100.0}),
+        ("/api/settings/paper-account/close-all", {}),
+        ("/api/settings/paper-account/close-spot", {}),
+    ]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for path, payload in mutation_routes:
+            for bad_headers in ({}, {"X-Aletheia-Token": "wrong-token"}):
+                resp = await client.post(path, json=payload, headers=bad_headers)
+                assert resp.status_code == 401, (
+                    f"Expected 401 for {path} with headers={bad_headers!r}, "
+                    f"got {resp.status_code}. "
+                    "Paper account mutations must be tunnel-gated."
+                )
+
+        # GET (read-only) must remain accessible without a token.
+        resp = await client.get("/api/settings/paper-account")
+        assert resp.status_code == 200
+
+        # No ledger mutations: balance must remain at the seeded initial value.
+        balance = resp.json()["cash_balance_usdt"]
+        assert balance == pytest.approx(200.0), (
+            f"Unauthenticated requests must produce zero economic side effects; "
+            f"balance changed to {balance}"
+        )
+
+    # Authorized caller with correct token must succeed.
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/settings/paper-account/credit",
+            json={"amount_usdt": 50.0},
+            headers={"X-Aletheia-Token": "PAPEROWNER42"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["cash_balance_usdt"] == pytest.approx(250.0)
+
+    # Audit source must reflect tunnel-authenticated context.
+    entries = [json.loads(line) for line in (tmp_path / "logs" / "audit.jsonl").read_text().splitlines()]
+    credit_audit = next(e for e in entries if e.get("event_type") == "paper_account_credit")
+    assert credit_audit["source"] == "tunnel_dashboard"
