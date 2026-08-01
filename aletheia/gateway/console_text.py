@@ -49,6 +49,20 @@ def console_encoding() -> str | None:
     return "mbcs"
 
 
+def _system_code_page_encodings() -> tuple[str, ...]:
+    """Return code pages used by hidden Windows child processes."""
+    if sys.platform != "win32":
+        return ()
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        pages = (kernel32.GetOEMCP(), kernel32.GetACP())
+        return tuple(dict.fromkeys(f"cp{int(page)}" for page in pages if page))
+    except Exception:
+        return ()
+
+
 def decode_console(data: bytes | str | None) -> str:
     """Decode console-tool bytes to text without mangling localized messages.
 
@@ -65,7 +79,8 @@ def decode_console(data: bytes | str | None) -> str:
             return data.decode(codec, errors="replace")
 
     fallback = console_encoding() or locale.getpreferredencoding(False) or "utf-8"
-    for codec in ("utf-8", fallback):
+    codecs = tuple(dict.fromkeys(("utf-8", fallback, *_system_code_page_encodings())))
+    for codec in codecs:
         try:
             return data.decode(codec)
         except (UnicodeDecodeError, LookupError):

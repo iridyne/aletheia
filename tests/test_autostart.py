@@ -287,6 +287,17 @@ def test_decode_console_recovers_code_page_bytes(monkeypatch):
     assert decode_console(None) == ""
 
 
+def test_decode_console_recovers_hidden_process_system_code_page(monkeypatch):
+    """CREATE_NO_WINDOW schtasks uses OEM/ANSI cp936, not a UTF-8 parent console."""
+    from aletheia.gateway import console_text
+
+    monkeypatch.setattr(console_text, "console_encoding", lambda: "cp65001")
+    monkeypatch.setattr(console_text, "_system_code_page_encodings", lambda: ("cp936",))
+
+    raw = "错误: 系统找不到指定的文件。".encode("cp936")
+    assert console_text.decode_console(raw) == "错误: 系统找不到指定的文件。"
+
+
 def test_disable_localized_not_found_bytes_is_idempotent(tmp_path, monkeypatch):
     """Simplified-Chinese Windows: absence must still read as success."""
     setup_env(tmp_path, monkeypatch)
