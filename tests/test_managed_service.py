@@ -221,6 +221,34 @@ def test_windows_task_xml_uses_s4u_not_interactive_token(monkeypatch):
     assert "<LogonType>InteractiveToken</LogonType>" not in xml
 
 
+def test_windows_start_retries_interactive_token_after_s4u_access_denied(monkeypatch):
+    from aletheia.gateway import managed_service as service
+
+    monkeypatch.setattr(service, "_status_windows", lambda: {"managed": False})
+    logon_types = []
+    monkeypatch.setattr(
+        service, "_build_windows_task_xml",
+        lambda **kwargs: logon_types.append(kwargs["logon_type"]) or "<Task />",
+    )
+    calls = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        if "/Create" in args and logon_types[-1] == "S4U":
+            return _proc(returncode=1, stderr=b"ERROR: Access is denied.\r\n")
+        return _proc()
+
+    monkeypatch.setattr(service.subprocess, "run", fake_run)
+
+    result = service._start_windows(no_browser=True)
+
+    assert result["ok"] is True
+    assert result["logon_type"] == "InteractiveToken"
+    assert logon_types == ["S4U", "InteractiveToken"]
+    assert sum("/Create" in call for call in calls) == 2
+    assert calls[-1] == ["schtasks", "/Run", "/TN", service.WINDOWS_TASK_NAME]
+
+
 def test_windows_stop_keeps_failure_when_the_task_survives(monkeypatch):
     """An unrecognized delete failure is only forgiven when the task is really gone."""
     from aletheia.gateway import console_text, managed_service as service

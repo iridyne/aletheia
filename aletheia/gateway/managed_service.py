@@ -175,7 +175,7 @@ def _windows_task_definition_matches(xml: str) -> bool:
         (command, arguments) in expected
         and value(".//t:Actions/t:Exec/t:WorkingDirectory") == str(_PROJECT_ROOT)
         and value(".//t:Principals/t:Principal/t:UserId") == _current_user()
-        and value(".//t:Principals/t:Principal/t:LogonType") == "S4U"
+        and value(".//t:Principals/t:Principal/t:LogonType") in {"S4U", "InteractiveToken"}
         and value(".//t:Principals/t:Principal/t:RunLevel") == "LeastPrivilege"
     )
 
@@ -381,7 +381,9 @@ def _windows_program_and_arguments(*, no_browser: bool) -> tuple[str, str]:
     return command[0], subprocess.list2cmdline(command[1:])
 
 
-def _build_windows_task_xml(*, no_browser: bool) -> str:
+def _build_windows_task_xml(*, no_browser: bool, logon_type: str = "S4U") -> str:
+    if logon_type not in {"S4U", "InteractiveToken"}:
+        raise ValueError(f"unsupported Windows task logon type: {logon_type}")
     program, arguments = _windows_program_and_arguments(no_browser=no_browser)
     user = _xml_escape(_current_user())
     return (
@@ -389,7 +391,7 @@ def _build_windows_task_xml(*, no_browser: bool) -> str:
         f'<Task version="1.2" xmlns="{_XML_NS}">\n'
         "  <RegistrationInfo><Description>Aletheia gateway on-demand user service.</Description></RegistrationInfo>\n"
         "  <Principals><Principal id=\"Author\">\n"
-        f"    <UserId>{user}</UserId><LogonType>S4U</LogonType><RunLevel>LeastPrivilege</RunLevel>\n"
+        f"    <UserId>{user}</UserId><LogonType>{logon_type}</LogonType><RunLevel>LeastPrivilege</RunLevel>\n"
         "  </Principal></Principals>\n"
         "  <Settings>\n"
         "    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><AllowStartOnDemand>true</AllowStartOnDemand>\n"
@@ -478,18 +480,33 @@ def _start_windows(*, no_browser: bool) -> dict:
             return {"supported": True, "managed": True, "ok": False, "platform": "task_scheduler", "reason": reason, "detail": (started.stderr or "").strip()[:200]}
         return {"supported": True, "managed": True, "ok": True, "platform": "task_scheduler"}
 
-    xml = _build_windows_task_xml(no_browser=no_browser)
-    temp_path: str | None = None
     try:
-        with tempfile.NamedTemporaryFile(mode="wb", suffix=".xml", delete=False) as handle:
-            handle.write(xml.encode("utf-16"))
-            temp_path = handle.name
-        created = _run_schtasks(
-            ["schtasks", "/Create", "/TN", WINDOWS_TASK_NAME, "/XML", temp_path, "/F"]
-        )
-        if created.returncode != 0:
-            reason = "access_denied" if _is_access_denied(created.stderr) else "schtasks_error"
-            return {"supported": True, "managed": False, "ok": False, "platform": "task_scheduler", "reason": reason, "detail": (created.stderr or "").strip()[:200]}
+        created = None
+        selected_logon_type = "S4U"
+        for logon_type in ("S4U", "InteractiveToken"):
+            temp_path: str | None = None
+            try:
+                xml = _build_windows_task_xml(no_browser=no_browser, logon_type=logon_type)
+                with tempfile.NamedTemporaryFile(mode="wb", suffix=".xml", delete=False) as handle:
+                    handle.write(xml.encode("utf-16"))
+                    temp_path = handle.name
+                created = _run_schtasks(
+                    ["schtasks", "/Create", "/TN", WINDOWS_TASK_NAME, "/XML", temp_path, "/F"]
+                )
+            finally:
+                if temp_path:
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
+            if created.returncode == 0:
+                selected_logon_type = logon_type
+                break
+            if logon_type != "S4U" or not _is_access_denied(created.stderr):
+                reason = "access_denied" if _is_access_denied(created.stderr) else "schtasks_error"
+                return {"supported": True, "managed": False, "ok": False, "platform": "task_scheduler", "reason": reason, "detail": (created.stderr or "").strip()[:200]}
+
+        assert created is not None
         started = _run_schtasks(["schtasks", "/Run", "/TN", WINDOWS_TASK_NAME])
         if started.returncode != 0:
             reason = "access_denied" if _is_access_denied(started.stderr) else "schtasks_error"
@@ -498,13 +515,7 @@ def _start_windows(*, no_browser: bool) -> dict:
         return {"supported": False, "managed": False, "ok": False, "platform": "task_scheduler", "reason": "schtasks_unavailable"}
     except Exception as exc:
         return {"supported": True, "managed": None, "ok": False, "platform": "task_scheduler", "reason": "schtasks_error", "detail": type(exc).__name__}
-    finally:
-        if temp_path:
-            try:
-                os.unlink(temp_path)
-            except OSError:
-                pass
-    return {"supported": True, "managed": True, "ok": True, "platform": "task_scheduler"}
+    return {"supported": True, "managed": True, "ok": True, "platform": "task_scheduler", "logon_type": selected_logon_type}
 
 
 def _stop_windows() -> dict:

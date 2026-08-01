@@ -15,7 +15,7 @@ removes its transient definition. The gateway stays stopped until a human runs
 | --- | --- | --- |
 | macOS | on-demand user `launchd` job | `launchctl bootout` and its transient plist |
 | Linux | user `systemd-run` transient service | `systemctl --user stop` |
-| Windows | on-demand Task Scheduler task | `schtasks /End` and `/Delete` |
+| Windows | on-demand Task Scheduler task; S4U first, InteractiveToken after an S4U access denial | `schtasks /End` and `/Delete` |
 
 Every definition runs the normal `_gateway_runner.py` in the foreground. None
 has a login trigger, interval, `KeepAlive`, or `Restart` policy. This is
@@ -32,8 +32,9 @@ uv run aletheia gateway stop
 ```
 
 `gateway status` reports both the running PID and whether the current platform
-manager owns an on-demand service. `gateway start` fails rather than silently
-falling back to an unowned detached process if the native manager is unavailable.
+manager owns an on-demand service. On Windows, an interactive logged-in user
+can still receive a Task Scheduler-owned service when host policy denies S4U;
+`gateway start` never silently falls back to an unowned detached process.
 
 Git operations never start or restart the gateway. A pull, merge, checkout, or
 rebase may make the running process report `code_updated_pending_restart`; the
