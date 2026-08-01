@@ -1,6 +1,6 @@
 ---
 id: gateway-service-lifecycle
-status: draft
+status: implemented
 github_issue: 567
 related_contracts: []
 supersedes: []
@@ -428,8 +428,7 @@ can be withdrawn without removing that fallback.
 
 ## Resolution
 
-This Proposal is a draft. Acceptance would approve the state model and staged
-direction, not claim implementation. When implemented, normative CLI behavior
-will move into a current Gateway Contract, platform mappings and recovery into
-Operations, and the long-lived backend-selection rationale into a Decision.
-Implementation progress remains exclusively in GitHub Issue #567 and its PRs.
+This Proposal is implemented. Normative CLI behavior now lives in the OS
+Service-lifecycle section of the Agent Contracts, and platform operation lives
+in the Gateway session-service runbook. GitHub Issue #567 and its implementation
+PR preserve the execution and verification record.

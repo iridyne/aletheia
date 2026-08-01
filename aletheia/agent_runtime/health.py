@@ -474,13 +474,9 @@ def _can_self_restart() -> tuple[bool, str]:
     Returns (allowed, reason_if_blocked)."""
     from aletheia.gateway.pidfile import supervisor_owns_pid
     if not supervisor_owns_pid():
-        # No supervisor owns the pidfile — check the OS-level autostart watchdog.
-        try:
-            from aletheia.gateway import autostart
-            if not autostart.status().get("enabled"):
-                return (False, "no supervisor/autostart — restart would be fatal")
-        except Exception:
-            return (False, "no supervisor/autostart — restart would be fatal")
+        # Login/boot activation is not proof of immediate crash recovery.  Only
+        # the live supervisor (or the SCM outside this worker) can safely respawn.
+        return (False, "no live supervisor — restart would be fatal")
 
     recent = _recent_self_heal_restarts()  # ages in seconds, last hour, oldest→newest
     cfg = load_config()

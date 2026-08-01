@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import getpass
 import os
+import re
+import subprocess
 
 
 def current_windows_user() -> str:
@@ -24,3 +26,22 @@ def current_windows_user() -> str:
 
     computer = os.environ.get("COMPUTERNAME")
     return f"{computer}\\{user}" if computer else user
+
+
+def current_windows_user_ids() -> set[str]:
+    """Return case-folded account names and the token SID used in task exports."""
+    identities = {current_windows_user().casefold()}
+    try:
+        proc = subprocess.run(
+            ["whoami.exe", "/user", "/fo", "csv", "/nh"],
+            capture_output=True,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if proc.returncode == 0:
+            match = re.search(rb"S-\d(?:-\d+)+", proc.stdout, flags=re.IGNORECASE)
+            if match:
+                identities.add(match.group().decode("ascii").casefold())
+    except OSError:
+        pass
+    return identities

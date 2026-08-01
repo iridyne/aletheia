@@ -144,6 +144,41 @@ def test_windows_task_xml_escapes_the_resolved_principal(monkeypatch):
     assert r"HOST&LAB\op<er" not in xml
 
 
+def test_windows_identity_ids_include_exported_token_sid(monkeypatch):
+    from aletheia.gateway import windows_identity
+
+    monkeypatch.setattr(windows_identity, "current_windows_user", lambda: r"HOST\user")
+    monkeypatch.setattr(
+        windows_identity.subprocess,
+        "run",
+        lambda *args, **kwargs: _proc(stdout=b'"HOST\\user","S-1-5-21-111-222-333-1001"\r\n'),
+    )
+    assert windows_identity.current_windows_user_ids() == {
+        r"host\user",
+        "s-1-5-21-111-222-333-1001",
+    }
+
+
+def test_windows_transient_task_accepts_scheduler_normalization(monkeypatch):
+    from aletheia.gateway import managed_service as service
+
+    sid = "S-1-5-21-111-222-333-1001"
+    monkeypatch.setattr(service, "_current_user", lambda: r"HOST\user")
+    monkeypatch.setattr(service, "_current_user_ids", lambda: {r"host\user", sid.casefold()})
+    monkeypatch.setattr(
+        service,
+        "_windows_program_and_arguments",
+        lambda **_kwargs: (r"C:\Python\pythonw.exe", r"C:\app\_gateway_runner.py --no-browser"),
+    )
+    exported = (
+        service._build_windows_task_xml(no_browser=True)
+        .replace(r"HOST\user", sid)
+        .replace("<LogonType>S4U</LogonType>", "<LogonType>InteractiveToken</LogonType>")
+        .replace("<RunLevel>LeastPrivilege</RunLevel>", "")
+    )
+    assert service._windows_task_definition_matches(exported) is True
+
+
 def test_windows_program_arguments_checks_windows_venv_config_as_filesystem_path(monkeypatch):
     """Windows-style paths must not call ``exists`` on ``PureWindowsPath``."""
     from aletheia.gateway import managed_service as service

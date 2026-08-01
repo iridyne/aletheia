@@ -765,28 +765,14 @@ def _emit_sd_notify() -> None:
 
 
 def _schedule_supervisor_recovery() -> None:
-    """After a crash loop (gave_up), ensure the gateway has an automatic recovery path.
-
-    If the autostart watchdog is not already enabled, enable it now.  The watchdog
-    fires every minute calling `gateway start` (idempotent), so the gateway will be
-    restarted within ~1 minute without requiring human intervention.
-
-    This respects operator intent: operators who explicitly disabled the watchdog will
-    not have it re-enabled here (the status check prevents that).  The audit event
-    makes the auto-enable visible in the event log.
-    """
+    """Report exhausted recovery without changing operator service enablement."""
     try:
-        from aletheia.gateway import autostart
-        if not autostart.is_supported_platform():
-            return
-        if autostart.status().get("enabled"):
-            return  # watchdog already active — it handles the restart
-        result = autostart.enable(source="supervisor_recovery")
-        if not result.get("ok"):
-            _write_error_event(
-                f"supervisor_recovery: could not enable autostart watchdog: "
-                f"{result.get('reason', 'unknown')}"
-            )
+        from aletheia.gateway import service_control
+        service = service_control.status()
+        _write_error_event(
+            "supervisor_recovery: runner gave up; service enablement was preserved "
+            f"(backend={service.get('backend')}, recovery={service.get('recovery_scope')})"
+        )
     except Exception as exc:
         try:
             _write_error_event(f"supervisor_recovery: unexpected error: {type(exc).__name__}: {exc}")

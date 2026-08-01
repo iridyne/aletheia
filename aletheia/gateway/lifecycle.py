@@ -30,6 +30,18 @@ class GatewayResumeApiError(RuntimeError):
 
 def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
     """Start the gateway (foreground or background)."""
+    from aletheia.gateway import service_control
+    if not foreground and service_control.is_machine_selected():
+        _echo_stdout_safe("Starting Aletheia machine gateway service (Windows UAC may prompt)...")
+        result = service_control.start(no_browser=True)
+        if not result.get("ok"):
+            message = f"Gateway machine service failed to start: {result.get('reason', 'service_start_failed')}"
+            if result.get("detail"):
+                message += f" — {result['detail']}"
+            _echo_safe(message)
+            raise typer.Exit(1)
+        _echo_stdout_safe("Gateway machine service start requested; use `gateway status` to confirm readiness.")
+        return
     cfg = bootstrap()
 
     # T7: If a circuit-break state file exists and 30 min of stability has elapsed,
@@ -92,8 +104,7 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
         _run_server(cfg)
     else:
         _echo_stdout_safe(f"Starting Aletheia gateway on http://{cfg.app.bind_host}:{cfg.app.dashboard_port} (background)...")
-        from aletheia.gateway import managed_service
-        managed = managed_service.start(no_browser=no_browser)
+        managed = service_control.start(no_browser=no_browser)
         if not managed.get("ok"):
             reason = managed.get("reason", "service_start_failed")
             detail = managed.get("detail")
@@ -110,7 +121,7 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
             # A manager definition that failed readiness must not survive as a
             # misleading registered service. The regular failed-start cleanup
             # already terminates any partial gateway process tree.
-            managed_service.stop()
+            service_control.stop()
             raise
         _auto_start_tunnel(cfg)
 
@@ -337,9 +348,10 @@ def _check_circuit_break_auto_reset() -> None:
         except Exception:
             pass
         try:
-            from aletheia.gateway import autostart
-            if autostart.is_supported_platform():
-                autostart.enable(source="auto_reset")
+            from aletheia.gateway import service_control
+            current_service = service_control.status()
+            if current_service.get("scope") == "session" and current_service.get("installed"):
+                service_control.enable(source="auto_reset")
         except Exception:
             pass
     except Exception:
@@ -381,16 +393,17 @@ def _check_spawn_circuit_breaker() -> None:
             return
         # Threshold hit within window — disable watchdog and alert.
         try:
-            from aletheia.gateway import autostart
-            if autostart.is_supported_platform() and autostart.status().get("enabled"):
-                autostart.disable(source="circuit_breaker")
+            from aletheia.gateway import service_control
+            current_service = service_control.status()
+            if current_service.get("scope") == "session" and current_service.get("enabled"):
+                service_control.disable(source="circuit_breaker")
                 _write_circuit_break_state()  # T7: persist timestamp for auto-reset
                 _notify_gateway_problem(
                     "Aletheia Gateway autostart disabled by circuit breaker",
                     f"Gateway failed to start {_CIRCUIT_BREAKER_THRESHOLD} times in "
                     f"{_CIRCUIT_BREAKER_WINDOW_SEC // 60} minutes. Autostart watchdog "
                     "has been disabled to stop the restart loop. Fix the root cause and "
-                    "re-enable with `gateway autostart enable`, or wait 30 min for "
+                    "re-enable with `gateway enable`, or wait 30 min for "
                     "auto-reset.",
                     source="gateway_lifecycle",
                 )
@@ -460,8 +473,9 @@ def do_stop() -> None:
     # manager operation is an ownership conflict, not permission to bypass the
     # OS owner by killing an arbitrary process on the gateway port.
     try:
-        from aletheia.gateway import managed_service
-        managed = managed_service.stop()
+        from aletheia.gateway import service_control
+        machine_selected = service_control.is_machine_selected()
+        managed = service_control.stop()
     except Exception as exc:
         managed = {"ok": False, "reason": "service_manager_error", "detail": type(exc).__name__}
     if not managed.get("ok"):
@@ -474,6 +488,11 @@ def do_stop() -> None:
         _echo_safe(message)
         _audit_stop_blocked(platform_name=platform_name, reason=reason)
         raise typer.Exit(1)
+
+    if machine_selected:
+        _auto_stop_tunnel()
+        _echo_stdout_safe("Gateway machine service stopped. Its installed and enabled states were preserved.")
+        return
 
     _auto_stop_tunnel()
 
@@ -523,26 +542,6 @@ def do_stop() -> None:
     _audit_stop(freed=freed, killed_any=killed_any)
     if not freed:
         raise typer.Exit(1)
-    _auto_deregister_watchdog()
-
-
-def _auto_deregister_watchdog() -> None:
-    """Disable the OS autostart watchdog after a stop so the user's intent is honored.
-
-    The legacy LaunchAgent / Task Scheduler watchdog can otherwise resurrect the
-    gateway after an explicit stop. It is deliberately not re-registered by a
-    subsequent `gateway start`.
-    """
-    try:
-        from aletheia.gateway import autostart
-        if not autostart.is_supported_platform():
-            return
-        current = autostart.status()
-        if not current.get("enabled"):
-            return
-        autostart.disable(source="auto")
-    except Exception:
-        pass
 
 
 def _audit_stop(*, freed: bool, killed_any: bool) -> None:
@@ -574,6 +573,16 @@ def _audit_stop_blocked(*, platform_name: str, reason: str) -> None:
 
 def do_status() -> None:
     """Show gateway status."""
+    from aletheia.gateway import service_control
+    service = service_control.status()
+    if service.get("scope") == "machine" and service.get("installed"):
+        typer.echo(f"Gateway: {service.get('runtime', 'unknown')} (Windows machine service)")
+        typer.echo("Dashboard: http://127.0.0.1:8787")
+        typer.echo(f"Service: installed={service.get('installed')} enabled={service.get('enabled')} owned={service.get('owned')} config_valid={service.get('config_valid')}")
+        typer.echo(f"Data directory: {service.get('data_dir')}")
+        if service.get("reason"):
+            typer.echo(f"Service reason: {service['reason']}")
+        return
     cfg = load_config()
     running = is_running()
     pid = read_pid()
@@ -589,15 +598,12 @@ def do_status() -> None:
     typer.echo(f"Live state: {cfg.live.state}")
     typer.echo(f"Permission: {cfg.agent.permission_mode}")
     try:
-        from aletheia.gateway import managed_service
-        service = managed_service.status()
-        if service.get("managed") is True:
-            lifecycle_label = f"managed ({service.get('platform')})"
-        elif service.get("managed") is False:
-            lifecycle_label = "not registered"
+        if service.get("registration") in {"persistent", "transient"}:
+            lifecycle_label = f"{service.get('registration')} ({service.get('platform')})"
         else:
-            lifecycle_label = f"unknown ({service.get('reason', 'error')})"
+            lifecycle_label = "not registered"
         typer.echo(f"Lifecycle: {lifecycle_label}")
+        typer.echo(f"Service: installed={service.get('installed')} enabled={service.get('enabled')} recovery={service.get('recovery_scope')}")
     except Exception:
         typer.echo("Lifecycle: unknown (manager query failed)")
 

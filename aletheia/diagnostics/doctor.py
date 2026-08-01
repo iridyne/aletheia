@@ -430,6 +430,27 @@ def _probe_legacy_launchd(report: Report) -> None:
         report.add("process.legacy_launchd", "ok", "no legacy Aletheia lifecycle jobs")
 
 
+def _probe_gateway_service(report: Report) -> None:
+    """Report installation, enablement, ownership, and runtime independently."""
+    try:
+        from aletheia.gateway import service_control
+        state = service_control.status()
+    except Exception as exc:
+        report.add("process.gateway_service", "info", f"service state not available: {type(exc).__name__}")
+        return
+    detail = (
+        f"backend={state.get('backend')} registration={state.get('registration')} "
+        f"installed={state.get('installed')} enabled={state.get('enabled')} "
+        f"runtime={state.get('runtime')} recovery={state.get('recovery_scope')}"
+    )
+    if state.get("reason") in {"backend_conflict", "ownership_conflict", "access_denied", "config_drift", "partial_install"}:
+        report.add("process.gateway_service", "warn", f"{detail}; reason={state.get('reason')}", "run `aletheia gateway service status` for remediation")
+    elif state.get("installed"):
+        report.add("process.gateway_service", "ok", detail)
+    else:
+        report.add("process.gateway_service", "info", detail, "optional: `aletheia gateway service install --backend session`")
+
+
 def _probe_process(report: Report) -> None:
     from aletheia.gateway.pidfile import is_running, read_pid, port_in_use
     from aletheia.config.loader import load_config
@@ -3702,6 +3723,7 @@ def build_report(*, probe_llm: bool = False) -> Report:
     for probe in (
         _probe_code_sync,
         _probe_legacy_launchd,
+        _probe_gateway_service,
         _probe_process,
         _probe_gateway_restart_history,
         _probe_config_gates,

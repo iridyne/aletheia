@@ -3,6 +3,8 @@
 Scheduler job structure, agent IO shapes, max_workers cap.
 """
 
+import inspect
+from pathlib import Path
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
@@ -237,6 +239,28 @@ def test_gateway_session_service_has_safe_macos_launchd_contract():
     assert "RunAtLoad" not in payload
     assert "StartInterval" not in payload
     assert "EnvironmentVariables" not in payload
+
+
+@spec_claim(
+    SpecClaim(
+        "AC-S14", "agent_contracts", "§1 OS service lifecycle", "L2c",
+        "Gateway service installation, enablement, and runtime are independent; "
+        "machine installation never collects an administrator password.",
+        status="implemented",
+    ),
+)
+def test_gateway_service_lifecycle_contract_is_structurally_safe():
+    from aletheia.gateway import service_control, windows_machine_service
+    source = inspect.getsource(service_control) + inspect.getsource(windows_machine_service)
+    assert "elevation_required" in source
+    assert "LocalService" in source
+    assert "password =" not in source.lower()
+    assert "LocalSystem" not in windows_machine_service._build_winsw_xml(
+        executable=Path("C:/Program Files/Aletheia/aletheia.exe")
+    )
+    from aletheia.agent_runtime import permissions
+    forbidden = {"service_install", "service_uninstall", "gateway_enable", "gateway_disable"}
+    assert forbidden.isdisjoint(permissions.TOOL_REGISTRY)
 
 
 @spec_claim(
