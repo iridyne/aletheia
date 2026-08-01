@@ -34,6 +34,9 @@ _SCOPE_PATH = (
 # In-process pointer to the current session (a RuntimeSession.model_dump() dict),
 # or None when no session is active (tests, out-of-band inserts → NULL provenance).
 _current_session: dict | None = None
+# True only when the current session row has been verified as durably persisted in the DB.
+# Non-durable sessions must NOT stamp child rows with runtime_session_id.
+_session_durable: bool = False
 
 
 def _sha(payload: object) -> str:
@@ -131,10 +134,13 @@ def _runtime_id(runtime_context: dict | None) -> str:
 def start_runtime_session(cfg=None, runtime_context: dict | None = None) -> dict:
     """Create and persist a Runtime Session for this process; set it as current.
 
-    Returns the session dict. Best-effort: on any persistence error it still sets
-    and returns an in-memory session so provenance stamping keeps working.
+    Returns the session dict (always includes a ``durable`` key).  Best-effort:
+    on any persistence or verification error the in-memory session is still set so
+    the process can continue, but ``durable`` will be False and child rows will NOT
+    carry a ``runtime_session_id`` — they stay NULL rather than advertise an orphan
+    identity.
     """
-    global _current_session
+    global _current_session, _session_durable
     if cfg is None:
         from aletheia.config.loader import load_config
 
@@ -152,18 +158,33 @@ def start_runtime_session(cfg=None, runtime_context: dict | None = None) -> dict
         active_scope_id=_active_scope_id(),
         execution_mode=getattr(getattr(cfg, "exchange", None), "paper_execution_mode", None),
     )
+    durable = False
     try:
         from aletheia.storage import repositories as repo
 
         repo.insert_runtime_session(session)
+        # Verify the row actually landed with the expected immutable fingerprints.
+        row = repo.get_runtime_session(session.session_id)
+        if (
+            row is not None
+            and row["session_id"] == session.session_id
+            and row["behavior_fingerprint"] == session.behavior_fingerprint
+        ):
+            durable = True
+        else:
+            logger.warning(
+                "runtime session verification failed after insert (row absent or fingerprint mismatch): %s",
+                session.session_id,
+            )
     except Exception as e:
         logger.warning("runtime session persist failed (continuing in-memory): %s", e)
 
-    _current_session = session.model_dump()
+    _current_session = {**session.model_dump(), "durable": durable}
+    _session_durable = durable
     logger.info(
-        "runtime session started: %s (runtime_id=%s, commit=%s, mode=%s)",
+        "runtime session started: %s (runtime_id=%s, commit=%s, mode=%s, durable=%s)",
         session.session_id, session.runtime_id,
-        (session.boot_commit or "-")[:12], session.execution_mode,
+        (session.boot_commit or "-")[:12], session.execution_mode, durable,
     )
     return dict(_current_session)
 
@@ -197,14 +218,23 @@ def current_session_id() -> str | None:
 def current_provenance() -> dict:
     """Provenance to stamp on a row PRODUCED by the current session.
 
-    All-None when no session is active — callers must leave the columns NULL
-    rather than fabricate an identity.
+    ``runtime_session_id`` is only populated when the session is durably persisted —
+    a non-durable (in-memory-only) session must not be stamped as a durable reference.
+    ``producer_commit`` and ``behavior_fingerprint`` are stamped whenever a session is
+    active (durable or not) so the row is not completely opaque even in degraded mode.
+    All-None when no session is active.
     """
     s = _current_session
+    if not s:
+        return {
+            "runtime_session_id": None,
+            "producer_commit": None,
+            "behavior_fingerprint": None,
+        }
     return {
-        "runtime_session_id": s["session_id"] if s else None,
-        "producer_commit": s["boot_commit"] if s else None,
-        "behavior_fingerprint": s["behavior_fingerprint"] if s else None,
+        "runtime_session_id": s["session_id"] if _session_durable else None,
+        "producer_commit": s["boot_commit"],
+        "behavior_fingerprint": s["behavior_fingerprint"],
     }
 
 
@@ -212,16 +242,80 @@ def current_close_provenance() -> dict:
     """Provenance to stamp on a position when it is CLOSED by the current session.
 
     Distinct column names so open (created) and close (outcome) producers coexist.
+    Same durability rule as ``current_provenance``: ``closed_runtime_session_id`` is
+    only populated when the closing session is durably persisted.
     """
     s = _current_session
+    if not s:
+        return {
+            "closed_runtime_session_id": None,
+            "closed_producer_commit": None,
+            "closed_behavior_fingerprint": None,
+        }
     return {
-        "closed_runtime_session_id": s["session_id"] if s else None,
-        "closed_producer_commit": s["boot_commit"] if s else None,
-        "closed_behavior_fingerprint": s["behavior_fingerprint"] if s else None,
+        "closed_runtime_session_id": s["session_id"] if _session_durable else None,
+        "closed_producer_commit": s["boot_commit"],
+        "closed_behavior_fingerprint": s["behavior_fingerprint"],
     }
 
 
 def reset_current_session() -> None:
     """Drop the in-process current-session pointer without touching the DB (tests)."""
-    global _current_session
+    global _current_session, _session_durable
     _current_session = None
+    _session_durable = False
+
+
+def current_session_durable() -> bool:
+    """Return True when the active session has been verified as durably persisted."""
+    return _session_durable
+
+
+def retry_session_durability() -> bool:
+    """Attempt to verify/repair durability for the current in-memory session.
+
+    Safe to call repeatedly — idempotent. Returns True if the session is now durable.
+    Raises nothing; logs on failure.
+    """
+    global _session_durable
+    s = _current_session
+    if not s:
+        return False
+    if _session_durable:
+        return True
+    try:
+        from aletheia.storage import repositories as repo
+
+        row = repo.get_runtime_session(s["session_id"])
+        if (
+            row is not None
+            and row["session_id"] == s["session_id"]
+            and row["behavior_fingerprint"] == s["behavior_fingerprint"]
+        ):
+            _session_durable = True
+            logger.info("runtime session durability recovered: %s", s["session_id"])
+            return True
+        # Row absent — attempt re-insert only if fingerprints are still consistent.
+        if row is None:
+            from aletheia.storage.models import RuntimeSession
+
+            session_obj = RuntimeSession(**{
+                k: v for k, v in s.items()
+                if k in RuntimeSession.model_fields and k != "durable"
+            })
+            repo.insert_runtime_session(session_obj)
+            row = repo.get_runtime_session(s["session_id"])
+            if (
+                row is not None
+                and row["session_id"] == s["session_id"]
+                and row["behavior_fingerprint"] == s["behavior_fingerprint"]
+            ):
+                _session_durable = True
+                logger.info("runtime session durability restored via re-insert: %s", s["session_id"])
+                return True
+        logger.warning(
+            "runtime session durability retry failed (fingerprint conflict or db error): %s", s["session_id"]
+        )
+    except Exception as e:
+        logger.warning("runtime session durability retry exception: %s", e)
+    return False

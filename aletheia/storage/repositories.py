@@ -6516,6 +6516,55 @@ def prune_runtime_sessions(days: int = 30) -> int:
     return cur.rowcount or 0
 
 
+def scan_orphan_session_ids() -> dict:
+    """Read-only scan for orphaned runtime_session_id references across core entity tables.
+
+    An orphan is a non-NULL ``runtime_session_id`` (or ``closed_runtime_session_id``)
+    value in a core trading-fact table that has no matching row in ``runtime_sessions``.
+
+    Returns a dict with:
+        total_orphan_refs  — total count of orphaned column values found
+        by_table           — {table_name: {column: orphan_count}}
+        orphan_session_ids — set of unknown session IDs referenced by child rows
+
+    Never modifies anything. Never raises — returns an error key on exception.
+    """
+    _ENTITY_TABLES_COLS = [
+        ("opportunities",  "runtime_session_id"),
+        ("pi_decisions",   "runtime_session_id"),
+        ("trade_proposals","runtime_session_id"),
+        ("risk_decisions", "runtime_session_id"),
+        ("orders",         "runtime_session_id"),
+        ("fills",          "runtime_session_id"),
+        ("positions",      "runtime_session_id"),
+        ("positions",      "closed_runtime_session_id"),
+    ]
+    try:
+        db = get_db()
+        known = {
+            r[0] for r in db.execute("SELECT session_id FROM runtime_sessions").fetchall()
+        }
+        total = 0
+        by_table: dict[str, dict] = {}
+        orphan_ids: set[str] = set()
+        for table, col in _ENTITY_TABLES_COLS:
+            rows = db.execute(
+                f"SELECT {col} FROM {table} WHERE {col} IS NOT NULL"
+            ).fetchall()
+            orphans = [r[0] for r in rows if r[0] not in known]
+            if orphans:
+                by_table.setdefault(table, {})[col] = len(orphans)
+                orphan_ids.update(orphans)
+                total += len(orphans)
+        return {
+            "total_orphan_refs": total,
+            "by_table": by_table,
+            "orphan_session_ids": list(orphan_ids),
+        }
+    except Exception as e:
+        return {"error": str(e), "total_orphan_refs": 0, "by_table": {}, "orphan_session_ids": []}
+
+
 def prune_backtest_trades(days: int = 60) -> int:
     """Prune backtest_trades whose parent run created_at is older than ``days``.
 
