@@ -26,6 +26,13 @@ class AgentJobManagerClosed(RuntimeError):
     pass
 
 
+class AgentJobAlreadyQueued(RuntimeError):
+    def __init__(self, run_id: str, agent_name: str) -> None:
+        self.run_id = run_id
+        self.agent_name = agent_name
+        super().__init__(f"agent '{agent_name}' is already queued or running (run_id={run_id})")
+
+
 @dataclass(frozen=True)
 class AgentJob:
     run: AgentRun
@@ -53,6 +60,9 @@ class AgentJobManager:
         self._completed = 0
         self._failed = 0
         self._cancelled = 0
+        # Maps agent_name → run_id for all currently queued or active runs.
+        # Used to enforce per-agent idempotency (duplicate-click prevention).
+        self._pending_agents: dict[str, str] = {}
         self._queue_wait_total_ms = 0.0
         self._queue_wait_count = 0
 
@@ -74,7 +84,13 @@ class AgentJobManager:
             )
             self._thread.start()
 
-    def enqueue(self, agent_name: str) -> AgentRun:
+    def enqueue(
+        self,
+        agent_name: str,
+        *,
+        trigger_type: str = "manual",
+        idempotency_key: str | None = None,
+    ) -> AgentRun:
         from aletheia.agents import get_agent_fn
 
         # Validate before a durable queued row is created.
@@ -82,12 +98,21 @@ class AgentJobManager:
         self.start()
         if not self._accepting:
             raise AgentJobManagerClosed("manual agent queue is shutting down")
+
+        # Per-agent idempotency: reject a second enqueue for the same agent while
+        # one is already queued or running.  When idempotency_key is supplied the
+        # caller can detect and return the in-flight run instead of creating a new one.
+        key = idempotency_key or agent_name
+        existing_run_id = self._pending_agents.get(key)
+        if existing_run_id is not None:
+            raise AgentJobAlreadyQueued(existing_run_id, agent_name)
+
         cfg = load_config()
         raw_provider_name = getattr(getattr(cfg, "models", None), "default_provider", None)
         provider_name = raw_provider_name if isinstance(raw_provider_name, str) else None
         run = queue_run(
             agent_name=agent_name,
-            trigger_type="manual",
+            trigger_type=trigger_type,
             permission_mode=cfg.agent.permission_mode,
             model_provider=provider_name,
         )
@@ -101,6 +126,7 @@ class AgentJobManager:
                 errors=[f"manual agent queue full (capacity={self.capacity})"],
             )
             raise AgentJobQueueFull(run.id, self.capacity) from exc
+        self._pending_agents[key] = run.id
         return run
 
     def _worker_main(self) -> None:
@@ -143,6 +169,12 @@ class AgentJobManager:
                 rollback_if_in_transaction()
                 close_db()
                 self._active_run_id = None
+                # Release the pending-agents slot so the same agent can be
+                # re-enqueued after this run completes.
+                self._pending_agents = {
+                    k: v for k, v in self._pending_agents.items()
+                    if v != job.run.id
+                }
                 self._queue.task_done()
 
     def stop(self, *, cancel_pending: bool = True, join_timeout_sec: float = 5.0) -> None:
@@ -165,6 +197,10 @@ class AgentJobManager:
                 finally:
                     self._cancelled += 1
                     self._queue.task_done()
+                    self._pending_agents = {
+                        k: v for k, v in self._pending_agents.items()
+                        if v != job.run.id
+                    }
         if self.running:
             try:
                 self._queue.put_nowait(None)
