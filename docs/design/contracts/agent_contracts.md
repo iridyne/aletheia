@@ -81,7 +81,8 @@ durably queued and independently retried by `outcome_hook_replay`.
 
 - `gateway start` creates an on-demand user service on the current platform:
   launchd on macOS, a systemd user transient service on Linux, or an on-demand
-  Task Scheduler task on Windows.
+  Task Scheduler task on Windows (S4U first; InteractiveToken only after an
+  S4U access denial).
 - The service runs the foreground gateway runner and has no login trigger,
   interval, `KeepAlive`, or `Restart` policy. It neither bypasses live, risk,
   permission, nor credential gates.
