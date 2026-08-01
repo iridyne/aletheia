@@ -241,10 +241,18 @@ def test_get_family_multipliers_above_threshold(monkeypatch):
         {"scanner_family": "momentum", "horizon": "4h", "n": 50,
          "win_count": 35, "avg_return": 1.5, "min_return": -2.0},
     ])
-    result = get_family_multipliers()
+    evidence = {}
+    result = get_family_multipliers(evidence_out=evidence)
     assert "momentum" in result
     assert result["momentum"] > 1.0
     assert result["momentum"] <= 1.10  # bounded to 1.0 + max_step
+    assert evidence["momentum"]["source"] == "universe_forward_outcomes"
+    assert evidence["momentum"]["eligible_outcome_n"] == 50
+    assert len(evidence["momentum"]["evidence_fingerprint"]) == 64
+
+    repeated = {}
+    get_family_multipliers(evidence_out=repeated)
+    assert repeated == evidence
 
 
 def test_calibration_keeps_direction_and_market_cohorts_separate(monkeypatch):

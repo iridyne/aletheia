@@ -155,7 +155,7 @@ def _assert_emission_failure_cannot_publish_partial_universe_refresh(
         lambda *_args, **_kwargs: 70.0,
     )
     monkeypatch.setattr(
-        "aletheia.universe.allocator.get_family_multipliers", lambda: {}
+        "aletheia.universe.allocator.get_family_multipliers", lambda **_kwargs: {}
     )
     monkeypatch.setattr(
         "aletheia.universe.allocator.allocate_universe",

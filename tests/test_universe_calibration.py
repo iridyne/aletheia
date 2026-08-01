@@ -76,6 +76,18 @@ def test_long_winner_counts_on_positive_return(tmp_path):
     row = stats[("momentum", "long", "spot", "1h")]
     assert row["n"] == 2
     assert row["win_count"] == 1  # only the +5% long wins
+    assert len(row["source_outcome_fingerprint"]) == 64
+    first_fingerprint = row["source_outcome_fingerprint"]
+
+    repo.insert_forward_outcomes_batch([
+        _settled("CCC/USDT", "long", 0.0),
+    ])
+    updated = {
+        (item["scanner_family"], item["direction"], item["market_type"], item["horizon"]): item
+        for item in repo.calibration_stats()
+    }[("momentum", "long", "spot", "1h")]
+    assert updated["n"] == 3
+    assert updated["source_outcome_fingerprint"] != first_fingerprint
     reset_db()
 
 

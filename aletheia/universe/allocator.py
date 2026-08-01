@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import random
 import logging
 
@@ -50,7 +52,11 @@ def _calibration_key(family: str, direction: str | None, market_type: str | None
     return f"{family}:{direction or 'unknown'}:{market_type or 'spot'}"
 
 
-def get_family_multipliers(max_step: float = 0.10) -> dict[str, float]:
+def get_family_multipliers(
+    max_step: float = 0.10,
+    *,
+    evidence_out: dict[str, dict] | None = None,
+) -> dict[str, float]:
     """Compute stratified opportunity-score multipliers from net outcomes.
 
     Returns {family:direction:market_type: multiplier}. Legacy test/adaptor rows
@@ -68,6 +74,11 @@ def get_family_multipliers(max_step: float = 0.10) -> dict[str, float]:
         return {}
 
     multipliers: dict[str, float] = {}
+    window_metadata = None
+    if evidence_out is not None:
+        from aletheia.analytics.learning_window import outcome_window_metadata
+
+        window_metadata = outcome_window_metadata()
     for row in stats:
         family = row.get("scanner_family")
         if not family:
@@ -100,6 +111,41 @@ def get_family_multipliers(max_step: float = 0.10) -> dict[str, float]:
             else family
         )
         multipliers[key] = 1.0 + adjustment
+        if evidence_out is not None:
+            evidence = {
+                "contract": "universe-calibration-source-evidence/v1",
+                "source": "universe_forward_outcomes",
+                "window": window_metadata,
+                "scanner_family": family,
+                "direction": direction,
+                "market_type": market_type,
+                "horizon": row.get("horizon"),
+                "eligible_outcome_n": int(n),
+                "source_outcome_fingerprint": row.get(
+                    "source_outcome_fingerprint"
+                ),
+                "source_window_start": row.get("source_window_start"),
+                "win_count": int(row.get("win_count") or 0),
+                "avg_net_return_pct": float(avg_net),
+                "min_net_return_pct": (
+                    None if row.get("min_return") is None
+                    else float(row["min_return"])
+                ),
+                "max_net_return_pct": (
+                    None if row.get("max_return") is None
+                    else float(row["max_return"])
+                ),
+                "proposed_multiplier": 1.0 + adjustment,
+            }
+            canonical = json.dumps(
+                evidence, sort_keys=True, separators=(",", ":"),
+            )
+            evidence_out[key] = {
+                **evidence,
+                "evidence_fingerprint": hashlib.sha256(
+                    canonical.encode("utf-8")
+                ).hexdigest(),
+            }
 
     return multipliers
 
@@ -143,6 +189,8 @@ def compute_total_score(
     cfg: UniverseConfig,
     calibration: dict[str, float] | None = None,
     scoring_cohort_key: str | None = None,
+    *,
+    calibration_evidence: dict[str, dict] | None = None,
 ) -> float:
     """Compute the final total_score for universe ranking.
 
@@ -158,7 +206,8 @@ def compute_total_score(
             scanner_result.get("scanner_direction") or scanner_result.get("direction"),
             feat.get("market_type", "spot"),
         )
-        raw_multiplier = float(calibration.get(exact_key, calibration.get(family, 1.0)))
+        evidence_key = exact_key if exact_key in calibration else family
+        raw_multiplier = float(calibration.get(evidence_key, 1.0))
         # Historical calibration can propose only a bounded direction. It does
         # not receive score authority until a prospective treatment/control
         # verdict passes the shared experiment gate.
@@ -202,7 +251,13 @@ def compute_total_score(
                 consumer="universe_allocator",
                 consumer_stage="opportunity_score",
                 outcome_candidate_key=(f"{candidate_key}:{horizon}" if candidate_key else None),
-                manifest={"raw_multiplier": raw_multiplier, "proposed_multiplier": proposed_multiplier},
+                manifest={
+                    "raw_multiplier": raw_multiplier,
+                    "proposed_multiplier": proposed_multiplier,
+                    "source_evidence": dict(
+                        (calibration_evidence or {}).get(evidence_key) or {}
+                    ),
+                },
                 assignment_key=cluster_key,
             )
             opportunity = influence.value

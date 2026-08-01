@@ -10,6 +10,8 @@ import math
 from httpx import ASGITransport, AsyncClient
 import pytest
 
+from tests.specs.spec_meta import SpecClaim, spec_claim
+
 
 _PATH_ID = "universe_family_calibration"
 _FAMILY = "momentum"
@@ -20,6 +22,12 @@ _METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v3"
 
 
 @pytest.mark.anyio
+@spec_claim(SpecClaim(
+    "LE-C07", "learning_evolution", "§7-9 causal paper lifecycle", "L2c",
+    "Exact eligible source outcomes produce the learned UFC treatment before the existing "
+    "exposure, settlement, owner admission, withdrawal, refreeze, and fallback lifecycle.",
+    status="implemented",
+))
 async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     monkeypatch,
     tmp_path,
@@ -42,7 +50,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     from aletheia.learning.models import LearningExperiment
     from aletheia.server.app import app
     from aletheia.storage.sqlite import get_db
-    from aletheia.universe.allocator import compute_total_score
+    from aletheia.universe.allocator import compute_total_score, get_family_multipliers
     from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
     from aletheia.universe.service import _register_experiment_candidate_outcomes
 
@@ -92,6 +100,60 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
         jsonl_file,
     ):
         monkeypatch.setattr(module, "datetime", ClockDateTime)
+
+    # Produce the treatment from real, exact, eligible source outcomes rather
+    # than injecting a multiplier into the lifecycle test. The bounded evidence
+    # fingerprint carried by every later exposure proves which aggregate source
+    # facts created the learned treatment proposal.
+    db = get_db()
+    db.execute(
+        "INSERT INTO universe_registry "
+        "(id,venue,market_type,symbol,base_asset,quote_asset) "
+        "VALUES ('phase4-source-asset','okx','perp','SOURCE/USDT','SOURCE','USDT')"
+    )
+    db.execute(
+        "INSERT INTO universe_snapshots (id,market_type,status) "
+        "VALUES ('phase4-source-snapshot','crypto','active')"
+    )
+    db.execute(
+        "INSERT INTO universe_members "
+        "(id,snapshot_id,asset_id,symbol,rank,total_score,scanner_family,"
+        "scanner_direction,expires_at) VALUES "
+        "('phase4-source-member','phase4-source-snapshot','phase4-source-asset',"
+        "'SOURCE/USDT',1,50,'momentum','long',?)",
+        ((clock[0] + timedelta(days=30)).isoformat(),),
+    )
+    for index in range(60):
+        entry_at = clock[0] - timedelta(days=1) + timedelta(seconds=index)
+        db.execute(
+            "INSERT INTO universe_forward_outcomes "
+            "(id,outcome_candidate_key,member_id,snapshot_id,symbol,venue,market_type,"
+            "scanner_family,direction,horizon,entry_price_usd,entry_ts,due_at,settled_at,"
+            "exit_price_usd,gross_return_pct,directional_return_pct,estimated_fee_pct,"
+            "estimated_spread_slippage_pct,estimated_funding_pct,net_return_pct,"
+            "min_tradable_edge_pct,mfe_pct,mae_pct,settlement_price_source,"
+            "settlement_lag_sec,cost_model_version,status) "
+            "VALUES (?,?,?,?,?,'okx','perp','momentum','long','4h',100,?,?,?,102,2,2,"
+            "0.1,0.1,0,1.8,0.2,2,-0.2,'phase4_source',0,'cost-v1','settled')",
+            (
+                f"phase4-source-outcome-{index}",
+                f"phase4-source-candidate-{index}:4h",
+                "phase4-source-member",
+                "phase4-source-snapshot",
+                "SOURCE/USDT",
+                entry_at.isoformat(),
+                (entry_at + timedelta(hours=4)).isoformat(),
+                (entry_at + timedelta(hours=4)).isoformat(),
+            ),
+        )
+    source_evidence: dict[str, dict] = {}
+    learned_calibration = get_family_multipliers(evidence_out=source_evidence)
+    assert learned_calibration[_CALIBRATION_KEY] > 1.0
+    assert source_evidence[_CALIBRATION_KEY]["eligible_outcome_n"] == 60
+    assert source_evidence[_CALIBRATION_KEY]["evidence_fingerprint"]
+    assert len(
+        source_evidence[_CALIBRATION_KEY]["source_outcome_fingerprint"]
+    ) == 64
 
     outcome_profiles: dict[str, str] = {}
 
@@ -160,7 +222,8 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
             scored_feature,
             dict(scanner),
             cfg.universe,
-            calibration={_CALIBRATION_KEY: 1.1},
+            calibration=learned_calibration,
+            calibration_evidence=source_evidence,
             scoring_cohort_key=scoring_key,
         )
         assert scored_feature["learning_candidate_key"] == candidate_key
@@ -318,6 +381,10 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     )
     shadow_manifest = [json.loads(row["manifest_json"]) for row in shadow_exposures]
     assert all(manifest["authority_applied"] is False for manifest in shadow_manifest)
+    assert all(
+        manifest["source_evidence"] == source_evidence[_CALIBRATION_KEY]
+        for manifest in shadow_manifest
+    )
     await settle_and_assert(shadow.experiment_id, len(shadow_exposures))
     epoch = str(shadow_exposures[0]["concurrent_policy_epoch"])
     behavior_contract_hash = str(shadow_exposures[0]["behavior_contract_hash"])
