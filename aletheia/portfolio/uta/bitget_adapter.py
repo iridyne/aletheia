@@ -99,23 +99,19 @@ class BitgetDemoAdapter:
         )
 
     async def get_positions(self) -> list[BrokerPosition]:
-        try:
-            futures = await self._client.get_positions()
-            return [
-                BrokerPosition(
-                    symbol=p.symbol,
-                    side=p.side,
-                    quantity=float(p.quantity),
-                    entry_price=float(p.entry_price),
-                    unrealized_pnl=float(p.unrealized_pnl or 0),
-                    leverage=int(p.leverage or 1),
-                    mark_price=float(p.mark_price or 0),
-                )
-                for p in futures
-            ]
-        except Exception as e:
-            logger.debug("bitget get_positions failed: %s", e)
-            return []
+        futures = await self._client.get_positions()
+        return [
+            BrokerPosition(
+                symbol=p.symbol,
+                side=p.side,
+                quantity=float(p.quantity),
+                entry_price=float(p.entry_price),
+                unrealized_pnl=float(p.unrealized_pnl or 0),
+                leverage=int(p.leverage or 1),
+                mark_price=float(p.mark_price or 0),
+            )
+            for p in futures
+        ]
 
     async def test_connection(self) -> bool:
         try:
