@@ -225,6 +225,17 @@ def compute_health() -> dict:
     if drift:
         issues.append(drift)
 
+    # Provenance durability: an active session that was never persisted means every
+    # child row carries a NULL runtime_session_id (safe) but observers cannot trace
+    # them to a parent lifecycle — surface the degraded state explicitly.
+    try:
+        from aletheia.agent_runtime.runtime_session import current_session, current_session_durable
+        sess = current_session()
+        if sess is not None and not current_session_durable():
+            issues.append("runtime_session_provenance_degraded")
+    except Exception:
+        pass
+
     return {"healthy": len(issues) == 0, "issues": issues}
 
 

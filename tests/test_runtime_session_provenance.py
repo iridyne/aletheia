@@ -266,3 +266,223 @@ def test_position_open_and_close_carry_different_sessions(tmp_path, monkeypatch)
     assert row["runtime_session_id"] == a["session_id"]          # created by A
     assert row["closed_runtime_session_id"] == b["session_id"]   # closed by B
     assert row["runtime_session_id"] != row["closed_runtime_session_id"]
+
+
+# --------------------------------------------------------------------------- #
+# 6. Durability: persist failure must not create orphan durable references
+# --------------------------------------------------------------------------- #
+
+def test_persist_failure_leaves_provenance_null(tmp_path, monkeypatch):
+    """If insert_runtime_session raises, child rows must NOT carry the session id."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity
+
+    # Inject a failing insert.
+    def _fail_insert(session):
+        raise RuntimeError("simulated DB failure")
+
+    monkeypatch.setattr(repo, "insert_runtime_session", _fail_insert)
+
+    session = rs.start_runtime_session()
+
+    # In-memory session is set but marked non-durable.
+    assert session["session_id"]
+    assert session["durable"] is False
+    assert rs.current_session_id() is not None
+    assert rs.current_session_durable() is False
+
+    # Child insert must leave runtime_session_id NULL.
+    repo.insert_opportunity(Opportunity(id="opp-nodurable", symbol="BTC/USDT", market="spot"))
+    row = repo._select_one("opportunities", "opp-nodurable")
+    assert row["runtime_session_id"] is None, (
+        "orphan durable reference stamped despite non-durable session"
+    )
+    # Non-durable: commit/fingerprint may still be stamped (diagnostic, not a durable id).
+    # The key contract is that runtime_session_id is NULL.
+
+
+def test_durable_session_stamps_runtime_session_id(tmp_path, monkeypatch):
+    """Happy-path: a durably persisted session stamps runtime_session_id on child rows."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity
+
+    session = rs.start_runtime_session()
+    assert session["durable"] is True
+    assert rs.current_session_durable() is True
+
+    repo.insert_opportunity(Opportunity(id="opp-durable", symbol="ETH/USDT", market="spot"))
+    row = repo._select_one("opportunities", "opp-durable")
+    assert row["runtime_session_id"] == session["session_id"]
+    assert row["producer_commit"] == session["boot_commit"]
+    assert row["behavior_fingerprint"] == session["behavior_fingerprint"]
+
+
+def test_health_reports_degraded_on_persist_failure(tmp_path, monkeypatch):
+    """Health check must surface runtime_session_provenance_degraded for non-durable sessions."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.storage import repositories as repo
+    from aletheia.agent_runtime.health import compute_health
+
+    def _fail_insert(session):
+        raise RuntimeError("simulated DB failure")
+
+    monkeypatch.setattr(repo, "insert_runtime_session", _fail_insert)
+    rs.start_runtime_session()
+
+    health = compute_health()
+    assert "runtime_session_provenance_degraded" in health["issues"]
+    assert health["healthy"] is False
+
+
+def test_health_recovers_after_retry_durability(tmp_path, monkeypatch):
+    """After retry_session_durability() succeeds health must no longer be degraded."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.storage import repositories as repo
+    from aletheia.agent_runtime.health import compute_health
+
+    inserted = []
+
+    original_insert = repo.insert_runtime_session
+
+    def _fail_first(session):
+        if not inserted:
+            raise RuntimeError("first attempt fails")
+        original_insert(session)
+
+    monkeypatch.setattr(repo, "insert_runtime_session", _fail_first)
+    rs.start_runtime_session()
+    assert rs.current_session_durable() is False
+
+    # Re-enable inserts for the retry.
+    inserted.append(True)
+    monkeypatch.setattr(repo, "insert_runtime_session", original_insert)
+
+    recovered = rs.retry_session_durability()
+    assert recovered is True
+    assert rs.current_session_durable() is True
+
+    health = compute_health()
+    assert "runtime_session_provenance_degraded" not in health["issues"]
+
+
+def test_close_provenance_null_when_non_durable(tmp_path, monkeypatch):
+    """closed_runtime_session_id must be NULL when the closing session is non-durable."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    # Session A (durable) opens the position.
+    a = rs.start_runtime_session()
+    assert a["durable"] is True
+    repo.insert_position(Position(
+        id="pos-close-nondurable", symbol="BTC/USDT", market_type="spot", direction="long",
+        quantity=1.0, entry_price=100.0, execution_mode="paper_internal", status="open",
+    ))
+    rs.end_runtime_session(clean=True)
+
+    # Session B (non-durable) closes the position.
+    def _fail_insert(session):
+        raise RuntimeError("simulated DB failure")
+    monkeypatch.setattr(repo, "insert_runtime_session", _fail_insert)
+    b = rs.start_runtime_session()
+    assert b["durable"] is False
+
+    prov = rs.current_close_provenance()
+    assert prov["closed_runtime_session_id"] is None
+    repo.update_position("pos-close-nondurable", status="closed", **prov)
+
+    row = repo._select_one("positions", "pos-close-nondurable")
+    assert row["runtime_session_id"] == a["session_id"]     # open provenance intact
+    assert row["closed_runtime_session_id"] is None          # no orphan close reference
+
+
+def test_orphan_scan_finds_orphaned_ids(tmp_path, monkeypatch):
+    """scan_orphan_session_ids must detect runtime_session_ids with no parent row."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    # Directly inject a row with a fake session id.
+    db = get_db()
+    db.execute(
+        "INSERT INTO opportunities (id, symbol, market, runtime_session_id) VALUES (?, ?, ?, ?)",
+        ("opp-orphan", "BTC/USDT", "spot", "ghost-session-000"),
+    )
+    db.commit()
+
+    result = repo.scan_orphan_session_ids()
+    assert result["total_orphan_refs"] >= 1
+    assert "ghost-session-000" in result["orphan_session_ids"]
+    assert "opportunities" in result["by_table"]
+
+
+def test_orphan_scan_empty_when_no_orphans(tmp_path, monkeypatch):
+    """scan_orphan_session_ids returns zero totals when all provenance is clean."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity
+
+    rs.start_runtime_session()
+    repo.insert_opportunity(Opportunity(id="opp-clean", symbol="ETH/USDT", market="spot"))
+
+    result = repo.scan_orphan_session_ids()
+    assert result["total_orphan_refs"] == 0
+    assert result["orphan_session_ids"] == []
+
+
+def test_retry_durability_idempotent_no_fingerprint_change(tmp_path, monkeypatch):
+    """retry_session_durability() must not bind a different fingerprint to the same session id."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.storage import repositories as repo
+
+    # Start a durable session.
+    session = rs.start_runtime_session()
+    assert session["durable"] is True
+    assert rs.current_session_durable() is True
+
+    # Calling retry on an already-durable session must be a no-op that returns True.
+    result = rs.retry_session_durability()
+    assert result is True
+    assert rs.current_session_durable() is True
+
+    # The DB row is unchanged.
+    row = repo.get_runtime_session(session["session_id"])
+    assert row["behavior_fingerprint"] == session["behavior_fingerprint"]
+
+
+def test_verification_fails_on_fingerprint_mismatch(tmp_path, monkeypatch):
+    """If the persisted row has a different fingerprint verification must fail (non-durable)."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    # Let insert succeed normally.
+    session = rs.start_runtime_session()
+    assert session["durable"] is True
+
+    # Tamper: corrupt the fingerprint in the DB and reset durable state to simulate
+    # a hypothetical mismatch scenario via retry_session_durability.
+    db = get_db()
+    db.execute(
+        "UPDATE runtime_sessions SET behavior_fingerprint = 'tampered' WHERE session_id = ?",
+        (session["session_id"],),
+    )
+    db.commit()
+
+    # Force retry to re-verify.
+    import aletheia.agent_runtime.runtime_session as rs_mod
+    rs_mod._session_durable = False
+
+    result = rs.retry_session_durability()
+    assert result is False
+    assert rs.current_session_durable() is False
