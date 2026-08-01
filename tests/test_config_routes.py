@@ -633,9 +633,9 @@ async def test_tunnel_guard_protects_learning_mutations_before_side_effects(
         headers=headers,
     )).status_code != 401
 
-    # Read-only experiment inspection is not an authority mutation and remains
-    # accessible without the tunnel credential.
-    read = await client.get("/api/settings/learning/experiments/example")
+    # Read-only experiment inspection also requires the tunnel credential under
+    # the default-deny policy (#398): read access exposes strategy state.
+    read = await client.get("/api/settings/learning/experiments/example", headers=headers)
     assert read.status_code != 401
 
 

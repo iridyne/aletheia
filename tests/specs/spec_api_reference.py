@@ -445,9 +445,9 @@ def test_tunnel_enabled_no_token_returns_401(tmp_path, monkeypatch):
     # Modify the existing TunnelConfig in-place (AletheiaConfig is the root model).
     cfg = AletheiaConfig()
     cfg.tunnel.enabled = True
-    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(loader, "load_config", lambda **_: cfg)
     import aletheia.server.app as server_app
-    monkeypatch.setattr(server_app, "load_config", lambda: cfg)
+    monkeypatch.setattr(server_app, "load_config", lambda **_: cfg)
 
     # Ensure get_secret returns None for tunnel_api_token.
     import aletheia.config.secrets as secrets_mod

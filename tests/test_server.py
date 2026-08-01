@@ -167,12 +167,12 @@ async def test_tunnel_guard_protects_lesson_management_actions(client):
         source_type="trade_case_study",
         source_id="case-tunnel-authorized",
     )
-    assert (await client.get("/api/persistence/lessons")).status_code == 200
-    assert (
-        await client.get(f"/api/persistence/lessons/{lesson.lesson_id}")
-    ).status_code == 200
-
+    # Under default-deny (#398), read routes also require the tunnel token.
     headers = {"X-Aletheia-Token": "LESSONOWNER42"}
+    assert (await client.get("/api/persistence/lessons", headers=headers)).status_code == 200
+    assert (
+        await client.get(f"/api/persistence/lessons/{lesson.lesson_id}", headers=headers)
+    ).status_code == 200
     for action, expected_status in (
         ("accept", "accepted"),
         ("reject", "rejected"),
