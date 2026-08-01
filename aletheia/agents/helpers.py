@@ -10,7 +10,7 @@ import threading
 from aletheia.model_provider.base import ModelRequest, StreamChunk
 from aletheia.model_provider.base import model_json_schema_payload
 from aletheia.model_provider.router import get_provider
-from aletheia.model_provider.fallback import complete_with_fallback
+from aletheia.model_provider.fallback import BudgetExceededError, complete_with_fallback
 
 logger = logging.getLogger("aletheia.agents")
 
@@ -28,7 +28,37 @@ def _exception_detail(exc: BaseException) -> str:
     return f"{name}: {message}" if message else name
 
 
-async def llm_complete(system: str, user: str, *, max_tokens: int = 800, provider: str | None = None) -> tuple[str | None, str | None]:
+def prepend_environment_header(system: str, *, include: bool | None = None) -> str:
+    """Add the Phase 5 context block only when the explicit feature flag is on."""
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
+    enabled = cfg.economics.harness_header_default_on if include is None else include
+    if not enabled:
+        return system
+    try:
+        from aletheia.agent_runtime.run_context import current_agent_run_id, current_economic_attribution
+
+        run_id = current_agent_run_id()
+        logical_agent = (current_economic_attribution() or {}).get("logical_agent")
+    except Exception:
+        run_id = logical_agent = None
+    identity = " ".join(part for part in (
+        f"agent_run_id={run_id}" if run_id else None,
+        f"logical_agent={logical_agent}" if logical_agent else None,
+    ) if part)
+    lines = [
+        "[Aletheia Harness v0.1]",
+        f"Time: {datetime.now(timezone.utc).isoformat()}",
+        f"Trading mode: {cfg.exchange.paper_execution_mode} live_enabled={cfg.live.state != 'live_disabled'}",
+        "Tool permissions: enforced by runtime; no:live_order",
+    ]
+    if identity:
+        lines.append(f"Run: {identity}")
+    return "\n".join([*lines, "", "[Caller system prompt follows]", system])
+
+
+async def llm_complete(system: str, user: str, *, max_tokens: int = 800, provider: str | None = None, include_harness_header: bool | None = None) -> tuple[str | None, str | None]:
     """Call the model provider. Returns (content, error).
 
     Never raises — on any failure returns (None, error_message) so the agent can
@@ -45,14 +75,17 @@ async def llm_complete(system: str, user: str, *, max_tokens: int = 800, provide
     # not the tier's.
     provider_name = provider
     try:
-        provider = get_provider(provider_name)
+        provider_instance = get_provider(provider_name)
         resp = await complete_with_fallback(ModelRequest(
             messages=[{"role": "user", "content": user}],
-            system=system,
+            system=prepend_environment_header(system, include=include_harness_header),
             max_tokens=max_tokens,
-        ), provider=provider, provider_name=provider_name)
+        ), provider=provider_instance, provider_name=provider_name)
         _record_llm(True)
         return resp.content, None
+    except BudgetExceededError:
+        _record_llm(False)
+        return None, "llm_budget_exhausted"
     except Exception as e:
         detail = _exception_detail(e)
         logger.warning("LLM call failed: %s", detail)
@@ -72,7 +105,7 @@ def _extract_json_object(text: str):
     if text.startswith("{"):
         try:
             return json.loads(text)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
             pass
 
     # Strategy 2: strip markdown code fences
@@ -80,7 +113,7 @@ def _extract_json_object(text: str):
     if fence_match:
         try:
             return json.loads(fence_match.group(1).strip())
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
             pass
 
     # Strategy 3: brace-matching extraction — find the first '{' and match
@@ -112,7 +145,7 @@ def _extract_json_object(text: str):
             if depth == 0:
                 try:
                     return json.loads(text[start:i + 1])
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, TypeError):
                     return None
     return None
 
@@ -125,6 +158,7 @@ async def llm_structured(
     max_tokens: int = 2048,
     provider: str | None = None,
     fallback_to_defaults: bool = False,
+    include_harness_header: bool | None = None,
 ) -> tuple[dict | None, str | None]:
     """Call the provider's structured() and return (parsed_dict, error).
 
@@ -148,7 +182,7 @@ async def llm_structured(
         return None, error
 
     try:
-        provider = get_provider(provider_name)
+        provider_instance = get_provider(provider_name)
         schema_dict = model_json_schema_payload(schema)
         schema_json = json.dumps(schema_dict)
         base_messages = [
@@ -161,7 +195,8 @@ async def llm_structured(
         # Prepend /no_think for Qwen3-series reasoning models: without it the model
         # exhausts the token budget on internal reasoning and returns empty text output.
         # Other models ignore this prefix safely.
-        structured_system = f"/no_think\n{system}" if system else "/no_think"
+        caller_system = prepend_environment_header(system, include=include_harness_header)
+        structured_system = f"/no_think\n{caller_system}" if caller_system else "/no_think"
         loop = asyncio.get_running_loop()
         deadline = loop.time() + _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC
 
@@ -213,7 +248,7 @@ async def llm_structured(
                             temperature=0.3 if attempt == 0 else 0.0,
                             max_tokens=attempt_max_tokens,
                         ),
-                        provider=provider,
+                        provider=provider_instance,
                         provider_name=provider_name,
                     ),
                     timeout=remaining,
@@ -329,7 +364,7 @@ def _schema_defaults_dict(schema_dict: dict) -> dict:
     return result
 
 
-async def llm_stream(system: str, user: str, *, max_tokens: int = 800, provider: str | None = None) -> AsyncIterator[StreamChunk]:
+async def llm_stream(system: str, user: str, *, max_tokens: int = 800, provider: str | None = None, include_harness_header: bool | None = None) -> AsyncIterator[StreamChunk]:
     """Stream response chunks from the provider.
 
     Yields StreamChunk objects. On failure yields a single chunk with done=True.
@@ -338,14 +373,14 @@ async def llm_stream(system: str, user: str, *, max_tokens: int = 800, provider:
     """
     provider_name = provider
     try:
-        provider = get_provider(provider_name)
+        provider_instance = get_provider(provider_name)
         from aletheia.config.loader import load_config
         from aletheia.model_provider.broker import brokered_stream
 
         resolved_name = provider_name or load_config().models.default_provider
-        async for chunk in brokered_stream(resolved_name, provider, ModelRequest(
+        async for chunk in brokered_stream(resolved_name, provider_instance, ModelRequest(
             messages=[{"role": "user", "content": user}],
-            system=system,
+            system=prepend_environment_header(system, include=include_harness_header),
             max_tokens=max_tokens,
         )):
             yield chunk

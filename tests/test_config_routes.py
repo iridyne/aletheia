@@ -69,6 +69,7 @@ async def test_economics_shadow_settings_are_explicit_and_default_off(client):
         "budgets_shadow_enabled": False,
         "enforcement_mode": "warn_only",
         "harness_header_default_on": False,
+        "prompt_guardrail_detection_enabled": False,
     }
 
     enabled = await client.post("/api/settings/economics", json={

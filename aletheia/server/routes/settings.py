@@ -502,6 +502,7 @@ class RuntimeConfigUpdate(SettingsRequest):
 class EconomicsConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
     budgets_shadow_enabled: Optional[bool] = None
+    prompt_guardrail_detection_enabled: Optional[bool] = None
 
 
 @router.post("/economics")
