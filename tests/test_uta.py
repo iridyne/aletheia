@@ -214,3 +214,56 @@ def test_get_unified_state_sync(monkeypatch):
     from aletheia.portfolio.uta.manager import get_unified_state_sync
     state = get_unified_state_sync()
     assert state.total_equity_usdt == 999.0
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed: positions query failure must not produce authoritative empty view
+# ---------------------------------------------------------------------------
+
+class _PartialFailAdapter(MockAdapter):
+    """Account succeeds; positions raises — simulates transport/auth failure."""
+    async def get_positions(self) -> list[BrokerPosition]:
+        raise RuntimeError("positions query failed")
+
+
+@pytest.mark.asyncio
+async def test_positions_query_failure_removes_broker_from_connected(monkeypatch):
+    """A broker whose positions query fails must NOT appear in connected_brokers.
+
+    Positions failure must propagate as an error so the reconciler cannot
+    treat an empty position list as authoritative evidence of absence.
+    """
+    partial = _PartialFailAdapter("bitget_demo", "Bitget Demo", equity=5000)
+    healthy = MockAdapter(
+        "binance_testnet", "Binance",
+        positions=[BrokerPosition("ETH/USDT", "long", 1.0, 3000, 0)],
+    )
+    monkeypatch.setattr(
+        "aletheia.portfolio.uta.registry.create_all_configured",
+        lambda: [partial, healthy],
+    )
+
+    state = await get_unified_state()
+
+    assert "bitget_demo" not in state.connected_brokers
+    assert len(state.errors) == 1
+    assert "bitget_demo" in state.errors[0]
+    assert not any(p["broker_id"] == "bitget_demo" for p in state.positions)
+    assert "binance_testnet" in state.connected_brokers
+    assert len(state.positions) == 1
+
+
+@pytest.mark.asyncio
+async def test_successful_empty_positions_remains_complete_view(monkeypatch):
+    """A broker returning an empty positions list (no open positions) is still connected."""
+    adapter = MockAdapter("bitget_demo", "Bitget Demo", equity=5000, positions=[])
+    monkeypatch.setattr(
+        "aletheia.portfolio.uta.registry.create_all_configured",
+        lambda: [adapter],
+    )
+
+    state = await get_unified_state()
+
+    assert "bitget_demo" in state.connected_brokers
+    assert state.errors == []
+    assert state.positions == []
