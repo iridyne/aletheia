@@ -5021,3 +5021,58 @@ def test_defer_ttl_guard_emits_warning_when_extend_is_noop(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == 1, "Expected one filter_decision with reason_code=defer_exceeds_opportunity_ttl"
     assert rows[0]["filter_name"] == "defer_ttl_guard"
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S66", "decision_lifecycle_contract", "§2.3 evicted opps retryable", "L2b",
+        "signal_queue_evicted opportunities are NOT included in "
+        "_operator_evaluated_opportunity_ids(), so an evicted candidate can be "
+        "re-queued on the next paper_trader run instead of being permanently blocked "
+        "as operator_already_evaluated (#331).",
+        status="implemented",
+    ),
+)
+def test_evicted_opportunity_not_in_operator_evaluated_set(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import close_db, get_db
+    close_db()
+    run_migrations()
+
+    now = datetime.now(timezone.utc)
+    recent = (now - timedelta(hours=1)).isoformat()
+
+    db = get_db()
+    # Evicted opportunity — must NOT be in the evaluated set (it is retryable).
+    db.execute(
+        "INSERT INTO pi_decisions "
+        "(id, symbol, direction, market_type, action, opportunity_id, "
+        " signal_source, created_at) "
+        "VALUES ('pi-evicted', 'CHZ/USDT', 'short', 'usdt_futures', 'signal_queue_evicted', "
+        "        'opp-evicted', 'market_observer', ?)",
+        (recent,),
+    )
+    # A terminal skip in the same window — must still be in the evaluated set.
+    db.execute(
+        "INSERT INTO pi_decisions "
+        "(id, symbol, direction, market_type, action, opportunity_id, "
+        " signal_source, created_at) "
+        "VALUES ('pi-skipped', 'BTC/USDT', 'long', 'spot', 'skip', "
+        "        'opp-skipped', 'market_observer', ?)",
+        (recent,),
+    )
+    db.commit()
+
+    from aletheia.agents.paper_trader import _operator_evaluated_opportunity_ids
+
+    ids = _operator_evaluated_opportunity_ids()
+    assert "opp-evicted" not in ids, (
+        "signal_queue_evicted must not appear in evaluated set — "
+        "evicted candidates are retryable, not finalized"
+    )
+    assert "opp-skipped" in ids, "terminal skip must still block re-queuing"
