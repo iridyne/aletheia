@@ -486,3 +486,111 @@ def test_verification_fails_on_fingerprint_mismatch(tmp_path, monkeypatch):
     result = rs.retry_session_durability()
     assert result is False
     assert rs.current_session_durable() is False
+
+
+# --------------------------------------------------------------------------- #
+# 7. Doctor probe: runtime_session_provenance surface coverage
+# --------------------------------------------------------------------------- #
+
+def test_doctor_probe_ok_for_durable_session(tmp_path, monkeypatch):
+    """Doctor must show ok for current and orphans when session is durable."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.diagnostics.doctor import _probe_runtime_session_provenance, Report
+    from datetime import timezone
+    from datetime import datetime
+
+    rs.start_runtime_session()
+    report = Report(generated_at=datetime.now(timezone.utc).isoformat())
+    _probe_runtime_session_provenance(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["trust.runtime_session.current"].severity == "ok"
+    assert checks["trust.runtime_session.stale_open"].severity == "ok"
+    assert checks["trust.runtime_session.orphans"].severity == "ok"
+
+
+def test_doctor_probe_warn_for_non_durable_session(tmp_path, monkeypatch):
+    """Doctor must show warn on current when session is non-durable."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.storage import repositories as repo
+    from aletheia.diagnostics.doctor import _probe_runtime_session_provenance, Report
+    from datetime import timezone
+    from datetime import datetime
+
+    def _fail_insert(session):
+        raise RuntimeError("simulated DB failure")
+    monkeypatch.setattr(repo, "insert_runtime_session", _fail_insert)
+
+    rs.start_runtime_session()
+    report = Report(generated_at=datetime.now(timezone.utc).isoformat())
+    _probe_runtime_session_provenance(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["trust.runtime_session.current"].severity == "warn"
+    assert "NON-DURABLE" in checks["trust.runtime_session.current"].detail
+
+
+def test_doctor_probe_no_session(tmp_path, monkeypatch):
+    """Doctor must show info (not warn) when no session is active."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.diagnostics.doctor import _probe_runtime_session_provenance, Report
+    from datetime import timezone
+    from datetime import datetime
+
+    report = Report(generated_at=datetime.now(timezone.utc).isoformat())
+    _probe_runtime_session_provenance(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["trust.runtime_session.current"].severity == "info"
+
+
+def test_doctor_probe_stale_open_sessions(tmp_path, monkeypatch):
+    """Doctor must surface stale open sessions from prior crashes."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.storage import repositories as repo
+    from aletheia.diagnostics.doctor import _probe_runtime_session_provenance, Report
+    from datetime import timezone
+    from datetime import datetime
+
+    # Session A starts but crashes (no clean end).
+    rs.start_runtime_session()
+    # Simulate crash: clear in-process state without updating DB.
+    from aletheia.agent_runtime import runtime_session as rs_mod
+    rs_mod._current_session = None
+    rs_mod._session_durable = False
+
+    # Session B starts normally.
+    rs.start_runtime_session()
+
+    report = Report(generated_at=datetime.now(timezone.utc).isoformat())
+    _probe_runtime_session_provenance(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["trust.runtime_session.stale_open"].severity == "warn"
+    assert "stale open session" in checks["trust.runtime_session.stale_open"].detail
+
+
+def test_doctor_probe_orphan_references(tmp_path, monkeypatch):
+    """Doctor must warn when orphan runtime_session_id references exist."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.sqlite import get_db
+    from aletheia.diagnostics.doctor import _probe_runtime_session_provenance, Report
+    from datetime import timezone
+    from datetime import datetime
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO opportunities (id, symbol, market, runtime_session_id) VALUES (?, ?, ?, ?)",
+        ("opp-doctor-orphan", "BTC/USDT", "spot", "ghost-session-doctor"),
+    )
+    db.commit()
+
+    report = Report(generated_at=datetime.now(timezone.utc).isoformat())
+    _probe_runtime_session_provenance(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["trust.runtime_session.orphans"].severity == "warn"
+    assert "orphan" in checks["trust.runtime_session.orphans"].detail

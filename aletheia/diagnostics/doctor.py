@@ -2871,6 +2871,121 @@ def _probe_network(report: Report) -> None:
                f"proxy reachable [{mode}] ({latency_ms}ms) — {proxy_url}{leak_note}")
 
 
+
+def _probe_runtime_session_provenance(report: Report) -> None:
+    """Runtime Session provenance integrity — four distinct states surfaced explicitly.
+
+    1. active durable session  — session row verified in DB; child rows carry a
+       traceable runtime_session_id.
+    2. active non-durable (degraded) — session exists in-memory but DB row absent or
+       unverifiable; child rows stamp NULL to avoid orphan references.
+    3. no active session       — process has not called start_runtime_session() yet;
+       normal for CLI / test contexts.
+    4. stale open sessions     — sessions with ended_at IS NULL from prior process
+       crashes that were never cleanly ended.
+
+    Also reports orphan reference counts (child rows referencing a session_id with no
+    parent row) so analytics can know attribution coverage rather than silently
+    treating orphan ids as valid.
+    """
+    try:
+        from aletheia.agent_runtime.runtime_session import (
+            current_session, current_session_durable,
+        )
+        from aletheia.storage import repositories as repo
+        from aletheia.storage.sqlite import get_db
+
+        sess = current_session()
+
+        # --- 1/2/3: current-process session state ---
+        if sess is None:
+            report.add(
+                "trust.runtime_session.current",
+                "info",
+                "no active runtime session (process not started or CLI context)",
+            )
+        elif current_session_durable():
+            report.add(
+                "trust.runtime_session.current",
+                "ok",
+                f"active durable session {sess['session_id'][:16]}… "
+                f"(commit={( sess.get('boot_commit') or '-')[:12]}, "
+                f"fingerprint={( sess.get('behavior_fingerprint') or '-')[:12]}…)",
+            )
+        else:
+            report.add(
+                "trust.runtime_session.current",
+                "warn",
+                f"active session {sess['session_id'][:16]}… is NON-DURABLE — "
+                "DB row absent or fingerprint mismatch; child rows stamped with NULL "
+                "runtime_session_id (provenance degraded, trading continues)",
+                fix_hint="Call retry_session_durability() or restart the gateway to "
+                         "attempt re-registration.",
+            )
+
+        # --- 4: stale open sessions from prior crashes ---
+        try:
+            db = get_db()
+            current_id = sess["session_id"] if sess else None
+            query = (
+                "SELECT session_id, started_at FROM runtime_sessions "
+                "WHERE ended_at IS NULL"
+            )
+            open_sessions = [dict(r) for r in db.execute(query).fetchall()]
+            stale = [
+                s for s in open_sessions
+                if s["session_id"] != current_id
+            ]
+            if stale:
+                ids = ", ".join(s["session_id"][:16] + "…" for s in stale[:3])
+                report.add(
+                    "trust.runtime_session.stale_open",
+                    "warn",
+                    f"{len(stale)} stale open session(s) from prior crash(es): {ids}",
+                    fix_hint="These sessions were never cleanly ended — likely a crash. "
+                             "They do not affect current trading but inflate the open-session "
+                             "count. end_runtime_session() was not called on gateway shutdown.",
+                )
+            else:
+                report.add(
+                    "trust.runtime_session.stale_open",
+                    "ok",
+                    "no stale open sessions from prior crashes",
+                )
+        except Exception as e:
+            report.add("trust.runtime_session.stale_open", "info", f"stale-session probe error: {e}")
+
+        # --- Orphan scan: child rows with no parent session ---
+        try:
+            scan = repo.scan_orphan_session_ids()
+            if "error" in scan:
+                report.add("trust.runtime_session.orphans", "info",
+                           f"orphan scan failed: {scan['error']}")
+            elif scan["total_orphan_refs"] == 0:
+                report.add("trust.runtime_session.orphans", "ok",
+                           "no orphan runtime_session_id references found")
+            else:
+                table_summary = "; ".join(
+                    f"{t}:{sum(v for v in cols.values())}"
+                    for t, cols in scan["by_table"].items()
+                )
+                n_ids = len(scan["orphan_session_ids"])
+                report.add(
+                    "trust.runtime_session.orphans",
+                    "warn",
+                    f"{scan['total_orphan_refs']} orphan reference(s) across "
+                    f"{n_ids} unknown session id(s): {table_summary}",
+                    fix_hint="These child rows advertise a runtime_session_id that has no "
+                             "parent in runtime_sessions. They are not fabricated — the "
+                             "session row was simply never written. Use "
+                             "scan_orphan_session_ids() for a full breakdown.",
+                )
+        except Exception as e:
+            report.add("trust.runtime_session.orphans", "info", f"orphan scan error: {e}")
+
+    except Exception as e:
+        report.add("trust.runtime_session.current", "info", f"probe error: {e}")
+
 def _probe_audit_chain(report: Report) -> None:
     """Verify audit JSONL hash chain integrity."""
     from aletheia.files.jsonl import verify_audit_chain
@@ -3632,6 +3747,7 @@ def build_report(*, probe_llm: bool = False) -> Report:
         _probe_network,
         _probe_infra_db_size,
         _probe_audit_chain,
+        _probe_runtime_session_provenance,
         _probe_fts_coverage,
     ):
         try:
