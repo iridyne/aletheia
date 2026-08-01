@@ -183,7 +183,14 @@ def test_strategy_factory_fields_have_no_production_consumer():
                 continue
             if "__pycache__" in rel:
                 continue
-            text = py_file.read_text(errors="replace")
+            if ".pytest_tmp_unawaited_probe" in rel:
+                continue
+            try:
+                text = py_file.read_text(errors="replace")
+            except FileNotFoundError:
+                # Probe file created and deleted by test_pytest_policy_rejects_an_unawaited_coroutine
+                # during parallel test execution — skip it.
+                continue
             if f".{field}" in text or f'"{field}"' in text or f"'{field}'" in text:
                 violations.append(f"{field} found in {rel}")
 
