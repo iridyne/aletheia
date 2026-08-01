@@ -3425,9 +3425,24 @@ function AppRows({ status, settings, qc }: any) {
         <span className="mono text-sm">{app.dashboard_port || 8787}</span>
         <span className="text-xs text-muted">(read-only — set via config.yaml)</span>
       </Row>
-      <Row label="Bind host" hint="Loopback is safest. Non-loopback hosts expose the local API without multi-user auth.">
-        <span className="mono text-sm">{app.bind_host || '127.0.0.1'}</span>
-        <span className="text-xs text-muted">(read-only — set via config.yaml)</span>
+      <Row label="Bind host" hint="The network interface the dashboard server listens on. Change requires gateway restart. Non-loopback exposes the API to the local network without multi-user auth.">
+        <select
+          value={app.bind_host || '0.0.0.0'}
+          onChange={e => appMut.mutate({ bind_host: e.target.value })}
+          disabled={appMut.isPending}
+          className="w-auto"
+        >
+          <option value="0.0.0.0">0.0.0.0 — All interfaces (default)</option>
+          <option value="127.0.0.1">127.0.0.1 — Localhost only</option>
+          <option value="::">:: — All interfaces (IPv6)</option>
+          <option value="::1">::1 — Localhost only (IPv6)</option>
+        </select>
+        {(app.bind_host || '0.0.0.0') !== '127.0.0.1' && (app.bind_host || '0.0.0.0') !== '::1' && (
+          <span className="text-xs text-warning">Network-exposed — restart required to apply</span>
+        )}
+        {((app.bind_host || '0.0.0.0') === '127.0.0.1' || (app.bind_host || '0.0.0.0') === '::1') && (
+          <span className="text-xs text-muted">Restart required to apply</span>
+        )}
       </Row>
       <Row label="Gateway mode" hint="Process lifecycle mode used by the CLI/supervisor.">
         <span className="mono text-sm">{runtime.gateway_mode || 'background'}</span>

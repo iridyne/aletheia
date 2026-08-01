@@ -85,6 +85,32 @@ async def test_economics_shadow_settings_are_explicit_and_default_off(client):
 
 
 @pytest.mark.anyio
+async def test_app_config_bind_host_update(client):
+    settings = (await client.get("/api/settings")).json()
+    assert settings["app"]["bind_host"] == "0.0.0.0"
+
+    resp = await client.post("/api/settings/app", json={"bind_host": "127.0.0.1"})
+    assert resp.status_code == 200
+    assert resp.json()["updated"]["bind_host"] == "127.0.0.1"
+
+    settings = (await client.get("/api/settings")).json()
+    assert settings["app"]["bind_host"] == "127.0.0.1"
+
+    resp2 = await client.post("/api/settings/app", json={"bind_host": "0.0.0.0"})
+    assert resp2.status_code == 200
+    assert resp2.json()["updated"]["bind_host"] == "0.0.0.0"
+
+
+@pytest.mark.anyio
+async def test_app_config_bind_host_rejects_invalid(client):
+    resp = await client.post("/api/settings/app", json={"bind_host": "not-a-host!!"})
+    assert resp.status_code == 422
+
+    resp2 = await client.post("/api/settings/app", json={"bind_host": ""})
+    assert resp2.status_code == 422
+
+
+@pytest.mark.anyio
 async def test_set_model_provider(client):
     resp = await client.post("/api/settings/model", json={
         "provider": "openai_compatible",

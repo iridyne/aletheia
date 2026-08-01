@@ -559,15 +559,36 @@ async def update_runtime_config(req: RuntimeConfigUpdate):
 # App config
 # ---------------------------------------------------------------------------
 
+_VALID_BIND_HOSTS = {"0.0.0.0", "::", "127.0.0.1", "localhost", "::1"}
+
+
 class AppConfigUpdate(SettingsRequest):
     auto_open_browser: Optional[bool] = None
     equity_curve_mode: Optional[str] = None
+    bind_host: Optional[str] = None
 
     @field_validator("equity_curve_mode")
     @classmethod
     def _validate_equity_curve_mode(cls, v):
         if v is not None and v not in ("full_cumulative", "window_relative"):
             raise ValueError("equity_curve_mode must be 'full_cumulative' or 'window_relative'")
+        return v
+
+    @field_validator("bind_host")
+    @classmethod
+    def _validate_bind_host(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            raise ValueError("bind_host cannot be empty")
+        if v not in _VALID_BIND_HOSTS:
+            import re
+            _ipv4 = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
+            if not _ipv4.match(v):
+                raise ValueError(
+                    f"bind_host must be one of {sorted(_VALID_BIND_HOSTS)} or a valid IPv4 address"
+                )
         return v
 
 
