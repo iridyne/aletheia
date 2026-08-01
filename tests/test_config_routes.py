@@ -3,7 +3,7 @@
 Critical security invariant: no GET ever returns a raw secret value.
 """
 
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
 from httpx import AsyncClient, ASGITransport
 
 from aletheia.server.app import app
@@ -1123,3 +1123,258 @@ async def test_telegram_health_reachable(client, monkeypatch):
     assert body["reachable"] is True
     assert body["username"] == "aletheia_bot"
     assert token not in resp.text
+
+@pytest.mark.anyio
+async def test_databricks_provider_config_is_explicit_and_secret_safe(client):
+    provider_types = await client.get("/api/model/provider-types")
+    assert provider_types.status_code == 200
+    databricks_type = provider_types.json()["databricks"]
+    assert databricks_type["fields"] == ["workspace_url", "model", "protocol", "api_key"]
+    assert "serving_endpoint" in databricks_type["protocols"]
+    assert "anthropic_messages" in databricks_type["protocols"]
+
+    secret = "dapi-candidate-secret-2468"
+    saved = await client.post(
+        "/api/settings/model",
+        json={
+            "provider": "databricks",
+            "workspace_url": "https://adb-123.azuredatabricks.net/ai-gateway/anthropic",
+            "protocol": "anthropic_messages",
+            "model": "claude-sonnet",
+            "api_key": secret,
+            "enabled": True,
+        },
+    )
+    assert saved.status_code == 200
+    assert secret not in saved.text
+
+    config = await client.get("/api/model")
+    entry = config.json()["providers"]["databricks"]
+    assert entry["workspace_url"] == "https://adb-123.azuredatabricks.net/ai-gateway/anthropic"
+    assert entry["protocol"] == "anthropic_messages"
+    assert entry["model"] == "claude-sonnet"
+    assert entry["api_key"] == {"configured": True, "last4": "2468"}
+    assert secret not in config.text
+
+@pytest.mark.anyio
+async def test_databricks_provider_config_rejects_invalid_workspace_or_protocol(client):
+    invalid_workspace = await client.post(
+        "/api/settings/model",
+        json={
+            "provider": "databricks",
+            "workspace_url": "not-a-workspace",
+        },
+    )
+    assert invalid_workspace.status_code == 422
+
+    invalid_protocol = await client.post(
+        "/api/settings/model",
+        json={
+            "provider": "databricks",
+            "protocol": "unknown_protocol",
+        },
+    )
+    assert invalid_protocol.status_code == 422
+
+@pytest.mark.anyio
+async def test_databricks_candidate_can_verify_without_catalogue_permission(client, monkeypatch):
+    """Known endpoints remain verifiable when workspace-wide LIST is forbidden."""
+    from aletheia.model_provider.base import ModelHealth, ModelResponse
+    from aletheia.model_provider.databricks import DatabricksProvider
+
+    async def no_catalogue(self):
+        return ModelHealth(
+            provider="databricks",
+            available=False,
+            model=self.model,
+            error="Databricks model catalogue unavailable",
+        )
+
+    async def successful_inference(self, request):
+        return ModelResponse(content="OK", model=self.model, usage={})
+
+    monkeypatch.setattr(DatabricksProvider, "healthcheck", no_catalogue)
+    monkeypatch.setattr(DatabricksProvider, "complete", successful_inference)
+
+    secret = "dapi-probe-only-1357"
+    response = await client.post(
+        "/api/model/test-candidate",
+        json={
+            "provider": "databricks",
+            "workspace_url": "https://adb-123.azuredatabricks.net",
+            "protocol": "serving_endpoint",
+            "model": "known-endpoint",
+            "api_key": secret,
+            "probe": True,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["available"] is True
+    assert secret not in response.text
+
+    config = await client.get("/api/model")
+    assert "databricks" not in config.json()["providers"]
+    assert secret not in config.text
+
+
+@pytest.mark.anyio
+async def test_databricks_omitted_protocol_defaults_to_serving_endpoint(client):
+    response = await client.post("/api/settings/model", json={
+        "provider": "databricks",
+        "workspace_url": "https://adb-123.azuredatabricks.net",
+    })
+    assert response.status_code == 200
+    config = await client.get("/api/model")
+    assert config.json()["providers"]["databricks"]["protocol"] == "serving_endpoint"
+
+
+@pytest.mark.anyio
+async def test_databricks_candidate_does_not_reuse_token_for_a_new_origin(client, monkeypatch):
+    from aletheia.model_provider.base import ModelHealth
+    from aletheia.model_provider.databricks import DatabricksProvider
+
+    saved = await client.post("/api/settings/model", json={
+        "provider": "databricks",
+        "workspace_url": "https://adb-old.azuredatabricks.net",
+        "model": "known-endpoint",
+        "api_key": "dapi-stored-origin-only",
+    })
+    assert saved.status_code == 200
+    seen_api_keys = []
+
+    async def unavailable(self):
+        seen_api_keys.append(self.api_key)
+        return ModelHealth(provider="databricks", available=False, error="HTTP 401")
+
+    monkeypatch.setattr(DatabricksProvider, "healthcheck", unavailable)
+    response = await client.post("/api/model/test-candidate", json={
+        "provider": "databricks",
+        "workspace_url": "https://adb-new.azuredatabricks.net",
+        "model": "known-endpoint",
+    })
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+    assert seen_api_keys == [None]
+
+
+@pytest.mark.anyio
+async def test_databricks_candidate_routes_reject_invalid_or_plaintext_remote_urls(client):
+    detected = await client.post("/api/model/detect-models", json={
+        "provider": "databricks",
+        "workspace_url": "not-a-workspace",
+    })
+    assert detected.status_code == 422
+
+    candidate = await client.post("/api/model/test-candidate", json={
+        "provider": "databricks",
+        "workspace_url": "http://adb-123.azuredatabricks.net",
+        "model": "endpoint",
+    })
+    assert candidate.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_databricks_save_requires_new_origin_bound_token(client):
+    from aletheia.config.loader import load_config
+    from aletheia.config.secrets import get_secret
+
+    old_token = "dapi-old-origin-1111"
+    created = await client.post("/api/settings/model", json={
+        "provider": "databricks",
+        "workspace_url": "https://adb-old.azuredatabricks.net",
+        "model": "endpoint",
+        "api_key": old_token,
+    })
+    assert created.status_code == 200
+    old_config = load_config().models.providers["databricks"]
+    old_ref = old_config.api_key_secret_ref
+    assert old_ref
+    assert get_secret(old_ref) == old_token
+
+    rejected = await client.post("/api/settings/model", json={
+        "provider": "databricks",
+        "workspace_url": "https://adb-new.azuredatabricks.net",
+    })
+    assert rejected.status_code == 422
+    unchanged = load_config().models.providers["databricks"]
+    assert unchanged.workspace_url == "https://adb-old.azuredatabricks.net"
+    assert unchanged.api_key_secret_ref == old_ref
+
+    new_token = "dapi-new-origin-2222"
+    replaced = await client.post("/api/settings/model", json={
+        "provider": "databricks",
+        "workspace_url": "https://adb-new.azuredatabricks.net",
+        "api_key": new_token,
+    })
+    assert replaced.status_code == 200
+    updated = load_config().models.providers["databricks"]
+    assert updated.workspace_url == "https://adb-new.azuredatabricks.net"
+    new_ref = updated.api_key_secret_ref
+    assert new_ref
+    assert new_ref != old_ref
+    assert get_secret(old_ref) == old_token
+    assert get_secret(new_ref) == new_token
+    assert old_token not in replaced.text
+    assert new_token not in replaced.text
+
+
+@pytest.mark.anyio
+async def test_databricks_save_rejects_base_url_rebinding_and_blank_replacement(client):
+    from aletheia.config.loader import load_config
+
+    created = await client.post("/api/settings/model", json={
+        "provider": "databricks",
+        "workspace_url": "https://adb-old.azuredatabricks.net",
+        "model": "endpoint",
+        "api_key": "dapi-origin-bound-3333",
+    })
+    assert created.status_code == 200
+
+    base_url_rebind = await client.post("/api/settings/model", json={
+        "provider": "databricks",
+        "base_url": "https://adb-new.azuredatabricks.net",
+    })
+    assert base_url_rebind.status_code == 422
+
+    blank_replacement = await client.post("/api/settings/model", json={
+        "provider": "databricks",
+        "workspace_url": "https://adb-new.azuredatabricks.net",
+        "api_key": "   ",
+    })
+    assert blank_replacement.status_code == 422
+    assert load_config().models.providers["databricks"].workspace_url == "https://adb-old.azuredatabricks.net"
+
+
+@pytest.mark.anyio
+async def test_databricks_origin_change_save_failure_keeps_old_token_binding(client, monkeypatch):
+    from aletheia.config.loader import load_config
+    from aletheia.config.secrets import get_secret
+    import aletheia.server.routes.model as model_routes
+
+    old_token = "dapi-persisted-old-4444"
+    created = await client.post("/api/settings/model", json={
+        "provider": "databricks",
+        "workspace_url": "https://adb-old.azuredatabricks.net",
+        "model": "endpoint",
+        "api_key": old_token,
+    })
+    assert created.status_code == 200
+    before = load_config().models.providers["databricks"]
+    old_ref = before.api_key_secret_ref
+    assert old_ref
+
+    def fail_save(_cfg):
+        raise RuntimeError("simulated config persistence failure")
+
+    monkeypatch.setattr(model_routes, "save_config", fail_save)
+    with pytest.raises(RuntimeError, match="simulated config persistence failure"):
+        await client.post("/api/settings/model", json={
+            "provider": "databricks",
+            "workspace_url": "https://adb-new.azuredatabricks.net",
+            "api_key": "dapi-uncommitted-new-5555",
+        })
+
+    after = load_config().models.providers["databricks"]
+    assert after.workspace_url == "https://adb-old.azuredatabricks.net"
+    assert after.api_key_secret_ref == old_ref
+    assert get_secret(old_ref) == old_token

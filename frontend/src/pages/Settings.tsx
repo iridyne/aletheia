@@ -17,17 +17,20 @@ import {
   type NumField,
 } from '../components/ui'
 import { fmtNum, humanize, humanizeBool } from '../lib/format'
+import { DatabricksProviderForm } from '../components/model-providers/DatabricksProviderForm'
+import { preferredAccessMethod } from '../components/model-providers/accessMethod'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PERMISSION_MODES = ['Observe', 'Paper', 'Full']
-const ALL_PROVIDERS = ['openai_compatible', 'anthropic_native', 'openai_native', 'claude_cli', 'codex_cli'] as const
-const HTTP_PROVIDERS = new Set(['openai_compatible', 'anthropic_compatible', 'anthropic_native', 'openai_native'])
+const PROVIDER_CARDS = ['openai_compatible', 'databricks', 'claude_access', 'openai_access'] as const
+const HTTP_PROVIDERS = new Set(['openai_compatible', 'anthropic_compatible', 'databricks', 'anthropic_native', 'openai_native'])
 const NATIVE_PROVIDERS = new Set(['anthropic_native', 'openai_native'])
 const PROVIDER_LABELS: Record<string, string> = {
   openai_compatible: 'API',
+  databricks: 'Databricks',
   anthropic_native: 'Claude OAuth (Experimental)',
   openai_native: 'OpenAI OAuth (Experimental)',
   codex_cli: 'Codex CLI',
@@ -4173,47 +4176,118 @@ function NetworkCard({ settings, qc }: any) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ModelProviderCard({ qc }: any) {
-  const { data } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
-  const { data: health = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 30000 })
-  const [expanded, setExpanded] = useState<string | null>(null)
+	const { data } = useQuery({
+		queryKey: ["model"],
+		queryFn: api.getModelConfig,
+	});
+	const { data: health = [] } = useQuery({
+		queryKey: ["model-health"],
+		queryFn: api.getModelHealth,
+		refetchInterval: 30000,
+	});
+	const [expanded, setExpanded] = useState<string | null>(null);
 
-  if (!data) return <p className="hint">Loading providers…</p>
+	if (!data) return <p className="hint">Loading providers…</p>;
 
-  const deepName = (data as any).deep_provider
-  const fastName = (data as any).fast_provider
-  const defaultName = String((data as any).default_provider || '')
-  const routingFallback = defaultName ? `→ ${defaultName}` : 'not set'
+	const deepName = (data as any).deep_provider;
+	const fastName = (data as any).fast_provider;
+	const defaultName = String((data as any).default_provider || "");
+	const routingFallback = defaultName ? `→ ${defaultName}` : "not set";
 
   return (
     <div className="flex flex-col gap-2">
       <ModelPingButton configured={!!defaultName} />
-      <div style={{ fontSize: '0.72rem', color: 'var(--muted)', display: 'flex', gap: '1rem', paddingLeft: '0.2rem' }}>
-        <span>Default: <span style={{ color: 'var(--text)' }}>{defaultName || 'not set'}</span></span>
-        <span>Deep (decisions): <span style={{ color: 'var(--text)' }}>{deepName || routingFallback}</span></span>
-        <span>Fast (research): <span style={{ color: 'var(--text)' }}>{fastName || routingFallback}</span></span>
-      </div>
-      {ALL_PROVIDERS.map(p => {
-        // The 'openai_compatible' card is the merged API card: it manages both
-        // openai_compatible and anthropic_compatible backend slots.
-        const anthroConfig = p === 'openai_compatible' ? data.providers?.anthropic_compatible : undefined
+			<div
+				style={{
+					fontSize: "0.72rem",
+					color: "var(--muted)",
+					display: "flex",
+					gap: "1rem",
+					paddingLeft: "0.2rem",
+				}}
+			>
+				<span>
+					Default:{" "}
+					<span style={{ color: "var(--text)" }}>
+						{defaultName || "not set"}
+					</span>
+				</span>
+				<span>
+					Deep (decisions):{" "}
+					<span style={{ color: "var(--text)" }}>
+						{deepName || routingFallback}
+					</span>
+				</span>
+				<span>
+					Fast (research):{" "}
+					<span style={{ color: "var(--text)" }}>
+						{fastName || routingFallback}
+					</span>
+				</span>
+			</div>
+			{PROVIDER_CARDS.map((card) => {
+				if (card === "claude_access" || card === "openai_access") {
+					const vendor = card === "claude_access" ? "claude" : "openai";
+					const oauthName =
+						vendor === "claude" ? "anthropic_native" : "openai_native";
+					const cliName = vendor === "claude" ? "claude_cli" : "codex_cli";
+					return (
+						<AccessProviderCard
+							key={card}
+							vendor={vendor}
+							oauthName={oauthName}
+							cliName={cliName}
+							oauthConfig={data.providers?.[oauthName]}
+							cliConfig={data.providers?.[cliName]}
+							oauthHealth={(health as any[]).find(
+								(x) => x.provider === oauthName,
+							)}
+							cliHealth={(health as any[]).find((x) => x.provider === cliName)}
+							allHealth={health as any[]}
+							defaultName={defaultName}
+							deepName={deepName}
+							fastName={fastName}
+							isExpanded={expanded === card}
+							onToggle={() => setExpanded(expanded === card ? null : card)}
+							qc={qc}
+						/>
+					);
+				}
 
-        // Pick health from whichever backend is currently active for the merged card.
-        let cardHealth: any
-        if (p === 'openai_compatible') {
-          const oCfg = data.providers?.openai_compatible
-          const aCfg = data.providers?.anthropic_compatible
-          const oH = (health as any[]).find(x => x.provider === 'openai_compatible')
-          const aH = (health as any[]).find(x => x.provider === 'anthropic_compatible')
-          const anthroActive = (aCfg?.base_url || aCfg?.api_key?.configured) && !(oCfg?.base_url || oCfg?.api_key?.configured)
-          cardHealth = anthroActive ? aH : oH
+				const p = card;
+				// The generic API card manages both OpenAI- and Anthropic-compatible slots.
+				const anthroConfig =
+					p === "openai_compatible"
+						? data.providers?.anthropic_compatible
+						: undefined;
+				let cardHealth: any;
+				if (p === "openai_compatible") {
+					const oCfg = data.providers?.openai_compatible;
+					const aCfg = data.providers?.anthropic_compatible;
+					const oH = (health as any[]).find(
+						(x) => x.provider === "openai_compatible",
+					);
+					const aH = (health as any[]).find(
+						(x) => x.provider === "anthropic_compatible",
+					);
+					const anthroActive =
+						(aCfg?.base_url || aCfg?.api_key?.configured) &&
+						!(oCfg?.base_url || oCfg?.api_key?.configured);
+					cardHealth = anthroActive ? aH : oH;
         } else {
-          cardHealth = (health as any[]).find(x => x.provider === p)
+					cardHealth = (health as any[]).find((x) => x.provider === p);
         }
 
-        // Routing badges: either backend slot may carry the role for the merged card.
-        const cardIsDefault = p === data.default_provider || (p === 'openai_compatible' && data.default_provider === 'anthropic_compatible')
-        const cardIsDeep = p === deepName || (p === 'openai_compatible' && deepName === 'anthropic_compatible')
-        const cardIsFast = p === fastName || (p === 'openai_compatible' && fastName === 'anthropic_compatible')
+				const cardIsDefault =
+					p === data.default_provider ||
+					(p === "openai_compatible" &&
+						data.default_provider === "anthropic_compatible");
+				const cardIsDeep =
+					p === deepName ||
+					(p === "openai_compatible" && deepName === "anthropic_compatible");
+				const cardIsFast =
+					p === fastName ||
+					(p === "openai_compatible" && fastName === "anthropic_compatible");
 
         return (
         <ProviderCard
@@ -4226,14 +4300,277 @@ function ModelProviderCard({ qc }: any) {
           isDefault={cardIsDefault}
           isDeep={cardIsDeep}
           isFast={cardIsFast}
+						hasDefault={!!defaultName}
           isExpanded={expanded === p}
           onToggle={() => setExpanded(expanded === p ? null : p)}
           qc={qc}
         />
-        )
+				);
       })}
     </div>
+	);
+}
+
+function AccessProviderCard({
+	vendor,
+	oauthName,
+	cliName,
+	oauthConfig,
+	cliConfig,
+	oauthHealth,
+	cliHealth,
+	allHealth,
+	defaultName,
+	deepName,
+	fastName,
+	isExpanded,
+	onToggle,
+	qc,
+}: {
+	vendor: "claude" | "openai";
+	oauthName: string;
+	cliName: string;
+	oauthConfig: any;
+	cliConfig: any;
+	oauthHealth: any;
+	cliHealth: any;
+	allHealth: any[];
+	defaultName: string;
+	deepName: string | null;
+	fastName: string | null;
+	isExpanded: boolean;
+	onToggle: () => void;
+	qc: any;
+}) {
+	const initialMethod = preferredAccessMethod({
+		oauthName,
+		cliName,
+		defaultName,
+		deepName,
+		fastName,
+		oauthEnabled: oauthConfig?.enabled === true,
+		cliEnabled: cliConfig?.enabled === true,
+	});
+	const [method, setMethod] = useState<"oauth" | "cli">(initialMethod);
+	const selectedName = method === "oauth" ? oauthName : cliName;
+	const selectedConfig = method === "oauth" ? oauthConfig : cliConfig;
+	const selectedHealth = method === "oauth" ? oauthHealth : cliHealth;
+	const enabled = selectedConfig?.enabled === true;
+	const selectedIsDefault = defaultName === selectedName;
+	const groupIsDefault = defaultName === oauthName || defaultName === cliName;
+	const groupIsDeep = deepName === oauthName || deepName === cliName;
+	const groupIsFast = fastName === oauthName || fastName === cliName;
+
+	let statusColor = "var(--muted)";
+	let statusText = enabled ? "checking…" : "disabled";
+	if (selectedHealth?.available) {
+		statusColor = "var(--green)";
+		statusText = "connected";
+	} else if (selectedHealth?.error === "not_installed") {
+		statusColor = "var(--yellow)";
+		statusText = "not installed";
+	} else if (selectedHealth && !selectedHealth.available) {
+		statusColor = enabled ? "var(--red)" : "var(--muted)";
+		statusText = selectedHealth.error || "unavailable";
+	}
+
+	const toggleEnabled = useMutation({
+		mutationFn: (next: boolean) =>
+			api.setModelProvider({ provider: selectedName, enabled: next }),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["model"] });
+			qc.invalidateQueries({ queryKey: ["model-health"] });
+			qc.invalidateQueries({ queryKey: ["status"] });
+		},
+	});
+
+	const label = vendor === "claude" ? "Claude" : "OpenAI";
+	const methodLabel = method === "oauth" ? "OAuth" : "CLI";
+	const model =
+		method === "cli" && vendor === "openai"
+			? selectedConfig?.codex_model
+			: selectedConfig?.model;
+
+	return (
+		<div
+			style={{
+				border: `1px solid ${isExpanded ? "var(--accent-dim)" : "var(--border)"}`,
+				borderRadius: "var(--r)",
+				background: "var(--surface)",
+				transition: "border-color 0.15s",
+			}}
+		>
+			<div
+				onClick={onToggle}
+				style={{
+					display: "flex",
+					alignItems: "center",
+					gap: "0.6rem",
+					padding: "0.7rem 0.9rem",
+					cursor: "pointer",
+					userSelect: "none",
+				}}
+			>
+				<span
+					title={`${methodLabel}: ${statusText}`}
+					style={{
+						width: "8px",
+						height: "8px",
+						borderRadius: "50%",
+						background: statusColor,
+						flexShrink: 0,
+						boxShadow:
+							statusColor === "var(--muted)"
+								? "none"
+								: `0 0 6px ${statusColor}`,
+					}}
+				/>
+				<span
+					style={{
+						fontWeight: 600,
+						fontSize: "0.82rem",
+						fontFamily: "var(--display)",
+					}}
+				>
+					{label}
+				</span>
+				<span className="badge badge-muted">{methodLabel}</span>
+				{groupIsDefault && <span className="provider-role-badge">DEFAULT</span>}
+				{groupIsDeep && !groupIsDefault && (
+					<span className="provider-role-badge">DEEP</span>
+				)}
+				{groupIsFast && !groupIsDefault && !groupIsDeep && (
+					<span className="provider-role-badge">FAST</span>
+				)}
+				<span className="flex-1" />
+				<span
+					onClick={(event) => event.stopPropagation()}
+					style={{
+						display: "inline-flex",
+						alignItems: "center",
+						marginRight: "0.35rem",
+					}}
+					title={
+						selectedIsDefault
+							? "The selected default provider must stay enabled"
+							: `Toggle ${label} ${methodLabel}`
+					}
+				>
+					<Toggle
+						checked={enabled}
+						onCheckedChange={(checked) => {
+							if (!checked) {
+								const available = (allHealth || []).filter(
+									(entry: any) => entry.available,
+								);
+								if (
+									available.length === 1 &&
+									available[0].provider === selectedName
+								) {
+									if (
+										!confirm(
+											`"${label} ${methodLabel}" is your only available provider. Disable anyway?`,
+										)
   )
+										return;
+								}
+							}
+							toggleEnabled.mutate(checked);
+						}}
+						disabled={selectedIsDefault || toggleEnabled.isPending}
+						aria-label={`${enabled ? "Disable" : "Enable"} ${label} ${methodLabel}`}
+					/>
+				</span>
+				<span
+					style={{
+						fontSize: "0.7rem",
+						color: "var(--muted)",
+						transform: isExpanded ? "rotate(90deg)" : "none",
+						transition: "transform 0.15s",
+					}}
+				>
+					▸
+				</span>
+			</div>
+
+			{!isExpanded && (
+				<div
+					style={{
+						padding: "0 0.9rem 0.6rem 2.3rem",
+						fontSize: "0.72rem",
+						color: "var(--muted)",
+						fontFamily: "var(--mono)",
+					}}
+				>
+					{methodLabel} · {statusText}
+					{model && model !== "default" ? ` · model: ${model}` : ""}
+				</div>
+			)}
+
+			{isExpanded && (
+				<div
+					style={{
+						padding: "0 0.9rem 0.9rem",
+						borderTop: "1px solid var(--border)",
+					}}
+				>
+					<div
+						className="provider-mode-switch mt-3"
+						role="tablist"
+						aria-label={`${label} connection method`}
+					>
+						<button
+							type="button"
+							role="tab"
+							aria-selected={method === "oauth"}
+							className={method === "oauth" ? "active" : ""}
+							onClick={() => setMethod("oauth")}
+						>
+							OAuth
+						</button>
+						<button
+							type="button"
+							role="tab"
+							aria-selected={method === "cli"}
+							className={method === "cli" ? "active" : ""}
+							onClick={() => setMethod("cli")}
+						>
+							CLI
+						</button>
+					</div>
+					<p className="hint">
+						Choose one access method. OAuth and CLI keep separate backend
+						identities and credentials.
+					</p>
+					{vendor === "openai" && method === "oauth" && (
+						<OpenAIOAuthPanel
+							config={oauthConfig}
+							health={oauthHealth}
+							qc={qc}
+						/>
+					)}
+					{vendor === "openai" && method === "cli" && (
+						<CodexCLIPanel config={cliConfig} health={cliHealth} qc={qc} />
+					)}
+					{vendor === "claude" && method === "oauth" && (
+						<ClaudeOAuthPanel
+							config={oauthConfig}
+							health={oauthHealth}
+							qc={qc}
+						/>
+					)}
+					{vendor === "claude" && method === "cli" && (
+						<ClaudeCLIPanel
+							config={cliConfig}
+							health={cliHealth}
+							isDefault={selectedIsDefault}
+							qc={qc}
+						/>
+					)}
+				</div>
+			)}
+		</div>
+	);
 }
 
 function EconomicsSnapshotCard({ economics, qc }: { economics: any; qc: any }) {
@@ -4476,9 +4813,9 @@ function ModelPingButton({ configured }: { configured: boolean }) {
   )
 }
 
-function ProviderCard({ name, config, anthroConfig, health, allHealth, isDefault, isDeep, isFast, isExpanded, onToggle, qc }: {
+function ProviderCard({ name, config, anthroConfig, health, allHealth, isDefault, isDeep, isFast, hasDefault, isExpanded, onToggle, qc }: {
   name: string; config: any; anthroConfig?: any; health: any; allHealth: any[]; isDefault: boolean; isDeep: boolean; isFast: boolean;
-  isExpanded: boolean; onToggle: () => void; qc: any
+  hasDefault: boolean; isExpanded: boolean; onToggle: () => void; qc: any
 }) {
   const isHTTP = HTTP_PROVIDERS.has(name)
   const isOAuth = OAUTH_PROVIDERS.has(name)
@@ -4519,8 +4856,11 @@ function ProviderCard({ name, config, anthroConfig, health, allHealth, isDefault
   // Summary line — prefer the configured slot for base_url / model / key display.
   const displayConfig = (name === 'openai_compatible' && !config?.base_url && anthroConfig?.base_url) ? anthroConfig : config
   const details: string[] = []
-  if (isHTTP && !NATIVE_PROVIDERS.has(name) && displayConfig?.base_url) details.push(displayConfig.base_url)
-  if (displayConfig?.model && displayConfig.model !== 'default') details.push(`model: ${displayConfig.model}`)
+  if (name === 'databricks' && displayConfig?.workspace_url) details.push(displayConfig.workspace_url)
+  else if (isHTTP && !NATIVE_PROVIDERS.has(name) && displayConfig?.base_url) details.push(displayConfig.base_url)
+  if (displayConfig?.model && displayConfig.model !== 'default') {
+    details.push(`${name === 'databricks' ? 'endpoint/model' : 'model'}: ${displayConfig.model}`)
+  }
   if (isHTTP && displayConfig?.api_key?.configured) details.push(`key: ··${displayConfig.api_key.last4}`)
   if (isCLI && health?.model) details.push(`model: ${health.model}`)
 
@@ -4551,14 +4891,9 @@ function ProviderCard({ name, config, anthroConfig, health, allHealth, isDefault
           {PROVIDER_LABELS[name] || name}
         </span>
         {/* Default badge */}
-        {isDefault && (
-          <span style={{
-            fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase',
-            letterSpacing: '0.06em', color: 'var(--accent)',
-            padding: '0.1rem 0.4rem', borderRadius: '3px',
-            border: '1px solid var(--accent-dim)', background: 'rgba(34,211,238,0.06)',
-          }}>DEFAULT</span>
-        )}
+        {isDefault && <span className="provider-role-badge">DEFAULT</span>}
+        {isDeep && !isDefault && <span className="provider-role-badge">DEEP</span>}
+        {isFast && !isDefault && !isDeep && <span className="provider-role-badge">FAST</span>}
         {/* Spacer */}
         <span className="flex-1" />
         <span
@@ -4600,7 +4935,16 @@ function ProviderCard({ name, config, anthroConfig, health, allHealth, isDefault
       {/* Expanded content */}
       {isExpanded && (
         <div style={{ padding: '0 0.9rem 0.9rem', borderTop: '1px solid var(--border)' }}>
-          {name === 'openai_native' ? (
+          {name === 'databricks' ? (
+            <DatabricksProviderForm
+              config={config}
+              isDefault={isDefault}
+              isDeep={isDeep}
+              isFast={isFast}
+              hasDefault={hasDefault}
+              qc={qc}
+            />
+          ) : name === 'openai_native' ? (
             <OpenAIOAuthPanel config={config} health={health} qc={qc} />
           ) : name === 'anthropic_native' ? (
             <ClaudeOAuthPanel config={config} health={health} qc={qc} />
@@ -4893,6 +5237,7 @@ function HTTPProviderForm({ name, config, anthroConfig, isDefault, isDeep, isFas
   ) ?? [])
   const showSuggestions = modelFocused && filteredModels.length > 0
 
+  // pi-lens-ignore: no-nested-links
   return (
     <div className="form-grid" style={{ paddingTop: '0.75rem', gridTemplateColumns: '1fr 1fr' }}>
       {/* Row 1: Base URL — full width (hidden for native providers) */}
@@ -4914,13 +5259,16 @@ function HTTPProviderForm({ name, config, anthroConfig, isDefault, isDeep, isFas
           onBlur={() => setTimeout(() => setModelFocused(false), 150)}
           autoComplete="off"
         />
+        {/* pi-lens-ignore: no-nested-links */}
         {showSuggestions && (
           <div style={{
             position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 20,
             background: 'var(--surface)', border: '1px solid var(--border)',
             borderRadius: '0 0 var(--r) var(--r)', maxHeight: '10rem', overflowY: 'auto',
             boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+            // pi-lens-ignore: no-nested-links
           }}>
+            {/* pi-lens-ignore: no-nested-links */}
             {filteredModels.map(m => (
               <div
                 key={m.slug}
