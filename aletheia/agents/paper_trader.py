@@ -205,8 +205,13 @@ def _operator_evaluated_opportunity_ids(
     signal_source: str = "market_observer",
     max_age_hours: int = 24,
 ) -> set[str]:
-    """Opportunity ids finalized by the same producer namespace within the
+    """Opportunity ids *finalized* by the same producer namespace within the
     lookback window.
+
+    Only terminal operator decisions (``trade``, ``skip``) count.
+    ``signal_queue_evicted`` is intentionally excluded: eviction moves the
+    opportunity back to ``open`` and it must remain eligible for re-queuing —
+    treating it as "already evaluated" would permanently block it (#331).
 
     The 24-hour window prevents the set from growing without bound as the DB
     ages. Genuine lifecycle races that resurface an ``open`` opportunity older
@@ -221,7 +226,8 @@ def _operator_evaluated_opportunity_ids(
         ).isoformat()
         rows = get_db().execute(
             "SELECT DISTINCT opportunity_id FROM pi_decisions "
-            "WHERE action != 'signal_pending' AND opportunity_id IS NOT NULL "
+            "WHERE action NOT IN ('signal_pending', 'signal_queue_evicted') "
+            "AND opportunity_id IS NOT NULL "
             "AND COALESCE(signal_source, 'market_observer')=? "
             "AND datetime(created_at) >= datetime(?)",
             (signal_source or "market_observer", cutoff),
