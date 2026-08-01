@@ -525,7 +525,10 @@ class UniverseService:
                 features_list, cfg.universe, scanner_run_id=run.id,
             )
 
-            calibration = get_family_multipliers()
+            calibration_evidence: dict[str, dict] = {}
+            calibration = get_family_multipliers(
+                evidence_out=calibration_evidence,
+            )
             if calibration:
                 logger.info("Calibration multipliers: %s", calibration)
 
@@ -543,6 +546,7 @@ class UniverseService:
                 scanner_result = run_all_scanners(feat)
                 total = compute_total_score(
                     feat, scanner_result, cfg.universe, calibration=calibration or None,
+                    calibration_evidence=calibration_evidence or None,
                     scoring_cohort_key=run.id,
                 )
                 pre_scored.append({**feat, **scanner_result, "total_score": total})

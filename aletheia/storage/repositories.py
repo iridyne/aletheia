@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
+import hashlib
 import json
 import logging
 import os
@@ -5400,7 +5401,57 @@ def calibration_stats() -> list[dict]:
         "ORDER BY scanner_family, direction, market_type, horizon",
         (cutoff,),
     ).fetchall()
-    return [dict(r) for r in rows]
+    lineage = _calibration_source_lineage(db, cutoff)
+    result = []
+    for raw in rows:
+        row = dict(raw)
+        key = (
+            row.get("scanner_family"), row.get("direction"),
+            row.get("market_type"), row.get("horizon"),
+        )
+        source = lineage.get(key)
+        row["source_outcome_fingerprint"] = (
+            source["fingerprint"] if source else None
+        )
+        row["source_window_start"] = cutoff
+        result.append(row)
+    return result
+
+
+def _calibration_source_lineage(db, cutoff: str) -> dict[tuple, dict]:
+    """Hash every exact row consumed by ``calibration_stats`` without retaining it."""
+    cursor = db.execute(
+        "SELECT scanner_family, direction, "
+        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, id, "
+        "outcome_candidate_key, member_id, entry_ts, settled_at, net_return_pct, "
+        "min_tradable_edge_pct, cost_model_version "
+        "FROM universe_forward_outcomes "
+        "WHERE status = 'settled' "
+        "AND entry_ts >= ? "
+        "AND net_return_pct IS NOT NULL "
+        "AND cost_model_version IS NOT NULL "
+        "AND ABS(net_return_pct) <= 100 "
+        "AND direction IN ('long', 'short') "
+        "ORDER BY scanner_family, direction, market_type, horizon, id",
+        (cutoff,),
+    )
+    hashers: dict[tuple, object] = {}
+    counts: dict[tuple, int] = {}
+    for raw in cursor:
+        row = dict(raw)
+        key = (
+            row.pop("scanner_family"), row.pop("direction"),
+            row.pop("market_type"), row.pop("horizon"),
+        )
+        hasher = hashers.setdefault(key, hashlib.sha256())
+        canonical = json.dumps(row, sort_keys=True, separators=(",", ":"))
+        hasher.update(canonical.encode("utf-8"))
+        hasher.update(b"\n")
+        counts[key] = counts.get(key, 0) + 1
+    return {
+        key: {"fingerprint": hasher.hexdigest(), "count": counts[key]}
+        for key, hasher in hashers.items()
+    }
 
 
 def filter_pressure_stats() -> list[dict]:

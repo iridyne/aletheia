@@ -174,8 +174,10 @@ loop contributes positively. Current behavior has these contract-relevant limita
   auditable but cannot pool with or authorize a current cohort.
 - historical experiments/exposures created before measurement-support enforcement remain immutable
   and visible for audit, but cannot produce a current verdict or authority.
-- the Phase 3 harm contract is behavior version v2 for the current measurement-supported path. Its metric
-  and path-version change rotates the policy epoch and starts a fresh from-zero window.
+- the current UFC source-lineage contract is behavior version v4. It carries a bounded,
+  deterministic aggregate fingerprint of the exact eligible calibration query into every
+  prospective exposure manifest; the v2 harm and v3 settlement-source semantics are historical.
+  Every path-version change rotates the policy epoch and starts a fresh from-zero window.
 - canonical/mirror disagreement remains whole-cohort `invalid`; no conflicting sample is silently
   excluded. Verdict metadata preserves every conflict fingerprint and up to 20 exact provenance
   records, each bounded to 20 rows, containing source table, row id, timestamps, cost/source

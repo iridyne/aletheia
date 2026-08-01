@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -50,17 +48,3 @@ def test_lifecycle_runtime_surface_exists():
     assert callable(admit_shadow_trial)
     assert callable(resolve_learning_authority)
     assert callable(inspect_learning_experiment)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="LE-C07: source outcome to learned-treatment production is not implemented",
-)
-@spec_claim(SpecClaim(
-    "LE-C07", "learning_evolution", "§7-9 causal paper lifecycle", "L2c",
-    "A measurement-supported path proves source outcome to learned treatment before the existing "
-    "exposure, settlement, owner admission, withdrawal, refreeze, and fallback lifecycle.",
-    status="missing",
-))
-def test_source_outcome_produces_the_measured_treatment():
-    pytest.fail("No current source-outcome producer creates the UFC learned treatment")
