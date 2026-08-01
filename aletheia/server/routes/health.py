@@ -114,20 +114,28 @@ def _cached_compute_health(ttl_sec: float = 5.0) -> dict:
         if _health_cache is not None:
             ts, cached_fn_id, cached = _health_cache
             if cached_fn_id == fn_id and now - ts < ttl_sec:
-                return {"healthy": bool(cached.get("healthy")), "issues": list(cached.get("issues") or [])}
+                return {
+                    "healthy": bool(cached.get("healthy")),
+                    "status": cached.get("status", "healthy" if cached.get("healthy") else "degraded"),
+                    "issues": list(cached.get("issues") or []),
+                }
 
     h = fn()
-    snapshot = {"healthy": bool(h.get("healthy")), "issues": list(h.get("issues") or [])}
+    snapshot = {
+        "healthy": bool(h.get("healthy")),
+        "status": h.get("status", "healthy" if h.get("healthy") else "degraded"),
+        "issues": list(h.get("issues") or []),
+    }
     with _health_cache_lock:
         _health_cache = (now, fn_id, snapshot)
-    return {"healthy": snapshot["healthy"], "issues": list(snapshot["issues"])}
+    return {"healthy": snapshot["healthy"], "status": snapshot["status"], "issues": list(snapshot["issues"])}
 
 
 @router.get("/health")
 def health():
     h = _cached_compute_health()
     return {
-        "status": "healthy" if h["healthy"] else "degraded",
+        "status": h["status"],
         "issues": h["issues"],
         "version": __version__,
     }
@@ -310,7 +318,7 @@ def status():
         "scheduler_job_count": sched["job_count"],
         "model_provider": cfg.models.default_provider,
         "external_connectivity": external_connectivity,
-        "health_status": "healthy" if h["healthy"] else "degraded",
+        "health_status": h.get("status", "healthy" if h["healthy"] else "degraded"),
         "health_issues": h["issues"],
         "infra_events": list_infra_events(limit=5, min_severity="warning"),
         "llm_model_health": _llm_model_health_snapshot(),
