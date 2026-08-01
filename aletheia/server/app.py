@@ -662,6 +662,16 @@ _PROTECTED_MUTATION_PATHS = (
     ("/api/persistence/lessons/", "/archive"),
 )
 
+# Declarative method+prefix guards: any request whose HTTP method is in the
+# set AND whose path starts with the prefix requires tunnel-owner auth.
+# Adding a new mutation under a covered prefix is automatically protected;
+# new prefixes must be declared here explicitly.
+_PROTECTED_METHOD_PREFIXES: tuple[tuple[frozenset[str], str], ...] = (
+    # All owner-facing Proposal mutations (approve, reject, and any future
+    # state-changing routes under /api/proposals/) must be authenticated.
+    (frozenset({"POST", "PUT", "PATCH", "DELETE"}), "/api/proposals/"),
+)
+
 
 @app.middleware("http")
 async def _tunnel_auth_guard(request, call_next):
@@ -672,17 +682,25 @@ async def _tunnel_auth_guard(request, call_next):
     treated as a misconfiguration and the request is rejected (fail-closed), because
     an enabled tunnel with no secret would expose live-unlock and kill-switch to the
     public internet without any authentication.
+
+    Successful authentication sets request.state.tunnel_authenticated = True so
+    route handlers can record the correct actor source in audit events.
     """
     path = request.url.path
+    method = request.method.upper()
     _matches_prefix = any(path.startswith(p) for p in _PROTECTED_PATH_PREFIXES)
     _matches_mutation = (
-        request.method.upper() == "POST"
+        method == "POST"
         and any(
             path.startswith(prefix) and path.endswith(suffix)
             for prefix, suffix in _PROTECTED_MUTATION_PATHS
         )
     )
-    if path in _PROTECTED_PATHS or _matches_prefix or _matches_mutation:
+    _matches_method_prefix = any(
+        method in methods and path.startswith(prefix)
+        for methods, prefix in _PROTECTED_METHOD_PREFIXES
+    )
+    if path in _PROTECTED_PATHS or _matches_prefix or _matches_mutation or _matches_method_prefix:
         cfg = load_config()
         if getattr(cfg, "tunnel", None) and getattr(cfg.tunnel, "enabled", False):
             from aletheia.config.secrets import get_secret
@@ -704,6 +722,9 @@ async def _tunnel_auth_guard(request, call_next):
                     {"detail": "Unauthorized: X-Aletheia-Token required when tunnel is active"},
                     status_code=401,
                 )
+            # Auth passed: mark the request so route handlers can record the
+            # authenticated-owner source in audit events.
+            request.state.tunnel_authenticated = True
     return await call_next(request)
 
 
