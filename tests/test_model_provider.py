@@ -1168,7 +1168,7 @@ async def test_databricks_ai_gateway_anthropic_request_shape():
                 "usage": {"input_tokens": 3, "output_tokens": 1},
             }
 
-    async def fake_post(self, url, json=None, headers=None):
+    async def fake_post(self, url, json=None, headers=None):  # noqa: F811
         sent.update(url=url, payload=json, headers=headers)
         return FakeResponse()
 
@@ -1203,7 +1203,7 @@ async def test_databricks_ai_gateway_responses_omits_temperature():
         def json(self):
             return {"output_text": "OK", "model": "gpt-model", "usage": {}}
 
-    async def fake_post(self, url, json=None, headers=None):
+    async def fake_post(self, url, json=None, headers=None):  # noqa: F811
         sent.update(url=url, payload=json)
         return FakeResponse()
 
