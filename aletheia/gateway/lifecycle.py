@@ -72,20 +72,15 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
                 kill_pid_tree(opid)
             _audit_orphan_cleanup(orphans)
 
-        # Fallback: kill anything holding the port (catches multiprocessing
-        # workers whose cmdline lacks our markers — the root cause of "ghost
-        # socket" issues on Windows where parent dies but children keep the fd).
+        # Never kill an arbitrary port holder.  The orphan scan above identifies
+        # this runtime's gateway processes; a PID discovered only from the socket
+        # is not proof that Aletheia owns it.
         if not wait_port_free(cfg.app.dashboard_port, cfg.app.bind_host, timeout=5.0):
             holders = find_port_holders(cfg.app.dashboard_port)
-            if holders:
-                for hpid in holders:
-                    kill_pid_tree(hpid)
-                _audit_orphan_cleanup(holders)
-
-        if not wait_port_free(cfg.app.dashboard_port, cfg.app.bind_host, timeout=5.0):
             _echo_safe(
-                f"Port {cfg.app.dashboard_port} is still in use after all cleanup "
-                f"attempts. A foreign process may be holding it.",
+                f"Port {cfg.app.dashboard_port} is still in use after verified Aletheia "
+                f"cleanup; it may be held by a foreign process. Refusing to terminate "
+                f"unverified holder(s): {holders or 'unknown'}.",
             )
             raise typer.Exit(1)
 
@@ -460,16 +455,27 @@ def do_stop() -> None:
     Fixes the restart leak where killing only the supervisor (no /T) orphaned the
     inner uvicorn, which kept holding the port and made the next start crash-loop.
     """
-    _auto_stop_tunnel()
-
     # Ask the operating-system owner to stop and unregister the on-demand
-    # service before retaining the historical PID/orphan cleanup as a safety
-    # net for legacy launches or manager-specific child-process residue.
+    # service before retaining verified legacy PID/orphan cleanup.  A failed
+    # manager operation is an ownership conflict, not permission to bypass the
+    # OS owner by killing an arbitrary process on the gateway port.
     try:
         from aletheia.gateway import managed_service
-        managed_service.stop()
-    except Exception:
-        pass
+        managed = managed_service.stop()
+    except Exception as exc:
+        managed = {"ok": False, "reason": "service_manager_error", "detail": type(exc).__name__}
+    if not managed.get("ok"):
+        platform_name = managed.get("platform", "service manager")
+        reason = managed.get("reason", "service_stop_failed")
+        detail = managed.get("detail")
+        message = f"Gateway stop blocked by {platform_name}: {reason}. No processes were terminated."
+        if detail:
+            message += f" {detail}"
+        _echo_safe(message)
+        _audit_stop_blocked(platform_name=platform_name, reason=reason)
+        raise typer.Exit(1)
+
+    _auto_stop_tunnel()
 
     cfg = load_config()
     port = cfg.app.dashboard_port
@@ -505,28 +511,18 @@ def do_stop() -> None:
     # rather than "untracked but port held" → false-orphan misdiagnosis.
     freed = wait_port_free(port, host, timeout=5.0)
 
-    # Fallback: kill port holders directly (catches multiprocessing workers
-    # whose cmdline doesn't match our markers).
-    if not freed:
-        holders = find_port_holders(port)
-        for hpid in holders:
-            if hpid not in targeted:
-                kill_pid_tree(hpid)
-                targeted.add(hpid)
-                killed_any = True
-        freed = wait_port_free(port, host, timeout=5.0)
-
-    clear_pid()
-
     if freed:
+        clear_pid()
         _echo_stdout_safe("Gateway stopped.")
     else:
         _echo_safe(
-            f"Gateway processes signalled, but port {port} is still in use. "
-            f"A non-Aletheia process may be holding it.",
+            f"Verified gateway processes were stopped, but port {port} is still in use. "
+            "Refusing to terminate an unverified holder.",
         )
 
     _audit_stop(freed=freed, killed_any=killed_any)
+    if not freed:
+        raise typer.Exit(1)
     _auto_deregister_watchdog()
 
 
@@ -554,9 +550,23 @@ def _audit_stop(*, freed: bool, killed_any: bool) -> None:
     try:
         from aletheia.files.jsonl import write_audit
         write_audit({
-            "actor": "human", "source": "cli", "event_type": "gateway_stopped",
+            "actor": "human", "source": "cli",
+            "event_type": "gateway_stopped" if freed else "gateway_stop_incomplete",
             "entity_type": "gateway", "entity_id": "gateway",
             "message": f"Gateway stopped (killed={killed_any}, port_freed={freed})",
+        })
+    except Exception:
+        pass
+
+
+def _audit_stop_blocked(*, platform_name: str, reason: str) -> None:
+    """Record an OS-manager ownership conflict without claiming a stop happened."""
+    try:
+        from aletheia.files.jsonl import write_audit
+        write_audit({
+            "actor": "human", "source": "cli", "event_type": "gateway_stop_blocked",
+            "entity_type": "gateway", "entity_id": "gateway",
+            "message": f"Gateway stop blocked by {platform_name}: {reason}",
         })
     except Exception:
         pass
