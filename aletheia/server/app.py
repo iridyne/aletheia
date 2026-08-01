@@ -603,10 +603,15 @@ async def _sanitized_validation_error(_request, exc: RequestValidationError):
     return JSONResponse(status_code=422, content={"detail": safe_errors})
 
 
+_cfg_for_cors = load_config()
+_bind_host = _cfg_for_cors.app.bind_host
+_loopback_origins = [
+    "http://localhost:5173", "http://127.0.0.1:5173",
+    "http://localhost:8787", "http://127.0.0.1:8787",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173",
-                   "http://localhost:8787", "http://127.0.0.1:8787"],
+    allow_origins=["*"] if _bind_host not in {"127.0.0.1", "localhost", "::1"} else _loopback_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

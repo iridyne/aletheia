@@ -8,13 +8,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 _logger = logging.getLogger("aletheia.config")
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_WILDCARD_HOSTS = {"0.0.0.0", "::"}
 
 
 class AppConfig(BaseModel):
     name: str = "Aletheia Trading OS"
     dashboard_port: int = 8787
     auto_open_browser: bool = True
-    bind_host: str = "127.0.0.1"
+    bind_host: str = "0.0.0.0"
     # Overview Equity Curve semantics when a time range (7D/30D/90D) is selected:
     #   full_cumulative  — every point's Y is the all-time cumulative realized PnL;
     #                      the range only narrows the visible window, so the end
@@ -28,8 +29,13 @@ class AppConfig(BaseModel):
     @field_validator("bind_host")
     @classmethod
     def validate_bind_host(cls, v: str) -> str:
-        if v not in _LOOPBACK_HOSTS:
-            _logger.warning("bind_host=%s is not loopback — API will be network-exposed without authentication", v)
+        if v not in _LOOPBACK_HOSTS and v not in _WILDCARD_HOSTS:
+            _logger.warning(
+                "bind_host=%s is a specific interface address — API will be network-exposed without authentication",
+                v,
+            )
+        elif v in _WILDCARD_HOSTS:
+            _logger.info("bind_host=%s — dashboard accessible on all network interfaces", v)
         return v
 
     @field_validator("equity_curve_mode")
