@@ -5025,7 +5025,7 @@ def test_defer_ttl_guard_emits_warning_when_extend_is_noop(tmp_path, monkeypatch
 
 @spec_claim(
     SpecClaim(
-        "DL-S65", "decision_lifecycle_contract", "§2.3 evicted opps retryable", "L2b",
+        "DL-S66", "decision_lifecycle_contract", "§2.3 evicted opps retryable", "L2b",
         "signal_queue_evicted opportunities are NOT included in "
         "_operator_evaluated_opportunity_ids(), so an evicted candidate can be "
         "re-queued on the next paper_trader run instead of being permanently blocked "
