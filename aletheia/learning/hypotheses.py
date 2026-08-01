@@ -9,7 +9,8 @@ from typing import Any
 
 def hypothesis_fingerprint(
     *, path_id: str, scope: dict[str, Any], action: dict[str, Any],
-    target_horizon: str, source_cohort: str, schema_version: int = 1,
+    target_horizon: str, source_cohort: str,
+    behavior_contract_version: str | None = None, schema_version: int = 1,
 ) -> str:
     payload = {
         "path_id": path_id.lower(),
@@ -19,6 +20,8 @@ def hypothesis_fingerprint(
         "source_cohort": source_cohort.lower(),
         "schema_version": schema_version,
     }
+    if behavior_contract_version is not None:
+        payload["behavior_contract_version"] = behavior_contract_version.lower()
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -31,4 +34,3 @@ def _normalize(value: Any) -> Any:
     if isinstance(value, str):
         return value.strip().lower()
     return value
-

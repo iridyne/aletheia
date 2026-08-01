@@ -77,6 +77,7 @@ def _ensure_experiment(
     fingerprint = hypothesis_fingerprint(
         path_id=path_id, scope=scope, action=action,
         target_horizon=target_horizon, source_cohort=source_cohort,
+        behavior_contract_version=path.behavior_contract_version,
     )
     row = get_hypothesis_by_fingerprint(fingerprint)
     if row is None:
