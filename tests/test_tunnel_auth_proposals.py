@@ -187,17 +187,36 @@ async def test_proposal_mutations_work_locally_without_token(client, tmp_path):
 
 
 @pytest.mark.anyio
-async def test_proposal_read_routes_not_blocked_by_tunnel_auth(client, tmp_path):
-    """GET reads on /api/proposals/* must never require the tunnel token."""
+async def test_proposal_read_routes_require_tunnel_auth(client, tmp_path):
+    """GET reads on /api/proposals/* must return 401 without token under tunnel mode.
+
+    Issue #398: read access exposes positions and strategy reasoning that are as
+    sensitive as mutations; default-deny policy applies to all /api/* routes when
+    tunnel.enabled=True.
+    """
     _enable_tunnel(tmp_path)
     proposal = _make_pending_proposal()
 
     for method, route in _PROPOSAL_READ_ROUTES:
         url = route.replace("{id}", proposal.id)
         response = await client.request(method, url)
+        assert response.status_code == 401, (
+            f"{method} {route} must return 401 without token under tunnel mode (issue #398)"
+        )
+
+
+@pytest.mark.anyio
+async def test_proposal_read_routes_accessible_with_correct_token(client, tmp_path):
+    """GET reads on /api/proposals/* must succeed with a valid tunnel token."""
+    secret = _enable_tunnel(tmp_path)
+    proposal = _make_pending_proposal()
+
+    for method, route in _PROPOSAL_READ_ROUTES:
+        url = route.replace("{id}", proposal.id)
+        response = await client.request(method, url, headers={"X-Aletheia-Token": secret})
         # 200 or 404 (risk-decision may be absent), but never 401.
         assert response.status_code != 401, (
-            f"{method} {route} should not require tunnel auth"
+            f"{method} {route} with correct token should not return 401"
         )
 
 

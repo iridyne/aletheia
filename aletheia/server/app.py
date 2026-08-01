@@ -617,8 +617,18 @@ app.add_middleware(
 )
 
 
-# Trust-boundary auth: when tunnel is enabled, sensitive endpoints require
-# X-Aletheia-Token header matching the configured tunnel secret.
+# Trust-boundary auth: when tunnel is enabled, ALL /api/* and /_infra/* routes
+# require owner authentication by default.  Only the minimal liveness/bootstrap
+# paths in _PUBLIC_PATHS may be reached anonymously.
+#
+# _PROTECTED_PATHS, _PROTECTED_PATH_PREFIXES, _PROTECTED_MUTATION_PATHS, and
+# _PROTECTED_METHOD_PREFIXES document the prior allowlist-based guard that named
+# only specific trust-boundary operations.  Issue #398 replaced it with a
+# default-deny policy; these constants are retained because spec tests
+# (spec_api_reference.py) verify that the critical paths they list are declared,
+# which remains true: under default-deny they are protected implicitly, and their
+# explicit presence here serves as a checklist that they cannot accidentally be
+# moved to _PUBLIC_PATHS.
 _PROTECTED_PATHS = {
     "/api/settings/live-unlock", "/api/settings/live-lock",
     "/api/risk/kill-switch",
@@ -680,43 +690,50 @@ _PROTECTED_METHOD_PREFIXES: tuple[tuple[frozenset[str], str], ...] = (
     (frozenset({"POST", "PUT", "PATCH", "DELETE"}), "/api/proposals/"),
 )
 
+# Minimal anonymous surface when tunnel is active.  Every /api/* and /_infra/*
+# path not listed here requires owner authentication.  Keep this list as small
+# as possible: liveness probes only, no config/positions/diagnostics content.
+_PUBLIC_PATHS = frozenset({
+    "/api/ready",
+    "/_infra/livez",
+    "/_infra/readyz",
+})
+
 
 @app.middleware("http")
 async def _tunnel_auth_guard(request, call_next):
-    """Block unauthenticated access to trust-boundary endpoints when tunnel is active.
+    """Enforce owner authentication for all private API/infra routes when tunnel is active.
 
-    When tunnel.enabled=True, ALL protected paths require a valid X-Aletheia-Token
-    header — even if tunnel_api_token secret is not configured.  A missing token is
-    treated as a misconfiguration and the request is rejected (fail-closed), because
-    an enabled tunnel with no secret would expose live-unlock and kill-switch to the
-    public internet without any authentication.
+    Policy (tunnel.enabled=True):
+      - Paths in _PUBLIC_PATHS are always accessible anonymously (minimal liveness).
+      - Every other /api/* and /_infra/* route requires a valid X-Aletheia-Token header,
+        including all GET/read endpoints.  Read access exposes positions, strategy
+        reasoning, agent output, and research data that are as sensitive as mutations.
+      - A missing tunnel_api_token secret → fail-closed (401); unauthenticated callers
+        cannot reach any private route.
+    Policy (tunnel.enabled=False / local loopback):
+      - No authentication required; local-first frictionless access is preserved.
 
     Successful authentication sets request.state.tunnel_authenticated = True so
     route handlers can record the correct actor source in audit events.
     """
     path = request.url.path
-    method = request.method.upper()
-    _matches_prefix = any(path.startswith(p) for p in _PROTECTED_PATH_PREFIXES)
-    _matches_mutation = (
-        method == "POST"
-        and any(
-            path.startswith(prefix) and path.endswith(suffix)
-            for prefix, suffix in _PROTECTED_MUTATION_PATHS
-        )
+    _is_private = (
+        (path.startswith("/api/") or path.startswith("/_infra/"))
+        and path not in _PUBLIC_PATHS
     )
-    _matches_method_prefix = any(
-        method in methods and path.startswith(prefix)
-        for methods, prefix in _PROTECTED_METHOD_PREFIXES
-    )
-    if path in _PROTECTED_PATHS or _matches_prefix or _matches_mutation or _matches_method_prefix:
-        cfg = load_config()
+
+    if _is_private:
+        # persist_migrations=False: the auth guard is read-only; it must not
+        # trigger a config rewrite as a side effect of checking tunnel.enabled.
+        cfg = load_config(persist_migrations=False)
         if getattr(cfg, "tunnel", None) and getattr(cfg.tunnel, "enabled", False):
             from aletheia.config.secrets import get_secret
             from fastapi.responses import JSONResponse
             expected = get_secret("tunnel_api_token")
             if not expected:
                 # Tunnel is on but no token configured — fail-closed to prevent
-                # unauthenticated public access to trust-boundary endpoints.
+                # unauthenticated public access to private routes.
                 return JSONResponse(
                     {"detail": "Tunnel is enabled but tunnel_api_token secret is not configured. "
                                "Set tunnel_api_token via 'aletheia secrets set tunnel_api_token <value>' "

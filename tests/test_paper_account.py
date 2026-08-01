@@ -447,8 +447,17 @@ async def test_tunnel_guard_rejects_unauthenticated_paper_account_mutations(tmp_
                     "Paper account mutations must be tunnel-gated."
                 )
 
-        # GET (read-only) must remain accessible without a token.
-        resp = await client.get("/api/settings/paper-account")
+        # GET (read-only) requires the tunnel token under default-deny policy (#398).
+        resp_anon = await client.get("/api/settings/paper-account")
+        assert resp_anon.status_code == 401, (
+            "GET /api/settings/paper-account must return 401 without token under tunnel mode (#398)"
+        )
+
+        # With the correct token, read succeeds and balance is unchanged.
+        resp = await client.get(
+            "/api/settings/paper-account",
+            headers={"X-Aletheia-Token": "PAPEROWNER42"},
+        )
         assert resp.status_code == 200
 
         # No ledger mutations: balance must remain at the seeded initial value.
