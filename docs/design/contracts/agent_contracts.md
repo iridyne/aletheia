@@ -90,6 +90,27 @@ durably queued and independently retried by `outcome_hook_replay`.
   service manager and distinguishes an absent registration from an unreadable
   manager state.
 - Git operations never start or restart the gateway. Applying new checkout code
+
+### OS Service-lifecycle Contract
+
+- Installation, automatic enablement, and current runtime are independent facts.
+  `gateway service status` reports each one and never treats an installed or
+  enabled definition as proof that the Gateway is running.
+- `gateway start|stop` changes runtime only. A persistent definition and its
+  enabled state survive an explicit stop; the next documented login or boot
+  trigger may start it again.
+- `gateway enable|disable` changes automatic activation only. Enabling does not
+  start the Gateway, and disabling does not stop it.
+- `gateway service install|uninstall` is ownership-safe and idempotent. Uninstall
+  refuses a running service and preserves runtime data, config, logs, and secrets.
+- The default `session` backend is user-scoped. Windows uses a LeastPrivilege
+  Task Scheduler task with S4U first and InteractiveToken only after explicit
+  S4U access denial; macOS uses a user LaunchAgent; Linux uses user systemd.
+- The optional `windows-service` backend is explicit, UAC-elevated, packaged-
+  runtime-only, LocalService-scoped, and uses a dedicated ProgramData runtime.
+  Aletheia never asks for or stores an administrator password and never copies
+  the interactive user's credentials into the machine runtime.
+- Service lifecycle commands remain unavailable to LLM-driven agent tools.
   requires an explicit owner-controlled `gateway restart`; legacy
   Aletheia-managed auto-restart hooks are removed without touching foreign hooks.
 

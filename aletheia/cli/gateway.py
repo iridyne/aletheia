@@ -1,8 +1,24 @@
 """Gateway lifecycle CLI commands."""
 
+from pathlib import Path
+
 import typer
 
 gateway_app = typer.Typer(no_args_is_help=True)
+service_app = typer.Typer(no_args_is_help=True, help="Install and inspect the OS service backend.")
+gateway_app.add_typer(service_app, name="service")
+
+
+def _service_result(result: dict, *, success: str) -> None:
+    if result.get("ok"):
+        typer.echo(success)
+        return
+    reason = result.get("reason") or "service_error"
+    detail = result.get("detail")
+    typer.echo(f"Gateway service operation failed: {reason}" + (f" — {detail}" if detail else ""), err=True)
+    if reason == "elevation_required":
+        typer.echo("Re-run without --no-elevate to use the Windows UAC secure desktop.", err=True)
+    raise typer.Exit(1)
 
 
 @gateway_app.command()
@@ -77,42 +93,63 @@ def resume():
 
 @gateway_app.command(name="enable")
 def enable_autostart():
-    """Register the OS watchdog to start and resurrect the gateway."""
-    from aletheia.gateway import autostart
-    result = autostart.enable(source="cli")
-    if result.get("ok"):
-        typer.echo(f"Autostart enabled (task: {result.get('task_name') or autostart.TASK_NAME}).")
-    elif not result.get("supported"):
-        typer.echo(f"Autostart not available on this OS ({result.get('reason')}).")
-    else:
-        typer.echo(
-            f"Failed to enable autostart: {result.get('reason')}"
-            + (f" — {result['detail']}" if result.get("detail") else ""),
-            err=True,
-        )
-        raise typer.Exit(1)
+    """Enable login/boot recovery without starting the Gateway now."""
+    from aletheia.gateway import service_control
+    _service_result(service_control.enable(source="cli"), success="Gateway service enabled. The running state was not changed.")
 
 
 @gateway_app.command(name="disable")
 def disable_autostart():
-    """Remove the gateway OS autostart/watchdog registration."""
-    from aletheia.gateway import autostart
-    result = autostart.disable(source="cli")
-    if result.get("ok"):
-        from aletheia.gateway.pidfile import is_running
-        msg = "Autostart disabled."
-        if is_running():
-            msg += " The gateway is still running — use 'gateway stop' to stop it."
-        typer.echo(msg)
-    elif not result.get("supported"):
-        typer.echo(f"Autostart not available on this OS ({result.get('reason')}).")
-    else:
-        typer.echo(
-            f"Failed to disable autostart: {result.get('reason')}"
-            + (f" — {result['detail']}" if result.get("detail") else ""),
-            err=True,
-        )
-        raise typer.Exit(1)
+    """Disable login/boot recovery without stopping the Gateway now."""
+    from aletheia.gateway import service_control
+    _service_result(service_control.disable(source="cli"), success="Gateway service disabled. The running state was not changed.")
+
+
+@service_app.command(name="status")
+def service_status():
+    """Show installed, enabled, running, ownership, and drift independently."""
+    from aletheia.gateway import service_control
+    result = service_control.status()
+    for key in ("backend", "scope", "registration", "installed", "enabled", "runtime", "owned", "config_valid", "recovery_scope", "data_dir"):
+        value = result.get(key)
+        if value is not None:
+            typer.echo(f"{key}: {str(value).lower() if isinstance(value, bool) else value}")
+    if result.get("reason"):
+        typer.echo(f"reason: {result['reason']}")
+
+
+@service_app.command(name="install")
+def service_install(
+    backend: str = typer.Option("session", "--backend", help="session or windows-service"),
+    elevate: bool = typer.Option(True, "--elevate/--no-elevate", help="Use Windows UAC for machine-scope changes."),
+):
+    """Install a disabled persistent service definition."""
+    from aletheia.gateway import service_control
+    _service_result(
+        service_control.install(backend=backend, elevate=elevate, source="cli"),
+        success=f"Gateway service installed ({backend}); it remains disabled and stopped.",
+    )
+
+
+@service_app.command(name="uninstall")
+def service_uninstall(
+    backend: str | None = typer.Option(None, "--backend", help="session or windows-service; defaults to the installed backend"),
+    elevate: bool = typer.Option(True, "--elevate/--no-elevate", help="Use Windows UAC for machine-scope changes."),
+):
+    """Uninstall a stopped service definition while preserving runtime data."""
+    from aletheia.gateway import service_control
+    _service_result(
+        service_control.uninstall(backend=backend, elevate=elevate, source="cli"),
+        success="Gateway service uninstalled. Runtime data and credentials were preserved.",
+    )
+
+
+@service_app.command(name="elevated-apply", hidden=True)
+def service_elevated_apply(request: Path = typer.Option(..., "--request")):
+    """Apply one validated Windows service transaction after UAC elevation."""
+    from aletheia.gateway.windows_machine_service import apply_elevated_request
+    result = apply_elevated_request(request)
+    raise typer.Exit(0 if result.get("ok") else 1)
 
 
 @gateway_app.command(name="open-dashboard")

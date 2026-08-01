@@ -43,9 +43,10 @@ def setup_env(tmp_path, monkeypatch):
     # Default: port-holder discovery returns empty — no real lsof/netstat (#233).
     # Tests that exercise the holder kill path override this in their own body.
     monkeypatch.setattr(lifecycle, "find_port_holders", lambda port: [])
-    from aletheia.gateway import managed_service
-    monkeypatch.setattr(managed_service, "start", lambda **_kwargs: {"ok": True})
-    monkeypatch.setattr(managed_service, "stop", lambda: {"ok": True})
+    from aletheia.gateway import service_control
+    monkeypatch.setattr(service_control, "is_machine_selected", lambda: False)
+    monkeypatch.setattr(service_control, "start", lambda **_kwargs: {"ok": True})
+    monkeypatch.setattr(service_control, "stop", lambda: {"ok": True})
 
 
 def test_do_stop_clears_pid_only_after_port_freed(tmp_path, monkeypatch, capsys):
@@ -117,11 +118,11 @@ def test_do_stop_reports_when_port_stuck(tmp_path, monkeypatch, capsys):
 def test_do_stop_blocks_on_service_manager_denial_without_killing_processes(tmp_path, monkeypatch, capsys):
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle
-    from aletheia.gateway import managed_service
+    from aletheia.gateway import service_control
 
     monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
     monkeypatch.setattr(
-        managed_service, "stop",
+        service_control, "stop",
         lambda: {"ok": False, "platform": "task_scheduler", "reason": "access_denied"},
     )
     killed = []
@@ -200,9 +201,9 @@ def test_do_start_self_heals_orphan_then_proceeds(tmp_path, monkeypatch):
         return call_count["n"] > 1  # False first time, True second time
     monkeypatch.setattr(lifecycle, "wait_port_free", staged_wait)
 
-    from aletheia.gateway import managed_service
+    from aletheia.gateway import service_control
     started = []
-    monkeypatch.setattr(managed_service, "start", lambda **kwargs: started.append(kwargs) or {"ok": True})
+    monkeypatch.setattr(service_control, "start", lambda **kwargs: started.append(kwargs) or {"ok": True})
     monkeypatch.setattr(lifecycle, "_verify_started", lambda cfg: None)
 
     lifecycle.do_start(no_browser=True)
@@ -234,9 +235,9 @@ def test_do_start_proceeds_after_transient_port_clears(tmp_path, monkeypatch):
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
     # Port frees within the grace window.
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
-    from aletheia.gateway import managed_service
+    from aletheia.gateway import service_control
     started = []
-    monkeypatch.setattr(managed_service, "start", lambda **kwargs: started.append(kwargs) or {"ok": True})
+    monkeypatch.setattr(service_control, "start", lambda **kwargs: started.append(kwargs) or {"ok": True})
     monkeypatch.setattr(lifecycle, "_verify_started", lambda cfg: None)
 
     lifecycle.do_start(no_browser=True)
@@ -248,9 +249,9 @@ def test_do_start_proceeds_when_port_free(tmp_path, monkeypatch):
     from aletheia.gateway import lifecycle
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
-    from aletheia.gateway import managed_service
+    from aletheia.gateway import service_control
     started = []
-    monkeypatch.setattr(managed_service, "start", lambda **kwargs: started.append(kwargs) or {"ok": True})
+    monkeypatch.setattr(service_control, "start", lambda **kwargs: started.append(kwargs) or {"ok": True})
     monkeypatch.setattr(lifecycle, "_verify_started", lambda cfg: None)
 
     lifecycle.do_start(no_browser=True)
@@ -491,9 +492,17 @@ def test_circuit_break_auto_resets_after_stability_window(tmp_path, monkeypatch)
 
     autostart_enabled: list[str] = []
 
-    from aletheia.gateway import autostart as _autostart_mod
-    monkeypatch.setattr(_autostart_mod, "is_supported_platform", lambda: True)
-    monkeypatch.setattr(_autostart_mod, "enable", lambda source="api": autostart_enabled.append(source) or {"ok": True})
+    from aletheia.gateway import service_control as _service_control
+    monkeypatch.setattr(
+        _service_control,
+        "status",
+        lambda: {"scope": "session", "installed": True, "enabled": False},
+    )
+    monkeypatch.setattr(
+        _service_control,
+        "enable",
+        lambda source="api": autostart_enabled.append(source) or {"ok": True},
+    )
 
     # No new spawn failures in audit log → reset should proceed.
     lifecycle._check_circuit_break_auto_reset()
@@ -550,10 +559,10 @@ def test_do_start_background_stops_registration_when_readiness_fails(tmp_path, m
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
     monkeypatch.setattr(lifecycle, "_is_headless", lambda: True)
-    from aletheia.gateway import managed_service
+    from aletheia.gateway import service_control
     stopped = []
-    monkeypatch.setattr(managed_service, "start", lambda **_kwargs: {"ok": True})
-    monkeypatch.setattr(managed_service, "stop", lambda: stopped.append(True) or {"ok": True})
+    monkeypatch.setattr(service_control, "start", lambda **_kwargs: {"ok": True})
+    monkeypatch.setattr(service_control, "stop", lambda: stopped.append(True) or {"ok": True})
     monkeypatch.setattr(lifecycle, "_verify_started", lambda *_args, **_kwargs: (_ for _ in ()).throw(typer.Exit(1)))
 
     with pytest.raises(typer.Exit):

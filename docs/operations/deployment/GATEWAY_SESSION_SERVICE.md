@@ -9,6 +9,18 @@ terminal or ORCA session that ran the command does not stop that managed runner.
 removes its transient definition. The gateway stays stopped until a human runs
 `gateway start` again.
 
+An operator may install a persistent user service without administrator rights:
+
+```sh
+uv run aletheia gateway service install --backend session
+uv run aletheia gateway enable
+uv run aletheia gateway start
+```
+
+Installation, enablement, and runtime are independent. `enable` does not start;
+`disable` does not stop; `stop` preserves an installed definition and its enabled
+state. `gateway service status` reports all three facts.
+
 ## Platform mapping
 
 | Platform | Owner created by `gateway start` | Removed by `gateway stop` |
@@ -47,6 +59,27 @@ checkouts, while leaving unrelated user hooks untouched.
 - No gateway configuration field, settings toggle, database state, or new API.
 - No tmux/screen dependency: those preserve a terminal session, not a durable
   process owner across all supported developer platforms.
-- No automatic restart or login startup. The separate historical watchdog is
-  never registered by `gateway start`; an explicit stop also removes a legacy
-  watchdog registration so it cannot resurrect the gateway.
+- A transient `gateway start` does not install login startup. Persistent login
+  or failure recovery requires the explicit service install/enable commands.
+
+## Optional Windows machine service
+
+Unattended operation before user login is an explicit packaged-runtime mode:
+
+```powershell
+aletheia gateway service install --backend windows-service
+aletheia gateway enable
+aletheia gateway start
+```
+
+Windows presents its own UAC secure desktop. Aletheia never accepts an
+administrator password. The service runs as LocalService with a service SID and
+an isolated `%ProgramData%\Aletheia\runtime`; it does not copy the interactive
+user's config or credentials. Source checkouts return
+`packaged_runtime_required` because granting LocalService access to a personal
+repository, venv, and home directory is not a supported deployment.
+
+WinSW 2.12.0 is downloaded before elevation from its official GitHub release and
+accepted only when its pinned SHA-256 matches. Elevated installation performs no
+network access. `service uninstall` requires the service to be stopped and
+preserves the machine runtime data directory.

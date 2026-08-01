@@ -29,6 +29,16 @@ uv run aletheia gateway status   # Gateway: running (PID ...)
 Other lifecycle commands: `gateway stop | restart | pause | resume | logs | open-dashboard`.
 `pause` halts all autonomous jobs without stopping the dashboard (the operator brake).
 
+Persistent service commands are separate from runtime control:
+
+```bash
+uv run aletheia gateway service install --backend session
+uv run aletheia gateway enable          # next login/boot activation; does not start now
+uv run aletheia gateway service status
+uv run aletheia gateway disable         # does not stop a running Gateway
+uv run aletheia gateway service uninstall  # requires stopped; preserves data
+```
+
 The gateway runs under a **supervisor**: if the inner server crashes it is
 respawned with backoff; after too many restarts in a window it gives up, writes a
 `gateway_supervisor_gave_up` audit event, and alerts through the operator
