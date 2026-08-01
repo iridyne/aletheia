@@ -24,3 +24,16 @@ status, and PR status stay in GitHub. Accepted does not mean implemented.
 Use [template.md](template.md). When a Proposal becomes current behavior,
 transfer the normative content to its permanent document role and leave the
 Proposal as stable decision history.
+
+## Current proposals
+
+- [Gateway service lifecycle](gateway_service_lifecycle.md): cross-platform
+  install, enablement, runtime control, and optional Windows machine-service
+  design.
+- [Gateway recovery](gateway_recovery.md): restart reconciliation and safe
+  freeze behavior.
+- [Learning evolution](learning_evolution.md): governed learning changes.
+- [Learning observability](learning_observability.md): learning measurement and
+  operator visibility.
+- [Tokenomics harness phase plan](tokenomics_harness_phase_plan_2026-07-30.md):
+  controlled inference-harness rollout.
