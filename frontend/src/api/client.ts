@@ -644,12 +644,13 @@ export const api = {
     inference_reserved_high_priority_slots?: number; inference_timeout_sec?: number
   }) => post('/settings/model', body),
   testModelCandidate: (body: {
-    provider: string; base_url?: string; protocol?: string; model?: string
+    provider: string; base_url?: string; workspace_url?: string; protocol?: string; model?: string
     api_key?: string; auth_scheme?: string; probe?: boolean
   }) => post<{ available: boolean; model: string; error: string | null; models?: string[] }>('/model/test-candidate', body),
   detectModels: (body: {
-    provider: string; base_url?: string; api_key?: string; auth_scheme?: string
-  }) => post<{ models: { slug: string; display_name: string }[] }>('/model/detect-models', body),
+    provider: string; base_url?: string; workspace_url?: string; protocol?: string
+    api_key?: string; auth_scheme?: string
+  }) => post<{ models: { slug: string; display_name: string; ready_state?: string }[] }>('/model/detect-models', body),
 
   // Codex subscription provider: web-triggered device-auth login + model listing
   codexLoginStart: () => post<{ state: string; verification_uri: string | null; user_code: string | null; error: string | null }>('/model/codex/login-start'),

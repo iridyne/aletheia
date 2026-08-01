@@ -1036,6 +1036,64 @@ input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; marg
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 .form-grid label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.75rem; color: var(--muted); }
 .form-grid input, .form-grid select { width: 100%; }
+.provider-draft-banner {
+  margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3);
+  color: var(--yellow); background: rgba(245,185,66,0.08);
+  border: 1px solid rgba(245,185,66,0.28); border-radius: var(--r-sm); font-size: 0.75rem;
+}
+.provider-form-block { padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+.provider-form-block:last-of-type { border-bottom: 0; }
+.provider-form-title {
+  margin-bottom: var(--space-2); color: var(--text); font: 600 0.72rem var(--display);
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.provider-field-label { display: block; margin-bottom: var(--space-1); color: var(--muted); font-size: 0.75rem; }
+.provider-field-help { color: var(--faint); font-size: 0.68rem; overflow-wrap: anywhere; }
+.provider-mode-switch {
+  display: inline-flex; max-width: 100%; padding: 2px; gap: 2px;
+  background: var(--bg); border: 1px solid var(--border-2); border-radius: var(--r-sm);
+}
+.provider-mode-switch button { background: transparent; color: var(--muted); border: 0; box-shadow: none; }
+.provider-mode-switch button:hover { filter: none; color: var(--text); background: var(--surface-2); }
+.provider-mode-switch button.active { color: var(--accent); background: var(--surface-2); }
+.provider-role-badge {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--accent); padding: 0.1rem 0.4rem; border-radius: 3px;
+  border: 1px solid var(--accent-dim); background: rgba(34,211,238,0.06);
+}
+.provider-catalogue { display: grid; gap: var(--space-1); margin-top: var(--space-2); max-height: 13rem; overflow-y: auto; }
+.provider-catalogue button {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  background: transparent; color: var(--text); border: 1px solid var(--border);
+  text-align: left; font-weight: 400;
+}
+.provider-catalogue button:hover:not(:disabled), .provider-catalogue button.selected {
+  filter: none; background: var(--surface-2); border-color: var(--border-2);
+}
+.provider-state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+.provider-state-dot.ready { background: var(--green); }
+.provider-state-dot.unavailable { background: var(--red); }
+.provider-verification-steps { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.provider-verification-steps span {
+  color: var(--muted); padding: 0.15rem 0.45rem; border: 1px solid var(--border);
+  border-radius: 999px; font: 500 0.68rem var(--mono);
+}
+.provider-verification-steps span.done { color: var(--green); border-color: rgba(46,230,168,0.3); background: rgba(46,230,168,0.06); }
+.provider-routing-assignments { display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); color: var(--muted); font-size: 0.75rem; }
+.provider-routing-assignments button { white-space: nowrap; }
+.provider-advanced { margin-top: var(--space-3); border: 1px solid var(--border); border-radius: var(--r-sm); }
+.provider-advanced summary { padding: var(--space-2) var(--space-3); cursor: pointer; color: var(--text); font-size: 0.78rem; }
+.provider-advanced[open] summary { border-bottom: 1px solid var(--border); }
+.provider-capability-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: var(--space-2); padding: var(--space-3); }
+.provider-capability-grid span { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 0.68rem; }
+.provider-capability-grid strong { color: var(--text); font: 500 0.72rem var(--mono); }
+.provider-advanced > .hint { padding: 0 var(--space-3) var(--space-3); }
+@media (max-width: 700px) {
+  .provider-mode-switch { display: grid; width: 100%; }
+  .provider-capability-grid { grid-template-columns: 1fr; }
+  .provider-routing-assignments { width: 100%; align-items: stretch; flex-direction: column; }
+  .provider-routing-assignments button { width: 100%; }
+}
 code { background: var(--bg); padding: 0.12rem 0.35rem; border-radius: 3px; font-size: 0.82em; font-family: var(--mono); color: var(--text); border: 1px solid var(--border); }
 
 .setup-banner {

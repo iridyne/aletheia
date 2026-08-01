@@ -4,12 +4,15 @@ Secrets are write-only over the API: POST accepts an api_key, but no GET ever
 returns a key. GET responses only report whether a key is configured + last-4.
 """
 
+import hashlib
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from aletheia.config.loader import load_config, save_config
 from aletheia.config.secrets import set_secret, get_secret
 from aletheia.files.jsonl import write_audit
+from aletheia.model_provider.databricks import DATABRICKS_PROTOCOLS, validate_workspace_url
 from aletheia.model_provider.router import (
     clear_cache,
     clear_cache_async,
@@ -21,7 +24,7 @@ router = APIRouter(prefix="/api", tags=["model"])
 
 VALID_PROVIDERS = set(PROVIDER_REGISTRY.keys())
 
-HTTP_PROVIDERS = {"openai_compatible", "anthropic_compatible", "anthropic_native", "openai_native"}
+HTTP_PROVIDERS = {"openai_compatible", "anthropic_compatible", "databricks", "anthropic_native", "openai_native"}
 CLI_PROVIDERS = {"codex_cli", "claude_cli"}
 
 
@@ -71,6 +74,8 @@ def get_model_config():
         if ptype in HTTP_PROVIDERS:
             entry["base_url"] = pcfg.base_url
             entry["protocol"] = pcfg.protocol
+        if ptype == "databricks":
+            entry["workspace_url"] = pcfg.workspace_url
         if ptype == "anthropic_compatible":
             entry["auth_scheme"] = getattr(pcfg, "auth_scheme", "x-api-key")
         if ptype in CLI_PROVIDERS:
@@ -159,6 +164,17 @@ def get_provider_types():
             "category": "http",
             "fields": ["base_url", "model", "api_key"],
         },
+        "databricks": {
+            "label": "Databricks",
+            "category": "http",
+            "fields": ["workspace_url", "model", "protocol", "api_key"],
+            "protocols": [
+                "serving_endpoint",
+                "chat_completions",
+                "responses",
+                "anthropic_messages",
+            ],
+        },
         "codex_cli": {
             "label": "Codex CLI",
             "category": "cli",
@@ -185,6 +201,8 @@ def get_provider_types():
 class DetectModelsRequest(BaseModel):
     provider: str
     base_url: str | None = None
+    workspace_url: str | None = None
+    protocol: str | None = None
     api_key: str | None = None
     auth_scheme: str | None = None
 
@@ -200,6 +218,7 @@ async def detect_models(req: DetectModelsRequest):
 
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+    from aletheia.model_provider.databricks import DatabricksProvider
     from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
     from aletheia.model_provider.openai_native import OpenAINativeProvider
     from aletheia.config.secrets import get_secret
@@ -210,6 +229,14 @@ async def detect_models(req: DetectModelsRequest):
     stored_key = None
     if pcfg and pcfg.api_key_secret_ref:
         stored_key = get_secret(pcfg.api_key_secret_ref)
+    if req.provider == "databricks" and req.workspace_url:
+        try:
+            candidate_origin = validate_workspace_url(req.workspace_url)
+            persisted_origin = validate_workspace_url(pcfg.workspace_url) if pcfg and pcfg.workspace_url else None
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if candidate_origin != persisted_origin:
+            stored_key = None
     api_key = req.api_key or stored_key
 
     if req.provider == "openai_compatible":
@@ -223,6 +250,16 @@ async def detect_models(req: DetectModelsRequest):
         provider = AnthropicCompatibleProvider(
             base_url=base_url, model="default", api_key=api_key, auth_scheme=auth_scheme,
         )
+    elif req.provider == "databricks":
+        try:
+            provider = DatabricksProvider(
+                workspace_url=req.workspace_url or (pcfg.workspace_url if pcfg else "") or "",
+                model=(pcfg.model if pcfg else "default") or "default",
+                protocol=req.protocol or (pcfg.protocol if pcfg else "serving_endpoint") or "serving_endpoint",
+                api_key=api_key,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     elif req.provider == "anthropic_native":
         provider = AnthropicNativeProvider(model="default", api_key=api_key)
     elif req.provider == "openai_native":
@@ -240,6 +277,7 @@ async def detect_models(req: DetectModelsRequest):
 class TestCandidateRequest(BaseModel):
     provider: str
     base_url: str | None = None
+    workspace_url: str | None = None
     protocol: str | None = None
     model: str | None = None
     api_key: str | None = None
@@ -259,6 +297,7 @@ async def test_model_candidate(req: TestCandidateRequest):
 
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+    from aletheia.model_provider.databricks import DatabricksProvider
     from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
     from aletheia.model_provider.openai_native import OpenAINativeProvider
     from aletheia.config.secrets import get_secret
@@ -271,6 +310,14 @@ async def test_model_candidate(req: TestCandidateRequest):
     stored_key = None
     if pcfg and pcfg.api_key_secret_ref:
         stored_key = get_secret(pcfg.api_key_secret_ref)
+    if req.provider == "databricks" and req.workspace_url:
+        try:
+            candidate_origin = validate_workspace_url(req.workspace_url)
+            persisted_origin = validate_workspace_url(pcfg.workspace_url) if pcfg and pcfg.workspace_url else None
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if candidate_origin != persisted_origin:
+            stored_key = None
     api_key = req.api_key or stored_key
 
     if req.provider == "openai_compatible":
@@ -288,6 +335,16 @@ async def test_model_candidate(req: TestCandidateRequest):
             api_key=api_key,
             auth_scheme=auth_scheme,
         )
+    elif req.provider == "databricks":
+        try:
+            provider = DatabricksProvider(
+                workspace_url=req.workspace_url or (pcfg.workspace_url if pcfg else "") or "",
+                model=model,
+                protocol=req.protocol or (pcfg.protocol if pcfg else "serving_endpoint") or "serving_endpoint",
+                api_key=api_key,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     elif req.provider == "anthropic_native":
         provider = AnthropicNativeProvider(model=model, api_key=api_key)
     elif req.provider == "openai_native":
@@ -297,7 +354,8 @@ async def test_model_candidate(req: TestCandidateRequest):
 
     try:
         health = await provider.healthcheck()
-        if not health.available:
+        # A known Databricks endpoint can be invokable without workspace-wide LIST access.
+        if not health.available and not (req.provider == "databricks" and req.probe):
             return {"available": False, "model": health.model, "error": health.error}
 
         if req.probe:
@@ -394,13 +452,44 @@ class ModelConfigRequest(BaseModel):
 async def set_model(req: ModelConfigRequest):
     if req.provider not in VALID_PROVIDERS:
         raise HTTPException(400, f"Invalid provider. Choose from: {sorted(VALID_PROVIDERS)}")
+    if req.api_key is not None:
+        req.api_key = req.api_key.strip() or None
+    if req.provider == "databricks":
+        if req.base_url is not None:
+            raise HTTPException(422, "Databricks uses workspace_url; base_url is not accepted")
+        if req.protocol is not None and req.protocol not in DATABRICKS_PROTOCOLS:
+            raise HTTPException(422, "Unsupported Databricks protocol")
+        if req.workspace_url is not None:
+            try:
+                validate_workspace_url(req.workspace_url)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
 
     cfg = load_config()
     pcfg = cfg.models.providers.get(req.provider)
+    previous_workspace_url = (pcfg.workspace_url or pcfg.base_url) if pcfg is not None else None
     if pcfg is None:
         from aletheia.config.schema import ProviderConfig
-        pcfg = ProviderConfig(type=req.provider)
+        pcfg = ProviderConfig(
+            type=req.provider,
+            protocol="serving_endpoint" if req.provider == "databricks" else "chat_completions",
+        )
         cfg.models.providers[req.provider] = pcfg
+
+    if req.provider == "databricks" and req.api_key and not (req.workspace_url or pcfg.workspace_url):
+        raise HTTPException(422, "Databricks workspace_url is required before storing a token")
+    if req.provider == "databricks" and req.workspace_url is not None:
+        next_origin = validate_workspace_url(req.workspace_url)
+        previous_origin = (
+            validate_workspace_url(previous_workspace_url)
+            if previous_workspace_url
+            else None
+        )
+        if previous_origin != next_origin and pcfg.api_key_secret_ref and not req.api_key:
+            raise HTTPException(
+                422,
+                "A new Databricks token is required when the workspace origin changes",
+            )
 
     if not pcfg.type:
         pcfg.type = req.provider
@@ -454,7 +543,14 @@ async def set_model(req: ModelConfigRequest):
         cfg.models.fast_provider = req.provider
 
     if req.api_key:
-        secret_ref = f"model.{req.provider}.api_key"
+        if req.provider == "databricks":
+            origin = validate_workspace_url(pcfg.workspace_url or "")
+            origin_id = hashlib.sha256(origin.encode("utf-8")).hexdigest()[:16]
+            # Origin-specific refs keep an uncommitted replacement token from
+            # ever being read through the previous workspace configuration.
+            secret_ref = f"model.databricks.{origin_id}.api_key"
+        else:
+            secret_ref = f"model.{req.provider}.api_key"
         set_secret(secret_ref, req.api_key)
         pcfg.api_key_secret_ref = secret_ref
 

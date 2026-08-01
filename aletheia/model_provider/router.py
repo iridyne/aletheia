@@ -10,6 +10,7 @@ from aletheia.config.loader import load_config, save_config
 from aletheia.model_provider.base import ModelProvider, ModelHealth
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+from aletheia.model_provider.databricks import DatabricksProvider
 from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
 from aletheia.model_provider.openai_native import OpenAINativeProvider
 from aletheia.model_provider.codex_cli import CodexCLIProvider
@@ -20,6 +21,7 @@ logger = logging.getLogger("aletheia.model_provider.router")
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     "openai_compatible": OpenAICompatibleProvider,
     "anthropic_compatible": AnthropicCompatibleProvider,
+    "databricks": DatabricksProvider,
     "anthropic_native": AnthropicNativeProvider,
     "openai_native": OpenAINativeProvider,
     "codex_cli": CodexCLIProvider,
@@ -214,6 +216,13 @@ def get_provider(name: str | None = None) -> ModelProvider:
             api_key=api_key,
             auth_scheme=getattr(pcfg, "auth_scheme", "x-api-key"),
         )
+    elif ptype == "databricks":
+        provider = DatabricksProvider(
+            workspace_url=pcfg.workspace_url or pcfg.base_url,
+            model=pcfg.model,
+            protocol=pcfg.protocol or "serving_endpoint",
+            api_key=api_key,
+        )
     elif ptype == "codex_cli":
         provider = CodexCLIProvider(
             command=pcfg.command,
@@ -276,6 +285,13 @@ async def get_provider_async(name: str | None = None) -> ModelProvider:
         provider = AnthropicCompatibleProvider(
             base_url=pcfg.base_url, model=pcfg.model, api_key=api_key,
             auth_scheme=getattr(pcfg, "auth_scheme", "x-api-key"),
+        )
+    elif ptype == "databricks":
+        provider = DatabricksProvider(
+            workspace_url=pcfg.workspace_url or pcfg.base_url,
+            model=pcfg.model,
+            protocol=pcfg.protocol or "serving_endpoint",
+            api_key=api_key,
         )
     elif ptype == "codex_cli":
         provider = CodexCLIProvider(
@@ -359,6 +375,7 @@ async def list_models_cached(
         error = RuntimeError(f"model directory refresh cancelled for {name}")
         inflight.set_exception(error)
         raise
+    # pi-lens-ignore: bare-except — BaseException settles shared Future before re-raising.
     except BaseException as exc:
         inflight.set_exception(exc)
         raise
@@ -390,7 +407,7 @@ async def clear_cache_async() -> None:
         await provider.aclose()
 
 
-_HTTP_TYPES = {"openai_compatible", "anthropic_compatible", "anthropic_native", "openai_native"}
+_HTTP_TYPES = {"openai_compatible", "anthropic_compatible", "databricks", "anthropic_native", "openai_native"}
 _DEFAULT_URLS = {"http://localhost:8000/v1", "http://localhost:8001", ""}
 
 
@@ -421,6 +438,7 @@ async def healthcheck_all(*, force: bool = False) -> list[ModelHealth]:
     except asyncio.CancelledError:
         inflight.set_exception(RuntimeError("model health refresh cancelled"))
         raise
+    # pi-lens-ignore: bare-except — BaseException settles shared Future before re-raising.
     except BaseException as exc:
         inflight.set_exception(exc)
         raise
@@ -440,7 +458,7 @@ async def _refresh_health_all() -> list[ModelHealth]:
             has_credential = bool(pcfg.api_key_secret_ref) or (
                 pcfg.auth_type == "oauth" and bool(pcfg.oauth_token_ref)
             )
-            is_default_url = pcfg.base_url in _DEFAULT_URLS
+            is_default_url = (pcfg.workspace_url or pcfg.base_url) in _DEFAULT_URLS
             if not has_credential and is_default_url:
                 continue
         tasks.append(_safe_healthcheck(name))
