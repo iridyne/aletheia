@@ -455,8 +455,8 @@ async def lifespan(app: FastAPI):
         try:
             gate_permits_pi_daemon = behavior_gate.gate_allows_startup(cfg)
         except Exception as e:
-            logger.warning("startup behaviour gate pre-check failed (permitting): %s", e)
-            gate_permits_pi_daemon = True
+            logger.error("startup behaviour gate pre-check raised — blocking PI daemon: %s", e)
+            gate_permits_pi_daemon = False
         behavior_gate_task = asyncio.create_task(
             behavior_gate.startup_behavior_gate(cfg), name="startup_behavior_gate"
         )

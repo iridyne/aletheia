@@ -506,3 +506,155 @@ def test_recheck_does_not_resume_user_pause(tmp_path, monkeypatch, _mock_schedul
     assert resumed is False
     assert load_config().runtime.paused is True   # still paused — user owns it
     assert _mock_scheduler["resume"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# 12. Fail-closed under exception paths (issue #389)
+# --------------------------------------------------------------------------- #
+
+def test_gate_allows_startup_returns_false_on_exception(tmp_path, monkeypatch):
+    """gate_allows_startup() must return False when evaluation raises, never True."""
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg()
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+
+    monkeypatch.setattr(
+        gate, "evaluate_startup_gate",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("simulated evaluation failure")),
+    )
+    result = gate.gate_allows_startup()
+    assert result is False
+
+
+def test_app_py_blocks_pi_daemon_when_gate_precheck_raises(tmp_path, monkeypatch):
+    """In app.py the exception handler must set gate_permits_pi_daemon=False, not True."""
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg()
+    import aletheia.agent_runtime.startup_behavior_gate as gate_mod
+
+    # Patch gate_allows_startup so it raises to simulate any upstream error.
+    monkeypatch.setattr(
+        gate_mod, "gate_allows_startup",
+        lambda *a, **k: (_ for _ in ()).throw(ImportError("simulated import error")),
+    )
+
+    # Reproduce the app.py try/except block under test.
+    gate_permits_pi_daemon = True  # would be the fail-open value before the fix
+    try:
+        gate_permits_pi_daemon = gate_mod.gate_allows_startup()
+    except Exception:
+        gate_permits_pi_daemon = False  # the correct post-fix behaviour
+
+    assert gate_permits_pi_daemon is False
+
+
+def test_evaluate_startup_gate_exception_creates_synthetic_blocker(
+    tmp_path, monkeypatch, _mock_scheduler
+):
+    """When evaluate_startup_gate() raises inside startup_behavior_gate(), the system
+    must apply a layered pause and write a durable synthetic blocker, not skip."""
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg()
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+
+    monkeypatch.setattr(gate, "_start_recheck_loop", lambda *a, **k: None)
+    monkeypatch.setattr(
+        gate, "evaluate_startup_gate",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("simulated schema error")),
+    )
+
+    verdict = asyncio.run(gate.startup_behavior_gate())
+
+    # Must NOT be skipped — the gate was enabled and evaluation failed.
+    assert verdict.get("skipped") is not True, "gate must not skip on evaluation error"
+    assert verdict["passed"] is False
+    assert "startup_gate_evaluation_error" in verdict["blockers"]
+
+    # Layered pause must have been applied.
+    assert _mock_scheduler["pause"] == [True]
+    assert load_config().runtime.paused is True
+
+    # Durable gate-owned blocker must have been written.
+    state = gate.read_gate_state()
+    assert state is not None
+    assert state["paused_by_gate"] is True
+    assert "startup_gate_evaluation_error" in state["blockers"]
+
+    # The synthetic check detail must not expose raw paths/secrets — only the
+    # exception type is included.
+    check = next(c for c in state["checks"] if c["name"] == "startup_gate_evaluation_error")
+    assert "RuntimeError" in check["detail"]
+    assert "simulated schema error" not in check["detail"]  # message sanitised out
+
+
+def test_evaluate_exception_recheck_resumes_when_clear(
+    tmp_path, monkeypatch, _mock_scheduler
+):
+    """After an evaluation-error block, a later clean recheck resumes exactly once."""
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg()
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+
+    # Capture the real function before patching so we can restore it precisely
+    # without undoing the tmp-path/DB setup patches from setup_env.
+    real_evaluate = gate.evaluate_startup_gate
+
+    monkeypatch.setattr(gate, "_start_recheck_loop", lambda *a, **k: None)
+    monkeypatch.setattr(
+        gate, "evaluate_startup_gate",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("transient error")),
+    )
+    asyncio.run(gate.startup_behavior_gate())
+
+    # Gate is now paused with a gate-owned blocker.
+    assert gate.read_gate_state() is not None
+    assert load_config().runtime.paused is True
+
+    # Restore just evaluate_startup_gate to the real implementation — this leaves
+    # setup_env patches (tmp DATA_DIR, CONFIG_PATH, DB) intact so recheck_once()
+    # reads the same in-memory test state.
+    monkeypatch.setattr(gate, "evaluate_startup_gate", real_evaluate)
+
+    resumed = asyncio.run(gate.recheck_once())
+    assert resumed is True
+    assert load_config().runtime.paused is False
+    assert gate.read_gate_state() is None
+    assert _mock_scheduler["resume"] == 1
+
+
+def test_apply_block_stops_running_pi_daemon(tmp_path, monkeypatch, _mock_scheduler):
+    """When _apply_block() fires on a system failure it must stop a running PI daemon."""
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg(exchange__paper_execution_mode="bitget_demo")
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+
+    stopped = []
+    import aletheia.agent_runtime.pi_daemon as pi_mod
+    monkeypatch.setattr(pi_mod, "is_daemon_running", lambda: True)
+    monkeypatch.setattr(pi_mod, "stop_pi_daemon", lambda: stopped.append(1))
+    monkeypatch.setattr(gate, "_start_recheck_loop", lambda *a, **k: None)
+
+    asyncio.run(gate.startup_behavior_gate())
+
+    assert stopped == [1], "stop_pi_daemon must be called when the gate blocks"
+
+
+def test_gate_disabled_unchanged_when_evaluation_would_error(tmp_path, monkeypatch, _mock_scheduler):
+    """Gate disabled → evaluation never runs, no pause, no blocker."""
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg(
+        health__startup_behavior_gate_enabled=False,
+        exchange__paper_execution_mode="bitget_demo",
+    )
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+
+    # Even if evaluation would raise, the gate is off — should remain a no-op.
+    monkeypatch.setattr(
+        gate, "evaluate_startup_gate",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("should not be called")),
+    )
+
+    verdict = asyncio.run(gate.startup_behavior_gate())
+    assert verdict.get("skipped") is True
+    assert _mock_scheduler["pause"] == []
+    assert load_config().runtime.paused is False

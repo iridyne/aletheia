@@ -88,7 +88,17 @@ def write_gate_state(state: dict) -> None:
         tmp.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
         tmp.replace(p)  # atomic on the same filesystem
     except Exception as e:
-        logger.warning("startup gate: could not persist durable state: %s", e)
+        logger.error(
+            "startup gate: could not persist durable state — "
+            "gate blocks in memory but the blocker may not survive a restart: %s", e
+        )
+        # Surface as a high-severity operational condition via the audit trail so
+        # operators are not silently left with an unverifiable startup block.
+        _audit(
+            "startup_behavior_gate_persistence_failed",
+            f"Failed to write gate durable state ({type(e).__name__}): "
+            "gate is blocking in memory; the blocker may not survive a restart.",
+        )
 
 
 def clear_gate_state() -> None:
@@ -353,14 +363,24 @@ def evaluate_startup_gate(cfg=None, *, state_store=None) -> dict:
 def gate_allows_startup(cfg=None) -> bool:
     """Whether behaviour that must wait for the gate (e.g. the System Operator
     daemon) may start. True when the gate is disabled, or the checks pass and no
-    human pause/kill switch is in effect."""
+    human pause/kill switch is in effect.
+
+    Never raises — any unexpected evaluation error is treated as a blocking
+    failure (fail-closed), since "could not verify" is not the same as "safe".
+    """
     if cfg is None:
         from aletheia.config.loader import load_config
 
         cfg = load_config()
     if not cfg.health.startup_behavior_gate_enabled:
         return True
-    verdict = evaluate_startup_gate(cfg)
+    try:
+        verdict = evaluate_startup_gate(cfg)
+    except Exception as e:
+        logger.error(
+            "startup gate: gate_allows_startup evaluation raised — blocking PI daemon: %s", e
+        )
+        return False
     return verdict["passed"] and not verdict["user_blocked"]
 
 
@@ -410,9 +430,24 @@ def _persist_paused(paused: bool) -> None:
     clobber a concurrent settings edit (same rationale as the LLM startup gate)."""
     from aletheia.config.loader import load_config, save_config
 
-    fresh = load_config()
-    fresh.runtime.paused = paused
-    save_config(fresh)
+    try:
+        fresh = load_config()
+        fresh.runtime.paused = paused
+        save_config(fresh)
+    except Exception as e:
+        # In-memory scheduler is still paused/resumed correctly, but without
+        # persistence the flag will not survive a restart.  Surface loudly so
+        # operators are not silently left with an incorrect saved state.
+        logger.error(
+            "startup gate: could not persist runtime.paused=%s — "
+            "in-memory scheduler is still %s but the flag will not survive restart: %s",
+            paused, "paused" if paused else "resumed", e,
+        )
+        _audit(
+            "startup_behavior_gate_persistence_failed",
+            f"Failed to persist runtime.paused={paused} ({type(e).__name__}): "
+            f"in-memory state is {'paused' if paused else 'active'} but will not survive a restart.",
+        )
 
 
 def _apply_block(verdict: dict, cfg) -> None:
@@ -433,6 +468,15 @@ def _apply_block(verdict: dict, cfg) -> None:
         except Exception as e:
             logger.warning("startup gate: pause_scheduler failed: %s", e)
         _persist_paused(True)
+        # Stop the PI daemon if it was started due to a race or an earlier state;
+        # it must not process new AI decisions while the gate is blocked.
+        try:
+            from aletheia.agent_runtime.pi_daemon import is_daemon_running, stop_pi_daemon
+
+            if is_daemon_running():
+                stop_pi_daemon()
+        except Exception as e:
+            logger.warning("startup gate: stop_pi_daemon failed: %s", e)
 
     write_gate_state({
         "paused_by_gate": paused_by_gate,
@@ -516,9 +560,26 @@ async def startup_behavior_gate(cfg=None) -> dict:
 
     try:
         verdict = evaluate_startup_gate(cfg)
-    except Exception as e:  # defensive: diagnosis is meant to be pure, but never crash startup
-        logger.warning("startup behaviour gate evaluation errored: %s", e)
-        return {"skipped": True, "error": str(e)}
+    except Exception as e:
+        # evaluate_startup_gate is designed to never raise, but if it does:
+        # treat the unknown state as a blocking failure, NOT as "safe to skip".
+        # "Could not evaluate" is not the same as "checks passed".
+        logger.error("startup behaviour gate evaluation raised unexpectedly: %s", e)
+        synthetic_check = {
+            "name": "startup_gate_evaluation_error",
+            "ok": False,
+            "detail": f"gate evaluation raised: {type(e).__name__}",
+            "blocking": True,
+        }
+        verdict = {
+            "passed": False,
+            "checks": [synthetic_check],
+            "blockers": ["startup_gate_evaluation_error"],
+            "user_blocked": False,
+            "user_block_reason": None,
+        }
+        _apply_block(verdict, cfg)
+        return verdict
 
     if verdict["passed"] and not verdict["user_blocked"]:
         if _gate_owns_pause():
