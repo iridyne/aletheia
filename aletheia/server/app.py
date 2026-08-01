@@ -642,6 +642,9 @@ _PROTECTED_PATHS = {
     "/api/settings/paper-account/set-balance",
     "/api/settings/paper-account/close-all",
     "/api/settings/paper-account/close-spot",
+    # #395: Manual Agent-run endpoint can consume LLM budget, create durable artifacts,
+    # and fill the bounded queue — treat it as an owner-authenticated mutation.
+    "/api/agent-runs/start",
 }
 
 # #41 fix: whole path PREFIXES that must require the tunnel token when the tunnel

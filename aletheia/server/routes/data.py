@@ -339,23 +339,103 @@ def get_agent_run_steps(run_id: str):
     return rows[:500]
 
 
+# Explicit allowlist of agents that are safe to trigger manually from the Dashboard.
+# side_effect_class: "observe" | "research" | "review" | "rank" | "behavior"
+# cost_class: "low" | "medium" | "high"
+# gate_check: True → block when kill_switch_active or runtime paused
+_MANUAL_AGENT_ALLOWLIST: dict[str, dict] = {
+    # Observational — read-only market data, no model calls, no artifacts
+    "market_observer":     {"side_effect_class": "observe",   "cost_class": "low",    "gate_check": False},
+    "equity_observer":     {"side_effect_class": "observe",   "cost_class": "low",    "gate_check": False},
+    "stock_observer":      {"side_effect_class": "observe",   "cost_class": "low",    "gate_check": False},
+    "prediction_observer": {"side_effect_class": "observe",   "cost_class": "low",    "gate_check": False},
+    "divergence_scanner":  {"side_effect_class": "observe",   "cost_class": "low",    "gate_check": False},
+    # Research / analysis — uses LLM, writes knowledge/insight artifacts only
+    "research_agent":      {"side_effect_class": "research",  "cost_class": "high",   "gate_check": False},
+    "research_worker":     {"side_effect_class": "research",  "cost_class": "high",   "gate_check": False},
+    # Review / critique — uses LLM, writes review/lesson/signal artifacts
+    "post_trade_reviewer": {"side_effect_class": "review",    "cost_class": "medium", "gate_check": False},
+    "risk_critic":         {"side_effect_class": "review",    "cost_class": "medium", "gate_check": False},
+    "lesson_reviewer":     {"side_effect_class": "review",    "cost_class": "medium", "gate_check": False},
+    "dreaming_agent":      {"side_effect_class": "review",    "cost_class": "medium", "gate_check": False},
+    "portfolio_agent":     {"side_effect_class": "review",    "cost_class": "medium", "gate_check": False},
+    # Ranking — deterministic, no LLM, no orders
+    "paper_trader_ranker": {"side_effect_class": "rank",      "cost_class": "low",    "gate_check": False},
+    # Behavior-producing — creates paper proposals/orders; respects kill-switch and pause
+    "paper_trader":        {"side_effect_class": "behavior",  "cost_class": "medium", "gate_check": True},
+}
+
+
 class StartAgentRequest(BaseModel):
     agent_name: str = "market_observer"
+    # Optional caller-supplied key for duplicate-click prevention.  Two requests
+    # with the same idempotency_key and agent_name while the first is still
+    # queued/running will return 409 with the in-flight run_id.
+    idempotency_key: str | None = None
 
 
 @router.post("/agent-runs/start", status_code=202)
-def start_agent_run(req: StartAgentRequest):
+def start_agent_run(req: StartAgentRequest, request: Request):
     _ensure_db()
     from fastapi import HTTPException
     from aletheia.agent_runtime.job_queue import (
+        AgentJobAlreadyQueued,
         AgentJobManagerClosed,
         AgentJobQueueFull,
         get_agent_job_manager,
     )
 
+    # Capability policy: only explicitly allowed agents may be triggered manually.
+    if req.agent_name not in _MANUAL_AGENT_ALLOWLIST:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "agent_not_in_manual_allowlist",
+                "agent_name": req.agent_name,
+                "allowed": sorted(_MANUAL_AGENT_ALLOWLIST),
+            },
+        )
+
+    meta = _MANUAL_AGENT_ALLOWLIST[req.agent_name]
+
+    # Gate check for behavior-producing agents: honour kill-switch and pause state
+    # so a manual trigger cannot bypass protections that scheduled runs respect.
+    if meta["gate_check"]:
+        cfg = load_config()
+        if getattr(getattr(cfg, "runtime", None), "kill_switch_active", False):
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "kill_switch_active",
+                        "message": "Kill switch is active; behavior-producing agents cannot be started manually."},
+            )
+        if getattr(getattr(cfg, "runtime", None), "paused", False):
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "gateway_paused",
+                        "message": "Gateway is paused; behavior-producing agents cannot be started manually."},
+            )
+
+    # Actor attribution: authenticated tunnel callers are recorded as "owner";
+    # local dashboard calls (tunnel disabled) are recorded as "dashboard".
+    _is_tunnel_auth = getattr(request.state, "tunnel_authenticated", False)
+    trigger_type = "manual_owner" if _is_tunnel_auth else "manual"
+
     manager = get_agent_job_manager()
     try:
-        run = manager.enqueue(req.agent_name)
+        run = manager.enqueue(
+            req.agent_name,
+            trigger_type=trigger_type,
+            idempotency_key=req.idempotency_key,
+        )
+    except AgentJobAlreadyQueued as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "agent_already_queued",
+                "agent_name": exc.agent_name,
+                "run_id": exc.run_id,
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except AgentJobQueueFull as exc:
@@ -373,6 +453,7 @@ def start_agent_run(req: StartAgentRequest):
         "job_id": run.id,
         "run_id": run.id,
         "status": "queued",
+        "trigger_type": run.trigger_type,
         "queue": manager.snapshot(),
     }
 

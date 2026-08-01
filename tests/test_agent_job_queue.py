@@ -94,7 +94,7 @@ async def test_manual_agent_route_returns_202_job_id(monkeypatch):
     )
 
     class FakeManager:
-        def enqueue(self, agent_name):
+        def enqueue(self, agent_name, *, trigger_type="manual", idempotency_key=None):
             assert agent_name == "research_agent"
             return run
 
