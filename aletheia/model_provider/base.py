@@ -103,6 +103,9 @@ def _cost_metadata(
         observations = getattr(request, "_aletheia_would_block_observations", None)
         if observations:
             metadata["would_block"] = list(observations)
+        guardrail_observations = getattr(request, "_aletheia_guardrail_observations", None)
+        if guardrail_observations:
+            metadata["prompt_guardrail"] = list(guardrail_observations)
     return metadata
 
 
@@ -252,7 +255,7 @@ class ModelProvider:
                     pass
                 return response
 
-            traced_complete._aletheia_cost_traced = True
+            setattr(traced_complete, "_aletheia_cost_traced", True)
             cls.complete = traced_complete
 
         original_structured = cls.__dict__.get("structured")
@@ -356,7 +359,7 @@ class ModelProvider:
                 finally:
                     _ACTIVE_STRUCTURED_REQUEST.reset(token)
 
-            grouped_structured._aletheia_cost_grouped = True
+            setattr(grouped_structured, "_aletheia_cost_grouped", True)
             cls.structured = grouped_structured
 
         original_stream = cls.__dict__.get("stream")
@@ -445,7 +448,7 @@ class ModelProvider:
                 finally:
                     _ACTIVE_STREAM_REQUEST.reset(token)
 
-            grouped_stream._aletheia_cost_grouped = True
+            setattr(grouped_stream, "_aletheia_cost_grouped", True)
             cls.stream = grouped_stream
 
     def _get_http_client(self, factory, *, timeout: float = 300):

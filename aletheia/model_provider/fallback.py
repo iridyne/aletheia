@@ -55,6 +55,17 @@ _MODEL_HEALTH: dict[tuple[str, str], "ModelHealthState"] = {}
 # success/failure) + iteration (ASGI thread building the health snapshot), which
 # could otherwise raise "dict changed size during iteration" (CC-1).
 _MODEL_HEALTH_LOCK = threading.Lock()
+_SAFETY_LOGICAL_AGENTS = frozenset({
+    "pi_trading_decision", "risk_critic", "paper_trader", "agent_shell/trading_decision",
+})
+
+
+class BudgetExceededError(RuntimeError):
+    """A configured non-safety budget denied this logical LLM call."""
+
+    def __init__(self, observations: list[dict[str, Any]]):
+        self.observations = observations
+        super().__init__("llm_budget_exhausted")
 
 
 @dataclass
@@ -250,6 +261,26 @@ def _observe_would_block(
         logger.debug("would-block observation failed silently: %s", exc)
 
 
+def _observe_prompt_guardrail(cfg, request: ModelRequest) -> None:
+    """Attach content-free Phase 4 observations; detection cannot deny inference."""
+    econ = getattr(cfg, "economics", None)
+    if econ is None or not econ.enabled or not econ.prompt_guardrail_detection_enabled:
+        return
+    try:
+        from aletheia.economics.tracing import tracing_enabled
+        from aletheia.model_provider.guardrails import detect_prompt_secrets
+
+        if not tracing_enabled():
+            return
+        observations = detect_prompt_secrets(
+            [request.system, *(message.get("content") for message in request.messages)]
+        )
+        if observations:
+            setattr(request, "_aletheia_guardrail_observations", observations)
+    except Exception as exc:  # noqa: BLE001 -- detection must not alter inference
+        logger.debug("prompt guardrail observation failed: %s", exc)
+
+
 def _estimate_input_tokens(request: ModelRequest) -> int:
     """Character-count / 4 heuristic; conservative enough for shadow mode."""
     chars = len(request.system or "")
@@ -317,6 +348,23 @@ def _with_fallback_meta(
     return response
 
 
+def _enforce_budget_if_configured(cfg, request: ModelRequest) -> None:
+    """Apply opt-in policy after the Phase 2 observation has been computed."""
+    econ = getattr(cfg, "economics", None)
+    observations = getattr(request, "_aletheia_would_block_observations", None)
+    if econ is None or not econ.enabled or econ.enforcement_mode == "warn_only" or not observations:
+        return
+    try:
+        from aletheia.agent_runtime.run_context import current_economic_attribution
+
+        logical_agent = (current_economic_attribution() or {}).get("logical_agent")
+    except Exception:
+        logical_agent = None
+    if logical_agent in _SAFETY_LOGICAL_AGENTS:
+        return
+    raise BudgetExceededError(list(observations))
+
+
 async def complete_with_fallback(
     request: ModelRequest,
     *,
@@ -328,6 +376,8 @@ async def complete_with_fallback(
     resolved_provider_name = provider_name or cfg.models.default_provider
     provider = provider or provider_router.get_provider(resolved_provider_name)
     _observe_would_block(cfg, request, provider, resolved_provider_name)
+    _observe_prompt_guardrail(cfg, request)
+    _enforce_budget_if_configured(cfg, request)
     models = await _candidate_models(resolved_provider_name, provider)
     if not models:
         return await brokered_complete(resolved_provider_name, provider, request)
@@ -396,7 +446,9 @@ async def complete_with_fallback(
             transient = is_transient_model_error(exc)
             if transient:
                 _record_model_failure(resolved_provider_name, model, exc)
-            if not transient or idx == len(models_to_try) - 1:
+            if not transient:
+                raise
+            if idx == len(models_to_try) - 1:
                 raise
             logger.warning(
                 "LLM model %s/%s transient failure on %s; trying fallback %s",

@@ -1381,6 +1381,8 @@ class EconomicsConfig(BaseModel):
         pattern="^(warn_only|fallback_to_defaults|hard_block)$",
     )
     harness_header_default_on: bool = False
+    # Phase 4 detect-only secret-shape observation. It never blocks a call.
+    prompt_guardrail_detection_enabled: bool = False
 
 
 class LearningConfig(BaseModel):

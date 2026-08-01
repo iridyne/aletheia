@@ -4577,8 +4577,9 @@ function EconomicsSnapshotCard({ economics, qc }: { economics: any; qc: any }) {
   const [saveErr, setSaveErr] = useState<string | null>(null)
   const economicsEnabled = economics?.enabled === true
   const shadowEnabled = economics?.budgets_shadow_enabled === true
+  const guardrailDetectionEnabled = economics?.prompt_guardrail_detection_enabled === true
   const economicsMut = useMutation({
-    mutationFn: (body: { enabled?: boolean; budgets_shadow_enabled?: boolean }) => api.updateEconomicsConfig(body),
+    mutationFn: (body: { enabled?: boolean; budgets_shadow_enabled?: boolean; prompt_guardrail_detection_enabled?: boolean }) => api.updateEconomicsConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: (error: any) => setSaveErr(`Economics controls: ${error?.message || 'save failed'}`),
   })
@@ -4643,6 +4644,16 @@ function EconomicsSnapshotCard({ economics, qc }: { economics: any; qc: any }) {
         <Toggle
           checked={shadowEnabled}
           onChange={budgets_shadow_enabled => economicsMut.mutate({ budgets_shadow_enabled })}
+          disabled={!economicsEnabled || economicsMut.isPending}
+        />
+      </Row>
+      <Row
+        label="Prompt secret-shape detection (observe only)"
+        hint="Records only stable rule IDs and counts; it never stores prompt text or blocks a model call."
+      >
+        <Toggle
+          checked={guardrailDetectionEnabled}
+          onChange={prompt_guardrail_detection_enabled => economicsMut.mutate({ prompt_guardrail_detection_enabled })}
           disabled={!economicsEnabled || economicsMut.isPending}
         />
       </Row>
