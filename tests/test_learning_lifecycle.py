@@ -1074,7 +1074,7 @@ def test_canonical_defaults_keep_numeric_consumers_on_static_baseline(monkeypatc
     assert decision.reason == "baseline:paper_influence_disabled"
 
 
-def test_invalidated_hypothesis_does_not_receive_a_fresh_experiment(monkeypatch):
+def test_refrozen_hypothesis_reopens_only_for_new_behavior_contract(monkeypatch):
     """A refreeze is durable: the next scanner tick must not reopen the enquiry.
 
     Regression (#442): ``_ensure_experiment`` resolved hypotheses by fingerprint and
@@ -1155,6 +1155,33 @@ def test_invalidated_hypothesis_does_not_receive_a_fresh_experiment(monkeypatch)
     assert db.execute(
         "SELECT COUNT(*) FROM learning_exposures WHERE hypothesis_id=?",
         (first.hypothesis_id,),
+    ).fetchone()[0] == 1
+
+    # A behavior-contract change is a distinct line of enquiry, not a retry of
+    # the refrozen hypothesis. It starts a fresh shadow experiment at baseline.
+    from dataclasses import replace
+
+    current_path = experiments.get_learning_path("universe_family_calibration")
+    successor_path = replace(
+        current_path,
+        behavior_contract_version="universe-family-calibration/successor-test",
+    )
+    monkeypatch.setattr(experiments, "get_learning_path", lambda _path_id: successor_path)
+
+    successor = experiments.apply_numeric_treatment(
+        candidate_key="candidate-after-contract-change", **treatment
+    )
+
+    assert successor.hypothesis_id != first.hypothesis_id
+    assert successor.experiment_id is not None
+    assert successor.exposure_id is not None
+    assert successor.applied is False
+    assert successor.value == 1.0
+    assert successor.reason == "baseline:paper_influence_disabled"
+    assert get_record("learning_hypotheses", successor.hypothesis_id)["status"] == "shadow"
+    assert db.execute(
+        "SELECT COUNT(*) FROM learning_experiments WHERE hypothesis_id=?",
+        (successor.hypothesis_id,),
     ).fetchone()[0] == 1
 
 

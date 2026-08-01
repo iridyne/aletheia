@@ -174,6 +174,9 @@ loop contributes positively. Current behavior has these contract-relevant limita
   auditable but cannot pool with or authorize a current cohort.
 - historical experiments/exposures created before measurement-support enforcement remain immutable
   and visible for audit, but cannot produce a current verdict or authority.
+- hypothesis identity includes the path behavior-contract version. A refreeze remains durable for
+  repeated calls under that version, while a version change creates a distinct shadow hypothesis
+  and experiment; it never reopens or mutates the refrozen predecessor.
 - the current UFC source-lineage contract is behavior version v4. It carries a bounded,
   deterministic aggregate fingerprint of the exact eligible calibration query into every
   prospective exposure manifest; the v2 harm and v3 settlement-source semantics are historical.

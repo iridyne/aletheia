@@ -149,7 +149,7 @@ def test_lifecycle_event_rolls_back_on_structured_audit_id_conflict():
 
 @spec_claim(SpecClaim(
     "LE-B01", "learning_evolution", "§5 canonical fingerprint", "L2b",
-    "Ordering, prose, timestamps, and artifact ids do not change normalized hypothesis identity.",
+    "Ordering and prose do not change normalized hypothesis identity; behavior versions do.",
     status="implemented",
 ))
 def test_hypothesis_fingerprint_is_stable_and_excludes_prose():
@@ -165,6 +165,13 @@ def test_hypothesis_fingerprint_is_stable_and_excludes_prose():
         action={"values": ["a", "b"], "type": "BLOCK"}, **common,
     )
     assert first == second
+    changed_contract = hypothesis_fingerprint(
+        scope={"symbol": "BTC/USDT", "direction": "LONG", "summary": "first prose"},
+        action={"type": "block", "values": ["b", "a"]},
+        behavior_contract_version="ranker-factor-filter/v2",
+        **common,
+    )
+    assert changed_contract != first
 
 
 @spec_claim(SpecClaim(
