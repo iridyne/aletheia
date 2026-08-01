@@ -6,7 +6,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from aletheia.config.loader import is_preview_mode, load_config
@@ -761,7 +761,7 @@ def get_proposal(proposal_id: str):
 
 
 @router.post("/proposals/{proposal_id}/approve-paper")
-def approve_proposal(proposal_id: str):
+def approve_proposal(proposal_id: str, request: Request):
     """Approve a stored local-paper proposal through the execution gateway."""
     if is_preview_mode():
         raise HTTPException(
@@ -796,10 +796,11 @@ def approve_proposal(proposal_id: str):
             "This proposal is no longer awaiting paper approval; no order was sent.",
         )
 
+    _source = "owner" if getattr(request.state, "tunnel_authenticated", False) else "dashboard"
     if status == "pending":
         repo.update_trade_proposal(proposal_id, status="approved")
         try:
-            write_audit({"actor": "human", "source": "dashboard", "event_type": "proposal_approved",
+            write_audit({"actor": "human", "source": _source, "event_type": "proposal_approved",
                          "entity_type": "trade_proposal", "entity_id": proposal_id,
                          "before": {"status": status}, "after": {"status": "approved"},
                          "message": "Proposal approved for paper execution"})
@@ -826,7 +827,7 @@ def approve_proposal(proposal_id: str):
         )
         repo.update_trade_proposal(proposal_id, status="error")
         try:
-            write_audit({"actor": "system", "source": "dashboard", "event_type": "execution_error",
+            write_audit({"actor": "system", "source": _source, "event_type": "execution_error",
                          "entity_type": "trade_proposal", "entity_id": proposal_id,
                          "before": {"status": "approved"}, "after": {"status": "error"},
                          "message": "paper_execution_failed: Paper execution could not be completed."})
@@ -848,7 +849,7 @@ def approve_proposal(proposal_id: str):
 
 
 @router.post("/proposals/{proposal_id}/reject")
-def reject_proposal(proposal_id: str):
+def reject_proposal(proposal_id: str, request: Request):
     _ensure_db()
     from aletheia.files.jsonl import write_audit
     # Re-read under the writer claim so an execution worker cannot acquire its
@@ -878,8 +879,9 @@ def reject_proposal(proposal_id: str):
         # transaction; otherwise one declined Proposal can consume a slot
         # forever even though no Order exists.
         repo.release_entry_risk_reservation(proposal_id)
+    _source = "owner" if getattr(request.state, "tunnel_authenticated", False) else "dashboard"
     try:
-        write_audit({"actor": "human", "source": "dashboard", "event_type": "proposal_rejected",
+        write_audit({"actor": "human", "source": _source, "event_type": "proposal_rejected",
                      "entity_type": "trade_proposal", "entity_id": proposal_id,
                      "message": "Proposal rejected by human before execution began"})
     except Exception as exc:
