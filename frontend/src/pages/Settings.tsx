@@ -4689,6 +4689,14 @@ function EconomicsSnapshotCard({ economics, qc }: { economics: any; qc: any }) {
           />
         </label>
         <label className="settings-field">
+          <span>Token integrity observations (7d)</span>
+          <input
+            readOnly
+            className="mono"
+            value={tokens ? String(Object.values(tokens.token_integrity_observation_counts).reduce((sum, count) => sum + count, 0)) : 'loading…'}
+          />
+        </label>
+        <label className="settings-field">
           <span>Spent last 7 days (known)</span>
           <input
             readOnly

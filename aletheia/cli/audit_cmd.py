@@ -9,6 +9,13 @@ import typer
 audit_app = typer.Typer(no_args_is_help=True)
 
 
+def _display_decimal(value: object, precision: int) -> str:
+    try:
+        return f"{float(str(value)):.{precision}f}"
+    except (TypeError, ValueError):
+        return "unavailable"
+
+
 @audit_app.command("verify")
 def verify():
     """Verify the integrity of the audit.jsonl hash chain."""
@@ -199,8 +206,8 @@ def pricing_list(
         typer.echo(
             f"{str(row['provider'])[:24]:<24} {str(row['model'])[:28]:<28} "
             f"{str(row['effective_from'])[:26]:<26} "
-            f"{float(row['input_usd_per_million']):>10.4f} "
-            f"{float(row['output_usd_per_million']):>10.4f} "
+            f"{_display_decimal(row['input_usd_per_million'], 4):>10} "
+            f"{_display_decimal(row['output_usd_per_million'], 4):>10} "
             f"{str(row['source'])[:12]:<12}"
         )
 
@@ -228,7 +235,7 @@ def tool_pricing_list(
         typer.echo(
             f"{str(row['tool_name'])[:32]:<32} "
             f"{str(row['effective_from'])[:26]:<26} "
-            f"{float(row['usd_per_call']):>12.6f} "
+            f"{_display_decimal(row['usd_per_call'], 6):>12} "
             f"{str(row['source'])[:12]:<12}"
         )
 
@@ -278,7 +285,7 @@ def budget_list(
     for row in rows:
         typer.echo(
             f"{row['id']:<24} {row['scope']:<16} {str(row['subject'] or '-'): <28} "
-            f"{row['window']:<8} {float(row['usd_cap']):>10.4f} {'YES' if row['enabled'] else 'NO':>8}"
+            f"{row['window']:<8} {_display_decimal(row['usd_cap'], 4):>10} {'YES' if row['enabled'] else 'NO':>8}"
         )
 
 
@@ -361,7 +368,7 @@ def viability_list(
         typer.echo(
             f"{str(row['id'])[:28]:<28} {str(row['scope'])[:10]:<10} "
             f"{str(row['window_end'])[:26]:<26} {str(row['verdict'])[:18]:<18} "
-            f"{('' if amount is None else f'{float(amount):.6f}'):>14}"
+            f"{('' if amount is None else _display_decimal(amount, 6)):>14}"
         )
 
 
@@ -413,6 +420,48 @@ def costs(
             f"  {kind}: events={bucket['event_count']} "
             f"known=${bucket['known_cost_usd']:.8f} unknown={bucket['unknown_count']}"
         )
+
+
+@audit_app.command("tokens")
+def tokens(
+    days: int = typer.Option(7, "--days", min=1, help="Lookback window in days."),
+    run_id: Optional[str] = typer.Option(None, "--run-id", help="Restrict to one AgentRun."),
+    output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """Inspect provider-reported input/output/cache token telemetry."""
+    from datetime import datetime, timedelta, timezone
+    from aletheia.economics.tracing import list_token_summary
+
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
+    report = list_token_summary(
+        window_start=start.isoformat(),
+        window_end=end.isoformat(),
+        run_id=run_id,
+    )
+    if output_json:
+        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+    token_totals = report["tokens"]
+    typer.echo("Runtime Token Audit")
+    typer.echo(f"Window: {report['window_start']} → {report['window_end']}")
+    typer.echo(f"LLM attempts: {report['llm_attempt_count']}")
+    typer.echo(
+        "Input/output coverage: "
+        f"{report['input_output_available_attempt_count']}/"
+        f"{report['llm_attempt_count']}"
+    )
+    typer.echo(f"Input tokens: {token_totals['input_tokens']}")
+    typer.echo(f"Output tokens: {token_totals['output_tokens']}")
+    typer.echo(f"Cached input tokens: {token_totals['cached_input_tokens']}")
+    typer.echo(
+        "Provider cache read/creation: "
+        f"{token_totals['provider_cache_read_input_tokens']}/"
+        f"{token_totals['provider_cache_creation_input_tokens']}"
+    )
+    observations = report["token_integrity_observation_counts"]
+    summary = ", ".join(f"{rule_id}={count}" for rule_id, count in sorted(observations.items()))
+    typer.echo(f"Token integrity observations: {summary or 'none'}")
 
 
 @audit_app.command("viability")

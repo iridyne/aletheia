@@ -270,6 +270,32 @@ def resolve_tool_cost_profile(tool_name: str, at: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def observe_token_integrity(usage: dict[str, int | None]) -> list[dict[str, str]]:
+    """Return non-blocking integrity observations without estimating tokens."""
+    findings: list[dict[str, str]] = []
+    input_tokens = usage.get("input_tokens")
+    output_tokens = usage.get("output_tokens")
+    total_tokens = usage.get("total_tokens")
+    reasoning_tokens = usage.get("reasoning_tokens")
+    cache_read = usage.get("provider_cache_read_input_tokens")
+    cache_creation = usage.get("provider_cache_creation_input_tokens")
+    if input_tokens is None or output_tokens is None:
+        findings.append({"rule_id": "input_or_output_usage_unavailable"})
+    if (
+        isinstance(total_tokens, int)
+        and isinstance(input_tokens, int)
+        and isinstance(output_tokens, int)
+        and total_tokens < input_tokens + output_tokens
+    ):
+        findings.append({"rule_id": "total_tokens_below_input_plus_output"})
+    if isinstance(reasoning_tokens, int) and isinstance(output_tokens, int) and reasoning_tokens > output_tokens:
+        findings.append({"rule_id": "reasoning_tokens_exceed_output"})
+    for name, value in (("cache_read", cache_read), ("cache_creation", cache_creation)):
+        if isinstance(value, int) and isinstance(input_tokens, int) and value > input_tokens:
+            findings.append({"rule_id": f"{name}_tokens_exceed_input"})
+    return findings
+
+
 def normalize_usage(raw_usage: Any) -> dict[str, int | None]:
     """Normalize common provider usage shapes without inventing absent counters."""
     usage = raw_usage if isinstance(raw_usage, dict) else {}
@@ -451,7 +477,11 @@ def record_llm_attempt(
             "USD",
             cost_status,
             error_type,
-            _json({**(metadata or {}), "cost_calculation": cost_meta}),
+            _json({
+                **(metadata or {}),
+                "cost_calculation": cost_meta,
+                "token_integrity_observations": observe_token_integrity(usage),
+            }),
             _utcnow(),
         )
         db = ensure_economics_schema()
@@ -678,6 +708,7 @@ def list_token_summary(
     availability = {field: 0 for field in token_fields}
     by_logical_agent: dict[str, dict[str, int]] = {}
     by_role: dict[str, dict[str, int]] = {}
+    token_integrity_observation_counts: dict[str, int] = {}
     input_output_available_attempt_count = 0
     for row in rows:
         try:
@@ -691,6 +722,14 @@ def list_token_summary(
         except (TypeError, ValueError, json.JSONDecodeError):
             metadata = {}
         logical_agent = metadata.get("logical_agent") if isinstance(metadata, dict) else None
+        observations = metadata.get("token_integrity_observations", []) if isinstance(metadata, dict) else []
+        if isinstance(observations, list):
+            for observation in observations:
+                rule_id = observation.get("rule_id") if isinstance(observation, dict) else None
+                if isinstance(rule_id, str):
+                    token_integrity_observation_counts[rule_id] = (
+                        token_integrity_observation_counts.get(rule_id, 0) + 1
+                    )
         agent_bucket = by_logical_agent.setdefault(
             str(logical_agent or "unattributed"),
             {"llm_attempt_count": 0, **{field: 0 for field in token_fields}},
@@ -720,6 +759,7 @@ def list_token_summary(
         "field_availability": availability,
         "by_logical_agent": by_logical_agent,
         "by_role": by_role,
+        "token_integrity_observation_counts": token_integrity_observation_counts,
     }
 
 
