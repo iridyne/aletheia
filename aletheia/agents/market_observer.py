@@ -73,6 +73,8 @@ _MARKET_OBSERVER_SIGNAL_PRESSURE_THRESHOLD = 0.5
 _MARKET_OBSERVER_LLM_EWMA_ALPHA = 0.4
 _PREDICTION_CONTEXT_MAX_AGE_HOURS = 6
 _ROUND_ROBIN_STATE_KEY = "agent.market_observer.round_robin.v1"
+_LLM_LATENCY_SETTINGS_KEY = "agent.market_observer.llm_latency.v1"
+_LLM_LATENCY_ROLLING_N = 100  # keep the most recent N successful call durations
 _RETRYABLE_EVIDENCE_ERROR_PREFIX = "observer_pre_filter_evidence_failed:"
 _RETRYABLE_EMISSION_ERROR_PREFIX = "observer_opportunity_emission_evidence_failed:"
 
@@ -167,6 +169,62 @@ def _advance_completed_round_robin_prefix(
         completed_keys.discard(expected_key)
         next_unprocessed_index = (next_unprocessed_index + 1) % len(ordered_keys)
     return next_unprocessed_index
+
+
+def _record_observer_llm_latency(duration_s: float) -> None:
+    """Persist one LLM call duration to the rolling latency history in settings.
+
+    Keeps at most _LLM_LATENCY_ROLLING_N samples (FIFO).  Best-effort: any
+    storage error is swallowed so a DB hiccup never breaks the observer run.
+    """
+    try:
+        import json as _json
+        from aletheia.storage.sqlite import get_db
+
+        db = get_db()
+        row = db.execute(
+            "SELECT value FROM settings WHERE key = ?", (_LLM_LATENCY_SETTINGS_KEY,)
+        ).fetchone()
+        existing: list[float] = []
+        if row is not None:
+            try:
+                existing = _json.loads(row["value"])
+                if not isinstance(existing, list):
+                    existing = []
+            except (ValueError, TypeError):
+                existing = []
+        existing.append(float(duration_s))
+        if len(existing) > _LLM_LATENCY_ROLLING_N:
+            existing = existing[-_LLM_LATENCY_ROLLING_N:]
+        payload = _json.dumps(existing)
+        db.execute(
+            "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            (_LLM_LATENCY_SETTINGS_KEY, payload),
+        )
+    except Exception:
+        pass  # latency persistence is purely advisory
+
+
+def _read_observer_llm_latency_p50() -> float | None:
+    """Return the p50 of the persisted LLM latency samples, or None if none exist."""
+    try:
+        import json as _json
+        from aletheia.storage.sqlite import get_db
+
+        row = get_db().execute(
+            "SELECT value FROM settings WHERE key = ?", (_LLM_LATENCY_SETTINGS_KEY,)
+        ).fetchone()
+        if row is None:
+            return None
+        samples: list[float] = _json.loads(row["value"])
+        if not isinstance(samples, list) or not samples:
+            return None
+        sorted_samples = sorted(samples)
+        mid = len(sorted_samples) // 2
+        return float(sorted_samples[mid])
+    except Exception:
+        return None
 
 
 def _consume_detached_prefetch(task: asyncio.Future) -> None:
@@ -1920,8 +1978,10 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     # Run-local EWMA of observed LLM call duration (seconds).  Updated after each
     # completed call; used to detect budget pressure and skip low-signal symbols
     # when the remaining budget is likely insufficient for the full queue.
-    # None until the first call completes.
-    _llm_ewma_s: float | None = None
+    # Seed from persisted p50 so the first run after a restart has a meaningful
+    # initial estimate rather than starting blind.  The run-local EWMA then
+    # updates this with fresh observations as calls complete.
+    _llm_ewma_s: float | None = _read_observer_llm_latency_p50()
 
     async def _run_one(instrument) -> None:
         nonlocal _success_count, _fail_count, _skip_count, _skipped_count
@@ -2033,6 +2093,9 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 # estimate reflects real LLM latency, not short-circuit paths.
                 _call_duration_s = _monotonic() - _t_llm_start
                 if err is None or (err and "pre_filter_skip" not in err):
+                    # Persist to rolling history (T5) and update run-local EWMA (T2).
+                    # _record_observer_llm_latency is best-effort and swallows exceptions.
+                    _record_observer_llm_latency(_call_duration_s)
                     async with _rr_lock:
                         if _llm_ewma_s is None:
                             _llm_ewma_s = _call_duration_s

@@ -1611,3 +1611,71 @@ async def test_pressure_does_not_skip_high_signal_symbols(tmp_path, monkeypatch)
         "High-signal symbol must never be pressure-skipped regardless of budget pressure"
     )
     assert result["errors"] == []
+
+
+# ---------------------------------------------------------------------------
+# T5: cross-run LLM latency persistence
+# ---------------------------------------------------------------------------
+
+
+def test_observer_llm_latency_persisted_and_readable(tmp_path, monkeypatch):
+    """_record_observer_llm_latency persists and _read_observer_llm_latency_p50 reads back."""
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sqlite
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.agents.market_observer import (
+        _record_observer_llm_latency,
+        _read_observer_llm_latency_p50,
+    )
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(sqlite, "_db_path", None, raising=False)
+    monkeypatch.setattr(sqlite, "_injected_db_path", str(tmp_path / "app.db"))
+    run_migrations()
+
+    # No data yet → None
+    assert _read_observer_llm_latency_p50() is None
+
+    # Record 5 values: [10, 20, 30, 40, 50] → p50 = 30
+    for v in [10.0, 20.0, 30.0, 40.0, 50.0]:
+        _record_observer_llm_latency(v)
+
+    p50 = _read_observer_llm_latency_p50()
+    assert p50 is not None
+    assert abs(p50 - 30.0) < 1.0, f"Expected p50≈30, got {p50}"
+
+
+def test_latency_history_rolling_window_capped_at_n(tmp_path, monkeypatch):
+    """Rolling history is capped at _LLM_LATENCY_ROLLING_N (100) entries."""
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sqlite
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.agents.market_observer import (
+        _record_observer_llm_latency,
+        _read_observer_llm_latency_p50,
+        _LLM_LATENCY_SETTINGS_KEY,
+        _LLM_LATENCY_ROLLING_N,
+    )
+    import json
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(sqlite, "_db_path", None, raising=False)
+    monkeypatch.setattr(sqlite, "_injected_db_path", str(tmp_path / "app.db"))
+    run_migrations()
+
+    # Insert N+20 entries (all value=5.0)
+    for _ in range(_LLM_LATENCY_ROLLING_N + 20):
+        _record_observer_llm_latency(5.0)
+
+    # Check the stored list length
+    from aletheia.storage.sqlite import get_db
+    row = get_db().execute(
+        "SELECT value FROM settings WHERE key = ?", (_LLM_LATENCY_SETTINGS_KEY,)
+    ).fetchone()
+    assert row is not None
+    stored = json.loads(row["value"])
+    assert len(stored) == _LLM_LATENCY_ROLLING_N, (
+        f"Expected {_LLM_LATENCY_ROLLING_N} entries, got {len(stored)}"
+    )
+    # All should be 5.0
+    assert all(v == 5.0 for v in stored)
