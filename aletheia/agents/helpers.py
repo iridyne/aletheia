@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from dataclasses import dataclass
+from enum import StrEnum
 import threading
 
 from aletheia.model_provider.base import ModelRequest, StreamChunk
@@ -27,6 +28,13 @@ def _exception_detail(exc: BaseException) -> str:
     name = type(exc).__name__
     message = str(exc).strip()
     return f"{name}: {message}" if message else name
+
+
+class ContextAdapter(StrEnum):
+    """Registered context adapters; planned variants stay unavailable until proven."""
+
+    NONE = "none"
+    MINIMAL_V1 = "minimal-v1"
 
 
 @dataclass(frozen=True)
@@ -82,12 +90,30 @@ def build_harness_context() -> HarnessContext:
     )
 
 
-def prepend_environment_header(system: str, *, include: bool | None = None) -> str:
-    """Render the default-off minimal context adapter around a caller prompt."""
+def render_context_adapter(system: str, *, adapter: ContextAdapter | str) -> str:
+    """Render a registered adapter; `none` preserves the caller prompt exactly."""
+    selected = ContextAdapter(adapter)
+    if selected is ContextAdapter.NONE:
+        return system
+    if selected is ContextAdapter.MINIMAL_V1:
+        return build_harness_context().render(system)
+    raise AssertionError(f"unhandled context adapter: {selected}")
+
+
+def prepend_environment_header(
+    system: str,
+    *,
+    include: bool | None = None,
+    adapter: ContextAdapter | str | None = None,
+) -> str:
+    """Render a default-off adapter while retaining the legacy bool experiment switch."""
+    if adapter is not None:
+        return render_context_adapter(system, adapter=adapter)
     from aletheia.config.loader import load_config
 
     enabled = load_config().economics.harness_header_default_on if include is None else include
-    return build_harness_context().render(system) if enabled else system
+    selected = ContextAdapter.MINIMAL_V1 if enabled else ContextAdapter.NONE
+    return render_context_adapter(system, adapter=selected)
 
 
 async def llm_complete(system: str, user: str, *, max_tokens: int = 800, provider: str | None = None, include_harness_header: bool | None = None) -> tuple[str | None, str | None]:

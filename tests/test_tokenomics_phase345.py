@@ -6,7 +6,12 @@ import pytest
 from aletheia.model_provider.base import ModelRequest
 from aletheia.model_provider.fallback import BudgetExceededError, _enforce_budget_if_configured
 from aletheia.model_provider.guardrails import detect_prompt_secrets
-from aletheia.agents.helpers import build_harness_context, prepend_environment_header
+from aletheia.agents.helpers import (
+    ContextAdapter,
+    build_harness_context,
+    prepend_environment_header,
+    render_context_adapter,
+)
 
 
 def _request() -> ModelRequest:
@@ -63,6 +68,24 @@ def test_header_is_default_off_and_opt_in_is_context_only(monkeypatch):
     rendered = prepend_environment_header("caller prompt", include=True)
     assert rendered.endswith("[Caller system prompt follows]\ncaller prompt")
     assert "live_enabled=False" in rendered
+
+
+def test_context_adapter_registry_preserves_disabled_prompts(monkeypatch):
+    assert render_context_adapter("caller prompt", adapter=ContextAdapter.NONE) == "caller prompt"
+    with pytest.raises(ValueError):
+        render_context_adapter("caller prompt", adapter="operator-v1")
+
+    import aletheia.config.loader as loader
+
+    monkeypatch.setattr(loader, "load_config", lambda: SimpleNamespace(
+        economics=SimpleNamespace(harness_header_default_on=False),
+        exchange=SimpleNamespace(paper_execution_mode="paper_internal"),
+        live=SimpleNamespace(state="live_disabled"),
+    ))
+    assert prepend_environment_header("caller prompt", adapter="none") == "caller prompt"
+    assert "Harness minimal-v1" in prepend_environment_header(
+        "caller prompt", adapter="minimal-v1"
+    )
 
 
 def test_minimal_context_has_a_versioned_truthful_contract(monkeypatch):
