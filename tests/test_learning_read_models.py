@@ -21,7 +21,7 @@ def _setup_env(tmp_path: Path, monkeypatch) -> None:
     reset_db()
     conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    sq._db_conn = conn
+    setattr(sq, "_db_conn", conn)
     run_migrations()
 
 
@@ -449,7 +449,26 @@ def test_lco_projection_reports_protected_admission_readiness(
     monkeypatch,
 ):
     _setup_env(tmp_path, monkeypatch)
-    _seed_current_experiment(monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    metrics = json.loads(
+        db.execute(
+            "SELECT harm_metrics_json FROM learning_contribution_verdicts "
+            "WHERE experiment_id=?",
+            (experiment_id,),
+        ).fetchone()[0]
+    )
+    metrics["harm_state"] = "clear"
+    metrics["harm_indeterminate_reason"] = None
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET harm_metrics_json=? "
+        "WHERE experiment_id=?",
+        (json.dumps(metrics), experiment_id),
+    )
+    db.commit()
+
     import aletheia.learning.lifecycle as lifecycle
 
     monkeypatch.setattr(
@@ -466,6 +485,66 @@ def test_lco_projection_reports_protected_admission_readiness(
     assert lifecycle_view["authority_enabled"] is False
     assert lifecycle_view["mutation_available"] is True
     assert lifecycle_view["mutation_unavailable_reason"] is None
+
+
+def test_lco_projection_never_offers_admission_with_indeterminate_harm(
+    tmp_path,
+    monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_current_experiment(monkeypatch)
+    import aletheia.learning.lifecycle as lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "trial_admission_gate_reason",
+        lambda _path_id, **_kwargs: None,
+    )
+    from aletheia.learning.read_models import (
+        build_learning_contribution_projection,
+    )
+
+    lifecycle_view = build_learning_contribution_projection()["items"][0]["lifecycle"]
+
+    assert lifecycle_view["recommended_action"] == "admit_trial"
+    assert lifecycle_view["mutation_available"] is False
+    assert lifecycle_view["mutation_unavailable_reason"] == "harm_gate_indeterminate"
+
+
+def test_lco_projection_never_offers_admission_for_malformed_measurement_metadata(
+    tmp_path,
+    monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET harm_metrics_json=? "
+        "WHERE experiment_id=?",
+        ("{malformed", experiment_id),
+    )
+    db.commit()
+
+    import aletheia.learning.lifecycle as lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "trial_admission_gate_reason",
+        lambda _path_id, **_kwargs: None,
+    )
+    from aletheia.learning.read_models import (
+        build_learning_contribution_projection,
+    )
+
+    lifecycle_view = build_learning_contribution_projection()["items"][0]["lifecycle"]
+
+    assert lifecycle_view["recommended_action"] == "admit_trial"
+    assert lifecycle_view["mutation_available"] is False
+    assert lifecycle_view["mutation_unavailable_reason"] == (
+        "measurement_metadata_invalid"
+    )
 
 
 def test_lco_projection_keeps_stale_behavior_verdict_historical(tmp_path, monkeypatch):
