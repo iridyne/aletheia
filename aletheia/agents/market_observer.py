@@ -1902,10 +1902,15 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     _rr_lock = asyncio.Lock()
     _llm_sem = asyncio.Semaphore(_MARKET_OBSERVER_LLM_CONCURRENCY)
     _skipped_count = 0
+    # Tracks how many symbols have not yet entered the semaphore slot (i.e., not
+    # yet started their LLM call).  Used to compute a fair per-symbol budget:
+    # fair_budget = remaining_run_time / pending_count so that early slow calls
+    # shorten the budget for later symbols rather than leaving them with nothing.
+    _pending_count = len(processing_order)
 
     async def _run_one(instrument) -> None:
         nonlocal _success_count, _fail_count, _skip_count, _skipped_count
-        nonlocal _next_unprocessed_index
+        nonlocal _next_unprocessed_index, _pending_count
         # Each slot first checks the budget before acquiring the semaphore.
         # This prevents a task from queuing inside the semaphore past the deadline.
         if _monotonic() >= _run_deadline:
@@ -1919,16 +1924,27 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 async with _rr_lock:
                     _skipped_count += 1
                 return
-            # Per-symbol LLM deadline: the tighter of
-            #   (a) _MARKET_OBSERVER_PER_SYMBOL_LLM_CAP_SEC from now  — absolute cap
-            #       preventing one slow call from starving the entire remaining queue
-            #   (b) remaining run budget — never exceed the job-level hard deadline
-            # Expressed as asyncio loop.time() so llm_structured() can use it
-            # directly with asyncio.wait_for() without a monotonic conversion.
+            # Per-symbol LLM deadline uses a three-way min:
+            #   (a) _MARKET_OBSERVER_PER_SYMBOL_LLM_CAP_SEC — absolute hard cap
+            #       so one slow provider call never starves the whole queue.
+            #   (b) fair_budget = remaining_run_time / pending_count — distributes
+            #       the remaining budget equally across outstanding symbols so that
+            #       an early 60s call automatically shortens the budget for later
+            #       ones rather than leaving the tail with essentially no time.
+            #       Clamped to a 10s floor so the very last symbol always gets a
+            #       meaningful attempt.
+            #   (c) remaining run budget — never exceeds the job-level deadline.
             _loop_now = asyncio.get_event_loop().time()
             _remaining_run_s = max(1.0, _run_deadline - _monotonic())
+            # Read _pending_count under _rr_lock to get a consistent snapshot,
+            # then decrement it now that this slot is committed.
+            async with _rr_lock:
+                _local_pending = max(1, _pending_count)
+                _pending_count -= 1
+            _fair_budget_s = max(10.0, _remaining_run_s / _local_pending)
             _per_symbol_llm_deadline = _loop_now + min(
                 _MARKET_OBSERVER_PER_SYMBOL_LLM_CAP_SEC,
+                _fair_budget_s,
                 _remaining_run_s,
             )
             completed_attempt = False
