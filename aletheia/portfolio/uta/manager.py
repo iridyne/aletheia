@@ -55,6 +55,9 @@ async def get_unified_state() -> UnifiedState:
             errors.append(f"{broker.broker_id}: {result}")
             logger.warning("UTA broker query failed (%s): %s", broker.broker_id, result)
             continue
+        # asyncio.gather(return_exceptions=True) -> Union[T, BaseException];
+        # the isinstance guard above guarantees result is T here.
+        assert not isinstance(result, BaseException)
         acct_info, positions = result
         total_equity += acct_info.equity_usdt
         total_available += acct_info.available_usdt
@@ -79,6 +82,9 @@ async def get_unified_state() -> UnifiedState:
                 "unrealized_pnl": p.unrealized_pnl,
                 "leverage": p.leverage,
                 "mark_price": p.mark_price,
+                # Issue #411: carry the exchange open timestamp forward so
+                # adopt_position() can compute accurate max_hold / horizon.
+                "cTime": p.opened_at_ms,
                 # get_positions() returns derivative positions only — tag the type
                 # so symbol display (perp → no slash) stays correct downstream.
                 "market_type": "usdt_futures",

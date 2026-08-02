@@ -22,6 +22,9 @@ class BrokerPosition:
     unrealized_pnl: float
     leverage: int = 1
     mark_price: float = 0.0
+    # Issue #411: exchange open timestamp in milliseconds.  None when the
+    # broker does not expose it; adopt_position() falls back to now() in that case.
+    opened_at_ms: int | None = None
 
 
 @runtime_checkable

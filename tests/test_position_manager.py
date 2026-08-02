@@ -304,3 +304,42 @@ def test_config_default_stop_used_when_no_explicit_stop(tmp_path, monkeypatch):
     result = evaluate_open_positions()
     assert result["closed"] == 1
     assert repo._select_one("positions", p.id)["close_reason"] == "stop_loss"
+
+
+# --- Issue #415: Operator stop adjustments must use broker-neutral exchange sync ---
+
+def test_adjust_stop_uses_broker_neutral_dispatcher(tmp_path, monkeypatch):
+    """Issue #415: adjust_stop() and _sync_exchange_stop() were calling
+    replace_exchange_stop (Bitget only).  They must now call
+    replace_exchange_protective_stop (broker-neutral) so OKX Demo positions
+    also get their exchange TPSL bracket updated."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.trading.exchange_tpsl_enabled = True
+    save_config(cfg)
+
+    p = Position(
+        symbol="SOL/USDT", market_type="usdt_futures", direction="long",
+        quantity=10.0, entry_price=100.0, current_price=100.0,
+        execution_mode="okx_demo", stop_price=95.0,
+    )
+    repo.insert_position(p)
+
+    calls: list[tuple] = []
+
+    from aletheia.portfolio import position_manager as pm_mod
+    import aletheia.execution.stops as stops_mod
+    monkeypatch.setattr(
+        stops_mod, "replace_exchange_protective_stop",
+        lambda pos_id, stop: calls.append((pos_id, stop)),
+    )
+
+    from aletheia.portfolio.position_manager import adjust_stop
+    result = adjust_stop(p.id, 97.0)
+
+    assert result.get("updated") is True
+    assert any(c[0] == p.id and abs(c[1] - 97.0) < 1e-9 for c in calls), (
+        "adjust_stop must call replace_exchange_protective_stop for okx_demo, "
+        f"got calls={calls}"
+    )

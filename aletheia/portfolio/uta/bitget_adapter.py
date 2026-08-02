@@ -109,6 +109,9 @@ class BitgetDemoAdapter:
                 unrealized_pnl=float(p.unrealized_pnl or 0),
                 leverage=int(p.leverage or 1),
                 mark_price=float(p.mark_price or 0),
+                # Issue #411: pass through the exchange open timestamp so
+                # adopt_position() can use the real open time instead of now().
+                opened_at_ms=p.ctime_ms,
             )
             for p in futures
         ]

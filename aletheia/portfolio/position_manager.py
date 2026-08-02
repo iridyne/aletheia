@@ -971,28 +971,30 @@ def adjust_stop(position_id: str, new_stop_price: float) -> dict:
     update_position(position_id, stop_price=round(float(new_stop_price), 8))
     logger.info("adjust_stop: %s new_stop=%.6f", position_id, new_stop_price)
 
-    cfg = load_config()
-    if cfg.trading.exchange_tpsl_enabled and pos.get("execution_mode") in ("bitget_demo", "bitget_live_limited"):
-        try:
-            from aletheia.execution.bitget_broker import replace_exchange_stop
-            replace_exchange_stop(position_id, float(new_stop_price))
-        except Exception as e:
-            logger.warning("exchange stop sync failed pos=%s: %s", position_id, e)
+    # Issue #415: use the broker-neutral dispatcher so OKX Demo (and future
+    # Binance testnet) positions also get their exchange TPSL updated.
+    try:
+        from aletheia.execution.stops import replace_exchange_protective_stop
+        replace_exchange_protective_stop(position_id, float(new_stop_price))
+    except Exception as e:
+        logger.warning("exchange stop sync failed pos=%s: %s", position_id, e)
 
     return {"updated": True, "position_id": position_id, "new_stop_price": new_stop_price}
 
 
 def _sync_exchange_stop(position_id: str, new_stop: float, position: dict, cfg) -> bool:
-    """Push a revised stop to the exchange TPSL bracket (bitget). Returns True if synced."""
-    if cfg.trading.exchange_tpsl_enabled and position.get("execution_mode") in (
-        "bitget_demo", "bitget_live_limited",
-    ):
-        try:
-            from aletheia.execution.bitget_broker import replace_exchange_stop
-            replace_exchange_stop(position_id, float(new_stop))
-            return True
-        except Exception as e:
-            logger.warning("exchange stop sync failed pos=%s: %s", position_id, e)
+    """Push a revised stop to the exchange TPSL bracket (broker-neutral). Returns True if synced.
+
+    Issue #415: the original implementation only synced Bitget.  Delegate to
+    replace_exchange_protective_stop() which dispatches for Bitget, OKX Demo, and
+    Binance Testnet (the flag check is inside that function).
+    """
+    try:
+        from aletheia.execution.stops import replace_exchange_protective_stop
+        replace_exchange_protective_stop(position_id, float(new_stop))
+        return True
+    except Exception as e:
+        logger.warning("exchange stop sync failed pos=%s: %s", position_id, e)
     return False
 
 
