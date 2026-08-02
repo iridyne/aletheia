@@ -57,15 +57,11 @@ async def live_unlock(req: LiveUnlockRequest):
 
     old_state = cfg.live.state
     old_permission_mode = cfg.operator.permission_mode
-    cfg.live.state = "live_limited"
-    cfg.live.first_live_confirmation_done = True
-    # §4b: System Operator gets full autonomy (Auto=4) when live is unlocked.
-    # This is the only path that can elevate operator.permission_mode to Auto;
-    # it must be symmetric with live_lock() which resets it to ReadOnly.
-    cfg.operator.permission_mode = "Auto"
-    save_config(cfg)
 
-    write_audit({
+    # Issue #388: write the audit record BEFORE committing the state change.
+    # If the JSONL write fails, refuse the unlock so config and audit chain stay
+    # in sync.  A live unlock that isn't audited is a trust-boundary violation.
+    audit_ok = write_audit({
         "actor": "human",
         "source": "dashboard",
         "event_type": "live_unlocked",
@@ -74,6 +70,26 @@ async def live_unlock(req: LiveUnlockRequest):
         "after": {"state": "live_limited", "operator_permission_mode": "Auto"},
         "message": "Live trading unlocked to live_limited by human confirmation; PI operator elevated to Auto",
     })
+    if not audit_ok:
+        raise HTTPException(
+            503,
+            detail={
+                "error": "audit_write_failed",
+                "message": (
+                    "Live unlock refused: audit.jsonl write failed. "
+                    "Resolve the storage issue and retry. "
+                    "No state change has been applied."
+                ),
+            },
+        )
+
+    cfg.live.state = "live_limited"
+    cfg.live.first_live_confirmation_done = True
+    # §4b: System Operator gets full autonomy (Auto=4) when live is unlocked.
+    # This is the only path that can elevate operator.permission_mode to Auto;
+    # it must be symmetric with live_lock() which resets it to ReadOnly.
+    cfg.operator.permission_mode = "Auto"
+    save_config(cfg)
 
     return {"status": "live_limited", "message": "Live-limited trading enabled"}
 
@@ -84,13 +100,11 @@ async def live_lock():
     cfg = load_config()
     old_state = cfg.live.state
     old_permission_mode = cfg.operator.permission_mode
-    cfg.live.state = "live_disabled"
-    # §4b symmetry: locking live must reset PI operator back to ReadOnly so the
-    # Auto authority granted by live_unlock does not persist after locking.
-    cfg.operator.permission_mode = "ReadOnly"
-    save_config(cfg)
-
-    write_audit({
+    # Issue #388: write the audit record BEFORE committing the state change.
+    # live_lock is a safety action so we still persist even if audit write fails,
+    # but we surface the failure in the response so operators know the chain is
+    # incomplete.  Not refusing here is intentional: locking is safer than not.
+    audit_ok = write_audit({
         "actor": "human",
         "source": "dashboard",
         "event_type": "live_locked",
@@ -100,4 +114,16 @@ async def live_lock():
         "message": "Live trading locked; PI operator reset to ReadOnly",
     })
 
-    return {"status": "live_disabled", "message": "Live trading disabled"}
+    cfg.live.state = "live_disabled"
+    # §4b symmetry: locking live must reset PI operator back to ReadOnly so the
+    # Auto authority granted by live_unlock does not persist after locking.
+    cfg.operator.permission_mode = "ReadOnly"
+    save_config(cfg)
+
+    response: dict = {"status": "live_disabled", "message": "Live trading disabled"}
+    if not audit_ok:
+        response["audit_warning"] = (
+            "audit.jsonl write failed — lock was applied but the JSONL audit chain "
+            "is incomplete. Investigate storage before the next unlock."
+        )
+    return response
