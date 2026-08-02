@@ -1,12 +1,18 @@
 """Gateway lifecycle CLI commands."""
 
+import platform
 from pathlib import Path
+import sys
 
 import typer
 
 gateway_app = typer.Typer(no_args_is_help=True)
 service_app = typer.Typer(no_args_is_help=True, help="Install and inspect the OS service backend.")
+firewall_app = typer.Typer(no_args_is_help=True, help="Inspect and configure Windows dashboard LAN access.")
 gateway_app.add_typer(service_app, name="service")
+gateway_app.add_typer(firewall_app, name="firewall")
+
+_WILDCARD_HOSTS = {"0.0.0.0", "::"}
 
 
 def _service_result(result: dict, *, success: str) -> None:
@@ -21,6 +27,76 @@ def _service_result(result: dict, *, success: str) -> None:
     raise typer.Exit(1)
 
 
+def _safe_firewall_state(state: dict) -> dict:
+    return {
+        key: state.get(key)
+        for key in (
+            "supported", "configured", "rule_present", "port", "program",
+            "conflicting_block_rules", "reason",
+        )
+        if key in state
+    }
+
+
+def _audit_firewall_change(*, action: str, before: dict, after: dict) -> bool:
+    try:
+        from aletheia.files.jsonl import write_audit
+        write_audit({
+            "actor": "human",
+            "source": "cli",
+            "event_type": "gateway_firewall_changed",
+            "entity_type": "gateway_firewall",
+            "entity_id": "windows-dashboard-lan",
+            "before": _safe_firewall_state(before),
+            "after": _safe_firewall_state(after),
+            "message": f"Windows dashboard LAN firewall {action}",
+        })
+        return True
+    except Exception:
+        return False
+
+
+def _maybe_configure_windows_lan_firewall(*, enabled: bool) -> None:
+    """Request UAC only from an explicit interactive start/restart command."""
+    if not enabled or platform.system() != "Windows":
+        return
+    from aletheia.config.loader import load_config
+    from aletheia.gateway import windows_firewall, windows_machine_service
+    cfg = load_config()
+    if cfg.app.bind_host not in _WILDCARD_HOSTS:
+        return
+    before = windows_firewall.status(cfg.app.dashboard_port)
+    if before.get("configured"):
+        return
+    if not sys.stdin.isatty():
+        typer.echo(
+            "Windows LAN firewall access is not configured; run "
+            "`aletheia gateway firewall enable-lan` from an interactive desktop.",
+            err=True,
+        )
+        return
+    typer.echo(
+        f"Requesting Windows Firewall permission for local-subnet TCP {cfg.app.dashboard_port} "
+        "(UAC may prompt)..."
+    )
+    after = windows_machine_service.firewall_enable_lan(cfg.app.dashboard_port, elevate=True)
+    if after.get("ok"):
+        audited = _audit_firewall_change(action="enabled", before=before, after=after)
+        typer.echo(
+            f"Windows LAN access enabled for TCP {cfg.app.dashboard_port}; "
+            f"backend port {cfg.app.dashboard_port + 1} was not opened."
+        )
+        if not audited:
+            typer.echo("Warning: firewall access changed but its audit record could not be written.", err=True)
+    else:
+        reason = after.get("reason") or "firewall_error"
+        typer.echo(
+            f"Windows LAN firewall setup did not complete ({reason}); gateway will still start for local access. "
+            "Run `aletheia gateway firewall enable-lan` to retry.",
+            err=True,
+        )
+
+
 @gateway_app.command()
 def start(
     browser: bool = typer.Option(
@@ -29,8 +105,14 @@ def start(
              "'aletheia gateway open-dashboard' to open it later.",
     ),
     foreground: bool = typer.Option(False, "--foreground", help="Run in foreground."),
+    lan_firewall: bool = typer.Option(
+        True,
+        "--lan-firewall/--no-lan-firewall",
+        help="On interactive Windows starts, request one-time UAC approval for local-subnet dashboard access.",
+    ),
 ):
     """Start the Aletheia gateway."""
+    _maybe_configure_windows_lan_firewall(enabled=lan_firewall)
     from aletheia.gateway.lifecycle import do_start
     do_start(no_browser=not browser, foreground=foreground)
 
@@ -49,6 +131,11 @@ def restart(
         help="Open dashboard in browser after restart. Default: off. Use "
              "'aletheia gateway open-dashboard' to open it later.",
     ),
+    lan_firewall: bool = typer.Option(
+        True,
+        "--lan-firewall/--no-lan-firewall",
+        help="On interactive Windows restarts, request one-time UAC approval for local-subnet dashboard access.",
+    ),
 ):
     """Restart the gateway.
 
@@ -56,6 +143,7 @@ def restart(
     for the port to free; do_start then refuses to spawn if the port is somehow still
     held — so a failed stop no longer stacks crash-looping supervisors.
     """
+    _maybe_configure_windows_lan_firewall(enabled=lan_firewall)
     from aletheia.gateway.lifecycle import do_stop, do_start
     do_stop()
     do_start(no_browser=not browser, foreground=False)
@@ -150,6 +238,71 @@ def service_elevated_apply(request: Path = typer.Option(..., "--request")):
     from aletheia.gateway.windows_machine_service import apply_elevated_request
     result = apply_elevated_request(request)
     raise typer.Exit(0 if result.get("ok") else 1)
+
+
+@firewall_app.command(name="status")
+def firewall_status():
+    """Show whether Windows permits local-subnet access to the dashboard port."""
+    from aletheia.config.loader import load_config
+    from aletheia.gateway.windows_firewall import status as read_status
+    cfg = load_config()
+    result = read_status(cfg.app.dashboard_port)
+    for key in (
+        "supported", "configured", "rule_present", "port", "program",
+        "conflicting_block_rules", "reason",
+    ):
+        if key in result:
+            typer.echo(f"{key}: {result[key]}")
+
+
+@firewall_app.command(name="enable-lan")
+def firewall_enable_lan(
+    elevate: bool = typer.Option(True, "--elevate/--no-elevate", help="Use the Windows UAC secure desktop."),
+):
+    """Allow local-subnet TCP access to the configured dashboard port."""
+    from aletheia.config.loader import load_config
+    from aletheia.gateway import windows_firewall, windows_machine_service
+    cfg = load_config()
+    if cfg.app.bind_host not in _WILDCARD_HOSTS:
+        typer.echo("Firewall setup refused: app.bind_host is loopback; select 0.0.0.0 or :: first.", err=True)
+        raise typer.Exit(1)
+    before = windows_firewall.status(cfg.app.dashboard_port)
+    result = windows_machine_service.firewall_enable_lan(cfg.app.dashboard_port, elevate=elevate)
+    if not result.get("ok"):
+        reason = result.get("reason") or "firewall_error"
+        typer.echo(f"Windows LAN firewall setup failed: {reason}", err=True)
+        if reason == "elevation_required":
+            typer.echo("Re-run without --no-elevate to use the Windows UAC secure desktop.", err=True)
+        raise typer.Exit(1)
+    audited = _audit_firewall_change(action="enabled", before=before, after=result)
+    typer.echo(
+        f"Windows LAN access enabled for TCP {cfg.app.dashboard_port}; "
+        f"backend port {cfg.app.dashboard_port + 1} was not opened."
+    )
+    if not audited:
+        typer.echo("Warning: firewall access changed but its audit record could not be written.", err=True)
+
+
+@firewall_app.command(name="disable-lan")
+def firewall_disable_lan(
+    elevate: bool = typer.Option(True, "--elevate/--no-elevate", help="Use the Windows UAC secure desktop."),
+):
+    """Remove Aletheia's LAN rule and restore narrowed Python block rules."""
+    from aletheia.config.loader import load_config
+    from aletheia.gateway import windows_firewall, windows_machine_service
+    cfg = load_config()
+    before = windows_firewall.status(cfg.app.dashboard_port)
+    result = windows_machine_service.firewall_disable_lan(cfg.app.dashboard_port, elevate=elevate)
+    if not result.get("ok"):
+        reason = result.get("reason") or "firewall_error"
+        typer.echo(f"Windows LAN firewall removal failed: {reason}", err=True)
+        if reason == "elevation_required":
+            typer.echo("Re-run without --no-elevate to use the Windows UAC secure desktop.", err=True)
+        raise typer.Exit(1)
+    audited = _audit_firewall_change(action="disabled", before=before, after=result)
+    typer.echo("Windows dashboard LAN firewall rule removed; prior Python block filters were restored.")
+    if not audited:
+        typer.echo("Warning: firewall access changed but its audit record could not be written.", err=True)
 
 
 @gateway_app.command(name="open-dashboard")
