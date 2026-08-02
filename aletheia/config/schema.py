@@ -1186,6 +1186,12 @@ class TunnelConfig(BaseModel):
     metrics_port: int = 0
 
 
+class RemoteControlConfig(BaseModel):
+    """Owner-token protection for private HTTP APIs over a private network."""
+
+    enabled: bool = False
+
+
 class NetworkConfig(BaseModel):
     # Structured proxy definition (source of truth). ``proxy_url`` below is
     # recomposed from these three parts by the model validator; every consumer
@@ -1409,7 +1415,7 @@ class AletheiaConfig(BaseModel):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     operator: OperatorConfig = Field(default_factory=OperatorConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
-    risk: RiskConfig = Field(default_factory=RiskConfig)
+    risk: RiskConfig = Field(default_factory=lambda: RiskConfig.model_validate({}))
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     webhook: WebhookConfig = Field(default_factory=WebhookConfig)
     update: UpdateConfig = Field(default_factory=UpdateConfig)
@@ -1421,6 +1427,7 @@ class AletheiaConfig(BaseModel):
     strategy_factory: StrategyFactoryConfig = Field(default_factory=StrategyFactoryConfig)
     guard: GuardConfig = Field(default_factory=GuardConfig)
     tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
+    remote_control: RemoteControlConfig = Field(default_factory=RemoteControlConfig)
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     historical_data: HistoricalDataConfig = Field(default_factory=HistoricalDataConfig)
     event_triggers: EventTriggerConfig = Field(default_factory=EventTriggerConfig)

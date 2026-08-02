@@ -3387,6 +3387,8 @@ function AdvancedTab({ settings }: { settings: any }) {
 function AppRows({ status, settings, qc }: any) {
   const app = settings?.app as any || {}
   const runtime = settings?.runtime as any || {}
+  const remoteControl = settings?.remote_control as any || {}
+  const [remoteToken, setRemoteToken] = useState('')
   const autoBrowser = app.auto_open_browser !== false
   const bootCommit = status?.boot_commit as string | null | undefined
   const currentCommit = status?.current_commit as string | null | undefined
@@ -3399,6 +3401,13 @@ function AppRows({ status, settings, qc }: any) {
   const runtimeMut = useMutation({
     mutationFn: (body: any) => api.updateRuntimeConfig(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+  })
+  const remoteControlMut = useMutation({
+    mutationFn: (body: { enabled?: boolean; api_token?: string }) => api.updateRemoteControl(body),
+    onSuccess: () => {
+      if (remoteToken.trim()) api.setRemoteControlToken(remoteToken)
+      qc.invalidateQueries({ queryKey: ['settings'] })
+    },
   })
   const runtimePending = useRef(false)
   const safeRuntimeMut = (body: any) => {
@@ -3446,6 +3455,31 @@ function AppRows({ status, settings, qc }: any) {
         {((app.bind_host || '0.0.0.0') === '127.0.0.1' || (app.bind_host || '0.0.0.0') === '::1') && (
           <span className="text-xs text-muted">Restart required to apply</span>
         )}
+      </Row>
+      <Row label="Remote Control" hint="Require X-Aletheia-Token for every private HTTP API. Use this for EasyTier or another private network; it is independent from Cloudflare Tunnel.">
+        <Toggle
+          checked={!!remoteControl.enabled}
+          onChange={enabled => remoteControlMut.mutate({
+            enabled,
+            ...(remoteToken.trim() ? { api_token: remoteToken.trim() } : {}),
+          })}
+          disabled={remoteControlMut.isPending}
+        />
+        <input
+          type="password"
+          value={remoteToken}
+          onChange={e => setRemoteToken(e.target.value)}
+          placeholder="Owner API token"
+          autoComplete="off"
+          className="w-56"
+        />
+        <button
+          type="button"
+          className="button-secondary"
+          onClick={() => api.setRemoteControlToken(remoteToken)}
+          disabled={!remoteToken.trim()}
+        >Use in this browser</button>
+        <span className="text-xs text-muted">Write-only; stored only in this browser so the local dashboard keeps access after enabling.</span>
       </Row>
       <Row label="Gateway mode" hint="Process lifecycle mode used by the CLI/supervisor.">
         <span className="mono text-sm">{runtime.gateway_mode || 'background'}</span>
@@ -3501,6 +3535,7 @@ function AppRows({ status, settings, qc }: any) {
 function ConfigCoverageCard({ settings }: { settings: any }) {
   const controlled = new Set([
     'agent.permission_mode', 'agent.autonomous_learning', 'agent.bypass_distress_gate',
+    'remote_control.enabled',
     'learning.contribution_evaluation_enabled', 'learning.lifecycle_automation_enabled',
     'learning.paper_influence_enabled', 'learning.paper_influence_paths',
     'learning.auto_refreeze', 'learning.evaluation_interval_minutes',

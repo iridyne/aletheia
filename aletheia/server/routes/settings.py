@@ -4,7 +4,7 @@ import asyncio
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ConfigDict, FiniteFloat, field_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator
 
 from aletheia.config.loader import load_config, save_config
 from aletheia.config.schema import ModeRiskPolicy, default_mode_risk_policy
@@ -154,6 +154,7 @@ def get_settings():
         "guard": cfg.guard.model_dump(mode="json"),
         "tunnel": {k: v for k, v in cfg.tunnel.model_dump(mode="json").items()
                    if k != "credentials_path"},
+        "remote_control": cfg.remote_control.model_dump(mode="json"),
         "regime": cfg.regime.model_dump(mode="json"),
         "network": _redacted_network(cfg.network.model_dump(mode="json")),
         "strategy_factory": {
@@ -2088,6 +2089,11 @@ class TunnelConfigUpdate(SettingsRequest):
     hostname: Optional[str] = None
 
 
+class RemoteControlConfigUpdate(SettingsRequest):
+    enabled: Optional[bool] = None
+    api_token: Optional[str] = Field(default=None, min_length=1)
+
+
 @router.get("/tunnel/status")
 async def get_tunnel_status():
     from aletheia.gateway.tunnel import tunnel_status
@@ -2111,6 +2117,31 @@ async def update_tunnel_config(req: TunnelConfigUpdate):
     tunnel_safe = {k: v for k, v in cfg.tunnel.model_dump(mode="json").items()
                    if k != "credentials_path"}
     return {"updated": updates, "tunnel": tunnel_safe}
+
+
+@router.post("/remote-control")
+async def update_remote_control_config(req: RemoteControlConfigUpdate):
+    """Save the independent remote-control switch and optional write-only API token."""
+    cfg = load_config()
+    old_enabled = cfg.remote_control.enabled
+    updates = req.model_dump(exclude_none=True)
+    api_token = updates.pop("api_token", None)
+    if api_token is not None:
+        from aletheia.config.secrets import set_secret
+        set_secret("remote_control_api_token", api_token)
+    if updates:
+        for field, value in updates.items():
+            setattr(cfg.remote_control, field, value)
+        save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "remote_control_config_changed",
+                 "entity_type": "remote_control_config", "before": {"enabled": old_enabled},
+                 "after": cfg.remote_control.model_dump(mode="json"),
+                 "message": "Remote Control config updated"})
+    return {
+        "updated": {**updates, "api_token_saved": api_token is not None},
+        "remote_control": cfg.remote_control.model_dump(mode="json"),
+    }
 
 
 @router.post("/tunnel/start")
