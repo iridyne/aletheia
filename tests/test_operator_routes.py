@@ -69,6 +69,7 @@ async def test_operator_status_defaults_when_no_heartbeat(client):
         "running": True,
         "evaluating": False,
         "wake_pending": False,
+        "last_error_summary": None,
         "fallback_available": True,
         "state": "event_driven",
     }
