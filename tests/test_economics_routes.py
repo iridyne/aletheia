@@ -39,10 +39,10 @@ async def client(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
     reset_db()
-    sq._db_conn = None
+    setattr(sq, "_db_conn", None)
     conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    sq._db_conn = conn
+    setattr(sq, "_db_conn", conn)
     run_migrations()
     ensure_economics_schema()
     reset_model_health()
@@ -66,6 +66,8 @@ def _seed_llm_cost(
     cost: float | None,
     run_id: str | None = None,
     started_at: str | None = None,
+    usage_json: str = "{}",
+    metadata_json: str = "{}",
 ) -> None:
     now = started_at or _now()
     status = "known" if cost is not None else "unknown"
@@ -77,7 +79,7 @@ def _seed_llm_cost(
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             event_id, "llm", run_id, event_id, "test", "model", 0, "success",
-            now, now, "{}", cost, "USD", status, "{}", now,
+            now, now, usage_json, cost, "USD", status, metadata_json, now,
         ),
     )
 
@@ -172,6 +174,72 @@ async def test_costs_run_id_filter(client):
 async def test_costs_rejects_invalid_days(client):
     resp = await client.get("/api/economics/costs?days=0")
     assert resp.status_code == 422
+
+
+# ── /api/economics/tokens ────────────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_tokens_summarize_provider_usage_without_cost(client):
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_llm_cost(
+        db,
+        event_id="token-known",
+        cost=None,
+        usage_json=(
+            '{"normalized":{"input_tokens":10,"output_tokens":4,'
+            '"total_tokens":14,"cached_input_tokens":3,'
+            '"provider_cache_read_input_tokens":2,'
+            '"provider_cache_creation_input_tokens":1,"reasoning_tokens":null}}'
+        ),
+        metadata_json='{"logical_agent":"market_observer"}',
+    )
+    _seed_llm_cost(db, event_id="token-unavailable", cost=None)
+
+    resp = await client.get("/api/economics/tokens?days=1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["llm_attempt_count"] == 2
+    assert data["input_output_available_attempt_count"] == 1
+    assert data["input_output_unavailable_attempt_count"] == 1
+    assert data["tokens"] == {
+        "input_tokens": 10,
+        "output_tokens": 4,
+        "total_tokens": 14,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 3,
+        "provider_cache_read_input_tokens": 2,
+        "provider_cache_creation_input_tokens": 1,
+    }
+    assert data["field_availability"]["cached_input_tokens"] == 1
+    assert data["by_logical_agent"]["market_observer"]["input_tokens"] == 10
+
+
+@pytest.mark.anyio
+async def test_tokens_filters_by_run_id(client):
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_llm_cost(
+        db,
+        event_id="token-run-a",
+        cost=None,
+        run_id="run-a",
+        usage_json='{"normalized":{"input_tokens":5,"output_tokens":2}}',
+    )
+    _seed_llm_cost(
+        db,
+        event_id="token-run-b",
+        cost=None,
+        run_id="run-b",
+        usage_json='{"normalized":{"input_tokens":9,"output_tokens":3}}',
+    )
+
+    resp = await client.get("/api/economics/tokens?days=1&run_id=run-a")
+    assert resp.status_code == 200
+    assert resp.json()["tokens"]["input_tokens"] == 5
 
 
 # ── /api/economics/viability ─────────────────────────────────────────────────

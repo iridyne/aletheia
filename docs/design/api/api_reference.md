@@ -295,8 +295,22 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | POST | `/settings/autonomous-learning` | Legacy master Learning-loop toggle. Protected by the tunnel owner token when a tunnel is enabled; missing tunnel secret fails closed and rejected authentication performs no config or audit mutation. |
 | POST | `/settings/learning` | Paper-only Learning experiment controls: contribution measurement, lifecycle automation, registry-validated paper influence path allowlist, auto-refreeze, evaluation interval, and final-stage allocation. Unknown paths and paths without a wired consumer, Settings support, or prospective measurement are rejected (including when an old unsupported saved path is re-enabled through the master toggle). Lifecycle automation and paper influence default off; this endpoint cannot enable live trading. Protected by the tunnel owner token when a tunnel is enabled. |
 | POST | `/settings/learning/experiments/{experiment_id}/admit-trial` | Explicit owner admission from a current shadow verdict into one `paper_10` successor. Requires `verdict_id`, `expected_policy_epoch`, bounded `reason`, and `confirm_admission=true`; the server derives the actual epoch, checks every paper gate, writes one deduplicated lifecycle event and audits `human/dashboard`. Protected by the tunnel owner token when a tunnel is enabled. |
-| POST | `/settings/economics` | Default-off tokenomics harness and Phase 2 budget-shadow controls. Disabling the harness also disables shadow observation; this endpoint never enables budget enforcement. |
+| POST | `/settings/economics` | Default-off tokenomics harness controls. Disabling the harness also disables shadow observation and prompt secret-shape detection; this endpoint never enables budget enforcement. |
 | POST | `/settings/bypass-distress-gate` | Explicit operator bypass for distress gate checks |
+
+---
+
+## LLM Harness telemetry (read-only)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/economics/status` | Token/cost tracing and viability-audit kill-switch state. |
+| GET | `/economics/tokens` | Token-first LLM usage summary for a day window, optionally filtered by `run_id`. Reports provider-supplied input/output/cache/reasoning totals and field availability without requiring a USD price snapshot. |
+| GET | `/economics/costs` | Windowed cost summary; USD remains nullable when no immutable price snapshot applies. |
+| GET | `/economics/budgets` | Read-only declared budget policies. |
+| GET | `/economics/budgets/would-block` | Read-only shadow observations; it does not enforce a budget. |
+
+---
 | POST | `/settings/exchange-markets` | Observed symbols list |
 | POST | `/settings/primary-exchange` | Primary exchange selection |
 | GET | `/settings/paper-account` | Local simulated cash, reserved margin, available balance, equity, economic-completeness state, and recent ledger events. Available only when `paper_internal` is active. |

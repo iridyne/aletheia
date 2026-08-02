@@ -4593,6 +4593,11 @@ function EconomicsSnapshotCard({ economics, qc }: { economics: any; qc: any }) {
     queryFn: () => api.getEconomicsCosts({ days: 7 }),
     refetchInterval: 30_000,
   })
+  const { data: tokens } = useQuery({
+    queryKey: ['economics-tokens-7d'],
+    queryFn: () => api.getEconomicsTokens({ days: 7 }),
+    refetchInterval: 30_000,
+  })
   const { data: broker } = useQuery({
     queryKey: ['economics-broker'],
     queryFn: api.getInferenceBroker,
@@ -4621,6 +4626,8 @@ function EconomicsSnapshotCard({ economics, qc }: { economics: any; qc: any }) {
   const knownUsd = costs?.known_cost_subtotal_usd ?? 0
   const unknownCount = costs?.unknown_event_count ?? 0
   const eventCount = costs?.event_count ?? 0
+  const formatTokens = (value: number | undefined) =>
+    value === undefined ? 'loading…' : new Intl.NumberFormat().format(value)
 
   const providerRows = broker?.providers ? Object.entries(broker.providers) : []
 
@@ -4665,6 +4672,22 @@ function EconomicsSnapshotCard({ economics, qc }: { economics: any; qc: any }) {
       )}
 
       <div className="settings-number-grid" style={{ marginBottom: '1rem' }}>
+        <label className="settings-field">
+          <span>LLM input tokens (7d)</span>
+          <input readOnly className="mono" value={formatTokens(tokens?.tokens.input_tokens)} />
+        </label>
+        <label className="settings-field">
+          <span>LLM output tokens (7d)</span>
+          <input readOnly className="mono" value={formatTokens(tokens?.tokens.output_tokens)} />
+        </label>
+        <label className="settings-field">
+          <span>Usage coverage (7d)</span>
+          <input
+            readOnly
+            className="mono"
+            value={tokens ? `${tokens.input_output_available_attempt_count}/${tokens.llm_attempt_count} attempts` : 'loading…'}
+          />
+        </label>
         <label className="settings-field">
           <span>Spent last 7 days (known)</span>
           <input
