@@ -1499,6 +1499,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     _run_deadline = _run_start + _MARKET_OBSERVER_LOOP_BUDGET_SEC
     outputs: list[str] = []
     errors: list[str] = []
+    warnings: list[str] = []
     _success_count = 0
     _fail_count = 0
     _skip_count = 0
@@ -1681,7 +1682,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             raise _prefetch_batch[0]
         _prefetch_raw = _prefetch_batch[0]
     except TimeoutError:
-        errors.append(
+        warnings.append(
             "prefetch_budget_exceeded: parallel context build consumed the "
             f"{_MARKET_OBSERVER_LOOP_BUDGET_SEC:.0f}s run budget"
         )
@@ -1691,11 +1692,11 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             _MARKET_OBSERVER_LOOP_BUDGET_SEC,
             _MARKET_OBSERVER_JOB_TIMEOUT_S,
         )
-        return {"outputs": outputs, "errors": errors}
+        return {"outputs": outputs, "errors": errors, "warnings": warnings}
     except Exception as exc:
         errors.append(f"prefetch_failed:{type(exc).__name__}")
         logger.warning("market_observer prefetch batch failed: %s", exc)
-        return {"outputs": outputs, "errors": errors}
+        return {"outputs": outputs, "errors": errors, "warnings": warnings}
     _prefetch_wall = _time.monotonic() - _t_prefetch_start
     logger.warning("[MO DIAG] parallel prefetch done: %.1fs for %d symbols",
                    _prefetch_wall, len(instruments))
@@ -1742,7 +1743,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     for _idx, instrument in enumerate(processing_order):
         if _monotonic() >= _run_deadline:
             _skipped = len(processing_order) - _idx
-            errors.append(
+            warnings.append(
                 f"loop_budget_exceeded: processed {_idx}/{len(processing_order)}, skipped "
                 f"{_skipped} (wall-clock cap {_MARKET_OBSERVER_LOOP_BUDGET_SEC:.0f}s "
                 f"< {_MARKET_OBSERVER_JOB_TIMEOUT_S:.0f}s job timeout — avoids thread leak)"
@@ -1817,4 +1818,4 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                     key=instrument_key,
                 )
 
-    return {"outputs": outputs, "errors": errors}
+    return {"outputs": outputs, "errors": errors, "warnings": warnings}

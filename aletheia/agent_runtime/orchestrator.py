@@ -54,6 +54,15 @@ async def run_agent(
             if isinstance(result, dict):
                 outputs = result.get("outputs", [])
                 errors = result.get("errors", [])
+                _agent_warnings = result.get("warnings", [])
+                if _agent_warnings:
+                    import logging
+                    logging.getLogger("aletheia.orchestrator").info(
+                        "Agent %s completed with %d warning(s): %s",
+                        agent_name,
+                        len(_agent_warnings),
+                        "; ".join(str(w) for w in _agent_warnings[:3]),
+                    )
     except Exception as e:
         # #70 fix: persist only the exception type + first line (not the full
         # traceback which leaks internal paths and possibly credentials from

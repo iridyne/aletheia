@@ -460,7 +460,8 @@ async def test_prefetch_time_is_charged_to_same_serial_loop_deadline(
     assert captured["deadline"] == pytest.approx(560.0)
     assert captured["remaining_before_prefetch"] == pytest.approx(440.0)
     assert analyzed == ["A"]
-    assert result["errors"] == [
+    assert result["errors"] == []
+    assert result["warnings"] == [
         "loop_budget_exceeded: processed 1/3, skipped 2 "
         "(wall-clock cap 460s < 500s job timeout — avoids thread leak)"
     ]
@@ -632,3 +633,194 @@ async def test_failed_prefetch_does_not_reach_llm(tmp_path, monkeypatch):
     assert opp_id is None
     assert err is not None and "prefetch_failed" in err
     assert llm_called["n"] == 0  # LLM was never called
+
+
+# ---------------------------------------------------------------------------
+# Budget truncation must NOT be classified as an error (fix: #612)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_loop_budget_exceeded_is_warning_not_error(tmp_path, monkeypatch):
+    """loop_budget_exceeded must land in result['warnings'], not result['errors'].
+
+    When the LLM serial loop hits the wall-clock cap with instruments remaining,
+    that is expected behaviour (safety budget < scheduler timeout).  Classifying
+    it as an error causes the orchestrator to set status='completed_with_errors',
+    which _async_run() in scheduler.py converts to a RuntimeError, incrementing
+    the consecutive-failure counter and eventually firing a
+    job_consecutive_failure:market_observer alert.
+    """
+    from types import SimpleNamespace
+
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agents import market_observer as mo
+
+    class _Instrument:
+        def __init__(self, symbol):
+            self.symbol = symbol
+            self.market_type = "spot"
+
+        def __str__(self):
+            return f"{self.symbol}:spot"
+
+    instruments = [_Instrument(s) for s in ("X", "Y")]
+    empty_cache = mo._DbCache(
+        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+    )
+    empty_pf = {
+        "passed": True,
+        "rsi": 20.0,
+        "atr_pct": None,
+        "keyword_hits": [],
+        "matched_rules": ["rsi_deviation"],
+    }
+    clock = {"now": 100.0}
+
+    monkeypatch.setattr(mo, "_monotonic", lambda: clock["now"])
+    monkeypatch.setattr(mo, "is_tool_permitted", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        mo,
+        "load_config",
+        lambda: SimpleNamespace(
+            universe=SimpleNamespace(enabled=False, max_candidates=2),
+            market_data=SimpleNamespace(
+                prediction_enabled=False, ccxt_exchange="fixture",
+            ),
+            observer=SimpleNamespace(force_full_scan=False),
+        ),
+    )
+    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
+    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
+
+    def fake_batch(_symbols):
+        clock["now"] += 5.0
+        return empty_cache
+
+    async def fake_prefetch(instrument, **_kwargs):
+        return mo._SymbolPrefetch(
+            context_str=instrument.symbol,
+            debug={},
+            pre_filter=empty_pf,
+            signal_score=1.0,
+            funding_rate_val=None,
+            open_interest_val=None,
+            oi_delta_val=None,
+        )
+
+    async def fake_gather(coros, *, deadline):
+        results = [await coro for coro in coros]
+        # Consume nearly all remaining budget so loop starts at deadline
+        clock["now"] = deadline  # exactly at deadline — first instrument is skipped
+        return results
+
+    monkeypatch.setattr(mo, "_batch_prefetch_db", fake_batch)
+    monkeypatch.setattr(mo, "_prefetch_symbol", fake_prefetch)
+    monkeypatch.setattr(mo, "_gather_prefetch_with_deadline", fake_gather)
+    monkeypatch.setattr(
+        "aletheia.knowledge.router.build_advisory_context",
+        lambda **_kwargs: "",
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.insight_synthesizer.get_latest_memo",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "aletheia.learning.control.learning_influence_enabled",
+        lambda: False,
+    )
+
+    result = await mo.run_market_observer(permission_mode="Observe", run_id="budget-warn-test")
+
+    # ── core contract: budget truncation is NOT a failure ──
+    assert result["errors"] == [], (
+        "loop_budget_exceeded must not appear in errors — it would trigger "
+        "job_consecutive_failure:market_observer"
+    )
+    assert any("loop_budget_exceeded" in w for w in result.get("warnings", [])), (
+        "loop_budget_exceeded must appear in warnings so operators can observe it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_prefetch_budget_exceeded_is_warning_not_error(tmp_path, monkeypatch):
+    """prefetch_budget_exceeded must land in result['warnings'], not result['errors'].
+
+    Same reasoning as test_loop_budget_exceeded_is_warning_not_error: a TimeoutError
+    from the prefetch phase is a budget-safety truncation, not a real failure.
+    """
+    from types import SimpleNamespace
+
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agents import market_observer as mo
+
+    class _Instrument:
+        def __init__(self, symbol):
+            self.symbol = symbol
+            self.market_type = "spot"
+
+        def __str__(self):
+            return f"{self.symbol}:spot"
+
+    instruments = [_Instrument("Z")]
+    empty_cache = mo._DbCache(
+        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+    )
+
+    monkeypatch.setattr(mo, "_monotonic", lambda: 100.0)
+    monkeypatch.setattr(mo, "is_tool_permitted", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        mo,
+        "load_config",
+        lambda: SimpleNamespace(
+            universe=SimpleNamespace(enabled=False, max_candidates=1),
+            market_data=SimpleNamespace(
+                prediction_enabled=False, ccxt_exchange="fixture",
+            ),
+            observer=SimpleNamespace(force_full_scan=False),
+        ),
+    )
+    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
+    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
+
+    async def _noop_prefetch_instruments(*_a, **_k):
+        return []
+
+    def fake_batch(_symbols):
+        return empty_cache
+
+    async def fake_gather_timeout(coros, *, deadline):
+        # Drain the coroutines so they don't linger as un-awaited tasks.
+        for coro in coros:
+            try:
+                coro.close()
+            except Exception:
+                pass
+        raise TimeoutError("budget test")
+
+    monkeypatch.setattr(mo, "_batch_prefetch_db", fake_batch)
+    monkeypatch.setattr(mo, "_prefetch_instruments", _noop_prefetch_instruments)
+    monkeypatch.setattr(mo, "_gather_prefetch_with_deadline", fake_gather_timeout)
+    monkeypatch.setattr(
+        "aletheia.knowledge.router.build_advisory_context",
+        lambda **_kwargs: "",
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.insight_synthesizer.get_latest_memo",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "aletheia.learning.control.learning_influence_enabled",
+        lambda: False,
+    )
+
+    result = await mo.run_market_observer(permission_mode="Observe", run_id="prefetch-warn-test")
+
+    assert result["errors"] == [], (
+        "prefetch_budget_exceeded must not appear in errors"
+    )
+    assert any("prefetch_budget_exceeded" in w for w in result.get("warnings", [])), (
+        "prefetch_budget_exceeded must appear in warnings"
+    )
