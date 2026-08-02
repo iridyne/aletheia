@@ -22,7 +22,11 @@ from aletheia.economics.budgets import (
     list_recent_would_block_events,
 )
 from aletheia.economics.schema import ensure_economics_schema
-from aletheia.economics.tracing import list_cost_summary, tracing_enabled
+from aletheia.economics.tracing import (
+    list_cost_summary,
+    list_token_summary,
+    tracing_enabled,
+)
 from aletheia.economics.viability import (
     audit_enabled,
     build_operator_viability,
@@ -62,6 +66,21 @@ def costs(
     else:
         report["events"] = report["events"][:event_limit]
     return report
+
+
+@router.get("/tokens")
+def tokens(
+    days: int = Query(7, ge=1, le=365),
+    run_id: Optional[str] = None,
+) -> dict:
+    """Token-first LLM usage summary independent of USD pricing coverage."""
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
+    return list_token_summary(
+        window_start=start.isoformat(),
+        window_end=end.isoformat(),
+        run_id=run_id,
+    )
 
 
 @router.get("/viability")
@@ -130,7 +149,8 @@ def viability_reports(
         f"SELECT COUNT(*) FROM viability_reports {where_sql}",
         tuple(params),
     ).fetchone()
-    total = int(total_row[0]) if total_row else 0
+    total_value = total_row[0] if total_row else 0
+    total = total_value if isinstance(total_value, int) else 0
     return {"reports": rows, "limit": limit, "offset": offset, "total": total}
 
 

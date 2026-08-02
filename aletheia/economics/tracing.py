@@ -66,6 +66,14 @@ def _float(value: Any) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
+def _bounded_limit(value: Any, *, maximum: int = 5_000) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+    return max(1, min(parsed, maximum))
+
+
 def add_pricing_snapshot(
     *,
     provider: str,
@@ -89,8 +97,9 @@ def add_pricing_snapshot(
         "reasoning_usd_per_million": reasoning_usd_per_million,
         "cached_input_usd_per_million": cached_input_usd_per_million,
     }
-    for name, value in rates.items():
-        if value is not None and (_float(value) is None or float(value) < 0):
+    parsed_rates = {name: _float(value) for name, value in rates.items()}
+    for name, value in parsed_rates.items():
+        if rates[name] is not None and (value is None or value < 0):
             raise ValueError(f"{name} must be a finite non-negative number")
     created_at = _utcnow()
     effective = _normalize_iso(effective_from)
@@ -108,14 +117,10 @@ def add_pricing_snapshot(
         "provider": provider,
         "model": model,
         "effective_from": effective,
-        "input_usd_per_million": float(input_usd_per_million),
-        "output_usd_per_million": float(output_usd_per_million),
-        "reasoning_usd_per_million": None
-        if reasoning_usd_per_million is None
-        else float(reasoning_usd_per_million),
-        "cached_input_usd_per_million": None
-        if cached_input_usd_per_million is None
-        else float(cached_input_usd_per_million),
+        "input_usd_per_million": parsed_rates["input_usd_per_million"],
+        "output_usd_per_million": parsed_rates["output_usd_per_million"],
+        "reasoning_usd_per_million": parsed_rates["reasoning_usd_per_million"],
+        "cached_input_usd_per_million": parsed_rates["cached_input_usd_per_million"],
         "currency": "USD",
         "source": source,
         "version": version,
@@ -161,7 +166,7 @@ def list_pricing_snapshots(
         f"SELECT * FROM pricing_snapshots {where_sql} "
         f"ORDER BY provider, model, replace(effective_from,' ','T') DESC, created_at DESC "
         f"LIMIT ?",
-        (*params, max(1, min(int(limit), 5_000))),
+        (*params, _bounded_limit(limit)),
     ).fetchall()
     return [dict(row) for row in rows]
 
@@ -247,7 +252,7 @@ def list_tool_cost_profiles(
         f"SELECT * FROM tool_cost_profiles {where_sql} "
         f"ORDER BY tool_name, replace(effective_from,' ','T') DESC, created_at DESC "
         f"LIMIT ?",
-        (*params, max(1, min(int(limit), 5_000))),
+        (*params, _bounded_limit(limit)),
     ).fetchall()
     return [dict(row) for row in rows]
 
@@ -599,7 +604,7 @@ def aggregate_agent_run_cost(run_id: str) -> dict[str, Any]:
         ).fetchall()
     ]
     known = sum(
-        float(row["estimated_cost_usd"] or 0)
+        (_float(row["estimated_cost_usd"]) or 0.0)
         for row in rows
         if row["estimated_cost_usd"] is not None
     )
@@ -630,6 +635,85 @@ def aggregate_agent_run_cost(run_id: str) -> dict[str, Any]:
     }
 
 
+def list_token_summary(
+    *,
+    window_start: str,
+    window_end: str,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Aggregate provider-reported token usage without requiring a price snapshot.
+
+    Input/output totals are summed only when the provider reported the field.
+    Cache counters remain separate optional fields rather than inferred values.
+    """
+    db = ensure_economics_schema()
+    if run_id:
+        result = db.execute(
+            "SELECT usage_json, metadata_json, provider, model_or_tool "
+            "FROM runtime_cost_events WHERE event_type='llm' "
+            "AND replace(started_at,' ','T') >= replace(?,' ','T') "
+            "AND replace(started_at,' ','T') <= replace(?,' ','T') AND run_id=?",
+            (window_start, window_end, run_id),
+        )
+    else:
+        result = db.execute(
+            "SELECT usage_json, metadata_json, provider, model_or_tool "
+            "FROM runtime_cost_events WHERE event_type='llm' "
+            "AND replace(started_at,' ','T') >= replace(?,' ','T') "
+            "AND replace(started_at,' ','T') <= replace(?,' ','T')",
+            (window_start, window_end),
+        )
+    rows = [dict(row) for row in result.fetchall()]
+    token_fields = (
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "reasoning_tokens",
+        "cached_input_tokens",
+        "provider_cache_read_input_tokens",
+        "provider_cache_creation_input_tokens",
+    )
+    totals = {field: 0 for field in token_fields}
+    availability = {field: 0 for field in token_fields}
+    by_logical_agent: dict[str, dict[str, int]] = {}
+    input_output_available_attempt_count = 0
+    for row in rows:
+        try:
+            usage_envelope = json.loads(row["usage_json"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            usage_envelope = {}
+        usage = usage_envelope.get("normalized") if isinstance(usage_envelope, dict) else None
+        normalized = usage if isinstance(usage, dict) else normalize_usage(usage_envelope)
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            metadata = {}
+        logical_agent = metadata.get("logical_agent") if isinstance(metadata, dict) else None
+        agent_bucket = by_logical_agent.setdefault(
+            str(logical_agent or "unattributed"),
+            {"llm_attempt_count": 0, **{field: 0 for field in token_fields}},
+        )
+        agent_bucket["llm_attempt_count"] += 1
+        if all(isinstance(normalized.get(field), int) for field in ("input_tokens", "output_tokens")):
+            input_output_available_attempt_count += 1
+        for field in token_fields:
+            value = normalized.get(field)
+            if isinstance(value, int) and value >= 0:
+                totals[field] += value
+                availability[field] += 1
+                agent_bucket[field] += value
+    return {
+        "window_start": window_start,
+        "window_end": window_end,
+        "llm_attempt_count": len(rows),
+        "input_output_available_attempt_count": input_output_available_attempt_count,
+        "input_output_unavailable_attempt_count": len(rows) - input_output_available_attempt_count,
+        "tokens": totals,
+        "field_availability": availability,
+        "by_logical_agent": by_logical_agent,
+    }
+
+
 def list_cost_summary(
     *,
     window_start: str,
@@ -637,23 +721,23 @@ def list_cost_summary(
     run_id: str | None = None,
 ) -> dict[str, Any]:
     db = ensure_economics_schema()
-    where = [
-        "replace(started_at,' ','T') >= replace(?,' ','T')",
-        "replace(started_at,' ','T') <= replace(?,' ','T')",
-    ]
-    params: list[Any] = [window_start, window_end]
     if run_id:
-        where.append("run_id=?")
-        params.append(run_id)
-    rows = [
-        dict(row)
-        for row in db.execute(
-            "SELECT * FROM runtime_cost_events WHERE "
-            + " AND ".join(where)
-            + " ORDER BY started_at,id",
-            params,
-        ).fetchall()
-    ]
+        result = db.execute(
+            "SELECT * FROM runtime_cost_events "
+            "WHERE replace(started_at,' ','T') >= replace(?,' ','T') "
+            "AND replace(started_at,' ','T') <= replace(?,' ','T') "
+            "AND run_id=? ORDER BY started_at,id",
+            (window_start, window_end, run_id),
+        )
+    else:
+        result = db.execute(
+            "SELECT * FROM runtime_cost_events "
+            "WHERE replace(started_at,' ','T') >= replace(?,' ','T') "
+            "AND replace(started_at,' ','T') <= replace(?,' ','T') "
+            "ORDER BY started_at,id",
+            (window_start, window_end),
+        )
+    rows = [dict(row) for row in result.fetchall()]
     by_type: dict[str, dict[str, Any]] = {}
     for row in rows:
         bucket = by_type.setdefault(
@@ -664,7 +748,7 @@ def list_cost_summary(
         if row["estimated_cost_usd"] is None or row["cost_status"] == "unknown":
             bucket["unknown_count"] += 1
         else:
-            bucket["known_cost_usd"] += float(row["estimated_cost_usd"])
+            bucket["known_cost_usd"] += _float(row["estimated_cost_usd"]) or 0.0
     for bucket in by_type.values():
         bucket["known_cost_usd"] = round(bucket["known_cost_usd"], 12)
     return {
@@ -672,7 +756,7 @@ def list_cost_summary(
         "window_end": window_end,
         "event_count": len(rows),
         "known_cost_subtotal_usd": round(
-            sum(float(row["estimated_cost_usd"] or 0) for row in rows), 12
+            sum(_float(row["estimated_cost_usd"]) or 0.0 for row in rows), 12
         ),
         "unknown_event_count": sum(
             1

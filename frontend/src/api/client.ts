@@ -521,6 +521,25 @@ export const api = {
       events?: Array<Record<string, unknown>>
     }>(`/economics/costs${suffix}`)
   },
+  getEconomicsTokens: (params?: { days?: number; run_id?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.days !== undefined) qs.set('days', String(params.days))
+    if (params?.run_id) qs.set('run_id', params.run_id)
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return fetchJson<{
+      window_start: string; window_end: string
+      llm_attempt_count: number
+      input_output_available_attempt_count: number
+      input_output_unavailable_attempt_count: number
+      tokens: {
+        input_tokens: number; output_tokens: number; total_tokens: number
+        reasoning_tokens: number; cached_input_tokens: number
+        provider_cache_read_input_tokens: number; provider_cache_creation_input_tokens: number
+      }
+      field_availability: Record<string, number>
+      by_logical_agent: Record<string, Record<string, number>>
+    }>(`/economics/tokens${suffix}`)
+  },
   getEconomicsViability: (params: {
     scope: 'system' | 'operator'
     days?: number
