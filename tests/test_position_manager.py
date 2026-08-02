@@ -304,3 +304,59 @@ def test_config_default_stop_used_when_no_explicit_stop(tmp_path, monkeypatch):
     result = evaluate_open_positions()
     assert result["closed"] == 1
     assert repo._select_one("positions", p.id)["close_reason"] == "stop_loss"
+
+
+# --- Issue #416: live limit exit must be rejected (no executor for it) ---
+
+def test_live_limit_exit_rejected(tmp_path, monkeypatch):
+    """Issue #416: operator_exit_position with order_type='limit' on a live_limited
+    position was accepted and persisted as pending_limit_exit=True, but evaluate_open_
+    positions() only processes _PAPER_MODES — the limit exit could never execute.
+
+    After the fix, the call must return an error response and leave the position
+    unchanged (exit_limit_price must NOT be set)."""
+    setup_env(tmp_path, monkeypatch)
+    p = Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.01, entry_price=60000.0, current_price=60000.0,
+        execution_mode="bitget_live_limited",
+    )
+    repo.insert_position(p)
+
+    from aletheia.portfolio.position_manager import proactive_exit
+    result = proactive_exit(p.id, order_type="limit", limit_price=65000.0)
+
+    assert result.get("error") == "limit_exit_not_supported_for_live", (
+        f"Expected error 'limit_exit_not_supported_for_live', got: {result}"
+    )
+    # Position must be unchanged — no exit_limit_price written.
+    row = repo._select_one("positions", p.id)
+    assert row["exit_limit_price"] is None, (
+        "exit_limit_price must not be set when the limit exit is rejected"
+    )
+    assert row["status"] == "open"
+
+
+def test_live_market_exit_still_works(tmp_path, monkeypatch):
+    """Regression: market exit for live positions must still route through
+    close_position_routed(), not be blocked by the limit-exit guard."""
+    setup_env(tmp_path, monkeypatch)
+    p = Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.01, entry_price=60000.0, current_price=60000.0,
+        execution_mode="bitget_live_limited",
+    )
+    repo.insert_position(p)
+
+    # close_position_routed raises when live is disabled; patch it to a no-op
+    # so we confirm the limit-type guard doesn't interfere with market exit routing.
+    from aletheia.portfolio import position_manager as pm_mod
+    monkeypatch.setattr(pm_mod, "close_position_routed",
+                        lambda *a, **kw: {"closed": True})
+    _snap("BTC/USDT", 63000.0)
+
+    from aletheia.portfolio.position_manager import proactive_exit
+    result = proactive_exit(p.id, order_type="market")
+
+    # No error — market exit is routed regardless of execution_mode.
+    assert "error" not in result, f"Unexpected error on market exit: {result}"
