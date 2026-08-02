@@ -189,7 +189,7 @@ def test_update_not_agent_callable(tmp_path, monkeypatch):
 
 # --- Component 4: smoke verification + controlled rollback ---
 
-def _stub_clean_pull(monkeypatch, pyproject_changed=False):
+def _stub_clean_pull(monkeypatch, pyproject_changed=False, changed_files=None):
     """Stub git_ops so apply_update reaches the smoke stage with a clean pull."""
     from aletheia.update import git_ops, applier
     commits = iter(["old111", "new222"])
@@ -197,7 +197,7 @@ def _stub_clean_pull(monkeypatch, pyproject_changed=False):
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
     monkeypatch.setattr(git_ops, "current_commit", lambda: next(commits))
     monkeypatch.setattr(git_ops, "pull", lambda branch="master": {"ok": True})
-    changed = ["pyproject.toml"] if pyproject_changed else ["aletheia/x.py"]
+    changed = changed_files if changed_files is not None else (["pyproject.toml"] if pyproject_changed else ["aletheia/x.py"])
     monkeypatch.setattr(git_ops, "changed_files", lambda old, new: changed)
     monkeypatch.setattr(applier, "_reinstall_deps", lambda: {"ok": True})
 
@@ -233,6 +233,78 @@ def test_apply_succeeds_when_smoke_passes(tmp_path, monkeypatch):
     assert result["applied"] is True
     assert result["restart_required"] is True
     assert reset_calls == []  # no rollback on success
+
+
+def test_apply_restart_builds_changed_frontend_and_restarts(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier
+    _stub_clean_pull(monkeypatch, changed_files=["frontend/src/pages/Settings.tsx"])
+    monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
+    calls = []
+    monkeypatch.setattr(applier, "_build_frontend", lambda: calls.append("build") or {"ok": True})
+    monkeypatch.setattr(applier, "_activate_frontend_build", lambda: calls.append("activate") or True)
+    monkeypatch.setattr(applier, "_restart_gateway", lambda: calls.append("restart") or {"ok": True})
+
+    result = applier.apply_update(restart=True)
+
+    assert result["applied"] is True
+    assert result["frontend_built"] is True
+    assert result["restart_completed"] is True
+    assert calls == ["build", "activate", "restart"]
+
+
+def test_apply_restart_restores_old_release_on_restart_failure(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier, git_ops
+    _stub_clean_pull(monkeypatch, changed_files=["frontend/src/pages/Settings.tsx"])
+    monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
+    monkeypatch.setattr(applier, "_build_frontend", lambda: {"ok": True})
+    monkeypatch.setattr(applier, "_activate_frontend_build", lambda: True)
+    restored = []
+    monkeypatch.setattr(applier, "_restore_frontend_build", lambda had_previous: restored.append(had_previous))
+    resets = []
+    monkeypatch.setattr(git_ops, "reset_hard", lambda commit: resets.append(commit) or {"ok": True})
+    starts = iter([{"ok": False}, {"ok": True}])
+    monkeypatch.setattr(applier, "_restart_gateway", lambda: next(starts))
+
+    result = applier.apply_update(restart=True)
+
+    assert result["applied"] is False
+    assert result["rolled_back"] is True
+    assert result["recovery_started"] is True
+    assert restored == [True]
+    assert resets == ["old111"]
+
+
+def test_apply_restart_does_not_build_unchanged_frontend(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier
+    _stub_clean_pull(monkeypatch)
+    monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
+    monkeypatch.setattr(applier, "_build_frontend", lambda: pytest.fail("frontend should not build"))
+    monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": True})
+
+    result = applier.apply_update(restart=True)
+
+    assert result["applied"] is True
+    assert result["frontend_built"] is False
+    assert result["restart_completed"] is True
+
+
+def test_apply_restart_rolls_back_when_frontend_build_fails(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier, git_ops
+    _stub_clean_pull(monkeypatch, changed_files=["frontend/src/pages/Settings.tsx"])
+    resets = []
+    monkeypatch.setattr(git_ops, "reset_hard", lambda commit: resets.append(commit) or {"ok": True})
+    monkeypatch.setattr(applier, "_build_frontend", lambda: {"ok": False, "reason": "frontend_build_failed"})
+    monkeypatch.setattr(applier, "_restart_gateway", lambda: pytest.fail("gateway must not restart"))
+
+    result = applier.apply_update(restart=True)
+
+    assert result["applied"] is False
+    assert result["reason"] == "frontend_build_failed"
+    assert resets == ["old111"]
 
 
 def test_smoke_import_gate_detects_broken_module(tmp_path, monkeypatch):
