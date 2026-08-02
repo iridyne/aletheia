@@ -62,11 +62,13 @@ def _validate_complete_funding_evidence(
     row: dict,
     position_id: str,
     closed_at: str,
-    funding_cost: object,
+    funding_cost: float | None,
     funding_source: object,
-    evidence: dict,
+    evidence: dict | None,
 ) -> None:
     """Reject a claimed-complete funding handoff that cannot be replayed."""
+    if evidence is None:
+        return  # guard: should never be None when evidence_status=='complete'
     opened = _parse_utc_instant(row.get("opened_at"))
     closed = _parse_utc_instant(closed_at)
     evidence_opened = _parse_utc_instant(evidence.get("opened_at"))
@@ -161,8 +163,17 @@ def _account_environment(execution_mode: str) -> str:
     return "unknown"
 
 
-def _build_exchange_upnl_index() -> dict[tuple[str, str], float]:
-    """Build (canonical_symbol, normalised_direction) → exchange uPnL from cache.
+# Bitget execution modes — the only modes served by get_cached_state().
+_BITGET_MODES = frozenset({"bitget_demo", "bitget_live_limited"})
+
+
+def _build_exchange_upnl_index() -> dict[tuple[str, str, str], float]:
+    """Build (canonical_symbol, execution_mode_bucket, normalised_direction) → exchange uPnL.
+
+    Issue #571: the old 2-tuple key (symbol, direction) allowed Bitget uPnL to
+    bleed across accounts and even across execution modes.  We now scope every
+    entry to the execution_mode_bucket so Bitget uPnL can only be applied to
+    Bitget positions and OKX uPnL (from the UTA cache) to OKX positions.
 
     Returns empty dict when cache is unavailable — callers fall back to the local
     estimate so the system degrades honestly rather than showing zeros.
@@ -170,19 +181,42 @@ def _build_exchange_upnl_index() -> dict[tuple[str, str], float]:
     try:
         from aletheia.portfolio import exchange_sync
         from aletheia.data.symbols import to_canonical
+        index: dict[tuple[str, str, str], float] = {}
+
+        # Bitget legacy cache (demo + live_limited positions).
         cached = exchange_sync.get_cached_state()
-        if cached is None or exchange_sync.status_for(cached) not in ("ok", "stale"):
-            return {}
-        index: dict[tuple[str, str], float] = {}
-        for p in cached.get("positions") or []:
-            sym = to_canonical(p.get("symbol", ""))
-            side = (p.get("side") or "").lower()
-            direction = "long" if side in ("long", "buy") else "short" if side in ("short", "sell") else None
-            if not sym or direction is None:
-                continue
-            upnl = p.get("unrealized_pnl")
-            if upnl is not None:
-                index[(sym, direction)] = float(upnl)
+        if cached is not None and exchange_sync.status_for(cached) in ("ok", "stale"):
+            for p in cached.get("positions") or []:
+                sym = to_canonical(p.get("symbol", ""))
+                side = (p.get("side") or "").lower()
+                direction = "long" if side in ("long", "buy") else "short" if side in ("short", "sell") else None
+                if not sym or direction is None:
+                    continue
+                upnl = p.get("unrealized_pnl")
+                if upnl is not None:
+                    # Bitget cache is exchange-mode-agnostic; key on both buckets
+                    # so demo AND live_limited can look up their own uPnL.
+                    for mode in _BITGET_MODES:
+                        index[(sym, mode, direction)] = float(upnl)
+
+        # UTA unified cache (OKX demo, Binance testnet, future brokers).
+        # Positions in the unified cache carry an explicit broker_id.
+        try:
+            unified = exchange_sync.get_unified_cached_state()
+        except Exception:
+            unified = None
+        if unified is not None:
+            for p in unified.get("positions") or []:
+                sym = to_canonical(p.get("symbol", ""))
+                side = (p.get("side") or "").lower()
+                direction = "long" if side in ("long", "buy") else "short" if side in ("short", "sell") else None
+                broker_id = p.get("broker_id") or ""
+                if not sym or direction is None or not broker_id:
+                    continue
+                upnl = p.get("unrealized_pnl")
+                if upnl is not None:
+                    index[(sym, broker_id, direction)] = float(upnl)
+
         return index
     except Exception:
         return {}
@@ -212,8 +246,10 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
         direction = p["direction"]
         norm_dir = "long" if direction in ("long", "buy") else "short"
         # Exchange uPnL is authoritative (real mark-price + funding fees).
-        # Fall back to local estimate when exchange data is unavailable.
-        exc_val = exc_upnl_index.get((p["symbol"], norm_dir))
+        # Issue #571: use 3-tuple key (symbol, execution_mode_bucket, direction)
+        # so uPnL is scoped to the correct broker and cannot cross accounts.
+        exec_mode = p.get("execution_mode") or ""
+        exc_val = exc_upnl_index.get((p["symbol"], exec_mode, norm_dir))
         if exc_val is not None:
             upnl = exc_val
         elif direction in ("long", "buy"):

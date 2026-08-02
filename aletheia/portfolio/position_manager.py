@@ -33,6 +33,12 @@ _OPEN_CLOSE_STATES = {
     "materialization_missing", "overfilled",
 }
 
+# Issue #572: maximum age for an unresolved pending-close marker before it is
+# treated as stale and cleared so protective SL/TP/max-hold evaluation can resume.
+# Set conservatively high (4 h) — the reconciler's normal 2-min cycle should
+# resolve any real close much sooner; this gate only fires when that fails.
+_PENDING_CLOSE_STALE_HOURS = 4
+
 
 class LocalPaperClosePreflightError(RuntimeError):
     """No local close was attempted because at least one mark was unavailable."""
@@ -842,13 +848,55 @@ def evaluate_open_positions() -> dict:
             continue
         checked += 1
         if p.get("pending_close_status") in _OPEN_CLOSE_STATES:
-            logger.info(
-                "skip close for %s: pending close order %s status=%s",
-                p["id"],
-                p.get("pending_close_order_id"),
-                p.get("pending_close_status"),
-            )
-            continue
+            # Issue #572: bound the maximum age of a pending-close marker.
+            # If the marker is older than _PENDING_CLOSE_STALE_HOURS, clear it
+            # so SL/TP/max-hold protection can resume.  This does NOT resubmit
+            # a close — it just unblocks position evaluation.  The reconciler is
+            # responsible for resolving the outstanding Order state separately.
+            requested_at = p.get("pending_close_requested_at")
+            is_stale = False
+            if requested_at:
+                try:
+                    from datetime import timedelta
+                    req_dt = datetime.fromisoformat(requested_at)
+                    if req_dt.tzinfo is None:
+                        req_dt = req_dt.replace(tzinfo=timezone.utc)
+                    is_stale = (datetime.now(timezone.utc) - req_dt) > timedelta(
+                        hours=_PENDING_CLOSE_STALE_HOURS
+                    )
+                except (ValueError, TypeError):
+                    pass
+            if is_stale:
+                from aletheia.storage.repositories import update_position as _upd
+                from aletheia.files.jsonl import write_audit
+                logger.warning(
+                    "pending_close_stale: clearing stale pending marker for %s "
+                    "(order=%s status=%s age>%dh) — re-enabling protective evaluation",
+                    p["id"], p.get("pending_close_order_id"),
+                    p.get("pending_close_status"), _PENDING_CLOSE_STALE_HOURS,
+                )
+                _upd(p["id"], pending_close_status=None, pending_close_order_id=None,
+                     pending_close_requested_at=None)
+                write_audit({
+                    "actor": "system", "source": "position_manager",
+                    "event_type": "pending_close_stale_cleared",
+                    "entity_type": "position", "entity_id": p["id"],
+                    "message": (
+                        f"Stale pending-close marker cleared after >{_PENDING_CLOSE_STALE_HOURS}h; "
+                        f"order={p.get('pending_close_order_id')} "
+                        f"status={p.get('pending_close_status')}. "
+                        "Protective evaluation resumed. Reconciler must resolve the outstanding Order."
+                    ),
+                })
+                # Fall through: re-evaluate this position in the current cycle.
+            else:
+                logger.info(
+                    "skip close for %s: pending close order %s status=%s",
+                    p["id"],
+                    p.get("pending_close_order_id"),
+                    p.get("pending_close_status"),
+                )
+                continue
         try:
             price_venue = protective_price_venue(
                 p.get("execution_mode"),

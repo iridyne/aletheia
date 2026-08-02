@@ -50,6 +50,9 @@ class RuntimeConfig(BaseModel):
     gateway_mode: str = "background"
     scheduler_enabled: bool = True
     paused: bool = False
+    # Issue #391: ownership token so exchange auto-resume only clears its OWN
+    # pause, not one set by a human, the LLM startup gate, or another authority.
+    paused_by_connectivity: bool = False
     # Global trading brake. When true, the risk engine rejects every proposal
     # (paper and live). Set by human action or auto-tripped on daily-loss limit.
     kill_switch_active: bool = False

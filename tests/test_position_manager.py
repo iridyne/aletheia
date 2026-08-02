@@ -304,3 +304,50 @@ def test_config_default_stop_used_when_no_explicit_stop(tmp_path, monkeypatch):
     result = evaluate_open_positions()
     assert result["closed"] == 1
     assert repo._select_one("positions", p.id)["close_reason"] == "stop_loss"
+
+
+# --- Issue #572: stale pending-close markers must be cleared ---
+
+def test_stale_pending_close_marker_is_cleared_and_evaluation_resumes(tmp_path, monkeypatch):
+    """Issue #572: a pending_close_status that has been stuck for >4 hours must
+    be cleared so SL/TP/max-hold protection can resume.  Before the fix, the
+    position was skipped indefinitely with no convergence or escalation."""
+    setup_env(tmp_path, monkeypatch)
+
+    from datetime import timedelta
+    # Create a position whose pending marker is 5 hours old (> _PENDING_CLOSE_STALE_HOURS).
+    stale_time = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+    p = Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.01, entry_price=60000.0, current_price=60000.0,
+        execution_mode="bitget_demo",
+        stop_price=55000.0,
+    )
+    repo.insert_position(p)
+    # Manually set the stale pending-close state via SQL (update_position may not expose all fields).
+    from aletheia.storage.sqlite import get_db
+    get_db().execute(
+        "UPDATE positions SET pending_close_status='submitted', "
+        "pending_close_order_id='stale-order', pending_close_requested_at=? WHERE id=?",
+        (stale_time, p.id),
+    )
+    get_db().commit()
+
+    # Price is at stop — should trigger a stop_loss close.
+    _snap("BTC/USDT", 54000.0)
+
+    from aletheia.portfolio.position_manager import evaluate_open_positions
+    result = evaluate_open_positions()
+
+    # Stale marker must have been cleared AND the position must now be eligible for close.
+    row = repo._select_one("positions", p.id)
+    assert row["pending_close_status"] is None, (
+        "stale pending_close_status must be cleared after timeout"
+    )
+    # The close should have been attempted (price is below stop).
+    # We just verify the marker was cleared; the close might fail due to no
+    # exchange in test env but that's acceptable.
+    from aletheia.files.jsonl import read_jsonl
+    audit = read_jsonl("audit.jsonl")
+    stale_events = [e for e in audit if e.get("event_type") == "pending_close_stale_cleared"]
+    assert stale_events, "audit trail must record the stale-marker clear"

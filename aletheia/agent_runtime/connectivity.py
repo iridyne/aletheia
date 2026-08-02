@@ -366,6 +366,10 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
 
     pause_scheduler()
     cfg.runtime.paused = True
+    # Issue #391: record connectivity ownership of this pause so the resume path
+    # can verify it is clearing its own pause rather than one set by a human or
+    # another authority (startup gate, manual operator action).
+    cfg.runtime.paused_by_connectivity = True
     save_config(cfg)
 
     emit_infra_event(
@@ -405,11 +409,11 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
         except RuntimeError:
             running = None
         mode = _choose_resume_scheduling(_uvicorn_loop, running)
-        if mode == "threadsafe":
+        if mode == "threadsafe" and _uvicorn_loop is not None:
             _active_resume_task = asyncio.run_coroutine_threadsafe(
                 _exchange_auto_resume_loop(interval), _uvicorn_loop,
             )
-        elif mode == "create_task":
+        elif mode == "create_task" and running is not None:
             _active_resume_task = running.create_task(
                 _exchange_auto_resume_loop(interval), name="exchange_auto_resume",
             )
@@ -525,8 +529,22 @@ async def _resume_from_network(cfg) -> None:
     from aletheia.infra.events import emit_infra_event
     from aletheia.files.jsonl import write_audit
 
-    cfg.runtime.paused = False
-    save_config(cfg)
+    # Issue #391: only clear the pause if it was originally set by the connectivity
+    # monitor.  A human, LLM gate, or other authority may have set paused=True for
+    # an independent reason; blindly un-pausing here would undo that safety guard.
+    from aletheia.config.loader import load_config as _load_config
+    fresh_cfg = _load_config()
+    if not fresh_cfg.runtime.paused_by_connectivity:
+        logger.info(
+            "exchange_auto_resume: exchange reachable but paused_by_connectivity=False — "
+            "pause was set by another authority; not clearing it"
+        )
+        return
+    fresh_cfg.runtime.paused = False
+    fresh_cfg.runtime.paused_by_connectivity = False
+    save_config(fresh_cfg)
+    # Assign back so the local reference stays consistent for the audit/notification below.
+    cfg = fresh_cfg
     resume_scheduler()
 
     emit_infra_event(

@@ -266,6 +266,7 @@ async def test_auto_resume_on_connectivity_restored(tmp_path, monkeypatch):
     cfg = load_config()
     cfg.exchange.name = "okx"
     cfg.runtime.paused = True  # Already paused
+    cfg.runtime.paused_by_connectivity = True  # Issue #391: ownership token required
     cfg.health.exchange_auto_resume_interval_sec = 0
     cfg.health.exchange_auto_resume_success_threshold = 2
     save_config(cfg)
@@ -598,3 +599,105 @@ async def test_no_double_pause_when_already_paused(tmp_path, monkeypatch):
 
     # No pause_scheduler call — already paused
     assert pause_called == []
+
+
+# ---------------------------------------------------------------------------
+# Test: Issue #391 — auto-resume must not clear pauses owned by other authorities
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_auto_resume_skips_when_paused_by_different_authority(tmp_path, monkeypatch):
+    """Issue #391: _resume_from_network() must only clear its own pause
+    (paused_by_connectivity=True).  A human operator pause must survive."""
+    setup_env(tmp_path, monkeypatch)
+    _reset_connectivity_state()
+
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.exchange.name = "okx"
+    cfg.runtime.paused = True
+    cfg.runtime.paused_by_connectivity = False  # NOT owned by connectivity monitor
+    cfg.health.exchange_auto_resume_interval_sec = 0
+    cfg.health.exchange_auto_resume_success_threshold = 1
+    save_config(cfg)
+
+    resume_called = []
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.resume_scheduler",
+        lambda: resume_called.append(True),
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.connectivity.notify_operator",
+        lambda *a, **kw: None, raising=False,
+    )
+
+    # All probes succeed — exchange is back.
+    async def _ok(cfg=None):
+        return {"reachable": True, "latency_ms": 10.0, "error": None, "exchange": "okx"}
+    monkeypatch.setattr("aletheia.agent_runtime.connectivity.probe_exchange", _ok)
+    async def _llm_ok(cfg, max_retries=1):
+        return {"any_usable": True, "checked": 1, "results": []}
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.startup_gate.probe_llm_providers_at_startup", _llm_ok
+    )
+
+    import aletheia.agent_runtime.connectivity as conn_mod
+    monkeypatch.setattr(conn_mod.asyncio, "sleep", AsyncMock(return_value=None))
+
+    from aletheia.agent_runtime.connectivity import _exchange_auto_resume_loop
+    await _exchange_auto_resume_loop(interval_sec=0)
+
+    # Exchange is back but the pause was NOT set by connectivity → must NOT resume.
+    assert resume_called == [], (
+        "auto-resume must not clear a pause it did not create "
+        "(paused_by_connectivity=False)"
+    )
+    cfg_after = load_config()
+    assert cfg_after.runtime.paused is True, "human pause must remain"
+
+
+@pytest.mark.asyncio
+async def test_auto_resume_clears_own_pause(tmp_path, monkeypatch):
+    """Issue #391 positive case: when paused_by_connectivity=True, auto-resume
+    correctly clears the pause after exchange recovers."""
+    setup_env(tmp_path, monkeypatch)
+    _reset_connectivity_state()
+
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.exchange.name = "okx"
+    cfg.runtime.paused = True
+    cfg.runtime.paused_by_connectivity = True  # owned by connectivity monitor
+    cfg.health.exchange_auto_resume_interval_sec = 0
+    cfg.health.exchange_auto_resume_success_threshold = 1
+    save_config(cfg)
+
+    resume_called = []
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.resume_scheduler",
+        lambda: resume_called.append(True),
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.connectivity.notify_operator",
+        lambda *a, **kw: None, raising=False,
+    )
+
+    async def _ok(cfg=None):
+        return {"reachable": True, "latency_ms": 10.0, "error": None, "exchange": "okx"}
+    monkeypatch.setattr("aletheia.agent_runtime.connectivity.probe_exchange", _ok)
+    async def _llm_ok(cfg, max_retries=1):
+        return {"any_usable": True, "checked": 1, "results": []}
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.startup_gate.probe_llm_providers_at_startup", _llm_ok
+    )
+
+    import aletheia.agent_runtime.connectivity as conn_mod
+    monkeypatch.setattr(conn_mod.asyncio, "sleep", AsyncMock(return_value=None))
+
+    from aletheia.agent_runtime.connectivity import _exchange_auto_resume_loop
+    await _exchange_auto_resume_loop(interval_sec=0)
+
+    assert resume_called == [True], "auto-resume must clear its own pause"
+    cfg_after = load_config()
+    assert cfg_after.runtime.paused is False
+    assert cfg_after.runtime.paused_by_connectivity is False
