@@ -131,6 +131,36 @@ def test_review_checks_cover_each_language_without_release_builds() -> None:
     assert "cargo build" not in commands
 
 
+def test_native_host_build_uses_self_contained_linker() -> None:
+    """Ensure the Rust compilation step never falls back to the system C linker.
+
+    Historically (runs #814-#826, 2026-07-31) the review job failed because
+    `cargo test` tried to link via `cc`, which was absent on some runner nodes.
+    The fix pins the musl target to the LLVM self-contained linker (`rust-lld`)
+    via RUSTFLAGS.  This test locks that protection in so a later edit cannot
+    silently regress to the system-linker path.
+    """
+    review_steps = _workflow()["jobs"]["review"]["steps"]
+    native_step = next(
+        (s for s in review_steps if isinstance(s, dict) and "native host" in s.get("name", "")),
+        None,
+    )
+    assert native_step is not None, "'Test the platform-neutral native host' step not found"
+
+    step_env = native_step.get("env", {})
+    rustflags = step_env.get("RUSTFLAGS", "")
+    assert "linker=rust-lld" in rustflags, (
+        f"Native host step must set RUSTFLAGS=-C linker=rust-lld to avoid "
+        f"depending on the system C toolchain (got: {rustflags!r})"
+    )
+
+    # The step must also target the musl platform so no glibc symbols leak in.
+    run = native_step.get("run", "")
+    assert "x86_64-unknown-linux-musl" in run, (
+        "Native host step must compile for x86_64-unknown-linux-musl"
+    )
+
+
 def test_python_regression_excludes_nightly_simulation_and_isolates_state() -> None:
     job = _workflow()["jobs"]["tests"]
     commands = _run_commands(job)

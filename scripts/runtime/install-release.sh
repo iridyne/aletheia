@@ -75,8 +75,19 @@ case "$releases_root" in
 esac
 
 command -v python3 >/dev/null 2>&1 || fail "python3 is required"
-command -v unzip >/dev/null 2>&1 || fail "unzip is required"
 command -v uv >/dev/null 2>&1 || fail "uv is required"
+
+# Prefer the system unzip for speed; fall back to python3's built-in zipfile
+# module so the installer works on Linux CI runners that do not have unzip
+# pre-installed (e.g. stock ubuntu-24.04 images without build-essential).
+_unzip_archive() {
+  local archive="$1" destination="$2"
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -q "$archive" -d "$destination"
+  else
+    python3 -m zipfile -e "$archive" "$destination"
+  fi
+}
 
 archive="$(cd "$(dirname "$archive")" && pwd -P)/$(basename "$archive")"
 if [[ -z "$checksum" ]]; then
@@ -113,7 +124,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-unzip -q "$archive" -d "$staging"
+_unzip_archive "$archive" "$staging"
 [[ -f "$staging/release-manifest.json" ]] || fail "release-manifest.json is missing"
 [[ ! -d "$staging/.git" ]] || fail "release archive must not contain Git metadata"
 

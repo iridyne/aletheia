@@ -73,13 +73,24 @@ async def test_infra_readyz_reports_static_dashboard_gap(client, tmp_path, monke
 
 
 @pytest.mark.anyio
-async def test_infra_status_includes_runtime_routing_context(client, monkeypatch):
+async def test_infra_status_includes_runtime_routing_context(client, tmp_path, monkeypatch):
     # dashboard_static is a gitignored build artifact (d728aa4); a fresh test env has no
     # built assets, so readiness would 503. This test checks the infra-status PAYLOAD
     # (host/port/runtime_mode/state), not the presence of built front-end assets, so stub
     # static-ready. The static-missing → 503 path is covered by
     # test_infra_readyz_reports_static_dashboard_gap above.
+    import aletheia.config.loader as loader
     import aletheia.server.routes.health as health_routes
+
+    # Write an explicit bind_host so the assertion is independent of whatever
+    # AppConfig.bind_host default the codebase uses at any given time.  A
+    # regression in this field shows up as a payload mismatch, not as a test
+    # that silently passes with a wrong default.
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("app:\n  bind_host: '0.0.0.0'\n", encoding="utf-8")
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
+    loader._invalidate_config_cache()
+
     monkeypatch.setattr(health_routes, "_static_dashboard_ready", lambda: (True, "/fake/dashboard_static"))
     resp = await client.get("/_infra/status")
     assert resp.status_code == 200
