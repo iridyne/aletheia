@@ -27,6 +27,7 @@ def _prepare_db(tmp_path, monkeypatch):
 # _signal_score()
 # ---------------------------------------------------------------------------
 
+
 def test_signal_score_no_signal():
     from aletheia.agents.market_observer import _signal_score
 
@@ -64,8 +65,11 @@ def test_signal_score_takes_max_of_dimensions():
 
     # RSI deviation = 14 → 14/12 ≈ 1.17; ATR% = 1.6 → 1.6/0.8 = 2.0 — ATR wins
     pf = {
-        "passed": True, "rsi": 36.0, "atr_pct": 1.6,
-        "keyword_hits": [], "matched_rules": ["rsi_deviation", "atr_pct"],
+        "passed": True,
+        "rsi": 36.0,
+        "atr_pct": 1.6,
+        "keyword_hits": [],
+        "matched_rules": ["rsi_deviation", "atr_pct"],
     }
     score = _signal_score(pf)
     expected = max(14.0 / _PREFILTER_RSI_DEVIATION, 1.6 / _PREFILTER_ATR_PCT)
@@ -84,11 +88,13 @@ def test_signal_score_below_threshold():
 def test_pre_filter_rejects_nonfinite_structured_values(value):
     from aletheia.agents.market_observer import _evaluate_pre_filter, _signal_score
 
-    result = _evaluate_pre_filter({
-        "symbols": {
-            "BTC/USDT": {"1h": {"rsi_14": value, "atr_pct": value}},
-        },
-    })
+    result = _evaluate_pre_filter(
+        {
+            "symbols": {
+                "BTC/USDT": {"1h": {"rsi_14": value, "atr_pct": value}},
+            },
+        }
+    )
 
     assert result == {
         "passed": False,
@@ -104,14 +110,19 @@ def test_pre_filter_rejects_nonfinite_structured_values(value):
 # Signal-strength ordering
 # ---------------------------------------------------------------------------
 
+
 def test_signal_ordering_passed_before_failed():
     """Instruments with signal_score >= 1.0 sort before those with score < 1.0."""
     from aletheia.agents.market_observer import _signal_score
 
     scores = {
         "A": _signal_score({"passed": False, "rsi": 51.0, "atr_pct": 0.2, "keyword_hits": [], "matched_rules": []}),
-        "B": _signal_score({"passed": True, "rsi": 35.0, "atr_pct": None, "keyword_hits": [], "matched_rules": ["rsi_deviation"]}),
-        "C": _signal_score({"passed": True, "rsi": None, "atr_pct": 1.6, "keyword_hits": [], "matched_rules": ["atr_pct"]}),
+        "B": _signal_score(
+            {"passed": True, "rsi": 35.0, "atr_pct": None, "keyword_hits": [], "matched_rules": ["rsi_deviation"]}
+        ),
+        "C": _signal_score(
+            {"passed": True, "rsi": None, "atr_pct": 1.6, "keyword_hits": [], "matched_rules": ["atr_pct"]}
+        ),
     }
     instruments = ["A", "B", "C"]
     sorted_order = sorted(instruments, key=lambda i: scores[i], reverse=True)
@@ -128,8 +139,12 @@ def test_signal_ordering_higher_score_first():
     # A: RSI deviation 30 → score = 30/12 = 2.5
     # B: RSI deviation 13 → score = 13/12 ≈ 1.08
     scores = {
-        "A": _signal_score({"passed": True, "rsi": 20.0, "atr_pct": None, "keyword_hits": [], "matched_rules": ["rsi_deviation"]}),
-        "B": _signal_score({"passed": True, "rsi": 37.0, "atr_pct": None, "keyword_hits": [], "matched_rules": ["rsi_deviation"]}),
+        "A": _signal_score(
+            {"passed": True, "rsi": 20.0, "atr_pct": None, "keyword_hits": [], "matched_rules": ["rsi_deviation"]}
+        ),
+        "B": _signal_score(
+            {"passed": True, "rsi": 37.0, "atr_pct": None, "keyword_hits": [], "matched_rules": ["rsi_deviation"]}
+        ),
     }
     assert scores["A"] > scores["B"]
     instruments = ["B", "A"]
@@ -140,6 +155,7 @@ def test_signal_ordering_higher_score_first():
 # ---------------------------------------------------------------------------
 # Round-robin advance preserves original instrument order
 # ---------------------------------------------------------------------------
+
 
 def test_completed_prefix_cursor_consumes_each_attempt_once(tmp_path, monkeypatch):
     """A full out-of-order run must not re-advance over completed identities.
@@ -192,9 +208,7 @@ def test_round_robin_advance_partial_run(tmp_path, monkeypatch):
     assert rr.next_key() == "B"
 
 
-def test_signal_priority_keeps_durable_round_robin_item_boundedly_reachable(
-    tmp_path, monkeypatch
-):
+def test_signal_priority_keeps_durable_round_robin_item_boundedly_reachable(tmp_path, monkeypatch):
     """A permanently low-score item must not starve behind the same high-score pair.
 
     The per-cycle capacity of two models the observer hitting its wall-clock budget
@@ -215,10 +229,14 @@ def test_signal_priority_keeps_durable_round_robin_item_boundedly_reachable(
 
     for _cycle in range(len(canonical)):
         rotated = rotate_from_next(
-            canonical, next_key=rr.next_key(), key=str,
+            canonical,
+            next_key=rr.next_key(),
+            key=str,
         )
         ordered = _fair_signal_order(
-            rotated, score=lambda item: scores[item], key=str,
+            rotated,
+            score=lambda item: scores[item],
+            key=str,
         )
         processed = ordered[:2]
         processed_by_cycle.append(processed)
@@ -329,10 +347,7 @@ async def test_prefetch_batch_reuses_one_provider_and_bounds_concurrency(monkeyp
         return instrument.symbol
 
     monkeypatch.setattr(mo, "_prefetch_symbol", fake_prefetch)
-    instruments = [
-        SimpleNamespace(symbol=f"S{i}/USDT", market_type="spot")
-        for i in range(10)
-    ]
+    instruments = [SimpleNamespace(symbol=f"S{i}/USDT", market_type="spot") for i in range(10)]
     db_cache = mo._DbCache(
         perp_structures={},
         funding_hl={},
@@ -357,9 +372,7 @@ async def test_prefetch_batch_reuses_one_provider_and_bounds_concurrency(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_prefetch_time_is_charged_to_same_serial_loop_deadline(
-    tmp_path, monkeypatch
-):
+async def test_prefetch_time_is_charged_to_same_serial_loop_deadline(tmp_path, monkeypatch):
     """A slow prefetch leaves only its true remainder for serial LLM work.
 
     With 450 of 460 seconds consumed before the loop, only one 15-second attempt
@@ -381,7 +394,11 @@ async def test_prefetch_time_is_charged_to_same_serial_loop_deadline(
 
     instruments = [_Instrument(symbol) for symbol in ("A", "B", "C")]
     empty_cache = mo._DbCache(
-        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+        perp_structures={},
+        funding_hl={},
+        funding_hl_pred={},
+        news={},
+        onchain_rows=[],
     )
     empty_pf = {
         "passed": True,
@@ -402,7 +419,8 @@ async def test_prefetch_time_is_charged_to_same_serial_loop_deadline(
         lambda: SimpleNamespace(
             universe=SimpleNamespace(enabled=False, max_candidates=3),
             market_data=SimpleNamespace(
-                prediction_enabled=False, ccxt_exchange="fixture",
+                prediction_enabled=False,
+                ccxt_exchange="fixture",
             ),
             observer=SimpleNamespace(force_full_scan=False),
         ),
@@ -462,14 +480,14 @@ async def test_prefetch_time_is_charged_to_same_serial_loop_deadline(
     assert analyzed == ["A"]
     assert result["errors"] == []
     assert result["warnings"] == [
-        "loop_budget_exceeded: processed 1/3, skipped 2 "
-        "(wall-clock cap 460s < 500s job timeout — avoids thread leak)"
+        "loop_budget_exceeded: processed 1/3, skipped 2 (wall-clock cap 460s < 500s job timeout — avoids thread leak)"
     ]
 
 
 # ---------------------------------------------------------------------------
 # _prefetch_symbol() error isolation
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_prefetch_failure_isolates_to_single_symbol(tmp_path, monkeypatch):
@@ -487,7 +505,11 @@ async def test_prefetch_failure_isolates_to_single_symbol(tmp_path, monkeypatch)
 
     # Build a minimal _DbCache (empty — no DB data needed for this test)
     empty_cache = _DbCache(
-        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+        perp_structures={},
+        funding_hl={},
+        funding_hl_pred={},
+        news={},
+        onchain_rows=[],
     )
 
     # Fake InstrumentId-like objects
@@ -571,15 +593,19 @@ async def test_spot_prefetch_omits_hl_and_position_x(tmp_path, monkeypatch):
 
     instrument = SimpleNamespace(symbol="BTC/USDT", market_type="spot")
     snapshot = SimpleNamespace(tradability={}, leverage={}, macro={})
-    with patch(
-        "aletheia.trading.market_context.build_market_context",
-        side_effect=fake_market_context,
-    ), patch(
-        "aletheia.data.context_builder.build_market_context_from_db",
-        return_value=snapshot,
-    ), patch(
-        "aletheia.data.context_builder.render_enriched_context_md",
-        side_effect=fake_render,
+    with (
+        patch(
+            "aletheia.trading.market_context.build_market_context",
+            side_effect=fake_market_context,
+        ),
+        patch(
+            "aletheia.data.context_builder.build_market_context_from_db",
+            return_value=snapshot,
+        ),
+        patch(
+            "aletheia.data.context_builder.render_enriched_context_md",
+            side_effect=fake_render,
+        ),
     ):
         result = await _prefetch_symbol(
             instrument,
@@ -606,10 +632,13 @@ async def test_failed_prefetch_does_not_reach_llm(tmp_path, monkeypatch):
     from aletheia.agents.market_observer import _analyze_symbol, _SymbolPrefetch
 
     failed_prefetch = _SymbolPrefetch(
-        context_str="", debug={},
+        context_str="",
+        debug={},
         pre_filter={"passed": False, "rsi": None, "atr_pct": None, "keyword_hits": [], "matched_rules": []},
         signal_score=0.0,
-        funding_rate_val=None, open_interest_val=None, oi_delta_val=None,
+        funding_rate_val=None,
+        open_interest_val=None,
+        oi_delta_val=None,
         failed=True,
     )
 
@@ -666,7 +695,11 @@ async def test_loop_budget_exceeded_is_warning_not_error(tmp_path, monkeypatch):
 
     instruments = [_Instrument(s) for s in ("X", "Y")]
     empty_cache = mo._DbCache(
-        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+        perp_structures={},
+        funding_hl={},
+        funding_hl_pred={},
+        news={},
+        onchain_rows=[],
     )
     empty_pf = {
         "passed": True,
@@ -685,7 +718,8 @@ async def test_loop_budget_exceeded_is_warning_not_error(tmp_path, monkeypatch):
         lambda: SimpleNamespace(
             universe=SimpleNamespace(enabled=False, max_candidates=2),
             market_data=SimpleNamespace(
-                prediction_enabled=False, ccxt_exchange="fixture",
+                prediction_enabled=False,
+                ccxt_exchange="fixture",
             ),
             observer=SimpleNamespace(force_full_scan=False),
         ),
@@ -735,8 +769,7 @@ async def test_loop_budget_exceeded_is_warning_not_error(tmp_path, monkeypatch):
 
     # ── core contract: budget truncation is NOT a failure ──
     assert result["errors"] == [], (
-        "loop_budget_exceeded must not appear in errors — it would trigger "
-        "job_consecutive_failure:market_observer"
+        "loop_budget_exceeded must not appear in errors — it would trigger job_consecutive_failure:market_observer"
     )
     assert any("loop_budget_exceeded" in w for w in result.get("warnings", [])), (
         "loop_budget_exceeded must appear in warnings so operators can observe it"
@@ -765,7 +798,11 @@ async def test_prefetch_budget_exceeded_is_warning_not_error(tmp_path, monkeypat
 
     instruments = [_Instrument("Z")]
     empty_cache = mo._DbCache(
-        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+        perp_structures={},
+        funding_hl={},
+        funding_hl_pred={},
+        news={},
+        onchain_rows=[],
     )
 
     monkeypatch.setattr(mo, "_monotonic", lambda: 100.0)
@@ -776,7 +813,8 @@ async def test_prefetch_budget_exceeded_is_warning_not_error(tmp_path, monkeypat
         lambda: SimpleNamespace(
             universe=SimpleNamespace(enabled=False, max_candidates=1),
             market_data=SimpleNamespace(
-                prediction_enabled=False, ccxt_exchange="fixture",
+                prediction_enabled=False,
+                ccxt_exchange="fixture",
             ),
             observer=SimpleNamespace(force_full_scan=False),
         ),
@@ -818,9 +856,192 @@ async def test_prefetch_budget_exceeded_is_warning_not_error(tmp_path, monkeypat
 
     result = await mo.run_market_observer(permission_mode="Observe", run_id="prefetch-warn-test")
 
-    assert result["errors"] == [], (
-        "prefetch_budget_exceeded must not appear in errors"
-    )
+    assert result["errors"] == [], "prefetch_budget_exceeded must not appear in errors"
     assert any("prefetch_budget_exceeded" in w for w in result.get("warnings", [])), (
         "prefetch_budget_exceeded must appear in warnings"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 bounded-concurrent LLM loop
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_llm_loop_runs_concurrently(tmp_path, monkeypatch):
+    """_analyze_symbol calls for different instruments must overlap in time.
+
+    With concurrency=2 and 4 instruments each taking 0.1s, the wall clock
+    should be roughly 0.2s (2 batches × 0.1s), not 0.4s (4 × 0.1s serial).
+    We use a generous 2× serial-time upper bound to keep the test robust.
+    """
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agents import market_observer as mo
+
+    class _Instrument:
+        def __init__(self, symbol):
+            self.symbol = symbol
+            self.market_type = "spot"
+
+        def __str__(self):
+            return f"{self.symbol}:spot"
+
+    n_symbols = 4
+    instruments = [_Instrument(s) for s in ("A", "B", "C", "D")]
+    empty_cache = mo._DbCache(
+        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+    )
+    empty_pf = {
+        "passed": True,
+        "rsi": 20.0,
+        "atr_pct": None,
+        "keyword_hits": [],
+        "matched_rules": ["rsi_deviation"],
+    }
+
+    monkeypatch.setattr(mo, "_monotonic", time.monotonic)
+    monkeypatch.setattr(mo, "is_tool_permitted", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        mo,
+        "load_config",
+        lambda: SimpleNamespace(
+            universe=SimpleNamespace(enabled=False, max_candidates=n_symbols),
+            market_data=SimpleNamespace(prediction_enabled=False, ccxt_exchange="fixture"),
+            observer=SimpleNamespace(force_full_scan=False),
+        ),
+    )
+    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
+    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
+
+    def fake_batch(_symbols):
+        return empty_cache
+
+    async def fake_prefetch(instrument, **_kwargs):
+        return mo._SymbolPrefetch(
+            context_str=instrument.symbol,
+            debug={},
+            pre_filter=empty_pf,
+            signal_score=1.0,
+            funding_rate_val=None,
+            open_interest_val=None,
+            oi_delta_val=None,
+        )
+
+    async def fake_gather(coros, *, deadline):
+        return [await c for c in coros]
+
+    ANALYZE_DELAY_S = 0.05  # Each fake LLM call costs 50 ms
+
+    async def fake_analyze(*, symbol, **_kwargs):
+        await asyncio.sleep(ANALYZE_DELAY_S)
+        return None, f"pre_filter_skip:{symbol}"
+
+    monkeypatch.setattr(mo, "_batch_prefetch_db", fake_batch)
+    monkeypatch.setattr(mo, "_prefetch_symbol", fake_prefetch)
+    monkeypatch.setattr(mo, "_gather_prefetch_with_deadline", fake_gather)
+    monkeypatch.setattr(mo, "_analyze_symbol", fake_analyze)
+    monkeypatch.setattr("aletheia.knowledge.router.build_advisory_context", lambda **_: "")
+    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda: None)
+    monkeypatch.setattr("aletheia.learning.control.learning_influence_enabled", lambda: False)
+
+    t0 = time.monotonic()
+    result = await mo.run_market_observer(permission_mode="Observe", run_id="concurrency-test")
+    elapsed = time.monotonic() - t0
+
+    serial_time = n_symbols * ANALYZE_DELAY_S  # 0.20 s
+    # With concurrency=2 the wall clock should be ~2 batches × ANALYZE_DELAY_S.
+    # We allow up to serial_time * 0.8 as the upper bound to confirm overlap.
+    assert elapsed < serial_time * 0.8, (
+        f"LLM loop took {elapsed:.3f}s — expected < {serial_time * 0.8:.3f}s "
+        f"(serial would be {serial_time:.3f}s); concurrency appears to be serial"
+    )
+    assert result["errors"] == []
+
+
+@pytest.mark.asyncio
+async def test_llm_loop_concurrent_results_collected(tmp_path, monkeypatch):
+    """Concurrent _analyze_symbol results (outputs/errors) are all captured."""
+    import asyncio
+    from types import SimpleNamespace
+
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agents import market_observer as mo
+
+    class _Instrument:
+        def __init__(self, symbol):
+            self.symbol = symbol
+            self.market_type = "spot"
+
+        def __str__(self):
+            return f"{self.symbol}:spot"
+
+    instruments = [_Instrument(s) for s in ("X1", "X2", "X3")]
+    empty_cache = mo._DbCache(
+        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+    )
+    empty_pf = {
+        "passed": True,
+        "rsi": 20.0,
+        "atr_pct": None,
+        "keyword_hits": [],
+        "matched_rules": ["rsi_deviation"],
+    }
+
+    monkeypatch.setattr(mo, "_monotonic", lambda: 100.0)
+    monkeypatch.setattr(mo, "is_tool_permitted", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        mo,
+        "load_config",
+        lambda: SimpleNamespace(
+            universe=SimpleNamespace(enabled=False, max_candidates=3),
+            market_data=SimpleNamespace(prediction_enabled=False, ccxt_exchange="fixture"),
+            observer=SimpleNamespace(force_full_scan=False),
+        ),
+    )
+    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
+    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
+
+    async def fake_gather(coros, *, deadline):
+        return [await c for c in coros]
+
+    async def fake_prefetch(instrument, **_kwargs):
+        return mo._SymbolPrefetch(
+            context_str=instrument.symbol,
+            debug={},
+            pre_filter=empty_pf,
+            signal_score=1.0,
+            funding_rate_val=None,
+            open_interest_val=None,
+            oi_delta_val=None,
+        )
+
+    # Two succeed (pre_filter_skip = counted in _skip_count, not errors/outputs),
+    # one raises an unexpected exception.
+    async def fake_analyze(*, symbol, **_kwargs):
+        if symbol == "X2":
+            raise RuntimeError("simulated_llm_crash")
+        return None, f"pre_filter_skip:{symbol}"
+
+    monkeypatch.setattr(mo, "_batch_prefetch_db", lambda _: empty_cache)
+    monkeypatch.setattr(mo, "_prefetch_symbol", fake_prefetch)
+    monkeypatch.setattr(mo, "_gather_prefetch_with_deadline", fake_gather)
+    monkeypatch.setattr(mo, "_analyze_symbol", fake_analyze)
+    monkeypatch.setattr("aletheia.knowledge.router.build_advisory_context", lambda **_: "")
+    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda: None)
+    monkeypatch.setattr("aletheia.learning.control.learning_influence_enabled", lambda: False)
+
+    result = await mo.run_market_observer(permission_mode="Observe", run_id="concurrent-results-test")
+
+    # X1 and X3 are pre-filter skips (not errors, not outputs).
+    # X2 raises → must appear in errors.
+    assert any("X2" in e and "simulated_llm_crash" in e for e in result["errors"]), (
+        f"Expected X2 crash in errors, got: {result['errors']}"
+    )
+    # X1 and X3 skips should NOT appear in errors.
+    assert not any("X1" in e or "X3" in e for e in result["errors"])
