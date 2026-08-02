@@ -274,23 +274,27 @@ def _finite_float(
     return number
 
 
-def _numbers_match(left: float, right: float) -> bool:
+def _numbers_match(left: float | None, right: float | None) -> bool:
+    if left is None or right is None:
+        return left is right  # both None → match; one None → no match
     tolerance = max(1e-12, max(abs(left), abs(right)) * 1e-9)
     return abs(left - right) <= tolerance
 
 
-def _stored_money_matches(left: float, right: float) -> bool:
+def _stored_money_matches(left: float | None, right: float | None) -> bool:
     # Position fees are intentionally normalized to eight decimals by the PnL
     # writer, while reconciliation evidence retains the raw private sum.
+    if left is None or right is None:
+        return left is right
     tolerance = max(5e-9, max(abs(left), abs(right)) * 1e-9)
     return abs(left - right) <= tolerance
 
 
 def _evidence_fee_in_quote(
     *,
-    fee: float,
+    fee: float | None,
     fee_currency: str,
-    fill_price: float,
+    fill_price: float | None,
     symbol: str,
 ) -> float | None:
     """Recompute the quote fee using the materializer's direct-fill rules."""
@@ -302,6 +306,8 @@ def _evidence_fee_in_quote(
     if currency == quote.upper():
         return fee
     if currency == base.upper():
+        if fee is None or fill_price is None:
+            return None
         return fee * fill_price
     return None
 
@@ -468,10 +474,11 @@ def _closed_pending_chain_complete(
             return False
         expected_remote_ids.append(remote_fill_id)
         expected_durable_ids.append(durable_fill_id)
-        total_quantity += item_quantity
-        total_notional += item_quantity * item_price
+        # The None-check above guarantees these are not None at this point.
+        total_quantity += item_quantity  # type: ignore[operator]
+        total_notional += item_quantity * item_price  # type: ignore[operator]
         total_fee_in_quote += fee_in_quote
-        latest_fill_ms = max(latest_fill_ms or item_time_ms, item_time_ms)
+        latest_fill_ms = max(latest_fill_ms or item_time_ms, item_time_ms)  # type: ignore[arg-type]
 
     if (
         len(set(expected_remote_ids)) != len(expected_remote_ids)
@@ -734,32 +741,48 @@ def _write_filled_gap_event(
     recovered: bool,
     reason: str,
 ) -> None:
-    """Keep an old filled status honest when its chain cannot be recovered."""
-    write_audit({
-        "actor": "system",
-        "source": "reconciliation",
-        "event_type": (
-            "order_reconciled"
-            if recovered
-            else "order_reconciliation_inconclusive"
-        ),
-        "entity_type": "order",
-        "entity_id": order["id"],
-        "reason": reason,
-        "before": {"status": order.get("status")},
-        "after": {
-            "status": order.get("status"),
-            "chain_recovered": recovered,
+    """Keep an old filled status honest when its chain cannot be recovered.
+
+    Issue #573: inconclusive events were written on every 2-minute reconcile cycle
+    for the same order, producing unbounded duplicates (196k+ in one real export).
+    A stable dedup_id per (order_id, outcome) ensures each unique state observation
+    is recorded exactly once in the JSONL chain.
+    """
+    event_type = (
+        "order_reconciled"
+        if recovered
+        else "order_reconciliation_inconclusive"
+    )
+    # Stable per-(order, outcome) identity so repeated inconclusive probes do
+    # not append duplicate audit lines.  The dedup_id contract requires mirror_db=False;
+    # the order row itself is already persisted by the caller.
+    dedup_id = f"{event_type}:{order['id']}"
+    write_audit(
+        {
+            "id": dedup_id,
+            "actor": "system",
+            "source": "reconciliation",
+            "event_type": event_type,
+            "entity_type": "order",
+            "entity_id": order["id"],
             "reason": reason,
+            "before": {"status": order.get("status")},
+            "after": {
+                "status": order.get("status"),
+                "chain_recovered": recovered,
+                "reason": reason,
+            },
+            "message": (
+                "Recovered the historical filled Order's durable Fill/Position chain "
+                "from exact complete private evidence."
+                if recovered
+                else "Historical filled Order chain recovery remained inconclusive; "
+                "the existing Order status and local exposure were left unchanged."
+            ),
         },
-        "message": (
-            "Recovered the historical filled Order's durable Fill/Position chain "
-            "from exact complete private evidence."
-            if recovered
-            else "Historical filled Order chain recovery remained inconclusive; "
-            "the existing Order status and local exposure were left unchanged."
-        ),
-    })
+        mirror_db=False,
+        dedup_id=dedup_id,
+    )
 
 
 def _fetch_multibroker_evidence(order: dict):

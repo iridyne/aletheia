@@ -31,6 +31,13 @@ _DATASETS: list[tuple[str, str, set[str]]] = [
     ("paper_account_events", "paper_account_events.csv",  {"analysis", "migration"}),
     ("agent_runs",           "agent_runs.csv",            {"migration"}),
     ("agent_run_steps",      "agent_run_steps.csv",       {"migration"}),
+    # Issue #576: agent_tool_calls is the authoritative trace for modern agent runs.
+    # The reader UNIONs agent_run_steps with agent_tool_calls; exporting only the
+    # former makes post-2026-07-19 runs appear trace-less in migration exports.
+    ("agent_tool_calls",     "agent_tool_calls.csv",      {"migration"}),
+    # Issue #576: upstream causal tables required for complete instance transfer.
+    ("opportunities",        "opportunities.csv",         {"migration"}),
+    ("pi_decisions",         "pi_decisions.csv",          {"migration"}),
     ("audit_events",         "audit_events.csv",          {"migration"}),
 ]
 

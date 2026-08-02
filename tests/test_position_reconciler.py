@@ -427,3 +427,89 @@ def test_run_reconcile_respects_auto_adopt_disabled(tmp_path, monkeypatch):
     # No adoption (disabled), but orphan close still runs
     assert summary["adopted"] == []
     assert summary["counts"]["external"] == 1
+
+
+# --- Issue #574: adopt_position must populate leverage ---
+
+def test_adopt_position_preserves_leverage(tmp_path, monkeypatch):
+    """Issue #574: adopt_position() was dropping the leverage field, causing
+    Risk to fail the account_leverage_check for every adopted futures position."""
+    setup_env(tmp_path, monkeypatch)
+
+    # Stub out all side effects that reach the exchange or notifications.
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *a, **kw: True)
+    import aletheia.notifications as notif_mod
+    monkeypatch.setattr(notif_mod, "notify_operator", lambda *a, **kw: None)
+
+    from aletheia.portfolio.position_reconciler import adopt_position
+
+    exchange_pos = {
+        "symbol": "BTC/USDT",
+        "side": "long",
+        "quantity": 0.01,
+        "entry_price": 60000.0,
+        "unrealized_pnl": 50.0,
+        "mark_price": 65000.0,
+        "leverage": 10,
+    }
+    result = adopt_position(exchange_pos, account_mode="demo")
+    assert "position_id" in result
+
+    from aletheia.storage.sqlite import get_db
+    row = get_db().execute(
+        "SELECT leverage FROM positions WHERE id=?", (result["position_id"],)
+    ).fetchone()
+    assert row is not None
+    assert row["leverage"] == 10, (
+        f"leverage must be carried from exchange_pos into the adopted Position, got {row['leverage']}"
+    )
+
+
+# --- Issue #575: market-type key prevents spot/futures collisions ---
+
+def test_spot_and_futures_same_symbol_direction_not_merged(tmp_path, monkeypatch):
+    """Issue #575: a spot and a futures position for the same symbol+direction
+    must NOT collide in the reconcile classification dicts."""
+    setup_env(tmp_path, monkeypatch)
+
+    # Two local positions: one spot, one futures
+    repo.insert_position(Position(
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        quantity=0.5, entry_price=60000.0, execution_mode="bitget_demo",
+    ))
+    repo.insert_position(Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.01, entry_price=60000.0, execution_mode="bitget_demo",
+    ))
+
+    # Exchange: only the futures position, with explicit market_type.
+    # We need to stub the UTA unified cache so bitget_demo appears as connected;
+    # the legacy get_cached_state path is also stubbed for the Bitget fallback.
+    from aletheia.portfolio import position_reconciler as pr
+    ep = {
+        "symbol": "BTCUSDT", "side": "long", "quantity": 0.01,
+        "entry_price": 60000.0, "unrealized_pnl": 0.0, "mark_price": 60000.0,
+        "market_type": "usdt_futures", "broker_id": "bitget_demo",
+    }
+    unified = {
+        "accounts": [{"broker_id": "bitget_demo", "equity_usdt": 1000.0}],
+        "positions": [ep],
+        "age_seconds": 5.0,
+        "fetched_at": "2026-06-12T00:00:00+00:00",
+    }
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state",
+                        lambda: unified)
+    _stub_cache(monkeypatch, [ep])
+
+    from aletheia.portfolio.position_reconciler import classify_positions
+    r = classify_positions()
+
+    # futures leg is managed; spot leg is orphaned (not on exchange).
+    managed_syms = [(i.symbol, i.local["market_type"]) for i in r.managed if i.local]
+    orphaned_syms = [(i.symbol, i.local["market_type"]) for i in r.orphaned if i.local]
+    assert any(mt == "usdt_futures" for _, mt in managed_syms), (
+        "futures leg must be classified managed"
+    )
+    assert any(mt == "spot" for _, mt in orphaned_syms), (
+        "spot leg must be classified orphaned (not matched to futures exchange position)"
+    )

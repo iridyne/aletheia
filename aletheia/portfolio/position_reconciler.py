@@ -76,6 +76,19 @@ def _key(symbol: str, direction: str) -> tuple[str, str]:
     return (to_canonical(symbol), _norm_direction(direction))
 
 
+_FUTURES_MARKET_TYPES = frozenset({"usdt_futures", "coin_futures", "linear", "inverse", "swap"})
+
+
+def _market_type_bucket(market_type: str | None) -> str | None:
+    """Return 'futures' or 'spot' for known types; None for unknown/missing."""
+    mt = (market_type or "").lower()
+    if mt in _FUTURES_MARKET_TYPES:
+        return "futures"
+    if mt in {"spot", "stock", "index"}:
+        return "spot"
+    return None
+
+
 @dataclass
 class ReconcileItem:
     """One classified position. `local`/`exchange` carry the source rows when present."""
@@ -238,9 +251,17 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
             cached = exchange_sync.get_cached_state(account_mode)
     sync_status = exchange_sync.status_for(cached)
 
+    # Issue #575: build a market-type-aware lookup.  local_by_key is keyed by
+    # (canonical_symbol, direction) as before; local_by_mtkey adds market_type
+    # so an OKX spot BTC/USDT and a OKX futures BTC/USDT can coexist.
     local_by_key: dict[tuple[str, str], dict] = {}
+    local_by_mtkey: dict[tuple[str, str, str], dict] = {}
     for p in in_scope:
-        local_by_key[_key(p["symbol"], p["direction"])] = p
+        k2 = _key(p["symbol"], p["direction"])
+        local_by_key[k2] = p
+        mt = _market_type_bucket(p.get("market_type"))
+        if mt is not None:
+            local_by_mtkey[(k2[0], mt, k2[1])] = p
     result.sync_status = sync_status
     if target_execution_mode:
         from aletheia.portfolio.disappearance_confirmation import build_view_evidence
@@ -268,19 +289,72 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
 
     exchange_positions = cached.get("positions") or []
     exchange_by_key: dict[tuple[str, str], dict] = {}
+    exchange_by_mtkey: dict[tuple[str, str, str], dict] = {}
     for ep in exchange_positions:
         # Skip zero-quantity rows the exchange sometimes returns for closed slots.
         if float(ep.get("quantity") or 0) <= 0:
             continue
-        exchange_by_key[_key(ep.get("symbol", ""), ep.get("side", ""))] = ep
+        k2 = _key(ep.get("symbol", ""), ep.get("side", ""))
+        exchange_by_key[k2] = ep
+        ep_mt = _market_type_bucket(ep.get("market_type"))
+        if ep_mt is not None:
+            exchange_by_mtkey[(k2[0], ep_mt, k2[1])] = ep
+
+    # Consolidated lookup: prefer market-type-specific match when both sides
+    # have an explicit market_type, otherwise fall back to the 2-tuple key.
+    def _find_ep(sym: str, direction: str, local_mt: str | None):
+        """Return the exchange position matching sym/direction, preferring mt match.
+
+        When the local position has a known market_type, the 2-tuple fallback is
+        suppressed if the candidate exchange position has a different known market_type
+        (e.g. spot local must not fall back to a futures exchange position).
+        """
+        local_mt_bucket = _market_type_bucket(local_mt)
+        if local_mt_bucket is not None:
+            ep = exchange_by_mtkey.get((to_canonical(sym), local_mt_bucket, direction))
+            if ep is not None:
+                return ep
+            # An explicit local market_type had no specific match.  Only use the
+            # 2-tuple fallback if the exchange position (if any) does NOT have a
+            # conflicting known market_type.
+            candidate = exchange_by_key.get(_key(sym, direction))
+            if candidate is not None:
+                ep_mt_bucket = _market_type_bucket(candidate.get("market_type"))
+                if ep_mt_bucket is not None and ep_mt_bucket != local_mt_bucket:
+                    return None  # cross-market collision — do not match
+            return candidate
+        return exchange_by_key.get(_key(sym, direction))
+
+    def _find_lp(sym: str, direction: str, ep_mt: str | None):
+        """Return the local position matching sym/direction, preferring mt match.
+
+        Same cross-market-collision guard: a local spot position must not be
+        returned for a futures exchange position when both sides have explicit types.
+        """
+        ep_mt_bucket = _market_type_bucket(ep_mt)
+        if ep_mt_bucket is not None:
+            lp = local_by_mtkey.get((to_canonical(sym), ep_mt_bucket, direction))
+            if lp is not None:
+                return lp
+            # Explicit exchange market_type had no specific local match.  Only
+            # fall back to the 2-tuple if the candidate does not have a conflicting type.
+            candidate = local_by_key.get(_key(sym, direction))
+            if candidate is not None:
+                lp_mt_bucket = _market_type_bucket(candidate.get("market_type"))
+                if lp_mt_bucket is not None and lp_mt_bucket != ep_mt_bucket:
+                    return None  # cross-market collision
+            return candidate
+        return local_by_key.get(_key(sym, direction))
 
     # managed + external: walk the exchange (the source of truth for what exists).
-    for k, ep in exchange_by_key.items():
-        symbol, direction = k
-        lp = local_by_key.get(k)
+    matched_local_ids: set[str] = set()
+    for k2, ep in exchange_by_key.items():
+        symbol, direction = k2
+        lp = _find_lp(symbol, direction, ep.get("market_type"))
         if lp is not None:
             ex_qty = float(ep.get("quantity") or 0)
             lo_qty = float(lp.get("quantity") or 0)
+            matched_local_ids.add(str(lp.get("id", "")))
             result.managed.append(
                 ReconcileItem(
                     symbol=symbol,
@@ -302,17 +376,19 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
             )
 
     # orphaned: local open positions with no matching exchange position.
-    for k, lp in local_by_key.items():
-        if k not in exchange_by_key:
-            symbol, direction = k
-            result.orphaned.append(
-                ReconcileItem(
-                    symbol=symbol,
-                    direction=direction,
-                    classification="orphaned",
-                    local=lp,
+    for p in in_scope:
+        if str(p.get("id", "")) not in matched_local_ids:
+            # Verify there's genuinely no exchange match.
+            ep = _find_ep(p["symbol"], p["direction"], p.get("market_type"))
+            if ep is None:
+                result.orphaned.append(
+                    ReconcileItem(
+                        symbol=to_canonical(p["symbol"]),
+                        direction=_norm_direction(p["direction"]),
+                        classification="orphaned",
+                        local=p,
+                    )
                 )
-            )
 
     return result
 
@@ -606,6 +682,17 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         else round(entry_price * (1 - _tp_pct / 100.0), 8)
     ) if _tp_pct else None
 
+    # Issue #574: adopt leverage from the exchange position so Risk can evaluate
+    # account_leverage_check correctly.  A NULL leverage causes every adopted
+    # futures position to fail that check (61 rejections in the real runtime export).
+    _raw_leverage = exchange_pos.get("leverage")
+    _leverage: int | None = None
+    if _raw_leverage is not None:
+        try:
+            _leverage = int(_raw_leverage) or None
+        except (ValueError, TypeError):
+            pass
+
     position = Position(
         symbol=symbol,
         market_type=market_type,
@@ -625,6 +712,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         opened_at=opened_at,
         stop_price=_adopted_stop,
         take_profit_price=_adopted_tp,
+        leverage=_leverage,
         # Adopted positions are price-action holdings by definition (the exchange
         # already opened them outside of any Serenity research thesis), so stamp
         # the short_term school explicitly. The Pydantic default would also pick
@@ -880,6 +968,8 @@ def run_reconcile(mode: str | None = None) -> dict:
     if cfg.trading.auto_adopt_enabled:
         for item in result.external:
             try:
+                if item.exchange is None:
+                    continue  # defensive: external items should always have exchange data
                 adopted = adopt_position(item.exchange, account_mode)
                 summary["adopted"].append(adopted)
             except Exception as e:
