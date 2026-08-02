@@ -23,6 +23,8 @@ from aletheia.economics.budgets import (
 )
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.tracing import (
+    list_cost_breakdown_by_provider,
+    list_cost_breakdown_by_tool,
     list_cost_summary,
     list_token_summary,
     tracing_enabled,
@@ -80,6 +82,52 @@ def tokens(
         window_start=start.isoformat(),
         window_end=end.isoformat(),
         run_id=run_id,
+    )
+
+
+@router.get("/costs/by-provider")
+def costs_by_provider(
+    days: int = Query(7, ge=1, le=365),
+    run_id: Optional[str] = None,
+    event_limit: int = Query(1_000, ge=1, le=100_000),
+) -> dict:
+    """Per-provider token breakdown + daily time series for the Usage dashboard.
+
+    Pivots LLM ``runtime_cost_events`` rows by ``provider`` and UTC date, parses
+    the persisted ``usage_json`` blob (which stores the normalized token fields),
+    and returns aggregations compact enough to poll at the same cadence as
+    ``/costs``. Read-only; writers stay CLI-only per ``economics.py`` contract.
+    """
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
+    return list_cost_breakdown_by_provider(
+        window_start=start.isoformat(),
+        window_end=end.isoformat(),
+        run_id=run_id,
+        event_limit=event_limit,
+    )
+
+
+@router.get("/costs/by-tool")
+def costs_by_tool(
+    days: int = Query(7, ge=1, le=365),
+    run_id: Optional[str] = None,
+    event_limit: int = Query(10_000, ge=1, le=100_000),
+) -> dict:
+    """Per-tool call rollup for the Usage dashboard.
+
+    Mirrors ``/costs/by-provider`` for ``event_type='tool'`` rows (the
+    ``agent_tool_calls`` mirror): call counts split by recorded/denied plus
+    known cost from ``tool_cost_profiles``. Tool rows carry no token usage or
+    latency, so this rollup deliberately omits those fields.
+    """
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
+    return list_cost_breakdown_by_tool(
+        window_start=start.isoformat(),
+        window_end=end.isoformat(),
+        run_id=run_id,
+        event_limit=event_limit,
     )
 
 

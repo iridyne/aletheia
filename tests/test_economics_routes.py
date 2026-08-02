@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+pytestmark = pytest.mark.domain_runtime
+
 from aletheia.economics.budgets import add_budget
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.tracing import add_pricing_snapshot, add_tool_cost_profile
@@ -66,20 +68,24 @@ def _seed_llm_cost(
     cost: float | None,
     run_id: str | None = None,
     started_at: str | None = None,
+    provider: str = "test",
+    model: str = "model",
     usage_json: str = "{}",
+    latency_ms: float | None = None,
+    status: str = "success",
     metadata_json: str = "{}",
 ) -> None:
     now = started_at or _now()
-    status = "known" if cost is not None else "unknown"
+    cost_status = "known" if cost is not None else "unknown"
     db.execute(
         """INSERT INTO runtime_cost_events (
             id,event_type,run_id,call_id,provider,model_or_tool,attempt_index,status,
-            started_at,finished_at,usage_json,estimated_cost_usd,currency,cost_status,
+            started_at,finished_at,latency_ms,usage_json,estimated_cost_usd,currency,cost_status,
             metadata_json,created_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            event_id, "llm", run_id, event_id, "test", "model", 0, "success",
-            now, now, usage_json, cost, "USD", status, metadata_json, now,
+            event_id, "llm", run_id, event_id, provider, model, 0, status,
+            now, now, latency_ms, usage_json, cost, "USD", cost_status, metadata_json, now,
         ),
     )
 
@@ -176,6 +182,278 @@ async def test_costs_rejects_invalid_days(client):
     assert resp.status_code == 422
 
 
+# ── /api/economics/costs/by-provider ─────────────────────────────────────────
+
+
+def _usage_json(*, input_t: int = 0, output_t: int = 0, reasoning: int = 0,
+                cached: int = 0) -> str:
+    import json as _json
+    return _json.dumps({"raw": {}, "normalized": {
+        "input_tokens": input_t or None,
+        "output_tokens": output_t or None,
+        "reasoning_tokens": reasoning or None,
+        "cached_input_tokens": cached or None,
+        "total_tokens": (input_t + output_t) or None,
+        "provider_cache_read_input_tokens": None,
+        "provider_cache_creation_input_tokens": None,
+    }})
+
+
+@pytest.mark.anyio
+async def test_costs_by_provider_empty_ledger(client):
+    resp = await client.get("/api/economics/costs/by-provider?days=1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["event_count"] == 0
+    assert data["providers"] == {}
+    assert data["daily_series"] == []
+    assert data["parse_errors"] == 0
+
+
+@pytest.mark.anyio
+async def test_costs_by_provider_aggregates_tokens(client):
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_llm_cost(db, event_id="openai-1", cost=0.10, provider="openai",
+                   model="gpt-4", usage_json=_usage_json(input_t=100, output_t=50))
+    _seed_llm_cost(db, event_id="openai-2", cost=0.05, provider="openai",
+                   model="gpt-4", usage_json=_usage_json(input_t=80, output_t=40, reasoning=20),
+                   latency_ms=250.0)
+    _seed_llm_cost(db, event_id="openrouter-1", cost=0.02, provider="openrouter",
+                   model="claude", usage_json=_usage_json(input_t=200, output_t=100, cached=30))
+
+    resp = await client.get("/api/economics/costs/by-provider?days=1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["event_count"] == 3
+    assert set(data["providers"].keys()) == {"openai", "openrouter"}
+
+    openai = data["providers"]["openai"]
+    assert openai["event_count"] == 2
+    assert openai["input_tokens"] == 180
+    assert openai["output_tokens"] == 90
+    assert openai["reasoning_tokens"] == 20
+    assert openai["cached_input_tokens"] == 0
+    assert openai["known_cost_usd"] == pytest.approx(0.15)
+    assert openai["unknown_count"] == 0
+
+    openrouter = data["providers"]["openrouter"]
+    assert openrouter["event_count"] == 1
+    assert openrouter["input_tokens"] == 200
+    assert openrouter["cached_input_tokens"] == 30
+    assert openrouter["known_cost_usd"] == pytest.approx(0.02)
+
+
+@pytest.mark.anyio
+async def test_costs_by_provider_daily_series(client):
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    # Anchor to UTC now so the seeded timestamps never fall outside the
+    # window endpoint (an absolute future-pinned timestamp would be filtered
+    # out when the test runs earlier in UTC than the pinned time of day).
+    now = datetime.now(timezone.utc)
+    day1 = (now - timedelta(days=2)).replace(hour=10, minute=0, second=0, microsecond=0).isoformat()
+    day2 = (now - timedelta(days=1)).replace(hour=15, minute=0, second=0, microsecond=0).isoformat()
+    _seed_llm_cost(db, event_id="d1a", cost=0.10, provider="openai",
+                   usage_json=_usage_json(input_t=100), started_at=day1)
+    _seed_llm_cost(db, event_id="d1b", cost=0.05, provider="openrouter",
+                   usage_json=_usage_json(input_t=50), started_at=day1)
+    _seed_llm_cost(db, event_id="d2a", cost=0.20, provider="openai",
+                   usage_json=_usage_json(input_t=200), started_at=day2)
+
+    resp = await client.get("/api/economics/costs/by-provider?days=7")
+    assert resp.status_code == 200
+    data = resp.json()
+    series = data["daily_series"]
+    # daily_series entries: {"date","provider",event_count,known_cost_usd,unknown_count,<tokens>}
+    assert len(series) == 3  # 2 on day1 (per-provider), 1 on day2
+    d1_iso = day1[:10]
+    d2_iso = day2[:10]
+    by_key = {(s["date"], s["provider"]): s for s in series}
+    assert (d1_iso, "openai") in by_key
+    assert (d1_iso, "openrouter") in by_key
+    assert (d2_iso, "openai") in by_key
+
+    d1_openai = by_key[(d1_iso, "openai")]
+    assert d1_openai["event_count"] == 1
+    assert d1_openai["input_tokens"] == 100
+    assert d1_openai["known_cost_usd"] == pytest.approx(0.10)
+    d2_openai = by_key[(d2_iso, "openai")]
+    assert d2_openai["input_tokens"] == 200
+
+
+@pytest.mark.anyio
+async def test_costs_by_provider_model_status_latency(client):
+    """Per-(provider, model) rollup carries call health + latency + tokens."""
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    # 2 models on one provider (one healthy, one flaky), 1 model on another.
+    _seed_llm_cost(db, event_id="a-ok-1", cost=0.10, provider="p1", model="m1",
+                   usage_json=_usage_json(input_t=100, output_t=50), latency_ms=1000.0)
+    _seed_llm_cost(db, event_id="a-ok-2", cost=0.05, provider="p1", model="m1",
+                   usage_json=_usage_json(input_t=80, output_t=40), latency_ms=3000.0)
+    _seed_llm_cost(db, event_id="a-err", cost=None, provider="p1", model="m1",
+                   latency_ms=250.0, status="error")
+    _seed_llm_cost(db, event_id="b-ok", cost=0.02, provider="p1", model="m2",
+                   usage_json=_usage_json(input_t=200, output_t=100), latency_ms=500.0)
+    _seed_llm_cost(db, event_id="c-ok", cost=0.03, provider="p2", model="m3",
+                   usage_json=_usage_json(input_t=300), latency_ms=2000.0)
+
+    resp = await client.get("/api/economics/costs/by-provider?days=1")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert set(data["models"].keys()) == {"p1", "p2"}
+    m1 = data["models"]["p1"]["m1"]
+    assert m1["event_count"] == 3
+    assert m1["success_count"] == 2
+    assert m1["error_count"] == 1
+    assert m1["unknown_count"] == 1  # the failed attempt has no usage/cost
+    assert m1["input_tokens"] == 180
+    assert m1["output_tokens"] == 90
+    # avg over the three latency samples (1000+3000+250)/3, rounded to 1dp
+    assert m1["avg_latency_ms"] == pytest.approx((1000.0 + 3000.0 + 250.0) / 3, abs=0.05)
+    assert data["models"]["p1"]["m2"]["event_count"] == 1
+    assert data["models"]["p2"]["m3"]["input_tokens"] == 300
+
+    # provider buckets surface the same new fields (rollup over both models)
+    p1 = data["providers"]["p1"]
+    assert p1["success_count"] == 3
+    assert p1["error_count"] == 1
+    assert p1["avg_latency_ms"] == pytest.approx(
+        (1000.0 + 3000.0 + 250.0 + 500.0) / 4, abs=0.05
+    )
+
+    # daily_series entries also carry the health fields
+    day_point = data["daily_series"][0]
+    assert day_point["success_count"] == 3
+    assert day_point["error_count"] == 1
+    assert day_point["avg_latency_ms"] == p1["avg_latency_ms"]
+
+
+@pytest.mark.anyio
+async def test_costs_by_provider_cached_tokens_falls_back_for_historical_rows(client):
+    """Rows persisted before the top-level cache_read mapping still surface
+    cached tokens: their normalized blob has cached_input_tokens=null but
+    provider_cache_read_input_tokens set — the aggregation must fall back so
+    the dashboard does not show cached=0 for real cache hits."""
+
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_llm_cost(
+        db,
+        event_id="hist-1",
+        cost=0.10,
+        provider="sensenova",
+        model="deepseek-v4-flash",
+        usage_json=__import__("json").dumps(
+            {
+                "raw": {},
+                "normalized": {
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                    "reasoning_tokens": 0,
+                    "cached_input_tokens": None,
+                    "total_tokens": 1500,
+                    "provider_cache_read_input_tokens": 768,
+                    "provider_cache_creation_input_tokens": 0,
+                },
+            }
+        ),
+        latency_ms=100.0,
+    )
+
+    resp = await client.get("/api/economics/costs/by-provider?days=1")
+    assert resp.status_code == 200
+    data = resp.json()
+    bucket = data["models"]["sensenova"]["deepseek-v4-flash"]
+    assert bucket["cached_input_tokens"] == 768
+    assert data["providers"]["sensenova"]["cached_input_tokens"] == 768
+
+
+@pytest.mark.anyio
+async def test_costs_by_provider_rejects_invalid_days(client):
+    resp = await client.get("/api/economics/costs/by-provider?days=0")
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_costs_by_tool_empty_ledger(client):
+    resp = await client.get("/api/economics/costs/by-tool?days=1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["event_count"] == 0
+    assert data["tools"] == {}
+    assert data["tracing_enabled"] is True
+
+
+@pytest.mark.anyio
+async def test_costs_by_tool_rolls_up_recorded_denied_and_cost(client):
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_tool_cost(db, event_id="t1", tool="build_market_context", cost=0.002)
+    _seed_tool_cost(db, event_id="t2", tool="build_market_context", cost=0.003)
+    _seed_tool_cost(db, event_id="t3", tool="build_market_context", cost=None)  # unknown
+    _seed_tool_cost(db, event_id="t4", tool="build_market_context", cost=0.001, status="denied")
+    _seed_tool_cost(db, event_id="t5", tool="create_opportunity", cost=None)
+    _seed_tool_cost(db, event_id="t6", tool="create_opportunity", cost=0.01)
+
+    resp = await client.get("/api/economics/costs/by-tool?days=1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["event_count"] == 6
+
+    build = data["tools"]["build_market_context"]
+    assert build["event_count"] == 4
+    assert build["recorded_count"] == 3
+    assert build["denied_count"] == 1
+    assert build["known_cost_usd"] == pytest.approx(0.002 + 0.003 + 0.001)
+    assert build["unknown_count"] == 1
+
+    create = data["tools"]["create_opportunity"]
+    assert create["event_count"] == 2
+    assert create["recorded_count"] == 2
+    assert create["denied_count"] == 0
+    assert create["known_cost_usd"] == pytest.approx(0.01)
+    assert create["unknown_count"] == 1
+
+
+@pytest.mark.anyio
+async def test_costs_by_tool_rejects_invalid_days(client):
+    resp = await client.get("/api/economics/costs/by-tool?days=0")
+    assert resp.status_code == 422
+
+
+def _seed_tool_cost(
+    db: sqlite3.Connection,
+    *,
+    event_id: str,
+    tool: str,
+    cost: float | None,
+    status: str = "recorded",
+) -> None:
+    now = _now()
+    cost_status = "known" if cost is not None else "unknown"
+    db.execute(
+        """INSERT INTO runtime_cost_events (
+            id,event_type,run_id,call_id,provider,model_or_tool,attempt_index,status,
+            started_at,finished_at,usage_json,estimated_cost_usd,currency,cost_status,
+            metadata_json,created_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            event_id, "tool", None, "tool_" + event_id, "tool", tool, 0, status,
+            now, now, "{}", cost, "USD", cost_status, "{}", now,
+        ),
+    )
+
+
 # ── /api/economics/tokens ────────────────────────────────────────────────────
 
 
@@ -247,6 +525,8 @@ async def test_tokens_filters_by_run_id(client):
     resp = await client.get("/api/economics/tokens?days=1&run_id=run-a")
     assert resp.status_code == 200
     assert resp.json()["tokens"]["input_tokens"] == 5
+
+
 
 
 # ── /api/economics/viability ─────────────────────────────────────────────────

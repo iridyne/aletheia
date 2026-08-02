@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Command as CommandIcon,
   Diamond,
+  Gauge,
   Globe,
   GraduationCap,
   LayoutDashboard,
@@ -35,6 +36,7 @@ import CommandCenter from './pages/CommandCenter'
 import SerenityLens from './pages/SerenityLens'
 import PredictionLens from './pages/PredictionLens'
 import Universe from './pages/Universe'
+import Usage from './pages/Usage'
 import CommandPalette from './components/CommandPalette'
 import MarketTicker from './components/MarketTicker'
 import BackendConnectionGuard from './components/BackendConnectionGuard'
@@ -92,6 +94,7 @@ export const NAV: NavGroup[] = [
     group: '',
     items: [
       { to: '/learning', label: 'Learning', icon: GraduationCap },
+      { to: '/usage', label: 'Usage', icon: Gauge },
       { to: '/settings', label: 'Settings', icon: SettingsIcon },
     ],
   },
@@ -685,6 +688,7 @@ export default function App() {
             <Route path="/news" element={<NewsIntel />} />
             <Route path="/serenity-lens" element={<SerenityLens />} />
             <Route path="/universe" element={<Universe />} />
+            <Route path="/usage" element={<Usage />} />
           </Routes>
         </main>
       </div>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, Link } from 'react-router-dom'
 import { api } from '../api/client'
 import ConnectionStatus, { ConnState } from '../components/ConnectionStatus'
 import { GuardAuthorityNotice } from '../components/GuardAuthorityNotice'
@@ -970,7 +970,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
         <InferenceAdmissionCard qc={qc} />
       </Section>
 
-      <Section title="LLM Cost & Usage" description="Enable default-off budget shadow observation; spend, broker headroom, and cooldown records remain read-only.">
+      <Section title="LLM Cost & Usage" description="Enable default-off budget shadow observation. The read-only usage dashboard (token spend, provider trends, budgets, cooldowns) lives on the Usage page.">
         <EconomicsSnapshotCard economics={settings?.economics} qc={qc} />
       </Section>
     </div>
@@ -4632,48 +4632,6 @@ function EconomicsSnapshotCard({ economics, qc }: { economics: any; qc: any }) {
     queryFn: api.getEconomicsStatus,
     refetchInterval: 30_000,
   })
-  const { data: costs } = useQuery({
-    queryKey: ['economics-costs-7d'],
-    queryFn: () => api.getEconomicsCosts({ days: 7 }),
-    refetchInterval: 30_000,
-  })
-  const { data: tokens } = useQuery({
-    queryKey: ['economics-tokens-7d'],
-    queryFn: () => api.getEconomicsTokens({ days: 7 }),
-    refetchInterval: 30_000,
-  })
-  const { data: broker } = useQuery({
-    queryKey: ['economics-broker'],
-    queryFn: api.getInferenceBroker,
-    refetchInterval: 10_000,
-  })
-  const { data: modelHealth } = useQuery({
-    queryKey: ['economics-model-health'],
-    queryFn: api.getEconomicsModelHealth,
-    refetchInterval: 10_000,
-  })
-  const { data: budgets } = useQuery({
-    queryKey: ['economics-budgets'],
-    queryFn: () => api.getEconomicsBudgets({ enabled_only: false }),
-    refetchInterval: 60_000,
-  })
-  const { data: wouldBlock } = useQuery({
-    queryKey: ['economics-would-block'],
-    queryFn: () => api.getEconomicsBudgetsWouldBlock({ days: 7, limit: 50 }),
-    refetchInterval: 30_000,
-  })
-
-  const cooling = (modelHealth?.snapshot ?? []).filter(m => m.cooling_down)
-  const budgetList = budgets?.budgets ?? []
-  const enabledBudgetCount = budgetList.filter(b => b.enabled === 1).length
-  const wouldBlockCount = wouldBlock?.events?.length ?? 0
-  const knownUsd = costs?.known_cost_subtotal_usd ?? 0
-  const unknownCount = costs?.unknown_event_count ?? 0
-  const eventCount = costs?.event_count ?? 0
-  const formatTokens = (value: number | undefined) =>
-    value === undefined ? 'loading…' : new Intl.NumberFormat().format(value)
-
-  const providerRows = broker?.providers ? Object.entries(broker.providers) : []
 
   return (
     <div>
@@ -4714,167 +4672,9 @@ function EconomicsSnapshotCard({ economics, qc }: { economics: any; qc: any }) {
           {status.audit_enabled === false && 'Viability audit disabled (ALETHEIA_VIABILITY_AUDIT=0).'}
         </p>
       )}
-
-      <div className="settings-number-grid" style={{ marginBottom: '1rem' }}>
-        <label className="settings-field">
-          <span>LLM input tokens (7d)</span>
-          <input readOnly className="mono" value={formatTokens(tokens?.tokens.input_tokens)} />
-        </label>
-        <label className="settings-field">
-          <span>LLM output tokens (7d)</span>
-          <input readOnly className="mono" value={formatTokens(tokens?.tokens.output_tokens)} />
-        </label>
-        <label className="settings-field">
-          <span>Usage coverage (7d)</span>
-          <input
-            readOnly
-            className="mono"
-            value={tokens ? `${tokens.input_output_available_attempt_count}/${tokens.llm_attempt_count} attempts` : 'loading…'}
-          />
-        </label>
-        <label className="settings-field">
-          <span>Token integrity observations (7d)</span>
-          <input
-            readOnly
-            className="mono"
-            value={tokens ? String(Object.values(tokens.token_integrity_observation_counts).reduce((sum, count) => sum + count, 0)) : 'loading…'}
-          />
-        </label>
-        <label className="settings-field">
-          <span>Spent last 7 days (known)</span>
-          <input
-            readOnly
-            className="mono"
-            value={costs ? `$${knownUsd.toFixed(6)}` : 'loading…'}
-          />
-        </label>
-        <label className="settings-field">
-          <span>Events (7 days)</span>
-          <input
-            readOnly
-            className="mono"
-            value={costs ? String(eventCount) : 'loading…'}
-          />
-        </label>
-        <label className="settings-field">
-          <span>Unknown-cost events</span>
-          <input
-            readOnly
-            className="mono"
-            value={costs ? String(unknownCount) : 'loading…'}
-          />
-        </label>
-        <label className="settings-field">
-          <span>Models cooling down</span>
-          <input readOnly className="mono" value={String(cooling.length)} />
-        </label>
-        <label className="settings-field">
-          <span>Declared budgets (enabled)</span>
-          <input readOnly className="mono" value={String(enabledBudgetCount)} />
-        </label>
-        <label className="settings-field">
-          <span>Would-block events (7d)</span>
-          <input readOnly className="mono" value={String(wouldBlockCount)} />
-        </label>
-      </div>
-
-      {budgetList.length > 0 && (
-        <div style={{ marginBottom: '1rem' }}>
-          <p className="hint" style={{ marginBottom: '0.5rem' }}>
-            Declared budget policies (read-only; use{' '}
-            <code>uv run aletheia audit budget-set</code> to add or edit)
-          </p>
-          <table className="mono" style={{ width: '100%', fontSize: '0.85em' }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: 'left' }}>Scope</th>
-                <th style={{ textAlign: 'left' }}>Subject</th>
-                <th style={{ textAlign: 'left' }}>Window</th>
-                <th style={{ textAlign: 'right' }}>USD cap</th>
-                <th style={{ textAlign: 'right' }}>Enabled</th>
-              </tr>
-            </thead>
-            <tbody>
-              {budgetList.map(b => (
-                <tr key={b.id}>
-                  <td>{b.scope}</td>
-                  <td>{b.subject ?? '—'}</td>
-                  <td>{b.window}</td>
-                  <td style={{ textAlign: 'right' }}>${b.usd_cap.toFixed(4)}</td>
-                  <td style={{ textAlign: 'right' }}>{b.enabled === 1 ? 'yes' : 'no'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {wouldBlockCount > 0 && (
-            <p className="hint" style={{ marginTop: '0.5rem' }}>
-              {wouldBlockCount} call(s) in the last 7 days would have breached a
-              budget. Shadow mode is on but no calls were blocked — see the
-              would-block observations in <code>runtime_cost_events.metadata_json</code>{' '}
-              for the exact policies triggered.
-            </p>
-          )}
-        </div>
-      )}
-
-      {unknownCount > 0 && (
-        <p className="hint" style={{ marginBottom: '1rem' }}>
-          {unknownCount} event(s) have unknown pricing. Set a snapshot with{' '}
-          <code>uv run aletheia audit pricing-set …</code> so future calls are priced.
-        </p>
-      )}
-
-      {providerRows.length > 0 && (
-        <div style={{ marginBottom: '1rem' }}>
-          <p className="hint" style={{ marginBottom: '0.5rem' }}>Broker headroom (per provider)</p>
-          <table className="mono" style={{ width: '100%', fontSize: '0.85em' }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: 'left' }}>Provider</th>
-                <th style={{ textAlign: 'right' }}>Active</th>
-                <th style={{ textAlign: 'right' }}>Queued</th>
-                <th style={{ textAlign: 'right' }}>Cap</th>
-                <th style={{ textAlign: 'right' }}>RPM</th>
-                <th style={{ textAlign: 'right' }}>Rate-wait avg (ms)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {providerRows.map(([name, entry]) => {
-                const policy = entry.policy || {}
-                const metrics = entry.metrics || {}
-                return (
-                  <tr key={name}>
-                    <td>{name}</td>
-                    <td style={{ textAlign: 'right' }}>{metrics.active ?? 0}</td>
-                    <td style={{ textAlign: 'right' }}>{metrics.queued ?? 0}</td>
-                    <td style={{ textAlign: 'right' }}>{policy.queue_capacity ?? '—'}</td>
-                    <td style={{ textAlign: 'right' }}>{policy.requests_per_minute ?? '—'}</td>
-                    <td style={{ textAlign: 'right' }}>{Number(metrics.rate_wait_avg_ms ?? 0).toFixed(1)}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {cooling.length > 0 && (
-        <div style={{ marginBottom: '0.5rem' }}>
-          <p className="hint" style={{ marginBottom: '0.5rem' }}>Models currently in cooldown</p>
-          <ul style={{ margin: 0, paddingLeft: '1.2rem' }}>
-            {cooling.map(m => (
-              <li key={`${m.provider}/${m.model}`} className="mono" style={{ fontSize: '0.85em' }}>
-                {m.provider}/{m.model} — {Math.round(m.cooldown_remaining_sec)}s remaining
-                {m.last_error && ` — ${m.last_error.slice(0, 80)}`}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
       <p className="hint">
-        Source: append-only <code>runtime_cost_events</code> ledger.
-        Full history via <code>uv run aletheia audit costs --json</code>.
+        Read-only spend, token, budget, and cooldown views live on the{' '}
+        <Link to="/usage">Usage page</Link>.
       </p>
     </div>
   )

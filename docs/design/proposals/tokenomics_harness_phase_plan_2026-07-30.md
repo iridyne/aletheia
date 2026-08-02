@@ -139,9 +139,12 @@ following read-only GET endpoints (each calls existing functions —
 no logic duplication):
 
 | Path | Backing call |
-|---|---|
+| --- | --- |
 | `/api/economics/status` | `tracing_enabled()`, `audit_enabled()` |
 | `/api/economics/costs?days=&run_id=&include_events=&event_limit=` | `list_cost_summary` |
+| `/api/economics/costs/by-provider?days=&run_id=&event_limit=` | `list_cost_breakdown_by_provider` |
+| `/api/economics/costs/by-tool?days=&run_id=&event_limit=` | `list_cost_breakdown_by_tool` |
+| `/api/economics/tokens?days=&run_id=` | `list_token_summary` |
 | `/api/economics/viability?scope=&days=&data_cost=&as_of=` | `build_*_viability(persist=False)` |
 | `/api/economics/viability/reports?scope=&limit=&offset=` | direct query of `viability_reports` |
 | `/api/economics/model-health` | `fallback.get_model_health_snapshot()` |
@@ -187,8 +190,9 @@ gets six new thin fetch helpers.
 - Assertions per
   `docs/research/tokenomics/economics_test_fixtures_2026-07-30.md`
   §"What Phase 1 tests should assert".
-- Markers: `@pytest.mark.tier_integration`,
-  `@pytest.mark.domain_runtime`, `@pytest.mark.fast`.
+- Markers: `@pytest.mark.domain_runtime` declared via `pytestmark`;
+  `tier_integration` is inferred automatically by conftest from the
+  `_routes` suffix in the filename.
 
 **Verification contract for Phase 1.**
 
@@ -251,7 +255,7 @@ default is `warn_only`** so a budget declaration never blocks a
 live trading call by accident.
 
 | Mode | Behaviour when a call would cross a declared budget |
-|---|---|
+| --- | --- |
 | `warn_only` (**default**) | Call proceeds normally. Ledger row marked `would_block=true`; a broker metric increments; the Settings tile flags the scope. No error surface for the caller. |
 | `fallback_to_defaults` | Call is denied at the harness layer. Callers already using `llm_structured(..., fallback_to_defaults=True)` receive schema-default values as usual with a `llm_budget_exhausted(fallback)` error string. This is the "fail-open with default response" behaviour discussed in the tracking issue. |
 | `hard_block` | Call errors immediately with `llm_budget_exhausted`. Non-default; opt-in only for aggressive cost control on non-safety callers. |

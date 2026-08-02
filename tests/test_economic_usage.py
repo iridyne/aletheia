@@ -65,7 +65,9 @@ def test_anthropic_usage_preserves_provider_cache_fields():
     assert usage["output_tokens"] == 30
     assert usage["provider_cache_read_input_tokens"] == 70
     assert usage["provider_cache_creation_input_tokens"] == 10
-    assert usage["cached_input_tokens"] is None
+    # PR #611: cache_read_input_tokens now falls back to cached_input_tokens
+    # for DeepSeek-style providers that put cache hits at the top level.
+    assert usage["cached_input_tokens"] == 70
 
 
 def test_unpriced_provider_cache_usage_is_unknown_not_undercounted():
