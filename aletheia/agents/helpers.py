@@ -5,6 +5,7 @@ import logging
 import json
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
+from dataclasses import dataclass
 import threading
 
 from aletheia.model_provider.base import ModelRequest, StreamChunk
@@ -28,34 +29,65 @@ def _exception_detail(exc: BaseException) -> str:
     return f"{name}: {message}" if message else name
 
 
-def prepend_environment_header(system: str, *, include: bool | None = None) -> str:
-    """Add the Phase 5 context block only when the explicit feature flag is on."""
+@dataclass(frozen=True)
+class HarnessContext:
+    """Truthful, non-secret model-visible context for the minimal-v1 adapter."""
+
+    adapter_id: str
+    observed_at: str
+    execution_mode: str
+    live_enabled: bool
+    agent_run_id: str | None = None
+    logical_agent: str | None = None
+
+    def render(self, system: str) -> str:
+        identity = " ".join(
+            part
+            for part in (
+                f"agent_run_id={self.agent_run_id}" if self.agent_run_id else None,
+                f"logical_agent={self.logical_agent}" if self.logical_agent else None,
+            )
+            if part
+        )
+        lines = [
+            f"[Aletheia Harness {self.adapter_id}]",
+            f"Time: {self.observed_at}",
+            f"Trading mode: {self.execution_mode} live_enabled={self.live_enabled}",
+            "Tool permissions: enforced by runtime; no:live_order",
+        ]
+        if identity:
+            lines.append(f"Run: {identity}")
+        return "\n".join([*lines, "", "[Caller system prompt follows]", system])
+
+
+def build_harness_context() -> HarnessContext:
+    """Build minimal-v1 from current runtime facts; never invent unavailable identity."""
     from aletheia.config.loader import load_config
 
     cfg = load_config()
-    enabled = cfg.economics.harness_header_default_on if include is None else include
-    if not enabled:
-        return system
     try:
         from aletheia.agent_runtime.run_context import current_agent_run_id, current_economic_attribution
 
-        run_id = current_agent_run_id()
+        agent_run_id = current_agent_run_id()
         logical_agent = (current_economic_attribution() or {}).get("logical_agent")
     except Exception:
-        run_id = logical_agent = None
-    identity = " ".join(part for part in (
-        f"agent_run_id={run_id}" if run_id else None,
-        f"logical_agent={logical_agent}" if logical_agent else None,
-    ) if part)
-    lines = [
-        "[Aletheia Harness v0.1]",
-        f"Time: {datetime.now(timezone.utc).isoformat()}",
-        f"Trading mode: {cfg.exchange.paper_execution_mode} live_enabled={cfg.live.state != 'live_disabled'}",
-        "Tool permissions: enforced by runtime; no:live_order",
-    ]
-    if identity:
-        lines.append(f"Run: {identity}")
-    return "\n".join([*lines, "", "[Caller system prompt follows]", system])
+        agent_run_id = logical_agent = None
+    return HarnessContext(
+        adapter_id="minimal-v1",
+        observed_at=datetime.now(timezone.utc).isoformat(),
+        execution_mode=cfg.exchange.paper_execution_mode,
+        live_enabled=cfg.live.state != "live_disabled",
+        agent_run_id=agent_run_id,
+        logical_agent=logical_agent,
+    )
+
+
+def prepend_environment_header(system: str, *, include: bool | None = None) -> str:
+    """Render the default-off minimal context adapter around a caller prompt."""
+    from aletheia.config.loader import load_config
+
+    enabled = load_config().economics.harness_header_default_on if include is None else include
+    return build_harness_context().render(system) if enabled else system
 
 
 async def llm_complete(system: str, user: str, *, max_tokens: int = 800, provider: str | None = None, include_harness_header: bool | None = None) -> tuple[str | None, str | None]:

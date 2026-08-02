@@ -6,7 +6,7 @@ import pytest
 from aletheia.model_provider.base import ModelRequest
 from aletheia.model_provider.fallback import BudgetExceededError, _enforce_budget_if_configured
 from aletheia.model_provider.guardrails import detect_prompt_secrets
-from aletheia.agents.helpers import prepend_environment_header
+from aletheia.agents.helpers import build_harness_context, prepend_environment_header
 
 
 def _request() -> ModelRequest:
@@ -63,6 +63,24 @@ def test_header_is_default_off_and_opt_in_is_context_only(monkeypatch):
     rendered = prepend_environment_header("caller prompt", include=True)
     assert rendered.endswith("[Caller system prompt follows]\ncaller prompt")
     assert "live_enabled=False" in rendered
+
+
+def test_minimal_context_has_a_versioned_truthful_contract(monkeypatch):
+    import aletheia.agent_runtime.run_context as context
+    import aletheia.config.loader as loader
+
+    monkeypatch.setattr(loader, "load_config", lambda: SimpleNamespace(
+        exchange=SimpleNamespace(paper_execution_mode="paper_internal"),
+        live=SimpleNamespace(state="live_disabled"),
+    ))
+    monkeypatch.setattr(context, "current_agent_run_id", lambda: "run-123")
+    monkeypatch.setattr(context, "current_economic_attribution", lambda: {"logical_agent": "market_observer"})
+
+    rendered = build_harness_context().render("caller prompt")
+    assert "Harness minimal-v1" in rendered
+    assert "logical_agent=market_observer" in rendered
+    assert "agent_run_id=run-123" in rendered
+    assert "no:live_order" in rendered
 
 
 def test_detect_only_scanner_never_returns_secret_content():
