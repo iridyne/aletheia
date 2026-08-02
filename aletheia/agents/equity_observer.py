@@ -33,7 +33,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import llm_structured, log_tool, record_step
+from aletheia.agents.helpers import llm_structured, log_tool, record_step, observer_llm_deadline
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.data.symbols import ticker_to_stock_tokens, stock_token_exchange
 from aletheia.storage.models import Opportunity
@@ -345,6 +345,7 @@ async def _analyze_equity(
         user=f"Equity data for {ticker}:\n{snapshot_text}\n\nReturn the market read JSON.",
         schema=EquityRead,
         max_tokens=500,
+        deadline=observer_llm_deadline(),
     )
     log_tool(run_id, "llm_structured", "observe", True)
 

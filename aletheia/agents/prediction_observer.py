@@ -24,7 +24,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import llm_structured, log_tool, record_step
+from aletheia.agents.helpers import llm_structured, log_tool, record_step, observer_llm_deadline
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
@@ -273,6 +273,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
         ),
         schema=PredictionMarketRead,
         max_tokens=500,
+        deadline=observer_llm_deadline(),
     )
     log_tool(run_id, "llm_structured", "observe", True)
 

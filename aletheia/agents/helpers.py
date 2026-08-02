@@ -592,3 +592,35 @@ def record_step(run_id: str | None, action: str, input_data: str | None = None,
         "input_data": input_data,
         "output_data": output_data,
     })
+
+
+def observer_llm_deadline(
+    run_deadline_monotonic: float | None = None,
+    per_symbol_cap_sec: float = 45.0,
+) -> float:
+    """Return an asyncio loop.time() deadline for a single observer LLM call.
+
+    When run_deadline_monotonic is provided, caps at the tighter of
+    per_symbol_cap_sec and the remaining run budget.  When omitted (or None),
+    simply grants per_symbol_cap_sec from now.
+
+    Use this helper in equity_observer, prediction_observer, and stock_observer
+    to enforce the same per-call cap as market_observer without duplicating the
+    monotonic-to-loop-time conversion.
+
+    Args:
+        run_deadline_monotonic: run-level deadline as time.monotonic().
+            Pass None (default) when there is no run-level deadline to enforce.
+        per_symbol_cap_sec: maximum wall-clock for this LLM call (default 45s).
+
+    Returns:
+        asyncio loop.time()-based absolute deadline for llm_structured(deadline=).
+    """
+    import asyncio
+    import time as _time
+
+    loop = asyncio.get_event_loop()
+    if run_deadline_monotonic is None:
+        return loop.time() + per_symbol_cap_sec
+    remaining_s = max(1.0, run_deadline_monotonic - _time.monotonic())
+    return loop.time() + min(per_symbol_cap_sec, remaining_s)

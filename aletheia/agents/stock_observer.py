@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from aletheia.agents import register_agent
 
 logger = logging.getLogger("aletheia.agents.stock_observer")
-from aletheia.agents.helpers import llm_structured, log_tool, record_step
+from aletheia.agents.helpers import llm_structured, log_tool, record_step, observer_llm_deadline
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import insert_opportunity, list_strategies
@@ -222,6 +222,7 @@ async def _analyze_stock(
         user=f"Equity data for {ticker}:\n{snapshot_text}\n\nReturn the market read JSON.",
         schema=StockRead,
         max_tokens=500,
+        deadline=observer_llm_deadline(),
     )
     log_tool(run_id, "llm_structured", "observe", True)
 
