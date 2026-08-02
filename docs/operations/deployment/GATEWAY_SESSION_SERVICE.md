@@ -43,6 +43,31 @@ uv run aletheia gateway status
 uv run aletheia gateway stop
 ```
 
+### Windows LAN dashboard access
+
+When `app.bind_host` is `0.0.0.0` or `::`, a Windows host can still reject LAN
+clients at Windows Defender Firewall. An interactive `gateway start` or
+`gateway restart` checks this once and uses the Windows `runas` secure desktop
+to request UAC approval when provisioning is needed. A scheduled or otherwise
+non-interactive start never attempts hidden elevation; `aletheia doctor` reports
+the missing rule instead.
+
+The explicit, reversible commands are:
+
+```powershell
+uv run aletheia gateway firewall status
+uv run aletheia gateway firewall enable-lan
+uv run aletheia gateway firewall disable-lan
+```
+
+The owned rule permits only the configured dashboard TCP port (normally
+`8787`) from `LocalSubnet`, for Private and Public profiles, and is scoped to
+the actual gateway listener executable. It never permits the supervised backend
+port `8788`. If Windows has generated a broad inbound Python block rule, setup
+narrows that rule to every TCP port except the dashboard port; removal restores
+the original block filter. More specific or centrally managed block rules fail
+closed and require administrator review rather than being disabled.
+
 `gateway status` reports both the running PID and whether the current platform
 manager owns an on-demand service. On Windows, an interactive logged-in user
 can still receive a Task Scheduler-owned service when host policy denies S4U;

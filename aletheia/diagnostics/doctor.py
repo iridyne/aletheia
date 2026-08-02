@@ -501,6 +501,44 @@ def _probe_process(report: Report) -> None:
         except Exception:
             pass
 
+
+def _probe_windows_lan_firewall(report: Report) -> None:
+    """Tell the truth when a wildcard bind is still blocked by Windows."""
+    if platform.system() != "Windows":
+        return
+    from aletheia.config.loader import load_config
+    from aletheia.gateway.windows_firewall import status
+    cfg = load_config()
+    if cfg.app.bind_host not in {"0.0.0.0", "::"}:
+        return
+    state = status(cfg.app.dashboard_port)
+    if state.get("configured"):
+        report.add(
+            "network.windows_firewall",
+            "ok",
+            f"local-subnet TCP {cfg.app.dashboard_port} allowed; "
+            f"backend port {cfg.app.dashboard_port + 1} not opened",
+        )
+        return
+    if state.get("reason"):
+        report.add(
+            "network.windows_firewall",
+            "warn",
+            f"Windows LAN firewall state could not be verified: {state['reason']}",
+            "run `aletheia gateway firewall status` from an interactive Windows desktop",
+        )
+        return
+    conflicts = state.get("conflicting_block_rules") or []
+    detail = f"wildcard bind on TCP {cfg.app.dashboard_port} is not permitted for LAN clients"
+    if conflicts:
+        detail += f"; conflicting Windows block rules={len(conflicts)}"
+    report.add(
+        "network.windows_firewall",
+        "warn",
+        detail,
+        "run `aletheia gateway firewall enable-lan` from an interactive Windows desktop",
+    )
+
 def _probe_frontdoor_process(report: Report, host: str, port: int) -> None:
     """Probe the stable front-door layer when present.
 
@@ -3725,6 +3763,7 @@ def build_report(*, probe_llm: bool = False) -> Report:
         _probe_legacy_launchd,
         _probe_gateway_service,
         _probe_process,
+        _probe_windows_lan_firewall,
         _probe_gateway_restart_history,
         _probe_config_gates,
         _probe_config_consistency,

@@ -208,7 +208,12 @@ def _request_dir() -> Path:
     return get_data_dir() / "service" / "requests"
 
 
-def _write_request(operation: str, *, wrapper: Path | None = None) -> Path:
+def _write_request(
+    operation: str,
+    *,
+    wrapper: Path | None = None,
+    arguments: dict | None = None,
+) -> Path:
     directory = _request_dir()
     directory.mkdir(parents=True, exist_ok=True)
     request_path = directory / f"{uuid.uuid4().hex}.json"
@@ -218,9 +223,21 @@ def _write_request(operation: str, *, wrapper: Path | None = None) -> Path:
         "nonce": uuid.uuid4().hex,
         "wrapper": str(wrapper.resolve()) if wrapper else None,
         "executable": str(Path(sys.executable).resolve()),
+        "arguments": arguments or {},
     }
     request_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     return request_path
+
+
+def _elevated_launcher() -> tuple[Path, list[str]]:
+    """Resolve a CLI entrypoint that works for packaged and source runtimes."""
+    executable = Path(sys.executable).resolve()
+    if is_frozen_runtime():
+        return executable, []
+    cli = executable.with_name("aletheia.exe")
+    if cli.is_file():
+        return cli.resolve(), []
+    return executable, ["-c", "from aletheia.main import app; app()"]
 
 
 def _shell_execute_elevated(request_path: Path, *, timeout_ms: int = 300000) -> dict:
@@ -240,16 +257,17 @@ def _shell_execute_elevated(request_path: Path, *, timeout_ms: int = 300000) -> 
             ("hProcess", wintypes.HANDLE),
         ]
 
-    params = subprocess.list2cmdline([
+    executable, prefix = _elevated_launcher()
+    params = subprocess.list2cmdline([*prefix,
         "gateway", "service", "elevated-apply", "--request", str(request_path),
     ])
     info = SHELLEXECUTEINFOW()
     info.cbSize = ctypes.sizeof(info)
     info.fMask = 0x00000040
     info.lpVerb = "runas"
-    info.lpFile = str(Path(sys.executable).resolve())
+    info.lpFile = str(executable)
     info.lpParameters = params
-    info.lpDirectory = str(Path(sys.executable).resolve().parent)
+    info.lpDirectory = str(executable.parent)
     info.nShow = 0
     if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(info)):
         error = ctypes.get_last_error()
@@ -273,11 +291,36 @@ def _shell_execute_elevated(request_path: Path, *, timeout_ms: int = 300000) -> 
     return result
 
 
-def _elevated(operation: str, *, wrapper: Path | None = None, elevate: bool = True) -> dict:
+def _elevated(
+    operation: str,
+    *,
+    wrapper: Path | None = None,
+    arguments: dict | None = None,
+    elevate: bool = True,
+) -> dict:
     if not elevate:
         return _result(ok=False, reason="elevation_required")
-    request_path = _write_request(operation, wrapper=wrapper)
+    request_path = _write_request(operation, wrapper=wrapper, arguments=arguments)
     return {**_result(), **_shell_execute_elevated(request_path)}
+
+
+def _apply_firewall_operation(payload: dict) -> dict:
+    arguments = payload.get("arguments")
+    if not isinstance(arguments, dict) or set(arguments) != {"port"}:
+        return {"ok": False, "reason": "invalid_elevation_request"}
+    port = arguments.get("port")
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        return {"ok": False, "reason": "invalid_elevation_request"}
+    from aletheia.gateway import windows_firewall
+    if payload.get("operation") == "firewall_enable_lan":
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        if port != cfg.app.dashboard_port or cfg.app.bind_host not in {"0.0.0.0", "::"}:
+            return {"ok": False, "reason": "invalid_elevation_request"}
+        return windows_firewall.apply_enable_lan(port)
+    if payload.get("operation") == "firewall_disable_lan":
+        return windows_firewall.apply_disable_lan(port)
+    return {"ok": False, "reason": "invalid_elevation_request"}
 
 
 def _apply_acls() -> None:
@@ -370,6 +413,8 @@ def apply_elevated_request(request_path: Path) -> dict:
                 result = _apply_install(payload)
             elif payload.get("operation") in {"start", "stop", "enable", "disable", "uninstall"}:
                 result = _apply_simple(payload["operation"])
+            elif payload.get("operation") in {"firewall_enable_lan", "firewall_disable_lan"}:
+                result = _apply_firewall_operation(payload)
             else:
                 result = _result(ok=False, reason="invalid_elevation_request")
     except Exception as exc:
@@ -416,3 +461,19 @@ def uninstall(*, elevate: bool = True) -> dict:
     if current.get("running"):
         return {**current, "ok": False, "reason": "service_running"}
     return _elevated("uninstall", elevate=elevate)
+
+
+def firewall_enable_lan(port: int, *, elevate: bool = True) -> dict:
+    if platform.system() != "Windows":
+        return {"ok": False, "supported": False, "reason": f"unsupported_platform:{platform.system().lower()}"}
+    if not elevate:
+        return {"ok": False, "supported": True, "reason": "elevation_required", "port": int(port)}
+    return _elevated("firewall_enable_lan", arguments={"port": int(port)}, elevate=True)
+
+
+def firewall_disable_lan(port: int, *, elevate: bool = True) -> dict:
+    if platform.system() != "Windows":
+        return {"ok": False, "supported": False, "reason": f"unsupported_platform:{platform.system().lower()}"}
+    if not elevate:
+        return {"ok": False, "supported": True, "reason": "elevation_required", "port": int(port)}
+    return _elevated("firewall_disable_lan", arguments={"port": int(port)}, elevate=True)
