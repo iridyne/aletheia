@@ -99,3 +99,54 @@ async def test_live_order_blocked_when_disabled(tmp_path, monkeypatch):
     assert result["status"] == "rejected"
     assert "live_disabled" in str(result.get("risk_violations", []))
     reset_db()
+
+
+# --- Issue #388: trust-boundary state changes must fail-closed when audit write fails ---
+
+@pytest.mark.anyio
+async def test_live_unlock_refused_when_audit_write_fails(client, monkeypatch):
+    """Issue #388: live_unlock must refuse the state change when the JSONL audit
+    write fails.  Before the fix, write_audit() swallowed the error and returned
+    without raising; live_unlock ignored the return value and persisted the unlock
+    regardless."""
+    # live.py binds write_audit at import time, so patch the name in that module.
+    import aletheia.server.routes.live as live_mod
+    monkeypatch.setattr(live_mod, "write_audit", lambda *a, **kw: False)
+
+    with patch("aletheia.analytics.go_live_scorecard.compute_scorecard") as sc:
+        sc.return_value = {"composite_score": 95.0, "traffic_light": "green", "blockers": []}
+        resp = await client.post(
+            "/api/settings/live-unlock",
+            json={"confirm": True, "acknowledge_first_unlock": True},
+        )
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["error"] == "audit_write_failed"
+
+    # Config must NOT have been mutated — live state stays disabled.
+    status = await client.get("/api/status")
+    assert status.json()["live_state"] == "live_disabled"
+
+
+@pytest.mark.anyio
+async def test_live_lock_proceeds_with_audit_warning_on_write_failure(client, monkeypatch):
+    """Issue #388: live_lock (a safety action) must still apply the lock even
+    when audit write fails, but must surface an audit_warning in the response
+    so operators know the chain is incomplete."""
+    # First unlock successfully.
+    with patch("aletheia.analytics.go_live_scorecard.compute_scorecard") as sc:
+        sc.return_value = {"composite_score": 95.0, "traffic_light": "green", "blockers": []}
+        await client.post("/api/settings/live-unlock",
+                          json={"confirm": True, "acknowledge_first_unlock": True})
+
+    import aletheia.server.routes.live as live_mod
+    monkeypatch.setattr(live_mod, "write_audit", lambda *a, **kw: False)
+
+    resp = await client.post("/api/settings/live-lock")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "live_disabled"
+    assert "audit_warning" in data, "live_lock must surface audit failure as audit_warning"
+
+    status = await client.get("/api/status")
+    assert status.json()["live_state"] == "live_disabled"
