@@ -86,7 +86,10 @@ def check():
 
 
 @update_app.command()
-def apply(yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation.")):
+def apply(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+    restart: bool = typer.Option(False, "--restart", help="Build changed frontend assets and restart after verification."),
+):
     """Stage an installed release or apply the development Git update."""
 
     if _is_packaged():
@@ -124,7 +127,7 @@ def apply(yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation
             raise typer.Exit(0)
     from aletheia.update.applier import apply_update
 
-    result = apply_update()
+    result = apply_update(restart=restart)
     if not result.get("applied"):
         typer.echo(f"Update not applied: {result.get('reason')}")
         if result.get("message"):
@@ -134,7 +137,10 @@ def apply(yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation
         f"Updated {result['old_commit'][:8]} -> {result['new_commit'][:8]} "
         f"(deps reinstalled: {result['deps_reinstalled']})."
     )
-    typer.echo("Restart the gateway to load the new code: aletheia gateway restart")
+    if restart:
+        typer.echo("Gateway restarted and readiness verified.")
+    else:
+        typer.echo("Restart the gateway to load the new code: aletheia gateway restart")
 
 
 @update_app.command()

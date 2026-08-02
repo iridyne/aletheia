@@ -41,7 +41,13 @@ uv run aletheia gateway logs
 
 ## 前端部署
 
-**前端代码改动后必须重新 build**，否则用户看到旧 UI：
+生产更新优先使用一键受控流程；它仅在 `frontend/` 有变动时构建静态产物，完成 smoke check 后才重启：
+
+```powershell
+uv run aletheia update apply --yes --restart
+```
+
+构建产物先写入未服务的 staging 目录；构建、烟测或重启失败会保留/恢复旧版本，不会把半成品 UI 暴露给用户。手动维护时，前端代码改动仍必须重新 build：
 
 ```powershell
 cd frontend
@@ -92,11 +98,11 @@ uv run aletheia doctor --bundle data/diagnostics/doctor.json
 
 ## 启动顺序（首次 / 恢复）
 
-1. `git pull --ff-only`（同步最新代码）
-2. 前端有改动？→ `cd frontend && npm run build && cd ..`
-3. `uv run aletheia gateway restart --no-browser`
-4. `uv run aletheia doctor`（确认健康）
-5. 打开 `http://127.0.0.1:8787/`
+1. `uv run aletheia update apply --yes --restart`（拉取、按需安装依赖、构建前端、烟测并重启）
+2. `uv run aletheia doctor`（确认健康）
+3. 打开 `http://127.0.0.1:8787/`
+
+若必须手动维护，再使用 `git pull --ff-only`、前端 build 和 gateway restart 的分步流程。
 
 ---
 

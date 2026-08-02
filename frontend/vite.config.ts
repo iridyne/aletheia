@@ -45,10 +45,14 @@ function readonlyMasterApi(target: string): Plugin {
 
 export default defineConfig(() => {
   const apiTarget = process.env.VITE_API_TARGET?.trim() || MASTER_API_TARGET
+  // The updater builds into a sibling staging directory, then activates that
+  // complete output only after Python smoke checks pass.
+  const outputDir = process.env.VITE_BUILD_OUT_DIR?.trim()
+    || path.resolve(__dirname, '../aletheia/dashboard_static')
   return {
     plugins: [react(), readonlyMasterApi(apiTarget)],
     build: {
-      outDir: path.resolve(__dirname, '../aletheia/dashboard_static'),
+      outDir: outputDir,
       emptyOutDir: true,
       manifest: true,
       rollupOptions: {

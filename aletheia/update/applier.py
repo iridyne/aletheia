@@ -8,6 +8,8 @@ stable tray host.
 
 import logging
 import os
+from pathlib import Path
+import shutil
 import subprocess
 from datetime import datetime, timezone
 
@@ -148,7 +150,77 @@ def _reinstall_deps() -> dict:
     return {"ok": False, "reason": "install_failed"}
 
 
-def apply_update() -> dict:
+_FRONTEND_DIR = _PROJECT_ROOT / "frontend"
+_DASHBOARD_STATIC = _PROJECT_ROOT / "aletheia" / "dashboard_static"
+_STAGED_DASHBOARD_STATIC = _PROJECT_ROOT / "aletheia" / ".dashboard_static-next"
+_PREVIOUS_DASHBOARD_STATIC = _PROJECT_ROOT / "aletheia" / ".dashboard_static-previous"
+
+
+def _frontend_changed(changed_files: list[str]) -> bool:
+    return any(path.startswith("frontend/") for path in changed_files)
+
+
+def _frontend_deps_changed(changed_files: list[str]) -> bool:
+    return any(path in {"frontend/package.json", "frontend/package-lock.json"} for path in changed_files)
+
+
+def _install_frontend_deps() -> dict:
+    try:
+        result = subprocess.run(
+            ["npm", "ci"], cwd=str(_FRONTEND_DIR), capture_output=True, text=True,
+            env=_safe_env(), **_no_window_kwargs(),
+        )
+    except FileNotFoundError:
+        return {"ok": False, "reason": "npm_unavailable"}
+    return {"ok": result.returncode == 0, "reason": "npm_ci_failed" if result.returncode else None}
+
+
+def _build_frontend() -> dict:
+    """Build into an unserved staging directory; do not mutate live UI yet."""
+    shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
+    env = _safe_env()
+    env["VITE_BUILD_OUT_DIR"] = str(_STAGED_DASHBOARD_STATIC)
+    try:
+        result = subprocess.run(
+            ["npm", "run", "build"], cwd=str(_FRONTEND_DIR), capture_output=True, text=True,
+            env=env, **_no_window_kwargs(),
+        )
+    except FileNotFoundError:
+        return {"ok": False, "reason": "npm_unavailable"}
+    if result.returncode or not (_STAGED_DASHBOARD_STATIC / "index.html").is_file():
+        shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
+        return {"ok": False, "reason": "frontend_build_failed"}
+    return {"ok": True}
+
+
+def _activate_frontend_build() -> bool:
+    """Swap complete static output while the gateway is stopped."""
+    shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
+    if _DASHBOARD_STATIC.exists():
+        _DASHBOARD_STATIC.replace(_PREVIOUS_DASHBOARD_STATIC)
+    _STAGED_DASHBOARD_STATIC.replace(_DASHBOARD_STATIC)
+    return _PREVIOUS_DASHBOARD_STATIC.exists()
+
+
+def _restore_frontend_build(had_previous: bool) -> None:
+    shutil.rmtree(_DASHBOARD_STATIC, ignore_errors=True)
+    if had_previous and _PREVIOUS_DASHBOARD_STATIC.exists():
+        _PREVIOUS_DASHBOARD_STATIC.replace(_DASHBOARD_STATIC)
+    shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
+
+
+def _restart_gateway() -> dict:
+    """Use the managed lifecycle, including its preflight and readiness proof."""
+    from aletheia.gateway import lifecycle
+    try:
+        lifecycle.do_stop()
+        lifecycle.do_start(no_browser=True)
+    except Exception as exc:
+        return {"ok": False, "reason": type(exc).__name__}
+    return {"ok": True}
+
+
+def apply_update(*, restart: bool = False) -> dict:
     """Apply an update according to the current execution mode."""
 
     if _is_packaged():
@@ -221,20 +293,43 @@ def apply_update() -> dict:
         }
 
     new = git_ops.current_commit()
-    pyproject_changed = "pyproject.toml" in git_ops.changed_files(old, new)
+    changed_files = git_ops.changed_files(old, new)
+    python_deps_changed = bool({"pyproject.toml", "uv.lock"}.intersection(changed_files))
+    frontend_changed = _frontend_changed(changed_files)
+    frontend_deps_changed = _frontend_deps_changed(changed_files)
     deps_reinstalled = False
-    if pyproject_changed:
+    if python_deps_changed:
         install = _reinstall_deps()
-        deps_reinstalled = bool(install.get("ok"))
+        if not install.get("ok"):
+            git_ops.reset_hard(old)
+            return {"applied": False, "reason": "python_dependency_install_failed", "mode": "development"}
+        deps_reinstalled = True
+    if restart and frontend_deps_changed:
+        install = _install_frontend_deps()
+        if not install.get("ok"):
+            git_ops.reset_hard(old)
+            return {"applied": False, "reason": install["reason"], "mode": "development"}
+    if restart and frontend_changed:
+        build = _build_frontend()
+        if not build.get("ok"):
+            git_ops.reset_hard(old)
+            if python_deps_changed:
+                _reinstall_deps()
+            if frontend_deps_changed:
+                _install_frontend_deps()
+            return {"applied": False, "reason": build["reason"], "mode": "development"}
 
     # Smoke-verify the pulled code before committing to it. On failure, roll back
     # to the recorded pre-pull commit (user-authorized controlled rollback) so a
-    # bad update can never brick the gateway. Never auto-restarts.
+    # bad update can never brick the gateway.
     smoke = run_smoke_check()
     if not smoke.get("ok"):
         rollback = git_ops.reset_hard(old)
-        if pyproject_changed:
+        shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
+        if python_deps_changed:
             _reinstall_deps()  # restore old deps to match the reverted code
+        if restart and frontend_deps_changed:
+            _install_frontend_deps()
         if not rollback.get("ok"):
             # #135: reset_hard failed — on-disk HEAD is still the broken NEW commit.
             # Do NOT claim a clean revert (UI honesty): surface the true failed state
@@ -297,6 +392,30 @@ def apply_update() -> dict:
             "message": "Update rolled back after smoke check failed. No restart needed.",
         }
 
+    frontend_built = False
+    if restart:
+        had_previous_static = _activate_frontend_build() if frontend_changed else False
+        frontend_built = frontend_changed
+        restarted = _restart_gateway()
+        if not restarted.get("ok"):
+            if frontend_changed:
+                _restore_frontend_build(had_previous_static)
+            rollback = git_ops.reset_hard(old)
+            if python_deps_changed:
+                _reinstall_deps()
+            if frontend_deps_changed:
+                _install_frontend_deps()
+            recovery = _restart_gateway() if rollback.get("ok") else {"ok": False}
+            return {
+                "applied": False,
+                "rolled_back": bool(rollback.get("ok")),
+                "reason": "gateway_restart_failed",
+                "mode": "development",
+                "old_commit": old,
+                "attempted_commit": new,
+                "recovery_started": bool(recovery.get("ok")),
+            }
+
     cfg.update.current_commit = new
     save_config(cfg)
 
@@ -309,7 +428,10 @@ def apply_update() -> dict:
             "entity_id": new,
             "before": {"commit": old},
             "after": {"commit": new},
-            "message": f"Updated {old[:8]} -> {new[:8]} (deps_reinstalled={deps_reinstalled})",
+            "message": (
+                f"Updated {old[:8]} -> {new[:8]} "
+                f"(deps_reinstalled={deps_reinstalled}, frontend_built={frontend_built}, restart={restart})"
+            ),
         }
     )
     return {
@@ -318,8 +440,11 @@ def apply_update() -> dict:
         "old_commit": old,
         "new_commit": new,
         "deps_reinstalled": deps_reinstalled,
-        "restart_required": True,
-        "message": "Update applied. Restart the gateway to load the new code.",
+        "frontend_built": frontend_built,
+        "restart_requested": restart,
+        "restart_completed": restart,
+        "restart_required": not restart,
+        "message": "Update applied and gateway restarted." if restart else "Update applied. Restart the gateway to load the new code.",
     }
 
 
