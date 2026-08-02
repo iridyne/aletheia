@@ -6,7 +6,7 @@ Use this directory for procedural instructions: running the gateway, local devel
 ## Subfolders
 
 | Folder | Use |
-|---|---|
+| --- | --- |
 | `runbooks/` | Daily operations and SOPs |
 | `development/` | Local setup, tests, worktree preview, pytest optimization |
 | `deployment/` | [Gateway session service](deployment/GATEWAY_SESSION_SERVICE.md), legacy autostart, release/deployment notes |
@@ -15,7 +15,9 @@ Use this directory for procedural instructions: running the gateway, local devel
 | `records/` | Dated operational recovery records |
 
 For read-only Alpha, opportunity-funnel, and sizing diagnosis, use
-[Trading Diagnostics](runbooks/TRADING_DIAGNOSTICS.md).
+[Trading Diagnostics](runbooks/TRADING_DIAGNOSTICS.md). For CASI-authoritative
+LLM token usage, optional economics, budget-shadow, and context-adapter
+operations, use the [LLM Harness Telemetry runbook](runbooks/LLM_HARNESS_TELEMETRY.md).
 
 ## Packaged Runtime release lane
 
