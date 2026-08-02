@@ -99,7 +99,9 @@ def _ensure_experiment(
         )
         insert_hypothesis(hypothesis)
         row = get_hypothesis_by_fingerprint(fingerprint)
-    hypothesis = LearningHypothesis(**row)
+    if row is None:
+        raise RuntimeError("learning hypothesis was not persisted")
+    hypothesis = LearningHypothesis.model_validate(row)
 
     experiment_row = get_open_experiment(hypothesis.hypothesis_id)
     if experiment_row is None:
@@ -120,7 +122,9 @@ def _ensure_experiment(
         )
         insert_experiment(experiment)
         experiment_row = get_open_experiment(hypothesis.hypothesis_id)
-    return hypothesis, LearningExperiment(**experiment_row)
+    if experiment_row is None:
+        raise RuntimeError("learning experiment was not persisted")
+    return hypothesis, LearningExperiment.model_validate(experiment_row)
 
 
 def _verdict_authorizes(experiment: LearningExperiment, policy_epoch: str) -> bool:
