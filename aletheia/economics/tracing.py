@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from aletheia.economics.agent_roles import role_for_logical_agent
 from aletheia.economics.schema import ensure_economics_schema
 
 
@@ -676,6 +677,7 @@ def list_token_summary(
     totals = {field: 0 for field in token_fields}
     availability = {field: 0 for field in token_fields}
     by_logical_agent: dict[str, dict[str, int]] = {}
+    by_role: dict[str, dict[str, int]] = {}
     input_output_available_attempt_count = 0
     for row in rows:
         try:
@@ -694,6 +696,11 @@ def list_token_summary(
             {"llm_attempt_count": 0, **{field: 0 for field in token_fields}},
         )
         agent_bucket["llm_attempt_count"] += 1
+        role_bucket = by_role.setdefault(
+            role_for_logical_agent(logical_agent).value,
+            {"llm_attempt_count": 0, **{field: 0 for field in token_fields}},
+        )
+        role_bucket["llm_attempt_count"] += 1
         if all(isinstance(normalized.get(field), int) for field in ("input_tokens", "output_tokens")):
             input_output_available_attempt_count += 1
         for field in token_fields:
@@ -702,6 +709,7 @@ def list_token_summary(
                 totals[field] += value
                 availability[field] += 1
                 agent_bucket[field] += value
+                role_bucket[field] += value
     return {
         "window_start": window_start,
         "window_end": window_end,
@@ -711,6 +719,7 @@ def list_token_summary(
         "tokens": totals,
         "field_availability": availability,
         "by_logical_agent": by_logical_agent,
+        "by_role": by_role,
     }
 
 

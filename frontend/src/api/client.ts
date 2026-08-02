@@ -538,6 +538,7 @@ export const api = {
       }
       field_availability: Record<string, number>
       by_logical_agent: Record<string, Record<string, number>>
+      by_role: Record<string, Record<string, number>>
     }>(`/economics/tokens${suffix}`)
   },
   getEconomicsViability: (params: {
