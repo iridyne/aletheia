@@ -194,7 +194,10 @@ async def test_tokens_summarize_provider_usage_without_cost(client):
             '"provider_cache_read_input_tokens":2,'
             '"provider_cache_creation_input_tokens":1,"reasoning_tokens":null}}'
         ),
-        metadata_json='{"logical_agent":"market_observer"}',
+        metadata_json=(
+            '{"logical_agent":"market_observer",'
+            '"token_integrity_observations":[{"rule_id":"input_or_output_usage_unavailable"}]}'
+        ),
     )
     _seed_llm_cost(db, event_id="token-unavailable", cost=None)
 
@@ -216,6 +219,9 @@ async def test_tokens_summarize_provider_usage_without_cost(client):
     assert data["field_availability"]["cached_input_tokens"] == 1
     assert data["by_logical_agent"]["market_observer"]["input_tokens"] == 10
     assert data["by_role"]["worker"]["output_tokens"] == 4
+    assert data["token_integrity_observation_counts"] == {
+        "input_or_output_usage_unavailable": 1
+    }
 
 
 @pytest.mark.anyio

@@ -708,6 +708,7 @@ def list_token_summary(
     availability = {field: 0 for field in token_fields}
     by_logical_agent: dict[str, dict[str, int]] = {}
     by_role: dict[str, dict[str, int]] = {}
+    token_integrity_observation_counts: dict[str, int] = {}
     input_output_available_attempt_count = 0
     for row in rows:
         try:
@@ -721,6 +722,14 @@ def list_token_summary(
         except (TypeError, ValueError, json.JSONDecodeError):
             metadata = {}
         logical_agent = metadata.get("logical_agent") if isinstance(metadata, dict) else None
+        observations = metadata.get("token_integrity_observations", []) if isinstance(metadata, dict) else []
+        if isinstance(observations, list):
+            for observation in observations:
+                rule_id = observation.get("rule_id") if isinstance(observation, dict) else None
+                if isinstance(rule_id, str):
+                    token_integrity_observation_counts[rule_id] = (
+                        token_integrity_observation_counts.get(rule_id, 0) + 1
+                    )
         agent_bucket = by_logical_agent.setdefault(
             str(logical_agent or "unattributed"),
             {"llm_attempt_count": 0, **{field: 0 for field in token_fields}},
@@ -750,6 +759,7 @@ def list_token_summary(
         "field_availability": availability,
         "by_logical_agent": by_logical_agent,
         "by_role": by_role,
+        "token_integrity_observation_counts": token_integrity_observation_counts,
     }
 
 

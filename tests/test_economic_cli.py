@@ -40,6 +40,7 @@ def test_tokens_command_renders_usage_without_price_snapshot():
     assert "Input/output coverage: 1/1" in result.output
     assert "Input tokens: 12" in result.output
     assert "Cached input tokens: 2" in result.output
+    assert "Token integrity observations: none" in result.output
 
 
 def test_costs_command_renders_current_summary_field_names():

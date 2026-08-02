@@ -459,6 +459,9 @@ def tokens(
         f"{token_totals['provider_cache_read_input_tokens']}/"
         f"{token_totals['provider_cache_creation_input_tokens']}"
     )
+    observations = report["token_integrity_observation_counts"]
+    summary = ", ".join(f"{rule_id}={count}" for rule_id, count in sorted(observations.items()))
+    typer.echo(f"Token integrity observations: {summary or 'none'}")
 
 
 @audit_app.command("viability")
