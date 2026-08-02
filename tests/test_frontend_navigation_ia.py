@@ -26,7 +26,7 @@ def test_sidebar_uses_trading_desk_ia_with_global_entries():
     research = re.search(r"group: 'Research'.*?group: 'Decision'", nav_text, re.S)
     decision = re.search(r"group: 'Decision'.*?group: 'Portfolio'", nav_text, re.S)
     portfolio = re.search(r"group: 'Portfolio'.*?\{ to: '/learning', label: 'Learning'[^}]*\}", nav_text, re.S)
-    bottom = re.search(r"items: \[\s*\{ to: '/learning', label: 'Learning'[^}]*\},\s*\{ to: '/settings', label: 'Settings'[^}]*\},\s*\]", nav_text, re.S)
+    bottom = re.search(r"items: \[\s*\{ to: '/learning', label: 'Learning'[^}]*\},\s*\{ to: '/usage', label: 'Usage'[^}]*\},\s*\{ to: '/settings', label: 'Settings'[^}]*\},\s*\]", nav_text, re.S)
 
     assert top, "Overview and Command Center must be top-level global entries"
     assert research, "Research nav group is missing"
