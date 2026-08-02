@@ -61,6 +61,16 @@ _MARKET_OBSERVER_LLM_CONCURRENCY = 2
 # cannot consume the entire remaining run budget and starve later symbols.
 # Must be < _MARKET_OBSERVER_LOOP_BUDGET_SEC and > a single attempt's p99.
 _MARKET_OBSERVER_PER_SYMBOL_LLM_CAP_SEC = 45.0
+# Pressure-skip: when estimated remaining LLM work exceeds remaining run budget
+# AND a symbol's signal score is below this threshold, the symbol is skipped
+# immediately rather than queued.  High-signal symbols (score >= threshold)
+# are always attempted regardless of budget pressure.
+# Set to 0.5 — symbols that did not fully pass the pre-filter (score < 1.0)
+# are candidates for pressure-skip; pre-filter passers are always protected.
+_MARKET_OBSERVER_SIGNAL_PRESSURE_THRESHOLD = 0.5
+# EWMA smoothing factor for the run-local LLM latency estimate.
+# alpha=0.4 weights recent calls heavier; lower values give more stable estimates.
+_MARKET_OBSERVER_LLM_EWMA_ALPHA = 0.4
 _PREDICTION_CONTEXT_MAX_AGE_HOURS = 6
 _ROUND_ROBIN_STATE_KEY = "agent.market_observer.round_robin.v1"
 _RETRYABLE_EVIDENCE_ERROR_PREFIX = "observer_pre_filter_evidence_failed:"
@@ -1907,10 +1917,15 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     # fair_budget = remaining_run_time / pending_count so that early slow calls
     # shorten the budget for later symbols rather than leaving them with nothing.
     _pending_count = len(processing_order)
+    # Run-local EWMA of observed LLM call duration (seconds).  Updated after each
+    # completed call; used to detect budget pressure and skip low-signal symbols
+    # when the remaining budget is likely insufficient for the full queue.
+    # None until the first call completes.
+    _llm_ewma_s: float | None = None
 
     async def _run_one(instrument) -> None:
         nonlocal _success_count, _fail_count, _skip_count, _skipped_count
-        nonlocal _next_unprocessed_index, _pending_count
+        nonlocal _next_unprocessed_index, _pending_count, _llm_ewma_s
         # Each slot first checks the budget before acquiring the semaphore.
         # This prevents a task from queuing inside the semaphore past the deadline.
         if _monotonic() >= _run_deadline:
@@ -1947,12 +1962,47 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 _fair_budget_s,
                 _remaining_run_s,
             )
-            completed_attempt = False
+            # Pressure-skip: if we have a latency estimate AND the expected
+            # remaining work (ewma * pending) exceeds the remaining budget by
+            # more than a safety factor, skip low-signal symbols immediately
+            # so high-signal ones are not crowded out.
             _prefetched = _prefetch_map.get(instrument_key(instrument))
+            _sym_signal = (
+                _prefetched.signal_score
+                if _prefetched is not None and not _prefetched.failed
+                else 0.0
+            )
+            async with _rr_lock:
+                _ewma_snapshot = _llm_ewma_s
+                _pending_snapshot = max(1, _pending_count)
+            if (
+                _ewma_snapshot is not None
+                and _sym_signal < _MARKET_OBSERVER_SIGNAL_PRESSURE_THRESHOLD
+            ):
+                _remaining_s = _run_deadline - _monotonic()
+                # Estimate work outstanding: ewma * (concurrent slots already in
+                # flight are not counted — they'll finish regardless).  Use a 1.5x
+                # safety factor to absorb estimation error.
+                _estimated_work_s = _ewma_snapshot * _pending_snapshot * 1.5
+                if _estimated_work_s > _remaining_s:
+                    logger.info(
+                        "[MO] %s: pressure-skip (signal=%.2f < %.2f, "
+                        "est_work=%.0fs > remaining=%.0fs)",
+                        instrument.symbol,
+                        _sym_signal,
+                        _MARKET_OBSERVER_SIGNAL_PRESSURE_THRESHOLD,
+                        _estimated_work_s,
+                        _remaining_s,
+                    )
+                    async with _rr_lock:
+                        _skip_count += 1
+                    return
+            completed_attempt = False
             try:
                 u_member = _universe_lookup.get(instrument.symbol)
                 _sym_canonical = to_canonical(instrument.symbol)
                 _linked_sid = _strategy_by_symbol.get(_sym_canonical) or _strategy_by_symbol.get("__generic__")
+                _t_llm_start = _monotonic()
                 opp_id, err = await _analyze_symbol(
                     symbol=instrument.symbol,
                     market_type=instrument.market_type,
@@ -1978,6 +2028,19 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                     _prefetched=_prefetched,
                     llm_deadline=_per_symbol_llm_deadline,
                 )
+                # Update run-local EWMA with the observed LLM call duration.
+                # Only count completed calls (not pre-filter skips) so the
+                # estimate reflects real LLM latency, not short-circuit paths.
+                _call_duration_s = _monotonic() - _t_llm_start
+                if err is None or (err and "pre_filter_skip" not in err):
+                    async with _rr_lock:
+                        if _llm_ewma_s is None:
+                            _llm_ewma_s = _call_duration_s
+                        else:
+                            _llm_ewma_s = (
+                                _MARKET_OBSERVER_LLM_EWMA_ALPHA * _call_duration_s
+                                + (1 - _MARKET_OBSERVER_LLM_EWMA_ALPHA) * _llm_ewma_s
+                            )
                 if opp_id:
                     async with _rr_lock:
                         outputs.append(f"opportunity:{opp_id}")
