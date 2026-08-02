@@ -142,6 +142,8 @@ no logic duplication):
 |---|---|
 | `/api/economics/status` | `tracing_enabled()`, `audit_enabled()` |
 | `/api/economics/costs?days=&run_id=&include_events=&event_limit=` | `list_cost_summary` |
+| `/api/economics/costs/by-provider?days=&run_id=&event_limit=` | `list_cost_breakdown_by_provider` |
+| `/api/economics/costs/by-tool?days=&run_id=&event_limit=` | `list_cost_breakdown_by_tool` |
 | `/api/economics/viability?scope=&days=&data_cost=&as_of=` | `build_*_viability(persist=False)` |
 | `/api/economics/viability/reports?scope=&limit=&offset=` | direct query of `viability_reports` |
 | `/api/economics/model-health` | `fallback.get_model_health_snapshot()` |

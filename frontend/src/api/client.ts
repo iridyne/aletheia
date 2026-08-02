@@ -288,6 +288,147 @@ function put<T>(path: string, body?: unknown): Promise<T> {
 
 export interface KeyStatus { configured: boolean; last4: string | null }
 
+// ── Economics (token-usage ledger) ───────────────────────────────────────────
+// Bound to `runtime_cost_events` rows returned by `/api/economics/costs` with
+// `include_events=true`. The `usage_json` field is the raw JSON string from the
+// ledger; callers parse it with `JSON.parse` and read `.normalized` for the
+// provider-normalized token fields (see `economics/tracing._extract_usage`).
+export interface RuntimeCostEvent {
+  id: string
+  event_type: string
+  provider: string | null
+  model_or_tool: string
+  started_at: string
+  latency_ms: number | null
+  estimated_cost_usd: number | null
+  cost_status: 'known' | 'estimated' | 'unknown'
+  usage_json: string
+}
+
+export interface EconomicsProviderBucket {
+  event_count: number
+  known_cost_usd: number
+  unknown_count: number
+  input_tokens: number
+  output_tokens: number
+  reasoning_tokens: number
+  cached_input_tokens: number
+  success_count: number
+  error_count: number
+  avg_latency_ms: number | null
+}
+
+export interface EconomicsDailyPoint extends EconomicsProviderBucket {
+  date: string // YYYY-MM-DD (UTC)
+  provider: string
+}
+
+// Named response shapes for the read-only economics surface. These mirror the
+// contract of the `/api/economics/*` endpoints so page components can type
+// their query results instead of reaching for `any`.
+export interface EconomicsStatusResponse {
+  tracing_enabled: boolean
+  audit_enabled: boolean
+}
+
+export interface EconomicsCostsByTypeBucket {
+  event_count: number
+  known_cost_usd: number
+  unknown_count: number
+}
+
+export interface EconomicsCostsResponse {
+  window_start: string
+  window_end: string
+  event_count: number
+  known_cost_subtotal_usd: number
+  unknown_event_count: number
+  by_type: Record<string, EconomicsCostsByTypeBucket>
+  events?: RuntimeCostEvent[]
+}
+
+export interface EconomicsCostsByProviderResponse {
+  window_start: string
+  window_end: string
+  tracing_enabled: boolean
+  event_count: number
+  parse_errors: number
+  providers: Record<string, EconomicsProviderBucket>
+  /** Per-(provider, model) rollup of the same bucket fields. */
+  models: Record<string, Record<string, EconomicsProviderBucket>>
+  daily_series: EconomicsDailyPoint[]
+}
+
+export interface EconomicsToolBucket {
+  event_count: number
+  known_cost_usd: number
+  unknown_count: number
+  recorded_count: number
+  denied_count: number
+}
+
+export interface EconomicsCostsByToolResponse {
+  window_start: string
+  window_end: string
+  tracing_enabled: boolean
+  event_count: number
+  /** Per-tool rollup (keyed by tool name) of the call/cost split. */
+  tools: Record<string, EconomicsToolBucket>
+}
+
+export interface EconomicsBudget {
+  id: string
+  scope: string
+  subject: string | null
+  usd_cap: number
+  window: string
+  enabled: number
+  source: string
+  created_at: string
+  updated_at: string
+}
+
+export interface EconomicsBudgetsResponse {
+  budgets: EconomicsBudget[]
+}
+
+export interface WouldBlockObservation {
+  policy_id: string
+  scope: string
+  subject: string | null
+  window: string
+  usd_cap: number
+  spent_before_call_usd: number
+  projected_after_call_usd: number
+  over_by_usd: number
+}
+
+export interface EconomicsWouldBlockEvent extends Record<string, unknown> {
+  would_block: WouldBlockObservation[]
+}
+
+export interface EconomicsWouldBlockResponse {
+  events: EconomicsWouldBlockEvent[]
+  window_days: number
+  limit: number
+}
+
+export interface ModelHealthEntry {
+  provider: string
+  model: string
+  consecutive_failures: number
+  cooldown_until: number
+  last_error: string | null
+  last_failure_at: number | null
+  last_success_at: number | null
+  cooling_down: boolean
+  cooldown_remaining_sec: number
+}
+
+export interface EconomicsModelHealthResponse {
+  snapshot: ModelHealthEntry[]
+}
+
 export interface SerenityTheme {
   id: string
   name: string
@@ -523,10 +664,7 @@ export const api = {
   // Read-only economics surface (Phase 1 of the tokenomics harness).
   // Mirrors `aletheia audit` CLI subcommands so operators can see LLM
   // spend and cooldown state from the dashboard.
-  getEconomicsStatus: () => fetchJson<{
-    tracing_enabled: boolean
-    audit_enabled: boolean
-  }>('/economics/status'),
+  getEconomicsStatus: () => fetchJson<EconomicsStatusResponse>('/economics/status'),
   getEconomicsCosts: (params?: {
     days?: number; run_id?: string; include_events?: boolean; event_limit?: number
   }) => {
@@ -536,14 +674,27 @@ export const api = {
     if (params?.include_events) qs.set('include_events', 'true')
     if (params?.event_limit !== undefined) qs.set('event_limit', String(params.event_limit))
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
-    return fetchJson<{
-      window_start: string; window_end: string
-      event_count: number
-      known_cost_subtotal_usd: number
-      unknown_event_count: number
-      by_type: Record<string, { event_count: number; known_cost_usd: number; unknown_count: number }>
-      events?: Array<Record<string, unknown>>
-    }>(`/economics/costs${suffix}`)
+    return fetchJson<EconomicsCostsResponse>(`/economics/costs${suffix}`)
+  },
+  getEconomicsCostsByProvider: (params?: {
+    days?: number; run_id?: string; event_limit?: number
+  }) => {
+    const qs = new URLSearchParams()
+    if (params?.days !== undefined) qs.set('days', String(params.days))
+    if (params?.run_id) qs.set('run_id', params.run_id)
+    if (params?.event_limit !== undefined) qs.set('event_limit', String(params.event_limit))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return fetchJson<EconomicsCostsByProviderResponse>(`/economics/costs/by-provider${suffix}`)
+  },
+  getEconomicsCostsByTool: (params?: {
+    days?: number; run_id?: string; event_limit?: number
+  }) => {
+    const qs = new URLSearchParams()
+    if (params?.days !== undefined) qs.set('days', String(params.days))
+    if (params?.run_id) qs.set('run_id', params.run_id)
+    if (params?.event_limit !== undefined) qs.set('event_limit', String(params.event_limit))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return fetchJson<EconomicsCostsByToolResponse>(`/economics/costs/by-tool${suffix}`)
   },
   getEconomicsTokens: (params?: { days?: number; run_id?: string }) => {
     const qs = new URLSearchParams()
@@ -613,19 +764,7 @@ export const api = {
       total: number
     }>(`/economics/viability/reports${suffix}`)
   },
-  getEconomicsModelHealth: () => fetchJson<{
-    snapshot: Array<{
-      provider: string
-      model: string
-      consecutive_failures: number
-      cooldown_until: number
-      last_error: string | null
-      last_failure_at: number | null
-      last_success_at: number | null
-      cooling_down: boolean
-      cooldown_remaining_sec: number
-    }>
-  }>('/economics/model-health'),
+  getEconomicsModelHealth: () => fetchJson<EconomicsModelHealthResponse>('/economics/model-health'),
   getEconomicsPricing: () => fetchJson<{
     models: Array<Record<string, unknown>>
     tools: Array<Record<string, unknown>>
@@ -638,19 +777,7 @@ export const api = {
     if (params?.scope) qs.set('scope', params.scope)
     if (params?.enabled_only) qs.set('enabled_only', 'true')
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
-    return fetchJson<{
-      budgets: Array<{
-        id: string
-        scope: string
-        subject: string | null
-        usd_cap: number
-        window: string
-        enabled: number
-        source: string
-        created_at: string
-        updated_at: string
-      }>
-    }>(`/economics/budgets${suffix}`)
+    return fetchJson<EconomicsBudgetsResponse>(`/economics/budgets${suffix}`)
   },
   getEconomicsBudgetsWouldBlock: (params?: {
     days?: number
@@ -662,22 +789,7 @@ export const api = {
     if (params?.limit !== undefined) qs.set('limit', String(params.limit))
     if (params?.scope) qs.set('scope', params.scope)
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
-    return fetchJson<{
-      events: Array<Record<string, unknown> & {
-        would_block: Array<{
-          policy_id: string
-          scope: string
-          subject: string | null
-          window: string
-          usd_cap: number
-          spent_before_call_usd: number
-          projected_after_call_usd: number
-          over_by_usd: number
-        }>
-      }>
-      window_days: number
-      limit: number
-    }>(`/economics/budgets/would-block${suffix}`)
+    return fetchJson<EconomicsWouldBlockResponse>(`/economics/budgets/would-block${suffix}`)
   },
   pingModel: () => post<{ ok: boolean; latency_ms: number; model: string; response: string; error: string | null }>('/model/ping'),
   setModelProvider: (body: {

@@ -333,6 +333,9 @@ def normalize_usage(raw_usage: Any) -> dict[str, int | None]:
         return None
 
     top_level_reasoning = token("reasoning_tokens")
+    cached_from_details = detail(
+        prompt_details, "cached_tokens", "cached_input_tokens"
+    )
     return {
         "input_tokens": token("prompt_tokens", "input_tokens"),
         "output_tokens": token("completion_tokens", "output_tokens"),
@@ -342,8 +345,15 @@ def normalize_usage(raw_usage: Any) -> dict[str, int | None]:
             if top_level_reasoning is not None
             else detail(completion_details, "reasoning_tokens")
         ),
-        "cached_input_tokens": detail(
-            prompt_details, "cached_tokens", "cached_input_tokens"
+        # Providers disagree on where cache hits live: OpenAI/Anthropic report
+        # them under prompt_tokens_details.cached_tokens, while DeepSeek-style
+        # providers (incl. sensenova) put them at the top level as
+        # cache_read_input_tokens. Fall back so both shapes normalize to
+        # cached_input_tokens instead of silently zeroing the counter.
+        "cached_input_tokens": (
+            cached_from_details
+            if cached_from_details is not None
+            else token("cache_read_input_tokens")
         ),
         "provider_cache_read_input_tokens": token("cache_read_input_tokens"),
         "provider_cache_creation_input_tokens": token("cache_creation_input_tokens"),
@@ -814,4 +824,333 @@ def list_cost_summary(
         ),
         "by_type": by_type,
         "events": rows,
+    }
+
+
+_PROVIDER_TOKEN_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "reasoning_tokens",
+    "cached_input_tokens",
+)
+
+
+def _extract_usage(usage_json: str) -> dict[str, Any] | None:
+    """Parse the persisted ``usage_json`` blob and return the normalized block.
+
+    The ledger stores ``{"raw": <provider usage>, "normalized": {...}}``. The
+    heatmap/scatter/stacked-chart aggregations only need the normalized block;
+    if the blob is missing, malformed, or has no normalized key the caller skips
+    the row and counts it as a parse error rather than raising.
+    """
+    if not usage_json:
+        return None
+    try:
+        parsed = json.loads(usage_json)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    normalized = parsed.get("normalized")
+    if not isinstance(normalized, dict):
+        return None
+    return normalized
+
+
+def _date_only(iso_ts: str) -> str:
+    """Return the UTC date (YYYY-MM-DD) for an ISO timestamp.
+
+    The schema stores ``started_at`` as an ISO8601 string in UTC, but rejects
+    are normalized defensively so a stray space or a Z suffix does not shift
+    the bucketed day.
+    """
+    return _normalize_iso(iso_ts)[:10]
+
+
+def list_cost_breakdown_by_provider(
+    *,
+    window_start: str,
+    window_end: str,
+    run_id: str | None = None,
+    event_limit: int = 10_000,
+) -> dict[str, Any]:
+    """Per-provider/model token breakdown + daily time series for the Usage dashboard.
+
+    Unlike :func:`list_cost_summary` (which groups by ``event_type`` only), this
+    reads LLM-type rows, parses the persisted ``usage_json`` blob, and rolls the
+    normalized token fields up by ``provider`` and ``(provider, model)`` as well
+    as by UTC date. Each bucket also carries success/error counts and average
+    latency so the dashboard can show per-model call health without scanning raw
+    rows. The output is intentionally compact (no raw events returned) so the
+    dashboard can poll it at the same cadence as ``/api/economics/costs`` without
+    paying for a 5 KB row back per call.
+
+    Rows whose ``usage_json`` cannot be parsed are still credited to the
+    provider's ``event_count`` and ``known_cost_usd`` totals (cost is always on
+    the row itself), but their token fields are skipped and surfaced via
+    ``parse_errors`` so an operator can see drift without an exception masking
+    the rest of the response.
+    """
+    db = ensure_economics_schema()
+    if not tracing_enabled():
+        return {
+            "window_start": window_start,
+            "window_end": window_end,
+            "tracing_enabled": False,
+            "providers": {},
+            "models": {},
+            "daily_series": [],
+            "parse_errors": 0,
+            "event_count": 0,
+        }
+    where = [
+        "event_type='llm'",
+        "replace(started_at,' ','T') >= replace(?,' ','T')",
+        "replace(started_at,' ','T') <= replace(?,' ','T')",
+    ]
+    params: list[Any] = [window_start, window_end]
+    if run_id:
+        where.append("run_id=?")
+        params.append(run_id)
+    rows = [
+        dict(row)
+        for row in db.execute(
+            "SELECT provider, model_or_tool, started_at, latency_ms, status, "
+            "estimated_cost_usd, cost_status, usage_json "
+            "FROM runtime_cost_events WHERE "
+            + " AND ".join(where)
+            + " ORDER BY started_at LIMIT ?",
+            (*params, int(event_limit)),
+        ).fetchall()
+    ]
+
+    providers: dict[str, dict[str, Any]] = {}
+    models: dict[str, dict[str, dict[str, Any]]] = {}
+    daily_map: dict[tuple[str, str], dict[str, Any]] = {}
+    parse_errors = 0
+
+    def _new_bucket() -> dict[str, Any]:
+        return {
+            "event_count": 0,
+            "known_cost_usd": 0.0,
+            "unknown_count": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "cached_input_tokens": 0,
+            "success_count": 0,
+            "error_count": 0,
+            "avg_latency_ms": None,
+            "latency_ms_sum": 0.0,
+            "latency_count": 0,
+        }
+
+    def _apply(
+        bucket: dict[str, Any],
+        *,
+        is_unknown: bool,
+        expense: Any,
+        usage: dict[str, Any] | None,
+        status: str,
+        latency_ms: Any,
+    ) -> None:
+        bucket["event_count"] += 1
+        if is_unknown:
+            bucket["unknown_count"] += 1
+        else:
+            bucket["known_cost_usd"] += float(expense)
+        if status == "success":
+            bucket["success_count"] += 1
+        else:
+            bucket["error_count"] += 1
+        if latency_ms is not None:
+            try:
+                bucket["latency_ms_sum"] += float(latency_ms)
+                bucket["latency_count"] += 1
+            except (TypeError, ValueError):
+                pass
+        if usage is not None:
+            for field in ("input_tokens", "output_tokens", "reasoning_tokens"):
+                value = usage.get(field)
+                if isinstance(value, (int, float)) and value > 0:
+                    bucket[field] += int(value)
+            cached = usage.get("cached_input_tokens")
+            if cached is None:
+                # Historical rows may predate the top-level cache_read mapping:
+                # their normalized blob only carries
+                # provider_cache_read_input_tokens. Fall back so cached tokens
+                # are not silently dropped from the dashboard.
+                cached = usage.get("provider_cache_read_input_tokens")
+            if isinstance(cached, (int, float)) and cached > 0:
+                bucket["cached_input_tokens"] += int(cached)
+
+    def _finalize_bucket(bucket: dict[str, Any]) -> None:
+        bucket["known_cost_usd"] = round(bucket["known_cost_usd"], 12)
+        if bucket["latency_count"]:
+            bucket["avg_latency_ms"] = round(
+                bucket["latency_ms_sum"] / bucket["latency_count"], 1
+            )
+        else:
+            bucket["avg_latency_ms"] = None
+        bucket.pop("latency_ms_sum", None)
+        bucket.pop("latency_count", None)
+
+    for row in rows:
+        provider = row.get("provider") or "unknown"
+        model = row.get("model_or_tool") or "unknown"
+        started_at = row.get("started_at") or _utcnow()
+        usage = _extract_usage(row.get("usage_json") or "")
+        expense = row.get("estimated_cost_usd")
+        status = row.get("status") or "error"
+        latency_ms = row.get("latency_ms")
+        is_unknown = expense is None or row.get("cost_status") == "unknown"
+
+        if usage is None and row.get("usage_json"):
+            parse_errors += 1
+
+        prov_bucket = providers.setdefault(provider, _new_bucket())
+        _apply(
+            prov_bucket,
+            is_unknown=is_unknown,
+            expense=expense,
+            usage=usage,
+            status=status,
+            latency_ms=latency_ms,
+        )
+
+        model_bucket = models.setdefault(provider, {}).setdefault(model, _new_bucket())
+        _apply(
+            model_bucket,
+            is_unknown=is_unknown,
+            expense=expense,
+            usage=usage,
+            status=status,
+            latency_ms=latency_ms,
+        )
+
+        day = _date_only(started_at)
+        day_key = (day, provider)
+        day_bucket = daily_map.setdefault(day_key, _new_bucket())
+        _apply(
+            day_bucket,
+            is_unknown=is_unknown,
+            expense=expense,
+            usage=usage,
+            status=status,
+            latency_ms=latency_ms,
+        )
+
+    for prov_bucket in providers.values():
+        _finalize_bucket(prov_bucket)
+    for provider_models in models.values():
+        for model_bucket in provider_models.values():
+            _finalize_bucket(model_bucket)
+    for day_bucket in daily_map.values():
+        _finalize_bucket(day_bucket)
+
+    daily_series = [
+        {
+            "date": day,
+            "provider": provider,
+            **bucket,
+        }
+        for (day, provider), bucket in sorted(
+            daily_map.items(),
+            key=lambda item: (item[0][0], item[0][1]),
+        )
+    ]
+
+    return {
+        "window_start": window_start,
+        "window_end": window_end,
+        "tracing_enabled": True,
+        "event_count": len(rows),
+        "parse_errors": parse_errors,
+        "providers": providers,
+        "models": models,
+        "daily_series": daily_series,
+    }
+
+
+def list_cost_breakdown_by_tool(
+    *,
+    window_start: str,
+    window_end: str,
+    run_id: str | None = None,
+    event_limit: int = 10_000,
+) -> dict[str, Any]:
+    """Per-tool call rollup for the Usage dashboard.
+
+    Tool rows are mirrored into ``runtime_cost_events`` from ``agent_tool_calls``
+    by the ``trg_agent_tool_call_cost_event`` trigger: ``provider`` is always
+    ``"tool"`` and the tool name lives in ``model_or_tool``. ``status`` is
+    ``recorded`` (permitted) or ``denied``. The trigger never writes a latency
+    or usage blob, so this rollup carries no latency/token fields — those would
+    be invented zeros.
+
+    Costs come from ``tool_cost_profiles`` via ``cost_profile_id``; rows without
+    a profile stay ``unknown`` and are counted, never dropped.
+    """
+    db = ensure_economics_schema()
+    if not tracing_enabled():
+        return {
+            "window_start": window_start,
+            "window_end": window_end,
+            "tracing_enabled": False,
+            "tools": {},
+            "event_count": 0,
+        }
+    where = [
+        "event_type='tool'",
+        "replace(started_at,' ','T') >= replace(?,' ','T')",
+        "replace(started_at,' ','T') <= replace(?,' ','T')",
+    ]
+    params: list[Any] = [window_start, window_end]
+    if run_id:
+        where.append("run_id=?")
+        params.append(run_id)
+    rows = [
+        dict(row)
+        for row in db.execute(
+            "SELECT model_or_tool, status, estimated_cost_usd, cost_status "
+            "FROM runtime_cost_events WHERE "
+            + " AND ".join(where)
+            + " ORDER BY started_at LIMIT ?",
+            (*params, int(event_limit)),
+        ).fetchall()
+    ]
+
+    def _new_tool_bucket() -> dict[str, Any]:
+        return {
+            "event_count": 0,
+            "known_cost_usd": 0.0,
+            "unknown_count": 0,
+            "recorded_count": 0,
+            "denied_count": 0,
+        }
+
+    tools: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        name = row.get("model_or_tool") or "unknown"
+        bucket = tools.setdefault(name, _new_tool_bucket())
+        bucket["event_count"] += 1
+        if (row.get("status") or "recorded") == "denied":
+            bucket["denied_count"] += 1
+        else:
+            bucket["recorded_count"] += 1
+        expense = row.get("estimated_cost_usd")
+        if expense is None or row.get("cost_status") == "unknown":
+            bucket["unknown_count"] += 1
+        else:
+            bucket["known_cost_usd"] += float(expense)
+
+    for bucket in tools.values():
+        bucket["known_cost_usd"] = round(bucket["known_cost_usd"], 12)
+
+    return {
+        "window_start": window_start,
+        "window_end": window_end,
+        "tracing_enabled": True,
+        "event_count": len(rows),
+        "tools": tools,
     }

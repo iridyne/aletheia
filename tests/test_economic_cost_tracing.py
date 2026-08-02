@@ -17,6 +17,7 @@ from aletheia.economics.tracing import (
     add_tool_cost_profile,
     aggregate_agent_run_cost,
     initialize_runtime_tracing,
+    normalize_usage,
 )
 from aletheia.model_provider.base import (
     ModelHealth,
@@ -80,6 +81,37 @@ def _add_test_pricing() -> None:
         effective_from="2020-01-01T00:00:00+00:00",
         source="test",
     )
+
+
+def test_normalize_usage_top_level_cache_read_falls_back_to_cached():
+    """DeepSeek-style providers report cache hits at the top level as
+    cache_read_input_tokens; those must normalize into cached_input_tokens
+    instead of being silently dropped."""
+    usage = normalize_usage(
+        {
+            "input_tokens": 1000,
+            "output_tokens": 500,
+            "cache_read_input_tokens": 768,
+            "cache_creation_input_tokens": 0,
+        }
+    )
+    assert usage["cached_input_tokens"] == 768
+    assert usage["provider_cache_read_input_tokens"] == 768
+    assert usage["provider_cache_creation_input_tokens"] == 0
+
+
+def test_normalize_usage_prompt_details_cache_still_preferred():
+    """OpenAI/Anthropic style prompt_tokens_details.cached_tokens remains the
+    primary source and is not displaced by the top-level fallback."""
+    usage = normalize_usage(
+        {
+            "prompt_tokens": 200,
+            "completion_tokens": 100,
+            "prompt_tokens_details": {"cached_tokens": 40},
+        }
+    )
+    assert usage["cached_input_tokens"] == 40
+    assert usage["provider_cache_read_input_tokens"] is None
 
 
 @pytest.mark.asyncio
