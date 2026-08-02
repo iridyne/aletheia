@@ -43,34 +43,50 @@ _action_log: list[dict] = []  # in-memory log for rate limiting within process l
 
 # ─── ParamSpec Registry ──────────────────────────────────────────────────────
 
+
 @dataclass
 class ParamSpec:
     name: str
     config_section: str  # "trading" | "risk"
-    neutral: Any         # schema default = homeostatic target
+    neutral: Any  # schema default = homeostatic target
     tighten_direction: str  # "up" | "down"
     floor: Any
     ceiling: Any
-    step: Any            # per-cycle cap (pct for numeric, 1 step for ladder)
+    step: Any  # per-cycle cap (pct for numeric, 1 step for ladder)
     ladder: list | None  # categorical params only
 
 
 PARAM_REGISTRY: dict[str, ParamSpec] = {
     "min_confidence_to_trade": ParamSpec(
-        "min_confidence_to_trade", "trading",
-        neutral="medium", tighten_direction="up",
-        floor="speculative", ceiling="high", step=1,
-        ladder=["speculative", "medium", "high"]),
+        "min_confidence_to_trade",
+        "trading",
+        neutral="medium",
+        tighten_direction="up",
+        floor="speculative",
+        ceiling="high",
+        step=1,
+        ladder=["speculative", "medium", "high"],
+    ),
     "max_demo_position_notional_usdt": ParamSpec(
-        "max_demo_position_notional_usdt", "risk",
-        neutral=200.0, tighten_direction="down",
-        floor=20.0, ceiling=500.0, step=0.30,
-        ladder=None),
+        "max_demo_position_notional_usdt",
+        "risk",
+        neutral=200.0,
+        tighten_direction="down",
+        floor=20.0,
+        ceiling=500.0,
+        step=0.30,
+        ladder=None,
+    ),
     "default_stop_loss_pct": ParamSpec(
-        "default_stop_loss_pct", "trading",
-        neutral=2.0, tighten_direction="down",
-        floor=1.0, ceiling=5.0, step=1.0,
-        ladder=None),
+        "default_stop_loss_pct",
+        "trading",
+        neutral=2.0,
+        tighten_direction="down",
+        floor=1.0,
+        ceiling=5.0,
+        step=1.0,
+        ladder=None,
+    ),
 }
 
 
@@ -121,9 +137,9 @@ def _get_param_drift(param_name: str) -> str:
 _CONSECUTIVE_ESCALATION_THRESHOLD = 3
 
 
-def _persist_action(event_type: str, param: str | None = None,
-                    before: str = "", after: str = "",
-                    direction: str = "", reason: str = "") -> None:
+def _persist_action(
+    event_type: str, param: str | None = None, before: str = "", after: str = "", direction: str = "", reason: str = ""
+) -> None:
     """Write action to audit_events (persistent) + in-memory cache."""
     from aletheia.storage.models import AuditEvent
     from aletheia.storage.repositories import insert_audit_event
@@ -146,13 +162,15 @@ def _persist_action(event_type: str, param: str | None = None,
     except Exception as e:
         logger.debug("_persist_action: audit write failed: %s", e)
 
-    _action_log.append({
-        "type": event_type,
-        "param": param,
-        "detail": f"{before}→{after}",
-        "direction": direction,
-        "ts": datetime.now(timezone.utc),
-    })
+    _action_log.append(
+        {
+            "type": event_type,
+            "param": param,
+            "detail": f"{before}→{after}",
+            "direction": direction,
+            "ts": datetime.now(timezone.utc),
+        }
+    )
     if len(_action_log) > 500:
         _action_log[:] = _action_log[-200:]
 
@@ -171,9 +189,9 @@ def _count_actions_today_persistent(event_type: str, param: str | None = None) -
     except Exception:
         cutoff_dt = datetime.now(timezone.utc) - timedelta(hours=24)
         return sum(
-            1 for a in _action_log
-            if a["type"] == event_type and a["ts"] > cutoff_dt
-            and (param is None or a.get("param") == param)
+            1
+            for a in _action_log
+            if a["type"] == event_type and a["ts"] > cutoff_dt and (param is None or a.get("param") == param)
         )
 
 
@@ -185,8 +203,7 @@ def _last_action_time_persistent(event_type: str, param: str | None = None) -> d
         if param:
             where += " AND entity_id = ?"
             params_tup = (event_type, param)
-        rows = repo._select_all("audit_events", where=where, params=params_tup,
-                                order="timestamp DESC", limit=1)
+        rows = repo._select_all("audit_events", where=where, params=params_tup, order="timestamp DESC", limit=1)
         if rows:
             ts_str = rows[0].get("timestamp", "")
             if ts_str:
@@ -204,8 +221,7 @@ def _count_consecutive_same_direction(param: str, direction: str) -> int:
     """Count consecutive recent actions in the same direction for a param."""
     try:
         where = "actor = 'operator_loop' AND event_type = 'config_patch' AND entity_id = ?"
-        rows = repo._select_all("audit_events", where=where, params=(param,),
-                                order="timestamp DESC", limit=10)
+        rows = repo._select_all("audit_events", where=where, params=(param,), order="timestamp DESC", limit=10)
         count = 0
         for row in rows:
             msg = row.get("message", "")
@@ -236,6 +252,7 @@ def _maybe_escalate(action: OperatorAction, param: str, direction: str) -> Opera
 
 # ─── Legacy helpers (delegate to persistent versions) ────────────────────────
 
+
 def _count_actions_today(action_type: str) -> int:
     return _count_actions_today_persistent(action_type)
 
@@ -249,6 +266,7 @@ def _record_action(action_type: str, param: str | None = None, detail: str = "")
 
 
 # ─── Action Definitions ──────────────────────────────────────────────────────
+
 
 @dataclass
 class OperatorAction:
@@ -274,10 +292,17 @@ class OperatorAction:
 # Owner should either wire the underlying queue or remove these before
 # claiming the action set is fully executable.
 _LEVEL_1_ACTIONS = {
-    "retire_strategy", "demote_strategy",  # advisory-only under Phase 4d — see note above
-    "trigger_optuna_sweep",                # status='not_implemented' at runtime — see note above
-    "tighten_confidence", "loosen_confidence", "reduce_sizing", "increase_sizing", "tighten_stop_loss",
-    "adjust_scanner_weight", "request_backfill", "notify_operator",
+    "retire_strategy",
+    "demote_strategy",  # advisory-only under Phase 4d — see note above
+    "trigger_optuna_sweep",  # status='not_implemented' at runtime — see note above
+    "tighten_confidence",
+    "loosen_confidence",
+    "reduce_sizing",
+    "increase_sizing",
+    "tighten_stop_loss",
+    "adjust_scanner_weight",
+    "request_backfill",
+    "notify_operator",
     "trigger_strategy_research",
     # Data-maintenance self-heal actions (operator_layer.md §自愈档位 L1).
     # These require PI approval before execution (§不变式1).
@@ -288,16 +313,22 @@ _LEVEL_1_ACTIONS = {
 }
 
 _LEVEL_2_ACTIONS = {
-    "widen_stop_loss", "neutral_drift",
+    "widen_stop_loss",
+    "neutral_drift",
     "add_universe_symbol",
     # L2 self-heal actions (operator_layer.md §自愈档位 L2) — require human confirmation.
     # Routed to _create_proposal automatically by classify_action → dispatch path.
-    "clear_signal_pending", "modify_prompt_fragment", "modify_config_fragment",
+    "clear_signal_pending",
+    "modify_prompt_fragment",
+    "modify_config_fragment",
 }
 
 _LEVEL_3_ACTIONS = {
-    "deactivate_kill_switch", "enable_live_mode", "modify_risk_limits",
-    "modify_credentials", "modify_permissions",
+    "deactivate_kill_switch",
+    "enable_live_mode",
+    "modify_risk_limits",
+    "modify_credentials",
+    "modify_permissions",
 }
 
 
@@ -315,9 +346,11 @@ def classify_action(action_type: str) -> int:
 
 # ─── System State Assessment ─────────────────────────────────────────────────
 
+
 @dataclass
 class SystemAssessment:
     """Snapshot of system state for operator decision-making."""
+
     timestamp: str = ""
     # Strategy pool
     strategies_total: int = 0
@@ -379,9 +412,7 @@ def build_system_assessment() -> SystemAssessment:
         )
         cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
         assessment.strategies_retired_24h = sum(
-            1 for s in strategies
-            if s.get("state") == "retired"
-            and (s.get("updated_at") or "") > cutoff_24h
+            1 for s in strategies if s.get("state") == "retired" and (s.get("updated_at") or "") > cutoff_24h
         )
         # Underperforming: paper_running with negative expectancy over last 7 days
         for s in strategies:
@@ -389,28 +420,31 @@ def build_system_assessment() -> SystemAssessment:
                 continue
             perf = _get_strategy_performance(str(s.get("id", "")))
             if perf and perf.get("expectancy", 0) < -0.5 and perf.get("trade_count", 0) >= 5:
-                assessment.underperforming_strategies.append({
-                    "id": str(s.get("id")),
-                    "name": s.get("name", ""),
-                    "state": s.get("state"),
-                    "expectancy": perf["expectancy"],
-                    "win_rate": perf.get("win_rate"),
-                    "trade_count": perf["trade_count"],
-                })
+                assessment.underperforming_strategies.append(
+                    {
+                        "id": str(s.get("id")),
+                        "name": s.get("name", ""),
+                        "state": s.get("state"),
+                        "expectancy": perf["expectancy"],
+                        "win_rate": perf.get("win_rate"),
+                        "trade_count": perf["trade_count"],
+                    }
+                )
     except Exception as e:
         logger.debug("assessment: strategy pool error: %s", e)
 
     # Uncovered symbols
     try:
         from aletheia.storage.repositories import get_active_universe_members
+
         members = get_active_universe_members()
         covered_symbols = {
-            s.get("symbol") for s in repo.list_strategies(limit=500)
+            s.get("symbol")
+            for s in repo.list_strategies(limit=500)
             if s.get("state") in ("paper_candidate", "paper_running", "paper_passed", "live_candidate", "live_limited")
         }
         assessment.uncovered_symbols = [
-            m.get("symbol", "") for m in members
-            if m.get("symbol") and m.get("symbol") not in covered_symbols
+            m.get("symbol", "") for m in members if m.get("symbol") and m.get("symbol") not in covered_symbols
         ]
     except Exception as e:
         logger.debug("assessment: uncovered symbols error: %s", e)
@@ -422,12 +456,8 @@ def build_system_assessment() -> SystemAssessment:
         cutoff_48h = (now - timedelta(hours=48)).isoformat()
         cutoff_7d = (now - timedelta(days=7)).isoformat()
         fills_all = repo.list_fills(limit=500)
-        assessment.trades_24h = sum(
-            1 for f in fills_all if (f.get("filled_at") or "") > cutoff_24h
-        )
-        assessment.trades_48h = sum(
-            1 for f in fills_all if (f.get("filled_at") or "") > cutoff_48h
-        )
+        assessment.trades_24h = sum(1 for f in fills_all if (f.get("filled_at") or "") > cutoff_24h)
+        assessment.trades_48h = sum(1 for f in fills_all if (f.get("filled_at") or "") > cutoff_48h)
         # A9 (LEARNING_LOOP_AUDIT §18.2): realized_pnl lives on POSITIONS, not fills
         # (the Fill model has no realized_pnl column), so the old fills-based math made
         # win_rate/total_pnl/profit_factor permanently 0/None. Compute from closed
@@ -495,6 +525,7 @@ def build_system_assessment() -> SystemAssessment:
     # Data health
     try:
         from aletheia.agent_shell.trading_context import _get_data_health_summary
+
         health = _get_data_health_summary()
         assessment.ohlcv_ready = health.get("ohlcv_ready", False)
         assessment.signal_win_rate = health.get("signal_win_rate_24h")
@@ -514,6 +545,7 @@ def build_system_assessment() -> SystemAssessment:
     # Scanner calibration
     try:
         from aletheia.universe.allocator import get_family_multipliers
+
         assessment.family_multipliers = get_family_multipliers()
     except Exception:
         pass
@@ -522,6 +554,7 @@ def build_system_assessment() -> SystemAssessment:
     # returns — indicates the filter may be too conservative for those families.
     try:
         from aletheia.universe.filter_advisor import get_family_filter_pressure_summary
+
         assessment.filter_pressure = get_family_filter_pressure_summary()
     except Exception:
         assessment.filter_pressure = []
@@ -542,9 +575,7 @@ def build_system_assessment() -> SystemAssessment:
         from aletheia.agent_shell.operator_store import list_events
         from aletheia.analytics.candidate_supply import evaluate_candidate_supply_drought
 
-        assessment.candidate_supply_drought = evaluate_candidate_supply_drought(
-            list_events(limit=20)
-        )
+        assessment.candidate_supply_drought = evaluate_candidate_supply_drought(list_events(limit=20))
     except Exception as e:
         logger.debug("assessment: candidate supply state unavailable: %s", e)
 
@@ -553,11 +584,10 @@ def build_system_assessment() -> SystemAssessment:
     # of doctor (content probes only). Best-effort; never breaks the assessment.
     try:
         from aletheia.diagnostics.doctor import build_content_report
+
         for c in build_content_report().checks:
             if c.severity in ("warn", "blocker"):
-                assessment.content_health.append(
-                    {"name": c.name, "severity": c.severity, "detail": c.detail}
-                )
+                assessment.content_health.append({"name": c.name, "severity": c.severity, "detail": c.detail})
     except Exception as e:
         logger.debug("assessment: content health error: %s", e)
 
@@ -574,12 +604,16 @@ def _auto_confidence_tightening_is_active() -> bool:
     try:
         from aletheia.storage.sqlite import get_db
 
-        row = get_db().execute(
-            "SELECT before_state, after_state, message FROM audit_events "
-            "WHERE actor='operator_loop' AND event_type='config_patch' "
-            "AND entity_id='min_confidence_to_trade' "
-            "ORDER BY timestamp DESC LIMIT 1"
-        ).fetchone()
+        row = (
+            get_db()
+            .execute(
+                "SELECT before_state, after_state, message FROM audit_events "
+                "WHERE actor='operator_loop' AND event_type='config_patch' "
+                "AND entity_id='min_confidence_to_trade' "
+                "ORDER BY timestamp DESC LIMIT 1"
+            )
+            .fetchone()
+        )
         if row is None:
             return False
         return (
@@ -602,12 +636,16 @@ def _legacy_aggregate_confidence_tightening_is_active() -> bool:
     try:
         from aletheia.storage.sqlite import get_db
 
-        row = get_db().execute(
-            "SELECT before_state, after_state, message FROM audit_events "
-            "WHERE actor='operator_loop' AND event_type='config_patch' "
-            "AND entity_id='min_confidence_to_trade' "
-            "ORDER BY timestamp DESC LIMIT 1"
-        ).fetchone()
+        row = (
+            get_db()
+            .execute(
+                "SELECT before_state, after_state, message FROM audit_events "
+                "WHERE actor='operator_loop' AND event_type='config_patch' "
+                "AND entity_id='min_confidence_to_trade' "
+                "ORDER BY timestamp DESC LIMIT 1"
+            )
+            .fetchone()
+        )
         return bool(
             row is not None
             and row["before_state"] == "medium"
@@ -628,23 +666,20 @@ def _confidence_recovery_reason(assessment: SystemAssessment) -> str | None:
     main exclusion reason become sufficient liveness evidence.  Recovery never
     goes below the neutral ``medium`` tier and never relaxes guards or risk.
     """
-    if (assessment.param_drift.get("min_confidence_to_trade") != "tightened"
-            or assessment.kill_switch_active):
+    if assessment.param_drift.get("min_confidence_to_trade") != "tightened" or assessment.kill_switch_active:
         return None
     if _legacy_aggregate_confidence_tightening_is_active():
         return (
             "legacy aggregate signal-health patch: restoring retired automatic "
             "min_confidence_to_trade tightening from high to neutral medium"
         )
-    if (assessment.hours_since_last_trade is not None
-            and assessment.hours_since_last_trade >= 4):
+    if assessment.hours_since_last_trade is not None and assessment.hours_since_last_trade >= 4:
         return (
             f"confidence drought: no fills in {assessment.hours_since_last_trade:.1f}h; "
             "restoring min_confidence_to_trade from high to neutral medium"
         )
     drought = assessment.candidate_supply_drought or {}
-    if (drought.get("main_reason") == "confidence_below"
-            and _auto_confidence_tightening_is_active()):
+    if drought.get("main_reason") == "confidence_below" and _auto_confidence_tightening_is_active():
         return (
             "candidate supply drought: confidence gate excluded the ranked working set "
             f"for {int(drought.get('consecutive_cycles') or 0)} consecutive cycles; "
@@ -661,7 +696,8 @@ def _get_strategy_performance(strategy_id: str) -> dict | None:
         # returned None. Closed positions carry both — use them.
         cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
         positions = [
-            row for row in eligible_strategy_outcomes(closed_after=cutoff)
+            row
+            for row in eligible_strategy_outcomes(closed_after=cutoff)
             if str(row.get("strategy_id") or "") == strategy_id
         ]
         if not positions:
@@ -680,6 +716,7 @@ def _get_strategy_performance(strategy_id: str) -> dict | None:
 
 
 # ─── Action Execution ────────────────────────────────────────────────────────
+
 
 def _execute_level1_action(action: OperatorAction) -> dict:
     """Execute a Level 1 (auto) action. Returns result dict."""
@@ -715,18 +752,30 @@ def _execute_level1_action(action: OperatorAction) -> dict:
     elif action.action_type.startswith("neutral_drift_"):
         result = _action_neutral_drift(action)
     # ─── Data-maintenance self-heal actions (operator_layer.md §自愈档位 L1) ───
-    # OL-C08/SH-C02: PI approval gate — every L1 self-heal action must record
-    # an approval token in pi_decisions before executing. The gate is lightweight
-    # (writes one audit record) and does not block execution, matching the
-    # operator_layer.md §不变式1 requirement for a "prior PI approval record".
+    # Issue #384/OL-C08: write a durable audit record BEFORE executing any L1
+    # self-heal action.  The record is an operator audit entry (action=
+    # 'l1_selfheal_audit'), NOT an independent PI approval.  If the write fails
+    # the action is BLOCKED (fail-closed) so the audit trail never goes missing.
     elif action.action_type == "clean_stale_heartbeats":
-        _request_pi_approval_for_selfheal(action)
+        try:
+            _request_pi_approval_for_selfheal(action)
+        except Exception as e:
+            return {"action": "clean_stale_heartbeats", "status": "blocked",
+                    "reason": f"audit_write_failed: {e}"}
         result = _action_clean_stale_heartbeats(action)
     elif action.action_type == "restart_collector":
-        _request_pi_approval_for_selfheal(action)
+        try:
+            _request_pi_approval_for_selfheal(action)
+        except Exception as e:
+            return {"action": "restart_collector", "status": "blocked",
+                    "reason": f"audit_write_failed: {e}"}
         result = _action_restart_collector(action)
     elif action.action_type == "rebuild_sqlite_index":
-        _request_pi_approval_for_selfheal(action)
+        try:
+            _request_pi_approval_for_selfheal(action)
+        except Exception as e:
+            return {"action": "rebuild_sqlite_index", "status": "blocked",
+                    "reason": f"audit_write_failed: {e}"}
         result = _action_rebuild_sqlite_index(action)
     else:
         result["reason"] = f"unknown action type: {action.action_type}"
@@ -743,6 +792,7 @@ def _action_retire_strategy(action: OperatorAction) -> dict:
     try:
         from aletheia.storage.models import PiDecision
         from aletheia.storage.repositories import insert_pi_decision
+
         pi_dec = PiDecision(
             symbol=None,
             direction=None,
@@ -755,6 +805,7 @@ def _action_retire_strategy(action: OperatorAction) -> dict:
         insert_pi_decision(pi_dec)
         try:
             from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+
             notify_pi_daemon(source="operator_loop_retire")
         except Exception:
             pass
@@ -774,6 +825,7 @@ def _action_demote_strategy(action: OperatorAction) -> dict:
     try:
         from aletheia.storage.models import PiDecision
         from aletheia.storage.repositories import insert_pi_decision
+
         pi_dec = PiDecision(
             symbol=None,
             direction=None,
@@ -786,6 +838,7 @@ def _action_demote_strategy(action: OperatorAction) -> dict:
         insert_pi_decision(pi_dec)
         try:
             from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+
             notify_pi_daemon(source="operator_loop_demote")
         except Exception:
             pass
@@ -809,16 +862,20 @@ _ICT_RESEARCH_BRIEF = (
 
 def _action_trigger_strategy_research(action: OperatorAction) -> dict:
     from aletheia.config.loader import load_config as _load_config
+
     if not _load_config().serenity.enabled:
-        return {"action": "trigger_strategy_research", "status": "skipped",
-                "reason": "serenity disabled"}
+        return {"action": "trigger_strategy_research", "status": "skipped", "reason": "serenity disabled"}
     if _count_actions_today("trigger_strategy_research") >= _MAX_RESEARCH_TRIGGERS_PER_DAY:
-        return {"action": "trigger_strategy_research", "status": "rate_limited",
-                "reason": f"already triggered {_MAX_RESEARCH_TRIGGERS_PER_DAY}x today"}
+        return {
+            "action": "trigger_strategy_research",
+            "status": "rate_limited",
+            "reason": f"already triggered {_MAX_RESEARCH_TRIGGERS_PER_DAY}x today",
+        }
     try:
         from aletheia.storage.models import SerenityResearchRun
         from aletheia.storage import repositories as _repo
         from aletheia.agents.research_worker import enqueue_research_run
+
         run = SerenityResearchRun(
             trigger_type="operator",
             mode="methodology",
@@ -838,13 +895,15 @@ def _action_trigger_optuna_sweep(action: OperatorAction) -> dict:
     # background worker) so this action produces real enqueued work.
     # Tracked as OL-2 in docs/research/audits/CODE_AUDIT_REPORT_2026-06-23.md.
     if _count_actions_today("trigger_optuna_sweep") >= _MAX_OPTUNA_TRIGGERS_PER_DAY:
-        return {"action": "trigger_optuna_sweep", "status": "rate_limited",
-                "reason": f"already triggered {_MAX_OPTUNA_TRIGGERS_PER_DAY}x today"}
+        return {
+            "action": "trigger_optuna_sweep",
+            "status": "rate_limited",
+            "reason": f"already triggered {_MAX_OPTUNA_TRIGGERS_PER_DAY}x today",
+        }
     strategy_id = action.params.get("strategy_id", "")
     _record_action("trigger_optuna_sweep", param=strategy_id)
     logger.info(
-        "operator: Optuna sweep requested for strategy %s — not_implemented: "
-        "no sweep-job queue exists yet",
+        "operator: Optuna sweep requested for strategy %s — not_implemented: no sweep-job queue exists yet",
         strategy_id,
     )
     return {
@@ -862,11 +921,13 @@ def _action_tighten_confidence(action: OperatorAction) -> dict:
     param_name = "min_confidence_to_trade"
     last = _last_action_time("config_patch", param_name)
     if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
-        return {"action": "tighten_confidence", "status": "cooldown",
-                "reason": "same param adjusted < 2h ago"}
+        return {"action": "tighten_confidence", "status": "cooldown", "reason": "same param adjusted < 2h ago"}
     if _count_actions_today("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
-        return {"action": "tighten_confidence", "status": "rate_limited",
-                "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
+        return {
+            "action": "tighten_confidence",
+            "status": "rate_limited",
+            "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)",
+        }
 
     cfg = load_config()
     current = getattr(cfg.trading, param_name, "medium")
@@ -880,23 +941,24 @@ def _action_tighten_confidence(action: OperatorAction) -> dict:
     new_val = _CONFIDENCE_LADDER[idx + 1]
     cfg.trading.min_confidence_to_trade = new_val
     save_config(cfg)
-    _persist_action("config_patch", param=param_name,
-                    before=current, after=new_val, direction="tighten",
-                    reason=action.reason)
+    _persist_action(
+        "config_patch", param=param_name, before=current, after=new_val, direction="tighten", reason=action.reason
+    )
     logger.info("operator: tightened %s: %s → %s — %s", param_name, current, new_val, action.reason)
-    return {"action": "tighten_confidence", "status": "executed",
-            "param": param_name, "old": current, "new": new_val}
+    return {"action": "tighten_confidence", "status": "executed", "param": param_name, "old": current, "new": new_val}
 
 
 def _action_loosen_confidence(action: OperatorAction) -> dict:
     param_name = "min_confidence_to_trade"
     last = _last_action_time("config_patch", param_name)
     if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
-        return {"action": "loosen_confidence", "status": "cooldown",
-                "reason": "same param adjusted < 2h ago"}
+        return {"action": "loosen_confidence", "status": "cooldown", "reason": "same param adjusted < 2h ago"}
     if _count_actions_today("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
-        return {"action": "loosen_confidence", "status": "rate_limited",
-                "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
+        return {
+            "action": "loosen_confidence",
+            "status": "rate_limited",
+            "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)",
+        }
 
     cfg = load_config()
     current = getattr(cfg.trading, param_name, "medium")
@@ -919,23 +981,24 @@ def _action_loosen_confidence(action: OperatorAction) -> dict:
         return {"action": "loosen_confidence", "status": "skipped", "reason": "already at neutral"}
     cfg.trading.min_confidence_to_trade = new_val
     save_config(cfg)
-    _persist_action("config_patch", param=param_name,
-                    before=current, after=new_val, direction="loosen",
-                    reason=action.reason)
+    _persist_action(
+        "config_patch", param=param_name, before=current, after=new_val, direction="loosen", reason=action.reason
+    )
     logger.info("operator: loosened %s: %s → %s — %s", param_name, current, new_val, action.reason)
-    return {"action": "loosen_confidence", "status": "executed",
-            "param": param_name, "old": current, "new": new_val}
+    return {"action": "loosen_confidence", "status": "executed", "param": param_name, "old": current, "new": new_val}
 
 
 def _action_reduce_sizing(action: OperatorAction) -> dict:
     param_name = "max_demo_position_notional_usdt"
     last = _last_action_time("config_patch", param_name)
     if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
-        return {"action": "reduce_sizing", "status": "cooldown",
-                "reason": "same param adjusted < 2h ago"}
+        return {"action": "reduce_sizing", "status": "cooldown", "reason": "same param adjusted < 2h ago"}
     if _count_actions_today("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
-        return {"action": "reduce_sizing", "status": "rate_limited",
-                "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
+        return {
+            "action": "reduce_sizing",
+            "status": "rate_limited",
+            "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)",
+        }
 
     pct = min(action.params.get("reduce_pct", 20), 30)
     cfg = load_config()
@@ -950,12 +1013,16 @@ def _action_reduce_sizing(action: OperatorAction) -> dict:
     cfg.risk.max_demo_position_notional_usdt = new_val
     cfg.risk.demo.revision += 1
     save_config(cfg)
-    _persist_action("config_patch", param=param_name,
-                    before=str(current), after=str(new_val), direction="tighten",
-                    reason=action.reason)
+    _persist_action(
+        "config_patch",
+        param=param_name,
+        before=str(current),
+        after=str(new_val),
+        direction="tighten",
+        reason=action.reason,
+    )
     logger.info("operator: reduced %s: %.1f → %.1f — %s", param_name, current, new_val, action.reason)
-    return {"action": "reduce_sizing", "status": "executed",
-            "param": param_name, "old": current, "new": new_val}
+    return {"action": "reduce_sizing", "status": "executed", "param": param_name, "old": current, "new": new_val}
 
 
 def _action_increase_sizing(action: OperatorAction) -> dict:
@@ -963,11 +1030,13 @@ def _action_increase_sizing(action: OperatorAction) -> dict:
     param_name = "max_demo_position_notional_usdt"
     last = _last_action_time("config_patch", param_name)
     if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
-        return {"action": "increase_sizing", "status": "cooldown",
-                "reason": "same param adjusted < 2h ago"}
+        return {"action": "increase_sizing", "status": "cooldown", "reason": "same param adjusted < 2h ago"}
     if _count_actions_today("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
-        return {"action": "increase_sizing", "status": "rate_limited",
-                "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
+        return {
+            "action": "increase_sizing",
+            "status": "rate_limited",
+            "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)",
+        }
 
     spec = PARAM_REGISTRY[param_name]
     pct = min(action.params.get("increase_pct", 20), 30)
@@ -981,23 +1050,29 @@ def _action_increase_sizing(action: OperatorAction) -> dict:
     cfg.risk.max_demo_position_notional_usdt = new_val
     cfg.risk.demo.revision += 1
     save_config(cfg)
-    _persist_action("config_patch", param=param_name,
-                    before=str(current), after=str(new_val), direction="loosen",
-                    reason=action.reason)
+    _persist_action(
+        "config_patch",
+        param=param_name,
+        before=str(current),
+        after=str(new_val),
+        direction="loosen",
+        reason=action.reason,
+    )
     logger.info("operator: increased %s: %.1f → %.1f — %s", param_name, current, new_val, action.reason)
-    return {"action": "increase_sizing", "status": "executed",
-            "param": param_name, "old": current, "new": new_val}
+    return {"action": "increase_sizing", "status": "executed", "param": param_name, "old": current, "new": new_val}
 
 
 def _action_tighten_stop_loss(action: OperatorAction) -> dict:
     param_name = "default_stop_loss_pct"
     last = _last_action_time("config_patch", param_name)
     if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
-        return {"action": "tighten_stop_loss", "status": "cooldown",
-                "reason": "same param adjusted < 2h ago"}
+        return {"action": "tighten_stop_loss", "status": "cooldown", "reason": "same param adjusted < 2h ago"}
     if _count_actions_today("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
-        return {"action": "tighten_stop_loss", "status": "rate_limited",
-                "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
+        return {
+            "action": "tighten_stop_loss",
+            "status": "rate_limited",
+            "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)",
+        }
 
     delta = min(action.params.get("delta", 0.5), 1.0)
     cfg = load_config()
@@ -1008,12 +1083,16 @@ def _action_tighten_stop_loss(action: OperatorAction) -> dict:
 
     cfg.trading.default_stop_loss_pct = new_val
     save_config(cfg)
-    _persist_action("config_patch", param=param_name,
-                    before=str(current), after=str(new_val), direction="tighten",
-                    reason=action.reason)
+    _persist_action(
+        "config_patch",
+        param=param_name,
+        before=str(current),
+        after=str(new_val),
+        direction="tighten",
+        reason=action.reason,
+    )
     logger.info("operator: tightened %s: %.1f → %.1f — %s", param_name, current, new_val, action.reason)
-    return {"action": "tighten_stop_loss", "status": "executed",
-            "param": param_name, "old": current, "new": new_val}
+    return {"action": "tighten_stop_loss", "status": "executed", "param": param_name, "old": current, "new": new_val}
 
 
 def _action_widen_stop_loss(action: OperatorAction) -> dict:
@@ -1021,11 +1100,13 @@ def _action_widen_stop_loss(action: OperatorAction) -> dict:
     param_name = "default_stop_loss_pct"
     last = _last_action_time("config_patch", param_name)
     if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
-        return {"action": "widen_stop_loss", "status": "cooldown",
-                "reason": "same param adjusted < 2h ago"}
+        return {"action": "widen_stop_loss", "status": "cooldown", "reason": "same param adjusted < 2h ago"}
     if _count_actions_today("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
-        return {"action": "widen_stop_loss", "status": "rate_limited",
-                "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
+        return {
+            "action": "widen_stop_loss",
+            "status": "rate_limited",
+            "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)",
+        }
 
     spec = PARAM_REGISTRY[param_name]
     delta = min(action.params.get("delta", 0.5), 1.0)
@@ -1038,12 +1119,16 @@ def _action_widen_stop_loss(action: OperatorAction) -> dict:
 
     cfg.trading.default_stop_loss_pct = new_val
     save_config(cfg)
-    _persist_action("config_patch", param=param_name,
-                    before=str(current), after=str(new_val), direction="loosen",
-                    reason=action.reason)
+    _persist_action(
+        "config_patch",
+        param=param_name,
+        before=str(current),
+        after=str(new_val),
+        direction="loosen",
+        reason=action.reason,
+    )
     logger.info("operator: widened %s: %.1f → %.1f — %s", param_name, current, new_val, action.reason)
-    return {"action": "widen_stop_loss", "status": "executed",
-            "param": param_name, "old": current, "new": new_val}
+    return {"action": "widen_stop_loss", "status": "executed", "param": param_name, "old": current, "new": new_val}
 
 
 def _action_neutral_drift(action: OperatorAction) -> dict:
@@ -1055,8 +1140,11 @@ def _action_neutral_drift(action: OperatorAction) -> dict:
         return _action_increase_sizing(action)
     elif param_name == "default_stop_loss_pct":
         return _action_widen_stop_loss(action)
-    return {"action": action.action_type, "status": "skipped",
-            "reason": f"unknown param for neutral_drift: {param_name}"}
+    return {
+        "action": action.action_type,
+        "status": "skipped",
+        "reason": f"unknown param for neutral_drift: {param_name}",
+    }
 
 
 def _action_adjust_scanner_weight(action: OperatorAction) -> dict:
@@ -1069,6 +1157,7 @@ def _action_adjust_scanner_weight(action: OperatorAction) -> dict:
     # Persist the new weight to config so it survives restarts (CR-PI-01).
     try:
         from aletheia.config.loader import load_config, save_config
+
         cfg = load_config()
         weights = dict(cfg.universe.scanner_weights)
         current = weights.get(family, 1.0)
@@ -1078,8 +1167,7 @@ def _action_adjust_scanner_weight(action: OperatorAction) -> dict:
     except Exception as e:
         logger.warning("operator: scanner_weight persist failed: %s", e)
     logger.info("operator: adjusted scanner weight %s by %.2f — %s", family, delta, action.reason)
-    return {"action": "adjust_scanner_weight", "status": "executed",
-            "family": family, "delta": delta}
+    return {"action": "adjust_scanner_weight", "status": "executed", "family": family, "delta": delta}
 
 
 def _action_request_backfill(action: OperatorAction) -> dict:
@@ -1097,40 +1185,48 @@ def _action_notify(action: OperatorAction) -> dict:
     _record_action("notify_operator", detail=message[:100])
     logger.info("operator: notify — %s", message[:200])
     try:
-        from aletheia.notifications.dispatcher import send_notification
-        send_notification(title="PI Operator", body=message[:500], level="info")
+        from aletheia.notifications import notify_operator as _notify
+        _notify("PI Operator", message[:500], level="info")
     except Exception:
         pass
     return {"action": "notify_operator", "status": "executed", "message": message[:200]}
 
 
 def _request_pi_approval_for_selfheal(action: OperatorAction) -> None:
-    """Record a PI-approval token in pi_decisions before a L1 self-heal action fires.
+    """Write a durable audit record before a L1 self-heal action executes.
 
-    operator_layer.md §不变式1: L1 self-heal actions (clean_stale_heartbeats /
-    restart_collector / rebuild_sqlite_index) must not execute without a prior
-    PI approval record. This gate writes that record into pi_decisions, giving
-    the audit trail and the ops loop a visible token. Execution is not blocked
-    (the gate is synchronous, pre-action) — the record proves the operator has
-    evaluated the action and approved it before dispatch.
+    Issue #384: the old implementation (a) used action='recommend_l1_selfheal'
+    which could be misread as independent PI approval when it was self-authored
+    by the same control loop, and (b) swallowed write failures, allowing execution
+    to proceed with no audit trail.
+
+    Design decision: these are deterministic Level-1 data-maintenance actions that
+    do NOT require a separate PI veto — they are executed on the operator's own
+    authority.  We therefore implement Option 2 from Issue #384: use an honest
+    action name ('l1_selfheal_audit') that cannot be misread as independent
+    approval, and fail CLOSED (raise) when the audit write fails so execution
+    never proceeds silently without a record.
+
+    Callers catch RuntimeError to surface the failure in the action result.
     """
-    try:
-        from aletheia.storage.models import PiDecision
-        from aletheia.storage.repositories import insert_pi_decision
-        insert_pi_decision(PiDecision(
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+    # Raises on any failure — callers must catch and abort execution (fail closed).
+    insert_pi_decision(
+        PiDecision(
             symbol=None,
             direction=None,
-            action="recommend_l1_selfheal",
+            action="l1_selfheal_audit",  # honest: operator decision, not independent PI approval
             conviction=0,
             reasoning=(
-                f"Operator recommends L1 self-heal action "
-                f"'{action.action_type}': {action.reason or 'routine maintenance'}"
+                f"Operator executing L1 self-heal: {action.action_type}. "
+                f"Reason: {action.reason or 'routine maintenance'}. "
+                "Authorised by the operator control loop on its own authority (not PI-approved)."
             ),
             proposal_id=None,
             debate_ran=False,
-        ))
-    except Exception as e:
-        logger.debug("_request_pi_approval_for_selfheal: could not write approval record: %s", e)
+        )
+    )
 
 
 def _action_clean_stale_heartbeats(action: OperatorAction) -> dict:
@@ -1145,6 +1241,7 @@ def _action_clean_stale_heartbeats(action: OperatorAction) -> dict:
     after_state = "unknown"
     try:
         from aletheia.storage import repositories as _repo
+
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
         existing = _repo._select_all(
             "agent_shell_heartbeats",
@@ -1154,10 +1251,12 @@ def _action_clean_stale_heartbeats(action: OperatorAction) -> dict:
         )
         before_state = str(len(existing)) + " stale rows"
         if existing:
-            _repo._execute_raw(
-                "DELETE FROM agent_shell_heartbeats WHERE last_seen < ?",
-                (cutoff,),
-            )
+            from aletheia.storage.sqlite import get_db
+            with _repo.transaction():
+                get_db().execute(
+                    "DELETE FROM agent_shell_heartbeats WHERE last_seen < ?",
+                    (cutoff,),
+                )
             rows_deleted = len(existing)
         after_state = f"{rows_deleted} rows deleted"
     except Exception as e:
@@ -1166,6 +1265,7 @@ def _action_clean_stale_heartbeats(action: OperatorAction) -> dict:
 
     try:
         from aletheia.agent_shell.commands import _emit_self_heal_action
+
         _emit_self_heal_action(
             action="clean_stale_heartbeats",
             reason=reason,
@@ -1180,8 +1280,7 @@ def _action_clean_stale_heartbeats(action: OperatorAction) -> dict:
 
     _record_action("self_heal", param="heartbeats", detail=after_state)
     logger.info("operator: clean_stale_heartbeats — %s", after_state)
-    return {"action": "clean_stale_heartbeats", "status": "executed",
-            "rows_deleted": rows_deleted, "reason": reason}
+    return {"action": "clean_stale_heartbeats", "status": "executed", "rows_deleted": rows_deleted, "reason": reason}
 
 
 def _action_restart_collector(action: OperatorAction) -> dict:
@@ -1198,6 +1297,7 @@ def _action_restart_collector(action: OperatorAction) -> dict:
         # Notify via audit trail — actual restart requires scheduler integration
         # (Phase 2 of the self-heal layer, per aletheia-self-heal-layer.md)
         from aletheia.agent_shell.commands import _emit_self_heal_action
+
         _emit_self_heal_action(
             action="restart_collector",
             reason=reason,
@@ -1212,8 +1312,7 @@ def _action_restart_collector(action: OperatorAction) -> dict:
 
     _record_action("self_heal", param=f"collector:{collector}", detail=result_msg)
     logger.info("operator: restart_collector %s — %s", collector, reason)
-    return {"action": "restart_collector", "status": "executed",
-            "collector": collector, "reason": reason}
+    return {"action": "restart_collector", "status": "executed", "collector": collector, "reason": reason}
 
 
 def _action_rebuild_sqlite_index(action: OperatorAction) -> dict:
@@ -1228,8 +1327,9 @@ def _action_rebuild_sqlite_index(action: OperatorAction) -> dict:
 
     try:
         from aletheia.storage import repositories as _repo
+        from aletheia.storage.sqlite import get_db as _get_db
         # ANALYZE updates index statistics; full REINDEX is deferred to avoid lock contention
-        _repo._execute_raw("ANALYZE", ())
+        _get_db().execute("ANALYZE")
         result_msg = "ANALYZE OK"
     except Exception as e:
         logger.debug("rebuild_sqlite_index ANALYZE: %s", e)
@@ -1237,6 +1337,7 @@ def _action_rebuild_sqlite_index(action: OperatorAction) -> dict:
 
     try:
         from aletheia.agent_shell.commands import _emit_self_heal_action
+
         _emit_self_heal_action(
             action="rebuild_sqlite_index",
             reason=reason,
@@ -1251,13 +1352,13 @@ def _action_rebuild_sqlite_index(action: OperatorAction) -> dict:
 
     _record_action("self_heal", param=f"index:{table}", detail=result_msg)
     logger.info("operator: rebuild_sqlite_index %s — %s", table, result_msg)
-    return {"action": "rebuild_sqlite_index", "status": "executed",
-            "table": table, "result": result_msg}
+    return {"action": "rebuild_sqlite_index", "status": "executed", "table": table, "result": result_msg}
 
 
 def _create_proposal(action: OperatorAction) -> dict:
     """Create a Level 2 proposal artifact for human review."""
     from aletheia.agent_shell.operator_store import create_artifact
+
     artifact_id = create_artifact(
         task_id=None,
         session_id=None,
@@ -1278,6 +1379,7 @@ def _create_proposal(action: OperatorAction) -> dict:
 
 # ─── Decision Engine ─────────────────────────────────────────────────────────
 
+
 def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
     """Deterministic decision engine: assessment → actions.
 
@@ -1290,15 +1392,17 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
     # NOT auto-fix (data/code remediation stays gated per ai_native_bugfix_path.md §4).
     if assessment.content_health:
         names = ", ".join(c["name"].replace("content.", "") for c in assessment.content_health)
-        actions.append(OperatorAction(
-            action_type="notify_operator",
-            level=1,
-            params={
-                "message": f"Content-health anomalies ({len(assessment.content_health)}): {names}",
-                "content_health": assessment.content_health,
-            },
-            reason="doctor content.* probes flagged warn/blocker — manager self-supervision",
-        ))
+        actions.append(
+            OperatorAction(
+                action_type="notify_operator",
+                level=1,
+                params={
+                    "message": f"Content-health anomalies ({len(assessment.content_health)}): {names}",
+                    "content_health": assessment.content_health,
+                },
+                reason="doctor content.* probes flagged warn/blocker — manager self-supervision",
+            )
+        )
 
     # Stage 2: Strategy Lifecycle — CONVERGED TO TS operator-shell (owner decision 2026-06-28).
     # Strategy retire/demote is owned by the TS operator-shell, which evaluates strategy
@@ -1314,24 +1418,25 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
     # confidence mutation.  A low aggregate forward-outcome WR can be caused by
     # sparse/legacy/mixed cohorts; using it to tighten the candidate threshold
     # created the same all-skip feedback loop that B1 removes from the PI prompt.
-    if (assessment.signal_status == "degraded"
-            and assessment.signal_win_rate is not None
-            and assessment.signal_win_rate < 40):
-        actions.append(OperatorAction(
-            action_type="notify_operator",
-            level=1,
-            params={
-                "diagnosis_kind": "aggregate_signal_quality",
-                "message": (
-                    "Aggregate 24h signal quality is degraded; inspect candidate "
-                    "skip evidence and cohort coverage. No confidence/config change was made."
-                ),
-            },
-            reason=(
-                f"aggregate signal win_rate={assessment.signal_win_rate:.1f}% below 40%; "
-                "diagnosis only"
-            ),
-        ))
+    if (
+        assessment.signal_status == "degraded"
+        and assessment.signal_win_rate is not None
+        and assessment.signal_win_rate < 40
+    ):
+        actions.append(
+            OperatorAction(
+                action_type="notify_operator",
+                level=1,
+                params={
+                    "diagnosis_kind": "aggregate_signal_quality",
+                    "message": (
+                        "Aggregate 24h signal quality is degraded; inspect candidate "
+                        "skip evidence and cohort coverage. No confidence/config change was made."
+                    ),
+                },
+                reason=(f"aggregate signal win_rate={assessment.signal_win_rate:.1f}% below 40%; diagnosis only"),
+            )
+        )
 
     if assessment.win_rate_7d is not None and assessment.win_rate_7d < 35:
         act = OperatorAction(
@@ -1355,68 +1460,88 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
         # Only the B1.1 supply branch changes candidate admission behavior.
         # Keep the pre-existing fill-clock recovery byte-for-byte epoch-neutral
         # so its deterministic simulation/replay contract remains intact.
-        if confidence_recovery_reason.startswith((
-                "candidate supply drought:", "legacy aggregate signal-health patch:")):
+        if confidence_recovery_reason.startswith(
+            ("candidate supply drought:", "legacy aggregate signal-health patch:")
+        ):
             from aletheia.agent_shell.skip_policy import ensure_skip_remediation_policy_epoch
+
             policy_epoch_id = ensure_skip_remediation_policy_epoch()
             params["policy_epoch_id"] = policy_epoch_id
-            confidence_recovery_reason = (
-                f"{confidence_recovery_reason}; policy_epoch={policy_epoch_id}"
+            confidence_recovery_reason = f"{confidence_recovery_reason}; policy_epoch={policy_epoch_id}"
+        actions.append(
+            OperatorAction(
+                action_type="loosen_confidence",
+                level=1,
+                params=params,
+                reason=confidence_recovery_reason,
             )
-        actions.append(OperatorAction(
-            action_type="loosen_confidence",
-            level=1,
-            params=params,
-            reason=confidence_recovery_reason,
-        ))
+        )
 
     # Rule 5B: Winning streak + high PF -> restore sizing toward neutral.
     # The win-rate guard is disjoint from reduce_sizing (<35), so opposing sizing
     # actions cannot be emitted in one cycle. The handler's shared parameter
     # cooldown prevents immediate reversal across adjacent cycles.
-    if (assessment.recent_streak >= 3
-            and assessment.profit_factor_7d is not None
-            and assessment.profit_factor_7d >= 1.5
-            and assessment.param_drift.get("max_demo_position_notional_usdt") == "tightened"
-            and (assessment.win_rate_7d is None or assessment.win_rate_7d >= 35)
-            and not assessment.kill_switch_active):
-        actions.append(OperatorAction(
-            action_type="increase_sizing",
-            level=1,
-            params={"increase_pct": 20},
-            reason=(f"streak={assessment.recent_streak}, PF={assessment.profit_factor_7d:.2f} "
-                    f"— sizing tightened, restoring toward neutral"),
-        ))
+    if (
+        assessment.recent_streak >= 3
+        and assessment.profit_factor_7d is not None
+        and assessment.profit_factor_7d >= 1.5
+        and assessment.param_drift.get("max_demo_position_notional_usdt") == "tightened"
+        and (assessment.win_rate_7d is None or assessment.win_rate_7d >= 35)
+        and not assessment.kill_switch_active
+    ):
+        actions.append(
+            OperatorAction(
+                action_type="increase_sizing",
+                level=1,
+                params={"increase_pct": 20},
+                reason=(
+                    f"streak={assessment.recent_streak}, PF={assessment.profit_factor_7d:.2f} "
+                    f"— sizing tightened, restoring toward neutral"
+                ),
+            )
+        )
 
     # Rule 5C: TP-dominated exits → widen stop loss
     exit_total = sum(assessment.exit_composition_7d.values())
     tp_exits = assessment.exit_composition_7d.get("take_profit", 0)
-    if (exit_total >= 8
-            and tp_exits / exit_total >= 0.70
-            and assessment.param_drift.get("default_stop_loss_pct") == "tightened"
-            and not assessment.kill_switch_active):
-        actions.append(OperatorAction(
-            action_type="widen_stop_loss",
-            level=2,
-            params={"delta": 0.5},
-            reason=(f"TP exits {tp_exits}/{exit_total} ({tp_exits/exit_total*100:.0f}%) "
-                    f"— stop tightened, proposing widen toward neutral"),
-        ))
+    if (
+        exit_total >= 8
+        and tp_exits / exit_total >= 0.70
+        and assessment.param_drift.get("default_stop_loss_pct") == "tightened"
+        and not assessment.kill_switch_active
+    ):
+        actions.append(
+            OperatorAction(
+                action_type="widen_stop_loss",
+                level=2,
+                params={"delta": 0.5},
+                reason=(
+                    f"TP exits {tp_exits}/{exit_total} ({tp_exits / exit_total * 100:.0f}%) "
+                    f"— stop tightened, proposing widen toward neutral"
+                ),
+            )
+        )
 
     # Rule 5D: Healthy performance → neutral drift (one param per cycle)
-    if (assessment.win_rate_7d is not None
-            and 45 <= assessment.win_rate_7d <= 65
-            and assessment.trades_48h > 0
-            and not assessment.kill_switch_active):
+    if (
+        assessment.win_rate_7d is not None
+        and 45 <= assessment.win_rate_7d <= 65
+        and assessment.trades_48h > 0
+        and not assessment.kill_switch_active
+    ):
         for param_name, drift in assessment.param_drift.items():
             if drift != "neutral":
-                actions.append(OperatorAction(
-                    action_type=f"neutral_drift_{param_name}",
-                    level=2,
-                    params={"param": param_name},
-                    reason=(f"WR={assessment.win_rate_7d:.1f}% healthy, "
-                            f"{param_name} drifted ({drift}) — proposing return to neutral"),
-                ))
+                actions.append(
+                    OperatorAction(
+                        action_type=f"neutral_drift_{param_name}",
+                        level=2,
+                        params={"param": param_name},
+                        reason=(
+                            f"WR={assessment.win_rate_7d:.1f}% healthy, "
+                            f"{param_name} drifted ({drift}) — proposing return to neutral"
+                        ),
+                    )
+                )
                 break  # one param per cycle
 
     # Stage 3: Data Health — request_backfill CONVERGED TO TS Auto Repair (owner decision
@@ -1425,37 +1550,39 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
     # the TS operator-shell's Auto Repair engine, so the Python loop no longer emits it.
 
     # Stage 3b: Strategy Research — trigger ICT/SMC methodology research
-    should_research = (
-        _count_actions_today("trigger_strategy_research") == 0
-        and (
-            len(assessment.uncovered_symbols) > 3
-            or (assessment.strategies_paper_running < 2 and assessment.strategies_retired_24h >= 3)
-        )
+    should_research = _count_actions_today("trigger_strategy_research") == 0 and (
+        len(assessment.uncovered_symbols) > 3
+        or (assessment.strategies_paper_running < 2 and assessment.strategies_retired_24h >= 3)
     )
     if should_research:
-        actions.append(OperatorAction(
-            action_type="trigger_strategy_research",
-            level=1,
-            reason=(
-                f"uncovered_symbols={len(assessment.uncovered_symbols)}, "
-                f"paper_running={assessment.strategies_paper_running}, "
-                f"retired_24h={assessment.strategies_retired_24h}"
-            ),
-        ))
+        actions.append(
+            OperatorAction(
+                action_type="trigger_strategy_research",
+                level=1,
+                reason=(
+                    f"uncovered_symbols={len(assessment.uncovered_symbols)}, "
+                    f"paper_running={assessment.strategies_paper_running}, "
+                    f"retired_24h={assessment.strategies_retired_24h}"
+                ),
+            )
+        )
 
     # Stage 4: Risk adaptation (proposals only for loosening)
     if assessment.kill_switch_active:
-        actions.append(OperatorAction(
-            action_type="notify_operator",
-            level=1,
-            params={"message": "Kill switch is active. Manual review required to resume trading."},
-            reason="kill_switch_active=True",
-        ))
+        actions.append(
+            OperatorAction(
+                action_type="notify_operator",
+                level=1,
+                params={"message": "Kill switch is active. Manual review required to resume trading."},
+                reason="kill_switch_active=True",
+            )
+        )
 
     return actions
 
 
 # ─── Stale recommendation escalation ─────────────────────────────────────────
+
 
 def _check_stale_recommendations() -> list[dict]:
     """Escalate recommend_retire/recommend_demote pi_decisions that have been
@@ -1484,12 +1611,19 @@ def _check_stale_recommendations() -> list[dict]:
     for row in rows:
         strat_id = (row["proposal_id"] or "?")[:8]
         action_label = "retire" if row["action"] == "recommend_retire" else "demote"
-        hours_pending = max(0, round(
-            (datetime.now(timezone.utc) -
-             datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))).total_seconds() / 3600
-        ))
-        msg = (f"Strategy {strat_id}: {action_label} recommendation unconfirmed for "
-               f"{hours_pending}h — System Operator may not be running. Review and confirm manually.")
+        hours_pending = max(
+            0,
+            round(
+                (
+                    datetime.now(timezone.utc) - datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
+                ).total_seconds()
+                / 3600
+            ),
+        )
+        msg = (
+            f"Strategy {strat_id}: {action_label} recommendation unconfirmed for "
+            f"{hours_pending}h — System Operator may not be running. Review and confirm manually."
+        )
         notify_action = OperatorAction(
             action_type="notify_operator",
             level=1,
@@ -1504,6 +1638,7 @@ def _check_stale_recommendations() -> list[dict]:
 
 
 # ─── Main Loop Entry Point ───────────────────────────────────────────────────
+
 
 def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
     """Main operator loop — called by scheduler every 4h.
@@ -1558,14 +1693,10 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
     confidence_recovery_reason = _confidence_recovery_reason(assessment)
     if confidence_recovery_reason:
         loosen_decided = any(a.action_type == "loosen_confidence" for a in actions)
-        loosen_executed = any(
-            r.get("action") == "loosen_confidence" and r.get("status") == "executed"
-            for r in results
-        )
+        loosen_executed = any(r.get("action") == "loosen_confidence" and r.get("status") == "executed" for r in results)
         if loosen_decided and not loosen_executed:
             blocker_reason = next(
-                (r.get("reason", "unknown") for r in results
-                 if r.get("action") == "loosen_confidence"),
+                (r.get("reason", "unknown") for r in results if r.get("action") == "loosen_confidence"),
                 "blocked",
             )
             _persist_action(
@@ -1580,7 +1711,7 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
     summary = {
         "trigger": trigger,
         "timestamp": assessment.timestamp,
-        "assess_time_ms": int(assess_time * 1000),
+        "assess_time_ms": round(assess_time * 1000),
         "assessment": {
             "strategies_total": assessment.strategies_total,
             "strategies_paper_running": assessment.strategies_paper_running,
@@ -1614,8 +1745,10 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
 
     logger.info(
         "operator_loop: done in %.1fs — %d actions decided, %d executed, %d proposed",
-        time.time() - t0, len(actions),
-        summary["actions_executed"], summary["actions_proposed"],
+        time.time() - t0,
+        len(actions),
+        summary["actions_executed"],
+        summary["actions_proposed"],
     )
 
     return summary
@@ -1635,8 +1768,8 @@ def _persist_assessment(summary: dict) -> None:
         lines = [
             f"## Operator Assessment — {ts}",
             f"Actions decided: {actions_n}, executed: {executed_n}, "
-            f"proposed: {summary.get('actions_proposed',0)}, "
-            f"skipped: {summary.get('actions_skipped',0)}",
+            f"proposed: {summary.get('actions_proposed', 0)}, "
+            f"skipped: {summary.get('actions_skipped', 0)}",
         ]
         if health:
             lines.append("\n### System Health")
@@ -1645,7 +1778,7 @@ def _persist_assessment(summary: dict) -> None:
         if results:
             lines.append("\n### Actions")
             for r in results[:10]:
-                lines.append(f"- [{r.get('status','?')}] {r.get('action',r.get('kind','?'))}")
+                lines.append(f"- [{r.get('status', '?')}] {r.get('action', r.get('kind', '?'))}")
         content = "\n".join(lines)
 
         from aletheia.storage.models import KnowledgeItem

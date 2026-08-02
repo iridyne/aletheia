@@ -811,3 +811,53 @@ class TestContentHealthSelfSupervision:
         assert "content.proposal_bias" in names, \
             f"content_health did not capture the proposal bias: {assessment.content_health}"
         assert all(c["severity"] in ("warn", "blocker") for c in assessment.content_health)
+
+
+# ─── Issue #384: L1 self-heal audit honesty and fail-closed ──────────────────
+
+class TestSelfHealAuditHonesty:
+    """Issue #384: the old 'recommend_l1_selfheal' action was self-authored and
+    indistinguishable from independent PI approval; write failures were swallowed."""
+
+    def test_selfheal_writes_l1_selfheal_audit_not_recommend(self, tmp_path, monkeypatch):
+        """Audit record must use 'l1_selfheal_audit', not 'recommend_l1_selfheal'."""
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import (
+            _request_pi_approval_for_selfheal, OperatorAction,
+        )
+        from aletheia.storage.repositories import list_pi_decisions
+
+        action = OperatorAction(
+            action_type="clean_stale_heartbeats", level=1, params={}, reason="test",
+        )
+        _request_pi_approval_for_selfheal(action)
+
+        decisions = list_pi_decisions()
+        audit_rows = [d for d in decisions if d.get("action") == "l1_selfheal_audit"]
+        old_rows = [d for d in decisions if d.get("action") == "recommend_l1_selfheal"]
+        assert audit_rows, "audit record must use action='l1_selfheal_audit'"
+        assert not old_rows, "old 'recommend_l1_selfheal' action must not be written"
+
+    def test_selfheal_blocked_when_audit_write_fails(self, tmp_path, monkeypatch):
+        """Issue #384: execution must be BLOCKED when the audit write fails.
+        The old code swallowed the exception and executed anyway."""
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        import aletheia.storage.repositories as repo_mod
+        monkeypatch.setattr(
+            repo_mod, "insert_pi_decision",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("storage down")),
+        )
+        from aletheia.agent_shell.operator_loop import (
+            OperatorAction, _execute_level1_action,
+        )
+        action = OperatorAction(
+            action_type="clean_stale_heartbeats", level=1, params={}, reason="test",
+        )
+        result = _execute_level1_action(action)
+        assert result["status"] == "blocked", (
+            "L1 self-heal must be blocked when the audit write fails, got: "
+            f"{result}"
+        )
+        assert "audit_write_failed" in result.get("reason", "")
