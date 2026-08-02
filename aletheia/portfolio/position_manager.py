@@ -829,10 +829,20 @@ def evaluate_open_positions() -> dict:
         try:
             from aletheia.portfolio.market_signal_reader import get_market_signals_for_positions
             all_open = list_all_open_positions()
-            syms = list({p["symbol"] for p in all_open if p.get("execution_mode") in _PAPER_MODES})
+            paper_positions = [p for p in all_open if p.get("execution_mode") in _PAPER_MODES]
+            syms = list({p["symbol"] for p in paper_positions})
+            # Issue #414: include market_type so a spot signal is not applied to a
+            # futures position.  Multiple positions can share a symbol with different
+            # market_types; use the first one seen (same symbol = same signal source).
+            pos_market_types = {
+                p["symbol"]: (p.get("market_type") or "spot")
+                for p in paper_positions
+            }
             if syms:
                 market_signal_index = get_market_signals_for_positions(
-                    syms, max_signal_age_min=cfg.trading.market_aware_exits.max_signal_age_min,
+                    syms,
+                    max_signal_age_min=cfg.trading.market_aware_exits.max_signal_age_min,
+                    position_market_types=pos_market_types,
                 )
         except Exception as e:
             logger.warning("market_signal_index build failed: %s", e)
@@ -890,7 +900,10 @@ def evaluate_open_positions() -> dict:
         # adjust / hold) instead of auto-closing or auto-tightening the stop. The daemon
         # token bucket rate-limits per position. Off by default (enabled flag).
         if decision is None and cfg.trading.market_aware_exits.enabled:
-            signal = market_signal_index.get(p["symbol"])
+            # Issue #414: look up signal by (symbol, market_type_bucket) key.
+            from aletheia.portfolio.market_signal_reader import _market_type_bucket
+            _mt_bucket = _market_type_bucket(p.get("market_type"))
+            signal = market_signal_index.get((p["symbol"], _mt_bucket))
             if signal is not None:
                 try:
                     from aletheia.portfolio.exit_rules import evaluate_market_exit_rules

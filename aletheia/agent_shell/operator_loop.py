@@ -1065,8 +1065,9 @@ def _action_adjust_scanner_weight(action: OperatorAction) -> dict:
     delta = max(-0.2, min(0.2, delta))  # cap at ±0.2
     if not family or delta == 0:
         return {"action": "adjust_scanner_weight", "status": "skipped", "reason": "no family or zero delta"}
-    _record_action("adjust_scanner_weight", param=family, detail=f"delta={delta}")
+    # Issue #385: record the action AFTER confirming persistence, not before.
     # Persist the new weight to config so it survives restarts (CR-PI-01).
+    save_err = None
     try:
         from aletheia.config.loader import load_config, save_config
         cfg = load_config()
@@ -1076,18 +1077,28 @@ def _action_adjust_scanner_weight(action: OperatorAction) -> dict:
         cfg.universe.scanner_weights = weights
         save_config(cfg)
     except Exception as e:
+        save_err = str(e)
         logger.warning("operator: scanner_weight persist failed: %s", e)
+    if save_err:
+        return {"action": "adjust_scanner_weight", "status": "failed",
+                "family": family, "delta": delta, "reason": save_err}
+    _record_action("adjust_scanner_weight", param=family, detail=f"delta={delta}")
     logger.info("operator: adjusted scanner weight %s by %.2f — %s", family, delta, action.reason)
     return {"action": "adjust_scanner_weight", "status": "executed",
             "family": family, "delta": delta}
 
 
 def _action_request_backfill(action: OperatorAction) -> dict:
+    # Issue #385: this action logs a recommendation but performs no real enqueue.
+    # Backfill ownership moved to the TypeScript Auto Repair engine; no Python path
+    # triggers a data fetch here.  Report status='advisory' so audit records
+    # cannot be misread as evidence that a backfill actually ran.
     if _count_actions_today("request_backfill") >= 1:
         return {"action": "request_backfill", "status": "rate_limited", "reason": "already triggered today"}
     _record_action("request_backfill")
-    logger.info("operator: requested OHLCV backfill — %s", action.reason)
-    return {"action": "request_backfill", "status": "executed"}
+    logger.info("operator: backfill recommendation logged (no real enqueue) — %s", action.reason)
+    return {"action": "request_backfill", "status": "advisory",
+            "message": "recommendation logged; actual backfill requires external engine"}
 
 
 def _action_notify(action: OperatorAction) -> dict:
@@ -1097,8 +1108,8 @@ def _action_notify(action: OperatorAction) -> dict:
     _record_action("notify_operator", detail=message[:100])
     logger.info("operator: notify — %s", message[:200])
     try:
-        from aletheia.notifications.dispatcher import send_notification
-        send_notification(title="PI Operator", body=message[:500], level="info")
+        from aletheia.notifications import notify_operator as _notify
+        _notify("PI Operator", message[:500], level="info")
     except Exception:
         pass
     return {"action": "notify_operator", "status": "executed", "message": message[:200]}
@@ -1154,10 +1165,12 @@ def _action_clean_stale_heartbeats(action: OperatorAction) -> dict:
         )
         before_state = str(len(existing)) + " stale rows"
         if existing:
-            _repo._execute_raw(
-                "DELETE FROM agent_shell_heartbeats WHERE last_seen < ?",
-                (cutoff,),
-            )
+            from aletheia.storage.sqlite import get_db
+            with _repo.transaction():
+                get_db().execute(
+                    "DELETE FROM agent_shell_heartbeats WHERE last_seen < ?",
+                    (cutoff,),
+                )
             rows_deleted = len(existing)
         after_state = f"{rows_deleted} rows deleted"
     except Exception as e:
@@ -1212,7 +1225,10 @@ def _action_restart_collector(action: OperatorAction) -> dict:
 
     _record_action("self_heal", param=f"collector:{collector}", detail=result_msg)
     logger.info("operator: restart_collector %s — %s", collector, reason)
-    return {"action": "restart_collector", "status": "executed",
+    # Issue #385: the audit event was emitted but no scheduler command, process
+    # signal, or verified restart occurred.  Report status='signal_sent' so audit
+    # records accurately reflect that a restart was requested, not confirmed.
+    return {"action": "restart_collector", "status": "signal_sent",
             "collector": collector, "reason": reason}
 
 
@@ -1228,8 +1244,9 @@ def _action_rebuild_sqlite_index(action: OperatorAction) -> dict:
 
     try:
         from aletheia.storage import repositories as _repo
+        from aletheia.storage.sqlite import get_db as _get_db
         # ANALYZE updates index statistics; full REINDEX is deferred to avoid lock contention
-        _repo._execute_raw("ANALYZE", ())
+        _get_db().execute("ANALYZE")
         result_msg = "ANALYZE OK"
     except Exception as e:
         logger.debug("rebuild_sqlite_index ANALYZE: %s", e)
@@ -1580,7 +1597,7 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
     summary = {
         "trigger": trigger,
         "timestamp": assessment.timestamp,
-        "assess_time_ms": int(assess_time * 1000),
+        "assess_time_ms": round(assess_time * 1000),
         "assessment": {
             "strategies_total": assessment.strategies_total,
             "strategies_paper_running": assessment.strategies_paper_running,

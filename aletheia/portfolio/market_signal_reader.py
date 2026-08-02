@@ -13,6 +13,13 @@ from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger("aletheia.portfolio.market_signal_reader")
 
+_FUTURES_TYPES = frozenset({"usdt_futures", "coin_futures", "linear", "inverse", "swap"})
+
+
+def _market_type_bucket(market_type: str | None) -> str:
+    """'futures' for derivative markets, 'spot' for everything else."""
+    return "futures" if (market_type or "").lower() in _FUTURES_TYPES else "spot"
+
 
 @dataclass
 class MarketSignalContext:
@@ -43,16 +50,30 @@ def _normalize_direction(raw: str | None) -> str | None:
 def get_market_signals_for_positions(
     symbols: list[str],
     max_signal_age_min: float = 35.0,
-) -> dict[str, MarketSignalContext]:
+    *,
+    position_market_types: dict[str, str] | None = None,
+) -> dict[tuple[str, str], MarketSignalContext]:
     """Batch-fetch the latest market signal for each held symbol.
 
     Queries the most recent opportunity per symbol (within age window) and
     augments with universe_feature_snapshots data (RSI, momentum, ATR).
+
+    Issue #414: returns a dict keyed by (symbol, market_type_bucket) so a spot
+    signal cannot be applied to a futures position and vice-versa.
+    position_market_types: {symbol: market_type} from the calling positions;
+    used to assign each signal to the correct bucket at the call site.
+    When absent, all results use bucket 'spot' (safe backward-compat default).
     """
     if not symbols:
         return {}
 
-    result: dict[str, MarketSignalContext] = {}
+    # Build symbol → bucket map from caller-supplied position market types.
+    sym_to_bucket: dict[str, str] = {}
+    if position_market_types:
+        for sym, mt in position_market_types.items():
+            sym_to_bucket[sym] = _market_type_bucket(mt)
+
+    by_symbol: dict[str, MarketSignalContext] = {}
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_signal_age_min)).isoformat()
 
     try:
@@ -87,7 +108,7 @@ def get_market_signals_for_positions(
                 age = (now - dt).total_seconds() / 60.0
             except (ValueError, TypeError):
                 age = None
-            result[sym] = MarketSignalContext(
+            by_symbol[sym] = MarketSignalContext(
                 symbol=sym,
                 direction_bias=_normalize_direction(row["direction_bias"]),
                 confidence_score=row["confidence_score"],
@@ -100,7 +121,7 @@ def get_market_signals_for_positions(
         from aletheia.storage.sqlite import get_db
         db = get_db()
         for sym in symbols:
-            ctx = result.get(sym) or MarketSignalContext(symbol=sym)
+            ctx = by_symbol.get(sym) or MarketSignalContext(symbol=sym)
             snap = db.execute(
                 "SELECT uf.rsi_14, uf.return_1h, uf.return_4h, uf.atr_pct, uf.funding_rate "
                 "FROM universe_feature_snapshots uf "
@@ -113,8 +134,13 @@ def get_market_signals_for_positions(
                 ctx.return_1h = snap["return_1h"]
                 ctx.return_4h = snap["return_4h"]
                 ctx.atr_pct = snap["atr_pct"]
-            result[sym] = ctx
+            by_symbol[sym] = ctx
     except Exception as e:
         logger.debug("feature snapshot query failed: %s", e)
 
+    # Build the final (symbol, market_type_bucket) keyed result.
+    result: dict[tuple[str, str], MarketSignalContext] = {}
+    for sym, ctx in by_symbol.items():
+        bucket = sym_to_bucket.get(sym, "spot")
+        result[(sym, bucket)] = ctx
     return result
