@@ -893,7 +893,11 @@ async def test_llm_loop_runs_concurrently(tmp_path, monkeypatch):
     n_symbols = 4
     instruments = [_Instrument(s) for s in ("A", "B", "C", "D")]
     empty_cache = mo._DbCache(
-        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+        perp_structures={},
+        funding_hl={},
+        funding_hl_pred={},
+        news={},
+        onchain_rows=[],
     )
     empty_pf = {
         "passed": True,
@@ -982,7 +986,11 @@ async def test_llm_loop_concurrent_results_collected(tmp_path, monkeypatch):
 
     instruments = [_Instrument(s) for s in ("X1", "X2", "X3")]
     empty_cache = mo._DbCache(
-        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+        perp_structures={},
+        funding_hl={},
+        funding_hl_pred={},
+        news={},
+        onchain_rows=[],
     )
     empty_pf = {
         "passed": True,
@@ -1045,3 +1053,171 @@ async def test_llm_loop_concurrent_results_collected(tmp_path, monkeypatch):
     )
     # X1 and X3 skips should NOT appear in errors.
     assert not any("X1" in e or "X3" in e for e in result["errors"])
+
+
+# ---------------------------------------------------------------------------
+# T1: per-symbol LLM deadline propagation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_per_symbol_deadline_passed_to_llm_structured(tmp_path, monkeypatch):
+    """_run_one() must compute _per_symbol_llm_deadline and pass it to _analyze_symbol.
+
+    With a full run budget the per-symbol deadline must be
+    _MARKET_OBSERVER_PER_SYMBOL_LLM_CAP_SEC (45s) away from now, not 180s.
+    """
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agents import market_observer as mo
+
+    class _Instrument:
+        def __init__(self, symbol):
+            self.symbol = symbol
+            self.market_type = "spot"
+
+        def __str__(self):
+            return f"{self.symbol}:spot"
+
+    instruments = [_Instrument("D1")]
+    empty_cache = mo._DbCache(
+        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+    )
+    empty_pf = {
+        "passed": True, "rsi": 20.0, "atr_pct": None,
+        "keyword_hits": [], "matched_rules": ["rsi_deviation"],
+    }
+    captured_deadline: list[float] = []
+
+    monkeypatch.setattr(mo, "_monotonic", time.monotonic)
+    monkeypatch.setattr(mo, "is_tool_permitted", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        mo, "load_config",
+        lambda: SimpleNamespace(
+            universe=SimpleNamespace(enabled=False, max_candidates=1),
+            market_data=SimpleNamespace(prediction_enabled=False, ccxt_exchange="fixture"),
+            observer=SimpleNamespace(force_full_scan=False),
+        ),
+    )
+    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
+    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
+
+    async def fake_gather(coros, *, deadline):
+        return [await c for c in coros]
+
+    async def fake_prefetch(instrument, **_kwargs):
+        return mo._SymbolPrefetch(
+            context_str=instrument.symbol, debug={}, pre_filter=empty_pf,
+            signal_score=1.0, funding_rate_val=None,
+            open_interest_val=None, oi_delta_val=None,
+        )
+
+    async def fake_analyze(*, llm_deadline=None, **_kwargs):
+        if llm_deadline is not None:
+            captured_deadline.append(llm_deadline)
+        return None, "pre_filter_skip:D1"
+
+    monkeypatch.setattr(mo, "_batch_prefetch_db", lambda _: empty_cache)
+    monkeypatch.setattr(mo, "_prefetch_symbol", fake_prefetch)
+    monkeypatch.setattr(mo, "_gather_prefetch_with_deadline", fake_gather)
+    monkeypatch.setattr(mo, "_analyze_symbol", fake_analyze)
+    monkeypatch.setattr("aletheia.knowledge.router.build_advisory_context", lambda **_: "")
+    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda: None)
+    monkeypatch.setattr("aletheia.learning.control.learning_influence_enabled", lambda: False)
+
+    await mo.run_market_observer(permission_mode="Observe", run_id="deadline-test")
+
+    assert len(captured_deadline) == 1, "llm_deadline must be passed to _analyze_symbol"
+    loop = asyncio.get_event_loop()
+    cap = mo._MARKET_OBSERVER_PER_SYMBOL_LLM_CAP_SEC
+    # The deadline must be no more than cap + 1s from now (generous margin for test latency).
+    assert captured_deadline[0] <= loop.time() + cap + 1.0, (
+        f"deadline {captured_deadline[0]:.1f} exceeds cap of {cap}s from now"
+    )
+
+
+@pytest.mark.asyncio
+async def test_per_symbol_deadline_respects_remaining_budget(tmp_path, monkeypatch):
+    """When the run budget is almost exhausted, per-symbol deadline is clamped to it."""
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agents import market_observer as mo
+
+    class _Instrument:
+        def __init__(self, symbol):
+            self.symbol = symbol
+            self.market_type = "spot"
+
+        def __str__(self):
+            return f"{self.symbol}:spot"
+
+    instruments = [_Instrument("E1")]
+    empty_cache = mo._DbCache(
+        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+    )
+    empty_pf = {
+        "passed": True, "rsi": 20.0, "atr_pct": None,
+        "keyword_hits": [], "matched_rules": ["rsi_deviation"],
+    }
+    captured_deadline: list[float] = []
+
+    # Fake clock: run started 455s ago → only 5s remaining before deadline (460s budget)
+    real_start = time.monotonic()
+    fake_start = real_start - 455.0
+
+    def fake_monotonic():
+        return time.monotonic() - real_start + fake_start
+
+    monkeypatch.setattr(mo, "_monotonic", fake_monotonic)
+    monkeypatch.setattr(mo, "is_tool_permitted", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        mo, "load_config",
+        lambda: SimpleNamespace(
+            universe=SimpleNamespace(enabled=False, max_candidates=1),
+            market_data=SimpleNamespace(prediction_enabled=False, ccxt_exchange="fixture"),
+            observer=SimpleNamespace(force_full_scan=False),
+        ),
+    )
+    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
+    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
+
+    async def fake_gather(coros, *, deadline):
+        return [await c for c in coros]
+
+    async def fake_prefetch(instrument, **_kwargs):
+        return mo._SymbolPrefetch(
+            context_str=instrument.symbol, debug={}, pre_filter=empty_pf,
+            signal_score=1.0, funding_rate_val=None,
+            open_interest_val=None, oi_delta_val=None,
+        )
+
+    async def fake_analyze(*, llm_deadline=None, **_kwargs):
+        if llm_deadline is not None:
+            captured_deadline.append(llm_deadline)
+        return None, "pre_filter_skip:E1"
+
+    monkeypatch.setattr(mo, "_batch_prefetch_db", lambda _: empty_cache)
+    monkeypatch.setattr(mo, "_prefetch_symbol", fake_prefetch)
+    monkeypatch.setattr(mo, "_gather_prefetch_with_deadline", fake_gather)
+    monkeypatch.setattr(mo, "_analyze_symbol", fake_analyze)
+    monkeypatch.setattr("aletheia.knowledge.router.build_advisory_context", lambda **_: "")
+    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda: None)
+    monkeypatch.setattr("aletheia.learning.control.learning_influence_enabled", lambda: False)
+
+    await mo.run_market_observer(permission_mode="Observe", run_id="tight-budget-test")
+
+    if captured_deadline:
+        loop = asyncio.get_event_loop()
+        # With only ~5s remaining, deadline must be << 45s from now.
+        remaining_at_capture = captured_deadline[0] - loop.time()
+        assert remaining_at_capture <= mo._MARKET_OBSERVER_PER_SYMBOL_LLM_CAP_SEC, (
+            f"Expected deadline clamped to remaining budget, got {remaining_at_capture:.1f}s"
+        )

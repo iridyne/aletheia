@@ -56,6 +56,11 @@ _MARKET_OBSERVER_PREFETCH_CONCURRENCY = 4
 # Raising this without also raising inference_max_concurrency in config would
 # only add asyncio overhead with no throughput gain.
 _MARKET_OBSERVER_LLM_CONCURRENCY = 2
+# Maximum wall-clock a single symbol's LLM call (all retry attempts combined)
+# may consume.  Caps the per-symbol deadline so that one slow provider call
+# cannot consume the entire remaining run budget and starve later symbols.
+# Must be < _MARKET_OBSERVER_LOOP_BUDGET_SEC and > a single attempt's p99.
+_MARKET_OBSERVER_PER_SYMBOL_LLM_CAP_SEC = 45.0
 _PREDICTION_CONTEXT_MAX_AGE_HOURS = 6
 _ROUND_ROBIN_STATE_KEY = "agent.market_observer.round_robin.v1"
 _RETRYABLE_EVIDENCE_ERROR_PREFIX = "observer_pre_filter_evidence_failed:"
@@ -887,6 +892,7 @@ async def _analyze_symbol(
     learning_outcome_candidate_key: str | None = None,
     non_learning_context_block: str = "",
     _prefetched: "_SymbolPrefetch | None" = None,
+    llm_deadline: float | None = None,
 ) -> tuple[str | None, str | None]:
     """Run market context build + LLM read for a single symbol.
 
@@ -895,6 +901,10 @@ async def _analyze_symbol(
 
     When _prefetched is provided (parallel-prefetch path), context building is
     skipped and the pre-built context is used directly.
+
+    llm_deadline: absolute asyncio loop.time() deadline for the LLM call
+        (all retry attempts combined). When None, llm_structured() uses its
+        own global _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC ceiling.
     """
     import time as _time
 
@@ -1321,6 +1331,7 @@ async def _analyze_symbol(
         schema=MarketRead,
         max_tokens=2048,
         provider=get_provider_for_tier("deep"),
+        deadline=llm_deadline,
     )
     _llm_duration = _time.monotonic() - _t0
     _step_times["llm_structured"] = _llm_duration
@@ -1908,15 +1919,24 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 async with _rr_lock:
                     _skipped_count += 1
                 return
+            # Per-symbol LLM deadline: the tighter of
+            #   (a) _MARKET_OBSERVER_PER_SYMBOL_LLM_CAP_SEC from now  — absolute cap
+            #       preventing one slow call from starving the entire remaining queue
+            #   (b) remaining run budget — never exceed the job-level hard deadline
+            # Expressed as asyncio loop.time() so llm_structured() can use it
+            # directly with asyncio.wait_for() without a monotonic conversion.
+            _loop_now = asyncio.get_event_loop().time()
+            _remaining_run_s = max(1.0, _run_deadline - _monotonic())
+            _per_symbol_llm_deadline = _loop_now + min(
+                _MARKET_OBSERVER_PER_SYMBOL_LLM_CAP_SEC,
+                _remaining_run_s,
+            )
             completed_attempt = False
             _prefetched = _prefetch_map.get(instrument_key(instrument))
             try:
                 u_member = _universe_lookup.get(instrument.symbol)
                 _sym_canonical = to_canonical(instrument.symbol)
-                _linked_sid = (
-                    _strategy_by_symbol.get(_sym_canonical)
-                    or _strategy_by_symbol.get("__generic__")
-                )
+                _linked_sid = _strategy_by_symbol.get(_sym_canonical) or _strategy_by_symbol.get("__generic__")
                 opp_id, err = await _analyze_symbol(
                     symbol=instrument.symbol,
                     market_type=instrument.market_type,
@@ -1937,11 +1957,10 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                     prediction_context_enabled=prediction_context_enabled,
                     prediction_context_cutoff=prediction_context_cutoff,
                     learning_memory_block=learning_memory_block,
-                    learning_outcome_candidate_key=(
-                        u_member.get("learning_candidate_key") if u_member else None
-                    ),
+                    learning_outcome_candidate_key=(u_member.get("learning_candidate_key") if u_member else None),
                     non_learning_context_block=non_learning_context_block,
                     _prefetched=_prefetched,
+                    llm_deadline=_per_symbol_llm_deadline,
                 )
                 if opp_id:
                     async with _rr_lock:

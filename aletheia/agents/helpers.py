@@ -217,6 +217,7 @@ async def llm_structured(
     provider: str | None = None,
     fallback_to_defaults: bool = False,
     include_harness_header: bool | None = None,
+    deadline: float | None = None,
 ) -> tuple[dict | None, str | None]:
     """Call the provider's structured() and return (parsed_dict, error).
 
@@ -227,6 +228,11 @@ async def llm_structured(
     fallback_to_defaults: if True and all retries fail, return a dict filled
         with schema defaults / None values instead of None. Use this only for
         non-critical paths where "best effort" is better than nothing.
+    deadline: absolute monotonic deadline (loop.time()) for the entire call
+        including all retry attempts.  When provided, takes precedence over the
+        global _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC ceiling so that callers
+        can enforce a tighter per-symbol or per-task budget without changing
+        the global default.
     """
     # #161 fix (mirrors llm_complete): thread the tier's provider name into
     # complete_with_fallback so its fallback/health/cooldown keying matches the
@@ -256,7 +262,10 @@ async def llm_structured(
         caller_system = prepend_environment_header(system, include=include_harness_header)
         structured_system = f"/no_think\n{caller_system}" if caller_system else "/no_think"
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC
+        if deadline is None:
+            deadline = loop.time() + _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC
+        # Never exceed the global ceiling even when the caller passes a deadline.
+        deadline = min(deadline, loop.time() + _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC)
 
         # 3 attempts with escalating token budget + corrective strategy:
         #   attempt 0: base max_tokens at temperature 0.3, standard prompt
