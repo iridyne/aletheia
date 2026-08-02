@@ -1,9 +1,9 @@
 """Executable claims for Learning Contribution Observability.
 
 The target contract is
-docs/design/proposals/learning_observability.md. Implemented slices use
-behavioral tests; remaining target slices stay strict-xfail so a partial owner
-projection cannot be mistaken for the full workbench.
+docs/design/proposals/learning_observability.md. Every claim currently indexed
+in this module is implemented as a behavioral test; this file carries no
+strict-xfail placeholder for future target slices.
 """
 
 from __future__ import annotations
@@ -23,13 +23,6 @@ from tests.test_learning_read_models import _seed_current_experiment, _setup_env
 _CONTRACT = "learning_observability"
 
 
-def _missing(claim_id: str):
-    return pytest.mark.xfail(
-        strict=True,
-        reason=f"{claim_id}: Learning Contribution Observability is not implemented",
-    )
-
-
 @spec_claim(SpecClaim(
     "LCO-S01", _CONTRACT, "§6 target read APIs", "L2a",
     "A typed GET-only lco-v1 projection is indexed and introduces no Learning mutation endpoint.",
@@ -47,7 +40,7 @@ def test_lco_projection_is_indexed_and_get_only(tmp_path, monkeypatch):
         if getattr(route, "path", None) == "/api/analytics/learning-contribution"
     ]
     assert len(routes) == 1
-    assert routes[0].methods == {"GET"}
+    assert getattr(routes[0], "methods", set()) == {"GET"}
     assert build_learning_contribution_projection()["schema_version"] == "lco-v1"
     assert all(
         set(getattr(route, "methods", set())) <= {"GET", "HEAD"}
