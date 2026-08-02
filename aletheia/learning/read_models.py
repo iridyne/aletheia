@@ -376,13 +376,26 @@ def _project_experiment(
     )
     mutation_reason = "admission_not_recommended"
     mutation_available = False
-    if recommended == "admit_trial" and current:
+    if recommended == "admit_trial" and current_verdict is not None:
+        from aletheia.learning.authority import (
+            measurement_harm_block_reason,
+            measurement_identity_reason,
+        )
         from aletheia.learning.lifecycle import trial_admission_gate_reason
 
         mutation_reason = trial_admission_gate_reason(
             path_id,
             persist_config_migrations=False,
         )
+        if mutation_reason is None:
+            mutation_reason = measurement_identity_reason(
+                current_verdict,
+                str(row.get("stage") or ""),
+                str(policy_epoch or ""),
+                expected_horizon=str(row.get("target_horizon") or ""),
+                expected_behavior_contract_hash=behavior_contract_hash,
+                expected_hypothesis_id=str(row.get("hypothesis_id") or ""),
+            ) or measurement_harm_block_reason(current_verdict)
         mutation_available = mutation_reason is None
 
     authority_enabled = False
