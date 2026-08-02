@@ -89,19 +89,30 @@ def _is_duplicate(message: str) -> bool:
     return False
 
 
-def _send_telegram_alert(message: str, *, level: str = "warning") -> None:
+def _send_telegram_alert(message: str, *, level: str = "warning",
+                         _require_alert_switch: bool = True) -> None:
     """Send a Telegram alert to allowed chats when configured. Never raises.
 
     P1 alerts (info level) are suppressed during DND hours.
     P0 alerts (warning/error/critical) always go through.
     Duplicate messages within 120s are suppressed.
+
+    _require_alert_switch: when True (default), obeys cfg.health.alert_via_telegram
+    so health-alert topics are gated by that toggle.  Non-alert topics (trade fills,
+    daily summary) pass False so that the health-alert setting does not accidentally
+    suppress trade or summary notifications (Issue #407).
     """
     try:
         if _is_duplicate(message):
             return
         from aletheia.config.loader import load_config
         cfg = load_config()
-        if not cfg.health.alert_via_telegram or not cfg.telegram.enabled:
+        if not cfg.telegram.enabled:
+            return
+        # Issue #407: alert_via_telegram gates *health/operator alerts only*.
+        # Trade fills and daily summaries have their own per-category switches and
+        # must not be blocked by the health-alert toggle.
+        if _require_alert_switch and not cfg.health.alert_via_telegram:
             return
         if level == "info" and _is_dnd():
             return
@@ -136,6 +147,16 @@ def _send_webhook(payload: dict, *, event_type: str = "alert") -> None:
         from aletheia.config.loader import load_config
         cfg = load_config()
         if not cfg.webhook.enabled or not cfg.webhook.url:
+            return
+        # Issue #406: honour the per-category delivery toggles.
+        # alert / operator_notification → notify_alerts
+        # trade_fill → notify_trade_fills
+        # daily_summary → notify_daily_summary
+        if event_type in ("alert", "operator_notification") and not cfg.webhook.notify_alerts:
+            return
+        if event_type == "trade_fill" and not cfg.webhook.notify_trade_fills:
+            return
+        if event_type == "daily_summary" and not cfg.webhook.notify_daily_summary:
             return
         import hashlib
         import hmac
@@ -267,7 +288,8 @@ def notify_trade_fill(
         lines.append(f"<code>TP: {take_profit_price:.4f}</code>")
     lines.append(f"<code>pos/{position_id[:8]}</code>")
     msg = "\n".join(lines)
-    _send_telegram_alert(msg, level="info")
+    # Issue #407: trade fills are not "alerts" — bypass the health-alert toggle.
+    _send_telegram_alert(msg, level="info", _require_alert_switch=False)
     _send_webhook({
         "symbol": symbol,
         "direction": dir_label,
@@ -309,7 +331,8 @@ def notify_daily_summary() -> None:
             f"Open positions: {open_count}",
             f"Portfolio value: <code>{total:.2f} USDT</code>",
         ]
-        _send_telegram_alert("\n".join(lines), level="info")
+        # Issue #407: daily summary is not an "alert" — bypass the health-alert toggle.
+        _send_telegram_alert("\n".join(lines), level="info", _require_alert_switch=False)
         _send_webhook({
             "realized_pnl": realized,
             "unrealized_pnl": unrealized,

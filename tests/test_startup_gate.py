@@ -524,3 +524,40 @@ def test_mixed_dns_and_non_dns_failures_still_retry(tmp_path, monkeypatch):
     result = asyncio.run(startup_gate.probe_llm_providers_at_startup(cfg))
     assert result["any_usable"] is False
     assert result["attempts"] == 2   # ran all retries — no short-circuit
+
+
+# --- 11. Issue #390: probe orchestration exception must not skip the gate ---
+
+def test_startup_gate_probe_exception_causes_pause(tmp_path, monkeypatch):
+    """Issue #390: when probe_llm_providers_at_startup raises an unexpected
+    exception the scheduler must be paused (fail-safe), not silently skipped
+    (fail-open).  The old code returned early, leaving the scheduler running."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.server import app as appmod
+    from aletheia.agent_runtime import startup_gate
+    from aletheia.agent_runtime.health import reset_llm_failures
+    import aletheia.notifications as notif_mod
+
+    reset_llm_failures()
+    cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
+    cfg.runtime.paused = False
+
+    # Simulate a probe-level orchestration crash (not a per-provider failure).
+    monkeypatch.setattr(
+        startup_gate, "probe_llm_providers_at_startup",
+        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("unexpected orchestration error")),
+    )
+    # Prevent notify_operator from trying to connect to Telegram (no I/O in tests).
+    monkeypatch.setattr(notif_mod, "notify_operator", lambda *a, **kw: None)
+    # Prevent start_auto_resume_task from spawning an asyncio Task that outlives the
+    # asyncio.run() call and causes the event-loop teardown to hang.
+    import aletheia.agent_runtime.auto_resume as ar_mod
+    monkeypatch.setattr(ar_mod, "start_auto_resume_task", lambda *a, **kw: None)
+
+    asyncio.run(appmod._llm_startup_gate(cfg))
+
+    from aletheia.config.loader import load_config
+    assert load_config().runtime.paused is True, (
+        "Startup gate probe exception must pause the scheduler (fail-safe), not skip the gate"
+    )
+    reset_llm_failures()

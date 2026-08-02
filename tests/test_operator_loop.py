@@ -380,6 +380,14 @@ class TestRunOperatorLoop:
         tags_data = json.loads(rows[0]["tags"])
         assert tags_data["trigger"] == "test"
 
+        # Issue #387: the assessment payload must appear in the FTS-searchable
+        # 'content' column, not just in tags.
+        content = rows[0]["content"]
+        assert "System State" in content or "strategies_total" in content, (
+            "_persist_assessment must write the assessment dict into content "
+            "(was reading 'system_health' instead of 'assessment')"
+        )
+
     def test_level3_actions_blocked(self, tmp_path, monkeypatch):
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
