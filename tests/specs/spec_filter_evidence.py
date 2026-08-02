@@ -1,6 +1,7 @@
 """Executable claims for docs/design/contracts/filter_evidence_contract.md."""
 
 import asyncio
+from datetime import datetime
 
 import pytest
 
@@ -787,6 +788,14 @@ def test_doctor_excludes_pre_remediation_skip_gaps_from_current_finding(tmp_path
     # This record represents the reload-era incomplete evidence.  It remains
     # visible in the raw 24h count, but must not diagnose the newly started B1
     # policy epoch as broken.
+    #
+    # Issue #467: on Windows (clock resolution 15.625 ms), the insert and the
+    # epoch-open can land on the same tick → identical timestamps → the decision
+    # is epoch-scoped and the test fails.  Fix: stamp the legacy decision with an
+    # explicit past time so "pre-epoch" is guaranteed regardless of clock resolution.
+    from datetime import timezone, timedelta
+    from aletheia.storage.sqlite import get_db
+    _past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     insert_pi_decision(PiDecision(
         id="legacy-skip-without-evidence",
         action="skip",
@@ -797,6 +806,12 @@ def test_doctor_excludes_pre_remediation_skip_gaps_from_current_finding(tmp_path
         signal_source="market_observer",
         reasoning="legacy skip",
     ))
+    # Back-date the row so it is unambiguously before the epoch open.
+    get_db().execute(
+        "UPDATE pi_decisions SET created_at=? WHERE id='legacy-skip-without-evidence'",
+        (_past,),
+    )
+    get_db().commit()
     epoch_id = ensure_skip_remediation_policy_epoch()
 
     report = doctor.Report()
