@@ -11,7 +11,7 @@ from aletheia.config.loader import load_config, save_config, bootstrap, ensure_d
 def test_default_config_has_correct_values():
     cfg = AletheiaConfig()
     assert cfg.app.dashboard_port == 8787
-    assert cfg.app.bind_host == "0.0.0.0"
+    assert cfg.app.bind_host == "127.0.0.1"
     assert cfg.exchange.mode == "paper"
     assert cfg.live.state == "live_disabled"
     assert cfg.agent.permission_mode == "Paper"
