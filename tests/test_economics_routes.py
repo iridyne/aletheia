@@ -215,6 +215,7 @@ async def test_tokens_summarize_provider_usage_without_cost(client):
     }
     assert data["field_availability"]["cached_input_tokens"] == 1
     assert data["by_logical_agent"]["market_observer"]["input_tokens"] == 10
+    assert data["by_role"]["worker"]["output_tokens"] == 4
 
 
 @pytest.mark.anyio
