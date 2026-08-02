@@ -712,18 +712,18 @@ _PUBLIC_PATHS = frozenset({
 async def _tunnel_auth_guard(request, call_next):
     """Enforce owner authentication for all private API/infra routes when tunnel is active.
 
-    Policy (tunnel.enabled=True):
+    Policy (tunnel.enabled=True or remote_control.enabled=True):
       - Paths in _PUBLIC_PATHS are always accessible anonymously (minimal liveness).
       - Every other /api/* and /_infra/* route requires a valid X-Aletheia-Token header,
-        including all GET/read endpoints.  Read access exposes positions, strategy
+        including all GET/read endpoints. Read access exposes positions, strategy
         reasoning, agent output, and research data that are as sensitive as mutations.
-      - A missing tunnel_api_token secret → fail-closed (401); unauthenticated callers
-        cannot reach any private route.
-    Policy (tunnel.enabled=False / local loopback):
+      - A missing remote_control_api_token (or legacy tunnel_api_token) secret
+        fails closed with 401; unauthenticated callers cannot reach a private route.
+    Policy (both flags disabled):
       - No authentication required; local-first frictionless access is preserved.
 
-    Successful authentication sets request.state.tunnel_authenticated = True so
-    route handlers can record the correct actor source in audit events.
+    Successful authentication sets both request-state flags so existing audited
+    routes continue to attribute authenticated owner actions correctly.
     """
     path = request.url.path
     _is_private = (
@@ -735,29 +735,35 @@ async def _tunnel_auth_guard(request, call_next):
         # persist_migrations=False: the auth guard is read-only; it must not
         # trigger a config rewrite as a side effect of checking tunnel.enabled.
         cfg = load_config(persist_migrations=False)
-        if getattr(cfg, "tunnel", None) and getattr(cfg.tunnel, "enabled", False):
+        tunnel_enabled = bool(getattr(getattr(cfg, "tunnel", None), "enabled", False))
+        remote_control_enabled = bool(
+            getattr(getattr(cfg, "remote_control", None), "enabled", False)
+        )
+        if tunnel_enabled or remote_control_enabled:
             from aletheia.config.secrets import get_secret
             from fastapi.responses import JSONResponse
-            expected = get_secret("tunnel_api_token")
+
+            # remote_control_api_token is the independent name for private-network
+            # API access. The legacy tunnel name remains valid for existing installs.
+            expected = get_secret("remote_control_api_token") or get_secret("tunnel_api_token")
             if not expected:
-                # Tunnel is on but no token configured — fail-closed to prevent
-                # unauthenticated public access to private routes.
                 return JSONResponse(
-                    {"detail": "Tunnel is enabled but tunnel_api_token secret is not configured. "
-                               "Set tunnel_api_token via 'aletheia secrets set tunnel_api_token <value>' "
-                               "or disable the tunnel to access this endpoint locally."},
+                    {"detail": "Remote Control is enabled but no API token is configured. "
+                               "Save a token in Settings or run "
+                               "'aletheia secrets set remote_control_api_token <value>'."},
                     status_code=401,
                 )
             import hmac as _hmac
             token = request.headers.get("x-aletheia-token", "")
             if not _hmac.compare_digest(token, expected):
                 return JSONResponse(
-                    {"detail": "Unauthorized: X-Aletheia-Token required when tunnel is active"},
+                    {"detail": "Unauthorized: X-Aletheia-Token required when Remote Control is active"},
                     status_code=401,
                 )
-            # Auth passed: mark the request so route handlers can record the
-            # authenticated-owner source in audit events.
+            # Existing route audit code checks tunnel_authenticated. Keep that
+            # compatibility flag while exposing the clearer remote-control fact.
             request.state.tunnel_authenticated = True
+            request.state.remote_control_authenticated = True
     return await call_next(request)
 
 

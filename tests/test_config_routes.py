@@ -502,6 +502,36 @@ async def test_risk_policy_reset_defaults_is_mode_scoped_and_revision_guarded(cl
 
 
 @pytest.mark.anyio
+async def test_remote_control_token_enables_private_api_access_without_tunnel(client):
+    """Remote Control is independent from cloudflared tunnel lifecycle settings."""
+    token = "REMOTEOWNER42"
+    response = await client.post(
+        "/api/settings/remote-control",
+        json={"enabled": True, "api_token": token},
+    )
+    assert response.status_code == 200
+    assert token not in response.text
+    assert response.json()["remote_control"] == {"enabled": True}
+
+    blocked = await client.get("/api/settings")
+    assert blocked.status_code == 401
+
+    allowed = await client.get("/api/settings", headers={"X-Aletheia-Token": token})
+    assert allowed.status_code == 200
+    assert allowed.json()["remote_control"] == {"enabled": True}
+    assert token not in allowed.text
+
+    disabled = await client.post(
+        "/api/settings/remote-control",
+        json={"enabled": False},
+        headers={"X-Aletheia-Token": token},
+    )
+    assert disabled.status_code == 200
+    assert disabled.json()["remote_control"] == {"enabled": False}
+    assert (await client.get("/api/settings")).status_code == 200
+
+
+@pytest.mark.anyio
 async def test_tunnel_guard_protects_risk_config_mutation(client):
     """Regression #137: with the tunnel enabled, POST /settings/risk requires the token."""
     from aletheia.config.loader import load_config, save_config

@@ -2,6 +2,26 @@ import type { InfraEvent, SystemStatus, ThesisLineageRecord } from '../types'
 import type { GuardRow } from '../lib/guards'
 
 const BASE = '/api'
+const REMOTE_CONTROL_TOKEN_KEY = 'aletheia.remoteControlToken'
+
+function remoteControlHeaders(): Record<string, string> {
+  try {
+    const token = window.localStorage.getItem(REMOTE_CONTROL_TOKEN_KEY)?.trim()
+    return token ? { 'X-Aletheia-Token': token } : {}
+  } catch {
+    return {}
+  }
+}
+
+function setRemoteControlToken(token: string): void {
+  try {
+    const normalized = token.trim()
+    if (normalized) window.localStorage.setItem(REMOTE_CONTROL_TOKEN_KEY, normalized)
+    else window.localStorage.removeItem(REMOTE_CONTROL_TOKEN_KEY)
+  } catch {
+    // Browser storage may be disabled; callers can still use the API manually.
+  }
+}
 
 export interface LearningContributionProjection {
   schema_version: 'lco-v1'
@@ -243,8 +263,12 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 
   try {
     const res = await fetch(`${BASE}${path}`, {
-      headers: { 'Content-Type': 'application/json' },
       ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...remoteControlHeaders(),
+        ...(init?.headers || {}),
+      },
       signal: timeoutCtrl.signal,
     })
     if (!res.ok) throw new Error(extractApiError(res.status, await res.text()))
@@ -1130,6 +1154,9 @@ export const api = {
     post<{ updated: Record<string, any>; economics: Record<string, any> }>('/settings/economics', body),
   updateAppConfig: (body: Partial<{ auto_open_browser: boolean; equity_curve_mode: string; bind_host: string }>) =>
     post<{ updated: Record<string, any> }>('/settings/app', body),
+  updateRemoteControl: (body: { enabled?: boolean; api_token?: string }) =>
+    post<{ updated: Record<string, any>; remote_control: { enabled: boolean } }>('/settings/remote-control', body),
+  setRemoteControlToken,
   updatePiDaemonConfig: (body: Partial<{ enabled: boolean; debounce_sec: number; cooldown_sec: number; heartbeat_sec: number }>) =>
     post<{ updated: Record<string, any> }>('/settings/pi_daemon', body),
   updateSerenityConfig: (body: Partial<{ enabled: boolean; auto_promote: boolean; min_score_for_pi: number; stop_loss_pct: number; max_hold_days: number }>) =>
