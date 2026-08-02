@@ -1116,6 +1116,22 @@ def proactive_exit(
         return {"error": "position_not_found_or_not_open", "position_id": position_id}
 
     if (order_type or "market") == "limit":
+        # Issue #416: the locally-watched limit executor (evaluate_open_positions)
+        # only processes _PAPER_MODES positions.  A live-limited position that
+        # accepts a limit exit is persisted as pending_limit_exit=True but nothing
+        # can ever execute it.  Reject limit exits on live-limited positions so the
+        # operator knows they must use market or close from the exchange UI.
+        exec_mode = pos.get("execution_mode", "")
+        if exec_mode.endswith("_live_limited"):
+            return {
+                "error": "limit_exit_not_supported_for_live",
+                "position_id": position_id,
+                "execution_mode": exec_mode,
+                "message": (
+                    "Limit exits cannot be watched by the local executor for live positions. "
+                    "Use order_type='market' or close from the exchange UI."
+                ),
+            }
         if limit_price is None or float(limit_price) <= 0:
             return {"error": "limit_price_required", "position_id": position_id}
         update_position(position_id, exit_limit_price=round(float(limit_price), 8))
