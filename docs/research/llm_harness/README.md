@@ -29,6 +29,7 @@ snapshot. Missing price must not make token telemetry unavailable.
 2. [Environmental-awareness context contract](environmental_awareness_context_contract.md)
 3. [Agent pyramid and role topology](agent_pyramid_and_role_topology.md)
 4. [Context adapters and header experiments](context_adapters_and_header_experiments.md)
+5. [Provider usage coverage](provider_usage_coverage.md)
 
 ## Evidence standard
 
