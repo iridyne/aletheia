@@ -1097,8 +1097,8 @@ def _action_notify(action: OperatorAction) -> dict:
     _record_action("notify_operator", detail=message[:100])
     logger.info("operator: notify — %s", message[:200])
     try:
-        from aletheia.notifications.dispatcher import send_notification
-        send_notification(title="PI Operator", body=message[:500], level="info")
+        from aletheia.notifications import notify_operator as _notify
+        _notify("PI Operator", message[:500], level="info")
     except Exception:
         pass
     return {"action": "notify_operator", "status": "executed", "message": message[:200]}
@@ -1154,10 +1154,12 @@ def _action_clean_stale_heartbeats(action: OperatorAction) -> dict:
         )
         before_state = str(len(existing)) + " stale rows"
         if existing:
-            _repo._execute_raw(
-                "DELETE FROM agent_shell_heartbeats WHERE last_seen < ?",
-                (cutoff,),
-            )
+            from aletheia.storage.sqlite import get_db
+            with _repo.transaction():
+                get_db().execute(
+                    "DELETE FROM agent_shell_heartbeats WHERE last_seen < ?",
+                    (cutoff,),
+                )
             rows_deleted = len(existing)
         after_state = f"{rows_deleted} rows deleted"
     except Exception as e:
@@ -1228,8 +1230,9 @@ def _action_rebuild_sqlite_index(action: OperatorAction) -> dict:
 
     try:
         from aletheia.storage import repositories as _repo
+        from aletheia.storage.sqlite import get_db
         # ANALYZE updates index statistics; full REINDEX is deferred to avoid lock contention
-        _repo._execute_raw("ANALYZE", ())
+        get_db().execute("ANALYZE")
         result_msg = "ANALYZE OK"
     except Exception as e:
         logger.debug("rebuild_sqlite_index ANALYZE: %s", e)
@@ -1580,7 +1583,7 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
     summary = {
         "trigger": trigger,
         "timestamp": assessment.timestamp,
-        "assess_time_ms": int(assess_time * 1000),
+        "assess_time_ms": round(assess_time * 1000),
         "assessment": {
             "strategies_total": assessment.strategies_total,
             "strategies_paper_running": assessment.strategies_paper_running,
@@ -1630,7 +1633,8 @@ def _persist_assessment(summary: dict) -> None:
         title = f"Operator assessment ({ts}) — {actions_n} actions, {executed_n} executed"
 
         # Build a readable content body so _index() can put it in FTS retrieval.
-        health = summary.get("system_health", {})
+        # Issue #387: the producer writes summary["assessment"], not "system_health".
+        health = summary.get("assessment", {})
         results = summary.get("results", [])
         lines = [
             f"## Operator Assessment — {ts}",
@@ -1639,7 +1643,7 @@ def _persist_assessment(summary: dict) -> None:
             f"skipped: {summary.get('actions_skipped',0)}",
         ]
         if health:
-            lines.append("\n### System Health")
+            lines.append("\n### System State")
             for k, v in health.items():
                 lines.append(f"- {k}: {v}")
         if results:

@@ -177,8 +177,16 @@ async def _llm_startup_gate(cfg) -> None:
     except asyncio.CancelledError:
         raise  # lifespan shutdown cancelled us mid-probe — propagate, don't swallow
     except Exception as e:
-        logger.warning("LLM startup gate probe errored (skipping gate): %s", e)
-        return
+        # Issue #390: an orchestration-level exception must NOT skip the gate
+        # (fail-open); it must pause the scheduler just like a "no usable provider"
+        # verdict.  We synthesise a minimal result so the unified pause path below
+        # can run without code duplication.
+        logger.warning(
+            "LLM startup gate probe raised an unexpected error — pausing trading loop "
+            "(fail-safe).  Fix the error and resume from the dashboard.  Error: %s", e,
+        )
+        result = {"any_usable": False, "checked": 0, "results": [], "attempts": 1,
+                  "_probe_exception": str(e)}
 
     if result["any_usable"]:
         # Clear any stale failure count so /api/health starts clean.
