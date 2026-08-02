@@ -50,6 +50,7 @@ def _redact_proxy_url(url):
         return url
     try:
         from urllib.parse import urlsplit, urlunsplit
+
         parts = urlsplit(str(url))
         if parts.username or parts.password:
             host = parts.hostname or ""
@@ -105,6 +106,7 @@ class ExchangeModeRequest(SettingsRequest):
 def get_settings():
     cfg = load_config()
     from aletheia.learning.registry import paper_influence_path_options
+
     providers_safe = {}
     for name, p in cfg.models.providers.items():
         providers_safe[name] = {
@@ -152,8 +154,7 @@ def get_settings():
         "market_data": _redacted_market_data(cfg.market_data.model_dump(mode="json")),
         "universe": cfg.universe.model_dump(mode="json"),
         "guard": cfg.guard.model_dump(mode="json"),
-        "tunnel": {k: v for k, v in cfg.tunnel.model_dump(mode="json").items()
-                   if k != "credentials_path"},
+        "tunnel": {k: v for k, v in cfg.tunnel.model_dump(mode="json").items() if k != "credentials_path"},
         "regime": cfg.regime.model_dump(mode="json"),
         "network": _redacted_network(cfg.network.model_dump(mode="json")),
         "strategy_factory": {
@@ -180,6 +181,7 @@ def get_settings():
 # Local paper account (No exchange only)
 # ---------------------------------------------------------------------------
 
+
 class PaperAccountAdjustmentRequest(SettingsRequest):
     amount_usdt: FiniteFloat
     note: str = ""
@@ -197,14 +199,21 @@ def _require_local_paper_mode() -> None:
 
 def _audit_paper_account_change(action: str, before: dict, after: dict, note: str) -> None:
     from aletheia.files.jsonl import write_audit
+
     cfg = load_config()
     tunnel_active = getattr(getattr(cfg, "tunnel", None), "enabled", False)
     source = "tunnel_dashboard" if tunnel_active else "dashboard"
-    write_audit({
-        "actor": "human", "source": source, "event_type": f"paper_account_{action}",
-        "entity_type": "paper_account", "before": before, "after": after,
-        "message": f"Local paper account {action}: {note or 'manual operator action'}",
-    })
+    write_audit(
+        {
+            "actor": "human",
+            "source": source,
+            "event_type": f"paper_account_{action}",
+            "entity_type": "paper_account",
+            "before": before,
+            "after": after,
+            "message": f"Local paper account {action}: {note or 'manual operator action'}",
+        }
+    )
 
 
 @router.get("/paper-account")
@@ -212,7 +221,9 @@ async def get_paper_account():
     def _read():
         _require_local_paper_mode()
         from aletheia.portfolio.paper_account import get_paper_account as _get
+
         return _get()
+
     return await asyncio.to_thread(_read)
 
 
@@ -224,6 +235,7 @@ async def credit_paper_account(req: PaperAccountAdjustmentRequest):
     def _credit():
         _require_local_paper_mode()
         from aletheia.portfolio.paper_account import adjust_cash, get_paper_account as _get
+
         before = _get(event_limit=0)
         try:
             after = adjust_cash(req.amount_usdt, note=req.note)
@@ -231,6 +243,7 @@ async def credit_paper_account(req: PaperAccountAdjustmentRequest):
             raise HTTPException(400, str(exc)) from exc
         _audit_paper_account_change("credit", before, after, req.note)
         return after
+
     return await asyncio.to_thread(_credit)
 
 
@@ -242,6 +255,7 @@ async def debit_paper_account(req: PaperAccountAdjustmentRequest):
     def _debit():
         _require_local_paper_mode()
         from aletheia.portfolio.paper_account import adjust_cash, get_paper_account as _get
+
         before = _get(event_limit=0)
         try:
             after = adjust_cash(-req.amount_usdt, note=req.note)
@@ -249,6 +263,7 @@ async def debit_paper_account(req: PaperAccountAdjustmentRequest):
             raise HTTPException(400, str(exc)) from exc
         _audit_paper_account_change("debit", before, after, req.note)
         return after
+
     return await asyncio.to_thread(_debit)
 
 
@@ -260,10 +275,12 @@ async def set_paper_account_balance(req: PaperAccountSetBalanceRequest):
     def _set_balance():
         _require_local_paper_mode()
         from aletheia.portfolio.paper_account import set_cash_balance, get_paper_account as _get
+
         before = _get(event_limit=0)
         after = set_cash_balance(req.cash_balance_usdt, note=req.note)
         _audit_paper_account_change("set_balance", before, after, req.note)
         return after
+
     return await asyncio.to_thread(_set_balance)
 
 
@@ -295,6 +312,7 @@ def _close_local_positions(market_type: str | None) -> dict:
         ) from exc
 
     from aletheia.portfolio.paper_account import get_paper_account as _get
+
     after = _get()
     action = "close_spot_positions" if market_type == "spot" else "close_all_positions"
     if result["failed"]:
@@ -332,6 +350,7 @@ async def close_local_paper_spot_positions():
 # Agent config
 # ---------------------------------------------------------------------------
 
+
 class AutonomousLearningRequest(SettingsRequest):
     enabled: bool
 
@@ -343,10 +362,18 @@ async def set_autonomous_learning(req: AutonomousLearningRequest):
     cfg.agent.autonomous_learning = req.enabled
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "autonomous_learning_changed",
-                 "entity_type": "agent_config", "before": {"autonomous_learning": old},
-                 "after": {"autonomous_learning": req.enabled},
-                 "message": f"autonomous_learning {old} -> {req.enabled}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "autonomous_learning_changed",
+            "entity_type": "agent_config",
+            "before": {"autonomous_learning": old},
+            "after": {"autonomous_learning": req.enabled},
+            "message": f"autonomous_learning {old} -> {req.enabled}",
+        }
+    )
     return {"old": old, "new": req.enabled}
 
 
@@ -361,16 +388,25 @@ async def set_bypass_distress_gate(req: BypassDistressGateRequest):
     cfg.agent.bypass_distress_gate = req.enabled
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "bypass_distress_gate_changed",
-                 "entity_type": "agent_config", "before": {"bypass_distress_gate": old},
-                 "after": {"bypass_distress_gate": req.enabled},
-                 "message": f"bypass_distress_gate {old} -> {req.enabled}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "bypass_distress_gate_changed",
+            "entity_type": "agent_config",
+            "before": {"bypass_distress_gate": old},
+            "after": {"bypass_distress_gate": req.enabled},
+            "message": f"bypass_distress_gate {old} -> {req.enabled}",
+        }
+    )
     return {"old": old, "new": req.enabled}
 
 
 # ---------------------------------------------------------------------------
 # Exchange markets config
 # ---------------------------------------------------------------------------
+
 
 class ExchangeMarketsRequest(SettingsRequest):
     spot: bool
@@ -400,12 +436,23 @@ def _require_exchange_divergence_confirmation(alignment, confirmed: bool) -> Non
 async def set_exchange_markets(req: ExchangeMarketsRequest):
     if not req.spot and not req.usdt_futures:
         raise HTTPException(400, "At least one market must be enabled")
-    if req.paper_execution_mode is not None and req.paper_execution_mode not in {"bitget_demo", "paper_internal", "binance_testnet", "okx_demo", "binance_live", "okx_live"}:
-        raise HTTPException(400, "paper_execution_mode must be one of: bitget_demo, paper_internal, binance_testnet, okx_demo, binance_live, okx_live")
+    if req.paper_execution_mode is not None and req.paper_execution_mode not in {
+        "bitget_demo",
+        "paper_internal",
+        "binance_testnet",
+        "okx_demo",
+        "binance_live",
+        "okx_live",
+    }:
+        raise HTTPException(
+            400,
+            "paper_execution_mode must be one of: bitget_demo, paper_internal, binance_testnet, okx_demo, binance_live, okx_live",
+        )
     cfg = load_config()
     old = cfg.exchange.model_dump(mode="json")
     next_paper_mode = req.paper_execution_mode or cfg.exchange.paper_execution_mode
     from aletheia.config.exchange_alignment import exchange_alignment_for_values
+
     alignment = exchange_alignment_for_values(
         paper_execution_mode=next_paper_mode,
         data_exchange=cfg.market_data.ccxt_exchange,
@@ -413,17 +460,26 @@ async def set_exchange_markets(req: ExchangeMarketsRequest):
     )
     if req.paper_execution_mode is not None and req.paper_execution_mode != cfg.exchange.paper_execution_mode:
         _require_exchange_divergence_confirmation(
-            alignment, req.confirm_exchange_divergence,
+            alignment,
+            req.confirm_exchange_divergence,
         )
     cfg.exchange.enabled_markets = {"spot": req.spot, "usdt_futures": req.usdt_futures}
     if req.paper_execution_mode is not None:
         cfg.exchange.paper_execution_mode = req.paper_execution_mode
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "exchange_markets_changed",
-                 "entity_type": "exchange_config", "before": old,
-                 "after": cfg.exchange.model_dump(mode="json"),
-                 "message": "exchange config updated"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "exchange_markets_changed",
+            "entity_type": "exchange_config",
+            "before": old,
+            "after": cfg.exchange.model_dump(mode="json"),
+            "message": "exchange config updated",
+        }
+    )
     if old != cfg.exchange.model_dump(mode="json"):
         _notify_ranker_config_change()
     return {**cfg.exchange.model_dump(mode="json"), "exchange_alignment": alignment.to_dict()}
@@ -474,13 +530,18 @@ async def set_primary_exchange(req: PrimaryExchangeRequest):
         "risk.allowed_exchange": cfg.risk.allowed_exchange,
     }
     from aletheia.files.jsonl import write_audit
-    write_audit({
-        "actor": "human", "source": "dashboard",
-        "event_type": "primary_exchange_changed",
-        "entity_type": "exchange_config",
-        "before": old, "after": after,
-        "message": f"Primary exchange set to {eid}",
-    })
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "primary_exchange_changed",
+            "entity_type": "exchange_config",
+            "before": old,
+            "after": after,
+            "message": f"Primary exchange set to {eid}",
+        }
+    )
     if old != after:
         _notify_ranker_config_change()
     return {"exchange_id": eid, **after}
@@ -489,6 +550,7 @@ async def set_primary_exchange(req: PrimaryExchangeRequest):
 # ---------------------------------------------------------------------------
 # Runtime config
 # ---------------------------------------------------------------------------
+
 
 class RuntimeConfigUpdate(SettingsRequest):
     scheduler_enabled: Optional[bool] = None
@@ -517,12 +579,18 @@ def update_economics_config(req: EconomicsConfigUpdate):
         cfg.economics.budgets_shadow_enabled = False
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({
-        "actor": "human", "source": "dashboard",
-        "event_type": "economics_config_changed", "entity_type": "economics_config",
-        "before": old, "after": cfg.economics.model_dump(mode="json"),
-        "message": f"Economics config updated: {list(updates.keys())}",
-    })
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "economics_config_changed",
+            "entity_type": "economics_config",
+            "before": old,
+            "after": cfg.economics.model_dump(mode="json"),
+            "message": f"Economics config updated: {list(updates.keys())}",
+        }
+    )
     return {"updated": updates, "economics": cfg.economics.model_dump(mode="json")}
 
 
@@ -542,6 +610,7 @@ async def update_runtime_config(req: RuntimeConfigUpdate):
     if "scheduler_enabled" in updates:
         try:
             from aletheia.agent_runtime.scheduler import pause_scheduler, resume_scheduler
+
             if cfg.runtime.scheduler_enabled:
                 resume_scheduler()
             else:
@@ -549,10 +618,18 @@ async def update_runtime_config(req: RuntimeConfigUpdate):
         except Exception:
             pass
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "runtime_config_changed",
-                 "entity_type": "runtime_config", "before": old,
-                 "after": cfg.runtime.model_dump(mode="json"),
-                 "message": f"Runtime config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "runtime_config_changed",
+            "entity_type": "runtime_config",
+            "before": old,
+            "after": cfg.runtime.model_dump(mode="json"),
+            "message": f"Runtime config updated: {list(updates.keys())}",
+        }
+    )
     return {"updated": updates}
 
 
@@ -585,11 +662,10 @@ class AppConfigUpdate(SettingsRequest):
             raise ValueError("bind_host cannot be empty")
         if v not in _VALID_BIND_HOSTS:
             import re
+
             _ipv4 = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
             if not _ipv4.match(v):
-                raise ValueError(
-                    f"bind_host must be one of {sorted(_VALID_BIND_HOSTS)} or a valid IPv4 address"
-                )
+                raise ValueError(f"bind_host must be one of {sorted(_VALID_BIND_HOSTS)} or a valid IPv4 address")
         return v
 
 
@@ -602,16 +678,25 @@ async def update_app_config(req: AppConfigUpdate):
         setattr(cfg.app, field, value)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "app_config_changed",
-                 "entity_type": "app_config", "before": old,
-                 "after": cfg.app.model_dump(mode="json"),
-                 "message": f"App config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "app_config_changed",
+            "entity_type": "app_config",
+            "before": old,
+            "after": cfg.app.model_dump(mode="json"),
+            "message": f"App config updated: {list(updates.keys())}",
+        }
+    )
     return {"updated": updates}
 
 
 # ---------------------------------------------------------------------------
 # PI Daemon config
 # ---------------------------------------------------------------------------
+
 
 class PiDaemonConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
@@ -649,10 +734,18 @@ async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
         setattr(cfg.pi_daemon, field, value)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "pi_daemon_config_changed",
-                 "entity_type": "pi_daemon_config", "before": old,
-                 "after": cfg.pi_daemon.model_dump(mode="json"),
-                 "message": f"System Operator daemon config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "pi_daemon_config_changed",
+            "entity_type": "pi_daemon_config",
+            "before": old,
+            "after": cfg.pi_daemon.model_dump(mode="json"),
+            "message": f"System Operator daemon config updated: {list(updates.keys())}",
+        }
+    )
 
     # Apply the runtime transition immediately so the running daemon reflects
     # the saved config without requiring a gateway restart.
@@ -661,6 +754,7 @@ async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
     if affects_runtime:
         try:
             from aletheia.agent_runtime.pi_daemon import reconfigure_pi_daemon
+
             loop = asyncio.get_event_loop()
             runtime_status = await reconfigure_pi_daemon(
                 enabled=cfg.pi_daemon.enabled,
@@ -685,6 +779,7 @@ async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
 # ---------------------------------------------------------------------------
 # Serenity Research config (Phase 3, Option A D5 switch)
 # ---------------------------------------------------------------------------
+
 
 class SerenityConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
@@ -714,16 +809,25 @@ async def update_serenity_config(req: SerenityConfigUpdate):
         setattr(cfg.serenity, field, value)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "serenity_config_changed",
-                 "entity_type": "serenity_config", "before": old,
-                 "after": cfg.serenity.model_dump(mode="json"),
-                 "message": f"Serenity config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "serenity_config_changed",
+            "entity_type": "serenity_config",
+            "before": old,
+            "after": cfg.serenity.model_dump(mode="json"),
+            "message": f"Serenity config updated: {list(updates.keys())}",
+        }
+    )
     return {"updated": updates}
 
 
 # ---------------------------------------------------------------------------
 # Filter feedback controller config (Phase 1 shadow)
 # ---------------------------------------------------------------------------
+
 
 class ControllerConfigUpdate(SettingsRequest):
     shadow_enabled: Optional[bool] = None
@@ -757,6 +861,7 @@ async def update_controller_config(req: ControllerConfigUpdate):
     if _CONTROLLER_SCHEDULER_FIELDS.intersection(updates):
         from aletheia.agent_runtime.scheduler import reconcile_filter_controller
         from starlette.concurrency import run_in_threadpool
+
         rescheduled = await run_in_threadpool(
             reconcile_filter_controller,
             cfg.controller.shadow_enabled,
@@ -764,16 +869,25 @@ async def update_controller_config(req: ControllerConfigUpdate):
         )
 
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "controller_config_changed",
-                 "entity_type": "controller_config", "before": old,
-                 "after": cfg.controller.model_dump(mode="json"),
-                 "message": f"Controller config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "controller_config_changed",
+            "entity_type": "controller_config",
+            "before": old,
+            "after": cfg.controller.model_dump(mode="json"),
+            "message": f"Controller config updated: {list(updates.keys())}",
+        }
+    )
     return {"updated": updates, "rescheduled": rescheduled}
 
 
 # ---------------------------------------------------------------------------
 # Paper Learning experiment controls (AT-02)
 # ---------------------------------------------------------------------------
+
 
 class LearningConfigUpdate(SettingsRequest):
     contribution_evaluation_enabled: Optional[bool] = None
@@ -786,13 +900,12 @@ class LearningConfigUpdate(SettingsRequest):
 
 
 def _validated_paper_influence_paths(values: list[str]) -> list[str]:
-    requested_paths = sorted({
-        str(path).strip() for path in values if str(path).strip()
-    })
+    requested_paths = sorted({str(path).strip() for path in values if str(path).strip()})
     from aletheia.learning.registry import (
         get_learning_path,
         supported_paper_influence_path_ids,
     )
+
     unknown_paths = []
     for path_id in requested_paths:
         try:
@@ -801,16 +914,14 @@ def _validated_paper_influence_paths(values: list[str]) -> list[str]:
             unknown_paths.append(path_id)
     if unknown_paths:
         raise HTTPException(
-            400, f"unknown paper influence paths: {', '.join(unknown_paths)}",
+            400,
+            f"unknown paper influence paths: {', '.join(unknown_paths)}",
         )
-    unsupported_paths = sorted(
-        set(requested_paths) - set(supported_paper_influence_path_ids())
-    )
+    unsupported_paths = sorted(set(requested_paths) - set(supported_paper_influence_path_ids()))
     if unsupported_paths:
         raise HTTPException(
             400,
-            "paper influence path is not fully supported for: "
-            + ", ".join(unsupported_paths),
+            "paper influence path is not fully supported for: " + ", ".join(unsupported_paths),
         )
     return requested_paths
 
@@ -836,21 +947,29 @@ async def update_learning_config(req: LearningConfigUpdate):
         setattr(cfg.learning, field, value)
     save_config(cfg)
     rescheduled = False
-    if (
-        "evaluation_interval_minutes" in updates
-        and updates["evaluation_interval_minutes"] != old.get("evaluation_interval_minutes")
+    if "evaluation_interval_minutes" in updates and updates["evaluation_interval_minutes"] != old.get(
+        "evaluation_interval_minutes"
     ):
         from aletheia.agent_runtime.scheduler import reschedule_learning_jobs
         from starlette.concurrency import run_in_threadpool
+
         rescheduled = await run_in_threadpool(
             reschedule_learning_jobs,
             cfg.learning.evaluation_interval_minutes,
         )
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "learning_config_changed",
-                 "entity_type": "learning_config", "before": old,
-                 "after": cfg.learning.model_dump(mode="json"),
-                 "message": f"Learning experiment config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "learning_config_changed",
+            "entity_type": "learning_config",
+            "before": old,
+            "after": cfg.learning.model_dump(mode="json"),
+            "message": f"Learning experiment config updated: {list(updates.keys())}",
+        }
+    )
     return {
         "updated": updates,
         "rescheduled": rescheduled,
@@ -862,16 +981,21 @@ async def update_learning_config(req: LearningConfigUpdate):
 def list_learning_experiments(limit: int = 100):
     """List all learning experiments with lightweight summary (path, stage, status)."""
     from aletheia.storage.sqlite import get_db
+
     try:
-        rows = get_db().execute(
-            "SELECT e.experiment_id, e.hypothesis_id, e.stage, e.status, "
-            "e.allocation_pct, e.min_samples_per_arm, e.activation_verdict_id, "
-            "e.created_at, h.path_id, h.target_horizon "
-            "FROM learning_experiments e "
-            "LEFT JOIN learning_hypotheses h ON e.hypothesis_id = h.hypothesis_id "
-            "ORDER BY datetime(e.created_at) DESC LIMIT ?",
-            (min(max(limit, 1), 200),),
-        ).fetchall()
+        rows = (
+            get_db()
+            .execute(
+                "SELECT e.experiment_id, e.hypothesis_id, e.stage, e.status, "
+                "e.allocation_pct, e.min_samples_per_arm, e.activation_verdict_id, "
+                "e.created_at, h.path_id, h.target_horizon "
+                "FROM learning_experiments e "
+                "LEFT JOIN learning_hypotheses h ON e.hypothesis_id = h.hypothesis_id "
+                "ORDER BY datetime(e.created_at) DESC LIMIT ?",
+                (min(max(limit, 1), 200),),
+            )
+            .fetchall()
+        )
     except Exception as exc:
         raise HTTPException(503, "learning ledger unavailable") from exc
     return [dict(row) for row in rows]
@@ -885,6 +1009,7 @@ def get_learning_experiment(experiment_id: str):
         current_policy_epoch as resolve_current_policy_epoch,
     )
     from aletheia.learning.ledger import get_record
+
     try:
         row = get_record("learning_experiments", experiment_id)
     except Exception as exc:
@@ -893,10 +1018,14 @@ def get_learning_experiment(experiment_id: str):
         raise HTTPException(404, f"experiment not found: {experiment_id}")
     hypothesis_row = get_record("learning_hypotheses", str(row.get("hypothesis_id") or ""))
     path_id = str((hypothesis_row or {}).get("path_id") or "")
-    policy_epoch = resolve_current_policy_epoch(
-        path_id,
-        persist_config_migrations=False,
-    ) if path_id else None
+    policy_epoch = (
+        resolve_current_policy_epoch(
+            path_id,
+            persist_config_migrations=False,
+        )
+        if path_id
+        else None
+    )
     if policy_epoch is None:
         raise HTTPException(409, "current policy epoch is not available")
     return inspect_learning_experiment(
@@ -932,6 +1061,7 @@ class AdmitTrialRequest(SettingsRequest):
 async def admit_learning_trial(experiment_id: str, req: AdmitTrialRequest):
     """Admit a shadow experiment to paper_10 trial. Change-management boundary."""
     from aletheia.learning.lifecycle import _execute_trial_admission
+
     result = _execute_trial_admission(
         experiment_id,
         verdict_id=req.verdict_id,
@@ -953,6 +1083,7 @@ async def admit_learning_trial(experiment_id: str, req: AdmitTrialRequest):
 # Operator config
 # ---------------------------------------------------------------------------
 
+
 class OperatorConfigUpdate(SettingsRequest):
     loop_enabled: Optional[bool] = None
 
@@ -966,16 +1097,25 @@ async def update_operator_config(req: OperatorConfigUpdate):
         setattr(cfg.operator, field, value)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "operator_config_changed",
-                 "entity_type": "operator_config", "before": old,
-                 "after": cfg.operator.model_dump(mode="json"),
-                 "message": f"Operator config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "operator_config_changed",
+            "entity_type": "operator_config",
+            "before": old,
+            "after": cfg.operator.model_dump(mode="json"),
+            "message": f"Operator config updated: {list(updates.keys())}",
+        }
+    )
     return {"updated": updates}
 
 
 # ---------------------------------------------------------------------------
 # Guard / lesson-promotion config
 # ---------------------------------------------------------------------------
+
 
 class RegimeConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
@@ -993,10 +1133,18 @@ async def update_regime_config(req: RegimeConfigUpdate):
         setattr(cfg.regime, field, value)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "regime_config_changed",
-                 "entity_type": "regime_config", "before": old,
-                 "after": cfg.regime.model_dump(mode="json"),
-                 "message": f"Regime config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "regime_config_changed",
+            "entity_type": "regime_config",
+            "before": old,
+            "after": cfg.regime.model_dump(mode="json"),
+            "message": f"Regime config updated: {list(updates.keys())}",
+        }
+    )
     if updates:
         _notify_ranker_config_change()
     return {"updated": updates}
@@ -1019,10 +1167,18 @@ async def update_guard_config(req: GuardConfigUpdate):
         setattr(cfg.guard, field, value)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "guard_config_changed",
-                 "entity_type": "guard_config", "before": old,
-                 "after": cfg.guard.model_dump(mode="json"),
-                 "message": f"Guard config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "guard_config_changed",
+            "entity_type": "guard_config",
+            "before": old,
+            "after": cfg.guard.model_dump(mode="json"),
+            "message": f"Guard config updated: {list(updates.keys())}",
+        }
+    )
     if updates:
         _notify_ranker_config_change()
     return {"updated": updates}
@@ -1031,6 +1187,7 @@ async def update_guard_config(req: GuardConfigUpdate):
 # ---------------------------------------------------------------------------
 # Health monitoring config
 # ---------------------------------------------------------------------------
+
 
 class HealthConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
@@ -1100,16 +1257,25 @@ async def update_health_config(req: HealthConfigUpdate):
         setattr(cfg.health, field, value)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "health_config_changed",
-                 "entity_type": "health_config", "before": old,
-                 "after": cfg.health.model_dump(mode="json"),
-                 "message": f"Health config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "health_config_changed",
+            "entity_type": "health_config",
+            "before": old,
+            "after": cfg.health.model_dump(mode="json"),
+            "message": f"Health config updated: {list(updates.keys())}",
+        }
+    )
     return {"updated": updates}
 
 
 # ---------------------------------------------------------------------------
 # Retention config
 # ---------------------------------------------------------------------------
+
 
 class RetentionConfigUpdate(SettingsRequest):
     agent_runs_days: Optional[int] = None
@@ -1145,16 +1311,25 @@ async def update_retention_config(req: RetentionConfigUpdate):
         setattr(cfg.retention, field, value)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "retention_config_changed",
-                 "entity_type": "retention_config", "before": old,
-                 "after": cfg.retention.model_dump(mode="json"),
-                 "message": f"Retention config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "retention_config_changed",
+            "entity_type": "retention_config",
+            "before": old,
+            "after": cfg.retention.model_dump(mode="json"),
+            "message": f"Retention config updated: {list(updates.keys())}",
+        }
+    )
     return {"updated": updates}
 
 
 # ---------------------------------------------------------------------------
 # Telegram config
 # ---------------------------------------------------------------------------
+
 
 class TelegramConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
@@ -1177,27 +1352,35 @@ async def update_telegram_config(req: TelegramConfigUpdate):
     save_config(cfg)
 
     rescheduled = False
-    if (
-        "daily_summary_hour_cst" in updates
-        and updates["daily_summary_hour_cst"] != old.get("daily_summary_hour_cst")
-    ):
+    if "daily_summary_hour_cst" in updates and updates["daily_summary_hour_cst"] != old.get("daily_summary_hour_cst"):
         from aletheia.agent_runtime.scheduler import reschedule_telegram_summary
         from starlette.concurrency import run_in_threadpool
+
         rescheduled = await run_in_threadpool(
-            reschedule_telegram_summary, cfg.telegram.daily_summary_hour_cst,
+            reschedule_telegram_summary,
+            cfg.telegram.daily_summary_hour_cst,
         )
 
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "telegram_config_changed",
-                 "entity_type": "telegram_config", "before": old,
-                 "after": cfg.telegram.model_dump(mode="json"),
-                 "message": f"Telegram config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "telegram_config_changed",
+            "entity_type": "telegram_config",
+            "before": old,
+            "after": cfg.telegram.model_dump(mode="json"),
+            "message": f"Telegram config updated: {list(updates.keys())}",
+        }
+    )
     return {"updated": updates, "rescheduled": rescheduled}
 
 
 # ---------------------------------------------------------------------------
 # Webhook config
 # ---------------------------------------------------------------------------
+
 
 class WebhookConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
@@ -1218,16 +1401,25 @@ async def update_webhook_config(req: WebhookConfigUpdate):
         setattr(cfg.webhook, field, value)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "webhook_config_changed",
-                 "entity_type": "webhook_config", "before": _redacted_webhook(old),
-                 "after": _redacted_webhook(cfg.webhook.model_dump(mode="json")),
-                 "message": f"Webhook config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "webhook_config_changed",
+            "entity_type": "webhook_config",
+            "before": _redacted_webhook(old),
+            "after": _redacted_webhook(cfg.webhook.model_dump(mode="json")),
+            "message": f"Webhook config updated: {list(updates.keys())}",
+        }
+    )
     return {"updated": _redacted_webhook(updates)}
 
 
 # ---------------------------------------------------------------------------
 # Update config
 # ---------------------------------------------------------------------------
+
 
 class UpdateConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
@@ -1247,10 +1439,18 @@ async def update_update_config(req: UpdateConfigUpdate):
         cfg.update.branch = branch
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "update_config_changed",
-                 "entity_type": "update_config", "before": old,
-                 "after": {"enabled": cfg.update.enabled, "branch": cfg.update.branch},
-                 "message": "Update config changed"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "update_config_changed",
+            "entity_type": "update_config",
+            "before": old,
+            "after": {"enabled": cfg.update.enabled, "branch": cfg.update.branch},
+            "message": "Update config changed",
+        }
+    )
     return {"enabled": cfg.update.enabled, "branch": cfg.update.branch}
 
 
@@ -1263,14 +1463,21 @@ async def set_permission_mode(req: PermissionModeRequest):
     cfg.agent.permission_mode = req.mode
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "permission_changed",
-                 "entity_type": "permission_mode", "before": {"mode": old}, "after": {"mode": req.mode},
-                 "message": f"Permission mode {old} -> {req.mode}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "permission_changed",
+            "entity_type": "permission_mode",
+            "before": {"mode": old},
+            "after": {"mode": req.mode},
+            "message": f"Permission mode {old} -> {req.mode}",
+        }
+    )
     if old != req.mode:
         _notify_ranker_config_change()
     return {"old": old, "new": req.mode}
-
-
 
 
 @router.post("/exchange-mode")
@@ -1282,15 +1489,25 @@ async def set_exchange_mode(req: ExchangeModeRequest):
     cfg.exchange.mode = req.mode
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "exchange_mode_changed",
-                 "entity_type": "exchange_mode", "before": {"mode": old}, "after": {"mode": req.mode},
-                 "message": f"Exchange mode {old} -> {req.mode}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "exchange_mode_changed",
+            "entity_type": "exchange_mode",
+            "before": {"mode": old},
+            "after": {"mode": req.mode},
+            "message": f"Exchange mode {old} -> {req.mode}",
+        }
+    )
     return {"old": old, "new": req.mode}
 
 
 # ---------------------------------------------------------------------------
 # Risk config (editable limits)
 # ---------------------------------------------------------------------------
+
 
 class RiskConfigUpdate(SettingsRequest):
     max_daily_loss_pct: Optional[float] = None
@@ -1375,10 +1592,7 @@ async def update_risk_config(req: RiskConfigUpdate):
     """Update editable risk limits. Immutable fields are rejected."""
     cfg = load_config()
     old = cfg.risk.model_dump(mode="json")
-    old_policy_hashes = {
-        mode: risk_policy_hash(getattr(cfg.risk, mode))
-        for mode in ("demo", "live")
-    }
+    old_policy_hashes = {mode: risk_policy_hash(getattr(cfg.risk, mode)) for mode in ("demo", "live")}
     updates = req.model_dump(exclude_none=True)
 
     for field, value in updates.items():
@@ -1398,10 +1612,18 @@ async def update_risk_config(req: RiskConfigUpdate):
             policy.revision += 1
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "risk_config_changed",
-                 "entity_type": "risk_config", "before": old,
-                 "after": cfg.risk.model_dump(mode="json"),
-                 "message": f"Risk config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "risk_config_changed",
+            "entity_type": "risk_config",
+            "before": old,
+            "after": cfg.risk.model_dump(mode="json"),
+            "message": f"Risk config updated: {list(updates.keys())}",
+        }
+    )
     return {"updated": updates, "risk": cfg.risk.model_dump(mode="json")}
 
 
@@ -1447,18 +1669,12 @@ def _validate_mode_policy(policy: ModeRiskPolicy) -> None:
         "leverage.mid_cap": policy.leverage.mid_cap,
         "leverage.alt_cap": policy.leverage.alt_cap,
         "leverage.account_cap": policy.leverage.account_cap,
-        "margin.min_entry_liquidation_buffer_pct":
-            policy.margin.min_entry_liquidation_buffer_pct,
-        "margin.runtime_liquidation_buffer_pct":
-            policy.margin.runtime_liquidation_buffer_pct,
-        "correlation.max_sector_concentration_pct":
-            policy.correlation.max_sector_concentration_pct,
+        "margin.min_entry_liquidation_buffer_pct": policy.margin.min_entry_liquidation_buffer_pct,
+        "margin.runtime_liquidation_buffer_pct": policy.margin.runtime_liquidation_buffer_pct,
+        "correlation.max_sector_concentration_pct": policy.correlation.max_sector_concentration_pct,
         "correlation.max_portfolio_beta": policy.correlation.max_portfolio_beta,
     }
-    invalid = [
-        path for path, value in numeric.items()
-        if not math.isfinite(float(value)) or float(value) < 0
-    ]
+    invalid = [path for path, value in numeric.items() if not math.isfinite(float(value)) or float(value) < 0]
     if policy.positions.max_open_positions < 1:
         invalid.append("positions.max_open_positions")
     if policy.capital.base_usdt <= 0:
@@ -1536,25 +1752,30 @@ async def copy_risk_policy(req: RiskPolicyCopyRequest):
         mode="json",
         exclude={"policy_id", "revision", "eligibility"},
     )
-    replacement = ModeRiskPolicy.model_validate({
-        **target.model_dump(mode="json"),
-        **common,
-        "revision": target.revision + 1,
-    })
+    replacement = ModeRiskPolicy.model_validate(
+        {
+            **target.model_dump(mode="json"),
+            **common,
+            "revision": target.revision + 1,
+        }
+    )
     _validate_mode_policy(replacement)
     setattr(cfg.risk, req.target, replacement)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({
-        "actor": "human",
-        "source": "dashboard",
-        "event_type": "risk_policy_copied",
-        "entity_type": "risk_policy",
-        "entity_id": req.target,
-        "before": before,
-        "after": replacement.model_dump(mode="json"),
-        "message": f"{req.source} policy copied to {req.target}: {req.reason}",
-    })
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "risk_policy_copied",
+            "entity_type": "risk_policy",
+            "entity_id": req.target,
+            "before": before,
+            "after": replacement.model_dump(mode="json"),
+            "message": f"{req.source} policy copied to {req.target}: {req.reason}",
+        }
+    )
     return _policy_payload(cfg)
 
 
@@ -1578,16 +1799,19 @@ async def replace_risk_policy(mode: RiskMode, req: RiskPolicyReplaceRequest):
     setattr(cfg.risk, mode, replacement)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({
-        "actor": "human",
-        "source": "dashboard",
-        "event_type": "risk_policy_replaced",
-        "entity_type": "risk_policy",
-        "entity_id": mode,
-        "before": current.model_dump(mode="json"),
-        "after": replacement.model_dump(mode="json"),
-        "message": f"{mode} policy replaced: {req.reason}",
-    })
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "risk_policy_replaced",
+            "entity_type": "risk_policy",
+            "entity_id": mode,
+            "before": current.model_dump(mode="json"),
+            "after": replacement.model_dump(mode="json"),
+            "message": f"{mode} policy replaced: {req.reason}",
+        }
+    )
     return _policy_payload(cfg)
 
 
@@ -1611,16 +1835,19 @@ async def reset_risk_policy(mode: RiskMode, req: RiskPolicyResetRequest):
     setattr(cfg.risk, mode, replacement)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({
-        "actor": "human",
-        "source": "dashboard",
-        "event_type": "risk_policy_reset_to_defaults",
-        "entity_type": "risk_policy",
-        "entity_id": mode,
-        "before": current.model_dump(mode="json"),
-        "after": replacement.model_dump(mode="json"),
-        "message": f"{mode} policy reset to defaults: {req.reason}",
-    })
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "risk_policy_reset_to_defaults",
+            "entity_type": "risk_policy",
+            "entity_id": mode,
+            "before": current.model_dump(mode="json"),
+            "after": replacement.model_dump(mode="json"),
+            "message": f"{mode} policy reset to defaults: {req.reason}",
+        }
+    )
     return _policy_payload(cfg)
 
 
@@ -1655,22 +1882,30 @@ async def update_tradable_symbols(req: SymbolsUpdate):
 
     # In whitelist mode, sync observed_symbols so the data layer fetches them.
     from aletheia.data.symbols import to_canonical, InstrumentId, MARKET_SPOT
+
     if req.mode == "whitelist" and normalized:
         canonical_symbols = [to_canonical(s) for s in normalized]
         cfg.market_data.observed_symbols = canonical_symbols
         exchange = cfg.market_data.ccxt_exchange or "binance"
         cfg.market_data.observed_instruments = [
-            str(InstrumentId.from_parts(exchange, sym, MARKET_SPOT))
-            for sym in canonical_symbols
+            str(InstrumentId.from_parts(exchange, sym, MARKET_SPOT)) for sym in canonical_symbols
         ]
 
     save_config(cfg)
 
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "symbols_changed",
-                 "entity_type": "symbols", "before": old,
-                 "after": {"mode": req.mode, "symbols": normalized},
-                 "message": f"Symbol filter updated: mode={req.mode}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "symbols_changed",
+            "entity_type": "symbols",
+            "before": old,
+            "after": {"mode": req.mode, "symbols": normalized},
+            "message": f"Symbol filter updated: mode={req.mode}",
+        }
+    )
     if old != {"mode": req.mode, "symbols": normalized}:
         _notify_ranker_config_change()
     return {"mode": req.mode, "symbols": normalized}
@@ -1679,6 +1914,7 @@ async def update_tradable_symbols(req: SymbolsUpdate):
 # ---------------------------------------------------------------------------
 # Observed equities (US equity tickers for equity_observer)
 # ---------------------------------------------------------------------------
+
 
 class EquitiesConfigUpdate(SettingsRequest):
     tickers: list[str]
@@ -1693,16 +1929,25 @@ async def update_observed_equities(req: EquitiesConfigUpdate):
     cfg.market_data.observed_equities = normalized
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "equities_config_changed",
-                 "entity_type": "market_data_config", "before": {"observed_equities": old},
-                 "after": {"observed_equities": normalized},
-                 "message": f"Observed equities updated: {old} -> {normalized}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "equities_config_changed",
+            "entity_type": "market_data_config",
+            "before": {"observed_equities": old},
+            "after": {"observed_equities": normalized},
+            "message": f"Observed equities updated: {old} -> {normalized}",
+        }
+    )
     return {"observed_equities": normalized}
 
 
 # ---------------------------------------------------------------------------
 # Trading config (paper position management)
 # ---------------------------------------------------------------------------
+
 
 class MarketAwareExitsUpdate(BaseModel):
     enabled: Optional[bool] = None
@@ -1795,13 +2040,31 @@ async def update_trading_config(req: TradingConfigUpdate):
             if not (lo <= value <= hi):
                 raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
         setattr(cfg.trading, field, value)
+        # Issue #409: when progressive unlock transitions False → True, stamp the
+        # current time as the epoch anchor so only outcomes AFTER this moment count
+        # toward the step counter.  Resetting to False clears the anchor.
+        if field == "persona_progressive_unlock_enabled":
+            from datetime import datetime, timezone
+
+            if value and not cfg.trading.persona_unlock_anchor_at:
+                cfg.trading.persona_unlock_anchor_at = datetime.now(timezone.utc).isoformat()
+            elif not value:
+                cfg.trading.persona_unlock_anchor_at = None
 
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "trading_config_changed",
-                 "entity_type": "trading_config", "before": old,
-                 "after": cfg.trading.model_dump(mode="json"),
-                 "message": f"Trading config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "trading_config_changed",
+            "entity_type": "trading_config",
+            "before": old,
+            "after": cfg.trading.model_dump(mode="json"),
+            "message": f"Trading config updated: {list(updates.keys())}",
+        }
+    )
     if "min_confidence_to_trade" in updates:
         _notify_ranker_config_change()
     return {"updated": updates, "trading": cfg.trading.model_dump(mode="json")}
@@ -1869,7 +2132,8 @@ async def update_market_data_config(req: MarketDataConfigUpdate):
     cfg = load_config()
     old = cfg.market_data.model_dump(mode="json")
     updates = req.model_dump(
-        exclude_none=True, exclude={"confirm_exchange_divergence"},
+        exclude_none=True,
+        exclude={"confirm_exchange_divergence"},
     )
 
     validated_updates: dict = {}
@@ -1887,11 +2151,18 @@ async def update_market_data_config(req: MarketDataConfigUpdate):
             value = str(value).strip().lower()
             if value not in _MARKET_DATA_PROVIDERS:
                 raise HTTPException(400, f"'provider' must be one of: {sorted(_MARKET_DATA_PROVIDERS)}")
-        if field in {"observed_stocks", "observed_stock_tokens", "observed_xstocks", "observed_prediction_markets", "observed_equities"}:
+        if field in {
+            "observed_stocks",
+            "observed_stock_tokens",
+            "observed_xstocks",
+            "observed_prediction_markets",
+            "observed_equities",
+        }:
             value = list(dict.fromkeys(str(s).strip() for s in value if str(s).strip()))
         validated_updates[field] = value
 
     from aletheia.config.exchange_alignment import exchange_alignment_for_values
+
     next_data_exchange = str(
         validated_updates.get("ccxt_exchange", cfg.market_data.ccxt_exchange),
     )
@@ -1900,12 +2171,10 @@ async def update_market_data_config(req: MarketDataConfigUpdate):
         data_exchange=next_data_exchange,
         configured_exchange=cfg.exchange.name,
     )
-    if (
-        "ccxt_exchange" in validated_updates
-        and next_data_exchange != cfg.market_data.ccxt_exchange
-    ):
+    if "ccxt_exchange" in validated_updates and next_data_exchange != cfg.market_data.ccxt_exchange:
         _require_exchange_divergence_confirmation(
-            alignment, req.confirm_exchange_divergence,
+            alignment,
+            req.confirm_exchange_divergence,
         )
 
     for field, value in validated_updates.items():
@@ -1913,10 +2182,18 @@ async def update_market_data_config(req: MarketDataConfigUpdate):
 
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "market_data_config_changed",
-                 "entity_type": "market_data_config", "before": old,
-                 "after": cfg.market_data.model_dump(mode="json"),
-                 "message": f"Market data config updated: {list(validated_updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "market_data_config_changed",
+            "entity_type": "market_data_config",
+            "before": old,
+            "after": cfg.market_data.model_dump(mode="json"),
+            "message": f"Market data config updated: {list(validated_updates.keys())}",
+        }
+    )
     return {
         "updated": validated_updates,
         "market_data": cfg.market_data.model_dump(mode="json"),
@@ -1927,6 +2204,7 @@ async def update_market_data_config(req: MarketDataConfigUpdate):
 # ---------------------------------------------------------------------------
 # Universe config
 # ---------------------------------------------------------------------------
+
 
 class UniverseConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
@@ -1999,7 +2277,9 @@ async def update_universe_config(req: UniverseConfigUpdate):
                     raise HTTPException(400, f"quota for regime '{regime_state}' must be a non-empty dict")
                 total = sum(float(v) for v in quota.values())
                 if abs(total - 1.0) > 0.01:
-                    raise HTTPException(400, f"family_quota_by_regime['{regime_state}'] must sum to 1.0 (got {total:.3f})")
+                    raise HTTPException(
+                        400, f"family_quota_by_regime['{regime_state}'] must sum to 1.0 (got {total:.3f})"
+                    )
                 cleaned[regime_state] = {k: round(float(v), 2) for k, v in quota.items()}
             value = cleaned
         setattr(cfg.universe, field, value)
@@ -2011,13 +2291,22 @@ async def update_universe_config(req: UniverseConfigUpdate):
     rescheduled = False
     if "refresh_interval_min" in updates and updates["refresh_interval_min"] != old.get("refresh_interval_min"):
         from aletheia.agent_runtime.scheduler import reschedule_universe_refresh
+
         rescheduled = reschedule_universe_refresh(cfg.universe.refresh_interval_min)
 
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "universe_config_changed",
-                 "entity_type": "universe_config", "before": old,
-                 "after": cfg.universe.model_dump(mode="json"),
-                 "message": f"Universe config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "universe_config_changed",
+            "entity_type": "universe_config",
+            "before": old,
+            "after": cfg.universe.model_dump(mode="json"),
+            "message": f"Universe config updated: {list(updates.keys())}",
+        }
+    )
     if updates:
         _notify_ranker_config_change()
     return {"updated": updates, "rescheduled": rescheduled, "universe": cfg.universe.model_dump(mode="json")}
@@ -2028,12 +2317,23 @@ async def update_universe_config(req: UniverseConfigUpdate):
 # ---------------------------------------------------------------------------
 
 _STRATEGY_FACTORY_DEPRECATED_FIELDS = [
-    "backtest_gate_enabled", "sweep_enabled", "sweep_max_variants",
-    "sweep_use_optuna", "sweep_n_trials", "sweep_optuna_timeout_sec", "sweep_top_k",
-    "event_driven_enabled", "event_cooldown_minutes", "event_min_score",
-    "walk_forward_enabled", "walk_forward_folds", "walk_forward_min_bars",
-    "high_trade_count_threshold", "min_runtime_days_relaxed",
+    "backtest_gate_enabled",
+    "sweep_enabled",
+    "sweep_max_variants",
+    "sweep_use_optuna",
+    "sweep_n_trials",
+    "sweep_optuna_timeout_sec",
+    "sweep_top_k",
+    "event_driven_enabled",
+    "event_cooldown_minutes",
+    "event_min_score",
+    "walk_forward_enabled",
+    "walk_forward_folds",
+    "walk_forward_min_bars",
+    "high_trade_count_threshold",
+    "min_runtime_days_relaxed",
 ]
+
 
 # Accepts (but ignores) the old field set so old API callers don't get a hard 422.
 class StrategyFactoryConfigUpdate(BaseModel):
@@ -2082,6 +2382,7 @@ async def update_strategy_factory_config(req: StrategyFactoryConfigUpdate):
 # Tunnel config (Cloudflare Tunnel)
 # ---------------------------------------------------------------------------
 
+
 class TunnelConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
     tunnel_id: Optional[str] = None
@@ -2092,6 +2393,7 @@ class TunnelConfigUpdate(SettingsRequest):
 async def get_tunnel_status():
     from aletheia.gateway.tunnel import tunnel_status
     from starlette.concurrency import run_in_threadpool
+
     return await run_in_threadpool(tunnel_status)
 
 
@@ -2104,12 +2406,19 @@ async def update_tunnel_config(req: TunnelConfigUpdate):
         setattr(cfg.tunnel, field, value)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "tunnel_config_changed",
-                 "entity_type": "tunnel_config", "before": old,
-                 "after": cfg.tunnel.model_dump(mode="json"),
-                 "message": f"Tunnel config updated: {list(updates.keys())}"})
-    tunnel_safe = {k: v for k, v in cfg.tunnel.model_dump(mode="json").items()
-                   if k != "credentials_path"}
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "tunnel_config_changed",
+            "entity_type": "tunnel_config",
+            "before": old,
+            "after": cfg.tunnel.model_dump(mode="json"),
+            "message": f"Tunnel config updated: {list(updates.keys())}",
+        }
+    )
+    tunnel_safe = {k: v for k, v in cfg.tunnel.model_dump(mode="json").items() if k != "credentials_path"}
     return {"updated": updates, "tunnel": tunnel_safe}
 
 
@@ -2117,6 +2426,7 @@ async def update_tunnel_config(req: TunnelConfigUpdate):
 async def start_tunnel_api():
     from aletheia.gateway.tunnel import start_tunnel
     from starlette.concurrency import run_in_threadpool
+
     result = await run_in_threadpool(start_tunnel)
     if not result.get("ok"):
         raise HTTPException(400, result.get("reason", "unknown error"))
@@ -2127,12 +2437,14 @@ async def start_tunnel_api():
 async def stop_tunnel_api():
     from aletheia.gateway.tunnel import stop_tunnel
     from starlette.concurrency import run_in_threadpool
+
     return await run_in_threadpool(stop_tunnel)
 
 
 # ---------------------------------------------------------------------------
 # Network / proxy config
 # ---------------------------------------------------------------------------
+
 
 class NetworkConfigUpdate(SettingsRequest):
     # Structured proxy definition — the panel drives these; proxy_url is derived.
@@ -2165,14 +2477,22 @@ async def update_network_config(req: NetworkConfigUpdate):
 
     # Apply immediately: set env vars so trust_env=True clients pick them up.
     from aletheia.net import apply_proxy_env
+
     apply_proxy_env()
 
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard",
-                 "event_type": "network_config_changed",
-                 "entity_type": "network_config", "before": _redacted_network(old),
-                 "after": _redacted_network(cfg.network.model_dump(mode="json")),
-                 "message": f"Network config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "network_config_changed",
+            "entity_type": "network_config",
+            "before": _redacted_network(old),
+            "after": _redacted_network(cfg.network.model_dump(mode="json")),
+            "message": f"Network config updated: {list(updates.keys())}",
+        }
+    )
     return {"updated": _redacted_network(updates), "network": _redacted_network(cfg.network.model_dump(mode="json"))}
 
 
@@ -2181,6 +2501,7 @@ async def test_network_proxy():
     """Test proxy connectivity by pinging Binance API through the configured proxy."""
     import time
     from aletheia.net import httpx_client
+
     url = "https://api.binance.com/api/v3/ping"
     t0 = time.monotonic()
     try:
@@ -2198,6 +2519,7 @@ async def test_network_proxy():
 # ---------------------------------------------------------------------------
 # Historical Data config
 # ---------------------------------------------------------------------------
+
 
 class HistoricalDataConfigUpdate(SettingsRequest):
     enabled: bool | None = None
@@ -2246,22 +2568,36 @@ async def update_historical_data_config(req: HistoricalDataConfigUpdate):
     if _SCHEDULER_FIELDS.intersection(updates):
         from aletheia.agent_runtime.scheduler import reconcile_historical_data_jobs
         from starlette.concurrency import run_in_threadpool
+
         rescheduled = await run_in_threadpool(
-            reconcile_historical_data_jobs, cfg.historical_data,
+            reconcile_historical_data_jobs,
+            cfg.historical_data,
         )
 
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard",
-                 "event_type": "historical_data_config_changed",
-                 "entity_type": "historical_data_config", "before": old,
-                 "after": cfg.historical_data.model_dump(mode="json"),
-                 "message": f"Historical data config updated: {list(updates.keys())}"})
-    return {"updated": updates, "rescheduled": rescheduled, "historical_data": cfg.historical_data.model_dump(mode="json")}
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "historical_data_config_changed",
+            "entity_type": "historical_data_config",
+            "before": old,
+            "after": cfg.historical_data.model_dump(mode="json"),
+            "message": f"Historical data config updated: {list(updates.keys())}",
+        }
+    )
+    return {
+        "updated": updates,
+        "rescheduled": rescheduled,
+        "historical_data": cfg.historical_data.model_dump(mode="json"),
+    }
 
 
 # ---------------------------------------------------------------------------
 # Event Trigger config
 # ---------------------------------------------------------------------------
+
 
 class EventTriggerConfigUpdate(SettingsRequest):
     enabled: bool | None = None
@@ -2294,17 +2630,25 @@ async def update_event_trigger_config(req: EventTriggerConfigUpdate):
         setattr(cfg.event_triggers, field, value)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard",
-                 "event_type": "event_trigger_config_changed",
-                 "entity_type": "event_trigger_config", "before": old,
-                 "after": cfg.event_triggers.model_dump(mode="json"),
-                 "message": f"Event trigger config updated: {list(updates.keys())}"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "event_trigger_config_changed",
+            "entity_type": "event_trigger_config",
+            "before": old,
+            "after": cfg.event_triggers.model_dump(mode="json"),
+            "message": f"Event trigger config updated: {list(updates.keys())}",
+        }
+    )
     return {"updated": updates, "event_triggers": cfg.event_triggers.model_dump(mode="json")}
 
 
 # ---------------------------------------------------------------------------
 # News feeds config
 # ---------------------------------------------------------------------------
+
 
 class NewsFeedUpdate(SettingsRequest):
     name: str
@@ -2336,23 +2680,31 @@ async def update_news_config(req: NewsConfigUpdate):
         cfg.news.retention_days = req.retention_days
     if req.feeds is not None:
         from aletheia.config.schema import NewsFeedEntry
+
         cfg.news.feeds = [NewsFeedEntry(**f.model_dump()) for f in req.feeds]
     save_config(cfg)
 
     rescheduled = False
-    if (
-        req.fetch_interval_minutes is not None
-        and req.fetch_interval_minutes != old.get("fetch_interval_minutes")
-    ):
+    if req.fetch_interval_minutes is not None and req.fetch_interval_minutes != old.get("fetch_interval_minutes"):
         from aletheia.agent_runtime.scheduler import reschedule_news_fetch
         from starlette.concurrency import run_in_threadpool
+
         rescheduled = await run_in_threadpool(
-            reschedule_news_fetch, cfg.news.fetch_interval_minutes,
+            reschedule_news_fetch,
+            cfg.news.fetch_interval_minutes,
         )
 
     from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "news_config_changed",
-                 "entity_type": "news_config", "before": old,
-                 "after": cfg.news.model_dump(mode="json"),
-                 "message": "News config updated"})
+
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "news_config_changed",
+            "entity_type": "news_config",
+            "before": old,
+            "after": cfg.news.model_dump(mode="json"),
+            "message": "News config updated",
+        }
+    )
     return {"news": cfg.news.model_dump(mode="json"), "rescheduled": rescheduled}

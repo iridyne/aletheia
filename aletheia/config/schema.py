@@ -94,9 +94,7 @@ class ExchangeConfig(BaseModel):
     # Futures position mode: "hedge" (long/short separate) or "one_way".
     position_mode: str = "hedge"
     # Explicit perp symbol allowlist. Empty = all perps passing universe registry.
-    futures_symbols: list[str] = Field(
-        default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
-    )
+    futures_symbols: list[str] = Field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
 
 
 class MarketDataConfig(BaseModel):
@@ -166,9 +164,18 @@ class MarketDataConfig(BaseModel):
     # Default covers the major r-series + ON-series starters; edit in Settings UI.
     observed_stock_tokens: list[str] = Field(
         default_factory=lambda: [
-            "rNVDA/USDT", "rTSLA/USDT", "rAAPL/USDT", "rAMD/USDT",
-            "rMSFT/USDT", "rGOOGL/USDT", "rAMZN/USDT", "rMETA/USDT",
-            "AAPLON/USDT", "TSLAON/USDT", "NVDAON/USDT", "SPYON/USDT",
+            "rNVDA/USDT",
+            "rTSLA/USDT",
+            "rAAPL/USDT",
+            "rAMD/USDT",
+            "rMSFT/USDT",
+            "rGOOGL/USDT",
+            "rAMZN/USDT",
+            "rMETA/USDT",
+            "AAPLON/USDT",
+            "TSLAON/USDT",
+            "NVDAON/USDT",
+            "SPYON/USDT",
         ]
     )
     # Deprecated: use observed_stock_tokens instead.
@@ -271,8 +278,8 @@ class ModelsConfig(BaseModel):
     # Two-tier model routing (MR, 2026-07-01): let top-level decision agents use a
     # stronger model while bulk data-extraction agents use a cheaper/faster one.
     # None → fall back to default_provider, so existing configs need no migration.
-    deep_provider: str | None = None   # decision/analysis tier: trading_decision, strategy_designer, risk_critic, …
-    fast_provider: str | None = None   # extraction tier: research_worker bulk LLM calls
+    deep_provider: str | None = None  # decision/analysis tier: trading_decision, strategy_designer, risk_critic, …
+    fast_provider: str | None = None  # extraction tier: research_worker bulk LLM calls
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
 
 
@@ -359,85 +366,53 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
                 f"max_{suffix}_position_notional_usdt",
                 50.0 if is_live else 100_000.0,
             ),
-            "max_per_symbol_notional_usdt": data.get(
-                "max_per_symbol_notional_usdt", 400.0
-            ),
-            "max_total_exposure_pct": data.get(
-                "max_total_live_exposure_pct", 5.0 if is_live else 100.0
-            ),
+            "max_per_symbol_notional_usdt": data.get("max_per_symbol_notional_usdt", 400.0),
+            "max_total_exposure_pct": data.get("max_total_live_exposure_pct", 5.0 if is_live else 100.0),
         },
         "loss": {
             "max_single_trade_risk_pct": data.get(
-                "max_single_trade_risk_pct" if is_live
-                else "max_demo_single_trade_risk_pct",
+                "max_single_trade_risk_pct" if is_live else "max_demo_single_trade_risk_pct",
                 0.25 if is_live else 20.0,
             ),
             "max_daily_loss_pct": data.get("max_daily_loss_pct", 1.0),
         },
         "positions": {
-            "max_open_positions": data.get(
-                f"max_open_positions_{suffix}", 3 if is_live else 200
-            ),
+            "max_open_positions": data.get(f"max_open_positions_{suffix}", 3 if is_live else 200),
             "allow_short": data.get(f"allow_short_{suffix}", True),
         },
         "leverage": {
-            "futures_cap": data.get(
-                f"max_futures_leverage_{suffix}", 2 if is_live else 125
-            ),
-            "major_cap": data.get(
-                f"max_leverage_major_{suffix}", 3 if is_live else 20
-            ),
-            "mid_cap": data.get(
-                f"max_leverage_mid_{suffix}", 2 if is_live else 10
-            ),
-            "alt_cap": data.get(
-                f"max_leverage_alt_{suffix}", 1 if is_live else 5
-            ),
-            "account_cap": data.get(
-                f"max_account_leverage_{suffix}", 1.5 if is_live else 10.0
-            ),
+            "futures_cap": data.get(f"max_futures_leverage_{suffix}", 2 if is_live else 125),
+            "major_cap": data.get(f"max_leverage_major_{suffix}", 3 if is_live else 20),
+            "mid_cap": data.get(f"max_leverage_mid_{suffix}", 2 if is_live else 10),
+            "alt_cap": data.get(f"max_leverage_alt_{suffix}", 1 if is_live else 5),
+            "account_cap": data.get(f"max_account_leverage_{suffix}", 1.5 if is_live else 10.0),
         },
         "margin": {
             "warning_ratio": data.get("futures_margin_warning_ratio", 0.70),
             "block_ratio": data.get("futures_margin_force_close_ratio", 0.85),
-            "min_entry_liquidation_buffer_pct": data.get(
-                "min_liquidation_buffer_pct", 5.0
-            ),
-            "runtime_liquidation_buffer_pct": data.get(
-                "runtime_liquidation_buffer_pct", 3.0
-            ),
+            "min_entry_liquidation_buffer_pct": data.get("min_liquidation_buffer_pct", 5.0),
+            "runtime_liquidation_buffer_pct": data.get("runtime_liquidation_buffer_pct", 3.0),
         },
         "correlation": {
             "enabled": data.get("correlation_guard_enabled", True),
-            "max_sector_concentration_pct": data.get(
-                "max_sector_concentration_pct", 60.0
-            ),
+            "max_sector_concentration_pct": data.get("max_sector_concentration_pct", 60.0),
             "max_portfolio_beta": data.get("max_portfolio_beta", 3.0),
         },
         "exits": {
-            "catastrophic_stop_enabled": data.get(
-                "catastrophic_stop_enabled", True
-            ),
+            "catastrophic_stop_enabled": data.get("catastrophic_stop_enabled", True),
             "catastrophic_stop_pct": data.get("catastrophic_stop_pct", 10.0),
-            "catastrophic_stop_pct_serenity": data.get(
-                "catastrophic_stop_pct_serenity", 15.0
-            ),
-            "horizon_hard_backstop_mult": data.get(
-                "horizon_hard_backstop_mult", 3.0
-            ),
+            "catastrophic_stop_pct_serenity": data.get("catastrophic_stop_pct_serenity", 15.0),
+            "horizon_hard_backstop_mult": data.get("horizon_hard_backstop_mult", 3.0),
         },
         "eligibility": (
             {
                 "family_min_samples": data.get("live_family_min_samples", 30),
-                "family_min_win_rate_pct": data.get(
-                    "live_family_min_win_rate_pct", 50.0
-                ),
+                "family_min_win_rate_pct": data.get("live_family_min_win_rate_pct", 50.0),
             }
-            if is_live else None
+            if is_live
+            else None
         ),
-        "auto_trip_mode_brake_on_daily_loss": data.get(
-            f"kill_switch_enabled_{suffix}", is_live
-        ),
+        "auto_trip_mode_brake_on_daily_loss": data.get(f"kill_switch_enabled_{suffix}", is_live),
     }
 
 
@@ -468,11 +443,7 @@ class RiskConfig(BaseModel):
         for mode in ("demo", "live"):
             base = _legacy_mode_policy(data, mode)
             override = data.get(mode)
-            data[mode] = (
-                _merge_policy(base, override)
-                if isinstance(override, dict)
-                else base
-            )
+            data[mode] = _merge_policy(base, override) if isinstance(override, dict) else base
         data["schema_version"] = 2
         return data
 
@@ -485,33 +456,51 @@ class RiskConfig(BaseModel):
             "max_live_limited_cap_usdt": ("live", "capital", "base_usdt"),
             "starting_capital_usdt": ("demo", "capital", "base_usdt"),
             "max_live_position_notional_usdt": (
-                "live", "capital", "max_position_notional_usdt",
+                "live",
+                "capital",
+                "max_position_notional_usdt",
             ),
             "max_demo_position_notional_usdt": (
-                "demo", "capital", "max_position_notional_usdt",
+                "demo",
+                "capital",
+                "max_position_notional_usdt",
             ),
             "max_total_live_exposure_pct": (
-                "live", "capital", "max_total_exposure_pct",
+                "live",
+                "capital",
+                "max_total_exposure_pct",
             ),
             "max_single_trade_risk_pct": (
-                "live", "loss", "max_single_trade_risk_pct",
+                "live",
+                "loss",
+                "max_single_trade_risk_pct",
             ),
             "max_demo_single_trade_risk_pct": (
-                "demo", "loss", "max_single_trade_risk_pct",
+                "demo",
+                "loss",
+                "max_single_trade_risk_pct",
             ),
             "max_open_positions_live": (
-                "live", "positions", "max_open_positions",
+                "live",
+                "positions",
+                "max_open_positions",
             ),
             "max_open_positions_demo": (
-                "demo", "positions", "max_open_positions",
+                "demo",
+                "positions",
+                "max_open_positions",
             ),
             "allow_short_live": ("live", "positions", "allow_short"),
             "allow_short_demo": ("demo", "positions", "allow_short"),
             "max_futures_leverage_live": (
-                "live", "leverage", "futures_cap",
+                "live",
+                "leverage",
+                "futures_cap",
             ),
             "max_futures_leverage_demo": (
-                "demo", "leverage", "futures_cap",
+                "demo",
+                "leverage",
+                "futures_cap",
             ),
             "max_leverage_major_live": ("live", "leverage", "major_cap"),
             "max_leverage_major_demo": ("demo", "leverage", "major_cap"),
@@ -520,22 +509,34 @@ class RiskConfig(BaseModel):
             "max_leverage_alt_live": ("live", "leverage", "alt_cap"),
             "max_leverage_alt_demo": ("demo", "leverage", "alt_cap"),
             "max_account_leverage_live": (
-                "live", "leverage", "account_cap",
+                "live",
+                "leverage",
+                "account_cap",
             ),
             "max_account_leverage_demo": (
-                "demo", "leverage", "account_cap",
+                "demo",
+                "leverage",
+                "account_cap",
             ),
             "kill_switch_enabled_live": (
-                "live", None, "auto_trip_mode_brake_on_daily_loss",
+                "live",
+                None,
+                "auto_trip_mode_brake_on_daily_loss",
             ),
             "kill_switch_enabled_demo": (
-                "demo", None, "auto_trip_mode_brake_on_daily_loss",
+                "demo",
+                None,
+                "auto_trip_mode_brake_on_daily_loss",
             ),
             "live_family_min_samples": (
-                "live", "eligibility", "family_min_samples",
+                "live",
+                "eligibility",
+                "family_min_samples",
             ),
             "live_family_min_win_rate_pct": (
-                "live", "eligibility", "family_min_win_rate_pct",
+                "live",
+                "eligibility",
+                "family_min_win_rate_pct",
             ),
         }
         shared_paths = {
@@ -544,23 +545,28 @@ class RiskConfig(BaseModel):
             "futures_margin_warning_ratio": ("margin", "warning_ratio"),
             "futures_margin_force_close_ratio": ("margin", "block_ratio"),
             "min_liquidation_buffer_pct": (
-                "margin", "min_entry_liquidation_buffer_pct",
+                "margin",
+                "min_entry_liquidation_buffer_pct",
             ),
             "runtime_liquidation_buffer_pct": (
-                "margin", "runtime_liquidation_buffer_pct",
+                "margin",
+                "runtime_liquidation_buffer_pct",
             ),
             "correlation_guard_enabled": ("correlation", "enabled"),
             "max_sector_concentration_pct": (
-                "correlation", "max_sector_concentration_pct",
+                "correlation",
+                "max_sector_concentration_pct",
             ),
             "max_portfolio_beta": ("correlation", "max_portfolio_beta"),
             "catastrophic_stop_enabled": ("exits", "catastrophic_stop_enabled"),
             "catastrophic_stop_pct": ("exits", "catastrophic_stop_pct"),
             "catastrophic_stop_pct_serenity": (
-                "exits", "catastrophic_stop_pct_serenity",
+                "exits",
+                "catastrophic_stop_pct_serenity",
             ),
             "horizon_hard_backstop_mult": (
-                "exits", "horizon_hard_backstop_mult",
+                "exits",
+                "horizon_hard_backstop_mult",
             ),
         }
         if name in mode_paths:
@@ -624,8 +630,8 @@ class RiskConfig(BaseModel):
     # strategy exit and is NOT relaxable by an ExitPlan. School-aware — serenity
     # (long-horizon research) tolerates a wider drawdown. Disable → no force-close.
     catastrophic_stop_enabled: bool = True
-    catastrophic_stop_pct: float = 10.0            # short_term / default school
-    catastrophic_stop_pct_serenity: float = 15.0   # serenity holdings
+    catastrophic_stop_pct: float = 10.0  # short_term / default school
+    catastrophic_stop_pct_serenity: float = 15.0  # serenity holdings
     # Runtime liquidation-proximity monitor (M6): emergency force-close a LEVERAGED
     # position when current price is within this % of its estimated liquidation
     # price. Tighter than the pre-trade min_liquidation_buffer_pct because by now the
@@ -695,15 +701,15 @@ class HealthConfig(BaseModel):
     # --- Deterministic self-heal: the health-check job ACTS on the signals it
     # already computes (NO LLM). Closes the gap where /api/health flagged stale
     # code for 11h but nothing consumed the signal to restart.
-    self_heal_enabled: bool = True            # master toggle
+    self_heal_enabled: bool = True  # master toggle
     # min_interval (30m) is deliberately > supervisor_restart_window_sec (600s):
     # two self-heal restarts can never fall inside one supervisor window, so
     # self-heal alone can never exhaust the supervisor's give-up budget.
-    self_heal_min_interval_sec: int = 1800    # >= 30 min between any two self-heal restarts
-    self_heal_max_per_hour: int = 2           # hard ceiling on self-heal restarts/hour
-    self_heal_code_drift: bool = True         # restart on code_updated_pending_restart (self-terminating)
-    self_heal_market_data: bool = True        # restart on market_data_stale (rate-limited; external root cause)
-    self_heal_port_cleanup: bool = True       # clean orphan/port-holder PIDs (cleanup, not restart)
+    self_heal_min_interval_sec: int = 1800  # >= 30 min between any two self-heal restarts
+    self_heal_max_per_hour: int = 2  # hard ceiling on self-heal restarts/hour
+    self_heal_code_drift: bool = True  # restart on code_updated_pending_restart (self-terminating)
+    self_heal_market_data: bool = True  # restart on market_data_stale (rate-limited; external root cause)
+    self_heal_port_cleanup: bool = True  # clean orphan/port-holder PIDs (cleanup, not restart)
     # LLM-unavailable / kill_switch / agent_failure are alert-only by design —
     # a restart cannot fix an external outage, human kill switch, or bad strategy.
     # Fail-loud LLM startup gate: at boot, probe every enabled provider with a REAL
@@ -838,6 +844,7 @@ class RetentionConfig(BaseModel):
 
 class MarketAwareExitsConfig(BaseModel):
     """Market-aware exit intelligence for position_manager."""
+
     enabled: bool = False
     min_hold_hours_before_market_exit: float = 0.5
     max_signal_age_min: float = 35.0
@@ -857,6 +864,7 @@ class PersonaParam(BaseModel):
     range can never exceed. For P1 the effective value is `init`.
     See docs/design/operator/dynamic_sizing_operator_persona_design.md.
     """
+
     min: float
     init: float
     max: float
@@ -870,6 +878,7 @@ class TradingPersona(BaseModel):
     at init. Recognised param keys (P1): notional_usdt, kelly_fraction, leverage_max,
     per_trade_loss_pct, max_adds, add_fraction.
     """
+
     name: str
     description: str = ""
     params: dict[str, PersonaParam] = Field(default_factory=dict)
@@ -889,14 +898,16 @@ def _default_personas() -> dict:
     pyramid, per owner's 滚仓 brief). All ranges stay inside the risk-engine hard
     envelope; the Operator/Learning can never exceed the envelope regardless.
     """
+
     def P(mn, i, mx):
         return PersonaParam(min=mn, init=i, max=mx)
+
     return {
         "conservative": TradingPersona(
             name="conservative",
             description="现状档:窄区间,init=当前扁平配置(启用后零行为变化)",
             params={
-                "notional_usdt": P(5, 25, 100),      # == default_notional_usdt
+                "notional_usdt": P(5, 25, 100),  # == default_notional_usdt
                 "kelly_fraction": P(0.10, 0.25, 0.40),  # == vol_kelly_cap_fraction
                 "leverage_max": P(1, 5, 5),
                 "per_trade_loss_pct": P(1.0, 2.0, 2.0),  # == default_stop_loss_pct
@@ -950,7 +961,7 @@ class TradingConfig(BaseModel):
     default_take_profit_pct: float = 4.0
     max_position_hold_hours: float = 72.0
     # Edge Lab: realistic paper fill simulation
-    slippage_bps: float = 5.0        # basis points of adverse slippage on paper fills
+    slippage_bps: float = 5.0  # basis points of adverse slippage on paper fills
     execution_fee_pct: float = 0.06  # % fee per side — Bitget taker (0.06%); change to match your live exchange
     # Minimum LLM confidence for paper_trader to open a position
     # (high | medium | speculative). Below this, the opportunity is recorded but
@@ -1016,6 +1027,13 @@ class TradingConfig(BaseModel):
     # OFF → the static operator_decidable dict applies (P1-P3 behavior, zero change).
     persona_progressive_unlock_enabled: bool = False
     persona_unlock_step_samples: int = 25
+    # Issue #409: timestamp (ISO UTC) when progressive unlock was last enabled.
+    # clean_close_count() uses this as the epoch anchor so only trades that occurred
+    # AFTER unlock was activated contribute to the step counter.  None = use all
+    # historical outcomes (legacy behavior, same bug as before; set automatically
+    # by the Settings save path when persona_progressive_unlock_enabled transitions
+    # from False → True).
+    persona_unlock_anchor_at: str | None = None
     # --- Pyramid add-on policy helper (P4, roll persona) ---
     # DEFAULT OFF. The pure helper can calculate a bounded add plan, but no production
     # scheduler/Operator caller or Risk-approved add-order materializer exists.
@@ -1057,10 +1075,16 @@ class UniverseConfig(BaseModel):
     # reflects which families actually fire: momentum trimmed, volatility &
     # short_bias given explicit shares (they previously relied on the 0.3 default
     # cap), derivatives/event kept small for when their feeds return. Sums to 1.0.
-    family_quota: dict[str, float] = Field(default_factory=lambda: {
-        "momentum": 0.30, "mean_reversion": 0.25, "volatility": 0.20,
-        "short_bias": 0.10, "derivatives": 0.10, "event": 0.05,
-    })
+    family_quota: dict[str, float] = Field(
+        default_factory=lambda: {
+            "momentum": 0.30,
+            "mean_reversion": 0.25,
+            "volatility": 0.20,
+            "short_bias": 0.10,
+            "derivatives": 0.10,
+            "event": 0.05,
+        }
+    )
     # Per-regime family quota overrides (2A+.9). Maps regime state
     # (bull/bear/sideways/volatile) → family quota dict. When the current regime
     # has an entry here, it REPLACES `family_quota` for that refresh; otherwise
@@ -1068,16 +1092,42 @@ class UniverseConfig(BaseModel):
     # regime should give short_bias/derivatives more of the universe and starve
     # long-only momentum, a volatile regime should favour the volatility family,
     # etc. Empty dict → fully backward compatible (static quota everywhere).
-    family_quota_by_regime: dict[str, dict[str, float]] = Field(default_factory=lambda: {
-        "bull": {"momentum": 0.40, "mean_reversion": 0.15, "derivatives": 0.25,
-                 "volatility": 0.10, "event": 0.05, "short_bias": 0.05},
-        "bear": {"short_bias": 0.30, "derivatives": 0.30, "mean_reversion": 0.20,
-                 "momentum": 0.10, "volatility": 0.05, "event": 0.05},
-        "sideways": {"mean_reversion": 0.35, "momentum": 0.20, "derivatives": 0.25,
-                     "volatility": 0.10, "event": 0.05, "short_bias": 0.05},
-        "volatile": {"volatility": 0.30, "derivatives": 0.25, "momentum": 0.20,
-                     "mean_reversion": 0.15, "event": 0.05, "short_bias": 0.05},
-    })
+    family_quota_by_regime: dict[str, dict[str, float]] = Field(
+        default_factory=lambda: {
+            "bull": {
+                "momentum": 0.40,
+                "mean_reversion": 0.15,
+                "derivatives": 0.25,
+                "volatility": 0.10,
+                "event": 0.05,
+                "short_bias": 0.05,
+            },
+            "bear": {
+                "short_bias": 0.30,
+                "derivatives": 0.30,
+                "mean_reversion": 0.20,
+                "momentum": 0.10,
+                "volatility": 0.05,
+                "event": 0.05,
+            },
+            "sideways": {
+                "mean_reversion": 0.35,
+                "momentum": 0.20,
+                "derivatives": 0.25,
+                "volatility": 0.10,
+                "event": 0.05,
+                "short_bias": 0.05,
+            },
+            "volatile": {
+                "volatility": 0.30,
+                "derivatives": 0.25,
+                "momentum": 0.20,
+                "mean_reversion": 0.15,
+                "event": 0.05,
+                "short_bias": 0.05,
+            },
+        }
+    )
     blacklist: list[str] = Field(default_factory=list)
     fallback_symbols: list[str] = Field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
     snapshot_ttl_enabled: bool = True
@@ -1095,12 +1145,17 @@ class UniverseConfig(BaseModel):
     # values EXACTLY (verified no-op) — extracted to config so the regime affinity lives
     # at the scanner-family layer, is operator/learning-tunable, and is documented rather
     # than buried in _compute_trade_score. Locked by spec SP-S06/SP-S07.
-    scanner_regime_scoring: dict[str, float] = Field(default_factory=lambda: {
-        "bear_short": 20.0, "bear_long": -25.0,
-        "bull_long": 20.0, "bull_short": -20.0,
-        "volatile_penalty": 10.0,
-        "sideways_trend_penalty": 25.0, "sideways_reversion_bonus": 15.0,
-    })
+    scanner_regime_scoring: dict[str, float] = Field(
+        default_factory=lambda: {
+            "bear_short": 20.0,
+            "bear_long": -25.0,
+            "bull_long": 20.0,
+            "bull_short": -20.0,
+            "volatile_penalty": 10.0,
+            "sideways_trend_penalty": 25.0,
+            "sideways_reversion_bonus": 15.0,
+        }
+    )
 
 
 class RegimeConfig(BaseModel):
@@ -1112,6 +1167,7 @@ class RegimeConfig(BaseModel):
 
 class HistoricalDataConfig(BaseModel):
     """Local OHLCV storage and bulk download settings."""
+
     enabled: bool = True
     max_bars_per_pair: int = 50_000
     default_months: int = 6
@@ -1125,6 +1181,7 @@ class HistoricalDataConfig(BaseModel):
 
 class EventTriggerConfig(BaseModel):
     """Real-time-ish event detection on price_feed ticks."""
+
     enabled: bool = True
     price_move_pct_threshold: float = 3.0
     volume_surge_multiplier: float = 3.0
@@ -1147,6 +1204,7 @@ class StrategyFactoryConfig(BaseModel):
     execution path reads these values. Do not add new consumers; the current authority
     chain is scanner-family opportunities → ranker / System Operator → Proposal → Risk.
     """
+
     backtest_gate_enabled: bool = True
     sweep_enabled: bool = True
     sweep_max_variants: int = 100
@@ -1199,7 +1257,7 @@ class NetworkConfig(BaseModel):
     # Composed URL, kept for backward compatibility with existing consumers and
     # legacy config files. Recomputed from the parts on every load/save.
     proxy_url: str = "http://127.0.0.1:7890"
-    no_proxy: str = ""    # comma-separated bypass list, e.g. "127.0.0.1,localhost"
+    no_proxy: str = ""  # comma-separated bypass list, e.g. "127.0.0.1,localhost"
     # Fail-closed policy. When True, outbound traffic MUST go through the proxy: if
     # the proxy is unreachable the request fails rather than silently connecting
     # direct (which would leak the real IP to exchanges / providers). When False,
@@ -1211,9 +1269,7 @@ class NetworkConfig(BaseModel):
     @model_validator(mode="after")
     def _sync_proxy_url(self) -> "NetworkConfig":
         fields_set = self.model_fields_set
-        structured_set = bool(
-            {"proxy_protocol", "proxy_host", "proxy_port"} & fields_set
-        )
+        structured_set = bool({"proxy_protocol", "proxy_host", "proxy_port"} & fields_set)
         # Legacy migration: a config predating the structured fields carries only
         # proxy_url. Parse it back into the parts so the UI reflects reality.
         if "proxy_url" in fields_set and not structured_set and self.proxy_url:
@@ -1266,9 +1322,9 @@ class PiDaemonConfig(BaseModel):
     """
 
     enabled: bool = True
-    debounce_sec: float = 2.0      # collect burst signals before evaluating
-    cooldown_sec: float = 45.0     # minimum gap between evaluation cycles
-    heartbeat_sec: float = 60.0    # fallback polling interval (safety net)
+    debounce_sec: float = 2.0  # collect burst signals before evaluating
+    cooldown_sec: float = 45.0  # minimum gap between evaluation cycles
+    heartbeat_sec: float = 60.0  # fallback polling interval (safety net)
 
 
 class NewsFeedEntry(BaseModel):
@@ -1280,19 +1336,97 @@ class NewsFeedEntry(BaseModel):
 
 
 _DEFAULT_NEWS_FEEDS: list[dict] = [
-    {"name": "CoinDesk", "url": "https://www.coindesk.com/arc/outboundfeeds/rss/", "source": "coindesk", "categories": ["crypto"], "enabled": True},
-    {"name": "CoinTelegraph", "url": "https://cointelegraph.com/rss", "source": "cointelegraph", "categories": ["crypto"], "enabled": True},
-    {"name": "Federal Reserve Press", "url": "https://www.federalreserve.gov/feeds/press_all.xml", "source": "fed", "categories": ["macro"], "enabled": True},
-    {"name": "SEC Press Releases", "url": "https://www.sec.gov/news/pressreleases.rss", "source": "sec-press", "categories": ["regulatory", "official"], "enabled": True},
-    {"name": "CFTC Press Releases", "url": "https://www.cftc.gov/RSS/RSSGP/rssgp.xml", "source": "cftc-press", "categories": ["regulatory", "official"], "enabled": True},
-    {"name": "Ethereum Foundation Blog", "url": "https://blog.ethereum.org/feed.xml", "source": "ethereum-foundation", "categories": ["crypto", "protocol", "official"], "enabled": True},
-    {"name": "MarketWatch Top Stories", "url": "http://feeds.marketwatch.com/marketwatch/topstories/", "source": "marketwatch", "categories": ["markets"], "enabled": True},
-    {"name": "CNBC Economy", "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258", "source": "cnbc-economy", "categories": ["macro"], "enabled": True},
-    {"name": "The Block", "url": "https://www.theblock.co/rss.xml", "source": "theblock", "categories": ["crypto"], "enabled": False},
-    {"name": "Decrypt", "url": "https://decrypt.co/feed", "source": "decrypt", "categories": ["crypto"], "enabled": False},
-    {"name": "Bitcoin Magazine", "url": "https://bitcoinmagazine.com/feed", "source": "bitcoinmagazine", "categories": ["crypto"], "enabled": False},
-    {"name": "Nikkei Asia", "url": "https://asia.nikkei.com/rss/feed/nar", "source": "nikkei-asia", "categories": ["markets", "asia"], "enabled": False},
-    {"name": "Yahoo Finance", "url": "https://finance.yahoo.com/news/rssindex", "source": "yahoo-finance", "categories": ["markets"], "enabled": False},
+    {
+        "name": "CoinDesk",
+        "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+        "source": "coindesk",
+        "categories": ["crypto"],
+        "enabled": True,
+    },
+    {
+        "name": "CoinTelegraph",
+        "url": "https://cointelegraph.com/rss",
+        "source": "cointelegraph",
+        "categories": ["crypto"],
+        "enabled": True,
+    },
+    {
+        "name": "Federal Reserve Press",
+        "url": "https://www.federalreserve.gov/feeds/press_all.xml",
+        "source": "fed",
+        "categories": ["macro"],
+        "enabled": True,
+    },
+    {
+        "name": "SEC Press Releases",
+        "url": "https://www.sec.gov/news/pressreleases.rss",
+        "source": "sec-press",
+        "categories": ["regulatory", "official"],
+        "enabled": True,
+    },
+    {
+        "name": "CFTC Press Releases",
+        "url": "https://www.cftc.gov/RSS/RSSGP/rssgp.xml",
+        "source": "cftc-press",
+        "categories": ["regulatory", "official"],
+        "enabled": True,
+    },
+    {
+        "name": "Ethereum Foundation Blog",
+        "url": "https://blog.ethereum.org/feed.xml",
+        "source": "ethereum-foundation",
+        "categories": ["crypto", "protocol", "official"],
+        "enabled": True,
+    },
+    {
+        "name": "MarketWatch Top Stories",
+        "url": "http://feeds.marketwatch.com/marketwatch/topstories/",
+        "source": "marketwatch",
+        "categories": ["markets"],
+        "enabled": True,
+    },
+    {
+        "name": "CNBC Economy",
+        "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258",
+        "source": "cnbc-economy",
+        "categories": ["macro"],
+        "enabled": True,
+    },
+    {
+        "name": "The Block",
+        "url": "https://www.theblock.co/rss.xml",
+        "source": "theblock",
+        "categories": ["crypto"],
+        "enabled": False,
+    },
+    {
+        "name": "Decrypt",
+        "url": "https://decrypt.co/feed",
+        "source": "decrypt",
+        "categories": ["crypto"],
+        "enabled": False,
+    },
+    {
+        "name": "Bitcoin Magazine",
+        "url": "https://bitcoinmagazine.com/feed",
+        "source": "bitcoinmagazine",
+        "categories": ["crypto"],
+        "enabled": False,
+    },
+    {
+        "name": "Nikkei Asia",
+        "url": "https://asia.nikkei.com/rss/feed/nar",
+        "source": "nikkei-asia",
+        "categories": ["markets", "asia"],
+        "enabled": False,
+    },
+    {
+        "name": "Yahoo Finance",
+        "url": "https://finance.yahoo.com/news/rssindex",
+        "source": "yahoo-finance",
+        "categories": ["markets"],
+        "enabled": False,
+    },
 ]
 
 
@@ -1310,6 +1444,7 @@ class SerenityConfig(BaseModel):
     (PI remains sole trade-decision maker). auto_promote is default OFF;
     manual-only promotion preserves the human-curator workflow.
     """
+
     enabled: bool = False
     auto_promote: bool = False
     min_score_for_pi: int = 72
@@ -1329,6 +1464,7 @@ class ControllerConfig(BaseModel):
     It NEVER writes trading config. Full closed-loop actuation remains out of scope.
     See aletheia/analytics/filter_controller.py + filter_registry.py.
     """
+
     # Master switch for the shadow observe job. Default ON — it is read-only and safe.
     shadow_enabled: bool = True
     # How often the observe job runs (hours). Low-frequency: verdicts are based on
@@ -1374,6 +1510,7 @@ class EconomicsConfig(BaseModel):
       tokenomics_harness_phase_plan_2026-07-30.md §4 Phase 5) clears
       it. Not consumed yet.
     """
+
     enabled: bool = False
     budgets_shadow_enabled: bool = False
     enforcement_mode: str = Field(

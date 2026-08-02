@@ -2,6 +2,7 @@
 
 Aggregates 9 criteria into a composite score (0-100) with traffic light status.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -110,8 +111,9 @@ def _check_trade_volume() -> dict:
         count = len(_genuine_closed_pnls())
         target = 50
         score = min(count / target, 1.0) * 100
-        return _criterion("trade_volume", "Trade Volume (≥50 closed)", score, 0.135,
-                          f"{count} trades (target ≥{target})")
+        return _criterion(
+            "trade_volume", "Trade Volume (≥50 closed)", score, 0.135, f"{count} trades (target ≥{target})"
+        )
     except Exception:
         return _criterion("trade_volume", "Trade Volume (≥50 closed)", 0, 0.135, "unavailable")
 
@@ -124,6 +126,7 @@ def count_consecutive_zero_fill_days() -> int:
     """
     try:
         from aletheia.storage.sqlite import get_db
+
         db = get_db()
         rows = db.execute(
             "SELECT DATE(opened_at) as open_date FROM positions "
@@ -131,6 +134,7 @@ def count_consecutive_zero_fill_days() -> int:
         ).fetchall()
         open_dates = {r[0] for r in rows if r[0]}
         from datetime import date, timedelta
+
         day = date.today()
         consecutive = 0
         for _ in range(30):  # check at most 30 days back
@@ -157,6 +161,7 @@ def check_kill_condition_consecutive_rounds(window_days: int = 14) -> dict:
             return {"consecutive_kill_rounds": 0, "kill_threshold": 0.5, "window_days": window_days}
 
         from datetime import datetime, timezone, timedelta
+
         now = datetime.now(timezone.utc)
         kill_floor = 0.5
         consecutive = 0
@@ -165,8 +170,7 @@ def check_kill_condition_consecutive_rounds(window_days: int = 14) -> dict:
             start = now - timedelta(days=window_days * (i + 1))
             end = now - timedelta(days=window_days * i)
             window_rows = [
-                row for row in rows
-                if start.isoformat()[:10] <= str(row.get("closed_at"))[:10] < end.isoformat()[:10]
+                row for row in rows if start.isoformat()[:10] <= str(row.get("closed_at"))[:10] < end.isoformat()[:10]
             ]
             if not window_rows:
                 break  # no data → stop counting
@@ -193,11 +197,10 @@ def compute_pnl_by_trade_school() -> dict:
         rows = eligible_strategy_outcomes()
         result: dict = {}
         from collections import defaultdict
+
         buckets: dict = defaultdict(list)
         for row in rows:
-            buckets[row.get("trade_school") or "short_term"].append(
-                float(row["realized_pnl"])
-            )
+            buckets[row.get("trade_school") or "short_term"].append(float(row["realized_pnl"]))
         for school, pnls in buckets.items():
             gross_profit = sum(p for p in pnls if p > 0)
             gross_loss = sum(abs(p) for p in pnls if p < 0)
@@ -220,12 +223,12 @@ def _check_profit_factor() -> dict:
         pf = gross_profit / gross_loss if gross_loss > 0 else 99.0
         # Kill-floor: PF < 0.5 is a hard stop regardless of go-live target (product §8 K1)
         if pf < 0.5:
-            return _criterion("profit_factor", "Profit Factor (≥1.2)", 0, 0.18,
-                              f"PF {pf:.2f} — below kill threshold 0.5")
+            return _criterion(
+                "profit_factor", "Profit Factor (≥1.2)", 0, 0.18, f"PF {pf:.2f} — below kill threshold 0.5"
+            )
         target = 1.2
         score = min(pf / target, 1.0) * 100 if pf < target else 100.0
-        return _criterion("profit_factor", "Profit Factor (≥1.2)", score, 0.18,
-                          f"PF {pf:.2f} (target ≥{target})")
+        return _criterion("profit_factor", "Profit Factor (≥1.2)", score, 0.18, f"PF {pf:.2f} (target ≥{target})")
     except Exception:
         return _criterion("profit_factor", "Profit Factor (≥1.2)", 0, 0.18, "unavailable")
 
@@ -240,8 +243,7 @@ def _check_win_rate() -> dict:
         wr = wins / total * 100
         target = 45.0
         score = min(wr / target, 1.0) * 100 if wr < target else 100.0
-        return _criterion("win_rate", "Win Rate (≥45%)", score, 0.135,
-                          f"{wr:.1f}% (target ≥{target}%)")
+        return _criterion("win_rate", "Win Rate (≥45%)", score, 0.135, f"{wr:.1f}% (target ≥{target}%)")
     except Exception:
         return _criterion("win_rate", "Win Rate (≥45%)", 0, 0.135, "unavailable")
 
@@ -261,27 +263,62 @@ def _check_max_drawdown() -> dict:
             dd = peak - cum
             if dd > max_dd:
                 max_dd = dd
-        dd_pct = (
-            max_dd / peak * 100
-            if peak > 0
-            else (100.0 if max_dd > 0 else 0.0)
-        )
+        dd_pct = max_dd / peak * 100 if peak > 0 else (100.0 if max_dd > 0 else 0.0)
         target = 10.0
         score = 100.0 if dd_pct <= target else max(0, (1 - (dd_pct - target) / target) * 100)
-        return _criterion("max_drawdown", "Max Drawdown (<10%)", score, 0.135,
-                          f"{dd_pct:.1f}% drawdown (target <{target}%)")
+        return _criterion(
+            "max_drawdown", "Max Drawdown (<10%)", score, 0.135, f"{dd_pct:.1f}% drawdown (target <{target}%)"
+        )
     except Exception:
         return _criterion("max_drawdown", "Max Drawdown (<10%)", 0, 0.135, "unavailable")
 
 
 def _check_exchange_connectivity() -> dict:
+    """Issue #412: check the SELECTED live exchange, not always the Bitget legacy cache.
+
+    Prefer the UTA unified state (which covers all configured brokers) when fresh;
+    fall back to the Bitget-only legacy cache for backwards compatibility.
+    """
     try:
+        from aletheia.config.loader import load_config as _lc
+
+        cfg = _lc()
+        exchange_name = (cfg.exchange.name or "").lower()
+
+        # Try UTA unified state first — covers all configured brokers.
+        try:
+            from aletheia.portfolio import exchange_sync
+
+            unified = exchange_sync.get_unified_cached_state()
+            if unified and unified.get("age_seconds", 999) < 300:
+                connected = unified.get("connected_brokers") or []
+                # For OKX/Binance, look for broker-specific connectivity.
+                if exchange_name in ("okx",) and any("okx" in b for b in connected):
+                    return _criterion("exchange_ok", "Exchange Connected", 100, 0.09, f"{exchange_name}_connected")
+                if exchange_name in ("binance",) and any("binance" in b for b in connected):
+                    return _criterion("exchange_ok", "Exchange Connected", 100, 0.09, f"{exchange_name}_connected")
+                if exchange_name in ("bitget", "") and any("bitget" in b for b in connected):
+                    return _criterion("exchange_ok", "Exchange Connected", 100, 0.09, "bitget_connected")
+        except Exception:
+            pass
+
+        # Legacy Bitget-only cache fallback.
         from aletheia.portfolio.exchange_sync import get_cached_state
+
         state = get_cached_state()
         if state and state.get("age_seconds", 999) < 300:
-            return _criterion("exchange_ok", "Exchange Connected", 100, 0.09, "connected")
-        return _criterion("exchange_ok", "Exchange Connected", 0, 0.09,
-                          "stale or missing exchange state")
+            # Only count this as passing if the selected exchange is Bitget.
+            if exchange_name in ("bitget", ""):
+                return _criterion("exchange_ok", "Exchange Connected", 100, 0.09, "connected")
+            # For non-Bitget exchanges, the Bitget cache is not authoritative.
+            return _criterion(
+                "exchange_ok",
+                "Exchange Connected",
+                0,
+                0.09,
+                f"{exchange_name or 'unknown'}_exchange_not_verified_via_uta",
+            )
+        return _criterion("exchange_ok", "Exchange Connected", 0, 0.09, "stale or missing exchange state")
     except Exception:
         return _criterion("exchange_ok", "Exchange Connected", 0, 0.09, "unavailable")
 
@@ -290,6 +327,7 @@ def _check_risk_violations() -> dict:
     try:
         from aletheia.storage.sqlite import get_db
         import json
+
         db = get_db()
         cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         rows = db.execute(
@@ -304,8 +342,13 @@ def _check_risk_violations() -> dict:
                 if parsed:
                     violation_count += 1
         score = 100.0 if violation_count == 0 else 0.0
-        return _criterion("risk_clean", "Zero Risk Violations (24h)", score, 0.09,
-                          f"{violation_count} violation events" if violation_count else "clean")
+        return _criterion(
+            "risk_clean",
+            "Zero Risk Violations (24h)",
+            score,
+            0.09,
+            f"{violation_count} violation events" if violation_count else "clean",
+        )
     except Exception:
         return _criterion("risk_clean", "Zero Risk Violations (24h)", 50, 0.09, "cannot verify")
 
@@ -313,14 +356,16 @@ def _check_risk_violations() -> dict:
 def _check_data_coverage() -> dict:
     try:
         from aletheia.agent_shell.trading_context import _get_data_health_summary
+
         health = _get_data_health_summary()
         if health.get("ohlcv_ready"):
             return _criterion("data_coverage", "Data Coverage Complete", 100, 0.045, "all symbols covered")
         ready = health.get("members_with_full_coverage", 0)
         total = max(health.get("total_members", 1), 1)
         score = ready / total * 100
-        return _criterion("data_coverage", "Data Coverage Complete", score, 0.045,
-                          f"{ready}/{total} symbols have full OHLCV")
+        return _criterion(
+            "data_coverage", "Data Coverage Complete", score, 0.045, f"{ready}/{total} symbols have full OHLCV"
+        )
     except Exception:
         return _criterion("data_coverage", "Data Coverage Complete", 0, 0.045, "unavailable")
 
@@ -328,8 +373,10 @@ def _check_data_coverage() -> dict:
 def _check_model_health() -> dict:
     try:
         from aletheia.model_provider.fallback import get_model_health_snapshot
-        snap = get_model_health_snapshot()
-        if any(p.get("available") for p in snap.get("providers", [])):
+
+        snap = get_model_health_snapshot()  # returns list[dict]
+        if any(p.get("available") for p in (snap if isinstance(snap, list) else snap.get("providers", []))):
+            # mypy/pyright: snap is list[dict], so iterate directly
             return _criterion("model_health", "LLM Model Available", 100, 0.045, "at least one provider up")
         return _criterion("model_health", "LLM Model Available", 0, 0.045, "no providers available")
     except Exception:
@@ -339,17 +386,22 @@ def _check_model_health() -> dict:
 def _check_reconciliation() -> dict:
     try:
         from aletheia.storage.sqlite import get_db
+
         db = get_db()
         cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         row = db.execute(
-            "SELECT COUNT(*) FROM audit_events "
-            "WHERE event_type = 'reconciliation_error' AND timestamp >= ?",
+            "SELECT COUNT(*) FROM audit_events WHERE event_type = 'reconciliation_error' AND timestamp >= ?",
             (cutoff,),
         ).fetchone()
         errors = row[0] if row else 0
         score = 100.0 if errors == 0 else 0.0
-        return _criterion("reconciliation", "No Reconciliation Errors (7d)", score, 0.045,
-                          f"{errors} errors in 7 days" if errors else "clean")
+        return _criterion(
+            "reconciliation",
+            "No Reconciliation Errors (7d)",
+            score,
+            0.045,
+            f"{errors} errors in 7 days" if errors else "clean",
+        )
     except Exception:
         return _criterion("reconciliation", "No Reconciliation Errors (7d)", 50, 0.045, "cannot verify")
 
@@ -357,12 +409,16 @@ def _check_reconciliation() -> dict:
 def _check_calibration() -> dict:
     try:
         from aletheia.analytics.confidence_calibration import compute_calibration_score, get_latest_calibration_report
+
         score = compute_calibration_score()
         report = get_latest_calibration_report()
         if not report:
             return _criterion(
-                "calibration", "Conviction Calibration (ECE<0.10)",
-                0, 0.10, "insufficient current-semantics data",
+                "calibration",
+                "Conviction Calibration (ECE<0.10)",
+                0,
+                0.10,
+                "insufficient current-semantics data",
             )
         else:
             total = report.get("total_executed", 0)

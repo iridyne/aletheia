@@ -1645,7 +1645,9 @@ def _has_durable_pending_carrier(decision) -> bool:
 
 
 def _configured_paper_execution_mode() -> str:
-    return str(config_loader.load_config().exchange.paper_execution_mode)
+    """Issue #418: return live mode when unlock is active, else paper/demo mode."""
+    from aletheia.config.exchanges import resolve_execution_mode
+    return resolve_execution_mode()
 
 
 def _proposal_status_from_execution_result(execution_result: dict) -> str | None:

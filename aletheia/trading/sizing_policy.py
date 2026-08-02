@@ -24,6 +24,7 @@ sparsely populated (many NULL). Until regime_tag propagation improves, most buck
 stay under the sample gate and the learner correctly no-ops. That is the intended
 fail-safe, not a bug — the learner activates only where it has enough clean evidence.
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,9 +35,9 @@ from aletheia.analytics.outcome_integrity import (
 
 logger = logging.getLogger("aletheia.trading.sizing_policy")
 
-MAX_ADJ = 0.30           # max |appetite| nudge the learner may apply
+MAX_ADJ = 0.30  # max |appetite| nudge the learner may apply
 _REWARD_SCALE_PCT = 2.0  # a bucket mean of +2% realized → full +MAX_ADJ (tanh-like via clamp)
-_WINDOW = 200            # look back at most this many recent clean closes per bucket
+_WINDOW = 200  # look back at most this many recent clean closes per bucket
 
 
 def _clean_bucket_rewards(regime_bucket: str) -> list[float]:
@@ -45,10 +46,9 @@ def _clean_bucket_rewards(regime_bucket: str) -> list[float]:
     Excludes synthetic/administrative closes and NULL-pnl rows. Reward is per-trade
     realized_pnl as a fraction of entry notional (risk-normalized across sizes)."""
     try:
-        rows = [
-            row for row in reversed(eligible_strategy_outcomes())
-            if row.get("regime_tag") == regime_bucket
-        ][:_WINDOW]
+        rows = [row for row in reversed(eligible_strategy_outcomes()) if row.get("regime_tag") == regime_bucket][
+            :_WINDOW
+        ]
     except Exception as e:
         logger.debug("sizing_policy reward query failed: %s", e)
         return []
@@ -61,13 +61,21 @@ def _clean_bucket_rewards(regime_bucket: str) -> list[float]:
     return out
 
 
-def clean_close_count() -> int:
+def clean_close_count(*, anchor_at: str | None = None) -> int:
     """Total count of GENUINE closed positions (synthetic/administrative excluded).
 
     Drives the progressive-unlock gate (P4): params unfreeze as clean evidence
-    accrues. Read-only; 0 on error."""
+    accrues. Read-only; 0 on error.
+
+    Issue #409: when anchor_at is provided, only count outcomes AFTER that ISO
+    timestamp so historical trades from before the progressive-unlock epoch do not
+    immediately grant step authority.
+    """
     try:
-        return len(eligible_strategy_outcomes())
+        kwargs: dict = {}
+        if anchor_at:
+            kwargs["closed_after"] = anchor_at
+        return len(eligible_strategy_outcomes(**kwargs))
     except Exception:
         return 0
 
@@ -76,11 +84,13 @@ def in_distress(cfg=None) -> bool:
     """True when the account is in drawdown or the kill switch is active — the
     progressive-unlock gate refreezes ALL params in distress."""
     from aletheia.config.loader import load_config
+
     cfg = cfg or load_config()
     try:
         if getattr(cfg.runtime, "kill_switch_active", False):
             return True
         from aletheia.risk.engine import _portfolio_drawdown_scale
+
         mode = cfg.exchange.paper_execution_mode or "paper_internal"
         return _portfolio_drawdown_scale(mode) < 0.8
     except Exception:
@@ -94,9 +104,11 @@ def learned_appetite_adjustment(regime_bucket: str | None, cfg=None) -> float:
     unknown, or clean samples are below the gate (soft self-refreeze). Positive bucket
     reward → nudge appetite up; negative → down (defensive)."""
     from aletheia.config.loader import load_config
+
     cfg = cfg or load_config()
     try:
         from aletheia.learning.control import learning_influence_enabled
+
         if not learning_influence_enabled():
             return 0.0
     except Exception:
@@ -137,6 +149,7 @@ def resolve_learned_notional(
     learned = float(learned_notional)
     if abs(learned - baseline) < 1e-9:
         from aletheia.learning.experiments import InfluenceDecision
+
         decision = InfluenceDecision(baseline, False, "baseline", "no_learned_delta")
     else:
         try:
@@ -166,6 +179,7 @@ def resolve_learned_notional(
         except Exception as exc:
             logger.warning("Sizing Learning adapter failed closed: %s", exc)
             from aletheia.learning.experiments import InfluenceDecision
+
             decision = InfluenceDecision(baseline, False, "unavailable", "adapter_error")
     return {
         "baseline_notional": baseline,
@@ -192,6 +206,7 @@ def pyramid_plan(position: dict, adds_done: int = 0, cfg=None) -> dict:
     so base_notional + all adds stays within the risk engine's per-symbol exposure
     limit (roll uses high leverage → exposure discipline is the whole safety story)."""
     from aletheia.config.loader import load_config
+
     cfg = cfg or load_config()
     t = cfg.trading
     if not getattr(t, "persona_pyramid_enabled", False):
@@ -216,8 +231,7 @@ def pyramid_plan(position: dict, adds_done: int = 0, cfg=None) -> dict:
     upnl = float(position.get("unrealized_pnl") or 0)
     profit_pct = (upnl / base_notional * 100.0) if base_notional else 0.0
     if profit_pct < float(getattr(t, "persona_pyramid_add_trigger_pct", 1.0)):
-        return {"add": False, "add_notional": 0.0,
-                "reason": f"not enough profit ({profit_pct:.2f}%) to add"}
+        return {"add": False, "add_notional": 0.0, "reason": f"not enough profit ({profit_pct:.2f}%) to add"}
 
     desired = base_notional * add_frac
     already_added = base_notional * add_frac * adds_done
@@ -235,16 +249,23 @@ def pyramid_plan(position: dict, adds_done: int = 0, cfg=None) -> dict:
         add_notional = min(add_notional, room)
 
     if add_notional <= 0:
-        return {"add": False, "add_notional": 0.0,
-                "reason": "pyramid cap reached (total≤1x base and per-symbol exposure)"}
-    return {"add": True, "add_notional": round(add_notional, 4),
-            "reason": f"winner +{profit_pct:.2f}%, add {adds_done + 1}/{max_adds} (total≤1x base)"}
+        return {
+            "add": False,
+            "add_notional": 0.0,
+            "reason": "pyramid cap reached (total≤1x base and per-symbol exposure)",
+        }
+    return {
+        "add": True,
+        "add_notional": round(add_notional, 4),
+        "reason": f"winner +{profit_pct:.2f}%, add {adds_done + 1}/{max_adds} (total≤1x base)",
+    }
 
 
 def sizing_policy_health(cfg=None) -> dict:
     """Observability for the doctor probe: per-regime clean sample counts + mean
     reward + the resulting appetite nudge. Read-only, never raises."""
     from aletheia.config.loader import load_config
+
     cfg = cfg or load_config()
     enabled = bool(getattr(cfg.trading, "persona_learning_enabled", False))
     min_n = int(getattr(cfg.trading, "persona_learning_min_samples", 15))

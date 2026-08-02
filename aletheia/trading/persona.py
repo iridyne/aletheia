@@ -14,6 +14,7 @@ When `trading.persona_sizing_enabled` is False (DEFAULT), `effective_sizing_para
 returns the legacy flat-config values → ZERO behavior change. This is the flag that
 keeps every persona feature dormant until the operator opts in.
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,8 +28,8 @@ _LEGACY_FALLBACK = {
     "kelly_fraction": ("vol_kelly_cap_fraction", 0.25),
     "per_trade_loss_pct": ("default_stop_loss_pct", 2.0),
     # No flat-config equivalent for these — legacy behavior is "feature off".
-    "leverage_max": (None, None),   # legacy leverage lives in RiskConfig tiers
-    "max_adds": (None, 0),          # legacy: no pyramiding
+    "leverage_max": (None, None),  # legacy leverage lives in RiskConfig tiers
+    "max_adds": (None, 0),  # legacy: no pyramiding
     "add_fraction": (None, 0.0),
 }
 
@@ -42,6 +43,7 @@ def get_active_persona(cfg=None):
     """Return the active TradingPersona, or None when persona sizing is disabled /
     the active name is unknown (caller then uses legacy flat config)."""
     from aletheia.config.loader import load_config
+
     cfg = cfg or load_config()
     if not getattr(cfg.trading, "persona_sizing_enabled", False):
         return None
@@ -75,6 +77,7 @@ def build_sizing_context(
     ctx: dict = {"risk_appetite": 0.5, "regime": None, "fng": None, "atr_pct": None}
     try:
         from aletheia.storage.repositories import get_latest_market_regime, latest_macro_snapshot
+
         reg = get_latest_market_regime()
         if reg:
             state = reg.get("state")
@@ -100,11 +103,12 @@ def build_sizing_context(
 
         if symbol:
             from aletheia.trading.sizing import _lookup_atr_pct
+
             atr = _lookup_atr_pct(symbol)
             ctx["atr_pct"] = atr
             if atr is not None:
                 if atr > 6.0:
-                    appetite -= 0.15   # choppy/dangerous name → size down
+                    appetite -= 0.15  # choppy/dangerous name → size down
                 elif atr < 2.0:
                     appetite += 0.10
 
@@ -113,6 +117,7 @@ def build_sizing_context(
         try:
             from aletheia.risk.engine import _portfolio_drawdown_scale
             from aletheia.config.loader import load_config as _lc
+
             _mode = (cfg or _lc()).exchange.paper_execution_mode or "paper_internal"
             dd = _portfolio_drawdown_scale(_mode)
             if dd < 1.0:
@@ -127,6 +132,7 @@ def build_sizing_context(
     if apply_learning:
         try:
             from aletheia.trading.sizing_policy import learned_appetite_adjustment
+
             adj = learned_appetite_adjustment(ctx.get("regime"), cfg)
             if adj:
                 appetite += adj
@@ -155,27 +161,31 @@ def effective_operator_decidable(persona, cfg=None) -> dict:
       switch) refreezes ALL (returns {}). This is the auto-refreeze safety.
     """
     from aletheia.config.loader import load_config
+
     cfg = cfg or load_config()
     static = dict(persona.operator_decidable or {})
     try:
         from aletheia.learning.control import learning_influence_enabled
+
         if not learning_influence_enabled():
             return static
     except Exception:
         return static
     if not getattr(cfg.trading, "persona_progressive_unlock_enabled", False):
         return static
-    ladder = [
-        key for key in (persona.unlock_ladder or [])
-        if key in _PROGRESSIVE_UNLOCKABLE
-    ]
+    ladder = [key for key in (persona.unlock_ladder or []) if key in _PROGRESSIVE_UNLOCKABLE]
     if not ladder:
         return static
     from aletheia.trading.sizing_policy import clean_close_count, in_distress
+
     if in_distress(cfg):
         return {}  # refreeze everything under distress
     step = max(1, int(getattr(cfg.trading, "persona_unlock_step_samples", 25)))
-    unlocked_n = min(len(ladder), clean_close_count() // step)
+    # Issue #409: use the anchor timestamp so only trades AFTER the unlock epoch
+    # contribute to the step counter, preventing historical trades from granting
+    # immediate unlock authority.
+    anchor_at = getattr(cfg.trading, "persona_unlock_anchor_at", None)
+    unlocked_n = min(len(ladder), clean_close_count(anchor_at=anchor_at) // step)
     out = dict(static)
     for i in range(unlocked_n):
         out[ladder[i]] = True
@@ -201,6 +211,7 @@ def effective_sizing_params(
     engine, never here.
     """
     from aletheia.config.loader import load_config
+
     cfg = cfg or load_config()
     persona = get_active_persona(cfg)
 
@@ -218,7 +229,10 @@ def effective_sizing_params(
                 # so this is dormant until the operator unlocks a param.
                 if ctx is None:
                     ctx = build_sizing_context(
-                        symbol, direction, cfg, apply_learning=apply_learning,
+                        symbol,
+                        direction,
+                        cfg,
+                        apply_learning=apply_learning,
                     )
                 out[key] = decide_param_value(persona.params[key], ctx["risk_appetite"])
             else:

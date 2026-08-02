@@ -1558,8 +1558,8 @@ def _build_layer1_snapshot() -> dict[str, Any]:
     # Account balance. Local paper is a separate cash ledger: showing an old
     # exchange cache here would make the agent misread a human balance adjustment.
     try:
-        from aletheia.config.loader import load_config as _load_cfg
-        _mode = _load_cfg().exchange.paper_execution_mode or "paper_internal"
+        from aletheia.config.exchanges import resolve_execution_mode
+        _mode = resolve_execution_mode()  # issue #418: live → live mode, else paper/demo
         if _mode == "paper_internal":
             from aletheia.portfolio.paper_account import get_paper_account
             account = get_paper_account(event_limit=3)
@@ -1593,8 +1593,8 @@ def _build_layer1_snapshot() -> dict[str, Any]:
     # Today's realized PnL (scoped to active execution mode so PI sees
     # the same figure as the paper dashboard, not a cross-mode total).
     try:
-        from aletheia.config.loader import load_config as _load_cfg
-        _mode = _load_cfg().exchange.paper_execution_mode or "paper_internal"
+        from aletheia.config.exchanges import resolve_execution_mode
+        _mode = resolve_execution_mode()  # issue #418: live → live mode, else paper/demo
         today_start = f"{datetime.now(timezone.utc).date().isoformat()}T00:00:00+00:00"
         today_outcomes = eligible_strategy_outcomes(
             execution_mode=_mode, closed_after=today_start,
