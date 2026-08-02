@@ -31,7 +31,6 @@ snapshot. Missing price must not make token telemetry unavailable.
 4. [Context adapters and header experiments](context_adapters_and_header_experiments.md)
 5. [Provider usage coverage](provider_usage_coverage.md)
 6. [Default token observation policy](token_observation_policy.md)
-7. [News and Learning context assessment](news_learning_context_assessment.md)
 
 ## Evidence standard
 
