@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+pytestmark = pytest.mark.domain_runtime
+
 from aletheia.economics.budgets import add_budget
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.tracing import add_pricing_snapshot, add_tool_cost_profile

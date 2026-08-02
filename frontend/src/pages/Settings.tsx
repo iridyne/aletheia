@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, Link } from 'react-router-dom'
 import { api } from '../api/client'
 import ConnectionStatus, { ConnState } from '../components/ConnectionStatus'
 import { GuardAuthorityNotice } from '../components/GuardAuthorityNotice'
@@ -970,7 +970,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
         <InferenceAdmissionCard qc={qc} />
       </Section>
 
-      <Section title="LLM Cost & Usage" description="Enable default-off budget shadow observation. The read-only usage dashboard (API usage, provider token spend, trends, budgets, cooldowns) moved to the Usage page.">
+      <Section title="LLM Cost & Usage" description="Enable default-off budget shadow observation. The read-only usage dashboard (token spend, provider trends, budgets, cooldowns) lives on the Usage page.">
         <EconomicsSnapshotCard economics={settings?.economics} qc={qc} />
       </Section>
     </div>
@@ -4673,7 +4673,8 @@ function EconomicsSnapshotCard({ economics, qc }: { economics: any; qc: any }) {
         </p>
       )}
       <p className="hint">
-        Read-only spend, token, budget, and cooldown views live on the Usage page.
+        Read-only spend, token, budget, and cooldown views live on the{' '}
+        <Link to="/usage">Usage page</Link>.
       </p>
     </div>
   )

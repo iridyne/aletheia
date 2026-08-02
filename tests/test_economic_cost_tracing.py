@@ -6,6 +6,8 @@ import json
 
 import pytest
 
+pytestmark = pytest.mark.domain_runtime
+
 from aletheia.agent_runtime.run_context import (
     bind_economic_attribution,
     reset_current_agent_run_id,
