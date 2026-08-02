@@ -19,6 +19,7 @@ from aletheia.economics.tracing import (
     initialize_runtime_tracing,
 )
 from aletheia.model_provider.base import (
+    ModelHealth,
     ModelProvider,
     ModelRequest,
     ModelResponse,
@@ -56,8 +57,8 @@ class _MeasuredProvider(ModelProvider):
         )
         return {"content": response.content}
 
-    async def healthcheck(self):  # pragma: no cover - contract stub
-        return None
+    async def healthcheck(self) -> ModelHealth:  # pragma: no cover - contract stub
+        return ModelHealth(provider="measured", available=True, model=self.model)
 
 
 def _insert_run() -> AgentRun:
@@ -101,6 +102,7 @@ async def test_physical_provider_attempt_persists_usage_and_cost():
     assert row["status"] == "success"
     assert row["cost_status"] == "estimated"
     assert row["estimated_cost_usd"] == pytest.approx(0.002)
+    assert json.loads(row["metadata_json"])["token_integrity_observations"] == []
 
     aggregate = aggregate_agent_run_cost(run.id)
     assert aggregate["cost_complete"] is True
