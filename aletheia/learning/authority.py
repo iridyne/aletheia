@@ -187,13 +187,14 @@ def resolve_learning_authority(
     if current is not None and str(current.get("hypothesis_id") or "") != experiment.hypothesis_id:
         return blocked("measurement_hypothesis_mismatch", current)
     activation = get_record("learning_contribution_verdicts", experiment.activation_verdict_id)
+    if activation is None:
+        return blocked("invalid_activation_verdict")
     trial_admission = None
     if experiment.stage == "paper_10":
         trial_admission = get_trial_admission_event(experiment.experiment_id)
-    activation_is_positive = activation is not None and activation.get("verdict") == "positive"
+    activation_is_positive = activation.get("verdict") == "positive"
     activation_is_admitted_trial = (
-        activation is not None
-        and activation.get("verdict") == "insufficient_data"
+        activation.get("verdict") == "insufficient_data"
         and activation.get("reason") == "no_actual_intervention"
         and trial_admission is not None
         and trial_admission.get("verdict_id") == experiment.activation_verdict_id
@@ -227,13 +228,14 @@ def resolve_learning_authority(
             expected_behavior_contract_hash=expected_behavior_contract_hash,
             expected_hypothesis_id=experiment.hypothesis_id,
         ) or measurement_harm_block_reason(activation)
-        return blocked(activation_reason) if activation_reason else AuthorityDecision(
+        if activation_reason:
+            return blocked(activation_reason)
+        return AuthorityDecision(
             True,
             "admitted_shadow_trial" if activation_is_admitted_trial else "activated_by_predecessor",
             experiment.stage, allocation,
             experiment.activation_verdict_id, None,
         )
-    verdict = str(current.get("verdict") or "")
     identity_reason = measurement_identity_reason(
         current, experiment.stage, current_policy_epoch, expected_horizon=expected_horizon,
         expected_behavior_contract_hash=expected_behavior_contract_hash,

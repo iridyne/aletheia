@@ -393,8 +393,8 @@ def _project_experiment(
             from aletheia.learning.authority import resolve_learning_authority
             from aletheia.learning.models import LearningExperiment
 
-            experiment = LearningExperiment(**{
-                field: row.get(field)
+            experiment = LearningExperiment.model_validate({
+                field: row[field]
                 for field in LearningExperiment.model_fields
                 if field in row
             })
