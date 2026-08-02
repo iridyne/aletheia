@@ -16,6 +16,7 @@ from aletheia.gateway.pidfile import (
     find_port_holders,
 )
 from aletheia.gateway.browser import open_browser
+from aletheia.gateway.network import local_frontdoor_host
 from aletheia.gateway.logs import tail_all_logs, log_path
 
 
@@ -77,7 +78,7 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
     # tracked gateway, attempt to auto-clean our own orphans before giving up.
     # This self-heals the common case where the supervisor died but the inner
     # uvicorn survived and holds the port, preventing a later explicit start.
-    if not wait_port_free(cfg.app.dashboard_port, cfg.app.bind_host, timeout=3.0):
+    if not wait_port_free(cfg.app.dashboard_port, local_frontdoor_host(), timeout=3.0):
         orphans = find_gateway_orphans()
         if orphans:
             for opid in orphans:
@@ -87,7 +88,7 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
         # Never kill an arbitrary port holder.  The orphan scan above identifies
         # this runtime's gateway processes; a PID discovered only from the socket
         # is not proof that Aletheia owns it.
-        if not wait_port_free(cfg.app.dashboard_port, cfg.app.bind_host, timeout=5.0):
+        if not wait_port_free(cfg.app.dashboard_port, local_frontdoor_host(), timeout=5.0):
             holders = find_port_holders(cfg.app.dashboard_port)
             _echo_safe(
                 f"Port {cfg.app.dashboard_port} is still in use after verified Aletheia "
@@ -97,13 +98,13 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
             raise typer.Exit(1)
 
     if foreground:
-        _echo_stdout_safe(f"Starting Aletheia gateway on http://{cfg.app.bind_host}:{cfg.app.dashboard_port} (foreground)...")
+        _echo_stdout_safe(f"Starting Aletheia gateway on http://{local_frontdoor_host()}:{cfg.app.dashboard_port} (foreground)...")
         write_pid()
         if not no_browser and cfg.app.auto_open_browser:
             open_browser(cfg.app.dashboard_port)
         _run_server(cfg)
     else:
-        _echo_stdout_safe(f"Starting Aletheia gateway on http://{cfg.app.bind_host}:{cfg.app.dashboard_port} (background)...")
+        _echo_stdout_safe(f"Starting Aletheia gateway on http://{local_frontdoor_host()}:{cfg.app.dashboard_port} (background)...")
         managed = service_control.start(no_browser=no_browser)
         if not managed.get("ok"):
             reason = managed.get("reason", "service_start_failed")
@@ -134,7 +135,7 @@ def _verify_webui_accessible(cfg) -> bool:
     """
     import urllib.request
     try:
-        url = f"http://{cfg.app.bind_host}:{cfg.app.dashboard_port}/"
+        url = f"http://{local_frontdoor_host()}:{cfg.app.dashboard_port}/"
         req = urllib.request.Request(url, headers={"User-Agent": "aletheia-preflight"})
         with urllib.request.urlopen(req, timeout=2) as response:
             content_type = response.getheader("Content-Type", "")
@@ -151,7 +152,7 @@ def _verify_api_ready_accessible(cfg) -> bool:
     """
     import urllib.request
     try:
-        url = f"http://{cfg.app.bind_host}:{cfg.app.dashboard_port}/api/ready"
+        url = f"http://{local_frontdoor_host()}:{cfg.app.dashboard_port}/api/ready"
         req = urllib.request.Request(url, headers={"User-Agent": "aletheia-preflight"})
         with urllib.request.urlopen(req, timeout=2) as response:
             return response.status == 200
@@ -211,7 +212,7 @@ def _verify_started(cfg, *, timeout: float = 60.0, poll_interval: float = 0.3) -
         # first appeared.  If the beacon is valid (pid matches live pid) we can
         # skip straight to the HTTP checks — no need to wait for the next poll tick.
         beacon_ready = _read_ready_beacon(cfg)
-        if beacon_ready or (is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host)):
+        if beacon_ready or (is_running() and port_in_use(cfg.app.dashboard_port, local_frontdoor_host())):
             if not _verify_api_ready_accessible(cfg):
                 time.sleep(poll_interval)
                 continue
@@ -226,7 +227,7 @@ def _verify_started(cfg, *, timeout: float = 60.0, poll_interval: float = 0.3) -
         time.sleep(poll_interval)
 
     # Timeout — distinguish "process alive" from "process truly dead".
-    if is_running() or port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
+    if is_running() or port_in_use(cfg.app.dashboard_port, local_frontdoor_host()):
         # Process is alive or port is held — this is a slow start, not a failure.
         # Leave it running. The supervisor restart policy and health self-heal
         # will detect and correct any persistent unhealthy state.
@@ -455,7 +456,7 @@ def _run_server(cfg) -> None:
     import uvicorn
     uvicorn.run(
         "aletheia.server.app:app",
-        host=cfg.app.bind_host,
+        host=local_frontdoor_host(),
         port=cfg.app.dashboard_port,
         log_level="info",
     )
@@ -498,7 +499,7 @@ def do_stop() -> None:
 
     cfg = load_config()
     port = cfg.app.dashboard_port
-    host = cfg.app.bind_host
+    host = local_frontdoor_host()
 
     pid = read_pid()
     tracked = pid is not None and is_running()
@@ -588,7 +589,7 @@ def do_status() -> None:
     pid = read_pid()
     typer.echo(f"Gateway: {'running' if running else 'stopped'}" + (f" (PID {pid})" if running else ""))
     typer.echo(f"Paused: {cfg.runtime.paused}")
-    typer.echo(f"Dashboard: http://{cfg.app.bind_host}:{cfg.app.dashboard_port}")
+    typer.echo(f"Dashboard: http://{local_frontdoor_host()}:{cfg.app.dashboard_port}")
     exchange_label = (
         "Local paper (no external exchange)"
         if cfg.exchange.paper_execution_mode == "paper_internal"
@@ -761,7 +762,7 @@ def resume_running_gateway_via_api_if_running() -> bool:
     the exact false-recovery state this guard prevents.
     """
     cfg = load_config()
-    if not (is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host)):
+    if not (is_running() and port_in_use(cfg.app.dashboard_port, local_frontdoor_host())):
         return False
     _post_gateway_resume_api(cfg)
     return True
@@ -772,7 +773,7 @@ def _post_gateway_resume_api(cfg) -> dict:
     import urllib.error
     import urllib.request
 
-    url = f"http://{cfg.app.bind_host}:{cfg.app.dashboard_port}/api/gateway/resume"
+    url = f"http://{local_frontdoor_host()}:{cfg.app.dashboard_port}/api/gateway/resume"
     req = urllib.request.Request(
         url,
         data=b"{}",

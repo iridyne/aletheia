@@ -454,8 +454,9 @@ def _probe_gateway_service(report: Report) -> None:
 def _probe_process(report: Report) -> None:
     from aletheia.gateway.pidfile import is_running, read_pid, port_in_use
     from aletheia.config.loader import load_config
+    from aletheia.gateway.network import local_frontdoor_host
     cfg = load_config()
-    host = cfg.app.bind_host
+    host = local_frontdoor_host()
     runtime_port = os.environ.get("ALETHEIA_RUNTIME_PORT")
     try:
         port = int(runtime_port) if runtime_port else cfg.app.dashboard_port

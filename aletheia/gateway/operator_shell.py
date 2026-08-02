@@ -14,6 +14,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 from aletheia.config.loader import get_data_dir
+from aletheia.gateway.network import local_frontdoor_host
 
 CREATE_NO_WINDOW = 0x08000000
 
@@ -87,7 +88,7 @@ def _build_operator_shell_env(
 ) -> dict[str, str]:
     effective_runtime_id = runtime_id or _current_runtime_id()
     return {
-        "ALETHEIA_GATEWAY_BASE_URL": f"http://{cfg.app.bind_host}:{cfg.app.dashboard_port}",
+        "ALETHEIA_GATEWAY_BASE_URL": f"http://{local_frontdoor_host()}:{cfg.app.dashboard_port}",
         "ALETHEIA_OPERATOR_PERMISSION_MODE": cfg.operator.permission_mode,
         "ALETHEIA_OPERATOR_HEARTBEAT_SEC": str(cfg.operator.heartbeat_interval_sec),
         "ALETHEIA_OPERATOR_MAIN_SESSION_ID": cfg.operator.main_session_id,
@@ -272,7 +273,7 @@ def _connect_host(host: str) -> str:
 
 def _gateway_api_ready(cfg) -> bool:
     try:
-        url = f"http://{_connect_host(cfg.app.bind_host)}:{cfg.app.dashboard_port}/api/ready"
+        url = f"http://{_connect_host(local_frontdoor_host())}:{cfg.app.dashboard_port}/api/ready"
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         with opener.open(url, timeout=1.0) as response:
             return response.status == 200
@@ -520,7 +521,7 @@ def _default_record_event(kind: str, payload: dict) -> None:
 
 def _post_operator_heartbeat(cfg, payload: dict) -> bool:
     try:
-        url = f"http://{_connect_host(cfg.app.bind_host)}:{cfg.app.dashboard_port}/api/operator/internal/heartbeat"
+        url = f"http://{_connect_host(local_frontdoor_host())}:{cfg.app.dashboard_port}/api/operator/internal/heartbeat"
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
             url,

@@ -163,10 +163,7 @@ def test_spawn_frontdoor_uses_dashboard_port_and_backend_url(tmp_path, monkeypat
     proc = runner._spawn_frontdoor(cfg, backend_port=9876)
 
     assert proc.pid == 2468
-    assert captured["cmd"][:4] == ["python-real", "-m", "uvicorn", "aletheia.gateway.frontdoor:app"]
-    assert "--port" in captured["cmd"]
-    assert str(cfg.app.dashboard_port) in captured["cmd"]
-    assert captured["cmd"][captured["cmd"].index("--log-level") + 1] == "info"
+    assert captured["cmd"] == ["python-real", "-m", "aletheia.gateway.frontdoor_runner"]
     env = captured["kwargs"]["env"]
     assert env["ALETHEIA_BACKEND_PORT"] == "9876"
     assert env["ALETHEIA_BACKEND_BASE_URL"] == "http://127.0.0.1:9876"

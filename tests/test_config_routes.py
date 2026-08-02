@@ -86,20 +86,16 @@ async def test_economics_shadow_settings_are_explicit_and_default_off(client):
 
 
 @pytest.mark.anyio
-async def test_app_config_bind_host_update(client):
-    settings = (await client.get("/api/settings")).json()
-    assert settings["app"]["bind_host"] == "0.0.0.0"
-
-    resp = await client.post("/api/settings/app", json={"bind_host": "127.0.0.1"})
-    assert resp.status_code == 200
-    assert resp.json()["updated"]["bind_host"] == "127.0.0.1"
-
+async def test_app_config_bind_host_is_managed_by_remote_control(client):
     settings = (await client.get("/api/settings")).json()
     assert settings["app"]["bind_host"] == "127.0.0.1"
 
-    resp2 = await client.post("/api/settings/app", json={"bind_host": "0.0.0.0"})
-    assert resp2.status_code == 200
-    assert resp2.json()["updated"]["bind_host"] == "0.0.0.0"
+    resp = await client.post("/api/settings/app", json={"bind_host": "0.0.0.0"})
+    assert resp.status_code == 400
+    assert "Remote Control" in resp.json()["detail"]
+
+    settings = (await client.get("/api/settings")).json()
+    assert settings["app"]["bind_host"] == "127.0.0.1"
 
 
 @pytest.mark.anyio
@@ -502,11 +498,28 @@ async def test_risk_policy_reset_defaults_is_mode_scoped_and_revision_guarded(cl
 
 
 @pytest.mark.anyio
+async def test_remote_control_interfaces_are_queryable(client):
+    response = await client.get("/api/settings/remote-control/interfaces")
+    assert response.status_code == 200
+    assert isinstance(response.json()["interfaces"], list)
+
+
+@pytest.mark.anyio
 async def test_remote_control_token_is_optional_and_disabled_by_default(client):
     """Remote Control can be reachable over EasyTier without forcing a token in MVP mode."""
-    enabled = await client.post("/api/settings/remote-control", json={"enabled": True})
+    no_adapter = await client.post("/api/settings/remote-control", json={"enabled": True})
+    assert no_adapter.status_code == 400
+
+    enabled = await client.post(
+        "/api/settings/remote-control",
+        json={"enabled": True, "bind_hosts": ["10.42.0.8"]},
+    )
     assert enabled.status_code == 200
-    assert enabled.json()["remote_control"] == {"enabled": True, "require_token": False}
+    assert enabled.json()["remote_control"] == {
+        "enabled": True,
+        "bind_hosts": ["10.42.0.8"],
+        "require_token": False,
+    }
     assert (await client.get("/api/settings")).status_code == 200
 
     missing_token = await client.post(
@@ -523,7 +536,11 @@ async def test_remote_control_token_is_optional_and_disabled_by_default(client):
     )
     assert protected.status_code == 200
     assert token not in protected.text
-    assert protected.json()["remote_control"] == {"enabled": True, "require_token": True}
+    assert protected.json()["remote_control"] == {
+        "enabled": True,
+        "bind_hosts": ["10.42.0.8"],
+        "require_token": True,
+    }
 
     blocked = await client.get("/api/settings")
     assert blocked.status_code == 401
@@ -537,7 +554,11 @@ async def test_remote_control_token_is_optional_and_disabled_by_default(client):
         headers={"X-Aletheia-Token": token},
     )
     assert disabled.status_code == 200
-    assert disabled.json()["remote_control"] == {"enabled": False, "require_token": False}
+    assert disabled.json()["remote_control"] == {
+        "enabled": False,
+        "bind_hosts": ["10.42.0.8"],
+        "require_token": False,
+    }
     assert (await client.get("/api/settings")).status_code == 200
 
 
