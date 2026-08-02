@@ -2091,6 +2091,7 @@ class TunnelConfigUpdate(SettingsRequest):
 
 class RemoteControlConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
+    require_token: Optional[bool] = None
     api_token: Optional[str] = Field(default=None, min_length=1)
 
 
@@ -2126,6 +2127,13 @@ async def update_remote_control_config(req: RemoteControlConfigUpdate):
     old_enabled = cfg.remote_control.enabled
     updates = req.model_dump(exclude_none=True)
     api_token = updates.pop("api_token", None)
+    if updates.get("require_token") is True and api_token is None:
+        from aletheia.config.secrets import get_secret
+        if not (get_secret("remote_control_api_token") or get_secret("tunnel_api_token")):
+            raise HTTPException(
+                400,
+                "Set an API token before enabling Remote Control Token protection",
+            )
     if api_token is not None:
         from aletheia.config.secrets import set_secret
         set_secret("remote_control_api_token", api_token)

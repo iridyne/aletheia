@@ -3403,7 +3403,7 @@ function AppRows({ status, settings, qc }: any) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
   const remoteControlMut = useMutation({
-    mutationFn: (body: { enabled?: boolean; api_token?: string }) => api.updateRemoteControl(body),
+    mutationFn: (body: { enabled?: boolean; require_token?: boolean; api_token?: string }) => api.updateRemoteControl(body),
     onSuccess: () => {
       if (remoteToken.trim()) api.setRemoteControlToken(remoteToken)
       qc.invalidateQueries({ queryKey: ['settings'] })
@@ -3456,22 +3456,31 @@ function AppRows({ status, settings, qc }: any) {
           <span className="text-xs text-muted">Restart required to apply</span>
         )}
       </Row>
-      <Row label="Remote Control" hint="Require X-Aletheia-Token for every private HTTP API. Use this for EasyTier or another private network; it is independent from Cloudflare Tunnel.">
+      <Row label="Remote Control" hint="Allow HTTP API control over EasyTier or another private network. It is independent from Cloudflare Tunnel and is off by default.">
         <Toggle
           checked={!!remoteControl.enabled}
-          onChange={enabled => remoteControlMut.mutate({
-            enabled,
+          onChange={enabled => remoteControlMut.mutate({ enabled })}
+          disabled={remoteControlMut.isPending}
+        />
+        <span className="text-xs text-muted">When enabled without Token protection, any device that can reach this API can use its existing read/write routes.</span>
+      </Row>
+      <Row label="Remote Control Token" hint="Optional owner-token protection for every private API. Turn it on only after entering a Token; Cloudflare Tunnel always requires a Token.">
+        <Toggle
+          checked={!!remoteControl.require_token}
+          onChange={require_token => remoteControlMut.mutate({
+            require_token,
             ...(remoteToken.trim() ? { api_token: remoteToken.trim() } : {}),
           })}
-          disabled={remoteControlMut.isPending}
+          disabled={!remoteControl.enabled || remoteControlMut.isPending || !remoteToken.trim()}
         />
         <input
           type="password"
           value={remoteToken}
           onChange={e => setRemoteToken(e.target.value)}
-          placeholder="Owner API token"
+          placeholder="Optional owner API token"
           autoComplete="off"
           className="w-56"
+          disabled={!remoteControl.enabled}
         />
         <button
           type="button"
@@ -3479,7 +3488,7 @@ function AppRows({ status, settings, qc }: any) {
           onClick={() => api.setRemoteControlToken(remoteToken)}
           disabled={!remoteToken.trim()}
         >Use in this browser</button>
-        <span className="text-xs text-muted">Write-only; stored only in this browser so the local dashboard keeps access after enabling.</span>
+        <span className="text-xs text-muted">Write-only; stored only in this browser so the local dashboard keeps access after Token protection is enabled.</span>
       </Row>
       <Row label="Gateway mode" hint="Process lifecycle mode used by the CLI/supervisor.">
         <span className="mono text-sm">{runtime.gateway_mode || 'background'}</span>

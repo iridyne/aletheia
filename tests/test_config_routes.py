@@ -502,32 +502,42 @@ async def test_risk_policy_reset_defaults_is_mode_scoped_and_revision_guarded(cl
 
 
 @pytest.mark.anyio
-async def test_remote_control_token_enables_private_api_access_without_tunnel(client):
-    """Remote Control is independent from cloudflared tunnel lifecycle settings."""
-    token = "REMOTEOWNER42"
-    response = await client.post(
+async def test_remote_control_token_is_optional_and_disabled_by_default(client):
+    """Remote Control can be reachable over EasyTier without forcing a token in MVP mode."""
+    enabled = await client.post("/api/settings/remote-control", json={"enabled": True})
+    assert enabled.status_code == 200
+    assert enabled.json()["remote_control"] == {"enabled": True, "require_token": False}
+    assert (await client.get("/api/settings")).status_code == 200
+
+    missing_token = await client.post(
         "/api/settings/remote-control",
-        json={"enabled": True, "api_token": token},
+        json={"require_token": True},
     )
-    assert response.status_code == 200
-    assert token not in response.text
-    assert response.json()["remote_control"] == {"enabled": True}
+    assert missing_token.status_code == 400
+    assert (await client.get("/api/settings")).status_code == 200
+
+    token = "REMOTEOWNER42"
+    protected = await client.post(
+        "/api/settings/remote-control",
+        json={"require_token": True, "api_token": token},
+    )
+    assert protected.status_code == 200
+    assert token not in protected.text
+    assert protected.json()["remote_control"] == {"enabled": True, "require_token": True}
 
     blocked = await client.get("/api/settings")
     assert blocked.status_code == 401
-
     allowed = await client.get("/api/settings", headers={"X-Aletheia-Token": token})
     assert allowed.status_code == 200
-    assert allowed.json()["remote_control"] == {"enabled": True}
     assert token not in allowed.text
 
     disabled = await client.post(
         "/api/settings/remote-control",
-        json={"enabled": False},
+        json={"enabled": False, "require_token": False},
         headers={"X-Aletheia-Token": token},
     )
     assert disabled.status_code == 200
-    assert disabled.json()["remote_control"] == {"enabled": False}
+    assert disabled.json()["remote_control"] == {"enabled": False, "require_token": False}
     assert (await client.get("/api/settings")).status_code == 200
 
 

@@ -712,14 +712,16 @@ _PUBLIC_PATHS = frozenset({
 async def _tunnel_auth_guard(request, call_next):
     """Enforce owner authentication for all private API/infra routes when tunnel is active.
 
-    Policy (tunnel.enabled=True or remote_control.enabled=True):
+    Policy (tunnel.enabled=True or remote_control.require_token=True):
       - Paths in _PUBLIC_PATHS are always accessible anonymously (minimal liveness).
       - Every other /api/* and /_infra/* route requires a valid X-Aletheia-Token header,
         including all GET/read endpoints. Read access exposes positions, strategy
         reasoning, agent output, and research data that are as sensitive as mutations.
       - A missing remote_control_api_token (or legacy tunnel_api_token) secret
         fails closed with 401; unauthenticated callers cannot reach a private route.
-    Policy (both flags disabled):
+    Policy (Remote Control enabled without require_token):
+      - Private-network API access remains unauthenticated for MVP convenience.
+    Policy (both modes disabled):
       - No authentication required; local-first frictionless access is preserved.
 
     Successful authentication sets both request-state flags so existing audited
@@ -736,10 +738,12 @@ async def _tunnel_auth_guard(request, call_next):
         # trigger a config rewrite as a side effect of checking tunnel.enabled.
         cfg = load_config(persist_migrations=False)
         tunnel_enabled = bool(getattr(getattr(cfg, "tunnel", None), "enabled", False))
-        remote_control_enabled = bool(
-            getattr(getattr(cfg, "remote_control", None), "enabled", False)
+        remote_control = getattr(cfg, "remote_control", None)
+        remote_token_required = bool(
+            getattr(remote_control, "enabled", False)
+            and getattr(remote_control, "require_token", False)
         )
-        if tunnel_enabled or remote_control_enabled:
+        if tunnel_enabled or remote_token_required:
             from aletheia.config.secrets import get_secret
             from fastapi.responses import JSONResponse
 

@@ -1154,8 +1154,8 @@ export const api = {
     post<{ updated: Record<string, any>; economics: Record<string, any> }>('/settings/economics', body),
   updateAppConfig: (body: Partial<{ auto_open_browser: boolean; equity_curve_mode: string; bind_host: string }>) =>
     post<{ updated: Record<string, any> }>('/settings/app', body),
-  updateRemoteControl: (body: { enabled?: boolean; api_token?: string }) =>
-    post<{ updated: Record<string, any>; remote_control: { enabled: boolean } }>('/settings/remote-control', body),
+  updateRemoteControl: (body: { enabled?: boolean; require_token?: boolean; api_token?: string }) =>
+    post<{ updated: Record<string, any>; remote_control: { enabled: boolean; require_token: boolean } }>('/settings/remote-control', body),
   setRemoteControlToken,
   updatePiDaemonConfig: (body: Partial<{ enabled: boolean; debounce_sec: number; cooldown_sec: number; heartbeat_sec: number }>) =>
     post<{ updated: Record<string, any> }>('/settings/pi_daemon', body),

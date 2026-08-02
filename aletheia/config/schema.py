@@ -1187,9 +1187,10 @@ class TunnelConfig(BaseModel):
 
 
 class RemoteControlConfig(BaseModel):
-    """Owner-token protection for private HTTP APIs over a private network."""
+    """Private-network Remote Control settings, independent from Cloudflare tunnel."""
 
     enabled: bool = False
+    require_token: bool = False
 
 
 class NetworkConfig(BaseModel):
