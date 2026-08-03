@@ -464,6 +464,33 @@ def tokens(
     typer.echo(f"Token integrity observations: {summary or 'none'}")
 
 
+@audit_app.command("context")
+def context(
+    days: int = typer.Option(7, "--days", min=1, help="Lookback window in days."),
+    run_id: Optional[str] = typer.Option(None, "--run-id", help="Restrict to one AgentRun."),
+    include_artifacts: bool = typer.Option(False, "--include-artifacts"),
+    output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """List prompt-free LLM context-consumption metadata."""
+    from aletheia.economics.context_artifacts import (
+        list_context_artifacts,
+        summarize_context_artifacts,
+    )
+
+    report = summarize_context_artifacts(days=days, run_id=run_id)
+    if include_artifacts:
+        report["items"] = list_context_artifacts(days=days, run_id=run_id)
+    if output_json:
+        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+    typer.echo("LLM Context Artifact Audit")
+    typer.echo(f"Artifacts: {report['artifacts']}")
+    for kind, bucket in sorted(report["by_kind"].items()):
+        typer.echo(f"  {kind}: artifacts={bucket['artifacts']} rendered_chars={bucket['rendered_chars']}")
+    freshness = ", ".join(f"{key}={value}" for key, value in sorted(report["freshness"].items()))
+    typer.echo(f"Freshness: {freshness or 'none'}")
+
+
 @audit_app.command("viability")
 def viability(
     scope: str = typer.Option("system", "--scope", help="system or operator"),

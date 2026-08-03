@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from typer.testing import CliRunner
 
+from aletheia.economics.context_artifacts import record_context_artifacts
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.main import app
 from aletheia.storage.sqlite import get_db
@@ -41,6 +42,25 @@ def test_tokens_command_renders_usage_without_price_snapshot():
     assert "Input tokens: 12" in result.output
     assert "Cached input tokens: 2" in result.output
     assert "Token integrity observations: none" in result.output
+
+
+def test_context_command_is_prompt_free():
+    record_context_artifacts(
+        run_id="cli-context-run", caller="market_observer", symbol="BTC/USDT",
+        artifacts=[{
+            "kind": "news", "stable_id": "news_item:cli", "source": "test",
+            "selected_reason": "exact_entity_match", "trust_class": "external_untrusted",
+            "freshness_status": "fresh", "rendered_chars": 42,
+            "metadata": {"analysis_state": "analyzed_metadata", "forbidden": "prompt body"},
+        }],
+    )
+
+    result = runner.invoke(app, ["audit", "context", "--days", "1", "--json", "--include-artifacts"])
+
+    assert result.exit_code == 0, result.output
+    assert '"artifacts": 1' in result.output
+    assert "prompt body" not in result.output
+    assert "analyzed_metadata" in result.output
 
 
 def test_costs_command_renders_current_summary_field_names():

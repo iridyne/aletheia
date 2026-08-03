@@ -137,6 +137,19 @@ CREATE TABLE IF NOT EXISTS economics_budgets (
 );
 CREATE INDEX IF NOT EXISTS idx_economics_budgets_scope
     ON economics_budgets(scope, subject, enabled);
+
+-- Prompt-free context consumption metadata. It cannot carry prompts, responses,
+-- or source bodies, and is isolated from trading state.
+CREATE TABLE IF NOT EXISTS llm_context_artifacts (
+    id TEXT PRIMARY KEY, schema_version TEXT NOT NULL, run_id TEXT, caller TEXT NOT NULL,
+    symbol TEXT, kind TEXT NOT NULL CHECK(kind IN ('environment','news','learning')),
+    stable_id TEXT NOT NULL, source TEXT, selected_reason TEXT, trust_class TEXT,
+    freshness_status TEXT NOT NULL CHECK(freshness_status IN ('fresh','stale','unknown')),
+    published_at TEXT, observed_at TEXT, rendered_chars INTEGER NOT NULL CHECK(rendered_chars >= 0),
+    metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_llm_context_artifacts_run ON llm_context_artifacts(run_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_llm_context_artifacts_window ON llm_context_artifacts(created_at DESC, kind);
 """
 
 _TOOL_COST_SELECT = """
