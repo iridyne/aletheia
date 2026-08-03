@@ -116,6 +116,7 @@ def _trading_daemon_status() -> dict[str, Any]:
         "running": running,
         "evaluating": bool(daemon.get("lock_held")),
         "wake_pending": bool(daemon.get("event_set")),
+        "last_error_summary": daemon.get("last_error_summary"),
         "fallback_available": fallback_available,
         "state": state,
     }

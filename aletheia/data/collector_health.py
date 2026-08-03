@@ -302,12 +302,20 @@ def get_collector_health_report(
             transient += 1
         if status in _COMPLETED_STATUSES:
             completed += 1
+        # Error codes are already constrained to a safe identifier. When a
+        # collector returns a failed result without raising, say so explicitly
+        # rather than inventing an exception message.
+        error_code = row.get("last_error_code")
+        error_summary = (
+            str(error_code) if error_code else "collector_returned_failed_result"
+        ) if status in _PROBLEM_STATUSES else None
         row.update({
             "domain": domain,
             "cadence_sec": cadence_sec,
             "last_status": status,
             "display_status": status,
             "attributed_cause": None,
+            "last_error_summary": error_summary,
             "display_severity": (
                 "warning"
                 if is_degraded or status in _PROBLEM_STATUSES

@@ -44,6 +44,7 @@ _generic_wake_pending: bool = False
 _task_generation: int = 0
 _started_at: float | None = None   # monotonic timestamp of last start
 _active_params: dict | None = None  # debounce/cooldown/heartbeat in effect
+_last_error_summary: str | None = None  # bounded, non-secret operator diagnostic
 
 # A negative value cannot collide with the non-negative queue depth returned by
 # evaluate_trading_opportunity(). The loop treats it as work still pending so a
@@ -102,6 +103,7 @@ def daemon_status() -> dict:
         "task_generation": _task_generation,
         "started_at": _started_at,
         "active_params": _active_params,
+        "last_error_summary": _last_error_summary,
     }
 
 
@@ -365,6 +367,7 @@ def _build_wake_context(triggered_by: str, batches: list) -> dict:
 
 
 async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -> int:
+    global _last_error_summary
     try:
         from aletheia.agent_runtime.run_context import bind_economic_attribution
         from aletheia.agent_shell.commands import (
@@ -404,10 +407,12 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
             )
             return max(int(remaining or 0), 0)
         _record_job_success("pi_trading_decision")
+        _last_error_summary = None
         return max(int(remaining or 0), 0)
     except asyncio.TimeoutError:
         from aletheia.agent_runtime.scheduler import _record_job_failure
         logger.warning("pi_daemon: evaluate_trading_opportunity timed out after 300s")
+        _last_error_summary = "evaluation_timeout"
         _record_job_failure("pi_trading_decision", "daemon_evaluation_timeout")
         return _EVALUATION_RETRY_PENDING
     except asyncio.CancelledError:
@@ -415,6 +420,7 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
     except Exception as exc:
         from aletheia.agent_runtime.scheduler import _record_job_failure
         logger.warning("pi_daemon: evaluation failed: %s", exc)
+        _last_error_summary = f"{type(exc).__name__}"[:120]
         _record_job_failure("pi_trading_decision", "daemon_evaluation_failed")
         return _EVALUATION_RETRY_PENDING
     finally:

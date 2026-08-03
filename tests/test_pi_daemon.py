@@ -48,6 +48,7 @@ def reset_daemon_state():
     pd._task_generation = 0
     pd._started_at = None
     pd._active_params = None
+    pd._last_error_summary = None
 
 
 def test_notify_noop_when_not_started():
@@ -61,6 +62,7 @@ def test_notify_noop_when_not_started():
         "task_generation": 0,
         "started_at": None,
         "active_params": None,
+        "last_error_summary": None,
     }
 
 
