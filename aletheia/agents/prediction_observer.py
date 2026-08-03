@@ -24,14 +24,18 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import llm_structured, log_tool, record_step
+from aletheia.agents.helpers import llm_structured, log_tool, record_step, observer_llm_deadline
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
-    insert_opportunity, list_strategies,
-    upsert_prediction_event, upsert_prediction_market,
-    insert_probability_snapshot, insert_prediction_claim,
-    insert_serenity_evidence, list_serenity_themes,
+    insert_opportunity,
+    list_strategies,
+    upsert_prediction_event,
+    upsert_prediction_market,
+    insert_probability_snapshot,
+    insert_prediction_claim,
+    insert_serenity_evidence,
+    list_serenity_themes,
 )
 from aletheia.config.loader import load_config
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
@@ -50,16 +54,15 @@ class PredictionMarketRead(BaseModel):
     - "short"   = YES probability is falling (the event is becoming less likely)
     - "neutral" = probability is stable
     """
+
     direction_bias: Literal["long", "short", "neutral"] = "neutral"
     confidence: Literal["high", "medium", "speculative"] = "speculative"
     confidence_score: int = Field(
-        50, ge=0, le=100,
-        description="0=no trend signal, 50=balanced, 100=strong trend signal"
+        50, ge=0, le=100, description="0=no trend signal, 50=balanced, 100=strong trend signal"
     )
     rationale: str = ""
     key_observations: list[str] = Field(
-        default_factory=list,
-        description="2-3 bullets citing probability levels and volume"
+        default_factory=list, description="2-3 bullets citing probability levels and volume"
     )
 
 
@@ -98,108 +101,128 @@ def _persist_normalized(markets: list, *, run_id: str | None = None) -> dict[str
     so callers can reference the normalized row.
     """
     from aletheia.storage.models import _utcnow
+
     market_id_map: dict[str, str] = {}
     for market in markets:
         ext_market_id = market.market_id or market.slug or market.question[:40]
         slug = market.slug or ""
-        event_id = upsert_prediction_event({
-            "external_event_id": ext_market_id,
-            "slug": slug,
-            "title": market.question,
-            "category": market.category,
-            "resolution_at": market.resolution_date or None,
-            "liquidity": market.liquidity,
-            "volume_24h": market.volume_usd,
-            "source": "polymarket",
-            "status": "active",
-        })
-        internal_market_id = upsert_prediction_market({
-            "event_id": event_id,
-            "external_market_id": ext_market_id,
-            "question": market.question,
-            "yes_probability": market.yes_probability,
-            "no_probability": round(1.0 - market.yes_probability, 4),
-            "probability_change_24h": market.prob_change_24h,
-            "enable_orderbook": int(market.enable_orderbook),
-            "liquidity": market.liquidity,
-            "volume_24h": market.volume_usd,
-            "source": "polymarket",
-            "status": "active",
-        })
+        event_id = upsert_prediction_event(
+            {
+                "external_event_id": ext_market_id,
+                "slug": slug,
+                "title": market.question,
+                "category": market.category,
+                "resolution_at": market.resolution_date or None,
+                "liquidity": market.liquidity,
+                "volume_24h": market.volume_usd,
+                "source": "polymarket",
+                "status": "active",
+            }
+        )
+        internal_market_id = upsert_prediction_market(
+            {
+                "event_id": event_id,
+                "external_market_id": ext_market_id,
+                "question": market.question,
+                "yes_probability": market.yes_probability,
+                "no_probability": round(1.0 - market.yes_probability, 4),
+                "probability_change_24h": market.prob_change_24h,
+                "enable_orderbook": int(market.enable_orderbook),
+                "liquidity": market.liquidity,
+                "volume_24h": market.volume_usd,
+                "source": "polymarket",
+                "status": "active",
+            }
+        )
         market_id_map[ext_market_id] = internal_market_id
-        insert_probability_snapshot({
-            "market_id": internal_market_id,
-            "ts": _utcnow(),
-            "yes_probability": market.yes_probability,
-            "no_probability": round(1.0 - market.yes_probability, 4),
-            "liquidity": market.liquidity,
-            "volume_24h": market.volume_usd,
-        })
+        insert_probability_snapshot(
+            {
+                "market_id": internal_market_id,
+                "ts": _utcnow(),
+                "yes_probability": market.yes_probability,
+                "no_probability": round(1.0 - market.yes_probability, 4),
+                "liquidity": market.liquidity,
+                "volume_24h": market.volume_usd,
+            }
+        )
     return market_id_map
 
 
-def _generate_heuristic_claims(market, *, internal_market_id: str, run_id: str | None = None, median_volume: float = 0) -> None:
+def _generate_heuristic_claims(
+    market, *, internal_market_id: str, run_id: str | None = None, median_volume: float = 0
+) -> None:
     """Write heuristic claims for notable market conditions."""
     if abs(market.prob_change_24h) > 0.10:
         direction = "long" if market.prob_change_24h > 0 else "short"
-        insert_prediction_claim({
-            "market_id": internal_market_id,
-            "run_id": run_id,
-            "claim_text": f"Probability moved {market.prob_change_24h*100:+.1f}pp in 24h — strong momentum signal",
-            "claim_type": "probability_momentum",
-            "direction": direction,
-            "confidence": min(0.9, 0.5 + abs(market.prob_change_24h)),
-        })
+        insert_prediction_claim(
+            {
+                "market_id": internal_market_id,
+                "run_id": run_id,
+                "claim_text": f"Probability moved {market.prob_change_24h * 100:+.1f}pp in 24h — strong momentum signal",
+                "claim_type": "probability_momentum",
+                "direction": direction,
+                "confidence": min(0.9, 0.5 + abs(market.prob_change_24h)),
+            }
+        )
     if median_volume > 0 and market.volume_usd > median_volume * 2:
-        insert_prediction_claim({
-            "market_id": internal_market_id,
-            "run_id": run_id,
-            "claim_text": f"Volume ${market.volume_usd:,.0f} is >2x median (${median_volume:,.0f}) — unusual activity",
-            "claim_type": "volume_spike",
-            "confidence": 0.7,
-        })
+        insert_prediction_claim(
+            {
+                "market_id": internal_market_id,
+                "run_id": run_id,
+                "claim_text": f"Volume ${market.volume_usd:,.0f} is >2x median (${median_volume:,.0f}) — unusual activity",
+                "claim_type": "volume_spike",
+                "confidence": 0.7,
+            }
+        )
     if market.liquidity < 5000 and market.liquidity > 0:
-        insert_prediction_claim({
-            "market_id": internal_market_id,
-            "run_id": run_id,
-            "claim_text": f"Liquidity only ${market.liquidity:,.0f} — thin market, prices may be unreliable",
-            "claim_type": "liquidity_warning",
-            "confidence": 0.8,
-        })
+        insert_prediction_claim(
+            {
+                "market_id": internal_market_id,
+                "run_id": run_id,
+                "claim_text": f"Liquidity only ${market.liquidity:,.0f} — thin market, prices may be unreliable",
+                "claim_type": "liquidity_warning",
+                "confidence": 0.8,
+            }
+        )
     if market.resolution_date:
         from datetime import datetime, timezone
+
         try:
             end = datetime.fromisoformat(market.resolution_date.replace("Z", "+00:00"))
             days_left = (end - datetime.now(timezone.utc)).days
             if 0 < days_left < 7:
-                insert_prediction_claim({
-                    "market_id": internal_market_id,
-                    "run_id": run_id,
-                    "claim_text": f"Resolves in {days_left} days — approaching resolution, volatility expected",
-                    "claim_type": "resolution_risk",
-                    "confidence": 0.6,
-                })
+                insert_prediction_claim(
+                    {
+                        "market_id": internal_market_id,
+                        "run_id": run_id,
+                        "claim_text": f"Resolves in {days_left} days — approaching resolution, volatility expected",
+                        "claim_type": "resolution_risk",
+                        "confidence": 0.6,
+                    }
+                )
         except (ValueError, TypeError):
             pass
 
 
 def _build_market_metadata(market, *, markets_scanned: int = 0) -> str:
     """Serialize prediction-specific fields into the Opportunity.metadata JSON."""
-    return json.dumps({
-        "event_title": market.question,
-        "market_id": market.market_id,
-        "slug": market.slug,
-        "category": market.category,
-        "yes_probability": market.yes_probability,
-        "no_probability": round(1.0 - market.yes_probability, 4),
-        "probability_change_24h": market.prob_change_24h,
-        "volume_24h": market.volume_usd,
-        "liquidity": market.liquidity,
-        "resolution_at": market.resolution_date,
-        "enable_orderbook": market.enable_orderbook,
-        "markets_scanned": markets_scanned,
-        "source": "polymarket",
-    })
+    return json.dumps(
+        {
+            "event_title": market.question,
+            "market_id": market.market_id,
+            "slug": market.slug,
+            "category": market.category,
+            "yes_probability": market.yes_probability,
+            "no_probability": round(1.0 - market.yes_probability, 4),
+            "probability_change_24h": market.prob_change_24h,
+            "volume_24h": market.volume_usd,
+            "liquidity": market.liquidity,
+            "resolution_at": market.resolution_date,
+            "enable_orderbook": market.enable_orderbook,
+            "markets_scanned": markets_scanned,
+            "source": "polymarket",
+        }
+    )
 
 
 @register_agent("prediction_observer")
@@ -220,18 +243,20 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
 
     # Start observer run record
     from aletheia.storage.repositories import (
-        insert_prediction_run, update_prediction_run,
+        insert_prediction_run,
+        update_prediction_run,
     )
     from aletheia.storage.models import new_id as _new_id
+
     obs_run_id = _new_id()
     insert_prediction_run(obs_run_id, categories)
 
     # Fetch markets from Polymarket
     from aletheia.data.polymarket_provider import fetch_active_markets, format_prediction_context
+
     try:
         markets = await fetch_active_markets(categories=categories, limit=50)
-        log_tool(run_id, "fetch_prediction_markets", "observe", True,
-                 output=f"markets:{len(markets)}")
+        log_tool(run_id, "fetch_prediction_markets", "observe", True, output=f"markets:{len(markets)}")
     except Exception as e:
         errors.append(f"polymarket_fetch_failed:{e}")
         update_prediction_run(obs_run_id, status="failed", errors=errors)
@@ -251,7 +276,8 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
 
     context = format_prediction_context(markets)
     record_step(
-        run_id, "prediction_read_input",
+        run_id,
+        "prediction_read_input",
         input_data=f"categories={categories} markets={len(markets)}",
         output_data=context[:1200],
     )
@@ -273,6 +299,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
         ),
         schema=PredictionMarketRead,
         max_tokens=500,
+        deadline=observer_llm_deadline(),
     )
     log_tool(run_id, "llm_structured", "observe", True)
 
@@ -300,14 +327,14 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
             observations = [str(o)[:200] for o in obs[:3] if o]
 
     record_step(
-        run_id, "prediction_read_output",
+        run_id,
+        "prediction_read_output",
         input_data=None,
         output_data=f"direction={direction} confidence={confidence} score={confidence_score}",
     )
 
     if not is_tool_permitted("create_opportunity", permission_mode):
-        update_prediction_run(obs_run_id, status="completed",
-                             markets_scanned=len(markets), opportunities_created=0)
+        update_prediction_run(obs_run_id, status="completed", markets_scanned=len(markets), opportunities_created=0)
         return {"outputs": outputs, "errors": errors}
 
     # Create one Opportunity per fetched market — capture all signals.
@@ -387,25 +414,43 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
         internal_id = market_id_map.get(ext_id)
         if not internal_id:
             continue
-        _generate_heuristic_claims(market, internal_market_id=internal_id,
-                                   run_id=obs_run_id, median_volume=median_vol)
+        _generate_heuristic_claims(market, internal_market_id=internal_id, run_id=obs_run_id, median_volume=median_vol)
         if i == 0 and observations:
             for obs_text in observations:
-                insert_prediction_claim({
-                    "market_id": internal_id,
-                    "run_id": obs_run_id,
-                    "claim_text": obs_text,
-                    "claim_type": "observation",
-                    "direction": direction,
-                    "confidence": (confidence_score or 50) / 100.0,
-                    "source": "prediction_observer_llm",
-                })
+                insert_prediction_claim(
+                    {
+                        "market_id": internal_id,
+                        "run_id": obs_run_id,
+                        "claim_text": obs_text,
+                        "claim_type": "observation",
+                        "direction": direction,
+                        "confidence": (confidence_score or 50) / 100.0,
+                        "source": "prediction_observer_llm",
+                    }
+                )
 
     # Phase 4: Write serenity_evidence for high-signal prediction markets
     # Criteria: |Δ24h| > 10pp AND volume > $50k AND question references crypto/macro
-    _CRYPTO_KEYWORDS = {"bitcoin", "btc", "ethereum", "eth", "crypto", "solana", "sol",
-                        "defi", "fed", "rate", "inflation", "macro", "recession",
-                        "tariff", "gdp", "cpi", "fomc", "treasury"}
+    _CRYPTO_KEYWORDS = {
+        "bitcoin",
+        "btc",
+        "ethereum",
+        "eth",
+        "crypto",
+        "solana",
+        "sol",
+        "defi",
+        "fed",
+        "rate",
+        "inflation",
+        "macro",
+        "recession",
+        "tariff",
+        "gdp",
+        "cpi",
+        "fomc",
+        "treasury",
+    }
     try:
         themes = list_serenity_themes(status="active", limit=50)
         for market in markets:
@@ -425,6 +470,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
             if matched_theme:
                 from aletheia.storage.models import SerenityEvidence
                 from aletheia.trading.serenity_evidence import assess_evidence_tier
+
                 ext_id = market.market_id or market.slug or market.question[:40]
                 internal_id = market_id_map.get(ext_id, ext_id)
                 ev = SerenityEvidence(
@@ -434,8 +480,8 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
                     source_ref=internal_id,
                     title=f"Prediction signal: {market.question[:80]}",
                     summary=(
-                        f"YES={market.yes_probability*100:.1f}% "
-                        f"Δ24h={market.prob_change_24h*100:+.1f}pp "
+                        f"YES={market.yes_probability * 100:.1f}% "
+                        f"Δ24h={market.prob_change_24h * 100:+.1f}pp "
                         f"vol=${market.volume_usd:,.0f}"
                     ),
                     # Self-proposed grade on the canonical ladder; the independent evaluator
@@ -452,7 +498,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
     except Exception as e:
         errors.append(f"serenity_evidence_link:{e}")
 
-    update_prediction_run(obs_run_id, status="completed",
-                         markets_scanned=len(markets),
-                         opportunities_created=opps_created)
+    update_prediction_run(
+        obs_run_id, status="completed", markets_scanned=len(markets), opportunities_created=opps_created
+    )
     return {"outputs": outputs, "errors": errors}

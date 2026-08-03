@@ -803,7 +803,8 @@ def test_opportunity_funnel_explains_current_operator_defer(tmp_path, monkeypatc
     assert current["reason_code"] == "candidate_technical_snapshot_unavailable"
     assert current["next_trigger"] == "feature_refresh"
     assert current["policy_epoch_id"] == "epoch-current"
-    assert current["counts"] == {
+    _counts = current["counts"]
+    assert {k: v for k, v in _counts.items() if k != "oldest_defer_age_seconds"} == {
         "open_positions": 0,
         "open_opportunities": 0,
         "queued_candidates": 2,
@@ -822,9 +823,12 @@ def test_opportunity_funnel_explains_current_operator_defer(tmp_path, monkeypatc
         "market_quiet_defers": 0,
         "candidate_specific_defers": 1,
         "defer_rate": 1.0,
-        "oldest_defer_age_seconds": 60,
         "queue_capacity": 5,
     }
+    # oldest_defer_age_seconds is wall-clock dependent; allow a ±5s window
+    assert 55 <= _counts["oldest_defer_age_seconds"] <= 65, (
+        f"oldest_defer_age_seconds {_counts['oldest_defer_age_seconds']} outside 55-65s window"
+    )
     candidates = {row["symbol"]: row for row in current["candidates"]}
     assert set(candidates) == {"NEAR/USDT", "SYN/USDT"}
     assert candidates["NEAR/USDT"]["status"] == "deferred"
