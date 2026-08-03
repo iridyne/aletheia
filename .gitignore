@@ -33,6 +33,10 @@ CLAUDE.local.md
 # External skill toolkits (not part of this repo)
 .baoyu-skills/
 
+# pi / pi-lens local config (pi-lens auto-format and autofix settings)
+.pi-lens.json
+pi-lens.json
+
 # Trae local/private state
 .trae/
 
