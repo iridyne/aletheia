@@ -37,3 +37,6 @@ Proposal as stable decision history.
   operator visibility.
 - [Tokenomics harness phase plan](tokenomics_harness_phase_plan_2026-07-30.md):
   controlled inference-harness rollout.
+- [Model provider profiles and access methods](model_provider_profiles_and_access_methods.md):
+  API profile instances, CLI harness integrations, OAuth connections, and the
+  staged retirement of the legacy model-settings mutation path.

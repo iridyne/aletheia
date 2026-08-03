@@ -16,7 +16,8 @@ import json
 import logging
 import shutil
 
-from aletheia.gateway.pidfile import _no_window_kwargs
+from aletheia.gateway.logs import redact_log_text
+from aletheia.model_provider.cli_harness import run_cli
 from aletheia.model_provider.base import (
     ModelHealth,
     ModelProvider,
@@ -55,43 +56,31 @@ class ClaudeCLIProvider(ModelProvider):
             prompt += f"{msg['role']}: {msg['content']}\n"
 
         argv = [
-            self.command, "-p", prompt.strip(),
-            "--output-format", "json",
+            self.command,
+            "-p",
+            "--output-format",
+            "json",
             "--bare",
-            "--disallowed-tools", "*",
-            "--max-turns", "1",
+            "--disallowed-tools",
+            "*",
+            "--max-turns",
+            "1",
         ]
-        if request.system:
-            argv += ["--system-prompt", request.system]
         if self.model:
             argv += ["--model", self.model]
 
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            **_no_window_kwargs(),
-        )
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(b""), timeout=_EXEC_TIMEOUT
+            result = await run_cli(
+                argv,
+                stdin=prompt.strip().encode("utf-8"),
+                timeout=_EXEC_TIMEOUT,
             )
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise RuntimeError("Claude CLI timed out")
-        except asyncio.CancelledError:
-            # An OUTER wait_for/cancel (e.g. the startup gate's per-provider
-            # timeout) cancels us before our own _EXEC_TIMEOUT fires. Without
-            # this the `claude` child is orphaned and keeps running up to
-            # _EXEC_TIMEOUT seconds, invisible under a detached launch. Kill it
-            # before re-raising so cancellation actually reaps the subprocess.
-            proc.kill()
-            raise
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError("Claude CLI timed out") from exc
 
-        if proc.returncode != 0:
-            detail = (stderr or b"").decode("utf-8", "replace").strip()[:300]
-            stdout_text = (stdout or b"").decode("utf-8", "replace").strip()
+        if result.returncode != 0:
+            detail = redact_log_text(result.stderr.decode("utf-8", "replace").strip())[:300]
+            stdout_text = result.stdout.decode("utf-8", "replace").strip()
             # Claude CLI returns exit 1 but still has valid JSON with error info
             if stdout_text:
                 try:
@@ -101,10 +90,10 @@ class ClaudeCLIProvider(ModelProvider):
                     err_msg = data.get("result", detail)
                     raise RuntimeError(f"Claude CLI error: {err_msg}")
                 except json.JSONDecodeError:
-                    pass
-            raise RuntimeError(f"Claude CLI failed (rc={proc.returncode}): {detail}")
+                    data = None
+            raise RuntimeError(f"Claude CLI failed (rc={result.returncode}): {detail}")
 
-        raw_out = (stdout or b"").decode("utf-8", "replace").strip()
+        raw_out = result.stdout.decode("utf-8", "replace").strip()
         if not raw_out:
             raise RuntimeError("Claude CLI returned empty output")
 
@@ -149,49 +138,42 @@ class ClaudeCLIProvider(ModelProvider):
         logger.info("Text-mode JSON extraction failed, falling back to schema mode")
         return await self._structured_schema_mode(request, schema_json)
 
-    async def _structured_schema_mode(self, request: StructuredModelRequest,
-                                      schema_json: dict) -> dict:
+    async def _structured_schema_mode(self, request: StructuredModelRequest, schema_json: dict) -> dict:
         if not shutil.which(self.command):
             raise RuntimeError(f"Claude CLI command '{self.command}' not found in PATH")
 
         prompt = ""
+        if request.system:
+            prompt += request.system + "\n\n"
         for msg in request.messages:
             prompt += f"{msg['role']}: {msg['content']}\n"
 
         argv = [
-            self.command, "-p", prompt.strip(),
-            "--output-format", "json",
+            self.command,
+            "-p",
+            "--output-format",
+            "json",
             "--bare",
-            "--json-schema", json.dumps(schema_json),
-            "--allowedTools", "StructuredOutput",
-            "--max-turns", "2",
+            "--json-schema",
+            json.dumps(schema_json),
+            "--allowedTools",
+            "StructuredOutput",
+            "--max-turns",
+            "2",
         ]
-        if request.system:
-            argv += ["--system-prompt", request.system]
         if self.model:
             argv += ["--model", self.model]
 
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            **_no_window_kwargs(),
-        )
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(b""), timeout=_EXEC_TIMEOUT
+            result = await run_cli(
+                argv,
+                stdin=prompt.strip().encode("utf-8"),
+                timeout=_EXEC_TIMEOUT,
             )
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise RuntimeError("Claude CLI structured mode timed out")
-        except asyncio.CancelledError:
-            # Outer cancellation (see complete()): kill the orphaned child before
-            # propagating, else it lingers up to _EXEC_TIMEOUT under detached launch.
-            proc.kill()
-            raise
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError("Claude CLI structured mode timed out") from exc
 
-        raw_out = (stdout or b"").decode("utf-8", "replace").strip()
+        raw_out = result.stdout.decode("utf-8", "replace").strip()
         if not raw_out:
             raise RuntimeError("Claude CLI structured mode returned empty output")
 
@@ -223,25 +205,24 @@ class ClaudeCLIProvider(ModelProvider):
         if not shutil.which(self.command):
             return ModelHealth(provider=self.name, available=False, error="not_installed")
         try:
-            proc = await asyncio.create_subprocess_exec(
-                self.command, "--version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                **_no_window_kwargs(),
+            result = await run_cli(
+                [self.command, "--version"],
+                timeout=_PROBE_TIMEOUT,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_PROBE_TIMEOUT)
-            if proc.returncode != 0:
+            if result.returncode != 0:
                 return ModelHealth(provider=self.name, available=False, error="version_check_failed")
-            version = (stdout or b"").decode("utf-8", "replace").strip()
+            version = result.stdout.decode("utf-8", "replace").strip()
         except Exception as e:
             return ModelHealth(provider=self.name, available=False, error=f"probe_failed:{e}")
 
         models_list = await self.list_models()
         slugs = [m["slug"] for m in models_list]
         return ModelHealth(
-            provider=self.name, available=True,
+            provider=self.name,
+            available=True,
             model=self.model or "opus",
-            models=slugs, model_metadata=models_list,
+            models=slugs,
+            model_metadata=models_list,
         )
 
 

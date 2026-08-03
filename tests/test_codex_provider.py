@@ -6,7 +6,7 @@ token. All subprocess interaction is mocked (no real codex calls). Covers the
 graceful degradation.
 """
 
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
 
 from aletheia.model_provider.codex_cli import CodexCLIProvider
 

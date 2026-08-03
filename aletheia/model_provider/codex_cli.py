@@ -13,7 +13,8 @@ import json
 import logging
 import shutil
 
-from aletheia.gateway.pidfile import _no_window_kwargs
+from aletheia.gateway.logs import redact_log_text
+from aletheia.model_provider.cli_harness import run_cli
 from aletheia.model_provider.base import (
     ModelProvider, ModelRequest, StructuredModelRequest,
     ModelResponse, ModelHealth,
@@ -52,40 +53,33 @@ class CodexCLIProvider(ModelProvider):
         # codex >=0.133 removed the `--ask-for-approval` flag from `exec`, so we
         # must not pass it or the whole command is rejected.
         argv = [
-            self.command, "exec", "--json", "--skip-git-repo-check",
-            "--sandbox", "read-only",
+            self.command,
+            "exec",
+            "--json",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "read-only",
         ]
         if self.model:
             argv += ["-m", self.model]
         argv.append("-")  # read prompt from stdin
 
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            **_no_window_kwargs(),
-        )
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(prompt.encode("utf-8")), timeout=_EXEC_TIMEOUT
+            result = await run_cli(
+                argv,
+                stdin=prompt.encode("utf-8"),
+                timeout=_EXEC_TIMEOUT,
             )
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise RuntimeError("Codex CLI timed out")
-        except asyncio.CancelledError:
-            # Outer cancellation (e.g. startup-gate per-provider timeout) would
-            # otherwise orphan the codex child up to _EXEC_TIMEOUT. Reap it.
-            proc.kill()
-            raise
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError("Codex CLI timed out") from exc
 
-        if proc.returncode != 0:
-            detail = (stderr or b"").decode("utf-8", "replace").strip()[:300]
+        if result.returncode != 0:
+            detail = redact_log_text(result.stderr.decode("utf-8", "replace").strip())[:300]
             raise RuntimeError(f"Codex CLI failed: {detail}")
 
         text_parts: list[str] = []
         usage: dict = {}
-        for line in (stdout or b"").decode("utf-8", "replace").splitlines():
+        for line in result.stdout.decode("utf-8", "replace").splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -158,31 +152,15 @@ class CodexCLIProvider(ModelProvider):
 
     async def _run(self, argv: list[str], timeout: int) -> str | None:
         """Run argv, return stdout text if rc==0 else None. Raises on spawn/timeout."""
-        proc = await asyncio.create_subprocess_exec(
-            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            **_no_window_kwargs(),
-        )
-        try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise
-        if proc.returncode != 0:
+        result = await run_cli(argv, timeout=timeout)
+        if result.returncode != 0:
             return None
-        return (stdout or b"").decode("utf-8", "replace")
+        return result.stdout.decode("utf-8", "replace")
 
     async def _run_rc(self, argv: list[str], timeout: int) -> int:
         """Run argv, return its exit code. Raises on spawn/timeout."""
-        proc = await asyncio.create_subprocess_exec(
-            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            **_no_window_kwargs(),
-        )
-        try:
-            await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise
-        return proc.returncode if proc.returncode is not None else 1
+        result = await run_cli(argv, timeout=timeout)
+        return result.returncode
 
 
 def _extract_json(text: str) -> dict:

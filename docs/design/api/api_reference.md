@@ -328,7 +328,7 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | POST | `/settings/runtime` | Scheduler intervals, timeouts |
 | POST | `/settings/app` | App-level settings (timezone, locale) |
 | POST | `/settings/pi_daemon` | PI daemon config (debounce, cooldown) |
-| POST | `/settings/model` | Save model/provider config |
+| POST | `/settings/model` | **Deprecated compatibility adapter** for legacy model/provider settings. The canonical write surface is `/settings/model-profiles`, `/settings/model-integrations`, and `/settings/model-routing`; responses include deprecation and successor-link headers. |
 | POST | `/settings/serenity` | Serenity research config (auto_promote, min_score_for_pi) |
 | POST | `/settings/guard` | Guard / lesson-promotion config (`auto_promote_enabled`, thresholds) |
 | POST | `/settings/operator` | Operator loop config |
@@ -410,13 +410,19 @@ reconciled.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/model` | Current model config (providers, default) |
-| GET | `/model/health` | Per-provider health status |
-| GET | `/model/broker` | Provider admission policy plus sanitized queue/concurrency/wait metrics |
-| POST | `/model/ping` | Ping specific provider |
-| GET | `/model/provider-types` | Available provider type definitions |
-| POST | `/model/detect-models` | Auto-detect models on a provider |
-| POST | `/model/test-candidate` | Test candidate model config |
+| GET | `/model` | Sanitized current model config: stable profile IDs, display names, categories, enabled state, write-only credential status, and independent Default/Deep/Fast role assignments. Never returns API keys or OAuth tokens. |
+| GET | `/model/health` | Per-profile health status; disabled profiles are reported without being invoked. |
+| GET | `/model/broker` | Provider admission policy plus sanitized queue/concurrency/wait metrics. |
+| POST | `/model/ping` | Ping a configured, enabled profile by stable ID. |
+| GET | `/model/provider-types` | Registry-backed API, CLI, and OAuth integration definitions, supported protocols, and singleton metadata. |
+| POST | `/model/detect-models` | Detect models for a saved profile or an unsaved API candidate. Candidate credentials are write-only. |
+| POST | `/model/test-candidate` | Test an unsaved API-profile candidate before saving it. Candidate credentials are write-only. |
+| POST | `/settings/model-profiles` | Create one API profile after server-side verification. Multiple profiles may share the same adapter type; `profile_id` is the stable identity and secret namespace. |
+| PATCH | `/settings/model-profiles/{profile_id}` | Verify and update an API profile. The stable ID and adapter type are immutable; display name, connection fields, key, model, limits, and enabled state may change. |
+| DELETE | `/settings/model-profiles/{profile_id}?confirm=true` | Confirmed API-profile deletion. Clears all Default/Deep/Fast references, deletes its credential, invalidates provider cache/broker state, and audits only sanitized metadata. |
+| PATCH | `/settings/model-integrations/{integration_id}` | Configure or enable/disable one registry-approved singleton CLI or OAuth integration. Arbitrary commands and duplicate vendor connections are rejected. |
+| POST | `/settings/model-routing` | Independently assign or clear `default_provider`, `deep_provider`, and `fast_provider`. Role assignment does not enable a profile; a disabled assignment is retained but runtime calls fail closed. |
+| POST | `/settings/model` | Deprecated compatibility adapter. It remains during the dual-surface phase and emits `Deprecation` and successor `Link` headers; no new caller should use it. |
 | POST | `/model/codex/login-start` | Start Codex OAuth flow |
 | GET | `/model/codex/login-status` | Codex OAuth status |
 | POST | `/model/codex/login-cancel` | Cancel Codex OAuth |

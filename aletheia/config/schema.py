@@ -223,6 +223,7 @@ class OperatorConfig(BaseModel):
 
 class ProviderConfig(BaseModel):
     type: str = ""
+    display_name: str = ""
     base_url: str = ""
     protocol: str = "chat_completions"
     model: str = "default"

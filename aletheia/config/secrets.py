@@ -14,7 +14,7 @@ class PreviewSecretAccessError(RuntimeError):
 def _get_keyring():
     """Try to import keyring; returns None if unavailable."""
     try:
-        import keyring
+        import keyring  # pyright: ignore[reportMissingImports]
         return keyring
     except Exception:
         return None
@@ -50,10 +50,37 @@ def get_secret(key: str) -> str | None:
     kr = _get_keyring()
     if kr:
         try:
-            return kr.get_password(_SERVICE_NAME, key)
+            value = kr.get_password(_SERVICE_NAME, key)
+            if value is not None:
+                return value
         except Exception:
             pass
     return _file_get(key)
+
+
+def delete_secret(key: str) -> None:
+    """Delete a secret from every Aletheia-owned credential store.
+
+    Deletion fails closed when an available keyring cannot be inspected. The
+    encrypted fallback is removed atomically before the keyring copy, so a
+    keyring deletion failure leaves the configured profile and retryable
+    keyring credential intact.
+    """
+    if is_preview_mode():
+        raise PreviewSecretAccessError("secret writes are blocked in preview mode")
+    kr = _get_keyring()
+    existing = None
+    if kr:
+        try:
+            existing = kr.get_password(_SERVICE_NAME, key)
+        except Exception as exc:
+            raise RuntimeError("failed to inspect secret in OS keyring") from exc
+    _file_delete(key)
+    if kr and existing is not None:
+        try:
+            kr.delete_password(_SERVICE_NAME, key)
+        except Exception as exc:
+            raise RuntimeError("failed to delete secret from OS keyring") from exc
 
 
 def _get_fernet():
@@ -92,6 +119,27 @@ def _file_get(key: str) -> str | None:
         return None
 
 
+def _file_delete(key: str) -> None:
+    import json
+    path = _fallback_path()
+    if not path.exists():
+        return
+    fernet = _get_fernet()
+    try:
+        data = json.loads(fernet.decrypt(path.read_bytes()).decode())
+    except Exception as exc:
+        raise RuntimeError("failed to read encrypted secret store") from exc
+    if key not in data:
+        return
+    del data[key]
+    replacement = path.with_name(path.name + ".tmp")
+    try:
+        replacement.write_bytes(fernet.encrypt(json.dumps(data).encode()))
+        replacement.replace(path)
+    finally:
+        replacement.unlink(missing_ok=True)
+
+
 def migrate_keyring_to_file() -> int:
     """Copy all secrets from the OS keyring into the encrypted file store.
 
@@ -110,7 +158,7 @@ def migrate_keyring_to_file() -> int:
     try:
         # Windows Credential Manager exposes enumerate via win32cred;
         # fall back to a known-key list when enumeration is unavailable.
-        import keyring.backends.Windows as _wb
+        import keyring.backends.Windows as _wb  # pyright: ignore[reportMissingImports]
         import win32cred  # type: ignore[import]
         creds = win32cred.CredEnumerate(None, 0) or []
         our_creds = [
