@@ -39,14 +39,10 @@ _DAILY_BARS = 90
 class StockRead(BaseModel):
     direction_bias: Literal["long", "short", "neutral"] = "neutral"
     confidence: Literal["high", "medium", "speculative"] = "speculative"
-    confidence_score: int = Field(
-        50, ge=0, le=100,
-        description="0=no idea, 50=balanced, 100=overwhelming evidence"
-    )
+    confidence_score: int = Field(50, ge=0, le=100, description="0=no idea, 50=balanced, 100=overwhelming evidence")
     rationale: str = ""
     key_observations: list[str] = Field(
-        default_factory=list,
-        description="2-4 bullets citing specific numbers from the indicators"
+        default_factory=list, description="2-4 bullets citing specific numbers from the indicators"
     )
 
 
@@ -78,6 +74,7 @@ Note: this is a paper-trading observation only — not financial advice."""
 
 class _FetchError:
     """Sentinel distinguishing hard errors from transient empty data."""
+
     __slots__ = ("reason",)
 
     def __init__(self, reason: str):
@@ -165,6 +162,7 @@ def _fetch_stock_indicators(ticker: str, _retry: bool = True) -> dict | _FetchEr
 
 def _render_stock_snapshot(data: dict) -> str:
     """Render indicator dict as markdown for LLM."""
+
     def fmt(v, f="{:.2f}"):
         return "n/a" if v is None else f.format(v)
 
@@ -212,7 +210,8 @@ async def _analyze_stock(
     snapshot_text = _render_stock_snapshot(data)
 
     record_step(
-        run_id, f"stock_read_input:{ticker}",
+        run_id,
+        f"stock_read_input:{ticker}",
         input_data=f"ticker={ticker} bars={data['bars']}",
         output_data=snapshot_text[:800],
     )
@@ -251,7 +250,8 @@ async def _analyze_stock(
             observations = [str(o)[:200] for o in obs[:4] if o]
 
     record_step(
-        run_id, f"stock_read_output:{ticker}",
+        run_id,
+        f"stock_read_output:{ticker}",
         input_data=None,
         output_data=f"direction={direction} confidence={confidence} score={confidence_score}",
     )
@@ -266,8 +266,10 @@ async def _analyze_stock(
         thesis_parts.append("Observations: " + " | ".join(observations))
     if confidence_score is not None:
         thesis_parts.append(f"score={confidence_score}/100")
-    thesis = " ".join(thesis_parts) if thesis_parts else (
-        f"No structured rationale (direction={direction}, confidence={confidence})"
+    thesis = (
+        " ".join(thesis_parts)
+        if thesis_parts
+        else (f"No structured rationale (direction={direction}, confidence={confidence})")
     )
 
     opp = Opportunity(

@@ -182,9 +182,7 @@ def _record_observer_llm_latency(duration_s: float) -> None:
         from aletheia.storage.sqlite import get_db
 
         db = get_db()
-        row = db.execute(
-            "SELECT value FROM settings WHERE key = ?", (_LLM_LATENCY_SETTINGS_KEY,)
-        ).fetchone()
+        row = db.execute("SELECT value FROM settings WHERE key = ?", (_LLM_LATENCY_SETTINGS_KEY,)).fetchone()
         existing: list[float] = []
         if row is not None:
             try:
@@ -212,9 +210,7 @@ def _read_observer_llm_latency_p50() -> float | None:
         import json as _json
         from aletheia.storage.sqlite import get_db
 
-        row = get_db().execute(
-            "SELECT value FROM settings WHERE key = ?", (_LLM_LATENCY_SETTINGS_KEY,)
-        ).fetchone()
+        row = get_db().execute("SELECT value FROM settings WHERE key = ?", (_LLM_LATENCY_SETTINGS_KEY,)).fetchone()
         if row is None:
             return None
         samples: list[float] = _json.loads(row["value"])
@@ -2027,18 +2023,11 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             # more than a safety factor, skip low-signal symbols immediately
             # so high-signal ones are not crowded out.
             _prefetched = _prefetch_map.get(instrument_key(instrument))
-            _sym_signal = (
-                _prefetched.signal_score
-                if _prefetched is not None and not _prefetched.failed
-                else 0.0
-            )
+            _sym_signal = _prefetched.signal_score if _prefetched is not None and not _prefetched.failed else 0.0
             async with _rr_lock:
                 _ewma_snapshot = _llm_ewma_s
                 _pending_snapshot = max(1, _pending_count)
-            if (
-                _ewma_snapshot is not None
-                and _sym_signal < _MARKET_OBSERVER_SIGNAL_PRESSURE_THRESHOLD
-            ):
+            if _ewma_snapshot is not None and _sym_signal < _MARKET_OBSERVER_SIGNAL_PRESSURE_THRESHOLD:
                 _remaining_s = _run_deadline - _monotonic()
                 # Estimate work outstanding: ewma * (concurrent slots already in
                 # flight are not counted — they'll finish regardless).  Use a 1.5x
@@ -2046,8 +2035,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 _estimated_work_s = _ewma_snapshot * _pending_snapshot * 1.5
                 if _estimated_work_s > _remaining_s:
                     logger.info(
-                        "[MO] %s: pressure-skip (signal=%.2f < %.2f, "
-                        "est_work=%.0fs > remaining=%.0fs)",
+                        "[MO] %s: pressure-skip (signal=%.2f < %.2f, est_work=%.0fs > remaining=%.0fs)",
                         instrument.symbol,
                         _sym_signal,
                         _MARKET_OBSERVER_SIGNAL_PRESSURE_THRESHOLD,

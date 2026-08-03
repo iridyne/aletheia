@@ -116,7 +116,14 @@ def prepend_environment_header(
     return render_context_adapter(system, adapter=selected)
 
 
-async def llm_complete(system: str, user: str, *, max_tokens: int = 800, provider: str | None = None, include_harness_header: bool | None = None) -> tuple[str | None, str | None]:
+async def llm_complete(
+    system: str,
+    user: str,
+    *,
+    max_tokens: int = 800,
+    provider: str | None = None,
+    include_harness_header: bool | None = None,
+) -> tuple[str | None, str | None]:
     """Call the model provider. Returns (content, error).
 
     Never raises — on any failure returns (None, error_message) so the agent can
@@ -134,11 +141,15 @@ async def llm_complete(system: str, user: str, *, max_tokens: int = 800, provide
     provider_name = provider
     try:
         provider_instance = get_provider(provider_name)
-        resp = await complete_with_fallback(ModelRequest(
-            messages=[{"role": "user", "content": user}],
-            system=prepend_environment_header(system, include=include_harness_header),
-            max_tokens=max_tokens,
-        ), provider=provider_instance, provider_name=provider_name)
+        resp = await complete_with_fallback(
+            ModelRequest(
+                messages=[{"role": "user", "content": user}],
+                system=prepend_environment_header(system, include=include_harness_header),
+                max_tokens=max_tokens,
+            ),
+            provider=provider_instance,
+            provider_name=provider_name,
+        )
         _record_llm(True)
         return resp.content, None
     except BudgetExceededError:
@@ -158,6 +169,7 @@ def _extract_json_object(text: str):
     the JSON block, and nested braces. Returns the parsed object or None.
     """
     import re
+
     # Strategy 1: try direct parse (fastest path for well-behaved models)
     text = text.strip()
     if text.startswith("{"):
@@ -202,7 +214,7 @@ def _extract_json_object(text: str):
             depth -= 1
             if depth == 0:
                 try:
-                    return json.loads(text[start:i + 1])
+                    return json.loads(text[start : i + 1])
                 except (json.JSONDecodeError, TypeError):
                     return None
     return None
@@ -251,10 +263,13 @@ async def llm_structured(
         schema_json = json.dumps(schema_dict)
         base_messages = [
             {"role": "user", "content": user},
-            {"role": "user", "content": (
-                f"Respond with ONLY a raw JSON object matching this schema (no markdown fences, "
-                f"no explanation, no text before or after — just the JSON): {schema_json}"
-            )},
+            {
+                "role": "user",
+                "content": (
+                    f"Respond with ONLY a raw JSON object matching this schema (no markdown fences, "
+                    f"no explanation, no text before or after — just the JSON): {schema_json}"
+                ),
+            },
         ]
         # Prepend /no_think for Qwen3-series reasoning models: without it the model
         # exhausts the token budget on internal reasoning and returns empty text output.
@@ -285,33 +300,45 @@ async def llm_structured(
             messages = list(base_messages)
             if attempt == 1:
                 # Stronger corrective prompt + emphasize immediate JSON output
-                messages.append({"role": "user", "content": (
-                    "IMPORTANT: Your previous reply was invalid. "
-                    "Output ONLY the JSON object now. "
-                    "Do NOT include any thinking, explanation, or markdown. "
-                    "Start your reply with '{' and end with '}'. Nothing else."
-                )})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "IMPORTANT: Your previous reply was invalid. "
+                            "Output ONLY the JSON object now. "
+                            "Do NOT include any thinking, explanation, or markdown. "
+                            "Start your reply with '{' and end with '}'. Nothing else."
+                        ),
+                    }
+                )
             elif attempt >= 2:
                 # Final attempt: repair mode — show the model its previous bad output
                 # and ask it to fix it. Simpler task than generating from scratch.
                 repair_hint = last_bad_output[:500] if last_bad_output else "(empty)"
-                messages.append({"role": "user", "content": (
-                    f"FIX THIS JSON. Your previous output was:\n"
-                    f"```\n{repair_hint}\n```\n"
-                    f"Reply with ONLY the corrected JSON. Start with '{{' and end with '}}'. "
-                    f"No extra text, no explanation."
-                )})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"FIX THIS JSON. Your previous output was:\n"
+                            f"```\n{repair_hint}\n```\n"
+                            f"Reply with ONLY the corrected JSON. Start with '{{' and end with '}}'. "
+                            f"No extra text, no explanation."
+                        ),
+                    }
+                )
             remaining = deadline - loop.time()
             if remaining <= 0:
-                logger.warning("LLM structured call exhausted %.0fs total wall-clock budget",
-                               _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC)
+                logger.warning(
+                    "LLM structured call exhausted %.0fs total wall-clock budget", _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC
+                )
                 _record_llm(False)
                 return _failure("llm_unavailable: structured_timeout")
             try:
                 resp = await asyncio.wait_for(
                     complete_with_fallback(
                         ModelRequest(
-                            messages=messages, system=structured_system,
+                            messages=messages,
+                            system=structured_system,
                             temperature=0.3 if attempt == 0 else 0.0,
                             max_tokens=attempt_max_tokens,
                         ),
@@ -321,8 +348,9 @@ async def llm_structured(
                     timeout=remaining,
                 )
             except TimeoutError:
-                logger.warning("LLM structured call exceeded %.0fs total wall-clock budget",
-                               _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC)
+                logger.warning(
+                    "LLM structured call exceeded %.0fs total wall-clock budget", _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC
+                )
                 _record_llm(False)
                 return _failure("llm_unavailable: structured_timeout")
             content = (resp.content or "").strip()
@@ -339,17 +367,23 @@ async def llm_structured(
                             "LLM structured call: empty content with %d output_tokens "
                             "(reasoning model exhausted budget) — retrying with %d tokens "
                             "(attempt %d/%d)",
-                            output_tokens, next_budget, attempt + 1, max_attempts,
+                            output_tokens,
+                            next_budget,
+                            attempt + 1,
+                            max_attempts,
                         )
                         continue
-                    logger.warning("LLM structured call: empty content with %d output_tokens — "
-                                   "reasoning model exhausted budget on reasoning phase",
-                                   output_tokens)
+                    logger.warning(
+                        "LLM structured call: empty content with %d output_tokens — "
+                        "reasoning model exhausted budget on reasoning phase",
+                        output_tokens,
+                    )
                     return _failure("structured_empty_content")
                 if attempt < max_attempts - 1:
                     logger.warning(
-                        "LLM structured call: empty content, no output_tokens — retrying "
-                        "(attempt %d/%d)", attempt + 1, max_attempts,
+                        "LLM structured call: empty content, no output_tokens — retrying (attempt %d/%d)",
+                        attempt + 1,
+                        max_attempts,
                     )
                     continue
                 logger.warning("LLM structured call: empty content, no completion tokens")
@@ -365,7 +399,8 @@ async def llm_structured(
                 if attempt < max_attempts - 1:
                     logger.warning(
                         "LLM structured call: JSON value is not an object (attempt %d/%d) — retrying",
-                        attempt + 1, max_attempts,
+                        attempt + 1,
+                        max_attempts,
                     )
                     continue
                 break
@@ -376,7 +411,10 @@ async def llm_structured(
                 logger.warning(
                     "LLM structured call: parse failure, output likely truncated "
                     "(%d/%d tokens used) — retrying with more tokens (attempt %d/%d)",
-                    output_tokens, attempt_max_tokens, attempt + 1, max_attempts,
+                    output_tokens,
+                    attempt_max_tokens,
+                    attempt + 1,
+                    max_attempts,
                 )
                 continue
 
@@ -384,7 +422,9 @@ async def llm_structured(
             if attempt < max_attempts - 1:
                 logger.warning(
                     "LLM structured call: parse failure (attempt %d/%d), content_len=%d — retrying",
-                    attempt + 1, max_attempts, len(content),
+                    attempt + 1,
+                    max_attempts,
+                    len(content),
                 )
                 continue
             last_err = "structured_parse_error: no valid JSON object found in response"
@@ -431,7 +471,14 @@ def _schema_defaults_dict(schema_dict: dict) -> dict:
     return result
 
 
-async def llm_stream(system: str, user: str, *, max_tokens: int = 800, provider: str | None = None, include_harness_header: bool | None = None) -> AsyncIterator[StreamChunk]:
+async def llm_stream(
+    system: str,
+    user: str,
+    *,
+    max_tokens: int = 800,
+    provider: str | None = None,
+    include_harness_header: bool | None = None,
+) -> AsyncIterator[StreamChunk]:
     """Stream response chunks from the provider.
 
     Yields StreamChunk objects. On failure yields a single chunk with done=True.
@@ -445,11 +492,15 @@ async def llm_stream(system: str, user: str, *, max_tokens: int = 800, provider:
         from aletheia.model_provider.broker import brokered_stream
 
         resolved_name = provider_name or load_config().models.default_provider
-        async for chunk in brokered_stream(resolved_name, provider_instance, ModelRequest(
-            messages=[{"role": "user", "content": user}],
-            system=prepend_environment_header(system, include=include_harness_header),
-            max_tokens=max_tokens,
-        )):
+        async for chunk in brokered_stream(
+            resolved_name,
+            provider_instance,
+            ModelRequest(
+                messages=[{"role": "user", "content": user}],
+                system=prepend_environment_header(system, include=include_harness_header),
+                max_tokens=max_tokens,
+            ),
+        ):
             yield chunk
         _record_llm(True)
     except Exception as e:
@@ -465,6 +516,7 @@ def _record_llm(success: bool) -> None:
     """
     try:
         from aletheia.agent_runtime.health import record_llm_success, record_llm_failure
+
         (record_llm_success if success else record_llm_failure)()
     except Exception:
         pass
@@ -502,9 +554,7 @@ def _buffer_telemetry(run_id: str, event: dict) -> None:
         if len(pending) >= _TELEMETRY_MAX_PENDING_PER_RUN:
             _telemetry_metrics["dropped"] += 1
             return
-        event["created_at"] = datetime.now(timezone.utc).strftime(
-            "%Y-%m-%d %H:%M:%S.%f"
-        )
+        event["created_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
         pending.append(event)
         _telemetry_metrics["buffered"] += 1
         should_flush = len(pending) >= _TELEMETRY_FLUSH_SIZE
@@ -552,8 +602,14 @@ def flush_all_agent_telemetry() -> int:
     return sum(flush_run_telemetry(run_id) for run_id in run_ids)
 
 
-def log_tool(run_id: str | None, tool_name: str, tool_class: str, permitted: bool,
-             output: str | None = None, input_data: str | None = None) -> None:
+def log_tool(
+    run_id: str | None,
+    tool_name: str,
+    tool_class: str,
+    permitted: bool,
+    output: str | None = None,
+    input_data: str | None = None,
+) -> None:
     """Best-effort tool-call logging (never raises).
 
     Writes only to `agent_tool_calls` — the structured tool ledger. The old
@@ -564,19 +620,21 @@ def log_tool(run_id: str | None, tool_name: str, tool_class: str, permitted: boo
     """
     if not run_id:
         return
-    _buffer_telemetry(run_id, {
-        "kind": "tool",
-        "run_id": run_id,
-        "tool_name": tool_name,
-        "tool_class": tool_class,
-        "permitted": permitted,
-        "output_data": output,
-        "input_data": input_data,
-    })
+    _buffer_telemetry(
+        run_id,
+        {
+            "kind": "tool",
+            "run_id": run_id,
+            "tool_name": tool_name,
+            "tool_class": tool_class,
+            "permitted": permitted,
+            "output_data": output,
+            "input_data": input_data,
+        },
+    )
 
 
-def record_step(run_id: str | None, action: str, input_data: str | None = None,
-                output_data: str | None = None) -> None:
+def record_step(run_id: str | None, action: str, input_data: str | None = None, output_data: str | None = None) -> None:
     """Record a non-tool reasoning step (e.g. 'considered N lessons', 'skipped: neutral bias').
 
     Use this for decision points that aren't tool calls — context the reasoning trace
@@ -584,14 +642,17 @@ def record_step(run_id: str | None, action: str, input_data: str | None = None,
     """
     if not run_id:
         return
-    _buffer_telemetry(run_id, {
-        "kind": "step",
-        "run_id": run_id,
-        "step_number": _next_step(run_id),
-        "action": action,
-        "input_data": input_data,
-        "output_data": output_data,
-    })
+    _buffer_telemetry(
+        run_id,
+        {
+            "kind": "step",
+            "run_id": run_id,
+            "step_number": _next_step(run_id),
+            "action": action,
+            "input_data": input_data,
+            "output_data": output_data,
+        },
+    )
 
 
 def observer_llm_deadline(

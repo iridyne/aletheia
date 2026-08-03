@@ -1084,18 +1084,26 @@ async def test_per_symbol_deadline_passed_to_llm_structured(tmp_path, monkeypatc
 
     instruments = [_Instrument("D1")]
     empty_cache = mo._DbCache(
-        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+        perp_structures={},
+        funding_hl={},
+        funding_hl_pred={},
+        news={},
+        onchain_rows=[],
     )
     empty_pf = {
-        "passed": True, "rsi": 20.0, "atr_pct": None,
-        "keyword_hits": [], "matched_rules": ["rsi_deviation"],
+        "passed": True,
+        "rsi": 20.0,
+        "atr_pct": None,
+        "keyword_hits": [],
+        "matched_rules": ["rsi_deviation"],
     }
     captured_deadline: list[float] = []
 
     monkeypatch.setattr(mo, "_monotonic", time.monotonic)
     monkeypatch.setattr(mo, "is_tool_permitted", lambda *_a, **_k: True)
     monkeypatch.setattr(
-        mo, "load_config",
+        mo,
+        "load_config",
         lambda: SimpleNamespace(
             universe=SimpleNamespace(enabled=False, max_candidates=1),
             market_data=SimpleNamespace(prediction_enabled=False, ccxt_exchange="fixture"),
@@ -1111,9 +1119,13 @@ async def test_per_symbol_deadline_passed_to_llm_structured(tmp_path, monkeypatc
 
     async def fake_prefetch(instrument, **_kwargs):
         return mo._SymbolPrefetch(
-            context_str=instrument.symbol, debug={}, pre_filter=empty_pf,
-            signal_score=1.0, funding_rate_val=None,
-            open_interest_val=None, oi_delta_val=None,
+            context_str=instrument.symbol,
+            debug={},
+            pre_filter=empty_pf,
+            signal_score=1.0,
+            funding_rate_val=None,
+            open_interest_val=None,
+            oi_delta_val=None,
         )
 
     async def fake_analyze(*, llm_deadline=None, **_kwargs):
@@ -1160,11 +1172,18 @@ async def test_per_symbol_deadline_respects_remaining_budget(tmp_path, monkeypat
 
     instruments = [_Instrument("E1")]
     empty_cache = mo._DbCache(
-        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+        perp_structures={},
+        funding_hl={},
+        funding_hl_pred={},
+        news={},
+        onchain_rows=[],
     )
     empty_pf = {
-        "passed": True, "rsi": 20.0, "atr_pct": None,
-        "keyword_hits": [], "matched_rules": ["rsi_deviation"],
+        "passed": True,
+        "rsi": 20.0,
+        "atr_pct": None,
+        "keyword_hits": [],
+        "matched_rules": ["rsi_deviation"],
     }
     captured_deadline: list[float] = []
 
@@ -1178,7 +1197,8 @@ async def test_per_symbol_deadline_respects_remaining_budget(tmp_path, monkeypat
     monkeypatch.setattr(mo, "_monotonic", fake_monotonic)
     monkeypatch.setattr(mo, "is_tool_permitted", lambda *_a, **_k: True)
     monkeypatch.setattr(
-        mo, "load_config",
+        mo,
+        "load_config",
         lambda: SimpleNamespace(
             universe=SimpleNamespace(enabled=False, max_candidates=1),
             market_data=SimpleNamespace(prediction_enabled=False, ccxt_exchange="fixture"),
@@ -1194,9 +1214,13 @@ async def test_per_symbol_deadline_respects_remaining_budget(tmp_path, monkeypat
 
     async def fake_prefetch(instrument, **_kwargs):
         return mo._SymbolPrefetch(
-            context_str=instrument.symbol, debug={}, pre_filter=empty_pf,
-            signal_score=1.0, funding_rate_val=None,
-            open_interest_val=None, oi_delta_val=None,
+            context_str=instrument.symbol,
+            debug={},
+            pre_filter=empty_pf,
+            signal_score=1.0,
+            funding_rate_val=None,
+            open_interest_val=None,
+            oi_delta_val=None,
         )
 
     async def fake_analyze(*, llm_deadline=None, **_kwargs):
@@ -1261,18 +1285,26 @@ async def test_fair_budget_distributes_remaining_time_evenly(tmp_path, monkeypat
 
     instruments = [_Instrument(s) for s in ("F1", "F2", "F3", "F4")]
     empty_cache = mo._DbCache(
-        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+        perp_structures={},
+        funding_hl={},
+        funding_hl_pred={},
+        news={},
+        onchain_rows=[],
     )
     empty_pf = {
-        "passed": True, "rsi": 20.0, "atr_pct": None,
-        "keyword_hits": [], "matched_rules": ["rsi_deviation"],
+        "passed": True,
+        "rsi": 20.0,
+        "atr_pct": None,
+        "keyword_hits": [],
+        "matched_rules": ["rsi_deviation"],
     }
     captured_deadlines: list[float] = []
 
     monkeypatch.setattr(mo, "_monotonic", fake_monotonic)
     monkeypatch.setattr(mo, "is_tool_permitted", lambda *_a, **_k: True)
     monkeypatch.setattr(
-        mo, "load_config",
+        mo,
+        "load_config",
         lambda: SimpleNamespace(
             universe=SimpleNamespace(enabled=False, max_candidates=4),
             market_data=SimpleNamespace(prediction_enabled=False, ccxt_exchange="fixture"),
@@ -1288,9 +1320,13 @@ async def test_fair_budget_distributes_remaining_time_evenly(tmp_path, monkeypat
 
     async def fake_prefetch(instrument, **_kwargs):
         return mo._SymbolPrefetch(
-            context_str=instrument.symbol, debug={}, pre_filter=empty_pf,
-            signal_score=1.0, funding_rate_val=None,
-            open_interest_val=None, oi_delta_val=None,
+            context_str=instrument.symbol,
+            debug={},
+            pre_filter=empty_pf,
+            signal_score=1.0,
+            funding_rate_val=None,
+            open_interest_val=None,
+            oi_delta_val=None,
         )
 
     async def fake_analyze(*, llm_deadline=None, **_kwargs):
@@ -1315,13 +1351,9 @@ async def test_fair_budget_distributes_remaining_time_evenly(tmp_path, monkeypat
     for dl in captured_deadlines:
         budget_given = dl - now
         # Each deadline must not exceed cap + small test-latency margin
-        assert budget_given <= cap + 2.0, (
-            f"deadline budget {budget_given:.1f}s exceeds cap {cap}s"
-        )
+        assert budget_given <= cap + 2.0, f"deadline budget {budget_given:.1f}s exceeds cap {cap}s"
         # And must not be less than 10s (the floor)
-        assert budget_given >= 10.0 - 2.0, (
-            f"deadline budget {budget_given:.1f}s is below 10s floor"
-        )
+        assert budget_given >= 10.0 - 2.0, f"deadline budget {budget_given:.1f}s is below 10s floor"
 
 
 @pytest.mark.asyncio
@@ -1351,18 +1383,26 @@ async def test_fair_budget_clamps_to_minimum_floor(tmp_path, monkeypatch):
 
     instruments = [_Instrument(s) for s in ("G1", "G2", "G3")]
     empty_cache = mo._DbCache(
-        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+        perp_structures={},
+        funding_hl={},
+        funding_hl_pred={},
+        news={},
+        onchain_rows=[],
     )
     empty_pf = {
-        "passed": True, "rsi": 20.0, "atr_pct": None,
-        "keyword_hits": [], "matched_rules": ["rsi_deviation"],
+        "passed": True,
+        "rsi": 20.0,
+        "atr_pct": None,
+        "keyword_hits": [],
+        "matched_rules": ["rsi_deviation"],
     }
     captured_deadlines: list[float] = []
 
     monkeypatch.setattr(mo, "_monotonic", fake_monotonic)
     monkeypatch.setattr(mo, "is_tool_permitted", lambda *_a, **_k: True)
     monkeypatch.setattr(
-        mo, "load_config",
+        mo,
+        "load_config",
         lambda: SimpleNamespace(
             universe=SimpleNamespace(enabled=False, max_candidates=3),
             market_data=SimpleNamespace(prediction_enabled=False, ccxt_exchange="fixture"),
@@ -1378,9 +1418,13 @@ async def test_fair_budget_clamps_to_minimum_floor(tmp_path, monkeypatch):
 
     async def fake_prefetch(instrument, **_kwargs):
         return mo._SymbolPrefetch(
-            context_str=instrument.symbol, debug={}, pre_filter=empty_pf,
-            signal_score=1.0, funding_rate_val=None,
-            open_interest_val=None, oi_delta_val=None,
+            context_str=instrument.symbol,
+            debug={},
+            pre_filter=empty_pf,
+            signal_score=1.0,
+            funding_rate_val=None,
+            open_interest_val=None,
+            oi_delta_val=None,
         )
 
     async def fake_analyze(*, llm_deadline=None, **_kwargs):
@@ -1405,9 +1449,7 @@ async def test_fair_budget_clamps_to_minimum_floor(tmp_path, monkeypatch):
             budget_given = dl - now
             # With 15s total and 3 symbols, fair = 5s; floor = 10s → each gets 10s.
             # Allow generous +3s test margin.
-            assert budget_given >= 10.0 - 3.0, (
-                f"expected floor ~10s, got {budget_given:.1f}s"
-            )
+            assert budget_given >= 10.0 - 3.0, f"expected floor ~10s, got {budget_given:.1f}s"
 
 
 # ---------------------------------------------------------------------------
@@ -1451,18 +1493,25 @@ async def test_pressure_skips_low_signal_symbols_when_budget_tight(tmp_path, mon
         return real_start + clock["elapsed"]
 
     instruments = [
-        _Instrument("H1", 2.0),   # high signal — gets called, 20s latency
-        _Instrument("H2", 0.3),   # low signal — should be pressure-skipped
-        _Instrument("H3", 0.3),   # low signal — should be pressure-skipped
+        _Instrument("H1", 2.0),  # high signal — gets called, 20s latency
+        _Instrument("H2", 0.3),  # low signal — should be pressure-skipped
+        _Instrument("H3", 0.3),  # low signal — should be pressure-skipped
     ]
     empty_cache = mo._DbCache(
-        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+        perp_structures={},
+        funding_hl={},
+        funding_hl_pred={},
+        news={},
+        onchain_rows=[],
     )
 
     def make_pf(signal):
         return {
-            "passed": signal >= 1.0, "rsi": 20.0, "atr_pct": None,
-            "keyword_hits": [], "matched_rules": ["rsi_deviation"] if signal >= 1.0 else [],
+            "passed": signal >= 1.0,
+            "rsi": 20.0,
+            "atr_pct": None,
+            "keyword_hits": [],
+            "matched_rules": ["rsi_deviation"] if signal >= 1.0 else [],
         }
 
     analyzed: list[str] = []
@@ -1470,7 +1519,8 @@ async def test_pressure_skips_low_signal_symbols_when_budget_tight(tmp_path, mon
     monkeypatch.setattr(mo, "_monotonic", fake_monotonic)
     monkeypatch.setattr(mo, "is_tool_permitted", lambda *_a, **_k: True)
     monkeypatch.setattr(
-        mo, "load_config",
+        mo,
+        "load_config",
         lambda: SimpleNamespace(
             universe=SimpleNamespace(enabled=False, max_candidates=3),
             market_data=SimpleNamespace(prediction_enabled=False, ccxt_exchange="fixture"),
@@ -1494,7 +1544,9 @@ async def test_pressure_skips_low_signal_symbols_when_budget_tight(tmp_path, mon
             debug={},
             pre_filter=make_pf(signal),
             signal_score=signal,
-            funding_rate_val=None, open_interest_val=None, oi_delta_val=None,
+            funding_rate_val=None,
+            open_interest_val=None,
+            oi_delta_val=None,
         )
 
     async def fake_analyze(*, symbol, **_kwargs):
@@ -1549,17 +1601,24 @@ async def test_pressure_does_not_skip_high_signal_symbols(tmp_path, monkeypatch)
         return real_start + clock["elapsed"]
 
     instruments = [
-        _Instrument("I1", 0.3),   # low signal — first, sets EWMA
-        _Instrument("I2", 2.0),   # high signal — must NOT be skipped despite pressure
+        _Instrument("I1", 0.3),  # low signal — first, sets EWMA
+        _Instrument("I2", 2.0),  # high signal — must NOT be skipped despite pressure
     ]
     empty_cache = mo._DbCache(
-        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+        perp_structures={},
+        funding_hl={},
+        funding_hl_pred={},
+        news={},
+        onchain_rows=[],
     )
 
     def make_pf(signal):
         return {
-            "passed": signal >= 1.0, "rsi": 20.0, "atr_pct": None,
-            "keyword_hits": [], "matched_rules": ["rsi_deviation"] if signal >= 1.0 else [],
+            "passed": signal >= 1.0,
+            "rsi": 20.0,
+            "atr_pct": None,
+            "keyword_hits": [],
+            "matched_rules": ["rsi_deviation"] if signal >= 1.0 else [],
         }
 
     analyzed: list[str] = []
@@ -1567,7 +1626,8 @@ async def test_pressure_does_not_skip_high_signal_symbols(tmp_path, monkeypatch)
     monkeypatch.setattr(mo, "_monotonic", fake_monotonic)
     monkeypatch.setattr(mo, "is_tool_permitted", lambda *_a, **_k: True)
     monkeypatch.setattr(
-        mo, "load_config",
+        mo,
+        "load_config",
         lambda: SimpleNamespace(
             universe=SimpleNamespace(enabled=False, max_candidates=2),
             market_data=SimpleNamespace(prediction_enabled=False, ccxt_exchange="fixture"),
@@ -1588,7 +1648,9 @@ async def test_pressure_does_not_skip_high_signal_symbols(tmp_path, monkeypatch)
             debug={},
             pre_filter=make_pf(signal),
             signal_score=signal,
-            funding_rate_val=None, open_interest_val=None, oi_delta_val=None,
+            funding_rate_val=None,
+            open_interest_val=None,
+            oi_delta_val=None,
         )
 
     async def fake_analyze(*, symbol, **_kwargs):
@@ -1607,9 +1669,7 @@ async def test_pressure_does_not_skip_high_signal_symbols(tmp_path, monkeypatch)
     result = await mo.run_market_observer(permission_mode="Observe", run_id="no-skip-high-signal")
 
     # I2 has high signal (2.0 >= 0.5 threshold) → must NOT be pressure-skipped
-    assert "I2" in analyzed, (
-        "High-signal symbol must never be pressure-skipped regardless of budget pressure"
-    )
+    assert "I2" in analyzed, "High-signal symbol must never be pressure-skipped regardless of budget pressure"
     assert result["errors"] == []
 
 
@@ -1669,13 +1729,10 @@ def test_latency_history_rolling_window_capped_at_n(tmp_path, monkeypatch):
 
     # Check the stored list length
     from aletheia.storage.sqlite import get_db
-    row = get_db().execute(
-        "SELECT value FROM settings WHERE key = ?", (_LLM_LATENCY_SETTINGS_KEY,)
-    ).fetchone()
+
+    row = get_db().execute("SELECT value FROM settings WHERE key = ?", (_LLM_LATENCY_SETTINGS_KEY,)).fetchone()
     assert row is not None
     stored = json.loads(row["value"])
-    assert len(stored) == _LLM_LATENCY_ROLLING_N, (
-        f"Expected {_LLM_LATENCY_ROLLING_N} entries, got {len(stored)}"
-    )
+    assert len(stored) == _LLM_LATENCY_ROLLING_N, f"Expected {_LLM_LATENCY_ROLLING_N} entries, got {len(stored)}"
     # All should be 5.0
     assert all(v == 5.0 for v in stored)
