@@ -460,7 +460,8 @@ async def test_prefetch_time_is_charged_to_same_serial_loop_deadline(
     assert captured["deadline"] == pytest.approx(560.0)
     assert captured["remaining_before_prefetch"] == pytest.approx(440.0)
     assert analyzed == ["A"]
-    assert result["errors"] == [
+    assert result["errors"] == []
+    assert result["warnings"] == [
         "loop_budget_exceeded: processed 1/3, skipped 2 "
         "(wall-clock cap 460s < 500s job timeout — avoids thread leak)"
     ]
