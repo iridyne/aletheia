@@ -3388,7 +3388,12 @@ function AppRows({ status, settings, qc }: any) {
   const app = settings?.app as any || {}
   const runtime = settings?.runtime as any || {}
   const remoteControl = settings?.remote_control as any || {}
+  const remoteBindHosts = Array.isArray(remoteControl.bind_hosts) ? remoteControl.bind_hosts as string[] : []
   const [remoteToken, setRemoteToken] = useState('')
+  const { data: remoteInterfaces } = useQuery({
+    queryKey: ['remote-control-interfaces'],
+    queryFn: api.getRemoteControlInterfaces,
+  })
   const autoBrowser = app.auto_open_browser !== false
   const bootCommit = status?.boot_commit as string | null | undefined
   const currentCommit = status?.current_commit as string | null | undefined
@@ -3403,7 +3408,7 @@ function AppRows({ status, settings, qc }: any) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
   const remoteControlMut = useMutation({
-    mutationFn: (body: { enabled?: boolean; require_token?: boolean; api_token?: string }) => api.updateRemoteControl(body),
+    mutationFn: (body: { enabled?: boolean; bind_hosts?: string[]; require_token?: boolean; api_token?: string }) => api.updateRemoteControl(body),
     onSuccess: () => {
       if (remoteToken.trim()) api.setRemoteControlToken(remoteToken)
       qc.invalidateQueries({ queryKey: ['settings'] })
@@ -3437,32 +3442,40 @@ function AppRows({ status, settings, qc }: any) {
         <span className="mono text-sm">{app.dashboard_port || 8787}</span>
         <span className="text-xs text-muted">(read-only — set via config.yaml)</span>
       </Row>
-      <Row label="Bind host" hint="The network interface the dashboard server listens on. Change requires gateway restart. Non-loopback exposes the API to the local network without multi-user auth.">
-        <select
-          value={app.bind_host || '0.0.0.0'}
-          onChange={e => appMut.mutate({ bind_host: e.target.value })}
-          disabled={appMut.isPending}
-          className="w-auto"
-        >
-          <option value="0.0.0.0">0.0.0.0 — All interfaces (default)</option>
-          <option value="127.0.0.1">127.0.0.1 — Localhost only</option>
-          <option value="::">:: — All interfaces (IPv6)</option>
-          <option value="::1">::1 — Localhost only (IPv6)</option>
-        </select>
-        {(app.bind_host || '0.0.0.0') !== '127.0.0.1' && (app.bind_host || '0.0.0.0') !== '::1' && (
-          <span className="text-xs text-warning">Network-exposed — restart required to apply</span>
-        )}
-        {((app.bind_host || '0.0.0.0') === '127.0.0.1' || (app.bind_host || '0.0.0.0') === '::1') && (
-          <span className="text-xs text-muted">Restart required to apply</span>
-        )}
+      <Row label="Listener binding" hint="Remote Control owns the dashboard listener. The internal backend is always loopback-only and is never exposed on :8788.">
+        <span className="text-sm">{remoteControl.enabled ? `${remoteBindHosts.length} selected adapter address(es)` : 'Localhost only'}</span>
+        <span className="text-xs text-muted">Restart gateway after changing Remote Control adapters.</span>
       </Row>
-      <Row label="Remote Control" hint="Allow HTTP API control over EasyTier or another private network. It is independent from Cloudflare Tunnel and is off by default.">
+      <Row label="Remote Control" hint="Allow HTTP API control over selected EasyTier or LAN adapter addresses. It is off by default and requires a gateway restart after changes.">
         <Toggle
           checked={!!remoteControl.enabled}
           onChange={enabled => remoteControlMut.mutate({ enabled })}
-          disabled={remoteControlMut.isPending}
+          disabled={remoteControlMut.isPending || (!remoteControl.enabled && remoteBindHosts.length === 0)}
         />
-        <span className="text-xs text-muted">When enabled without Token protection, any device that can reach this API can use its existing read/write routes.</span>
+        <span className="text-xs text-muted">{remoteBindHosts.length === 0 ? 'Select at least one adapter below before enabling.' : 'Only selected adapter addresses will listen on :8787.'}</span>
+      </Row>
+      <Row label="Remote network adapters" hint="Detected IPv4 addresses. Select one or more interfaces for Remote Control; inactive adapters are shown for diagnosis but cannot accept traffic until they are up.">
+        <div className="flex flex-col gap-2">
+          {(remoteInterfaces?.interfaces || []).map(iface => (
+            <label key={`${iface.name}-${iface.address}`} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={remoteBindHosts.includes(iface.address)}
+                onChange={event => {
+                  const bind_hosts = event.target.checked
+                    ? [...remoteBindHosts, iface.address]
+                    : remoteBindHosts.filter(host => host !== iface.address)
+                  remoteControlMut.mutate({ bind_hosts })
+                }}
+                disabled={remoteControlMut.isPending || !iface.is_up}
+              />
+              <span className="mono">{iface.name} · {iface.address}/{iface.netmask || 'unknown'}</span>
+              {!iface.is_up && <span className="text-xs text-warning">inactive</span>}
+            </label>
+          ))}
+          {!remoteInterfaces && <span className="text-xs text-muted">Loading network adapters…</span>}
+          {remoteInterfaces?.interfaces.length === 0 && <span className="text-xs text-warning">No non-loopback IPv4 adapter is available.</span>}
+        </div>
       </Row>
       <Row label="Remote Control Token" hint="Optional owner-token protection for every private API. Turn it on only after entering a Token; Cloudflare Tunnel always requires a Token.">
         <Toggle

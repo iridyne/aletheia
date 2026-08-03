@@ -97,7 +97,8 @@ async def test_infra_status_includes_runtime_routing_context(client, tmp_path, m
     data = resp.json()
     assert data["ok"] is True
     assert data["api"] is True
-    assert data["host"] == "0.0.0.0"
+    assert data["host"] == "127.0.0.1"
+    assert data["remote_control_hosts"] == []
     assert data["port"] == 8787
     assert data["runtime_mode"] == "current"
     assert data["runtime_state"] == "current"

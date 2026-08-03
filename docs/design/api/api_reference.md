@@ -9,11 +9,15 @@
 ## Conventions
 
 - **Base URL**: `http://localhost:8787/api/` (via frontdoor proxy)
+- **Remote Control**: The frontdoor listens only on `127.0.0.1` by default. Enabling
+  Remote Control requires selecting one or more detected non-loopback IPv4 adapter addresses;
+  after a gateway restart, only those addresses expose `:8787`. The internal backend `:8788`
+  always remains loopback-only. This transport is independent from Cloudflare Tunnel (for example,
+  it can use EasyTier).
 - **Auth**: None while tunnel mode is disabled and Remote Control Token protection is off.
-  Cloudflare tunnel always requires `X-Aletheia-Token`. Remote Control is transport-independent
-  (for example, EasyTier) and defaults off; when enabled, its `require_token` option is also off
-  by default for MVP convenience. Enabling that option requires a write-only configured token and
-  makes every private `/api/*` and `/_infra/*` route fail closed without it.
+  Cloudflare tunnel always requires `X-Aletheia-Token`. Remote Control Token protection defaults
+  off for MVP convenience; enabling it requires a write-only configured token and makes every
+  private `/api/*` and `/_infra/*` route fail closed without it.
 - **Error format**: `{"detail": "message"}` with appropriate HTTP status
 - **Pagination**: `?limit=N&offset=M` where supported
 - **Timestamps**: ISO 8601 UTC strings in request/response bodies
@@ -352,7 +356,8 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | POST | `/settings/tunnel` | Tunnel config |
 | POST | `/settings/tunnel/start` | Start tunnel |
 | POST | `/settings/tunnel/stop` | Stop tunnel |
-| POST | `/settings/remote-control` | Enable/disable private-network Remote Control; its optional Token protection defaults off and can save a write-only owner API token. |
+| GET | `/settings/remote-control/interfaces` | Enumerate local non-loopback IPv4 adapters for Remote Control selection. |
+| POST | `/settings/remote-control` | Save selected listener addresses, enable/disable Remote Control, and optionally save/require a write-only owner API token; listener changes require gateway restart. |
 
 `GET /settings/paper-account` adds:
 

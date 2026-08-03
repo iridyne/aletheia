@@ -27,6 +27,7 @@ from aletheia.gateway.pidfile import (
     find_gateway_orphans, find_port_holders, kill_pid_tree, port_in_use, wait_port_free,
 )
 from aletheia.gateway.browser import open_browser
+from aletheia.gateway.network import backend_bind_host, frontdoor_bind_hosts
 from aletheia.runtime_continuity.processes import current_gateway_launch_context, runtime_process_env
 
 # Win32: forbid the OS from allocating a console for the inner uvicorn process.
@@ -61,11 +62,11 @@ def _cleanup_before_spawn(cfg) -> None:
         if pid != my_pid:
             kill_pid_tree(pid)
     port = cfg.app.dashboard_port
-    host = cfg.app.bind_host
-    if not wait_port_free(port, host, timeout=2.0):
-        for pid in find_port_holders(port):
-            if pid != my_pid:
-                kill_pid_tree(pid)
+    for host in frontdoor_bind_hosts(cfg):
+        if not wait_port_free(port, host, timeout=2.0):
+            for pid in find_port_holders(port):
+                if pid != my_pid:
+                    kill_pid_tree(pid)
 
 
 def backend_port_for(cfg) -> int:
@@ -81,7 +82,7 @@ def backend_port_for(cfg) -> int:
 
 def _cleanup_backend_before_spawn(cfg, backend_port: int) -> None:
     """Free the internal backend port without touching the front-door port."""
-    host = cfg.app.bind_host
+    host = backend_bind_host()
     if not wait_port_free(backend_port, host, timeout=2.0):
         my_pid = os.getpid()
         for pid in find_port_holders(backend_port):
@@ -94,7 +95,7 @@ def _connect_host(host: str) -> str:
 
 
 def _backend_base_url(cfg, backend_port: int) -> str:
-    return f"http://{_connect_host(cfg.app.bind_host)}:{backend_port}"
+    return f"http://{backend_bind_host()}:{backend_port}"
 
 
 def _publish_frontdoor_route(
@@ -130,24 +131,11 @@ def _spawn_frontdoor(cfg, backend_port: int) -> subprocess.Popen:
     cmd = [
         real_python,
         "-m",
-        "uvicorn",
-        "aletheia.gateway.frontdoor:app",
-        "--host",
-        cfg.app.bind_host,
-        "--port",
-        str(cfg.app.dashboard_port),
-        "--log-level",
-        "info",
-        # loop=none → uvicorn passes loop_factory=None → standard asyncio.run()
-        # → respects the process WindowsSelectorEventLoopPolicy set at the top of
-        # gateway/frontdoor.py. Without this, uvicorn's own factory hardcodes
-        # ProactorEventLoop on win32 and bypasses the policy (§23 WinError 64).
-        "--loop",
-        "none",
+        "aletheia.gateway.frontdoor_runner",
     ]
     env = os.environ.copy()
     env.update(env_patch)
-    env["ALETHEIA_BACKEND_HOST"] = cfg.app.bind_host
+    env["ALETHEIA_BACKEND_HOST"] = backend_bind_host()
     env["ALETHEIA_BACKEND_PORT"] = str(backend_port)
     env["ALETHEIA_BACKEND_BASE_URL"] = backend_base_url
     env["ALETHEIA_FRONTDOOR_ROUTE_PATH"] = str(frontdoor_route_path())
@@ -163,19 +151,26 @@ def _spawn_frontdoor(cfg, backend_port: int) -> subprocess.Popen:
         return subprocess.Popen(cmd, **popen_kwargs)
 
 
+def _frontdoor_listening(cfg) -> bool:
+    return all(
+        port_in_use(cfg.app.dashboard_port, host)
+        for host in frontdoor_bind_hosts(cfg)
+    )
+
+
 def _wait_frontdoor_listening(cfg, proc: subprocess.Popen, *, timeout: float = _FRONTDOOR_STARTUP_GRACE_SEC) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             return False
-        if port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
+        if _frontdoor_listening(cfg):
             return True
         _sleep(0.2)
-    return port_in_use(cfg.app.dashboard_port, cfg.app.bind_host)
+    return _frontdoor_listening(cfg)
 
 
 def _ensure_frontdoor_running(cfg, backend_port: int, proc: subprocess.Popen | None) -> subprocess.Popen:
-    if proc is not None and proc.poll() is None and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
+    if proc is not None and proc.poll() is None and _frontdoor_listening(cfg):
         return proc
     if proc is not None:
         try:
@@ -214,6 +209,7 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
     rotate_if_needed(errors_log)
     real_python, env_patch = _resolve_real_python()
     runtime_context = current_gateway_launch_context(cfg, port=port)
+    runtime_context["host"] = backend_bind_host()
 
     cmd = [
         real_python, "-m", "uvicorn", "aletheia.server.app:app",
@@ -271,7 +267,10 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
             if frontdoor_holder is not None and frontdoor_holder[0] is not None:
                 frontdoor_proc = frontdoor_holder[0]
                 frontdoor_dead = frontdoor_proc.poll() is not None
-                frontdoor_port_lost = not port_in_use(cfg.app.dashboard_port, cfg.app.bind_host)
+                frontdoor_port_lost = not all(
+                    port_in_use(cfg.app.dashboard_port, host)
+                    for host in frontdoor_bind_hosts(cfg)
+                )
                 if frontdoor_dead or frontdoor_port_lost:
                     # Restart ONLY the frontdoor — keep the backend running.
                     # _ensure_frontdoor_running records the restart + respawns,

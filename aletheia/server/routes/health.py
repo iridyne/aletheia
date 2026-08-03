@@ -201,12 +201,14 @@ def infra_status():
         effective_port = int(runtime_port) if runtime_port else cfg.app.dashboard_port
     except ValueError:
         effective_port = cfg.app.dashboard_port
+    from aletheia.gateway.network import frontdoor_bind_hosts, local_frontdoor_host
     status_code, readiness = _readiness_payload()
     return JSONResponse(
         status_code=status_code,
         content={
             **readiness,
-            "host": cfg.app.bind_host,
+            "host": local_frontdoor_host(),
+            "remote_control_hosts": frontdoor_bind_hosts(cfg) if cfg.remote_control.enabled else [],
             "port": effective_port,
             "runtime_mode": os.environ.get("ALETHEIA_RUNTIME_MODE", "current"),
             "runtime_state": os.environ.get("ALETHEIA_RUNTIME_STATE", "current"),

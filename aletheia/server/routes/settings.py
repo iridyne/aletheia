@@ -599,6 +599,11 @@ async def update_app_config(req: AppConfigUpdate):
     cfg = load_config()
     old = cfg.app.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
+    if "bind_host" in updates:
+        raise HTTPException(
+            400,
+            "bind_host is managed by Remote Control network-adapter selection",
+        )
     for field, value in updates.items():
         setattr(cfg.app, field, value)
     save_config(cfg)
@@ -2091,8 +2096,15 @@ class TunnelConfigUpdate(SettingsRequest):
 
 class RemoteControlConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
+    bind_hosts: Optional[list[str]] = None
     require_token: Optional[bool] = None
     api_token: Optional[str] = Field(default=None, min_length=1)
+
+
+@router.get("/remote-control/interfaces")
+async def get_remote_control_interfaces():
+    from aletheia.gateway.network import discover_ipv4_interfaces
+    return {"interfaces": discover_ipv4_interfaces()}
 
 
 @router.get("/tunnel/status")
@@ -2127,6 +2139,16 @@ async def update_remote_control_config(req: RemoteControlConfigUpdate):
     old_enabled = cfg.remote_control.enabled
     updates = req.model_dump(exclude_none=True)
     api_token = updates.pop("api_token", None)
+    if "bind_hosts" in updates:
+        from aletheia.gateway.network import normalize_remote_bind_hosts
+        try:
+            updates["bind_hosts"] = normalize_remote_bind_hosts(updates["bind_hosts"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    effective_enabled = updates.get("enabled", cfg.remote_control.enabled)
+    effective_hosts = updates.get("bind_hosts", cfg.remote_control.bind_hosts)
+    if effective_enabled and not effective_hosts:
+        raise HTTPException(400, "Select at least one network adapter before enabling Remote Control")
     if updates.get("require_token") is True and api_token is None:
         from aletheia.config.secrets import get_secret
         if not (get_secret("remote_control_api_token") or get_secret("tunnel_api_token")):
@@ -2145,9 +2167,10 @@ async def update_remote_control_config(req: RemoteControlConfigUpdate):
     write_audit({"actor": "human", "source": "dashboard", "event_type": "remote_control_config_changed",
                  "entity_type": "remote_control_config", "before": {"enabled": old_enabled},
                  "after": cfg.remote_control.model_dump(mode="json"),
-                 "message": "Remote Control config updated"})
+                 "message": "Remote Control config updated; gateway restart required for listener changes"})
     return {
         "updated": {**updates, "api_token_saved": api_token is not None},
+        "restart_required": "enabled" in updates or "bind_hosts" in updates,
         "remote_control": cfg.remote_control.model_dump(mode="json"),
     }
 

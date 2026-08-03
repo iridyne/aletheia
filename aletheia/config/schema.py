@@ -15,7 +15,7 @@ class AppConfig(BaseModel):
     name: str = "Aletheia Trading OS"
     dashboard_port: int = 8787
     auto_open_browser: bool = True
-    bind_host: str = "0.0.0.0"
+    bind_host: str = "127.0.0.1"
     # Overview Equity Curve semantics when a time range (7D/30D/90D) is selected:
     #   full_cumulative  — every point's Y is the all-time cumulative realized PnL;
     #                      the range only narrows the visible window, so the end
@@ -1190,6 +1190,7 @@ class RemoteControlConfig(BaseModel):
     """Private-network Remote Control settings, independent from Cloudflare tunnel."""
 
     enabled: bool = False
+    bind_hosts: list[str] = Field(default_factory=list)
     require_token: bool = False
 
 

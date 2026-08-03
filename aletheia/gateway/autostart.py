@@ -494,10 +494,11 @@ def _verify_after_prime(timeout: float = 30.0) -> dict:
     """
     from aletheia.config.loader import load_config
     from aletheia.gateway.pidfile import is_running, port_in_use
+    from aletheia.gateway.network import local_frontdoor_host
 
     cfg = load_config()
     port = cfg.app.dashboard_port
-    host = cfg.app.bind_host
+    host = local_frontdoor_host()
     deadline = time.monotonic() + timeout
 
     while time.monotonic() < deadline:

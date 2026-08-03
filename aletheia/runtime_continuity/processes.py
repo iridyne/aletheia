@@ -9,6 +9,7 @@ from pathlib import Path
 import urllib.request
 
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
+from aletheia.gateway.network import backend_bind_host
 from aletheia.gateway.pidfile import _no_window_kwargs, _resolve_real_python
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.sqlite import get_db
@@ -73,7 +74,7 @@ def current_gateway_launch_context(cfg, *, port: int | None = None) -> dict:
         "runtime_mode": "current",
         "runtime_state": str(runtime.get("state") or "current"),
         "port": int(port if port is not None else cfg.app.dashboard_port),
-        "host": cfg.app.bind_host,
+        "host": backend_bind_host(),
         "workdir": workdir,
     }
 
@@ -114,7 +115,7 @@ def spawn_shadow_gateway(
     if not runtime_id:
         return {"attempted": True, "started": False, "reason": "runtime_id_missing"}
     port = shadow_port_for(cfg)
-    host = cfg.app.bind_host
+    host = backend_bind_host()
     base_url = f"http://{host}:{port}"
     workdir = runtime_workdir(runtime)
     real_python, env_patch = _resolve_real_python()
