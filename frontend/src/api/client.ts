@@ -655,7 +655,14 @@ export const api = {
 
   // Model provider config
   getModelConfig: () => fetchJson<{ default_provider: string; deep_provider: string | null; fast_provider: string | null; providers: Record<string, any> }>('/model'),
-  getModelHealth: () => fetchJson<{ provider: string; available: boolean; model: string; error: string | null; models: string[] }[]>('/model/health'),
+  getModelProviderTypes: () => fetchJson<Record<string, {
+    id: string; label: string; category: 'api' | 'cli' | 'oauth'
+    fields: string[]; singleton: boolean; protocols?: string[]
+  }>>('/model/provider-types'),
+  getModelHealth: () => fetchJson<{
+    provider: string; available: boolean; model: string; error: string | null; models: string[]
+    model_metadata?: Array<Record<string, any>>
+  }[]>('/model/health'),
   getInferenceBroker: () => fetchJson<{
     running: boolean
     providers: Record<string, { policy: Record<string, number>; metrics: Record<string, number> }>
@@ -792,6 +799,19 @@ export const api = {
     return fetchJson<EconomicsWouldBlockResponse>(`/economics/budgets/would-block${suffix}`)
   },
   pingModel: () => post<{ ok: boolean; latency_ms: number; model: string; response: string; error: string | null }>('/model/ping'),
+  createModelProfile: (body: Record<string, unknown>) => post('/settings/model-profiles', body),
+  updateModelProfile: (profileId: string, body: Record<string, unknown>) => fetchJson(`/settings/model-profiles/${encodeURIComponent(profileId)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }),
+  deleteModelProfile: (profileId: string) => fetchJson(`/settings/model-profiles/${encodeURIComponent(profileId)}?confirm=true`, {
+    method: 'DELETE',
+  }),
+  updateModelIntegration: (integrationId: string, body: Record<string, unknown>) => fetchJson(`/settings/model-integrations/${encodeURIComponent(integrationId)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }),
+  updateModelRouting: (body: {
+    default_provider?: string | null; deep_provider?: string | null; fast_provider?: string | null
+  }) => post('/settings/model-routing', body),
   setModelProvider: (body: {
     provider: string; base_url?: string; protocol?: string; model?: string
     enabled?: boolean; default?: boolean; set_as_deep?: boolean; set_as_fast?: boolean
@@ -801,11 +821,11 @@ export const api = {
     inference_reserved_high_priority_slots?: number; inference_timeout_sec?: number
   }) => post('/settings/model', body),
   testModelCandidate: (body: {
-    provider: string; base_url?: string; workspace_url?: string; protocol?: string; model?: string
+    provider: string; type?: string; base_url?: string; workspace_url?: string; protocol?: string; model?: string
     api_key?: string; auth_scheme?: string; probe?: boolean
   }) => post<{ available: boolean; model: string; error: string | null; models?: string[] }>('/model/test-candidate', body),
   detectModels: (body: {
-    provider: string; base_url?: string; workspace_url?: string; protocol?: string
+    provider: string; type?: string; base_url?: string; workspace_url?: string; protocol?: string
     api_key?: string; auth_scheme?: string
   }) => post<{ models: { slug: string; display_name: string; ready_state?: string }[] }>('/model/detect-models', body),
 

@@ -15,6 +15,7 @@ from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
 from aletheia.model_provider.openai_native import OpenAINativeProvider
 from aletheia.model_provider.codex_cli import CodexCLIProvider
 from aletheia.model_provider.claude_cli import ClaudeCLIProvider
+from aletheia.model_provider.pi_cli import PiCLIProvider
 
 logger = logging.getLogger("aletheia.model_provider.router")
 
@@ -26,6 +27,7 @@ PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     "openai_native": OpenAINativeProvider,
     "codex_cli": CodexCLIProvider,
     "claude_cli": ClaudeCLIProvider,
+    "pi_cli": PiCLIProvider,
 }
 
 _cache: dict[str, ModelProvider] = {}
@@ -40,6 +42,81 @@ _health_inflight: Future[list[ModelHealth]] | None = None
 _health_lock = threading.Lock()
 
 _REFRESH_MARGIN_MS = 5 * 60 * 1000  # refresh 5 min before expiry
+_oauth_refresh_inflight: dict[str, Future[str | None]] = {}
+_oauth_refresh_lock = threading.Lock()
+
+
+def _claim_oauth_refresh(name: str) -> tuple[Future[str | None], bool]:
+    with _oauth_refresh_lock:
+        existing = _oauth_refresh_inflight.get(name)
+        if existing is not None:
+            return existing, False
+        future: Future[str | None] = Future()
+        _oauth_refresh_inflight[name] = future
+        return future, True
+
+
+def _release_oauth_refresh(name: str, future: Future[str | None]) -> None:
+    with _oauth_refresh_lock:
+        if _oauth_refresh_inflight.get(name) is future:
+            del _oauth_refresh_inflight[name]
+
+
+def _refresh_oauth_singleflight(name: str) -> str | None:
+    future, owner = _claim_oauth_refresh(name)
+    if not owner:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            return None
+        return future.result()
+    try:
+        from aletheia.config.secrets import get_secret
+
+        fresh = load_config().models.providers.get(name)
+        if fresh is None or fresh.auth_type != "oauth" or not fresh.oauth_token_ref:
+            result = None
+        elif not fresh.oauth_expires_at or int(time.time() * 1000) <= (fresh.oauth_expires_at - _REFRESH_MARGIN_MS):
+            result = get_secret(fresh.oauth_token_ref)
+        else:
+            refresh_val = get_secret(fresh.oauth_refresh_ref) if fresh.oauth_refresh_ref else None
+            result = _do_refresh(name, fresh, refresh_val) if refresh_val else None
+        future.set_result(result)
+        return result
+    except BaseException as exc:
+        future.set_exception(exc)
+        raise
+    finally:
+        _release_oauth_refresh(name, future)
+
+
+async def _refresh_oauth_singleflight_async(name: str) -> str | None:
+    future, owner = _claim_oauth_refresh(name)
+    if not owner:
+        return await asyncio.shield(asyncio.wrap_future(future))
+    try:
+        from aletheia.config.secrets import get_secret
+
+        fresh = await asyncio.to_thread(lambda: load_config().models.providers.get(name))
+        if fresh is None or fresh.auth_type != "oauth" or not fresh.oauth_token_ref:
+            result = None
+        elif not fresh.oauth_expires_at or int(time.time() * 1000) <= (fresh.oauth_expires_at - _REFRESH_MARGIN_MS):
+            result = await asyncio.to_thread(get_secret, fresh.oauth_token_ref)
+        else:
+            refresh_val = await asyncio.to_thread(get_secret, fresh.oauth_refresh_ref) if fresh.oauth_refresh_ref else None
+            result = await _do_refresh_async(name, fresh, refresh_val) if refresh_val else None
+        future.set_result(result)
+        return result
+    except asyncio.CancelledError:
+        future.cancel()
+        raise
+    except BaseException as exc:
+        future.set_exception(exc)
+        raise
+    finally:
+        _release_oauth_refresh(name, future)
 
 
 def _resolve_oauth_token(name: str, pcfg) -> str | None:
@@ -47,7 +124,7 @@ def _resolve_oauth_token(name: str, pcfg) -> str | None:
     if pcfg.auth_type != "oauth" or not pcfg.oauth_token_ref:
         return None
 
-    from aletheia.config.secrets import get_secret, set_secret
+    from aletheia.config.secrets import get_secret
 
     token = get_secret(pcfg.oauth_token_ref)
     if not token:
@@ -56,14 +133,12 @@ def _resolve_oauth_token(name: str, pcfg) -> str | None:
     # Check expiry — refresh proactively
     now_ms = int(time.time() * 1000)
     if pcfg.oauth_expires_at and now_ms > (pcfg.oauth_expires_at - _REFRESH_MARGIN_MS):
-        refresh_val = get_secret(pcfg.oauth_refresh_ref) if pcfg.oauth_refresh_ref else None
-        if refresh_val:
-            try:
-                new_token = _do_refresh(name, pcfg, refresh_val)
-                if new_token:
-                    token = new_token
-            except Exception as e:
-                logger.warning("OAuth token refresh failed for %s: %s", name, e)
+        try:
+            new_token = _refresh_oauth_singleflight(name)
+            if new_token:
+                token = new_token
+        except Exception as e:
+            logger.warning("OAuth token refresh failed for %s: %s", name, e)
     return token
 
 
@@ -121,14 +196,12 @@ async def _resolve_oauth_token_async(name: str, pcfg) -> str | None:
 
     now_ms = int(time.time() * 1000)
     if pcfg.oauth_expires_at and now_ms > (pcfg.oauth_expires_at - _REFRESH_MARGIN_MS):
-        refresh_val = get_secret(pcfg.oauth_refresh_ref) if pcfg.oauth_refresh_ref else None
-        if refresh_val:
-            try:
-                new_token = await _do_refresh_async(name, pcfg, refresh_val)
-                if new_token:
-                    token = new_token
-            except Exception as e:
-                logger.warning("Async OAuth token refresh failed for %s: %s", name, e)
+        try:
+            new_token = await _refresh_oauth_singleflight_async(name)
+            if new_token:
+                token = new_token
+        except Exception as e:
+            logger.warning("Async OAuth token refresh failed for %s: %s", name, e)
     return token
 
 
@@ -177,27 +250,29 @@ def _resolve_type(name: str, pcfg) -> str:
 
 
 def get_provider(name: str | None = None) -> ModelProvider:
-    """Get a provider by name, or the default."""
+    """Get an enabled provider by name, or the configured default."""
     cfg = load_config()
     if name is None:
         name = cfg.models.default_provider
 
     if not name:
         raise ValueError(
-            "No LLM provider configured. Add and enable one under "
-            "Settings → AI Model Providers before running agents."
+            "No LLM provider configured. Add and enable one under Settings → AI Model Providers before running agents."
         )
-
-    if name in _cache:
-        return _cache[name]
 
     pcfg = cfg.models.providers.get(name)
     if pcfg is None:
         raise ValueError(f"Unknown provider: {name}")
+    if not pcfg.enabled:
+        raise ValueError(f"Model provider is disabled: {name}")
+
+    if name in _cache:
+        return _cache[name]
 
     api_key = None
     if pcfg.api_key_secret_ref:
         from aletheia.config.secrets import get_secret
+
         api_key = get_secret(pcfg.api_key_secret_ref)
 
     ptype = _resolve_type(name, pcfg)
@@ -243,6 +318,12 @@ def get_provider(name: str | None = None) -> ModelProvider:
             enabled=pcfg.enabled,
             model=pcfg.model if pcfg.model != "default" else None,
         )
+    elif ptype == "pi_cli":
+        provider = PiCLIProvider(
+            command=pcfg.command or "pi",
+            enabled=pcfg.enabled,
+            model=pcfg.model if pcfg.model != "default" else None,
+        )
     else:
         raise ValueError(f"Unknown provider type: {ptype}")
 
@@ -258,32 +339,38 @@ async def get_provider_async(name: str | None = None) -> ModelProvider:
 
     if not name:
         raise ValueError(
-            "No LLM provider configured. Add and enable one under "
-            "Settings → AI Model Providers before running agents."
+            "No LLM provider configured. Add and enable one under Settings → AI Model Providers before running agents."
         )
-
-    if name in _cache:
-        return _cache[name]
 
     pcfg = cfg.models.providers.get(name)
     if pcfg is None:
         raise ValueError(f"Unknown provider: {name}")
+    if not pcfg.enabled:
+        raise ValueError(f"Model provider is disabled: {name}")
+
+    if name in _cache:
+        return _cache[name]
 
     api_key = None
     if pcfg.api_key_secret_ref:
         from aletheia.config.secrets import get_secret
+
         api_key = get_secret(pcfg.api_key_secret_ref)
 
     ptype = _resolve_type(name, pcfg)
 
     if ptype == "openai_compatible":
         provider = OpenAICompatibleProvider(
-            base_url=pcfg.base_url, model=pcfg.model,
-            protocol=pcfg.protocol, api_key=api_key,
+            base_url=pcfg.base_url,
+            model=pcfg.model,
+            protocol=pcfg.protocol,
+            api_key=api_key,
         )
     elif ptype == "anthropic_compatible":
         provider = AnthropicCompatibleProvider(
-            base_url=pcfg.base_url, model=pcfg.model, api_key=api_key,
+            base_url=pcfg.base_url,
+            model=pcfg.model,
+            api_key=api_key,
             auth_scheme=getattr(pcfg, "auth_scheme", "x-api-key"),
         )
     elif ptype == "databricks":
@@ -295,8 +382,10 @@ async def get_provider_async(name: str | None = None) -> ModelProvider:
         )
     elif ptype == "codex_cli":
         provider = CodexCLIProvider(
-            command=pcfg.command, mode=pcfg.mode,
-            enabled=pcfg.enabled, model=pcfg.codex_model,
+            command=pcfg.command,
+            mode=pcfg.mode,
+            enabled=pcfg.enabled,
+            model=pcfg.codex_model,
         )
     elif ptype == "anthropic_native":
         oauth_token = await _resolve_oauth_token_async(name, pcfg)
@@ -306,7 +395,14 @@ async def get_provider_async(name: str | None = None) -> ModelProvider:
         provider = OpenAINativeProvider(model=pcfg.model, api_key=api_key, oauth_token=oauth_token)
     elif ptype == "claude_cli":
         provider = ClaudeCLIProvider(
-            command=pcfg.command or "claude", mode=pcfg.mode or "print",
+            command=pcfg.command or "claude",
+            mode=pcfg.mode or "print",
+            enabled=pcfg.enabled,
+            model=pcfg.model if pcfg.model != "default" else None,
+        )
+    elif ptype == "pi_cli":
+        provider = PiCLIProvider(
+            command=pcfg.command or "pi",
             enabled=pcfg.enabled,
             model=pcfg.model if pcfg.model != "default" else None,
         )
@@ -473,7 +569,9 @@ async def _safe_healthcheck(name: str) -> ModelHealth:
         provider = await get_provider_async(name)
         from aletheia.model_provider.broker import inference_broker
 
-        return await inference_broker.run_auxiliary(provider.healthcheck)
+        health = await inference_broker.run_auxiliary(provider.healthcheck)
+        health.provider = name
+        return health
     except Exception as e:
         return ModelHealth(provider=name, available=False, error=str(e))
 

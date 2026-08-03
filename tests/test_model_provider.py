@@ -1,7 +1,7 @@
 """Tests for model provider layer."""
 
 import asyncio
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
 from unittest.mock import patch, AsyncMock
 import json
 
@@ -37,6 +37,7 @@ def test_router_injects_api_key_from_secret_ref(tmp_path, monkeypatch):
         type="openai_compatible",
         base_url="http://localhost:8000/v1",
         api_key_secret_ref="model.openai_compatible.api_key",
+        enabled=True,
     )
     save_config(cfg)
     set_secret("model.openai_compatible.api_key", "sk-secret-123")
@@ -59,7 +60,8 @@ def test_router_returns_openai_by_default(tmp_path, monkeypatch):
     cfg = load_config()
     cfg.models.default_provider = "openai_compatible"
     cfg.models.providers["openai_compatible"] = ProviderConfig(
-        type="openai_compatible", base_url="http://localhost:8000/v1"
+        type="openai_compatible", base_url="http://localhost:8000/v1",
+        enabled=True,
     )
     save_config(cfg)
     clear_cache()
@@ -77,7 +79,7 @@ def test_router_returns_anthropic(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     clear_cache()
     cfg = load_config()
-    cfg.models.providers["anthropic_compatible"] = ProviderConfig(type="anthropic_compatible")
+    cfg.models.providers["anthropic_compatible"] = ProviderConfig(type="anthropic_compatible", enabled=True)
     save_config(cfg)
     clear_cache()
     provider = get_provider("anthropic_compatible")
@@ -93,12 +95,12 @@ def test_router_returns_codex(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     clear_cache()
     cfg = load_config()
-    cfg.models.providers["codex_cli"] = ProviderConfig(type="codex_cli")
+    cfg.models.providers["codex_cli"] = ProviderConfig(type="codex_cli", enabled=True)
     save_config(cfg)
     clear_cache()
     provider = get_provider("codex_cli")
     assert isinstance(provider, CodexCLIProvider)
-    assert provider.enabled is False
+    assert provider.enabled is True
     clear_cache()
 
 
@@ -211,7 +213,7 @@ async def test_codex_healthcheck_disabled():
 
 @pytest.mark.anyio
 async def test_openai_healthcheck_no_server():
-    import httpx
+    import httpx  # pyright: ignore[reportMissingImports]
 
     class FailClient:
         def __init__(self, *a, **k): pass
@@ -372,7 +374,7 @@ async def test_openai_list_models_parses_data_array():
 
 @pytest.mark.anyio
 async def test_openai_list_models_returns_empty_on_failure():
-    import httpx
+    import httpx  # pyright: ignore[reportMissingImports]
 
     class FailClient:
         def __init__(self, *a, **k): pass
@@ -431,7 +433,7 @@ async def test_anthropic_list_models_handles_plain_list():
 
 @pytest.mark.anyio
 async def test_anthropic_list_models_returns_empty_on_failure():
-    import httpx
+    import httpx  # pyright: ignore[reportMissingImports]
 
     class FailClient:
         def __init__(self, *a, **k): pass
@@ -480,7 +482,7 @@ async def test_databricks_list_models_parses_endpoints():
 
 @pytest.mark.anyio
 async def test_databricks_list_models_returns_empty_on_failure():
-    import httpx
+    import httpx  # pyright: ignore[reportMissingImports]
 
     class FailClient:
         def __init__(self, *a, **k): pass
@@ -578,7 +580,7 @@ async def test_anthropic_native_healthcheck_success():
 
 @pytest.mark.anyio
 async def test_anthropic_native_healthcheck_failure():
-    import httpx
+    import httpx  # pyright: ignore[reportMissingImports]
 
     class FailClient:
         def __init__(self, *a, **k): pass
@@ -680,7 +682,7 @@ async def test_openai_native_healthcheck_success():
 
 @pytest.mark.anyio
 async def test_openai_native_healthcheck_failure():
-    import httpx
+    import httpx  # pyright: ignore[reportMissingImports]
 
     class FailClient:
         def __init__(self, *a, **k): pass
@@ -709,6 +711,7 @@ def test_router_returns_anthropic_native(tmp_path, monkeypatch):
     cfg.models.providers["anthropic_native"] = ProviderConfig(
         type="anthropic_native", model="claude-sonnet-4-6",
         api_key_secret_ref="model.anthropic_native.api_key",
+        enabled=True,
     )
     save_config(cfg)
     set_secret("model.anthropic_native.api_key", "sk-ant-test")
@@ -735,6 +738,7 @@ def test_router_returns_openai_native(tmp_path, monkeypatch):
     cfg.models.providers["openai_native"] = ProviderConfig(
         type="openai_native", model="gpt-4o",
         api_key_secret_ref="model.openai_native.api_key",
+        enabled=True,
     )
     save_config(cfg)
     set_secret("model.openai_native.api_key", "sk-openai-test")
@@ -963,6 +967,7 @@ def test_router_passes_oauth_token_to_provider(tmp_path, monkeypatch):
     cfg.models.providers["anthropic_native"] = ProviderConfig(
         type="anthropic_native", model="claude-sonnet-4-6",
         auth_type="oauth", oauth_token_ref="model.anthropic_native.oauth_token",
+        enabled=True,
     )
     save_config(cfg)
     set_secret("model.anthropic_native.oauth_token", "oat_test_tok")
@@ -991,6 +996,7 @@ def test_router_oauth_token_takes_priority_over_api_key(tmp_path, monkeypatch):
         type="openai_native", model="gpt-4o",
         api_key_secret_ref="model.openai_native.api_key",
         auth_type="oauth", oauth_token_ref="model.openai_native.oauth_token",
+        enabled=True,
     )
     save_config(cfg)
     set_secret("model.openai_native.api_key", "sk-fallback")
@@ -1079,6 +1085,7 @@ def test_persist_openai_oauth_sets_default_model(tmp_path, monkeypatch):
     cfg = load_config()
     assert cfg.models.providers["openai_native"].model == "gpt-4o"
     assert cfg.models.providers["openai_native"].auth_type == "oauth"
+    assert not cfg.models.providers["openai_native"].enabled
 
 
 def test_persist_claude_oauth_sets_default_model(tmp_path, monkeypatch):
@@ -1101,6 +1108,7 @@ def test_persist_claude_oauth_sets_default_model(tmp_path, monkeypatch):
     cfg = load_config()
     assert cfg.models.providers["anthropic_native"].model == "claude-sonnet-4-6"
     assert cfg.models.providers["anthropic_native"].auth_type == "oauth"
+    assert not cfg.models.providers["anthropic_native"].enabled
 
 
 def test_persist_oauth_does_not_override_user_model(tmp_path, monkeypatch):
@@ -1137,6 +1145,7 @@ def test_router_returns_databricks_with_workspace_protocol(tmp_path, monkeypatch
         workspace_url="https://adb-123.azuredatabricks.net/ai-gateway/openai",
         protocol="responses",
         model="research-model",
+        enabled=True,
     )
     save_config(cfg)
 

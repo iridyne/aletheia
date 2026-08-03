@@ -45,6 +45,8 @@ def check_config_consistency(cfg: "AletheiaConfig") -> list[ConfigInconsistency]
 def _check_default_provider(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
     default = cfg.models.default_provider
     providers = cfg.models.providers
+    if not default:
+        return None
     if default not in providers:
         return ConfigInconsistency(
             field_path="models.default_provider",
