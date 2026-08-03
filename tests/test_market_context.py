@@ -532,7 +532,7 @@ def test_observer_includes_fresh_perp_structure_context(tmp_path, monkeypatch):
 
     captured = []
 
-    async def fake_llm_structured(*, system, user, schema, max_tokens=1024, provider=None):
+    async def fake_llm_structured(*, system, user, schema, max_tokens=1024, provider=None, deadline=None, **_kw):
         captured.append(user)
         return ({
             "direction_bias": "neutral",
@@ -596,7 +596,7 @@ def test_observer_includes_compact_position_x_structure_context(tmp_path, monkey
 
     captured = []
 
-    async def fake_llm_structured(*, system, user, schema, max_tokens=1024, provider=None):
+    async def fake_llm_structured(*, system, user, schema, max_tokens=1024, provider=None, deadline=None, **_kw):
         captured.append(user)
         return ({
             "direction_bias": "neutral",
