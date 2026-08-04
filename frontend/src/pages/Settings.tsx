@@ -638,13 +638,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
   return (
     <div>
       {saveErr && (
-        <div className="save-err-banner" role="alert" style={{
-          background: 'var(--red-bg, rgba(255,0,0,0.08))',
-          color: 'var(--red)',
-          padding: '0.6em 0.8em',
-          borderRadius: 4,
-          marginBottom: 12,
-        }}>
+        <div className="save-err-banner" role="alert">
           Save failed — {saveErr}
         </div>
       )}
@@ -1996,22 +1990,26 @@ function LiveUnlockWarningWall({ credError, onConfirm, onCancel }: {
   onConfirm: () => void
   onCancel: () => void
 }) {
+  // Uses the shared .danger-zone classes rather than inline colours: the previous
+  // version hardcoded `var(--color-danger-bg, #fff5f5)`, and neither --color-danger
+  // nor --color-danger-bg is defined in index.css, so the fallback painted a
+  // near-white panel on this app's near-black (--bg: #0a0e12) surface.
   return (
-    <div style={{ border: '2px solid var(--color-danger, #d9534f)', borderRadius: 6, padding: '16px', marginTop: 8, background: 'var(--color-danger-bg, #fff5f5)' }}>
-      <p style={{ fontWeight: 700, marginBottom: 8 }}>实验性 Live 权限准备 — 请仔细阅读</p>
-      <ul style={{ margin: '0 0 12px 18px', lineHeight: 1.7 }}>
-        <li>此操作只记录 live_limited 权限前置状态，不会把新 Proposal 路由到实盘</li>
-        <li>当前自主 Proposal 仍使用 Paper execution mode 中选择的模拟执行通道</li>
-        <li>只有未来独立完成并验证 live Proposal 路由后，真实资金风险才会出现</li>
+    <div className="danger-zone" role="alertdialog" aria-label="Confirm experimental Live authority">
+      <div className="danger-zone-header">Experimental Live authority — read before confirming</div>
+      <ul className="settings-danger-list">
+        <li>Records the <span className="mono">live_limited</span> authority prerequisite only. It does not route new Proposals to real-fund execution.</li>
+        <li>Autonomous Proposals continue to use the simulated channel selected in Paper execution mode.</li>
+        <li>Real-fund risk appears only after live Proposal routing is separately implemented and verified.</li>
       </ul>
       {credError && (
-        <p style={{ color: 'var(--color-danger, #d9534f)', marginBottom: 10 }}>
-          ⚠ 凭证预检失败：{credError}。建议先修复凭证再解锁。
+        <p className="settings-danger-error">
+          ⚠ Credential pre-flight failed: {credError}. Fix credentials before unlocking.
         </p>
       )}
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={onConfirm}>确认记录实验性权限状态</button>
-        <button className="secondary" onClick={onCancel}>取消</button>
+      <div className="settings-action-row settings-action-row-start">
+        <button onClick={onConfirm}>Record experimental authority state</button>
+        <button className="secondary" onClick={onCancel}>Cancel</button>
       </div>
     </div>
   )

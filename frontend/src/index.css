@@ -921,6 +921,27 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--red); opacity: 0.6;
 }
+/* Consequence list inside a danger zone (e.g. the Live authority wall). Looser
+   leading than body copy because operators read these before a decision. */
+.settings-danger-list {
+  margin: 0 0 var(--space-3) var(--space-5);
+  font-size: var(--fs-base); line-height: 1.65; color: var(--text);
+}
+.settings-danger-list li + li { margin-top: var(--space-1); }
+.settings-danger-error {
+  margin: 0 0 var(--space-3); font-size: var(--fs-sm); color: var(--red);
+}
+/* Save-failure banner. Rendered by the shared SettingsFeatureSection, so it must
+   live in the global sheet: it was previously only defined in the feature-scoped
+   model-providers.css, meaning the next section migrated to that boundary would
+   have rendered an unstyled banner. */
+.save-err-banner {
+  background: rgba(255,93,108,0.08);
+  color: var(--red);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r);
+  margin-bottom: var(--space-3);
+}
 /* Numeric field grid (universe config etc.) — labels stack, inputs FILL the column
    (no fixed widths); units live in the label text, not as sibling spans. */
 .settings-field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--space-4) var(--space-5); margin-bottom: var(--space-4); align-items: start; }
@@ -2583,7 +2604,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 
 /* Decision Reasoning in Drawer */
 .decision-reasoning {
-  font-family: var(--font-mono);
+  font-family: var(--mono);
   font-size: 0.72rem;
   white-space: pre-wrap;
   word-break: break-word;
@@ -3284,7 +3305,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .lco-path-selector {
   display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
   padding: var(--space-2) var(--space-3); border: 1px solid var(--border-2);
-  background: var(--c-surface-raised); border-radius: var(--r-sm);
+  background: var(--surface-2); border-radius: var(--r-sm);
 }
 .lco-path-selector label { color: var(--muted); font-size: 0.72rem; font-weight: 600; }
 .lco-path-selector select { min-width: 240px; }
@@ -3299,7 +3320,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 .lco-summary-fact {
   display: flex; flex-direction: column; gap: 4px; min-width: 0;
-  padding: var(--space-3); background: var(--c-surface-raised);
+  padding: var(--space-3); background: var(--surface-2);
   border: 1px solid var(--border-2); border-radius: var(--r-sm);
 }
 .lco-summary-fact > span {
@@ -3328,10 +3349,10 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 .lco-progress > div:first-child strong { color: var(--text); font-family: var(--mono); }
 .lco-progress-track {
-  height: 8px; overflow: hidden; background: var(--c-surface-raised);
+  height: 8px; overflow: hidden; background: var(--surface-2);
   border-radius: 999px;
 }
-.lco-progress-fill { display: block; height: 100%; background: var(--c-accent); border-radius: inherit; }
+.lco-progress-fill { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
 .lco-message { display: flex; flex-direction: column; gap: var(--space-2); }
 .lco-message p { margin: 0; color: var(--muted); font-size: 0.78rem; }
 @media (max-width: 1100px) {
@@ -3351,22 +3372,21 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .drawer-list-error { color: var(--red); }
 .drawer-table { font-size: 0.78rem; width: 100%; }
 .strategy-diag-grid { display: flex; gap: var(--space-3); flex-wrap: wrap; margin-top: 4px; }
-.strategy-diag-block { background: var(--c-surface-raised); border-radius: 6px; padding: 8px 12px; min-width: 120px; }
 .strategy-diag-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; margin-bottom: 2px; }
 /* Learning Funnel (lf-* prefix avoids collision with Overview funnel-bar-* rules) */
 .lf-meta-row { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-3); }
-.lf-meta-pill { font-size: 0.75rem; background: var(--c-surface-raised); border-radius: 4px; padding: 3px 8px; color: var(--muted); }
+.lf-meta-pill { font-size: 0.75rem; background: var(--surface-2); border-radius: 4px; padding: 3px 8px; color: var(--muted); }
 .lf-meta-pill strong { color: var(--text); }
 .lf-bars { display: flex; flex-direction: column; gap: 6px; }
 .lf-bar-row { display: grid; grid-template-columns: 140px 1fr 52px; align-items: center; gap: 8px; }
 .lf-bar-label { font-size: 0.74rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lf-bar-track { height: 8px; background: var(--c-surface-raised); border-radius: 4px; overflow: hidden; }
-.lf-bar-fill { height: 100%; background: var(--c-accent); border-radius: 4px; transition: width 0.3s; }
+.lf-bar-track { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.lf-bar-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.3s; }
 .lf-bar-count { font-size: 0.72rem; text-align: right; }
 /* SerenityLens filter bar */
 .lens-filter-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: var(--space-3); }
-.lens-filter-btn { padding: 4px 12px; font-size: 0.78rem; border-radius: 20px; border: 1px solid var(--c-border); background: var(--c-surface-raised); color: var(--muted); cursor: pointer; }
-.lens-filter-btn.active { background: var(--c-accent); color: #fff; border-color: var(--c-accent); }
+.lens-filter-btn { padding: 4px 12px; font-size: 0.78rem; border-radius: 20px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); cursor: pointer; }
+.lens-filter-btn.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
 .opp-thesis { font-size: 0.82rem; line-height: 1.6; white-space: pre-wrap; }
 /* ThesisText structured rendering */
 .thesis-text { font-size: 0.82rem; line-height: 1.6; }
@@ -4505,7 +4525,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
 
 /* ---------- Decision Reasoning (trade drawer) ---------- */
 .decision-reasoning {
-  font-family: var(--font-mono);
+  font-family: var(--mono);
   font-size: 0.72rem;
   white-space: pre-wrap;
   word-break: break-word;
@@ -4529,7 +4549,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
 .insights-calibration-text {
   font-size: 0.72rem;
   color: var(--muted);
-  font-family: var(--font-mono);
+  font-family: var(--mono);
 }
 
 /* ---------- Confirm modal ---------- */
@@ -4539,7 +4559,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
 .confirm-title.confirm-danger { color: var(--red); }
 .confirm-title.confirm-warning { color: var(--yellow); }
 .confirm-desc { margin: 0 0 12px; font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
-.confirm-detail { margin: 0 0 16px; padding: 10px 12px; background: var(--bg-2); border-radius: 6px; font-size: 0.75rem; color: var(--text); font-family: var(--font-mono); line-height: 1.6; }
+.confirm-detail { margin: 0 0 16px; padding: 10px 12px; background: var(--bg-2); border-radius: 6px; font-size: 0.75rem; color: var(--text); font-family: var(--mono); line-height: 1.6; }
 .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
 /* ============================ prefers-reduced-motion ============================
@@ -4568,17 +4588,17 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   padding-bottom: 0.5rem;
 }
 .serenity-bearcase-box {
-  background: var(--color-surface-raised, #1e1e1e);
+  background: var(--surface-2);
   border-radius: 4px;
   padding: 0.5rem 0.75rem;
 }
 .serenity-bearcase-label {
   font-weight: 600;
   font-size: 0.75rem;
-  color: var(--color-red, #f87171);
+  color: var(--red);
   margin-right: 0.5rem;
 }
 .serenity-bearcase-text {
   font-size: 0.8rem;
-  color: var(--color-text-muted, #9ca3af);
+  color: var(--muted);
 }

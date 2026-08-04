@@ -256,13 +256,9 @@ button.danger {
 	font-size: 0.75rem;
 }
 
-.save-err-banner {
-	background: var(--red-bg, rgba(255, 0, 0, 0.08));
-	color: var(--red);
-	padding: 0.6rem 0.8rem;
-	border-radius: var(--r);
-	margin-bottom: 0.75rem;
-}
+/* .save-err-banner moved to index.css: it is rendered by the shared
+   SettingsFeatureSection, not by this feature, so scoping it here would leave
+   every future section migrated to that boundary with an unstyled banner. */
 
 @media (max-width: 900px) {
 	.model-routing-board {
