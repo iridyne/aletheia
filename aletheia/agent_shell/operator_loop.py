@@ -34,7 +34,6 @@ logger = logging.getLogger("aletheia.operator_loop")
 
 _MAX_CONFIG_PATCHES_PER_DAY = 3
 _COOLDOWN_SECONDS = 7200  # 2h same-param cooldown
-_MAX_OPTUNA_TRIGGERS_PER_DAY = 2
 _MAX_NOTIFICATIONS_PER_DAY = 10
 _MAX_RESEARCH_TRIGGERS_PER_DAY = 1
 
@@ -267,15 +266,8 @@ class OperatorAction:
 #     `pi_decisions` recommendation row instead of retiring the strategy
 #     directly. The LLM sees the action as available; the effect is a
 #     recommendation queued for review, not an immediate state change.
-#   - trigger_optuna_sweep: returns status='not_implemented' — no
-#     sweep-job queue exists (tracked as OL-2 in
-#     docs/research/audits/CODE_AUDIT_REPORT_2026-06-23.md). Kept in the set so
-#     the operator's rubric doesn't red-flag it as an unknown intent.
-# Owner should either wire the underlying queue or remove these before
-# claiming the action set is fully executable.
 _LEVEL_1_ACTIONS = {
     "retire_strategy", "demote_strategy",  # advisory-only under Phase 4d — see note above
-    "trigger_optuna_sweep",                # status='not_implemented' at runtime — see note above
     "tighten_confidence", "loosen_confidence", "reduce_sizing", "increase_sizing", "tighten_stop_loss",
     "adjust_scanner_weight", "request_backfill", "notify_operator",
     "trigger_strategy_research",
@@ -689,8 +681,6 @@ def _execute_level1_action(action: OperatorAction) -> dict:
         result = _action_retire_strategy(action)
     elif action.action_type == "demote_strategy":
         result = _action_demote_strategy(action)
-    elif action.action_type == "trigger_optuna_sweep":
-        result = _action_trigger_optuna_sweep(action)
     elif action.action_type == "tighten_confidence":
         result = _action_tighten_confidence(action)
     elif action.action_type == "loosen_confidence":
@@ -831,28 +821,6 @@ def _action_trigger_strategy_research(action: OperatorAction) -> dict:
         return {"action": "trigger_strategy_research", "status": "executed", "run_id": run.id}
     except Exception as e:
         return {"action": "trigger_strategy_research", "status": "error", "reason": str(e)}
-
-
-def _action_trigger_optuna_sweep(action: OperatorAction) -> dict:
-    # TODO(backlog): Implement a durable sweep-job queue (optuna_jobs table +
-    # background worker) so this action produces real enqueued work.
-    # Tracked as OL-2 in docs/research/audits/CODE_AUDIT_REPORT_2026-06-23.md.
-    if _count_actions_today("trigger_optuna_sweep") >= _MAX_OPTUNA_TRIGGERS_PER_DAY:
-        return {"action": "trigger_optuna_sweep", "status": "rate_limited",
-                "reason": f"already triggered {_MAX_OPTUNA_TRIGGERS_PER_DAY}x today"}
-    strategy_id = action.params.get("strategy_id", "")
-    _record_action("trigger_optuna_sweep", param=strategy_id)
-    logger.info(
-        "operator: Optuna sweep requested for strategy %s — not_implemented: "
-        "no sweep-job queue exists yet",
-        strategy_id,
-    )
-    return {
-        "action": "trigger_optuna_sweep",
-        "status": "not_implemented",
-        "strategy_id": strategy_id,
-        "reason": "no sweep-job queue; see OL-2 backlog",
-    }
 
 
 _CONFIDENCE_LADDER = ["speculative", "medium", "high"]

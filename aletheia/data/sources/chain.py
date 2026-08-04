@@ -11,7 +11,6 @@ cross-source check fetches from a second provider to detect price divergence.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from aletheia.data.providers import Candle, Ticker
@@ -35,19 +34,18 @@ def _should_alert(symbol: str) -> bool:
     return True
 
 
-def _load_divergence_config() -> tuple[bool, bool, float]:
-    """Return (alert_enabled, cross_check_enabled, threshold_pct)."""
+def _load_divergence_config() -> tuple[bool, float]:
+    """Return (alert_enabled, threshold_pct)."""
     try:
         from aletheia.config.loader import load_config
 
         md = load_config().market_data
         return (
             getattr(md, "price_divergence_alert_enabled", True),
-            getattr(md, "cross_source_check_enabled", False),
             getattr(md, "price_divergence_threshold_pct", 2.0),
         )
     except Exception:
-        return True, False, 2.0
+        return True, 2.0
 
 
 class FallbackChainProvider:
@@ -112,7 +110,7 @@ class FallbackChainProvider:
         if result is None:
             raise last_err if last_err else RuntimeError("all providers failed")
 
-        alert_enabled, cross_check, threshold = _load_divergence_config()
+        alert_enabled, threshold = _load_divergence_config()
 
         if fallback_used and alert_enabled and _should_alert(str(symbol)):
             try:
@@ -130,51 +128,7 @@ class FallbackChainProvider:
             except Exception:  # noqa: BLE001
                 pass
 
-        if cross_check and result and not fallback_used and len(self._providers) > 1:
-            await self._cross_source_check(symbol, result, threshold)
-
         return result
-
-    async def _cross_source_check(
-        self, symbol, primary_result: Ticker, threshold_pct: float
-    ) -> None:
-        """Best-effort: fetch from second provider, compare, alert on divergence."""
-        try:
-            secondary = await asyncio.wait_for(
-                self._providers[1].get_ticker(symbol), timeout=5.0
-            )
-            if not secondary or not secondary.last_price or not primary_result.last_price:
-                return
-            delta_pct = abs(
-                (primary_result.last_price - secondary.last_price)
-                / primary_result.last_price
-                * 100
-            )
-            if delta_pct > threshold_pct and _should_alert(f"div:{symbol}"):
-                from aletheia.notifications import notify_operator
-
-                notify_operator(
-                    "Price divergence detected",
-                    f"{symbol}: {delta_pct:.1f}% gap — "
-                    f"{primary_result.provider}={primary_result.last_price:.2f} vs "
-                    f"{secondary.provider}={secondary.last_price:.2f}",
-                    level="warning",
-                    source="price_divergence",
-                    event_type="price_divergence_alert",
-                    entity_type="market_data",
-                    entity_id=str(symbol),
-                )
-                logger.warning(
-                    "price divergence %s: %.1f%% (%s=%.2f vs %s=%.2f)",
-                    symbol,
-                    delta_pct,
-                    primary_result.provider,
-                    primary_result.last_price,
-                    secondary.provider,
-                    secondary.last_price,
-                )
-        except Exception:  # noqa: BLE001
-            pass
 
     async def get_ohlcv(
         self,

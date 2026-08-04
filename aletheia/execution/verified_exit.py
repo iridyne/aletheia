@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 import time
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal
 
 from aletheia.data.symbols import to_canonical
 
@@ -101,13 +101,6 @@ class VerifiedExitResult:
     pages: int
     source_endpoint: str
     fills: tuple[VerifiedExitFill, ...] = field(default_factory=tuple)
-
-
-@runtime_checkable
-class VerifiedExitProvider(Protocol):
-    async def get_verified_position_exit(
-        self, request: VerifiedExitRequest
-    ) -> VerifiedExitResult: ...
 
 
 def _usable_fee(value: float | None) -> bool:

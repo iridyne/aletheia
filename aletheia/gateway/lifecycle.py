@@ -15,7 +15,6 @@ from aletheia.gateway.pidfile import (
     kill_pid_tree, port_in_use, wait_port_free, find_gateway_orphans,
     find_port_holders,
 )
-from aletheia.gateway.browser import open_browser
 from aletheia.gateway.network import local_frontdoor_host
 from aletheia.gateway.logs import tail_all_logs, log_path
 
@@ -101,7 +100,8 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
         _echo_stdout_safe(f"Starting Aletheia gateway on http://{local_frontdoor_host()}:{cfg.app.dashboard_port} (foreground)...")
         write_pid()
         if not no_browser and cfg.app.auto_open_browser:
-            open_browser(cfg.app.dashboard_port)
+            import webbrowser
+            webbrowser.open(f"http://127.0.0.1:{cfg.app.dashboard_port}")
         _run_server(cfg)
     else:
         _echo_stdout_safe(f"Starting Aletheia gateway on http://{local_frontdoor_host()}:{cfg.app.dashboard_port} (background)...")
