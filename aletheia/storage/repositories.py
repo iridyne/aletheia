@@ -3343,6 +3343,17 @@ def insert_market_snapshot(snap) -> None:
     _insert("market_snapshots", snap.model_dump())
 
 
+def insert_market_snapshot_batch(snaps) -> int:
+    """Persist a list of MarketSnapshot objects in one transaction.
+
+    Replaces N individual INSERT+COMMIT calls with a single executemany
+    so that collect_market_snapshots acquires the write lock exactly once
+    per collection cycle instead of once per ticker.  Returns the row count.
+    """
+    rows = [s.model_dump() for s in snaps]
+    return _insert_many("market_snapshots", rows)
+
+
 def list_market_snapshots(
     symbol: str | None = None,
     limit: int = 100,

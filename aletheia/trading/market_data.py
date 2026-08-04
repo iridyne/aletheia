@@ -10,7 +10,7 @@ import logging
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import InstrumentId, MARKET_SPOT, MARKET_PERP, to_canonical, to_bitget
 from aletheia.storage.models import MarketSnapshot
-from aletheia.storage.repositories import insert_market_snapshot
+from aletheia.storage.repositories import insert_market_snapshot, insert_market_snapshot_batch
 from aletheia.trading.instruments import (
     MARKET_USDT_FUTURES,
     observed_instruments_from_config,
@@ -325,12 +325,29 @@ async def collect_market_snapshots() -> dict:
 
     collected = []
     errors = []
+    # Batch accumulators — all network fetches complete first, then a single
+    # batch write acquires the write lock exactly once per collection cycle.
+    # Previously each _fetch_and_store call issued its own BEGIN/INSERT/COMMIT,
+    # causing N write transactions per cycle (N = watched instrument count).
+    _pending_snaps: list[MarketSnapshot] = []
 
-    async def _fetch_and_store(instrument, prov):
+    async def _fetch_snap(instrument, prov) -> MarketSnapshot:
+        """Fetch one ticker and return a MarketSnapshot; does NOT write to DB.
+
+        Separating fetch from persist lets the caller accumulate all snapshots
+        and flush them in a single batch transaction (one write-lock acquisition
+        per cycle instead of one per ticker).
+        """
         ticker = require_exact_ticker_venue(
             await prov.get_ticker(instrument), instrument.exchange,
         )
-        snap = MarketSnapshot(
+        # NOTE: the DB row (market_snapshots) is the canonical, queried record.
+        # The former append_jsonl("market_snapshots.jsonl", ...) write was
+        # write-only — no reader anywhere in the codebase — so it only grew
+        # runtime-home logs/ unbounded (~11.6MB) with zero consumers. Removed 2026-06-28
+        # (junk-data sweep B2). Re-add a rotation-bounded sink here if a real
+        # offline consumer ever needs the raw stream.
+        return MarketSnapshot(
             symbol=instrument.symbol,
             market_type=instrument.market_type,
             exchange=instrument.exchange,
@@ -341,19 +358,13 @@ async def collect_market_snapshots() -> dict:
             low_24h=ticker.low_24h,
             provider=ticker.provider or None,
         )
-        insert_market_snapshot(snap)
-        # NOTE: the DB row (market_snapshots) is the canonical, queried record.
-        # The former append_jsonl("market_snapshots.jsonl", ...) write was
-        # write-only — no reader anywhere in the codebase — so it only grew
-        # runtime-home logs/ unbounded (~11.6MB) with zero consumers. Removed 2026-06-28
-        # (junk-data sweep B2). Re-add a rotation-bounded sink here if a real
-        # offline consumer ever needs the raw stream.
-        return str(instrument)
 
     try:
         for instrument in instruments:
             try:
-                collected.append(await _fetch_and_store(instrument, provider))
+                snap = await _fetch_snap(instrument, provider)
+                _pending_snaps.append(snap)
+                collected.append(str(instrument))
             except Exception as e:
                 errors.append(f"{instrument}: {e}")
                 logger.warning("Failed to fetch ticker %s: %s", instrument, e)
@@ -372,7 +383,9 @@ async def collect_market_snapshots() -> dict:
         try:
             for instrument in xstocks:
                 try:
-                    collected.append(await _fetch_and_store(instrument, xprovider))
+                    snap = await _fetch_snap(instrument, xprovider)
+                    _pending_snaps.append(snap)
+                    collected.append(str(instrument))
                     _xstock_failure_counts[instrument.symbol] = 0  # reset on success
                 except Exception as e:
                     errors.append(f"{instrument}: {e}")
@@ -408,6 +421,12 @@ async def collect_market_snapshots() -> dict:
                             _xstock_failure_counts.pop(sym, None)
         finally:
             await xprovider.close()
+
+    # Single batch write: one write-lock acquisition for the entire cycle.
+    # Replaces N individual INSERT+COMMIT calls (one per ticker) with a single
+    # executemany transaction, reducing SQLite write-lock contention.
+    if _pending_snaps:
+        insert_market_snapshot_batch(_pending_snaps)
 
     return {"collected": collected, "errors": errors}
 
