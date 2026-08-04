@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -10,15 +11,36 @@ def test_universe_board_has_direct_settings_link():
 
 
 def test_settings_exposes_universe_control_in_symbols_tab():
-    """Universe is a symbol-selection control, so it must be discoverable there."""
+    """Universe is a symbol-selection control, so it must be discoverable there.
+
+    Asserts the outcome the Universe Board link depends on -- that the
+    ``?tab=risk&section=universe`` deep link resolves to a section rendered on
+    the Risk tab -- rather than the mechanism that produces the anchor id.
+
+    The previous version asserted a literal ``id="universe"`` on the JSX call
+    site. That anchor is now derived from the ``SETTINGS_INDEX`` registry
+    (slug ``universe``), because only 1 of 30 sections carried a hand-written
+    id and the other 29 deep links silently scrolled nowhere (#632).
+    Registry-to-render drift is covered by
+    ``frontend/src/pages/settings.registry.test.ts``.
+    """
     settings = Path("frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
     assert "Risk & Universe" in settings
-    assert 'id="universe"' in settings
-    assert "settings-section-${section}" in settings
-    assert settings.count("<UniverseConfigCard settings={settings} qc={qc} />") == 1
 
+    # The deep-link target Universe.tsx links to must be a registered slug.
+    # Matched on the registry entry itself (title + slug on one line) rather than
+    # the bare `slug: 'universe'` substring, which also appears in a nearby
+    # explanatory comment -- so the loose form passed even when the real entry
+    # was renamed.
+    assert re.search(
+        r"\{\s*title:\s*'Universe Board',[^}]*slug:\s*'universe'", settings
+    ), "SETTINGS_INDEX must register 'Universe Board' with slug 'universe'"
+    # Section anchors must still be emitted as settings-section-<slug> ids.
+    assert "settings-section-${section}" in settings
+
+    assert settings.count("<UniverseConfigCard") == 1
     risk_tab = settings.index("function RiskTab")
-    universe_card = settings.index("<UniverseConfigCard settings={settings} qc={qc} />")
+    universe_card = settings.index("<UniverseConfigCard")
     assert universe_card > risk_tab
 
 
