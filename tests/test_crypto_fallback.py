@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from types import SimpleNamespace
 
 from aletheia.data.providers import Candle, Ticker
-from aletheia.data.sources.symbol_map import to_coingecko_id, to_binance_symbol
+from aletheia.data.sources.coingecko import _to_coingecko_id as to_coingecko_id
+from aletheia.data.symbols import to_binance as to_binance_symbol
 from aletheia.data.sources.coingecko import CoinGeckoProvider
 from aletheia.data.sources.binance_public import BinancePublicProvider
 from aletheia.data.sources.chain import FallbackChainProvider
