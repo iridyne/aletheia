@@ -182,15 +182,31 @@ def get_fresh_price_for_protective_close(
 
 
 def get_watched_instruments():
-    """Return exact instruments for open positions + executable universe members."""
+    """Return exact instruments for open positions + executable universe members.
+
+    Stock tokens (xStocks) are filtered against the venue listing cache before
+    being added.  The cache is populated by collect_market_snapshots (async, 5min
+    cadence) and read here synchronously (get_cached_listing).  On a cold cache
+    the filter is skipped (fail-open) so startup is not blocked on a network call.
+    """
     from aletheia.config.loader import load_config
     from aletheia.data.symbols import InstrumentId, MARKET_PERP, MARKET_SPOT
     from aletheia.data.symbols import is_stock_token, stock_token_exchange
+    from aletheia.data.venue_listing_cache import get_cached_listing
 
     seen: set[tuple[str, str, str]] = set()
     result: list[InstrumentId] = []
     cfg = load_config()
     default_exchange = cfg.market_data.ccxt_exchange or "binance"
+
+    # Load per-venue listing caches once for this call (sync cache read only).
+    _listing_cache: dict[str, frozenset[str] | None] = {}
+
+    def _get_listing(venue: str) -> frozenset[str] | None:
+        key = venue.lower()
+        if key not in _listing_cache:
+            _listing_cache[key] = get_cached_listing(key)
+        return _listing_cache[key]
 
     def append_instrument(raw_symbol: str, market_type: str | None, venue: str | None) -> None:
         if not raw_symbol:
@@ -205,6 +221,16 @@ def get_watched_instruments():
             )
         except ValueError:
             return
+        # For stock tokens, filter against the venue listing cache.  On a cold
+        # cache (None) we fall through and keep the instrument (fail-open).
+        if is_stock_token(raw_symbol):
+            listing = _get_listing(instrument.exchange)
+            if listing is not None and instrument.symbol not in listing:
+                logger.debug(
+                    "price_feed: skipping unlisted stock token %s on %s",
+                    instrument.symbol, instrument.exchange,
+                )
+                return
         # Protective lifecycle pricing is exact by symbol + physical market, so
         # same-symbol spot and perp Positions must both remain watched.
         identity = (

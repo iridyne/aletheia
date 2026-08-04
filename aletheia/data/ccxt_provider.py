@@ -149,7 +149,12 @@ class CCXTProvider:
         return self._fallback
 
     async def get_ticker(self, symbol: InstrumentId | str) -> Ticker:
-        ccxt_symbol, canon, _ = _resolve_ccxt_symbol(symbol)
+        ccxt_symbol, canon, market_type = _resolve_ccxt_symbol(symbol)
+        # For perp instruments ccxt requires defaultType="swap" so that Bitget/Bybit
+        # route fetch_ticker to the futures endpoint instead of the spot
+        # instruments-info endpoint.  We set and restore per-call to avoid
+        # mutating shared state across concurrent calls on the same exchange client.
+        _is_perp = market_type == "perp"
         last_err: Exception | None = None
         for name, ensure in (
             (self._primary_name, self._ensure_primary),
@@ -159,7 +164,18 @@ class CCXTProvider:
                 last_err = VenueCoolingDownError(f"market-data venue cooling down: {name}")
                 continue
             try:
-                raw = await ensure().fetch_ticker(ccxt_symbol)
+                exchange = ensure()
+                _prev_type = exchange.options.get("defaultType") if _is_perp else None
+                if _is_perp:
+                    exchange.options["defaultType"] = "swap"
+                try:
+                    raw = await exchange.fetch_ticker(ccxt_symbol)
+                finally:
+                    if _is_perp:
+                        if _prev_type is None:
+                            exchange.options.pop("defaultType", None)
+                        else:
+                            exchange.options["defaultType"] = _prev_type
                 record_venue_success(name)
                 return Ticker(
                     symbol=canon,

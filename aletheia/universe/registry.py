@@ -216,6 +216,17 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
         if deactivated_other or deactivated_stale:
             _invalidate_stale_pipeline_data()
 
+        # Always invalidate the venue listing cache after a registry sync so that
+        # the next market_data / price_feed cycle re-fetches the current whitelist.
+        # This covers both exchange switches (deactivated_other) and routine
+        # delistings (deactivated_stale), as well as a first-time sync where
+        # neither counter is non-zero but the cache may be cold.
+        try:
+            from aletheia.data.venue_listing_cache import invalidate_venue_listing
+            invalidate_venue_listing(venue)
+        except Exception:  # noqa: BLE001 — cache invalidation is best-effort
+            pass
+
         logger.info("Registry sync: %d active assets from %s", count, venue)
     finally:
         await provider.close()

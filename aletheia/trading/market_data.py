@@ -288,6 +288,10 @@ async def collect_market_snapshots() -> dict:
 
     Dynamically includes universe members and open-position symbols so that
     altcoin candidates have fresh price data for paper trading.
+
+    xStock instruments are pre-filtered against the Bitget venue listing cache
+    (TTL 6h) before the fetch loop so that delisted tokens never enter the
+    loop and never accumulate error counts or trigger DB writes.
     """
     # Migrations run once at gateway startup (aletheia/server/app.py:44); scheduler
     # jobs MUST NOT call run_migrations() — concurrent executescript() across threads
@@ -295,7 +299,17 @@ async def collect_market_snapshots() -> dict:
     cfg = load_config()
 
     instruments = _build_dynamic_instruments(cfg)
-    xstocks = xstocks_instruments_from_config(cfg)
+    _xstocks_raw = xstocks_instruments_from_config(cfg)
+    # Pre-filter xStocks against the venue listing whitelist.  This resolves
+    # the root cause of the 569-consecutive-failure loop: delisted ON-series
+    # tokens (AAPLON/USDT etc.) are dropped here before any network call is made.
+    # fail-open: if the cache cannot load (network down), all xStocks are kept.
+    if _xstocks_raw:
+        from aletheia.data.venue_listing_cache import get_venue_listing, filter_by_listing
+        _bitget_listing = await get_venue_listing("bitget")
+        xstocks = filter_by_listing(_xstocks_raw, listing=_bitget_listing, venue="bitget")
+    else:
+        xstocks = _xstocks_raw
 
     from aletheia.data.ccxt_provider import (
         CCXTProvider,
@@ -350,6 +364,8 @@ async def collect_market_snapshots() -> dict:
     # Deliberate exception: NOT routed through get_market_data_provider(). ON-series
     # xStocks only list on Bitget, so both primary AND fallback must be bitget — the
     # factory would force the config fallback (bybit), which doesn't list these tokens.
+    # Note: xstocks has already been filtered by the venue listing cache above;
+    # the listing_cache below is the post-failure auto-remove path (kept as belt-and-suspenders).
     if xstocks:
         xprovider = CCXTProvider(exchange="bitget", fallback_exchange="bitget")
         listing_cache: dict[str, frozenset[str] | None] = {}
