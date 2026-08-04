@@ -10,13 +10,14 @@ import {
   NumberFieldGrid as NumGrid,
   SaveMessage as SaveMsg,
   SettingsRow as Row,
-  SettingsSection as Section,
+  SettingsSection,
   Switch as Toggle,
   SwitchGrid as ToggleGrid,
   type BoolField,
   type NumField,
 } from '../components/ui'
 import { fmtNum, humanize, humanizeBool } from '../lib/format'
+import { isUnsavedEdit, shouldBlockNavigation } from '../features/settings/dirtyGuard'
 import { ModelProvidersSection } from '../features/settings/model-providers/ModelProvidersSection'
 import { MODEL_PROVIDERS_SECTION } from '../features/settings/model-providers/modelProviderState'
 
@@ -100,48 +101,70 @@ function SettingsNavIcon({ tab }: { tab: Tab }) {
  * lives on; clicking a result switches tabs (and the existing ?section= deep-link
  * mechanism takes care of scrolling).
  *
- * MAINTAIN INVARIANT: every `<Section title="X">` in this file must have a
- * matching entry below. Drift means the search will miss that section.
+ * MAINTAIN INVARIANT: every `<Section>` in this file must render a title listed
+ * below, and `Section` resolves its own anchor id from this registry. A section
+ * that is not registered gets no id, so `settings.test.ts` fails — the invariant
+ * is enforced by a test rather than by this comment, which had already drifted
+ * three times (#632).
  */
-const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
+const SETTINGS_INDEX: { title: string; tab: Tab; slug: string; alt?: string[] }[] = [
   // Agent & Models
-  { title: 'Permission Mode',          tab: 'agent', alt: ['autonomy', 'observe', 'paper', 'full'] },
-  { title: 'Learning',                 tab: 'agent', alt: ['dreaming', 'research', 'pi daemon', 'paper learning', 'experiments', 'contribution', 'lifecycle', 'guard', 'lesson guard', 'auto promote', 'guard candidate', 'controller', 'shadow', 'filter tuning', 'opportunity funnel'] },
-  { title: 'Regime Detection',         tab: 'agent', alt: ['regime', 'bias', 'short enabled', 'bear', 'trend', 'direction'] },
-  { title: 'Serenity Research',        tab: 'agent', alt: ['serenity', 'auto promote', 'pi evaluation', 'long horizon', 'industrial chain'] },
-  { title: 'Scheduler',                tab: 'agent', alt: ['jobs', 'cron', 'autostart agents'] },
-  { title: MODEL_PROVIDERS_SECTION.title, tab: 'agent', alt: [...MODEL_PROVIDERS_SECTION.searchTerms] },
-  { title: 'Inference Admission',      tab: 'agent', alt: ['broker', 'rate limit', 'rpm', 'tpm', 'concurrency', 'queue', 'inference limits', 'admission control', 'timeout'] },
-  { title: 'LLM Cost & Usage',         tab: 'agent', alt: ['tokenomics', 'spend', 'budget', 'economics', 'cooldown', 'broker', 'inference'] },
+  { title: 'Permission Mode',          tab: 'agent', slug: 'permission-mode', alt: ['autonomy', 'observe', 'paper', 'full'] },
+  { title: 'Learning',                 tab: 'agent', slug: 'learning', alt: ['dreaming', 'research', 'pi daemon', 'paper learning', 'experiments', 'contribution', 'lifecycle', 'guard', 'lesson guard', 'auto promote', 'guard candidate', 'controller', 'shadow', 'filter tuning', 'opportunity funnel'] },
+  { title: 'Regime Detection',         tab: 'agent', slug: 'regime-detection', alt: ['regime', 'bias', 'short enabled', 'bear', 'trend', 'direction'] },
+  { title: 'Serenity Research',        tab: 'agent', slug: 'serenity-research', alt: ['serenity', 'auto promote', 'pi evaluation', 'long horizon', 'industrial chain'] },
+  { title: 'Scheduler',                tab: 'agent', slug: 'scheduler', alt: ['jobs', 'cron', 'autostart agents'] },
+  { title: MODEL_PROVIDERS_SECTION.title, tab: 'agent', slug: MODEL_PROVIDERS_SECTION.id, alt: [...MODEL_PROVIDERS_SECTION.searchTerms] },
+  { title: 'Inference Admission',      tab: 'agent', slug: 'inference-admission', alt: ['broker', 'rate limit', 'rpm', 'tpm', 'concurrency', 'queue', 'inference limits', 'admission control', 'timeout'] },
+  { title: 'LLM Cost & Usage',         tab: 'agent', slug: 'llm-cost-usage', alt: ['tokenomics', 'spend', 'budget', 'economics', 'cooldown', 'broker', 'inference'] },
   // Execution
-  { title: 'Exchange Connection',      tab: 'execution', alt: ['bitget', 'okx', 'binance', 'api key'] },
-  { title: 'Trading Mode',             tab: 'execution', alt: ['demo', 'live unlock', 'paper'] },
-  { title: 'Paper Trading Parameters', tab: 'execution', alt: ['stop loss', 'take profit', 'hold time', 'confidence'] },
-  { title: 'Capital Events',           tab: 'execution', alt: ['deposit', 'withdrawal', 'pnl baseline'] },
-  { title: 'Local Paper Account',      tab: 'execution', alt: ['no exchange', 'paper cash', 'available balance', 'close positions'] },
+  { title: 'Exchange Connection',      tab: 'execution', slug: 'exchange-connection', alt: ['bitget', 'okx', 'binance', 'api key'] },
+  { title: 'Trading Mode — Advanced',  tab: 'execution', slug: 'trading-mode', alt: ['demo', 'live unlock', 'paper', 'trading mode'] },
+  { title: 'Paper Trading Parameters', tab: 'execution', slug: 'paper-trading-parameters', alt: ['stop loss', 'take profit', 'hold time', 'confidence'] },
+  { title: 'Capital Events',           tab: 'execution', slug: 'capital-events', alt: ['deposit', 'withdrawal', 'pnl baseline'] },
+  { title: 'Local Paper Account',      tab: 'execution', slug: 'local-paper-account', alt: ['no exchange', 'paper cash', 'available balance', 'close positions'] },
   // Risk & Universe
-  { title: 'Universe Board',           tab: 'risk', alt: ['scanner', 'tradable universe'] },
-  { title: 'Event Triggers',           tab: 'risk', alt: ['threshold', 'fire conditions'] },
-  { title: 'Tradable Symbols',         tab: 'risk', alt: ['allowlist', 'symbol filter'] },
-  { title: 'Risk Limits',              tab: 'risk', alt: ['notional cap', 'leverage', 'daily loss', 'margin ratio', 'kill switch', 'force close'] },
+  { title: 'Universe Board',           tab: 'risk', slug: 'universe', alt: ['scanner', 'tradable universe'] },
+  { title: 'Event Triggers',           tab: 'risk', slug: 'event-triggers', alt: ['threshold', 'fire conditions'] },
+  { title: 'Tradable Symbols',         tab: 'risk', slug: 'tradable-symbols', alt: ['allowlist', 'symbol filter'] },
+  { title: 'Risk Limits',              tab: 'risk', slug: 'risk-limits', alt: ['notional cap', 'leverage', 'daily loss', 'margin ratio', 'kill switch', 'force close'] },
   // Health & Alerts
-  { title: 'Health Monitoring',        tab: 'health', alt: ['alert thresholds', 'self-heal'] },
-  { title: 'Telegram',                 tab: 'health', alt: ['bot', 'chat id', 'notification'] },
-  { title: 'Webhook',                  tab: 'health', alt: ['slack', 'discord', 'n8n', 'hmac'] },
+  { title: 'Health Monitoring',        tab: 'health', slug: 'health-monitoring', alt: ['alert thresholds', 'self-heal'] },
+  { title: 'Telegram',                 tab: 'health', slug: 'telegram', alt: ['bot', 'chat id', 'notification'] },
+  { title: 'Webhook',                  tab: 'health', slug: 'webhook', alt: ['slack', 'discord', 'n8n', 'hmac'] },
   // Runtime & System
-  { title: 'App',                      tab: 'runtime', alt: ['theme', 'dashboard', 'shell', 'auto open browser', 'pnl mode'] },
-  { title: 'Data & Retention',         tab: 'runtime', alt: ['backfill', 'ohlcv storage', 'backtest', 'prune', 'cleanup', 'telemetry'] },
-  { title: 'Data Export',              tab: 'runtime', alt: ['export', 'download', 'csv', 'zip', 'backup', 'migration', 'analysis', 'trade data'] },
-  { title: 'Software Updates',         tab: 'runtime', alt: ['git pull', 'upgrade', 'self-update'] },
+  { title: 'App',                      tab: 'runtime', slug: 'app', alt: ['theme', 'dashboard', 'shell', 'auto open browser', 'pnl mode'] },
+  { title: 'Data & Retention',         tab: 'runtime', slug: 'data-retention', alt: ['backfill', 'ohlcv storage', 'backtest', 'prune', 'cleanup', 'telemetry'] },
+  { title: 'Data Export',              tab: 'runtime', slug: 'data-export', alt: ['export', 'download', 'csv', 'zip', 'backup', 'migration', 'analysis', 'trade data'] },
+  { title: 'Software Updates',         tab: 'runtime', slug: 'software-updates', alt: ['git pull', 'upgrade', 'self-update'] },
+  { title: 'Network Proxy',            tab: 'runtime', slug: 'network-proxy', alt: ['proxy', 'socks', 'http proxy', 'enforce', 'outbound', 'ip leak'] },
   // Signals
-  { title: 'Market Data Sources',      tab: 'signals', alt: ['ohlcv', 'data provider', 'override', 'long short', 'lsr'] },
-  { title: 'Macro & Sentiment Signals',tab: 'signals', alt: ['fear greed', 'sentiment', 'coingecko', 'top movers', 'macro'] },
-  { title: 'News Feeds',               tab: 'signals', alt: ['rss', 'ingestion'] },
-  { title: 'Prediction Markets',       tab: 'signals', alt: ['polymarket', 'categories'] },
-  { title: 'Observed US Equities',     tab: 'signals', alt: ['xstocks', 'equity'] },
+  { title: 'Market Data Sources',      tab: 'signals', slug: 'market-data-sources', alt: ['ohlcv', 'data provider', 'override', 'long short', 'lsr'] },
+  { title: 'Macro & Sentiment Signals',tab: 'signals', slug: 'macro-sentiment-signals', alt: ['fear greed', 'sentiment', 'coingecko', 'top movers', 'macro'] },
+  { title: 'News Feeds',               tab: 'signals', slug: 'news-feeds', alt: ['rss', 'ingestion'] },
+  { title: 'Prediction Markets',       tab: 'signals', slug: 'prediction-markets', alt: ['polymarket', 'categories'] },
+  { title: 'Observed US Equities',     tab: 'signals', slug: 'observed-us-equities', alt: ['xstocks', 'equity'] },
   // Advanced
-  { title: 'Configuration Coverage',   tab: 'advanced', alt: ['coverage matrix', 'config audit'] },
+  { title: 'Configuration Matrix',     tab: 'advanced', slug: 'configuration-matrix', alt: ['coverage matrix', 'config audit', 'configuration coverage'] },
 ]
+
+/** Anchor id for a registered section title, or undefined when unregistered. */
+export function sectionSlug(title: string): string | undefined {
+  return SETTINGS_INDEX.find(it => it.title === title)?.slug
+}
+
+/** Registry export for the drift test — see settings.test.ts. */
+export const SETTINGS_SECTION_TITLES: readonly string[] = SETTINGS_INDEX.map(it => it.title)
+
+/**
+ * Settings-local wrapper that resolves the anchor id from SETTINGS_INDEX instead
+ * of requiring each of the 30 call sites to repeat it. Registering a section in
+ * one place is what makes `?section=<slug>` and ⌘K land on it; before #632 only
+ * one call site passed an id, so 29 deep links silently scrolled nowhere.
+ */
+function Section(props: { title: string; description?: string; children: React.ReactNode }) {
+  return <SettingsSection {...props} id={sectionSlug(props.title)} />
+}
 
 function matchesSearch(item: typeof SETTINGS_INDEX[number], q: string): boolean {
   const needle = q.toLowerCase().trim()
@@ -190,7 +213,7 @@ export default function Settings() {
   const qc = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
-  const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: api.getSettings })
+  const { data: settings, dataUpdatedAt: settingsUpdatedAt } = useQuery({ queryKey: ['settings'], queryFn: api.getSettings })
   const [navWidth, setNavWidth] = useState(SETTINGS_NAV_DEFAULT)
   const [isNavCollapsed, setIsNavCollapsed] = useState(false)
   const navExpandedWidthRef = useRef(SETTINGS_NAV_DEFAULT)
@@ -202,6 +225,21 @@ export default function Settings() {
   const registerDirty = (id: string, isDirty: boolean) => {
     if (isDirty) dirtyRef.current.add(id)
     else dirtyRef.current.delete(id)
+  }
+  // Delegated fallback for the 26 sections that do not call registerDirty.
+  // See features/settings/dirtyGuard.ts for why this is a shell-level listener.
+  const touchedRef = useRef(false)
+  const [isTouched, setIsTouched] = useState(false)
+  const markTouched = (e: React.FormEvent<HTMLDivElement>) => {
+    if (touchedRef.current) return
+    if (!isUnsavedEdit(e.target as HTMLElement | null)) return
+    touchedRef.current = true
+    setIsTouched(true)   // state (not just ref) so the beforeunload effect re-runs
+  }
+  const clearDirty = () => {
+    dirtyRef.current.clear()
+    touchedRef.current = false
+    setIsTouched(false)
   }
 
   useEffect(() => {
@@ -286,15 +324,41 @@ export default function Settings() {
     return () => window.clearTimeout(timer)
   }, [searchParams, tab, settings])
 
-  const selectTab = (next: Tab) => {
-    if (dirtyRef.current.size > 0) {
+  // Every section's save calls invalidateQueries(['settings']), so a refetch of
+  // `settings` is the shell-visible signal that a save landed. Without this the
+  // operator would be warned about edits they already saved, which teaches them
+  // to dismiss the prompt — the same failure mode as not warning at all.
+  // Skipped on first load: refs start clean, so there is nothing to reset.
+  const lastSettledRef = useRef(settingsUpdatedAt)
+  useEffect(() => {
+    if (settingsUpdatedAt === lastSettledRef.current) return
+    lastSettledRef.current = settingsUpdatedAt
+    clearDirty()
+  }, [settingsUpdatedAt])
+
+  // Warn before a hard reload / tab close / cross-origin navigation. react-router's
+  // useBlocker cannot cover this case ("does not handle hard-reloads or cross-origin
+  // navigations") and additionally requires a data router, which this app does not use.
+  useEffect(() => {
+    if (!shouldBlockNavigation(dirtyRef.current.size, isTouched)) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [isTouched])
+
+  // `slug` is set when navigation came from a search result, so the deep-link
+  // effect above can scroll to that section instead of leaving the operator at
+  // the top of an 11-section tab.
+  const selectTab = (next: Tab, slug?: string) => {
+    if (shouldBlockNavigation(dirtyRef.current.size, touchedRef.current)) {
       if (!confirm('You have unsaved changes on this tab. Switch tabs and discard them?')) return
     }
-    dirtyRef.current.clear()
+    clearDirty()
     setTab(next)
     const nextParams = new URLSearchParams(searchParams)
     nextParams.set('tab', next)
-    nextParams.delete('section')
+    if (slug) nextParams.set('section', slug)
+    else nextParams.delete('section')
     setSearchParams(nextParams, { replace: true })
   }
 
@@ -331,6 +395,8 @@ export default function Settings() {
         className={`settings-shell ${isNavCollapsed ? 'is-collapsed' : ''}`}
         style={{ '--settings-nav-width': `${navWidth}px` } as React.CSSProperties}
         onFocus={handleNumericFocus}
+        onInput={markTouched}
+        onChange={markTouched}
       >
         <aside className={`settings-nav ${isNavCollapsed ? 'is-collapsed' : ''}`} aria-label="Settings sections">
           <div className="settings-nav-header">
@@ -373,7 +439,7 @@ export default function Settings() {
           {tab === 'execution' && <ExecutionTab          status={status} settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'risk'      && <RiskTab               settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'health'    && <HealthNotificationsTab settings={settings} qc={qc} />}
-          {tab === 'runtime'   && <RuntimeSystemTab      status={status} settings={settings} qc={qc} onDirty={registerDirty} />}
+          {tab === 'runtime'   && <RuntimeSystemTab      status={status} settings={settings} qc={qc} />}
           {tab === 'signals'   && <SignalsTab            settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'advanced'  && <AdvancedTab           settings={settings} />}
         </div>
@@ -384,10 +450,10 @@ export default function Settings() {
 
 /**
  * Inline fuzzy search across all Settings sections. ⌘/Ctrl + K to focus, Esc to close.
- * Results are tab-aware: clicking a result switches the current tab and lets the
- * existing ?section= deep-link mechanism handle scroll-to-section.
+ * Results are tab- AND section-aware: picking a result switches tab and passes the
+ * registry slug so the ?section= effect scrolls to the exact section (#632).
  */
-function SettingsSearch({ onPick }: { onPick: (tab: Tab) => void }) {
+function SettingsSearch({ onPick }: { onPick: (tab: Tab, slug?: string) => void }) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
   const [activeIdx, setActiveIdx] = useState(0)
@@ -405,7 +471,7 @@ function SettingsSearch({ onPick }: { onPick: (tab: Tab) => void }) {
   }, [])
   const results = q.trim() ? SETTINGS_INDEX.filter(it => matchesSearch(it, q)) : []
   const pick = (it: typeof SETTINGS_INDEX[number]) => {
-    onPick(it.tab)
+    onPick(it.tab, it.slug)
     setQ(''); setOpen(false); setActiveIdx(0)
     inputRef.current?.blur()
   }
@@ -572,13 +638,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
   return (
     <div>
       {saveErr && (
-        <div className="save-err-banner" role="alert" style={{
-          background: 'var(--red-bg, rgba(255,0,0,0.08))',
-          color: 'var(--red)',
-          padding: '0.6em 0.8em',
-          borderRadius: 4,
-          marginBottom: 12,
-        }}>
+        <div className="save-err-banner" role="alert">
           Save failed — {saveErr}
         </div>
       )}
@@ -1930,20 +1990,31 @@ function LiveUnlockWarningWall({ credError, onConfirm, onCancel }: {
   onConfirm: () => void
   onCancel: () => void
 }) {
+  // Styling only: this wall previously hardcoded `var(--color-danger-bg, #fff5f5)`,
+  // and neither --color-danger nor --color-danger-bg is declared in index.css, so
+  // the fallback painted a near-white panel on this app's near-black --bg #0a0e12.
+  // Now uses the shared .danger-zone classes.
+  //
+  // COPY IS CONTRACT-BOUND — DO NOT REWORD OR TRANSLATE.
+  // docs/design/contracts/live_unlock_contract.md §4b mandates these three
+  // honest-boundary elements, and tests/specs/spec_live_unlock.py::
+  // test_ui_warning_wall_three_elements (claim LU-S03) asserts the literal
+  // strings. Changing the wording requires updating the contract and its
+  // executable spec in the same change.
   return (
-    <div style={{ border: '2px solid var(--color-danger, #d9534f)', borderRadius: 6, padding: '16px', marginTop: 8, background: 'var(--color-danger-bg, #fff5f5)' }}>
-      <p style={{ fontWeight: 700, marginBottom: 8 }}>实验性 Live 权限准备 — 请仔细阅读</p>
-      <ul style={{ margin: '0 0 12px 18px', lineHeight: 1.7 }}>
+    <div className="danger-zone" role="alertdialog" aria-label="实验性 Live 权限准备确认">
+      <div className="danger-zone-header">实验性 Live 权限准备 — 请仔细阅读</div>
+      <ul className="settings-danger-list">
         <li>此操作只记录 live_limited 权限前置状态，不会把新 Proposal 路由到实盘</li>
         <li>当前自主 Proposal 仍使用 Paper execution mode 中选择的模拟执行通道</li>
         <li>只有未来独立完成并验证 live Proposal 路由后，真实资金风险才会出现</li>
       </ul>
       {credError && (
-        <p style={{ color: 'var(--color-danger, #d9534f)', marginBottom: 10 }}>
+        <p className="settings-danger-error">
           ⚠ 凭证预检失败：{credError}。建议先修复凭证再解锁。
         </p>
       )}
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div className="settings-action-row settings-action-row-start">
         <button onClick={onConfirm}>确认记录实验性权限状态</button>
         <button className="secondary" onClick={onCancel}>取消</button>
       </div>
@@ -2651,14 +2722,18 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function RiskTab({ settings, qc, onDirty }: any) {
+  // onDirty is forwarded to UniverseConfigCard below; its own dirty reporting
+  // (see the useEffect near its definition) was a no-op until #632/#631 because
+  // this tab accepted the prop and never passed it down.
   return (
     <div>
+      {/* id comes from SETTINGS_INDEX (slug: 'universe'), preserving the existing
+          ?section=universe deep link that other surfaces already use. */}
       <Section
-        id="universe"
         title="Universe Board"
         description="Controls the dynamic candidate selector shown on Universe Board. When disabled, agents use the static fallback list instead."
       >
-        <UniverseConfigCard settings={settings} qc={qc} />
+        <UniverseConfigCard settings={settings} qc={qc} onDirty={onDirty} />
       </Section>
 
       <Section
@@ -3327,7 +3402,9 @@ function SignalsTab({ settings, qc, onDirty }: any) {
 // RUNTIME & SYSTEM TAB — display, app, retention, updates, network
 // ─────────────────────────────────────────────────────────────────────────────
 
-function RuntimeSystemTab({ status, settings, qc, onDirty }: any) {
+// No child on this tab reports precise dirty state; the shell's delegated guard
+// (features/settings/dirtyGuard.ts) covers them, so there is no onDirty to accept.
+function RuntimeSystemTab({ status, settings, qc }: any) {
   return (
     <div>
       <Section title="App" description="Dashboard process settings.">
