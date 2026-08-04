@@ -17,7 +17,7 @@ import shutil
 import stat
 import zipfile
 
-from aletheia.update.package_integrity import (
+from aletheia.package_integrity import (
     iter_payload_entries,
     validate_filesystem_symlink,
 )

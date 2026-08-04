@@ -1,8 +1,7 @@
-"""Tests for cross-source price divergence alerting (Phase 1)."""
+"""Tests for fallback price divergence alerting."""
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from aletheia.data.providers import Ticker
 from aletheia.data.sources.chain import (
@@ -30,15 +29,6 @@ def _make_ticker(symbol="BTC/USDT", price=67000.0, provider="binance"):
     )
 
 
-def _mock_config(alert_enabled=True, cross_check=False, threshold=2.0):
-    md = SimpleNamespace(
-        price_divergence_alert_enabled=alert_enabled,
-        cross_source_check_enabled=cross_check,
-        price_divergence_threshold_pct=threshold,
-    )
-    return SimpleNamespace(market_data=md)
-
-
 class TestFallbackNotification:
     """When primary fails and fallback succeeds, notify_operator is called."""
 
@@ -53,7 +43,7 @@ class TestFallbackNotification:
 
         with patch(
             "aletheia.data.sources.chain._load_divergence_config",
-            return_value=(True, False, 2.0),
+            return_value=(True, 2.0),
         ), patch("aletheia.notifications.notify_operator") as mock_notify:
             result = await chain.get_ticker("BTC/USDT")
 
@@ -73,7 +63,7 @@ class TestFallbackNotification:
 
         with patch(
             "aletheia.data.sources.chain._load_divergence_config",
-            return_value=(True, False, 2.0),
+            return_value=(True, 2.0),
         ), patch("aletheia.notifications.notify_operator") as mock_notify:
             result = await chain.get_ticker("BTC/USDT")
 
@@ -91,7 +81,7 @@ class TestFallbackNotification:
 
         with patch(
             "aletheia.data.sources.chain._load_divergence_config",
-            return_value=(False, False, 2.0),
+            return_value=(False, 2.0),
         ), patch("aletheia.notifications.notify_operator") as mock_notify:
             await chain.get_ticker("BTC/USDT")
 
@@ -108,95 +98,12 @@ class TestFallbackNotification:
 
         with patch(
             "aletheia.data.sources.chain._load_divergence_config",
-            return_value=(True, False, 2.0),
+            return_value=(True, 2.0),
         ), patch("aletheia.notifications.notify_operator") as mock_notify:
             await chain.get_ticker("BTC/USDT")
             await chain.get_ticker("BTC/USDT")
 
         assert mock_notify.call_count == 1
-
-
-class TestCrossSourceCheck:
-    """When cross_source_check_enabled, compare primary vs secondary price."""
-
-    @pytest.mark.anyio
-    async def test_divergence_above_threshold_alerts(self):
-        p1 = AsyncMock()
-        p1.get_ticker = AsyncMock(return_value=_make_ticker(price=67000, provider="binance"))
-        p2 = AsyncMock()
-        p2.get_ticker = AsyncMock(return_value=_make_ticker(price=68500, provider="coingecko"))
-
-        chain = FallbackChainProvider([p1, p2])
-
-        with patch(
-            "aletheia.data.sources.chain._load_divergence_config",
-            return_value=(True, True, 2.0),
-        ), patch("aletheia.notifications.notify_operator") as mock_notify:
-            result = await chain.get_ticker("BTC/USDT")
-
-        assert result.last_price == 67000
-        mock_notify.assert_called_once()
-        assert "divergence" in mock_notify.call_args[0][0].lower()
-
-    @pytest.mark.anyio
-    async def test_divergence_below_threshold_silent(self):
-        p1 = AsyncMock()
-        p1.get_ticker = AsyncMock(return_value=_make_ticker(price=67000, provider="binance"))
-        p2 = AsyncMock()
-        p2.get_ticker = AsyncMock(return_value=_make_ticker(price=67100, provider="coingecko"))
-
-        chain = FallbackChainProvider([p1, p2])
-
-        with patch(
-            "aletheia.data.sources.chain._load_divergence_config",
-            return_value=(True, True, 2.0),
-        ), patch("aletheia.notifications.notify_operator") as mock_notify:
-            await chain.get_ticker("BTC/USDT")
-
-        mock_notify.assert_not_called()
-
-    @pytest.mark.anyio
-    async def test_cross_check_disabled_no_secondary_call(self):
-        p1 = AsyncMock()
-        p1.get_ticker = AsyncMock(return_value=_make_ticker(price=67000, provider="binance"))
-        p2 = AsyncMock()
-        p2.get_ticker = AsyncMock(return_value=_make_ticker(price=99999, provider="coingecko"))
-
-        chain = FallbackChainProvider([p1, p2])
-
-        with patch(
-            "aletheia.data.sources.chain._load_divergence_config",
-            return_value=(True, False, 2.0),
-        ), patch("aletheia.notifications.notify_operator") as mock_notify:
-            await chain.get_ticker("BTC/USDT")
-
-        p2.get_ticker.assert_not_called()
-        mock_notify.assert_not_called()
-
-    @pytest.mark.anyio
-    async def test_cross_check_timeout_silent(self):
-        """If secondary provider times out, no alert and no crash."""
-        import asyncio
-
-        p1 = AsyncMock()
-        p1.get_ticker = AsyncMock(return_value=_make_ticker(price=67000, provider="binance"))
-        p2 = AsyncMock()
-
-        async def slow_ticker(*a, **kw):
-            await asyncio.sleep(10)
-
-        p2.get_ticker = slow_ticker
-
-        chain = FallbackChainProvider([p1, p2])
-
-        with patch(
-            "aletheia.data.sources.chain._load_divergence_config",
-            return_value=(True, True, 2.0),
-        ), patch("aletheia.notifications.notify_operator") as mock_notify:
-            result = await chain.get_ticker("BTC/USDT")
-
-        assert result.last_price == 67000
-        mock_notify.assert_not_called()
 
 
 class TestShouldAlert:
