@@ -17,6 +17,7 @@ import {
   type NumField,
 } from '../components/ui'
 import { fmtNum, humanize, humanizeBool } from '../lib/format'
+import { isUnsavedEdit, shouldBlockNavigation } from '../features/settings/dirtyGuard'
 import { ModelProvidersSection } from '../features/settings/model-providers/ModelProvidersSection'
 import { MODEL_PROVIDERS_SECTION } from '../features/settings/model-providers/modelProviderState'
 
@@ -190,7 +191,7 @@ export default function Settings() {
   const qc = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
-  const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: api.getSettings })
+  const { data: settings, dataUpdatedAt: settingsUpdatedAt } = useQuery({ queryKey: ['settings'], queryFn: api.getSettings })
   const [navWidth, setNavWidth] = useState(SETTINGS_NAV_DEFAULT)
   const [isNavCollapsed, setIsNavCollapsed] = useState(false)
   const navExpandedWidthRef = useRef(SETTINGS_NAV_DEFAULT)
@@ -202,6 +203,21 @@ export default function Settings() {
   const registerDirty = (id: string, isDirty: boolean) => {
     if (isDirty) dirtyRef.current.add(id)
     else dirtyRef.current.delete(id)
+  }
+  // Delegated fallback for the 26 sections that do not call registerDirty.
+  // See features/settings/dirtyGuard.ts for why this is a shell-level listener.
+  const touchedRef = useRef(false)
+  const [isTouched, setIsTouched] = useState(false)
+  const markTouched = (e: React.FormEvent<HTMLDivElement>) => {
+    if (touchedRef.current) return
+    if (!isUnsavedEdit(e.target as HTMLElement | null)) return
+    touchedRef.current = true
+    setIsTouched(true)   // state (not just ref) so the beforeunload effect re-runs
+  }
+  const clearDirty = () => {
+    dirtyRef.current.clear()
+    touchedRef.current = false
+    setIsTouched(false)
   }
 
   useEffect(() => {
@@ -286,11 +302,33 @@ export default function Settings() {
     return () => window.clearTimeout(timer)
   }, [searchParams, tab, settings])
 
+  // Every section's save calls invalidateQueries(['settings']), so a refetch of
+  // `settings` is the shell-visible signal that a save landed. Without this the
+  // operator would be warned about edits they already saved, which teaches them
+  // to dismiss the prompt — the same failure mode as not warning at all.
+  // Skipped on first load: refs start clean, so there is nothing to reset.
+  const lastSettledRef = useRef(settingsUpdatedAt)
+  useEffect(() => {
+    if (settingsUpdatedAt === lastSettledRef.current) return
+    lastSettledRef.current = settingsUpdatedAt
+    clearDirty()
+  }, [settingsUpdatedAt])
+
+  // Warn before a hard reload / tab close / cross-origin navigation. react-router's
+  // useBlocker cannot cover this case ("does not handle hard-reloads or cross-origin
+  // navigations") and additionally requires a data router, which this app does not use.
+  useEffect(() => {
+    if (!shouldBlockNavigation(dirtyRef.current.size, isTouched)) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [isTouched])
+
   const selectTab = (next: Tab) => {
-    if (dirtyRef.current.size > 0) {
+    if (shouldBlockNavigation(dirtyRef.current.size, touchedRef.current)) {
       if (!confirm('You have unsaved changes on this tab. Switch tabs and discard them?')) return
     }
-    dirtyRef.current.clear()
+    clearDirty()
     setTab(next)
     const nextParams = new URLSearchParams(searchParams)
     nextParams.set('tab', next)
@@ -331,6 +369,8 @@ export default function Settings() {
         className={`settings-shell ${isNavCollapsed ? 'is-collapsed' : ''}`}
         style={{ '--settings-nav-width': `${navWidth}px` } as React.CSSProperties}
         onFocus={handleNumericFocus}
+        onInput={markTouched}
+        onChange={markTouched}
       >
         <aside className={`settings-nav ${isNavCollapsed ? 'is-collapsed' : ''}`} aria-label="Settings sections">
           <div className="settings-nav-header">
