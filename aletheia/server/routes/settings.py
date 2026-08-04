@@ -2035,7 +2035,7 @@ async def update_universe_config(req: UniverseConfigUpdate):
 
 _STRATEGY_FACTORY_DEPRECATED_FIELDS = [
     "backtest_gate_enabled", "sweep_enabled", "sweep_max_variants",
-    "sweep_use_optuna", "sweep_n_trials", "sweep_optuna_timeout_sec", "sweep_top_k",
+    "sweep_n_trials", "sweep_top_k",
     "event_driven_enabled", "event_cooldown_minutes", "event_min_score",
     "walk_forward_enabled", "walk_forward_folds", "walk_forward_min_bars",
     "high_trade_count_threshold", "min_runtime_days_relaxed",
@@ -2055,9 +2055,7 @@ class StrategyFactoryConfigUpdate(BaseModel):
     walk_forward_min_bars: int | None = None
     high_trade_count_threshold: int | None = None
     min_runtime_days_relaxed: int | None = None
-    sweep_use_optuna: bool | None = None
     sweep_n_trials: int | None = None
-    sweep_optuna_timeout_sec: float | None = None
     sweep_top_k: int | None = None
 
 

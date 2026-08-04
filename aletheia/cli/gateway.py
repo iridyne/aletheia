@@ -308,7 +308,7 @@ def firewall_disable_lan(
 @gateway_app.command(name="open-dashboard")
 def open_dashboard():
     """Open the dashboard in the default browser."""
-    from aletheia.gateway.browser import open_browser
+    import webbrowser
     from aletheia.config.loader import load_config
     cfg = load_config()
-    open_browser(cfg.app.dashboard_port)
+    webbrowser.open(f"http://127.0.0.1:{cfg.app.dashboard_port}")

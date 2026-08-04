@@ -8,7 +8,7 @@ import stat
 import pytest
 
 from aletheia.update import bootstrap, packaged
-from aletheia.update.package_integrity import manifest_entry, sha256_file
+from aletheia.package_integrity import manifest_entry, sha256_file
 
 
 def test_bootstrap_preserves_safe_internal_symlink(tmp_path: Path):

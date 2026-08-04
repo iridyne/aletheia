@@ -20,19 +20,35 @@ logger = logging.getLogger("aletheia.data.sources.coingecko")
 _BASE_URL = "https://api.coingecko.com/api/v3"
 _MIN_INTERVAL_SEC = 6.0
 _last_request_time: float = 0.0
-_rate_lock: asyncio.Lock | None = None
+
+# Canonical symbol → CoinGecko coin ID (previously in data/sources/symbol_map.py)
+_CG_SLUG: dict[str, str] = {
+    "BTC/USDT": "bitcoin", "ETH/USDT": "ethereum", "SOL/USDT": "solana",
+    "BNB/USDT": "binancecoin", "XRP/USDT": "ripple", "ADA/USDT": "cardano",
+    "AVAX/USDT": "avalanche-2", "DOT/USDT": "polkadot", "MATIC/USDT": "matic-network",
+    "LINK/USDT": "chainlink", "DOGE/USDT": "dogecoin", "LTC/USDT": "litecoin",
+    "UNI/USDT": "uniswap", "ATOM/USDT": "cosmos", "FIL/USDT": "filecoin",
+    "NEAR/USDT": "near", "OP/USDT": "optimism", "ARB/USDT": "arbitrum",
+    "SUI/USDT": "sui", "APT/USDT": "aptos", "PEPE/USDT": "pepe",
+    "WIF/USDT": "dogwifcoin", "TRX/USDT": "tron", "TON/USDT": "the-open-network",
+    "RENDER/USDT": "render-token", "INJ/USDT": "injective-protocol",
+    "FET/USDT": "fetch-ai", "AAVE/USDT": "aave", "MKR/USDT": "maker",
+    "CRV/USDT": "curve-dao-token",
+}
 
 
-def _get_lock() -> asyncio.Lock:
-    global _rate_lock
-    if _rate_lock is None:
-        _rate_lock = asyncio.Lock()
-    return _rate_lock
+def _to_coingecko_id(canonical: str) -> str | None:
+    """Return the CoinGecko coin ID for a canonical symbol, or None if unmapped."""
+    from aletheia.data.symbols import to_canonical
+    return _CG_SLUG.get(to_canonical(canonical))
+
+
+_rate_lock = asyncio.Lock()
 
 
 async def _throttle() -> None:
     global _last_request_time
-    async with _get_lock():
+    async with _rate_lock:
         now = time.monotonic()
         wait = _MIN_INTERVAL_SEC - (now - _last_request_time)
         if wait > 0:
@@ -45,11 +61,10 @@ class CoinGeckoProvider:
 
     async def get_ticker(self, symbol) -> Ticker:
         from aletheia.data.symbols import canonical_of
-        from aletheia.data.sources.symbol_map import to_coingecko_id
         from aletheia.net import httpx_client
 
         canon = canonical_of(symbol)
-        cg_id = to_coingecko_id(canon)
+        cg_id = _to_coingecko_id(canon)
         if cg_id is None:
             # F6: unmapped symbol — fail clearly so the provider fallback chain tries
             # another source instead of querying CoinGecko with ids=None.
@@ -85,7 +100,6 @@ class CoinGeckoProvider:
         since: int | None = None,
     ) -> list[Candle]:
         from aletheia.data.symbols import canonical_of
-        from aletheia.data.sources.symbol_map import to_coingecko_id
         from aletheia.net import httpx_client
 
         if timeframe in ("1m", "5m", "15m"):
@@ -94,7 +108,7 @@ class CoinGeckoProvider:
             )
 
         canon = canonical_of(symbol)
-        cg_id = to_coingecko_id(canon)
+        cg_id = _to_coingecko_id(canon)
         if cg_id is None:
             raise ValueError(f"CoinGecko has no slug mapping for {canon}")
 

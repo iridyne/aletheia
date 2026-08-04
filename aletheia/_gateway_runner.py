@@ -26,7 +26,6 @@ from aletheia.gateway.pidfile import (
     write_pid, _resolve_real_python,
     find_gateway_orphans, find_port_holders, kill_pid_tree, port_in_use, wait_port_free,
 )
-from aletheia.gateway.browser import open_browser
 from aletheia.gateway.network import backend_bind_host, frontdoor_bind_hosts
 from aletheia.runtime_continuity.processes import current_gateway_launch_context, runtime_process_env
 
@@ -793,7 +792,8 @@ def main():
     no_browser = "--no-browser" in sys.argv
     cfg = bootstrap()
     if not no_browser and cfg.app.auto_open_browser:
-        open_browser(cfg.app.dashboard_port)
+        import webbrowser
+        webbrowser.open(f"http://127.0.0.1:{cfg.app.dashboard_port}")
     result = run_supervised()  # writes the pid file itself
     if result.get("gave_up"):
         _schedule_supervisor_recovery()

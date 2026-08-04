@@ -33,12 +33,11 @@ class BinancePublicProvider:
     venue_name = "binance"
 
     async def get_ticker(self, symbol) -> Ticker:
-        from aletheia.data.symbols import canonical_of
-        from aletheia.data.sources.symbol_map import to_binance_symbol
+        from aletheia.data.symbols import canonical_of, to_binance
         from aletheia.net import httpx_client
 
         canon = canonical_of(symbol)
-        bn_sym = to_binance_symbol(canon)
+        bn_sym = to_binance(canon)
 
         try:
             async with httpx_client(timeout=10) as client:
@@ -75,12 +74,11 @@ class BinancePublicProvider:
         limit: int = 100,
         since: int | None = None,
     ) -> list[Candle]:
-        from aletheia.data.symbols import canonical_of
-        from aletheia.data.sources.symbol_map import to_binance_symbol
+        from aletheia.data.symbols import canonical_of, to_binance
         from aletheia.net import httpx_client
 
         canon = canonical_of(symbol)
-        bn_sym = to_binance_symbol(canon)
+        bn_sym = to_binance(canon)
         interval = _TF_MAP.get(timeframe, timeframe)
 
         params: dict = {

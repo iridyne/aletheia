@@ -183,7 +183,6 @@ class MarketDataConfig(BaseModel):
     # Cross-source price divergence detection.
     price_divergence_threshold_pct: float = 2.0
     price_divergence_alert_enabled: bool = True
-    cross_source_check_enabled: bool = False
 
 
 class LiveConfig(BaseModel):
@@ -1151,9 +1150,7 @@ class StrategyFactoryConfig(BaseModel):
     backtest_gate_enabled: bool = True
     sweep_enabled: bool = True
     sweep_max_variants: int = 100
-    sweep_use_optuna: bool = False
     sweep_n_trials: int = 60
-    sweep_optuna_timeout_sec: float = 120.0
     sweep_top_k: int = 10
     event_driven_enabled: bool = True
     event_cooldown_minutes: int = 30
