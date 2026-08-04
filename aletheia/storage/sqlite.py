@@ -33,11 +33,23 @@ _T = TypeVar("_T")
 # before issuing BEGIN so that only one connection can hold the SQLite writer slot
 # at a time.  Contention is resolved in Python-land instead of inside SQLite's
 # busy_timeout loop, which means "database is locked" can never be raised by normal
-# application code.  Timeout is set slightly above busy_timeout (30 s) as a last
-# resort; if it fires it means a write transaction was held open across I/O — a bug
-# in the caller, not a concurrency problem.
+# application code.
+#
+# Timeout philosophy: normal write transactions complete in single-digit milliseconds.
+# A timeout in the seconds range means a write transaction is being held open across
+# I/O (an await, a network call, or a long computation) — that is a bug in the caller,
+# not a capacity problem.  The previous 32 s value allowed broken callers to block
+# all other writers for half a minute before failing, compounding the problem.
+#
+# New values:
+#   _WRITE_LOCK_TIMEOUT_S  = 6 s  (process-wide Python threading.Lock)
+#   PRAGMA busy_timeout    = 3 s  (SQLite's own cross-thread/cross-process fallback)
+#   _acquire_file_write_lock timeout is derived from the same _WRITE_LOCK_TIMEOUT_S
+#
+# If either fires, it is a fast-fail signal to the operator that something is holding
+# a write transaction open across I/O.  Raise an issue; do not raise the timeout.
 _WRITE_LOCK = threading.Lock()
-_WRITE_LOCK_TIMEOUT_S = 32.0
+_WRITE_LOCK_TIMEOUT_S = 6.0
 _write_lock_state = threading.local()
 
 _WRITE_QUEUE_CAPACITY = 256
@@ -246,7 +258,7 @@ def _open_connection(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA busy_timeout=3000")  # 3 s — fast-fail, not retry budget
     conn.execute("PRAGMA wal_autocheckpoint=1000")
     return conn
 
