@@ -15,7 +15,8 @@ import { fmtNum, humanize, humanizeBool } from '../../../lib/format'
 import { listToCsv, parseCsvList } from '../csvList'
 import {
   RISK_BOOLS, RISK_CORR, RISK_DEMO, RISK_FAMILY_GATE, RISK_FUTURES_DEMO,
-  RISK_FUTURES_LIVE, RISK_LIVE, RISK_MARGIN, RISK_SHARED,
+  RISK_FUTURES_LIVE, RISK_LIVE, RISK_MARGIN, RISK_POLICY_BOOLS,
+  RISK_POLICY_LIVE_FIELDS, RISK_POLICY_NUM_FIELDS, RISK_SHARED,
 } from '../risk/riskFields'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
 
@@ -506,40 +507,6 @@ function SymbolsCard({ settings, qc }: any) {
 
 // ─── Risk limits ───
 
-const POLICY_NUM_FIELDS: NumField[] = [
-  { key: 'capital.base_usdt', label: 'Capital base', unit: 'USDT', min: 1, step: 1 },
-  { key: 'capital.max_position_notional_usdt', label: 'Position notional cap', unit: 'USDT', min: 1, step: 1 },
-  { key: 'capital.max_per_symbol_notional_usdt', label: 'Per-symbol cumulative cap', unit: 'USDT', min: 0, step: 10 },
-  { key: 'capital.max_total_exposure_pct', label: 'Total exposure cap', unit: '%', min: 0, step: 0.5 },
-  { key: 'loss.max_single_trade_risk_pct', label: 'Single-trade risk', unit: '%', min: 0.01, step: 0.01 },
-  { key: 'loss.max_daily_loss_pct', label: 'Daily loss', unit: '%', min: 0.1, step: 0.1 },
-  { key: 'positions.max_open_positions', label: 'Open positions', unit: '', min: 1, step: 1, isInt: true },
-  { key: 'leverage.futures_cap', label: 'Futures leverage', unit: 'x', min: 1, step: 1, isInt: true },
-  { key: 'leverage.major_cap', label: 'Major leverage', unit: 'x', min: 1, step: 1, isInt: true },
-  { key: 'leverage.mid_cap', label: 'Mid-cap leverage', unit: 'x', min: 1, step: 1, isInt: true },
-  { key: 'leverage.alt_cap', label: 'Alt leverage', unit: 'x', min: 1, step: 1, isInt: true },
-  { key: 'leverage.account_cap', label: 'Account leverage', unit: 'x', min: 1, step: 0.1 },
-  { key: 'margin.min_entry_liquidation_buffer_pct', label: 'Entry liquidation buffer', unit: '%', min: 0, step: 0.5 },
-  { key: 'margin.runtime_liquidation_buffer_pct', label: 'Runtime liquidation buffer', unit: '%', min: 0, step: 0.5 },
-  { key: 'correlation.max_sector_concentration_pct', label: 'Sector concentration', unit: '%', min: 0, step: 1 },
-  { key: 'correlation.max_portfolio_beta', label: 'Portfolio BTC beta', unit: '', min: 0, step: 0.1 },
-  { key: 'exits.catastrophic_stop_pct', label: 'Catastrophic stop', unit: '%', min: 0, step: 0.5 },
-  { key: 'exits.catastrophic_stop_pct_serenity', label: 'Serenity catastrophic stop', unit: '%', min: 0, step: 0.5 },
-  { key: 'exits.horizon_hard_backstop_mult', label: 'Horizon hard backstop', unit: 'x', min: 1, step: 0.5 },
-]
-
-const POLICY_BOOLS: BoolField[] = [
-  { key: 'positions.allow_short', label: 'Allow short selling' },
-  { key: 'correlation.enabled', label: 'Correlation guard' },
-  { key: 'exits.catastrophic_stop_enabled', label: 'Catastrophic stop' },
-  { key: 'auto_trip_mode_brake_on_daily_loss', label: 'Auto-trip mode brake on daily loss' },
-]
-
-const LIVE_POLICY_FIELDS: NumField[] = [
-  { key: 'eligibility.family_min_samples', label: 'Family evidence samples', unit: '', min: 1, step: 1, isInt: true },
-  { key: 'eligibility.family_min_win_rate_pct', label: 'Family evidence win rate', unit: '%', min: 0, max: 100, step: 1 },
-]
-
 function readPolicyPath(value: any, path: string): any {
   return path.split('.').reduce((current, key) => current?.[key], value)
 }
@@ -557,9 +524,9 @@ function RiskPolicyEditor({ mode, initial, qc }: { mode: 'demo' | 'live'; initia
   const [policy, setPolicy] = useState<any>(initial)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   useEffect(() => setPolicy(initial), [initial])
-  const numFields = mode === 'live' ? [...POLICY_NUM_FIELDS, ...LIVE_POLICY_FIELDS] : POLICY_NUM_FIELDS
+  const numFields = mode === 'live' ? [...RISK_POLICY_NUM_FIELDS, ...RISK_POLICY_LIVE_FIELDS] : RISK_POLICY_NUM_FIELDS
   const vals = Object.fromEntries(
-    [...numFields, ...POLICY_BOOLS].map(field => [field.key, readPolicyPath(policy, field.key)])
+    [...numFields, ...RISK_POLICY_BOOLS].map(field => [field.key, readPolicyPath(policy, field.key)])
   )
   const save = useMutation({
     mutationFn: () => api.replaceRiskPolicy(
@@ -598,7 +565,7 @@ function RiskPolicyEditor({ mode, initial, qc }: { mode: 'demo' | 'live'; initia
       <div className="section-label">{mode === 'demo' ? 'Demo / Paper Policy' : 'Live Policy'}</div>
       <p className="hint mono">{policy.policy_id} · revision {policy.revision}</p>
       <NumGrid fields={numFields} vals={vals} set={set} />
-      <ToggleGrid fields={POLICY_BOOLS} vals={vals} set={set} />
+      <ToggleGrid fields={RISK_POLICY_BOOLS} vals={vals} set={set} />
       <p className="hint">Daily-loss threshold: −{fmtNum(threshold)} USDT. A breach trips only the {mode} brake.</p>
       <p className="hint">Margin warning/block ratios are retained for migration but are not enforced yet; entry/runtime liquidation buffers are enforced.</p>
       {mode === 'live' && policy.eligibility && (
