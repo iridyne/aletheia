@@ -182,6 +182,8 @@ def _build_exchange_upnl_index() -> dict[tuple[str, str, str, str], float]:
 
         candidates: dict[tuple[str, str, str, str], list[float]] = {}
         cached = exchange_sync.get_unified_cached_state()
+        if exchange_sync.status_for(cached) != "ok":
+            return {}
         for position in (cached or {}).get("positions") or []:
             symbol = to_canonical(position.get("symbol", ""))
             broker_id = str(position.get("broker_id") or "")
