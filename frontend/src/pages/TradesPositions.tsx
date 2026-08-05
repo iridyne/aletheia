@@ -1,5 +1,5 @@
-import { useState, useMemo, lazy, Suspense } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useMemo, useCallback, lazy, Suspense } from 'react'
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createColumnHelper } from '@tanstack/react-table'
 import { api } from '../api/client'
@@ -11,7 +11,7 @@ import CausalChain from '../components/CausalChain'
 import PageHeader from '../components/PageHeader'
 import Tabs from '../components/Tabs'
 import ThesisText from '../components/ThesisText'
-import { Badge, Button, Card, TableWrap } from '../components/ui'
+import { ActionRow, Badge, Button, Card, TableWrap, useConfirm, useToast } from '../components/ui'
 import { fmtNum, fmtSigned, humanize, fmtTimestamp, fmtSymbol, exchangeOf, marketBadgeTone, isPerpMarket } from '../lib/format'
 import TradeAnalyticsPanel from '../charts/TradeAnalyticsPanel'
 const TradeInsightsPanel = lazy(() => import('../charts/TradeInsightsPanel'))
@@ -100,6 +100,62 @@ type Selection =
   | { kind: 'position'; position: Position }
   | null
 
+/**
+ * Shared manual-close hook used by both the row button and the drawer.
+ * Paper/demo only — live positions get a clear error (409), not a silent no-op.
+ * Confirm → market close → invalidate + toast + auto-close drawer.
+ */
+function useManualClose(onSuccess?: () => void) {
+  const confirm = useConfirm()
+  const { toast } = useToast()
+  const qc = useQueryClient()
+
+  const mutation = useMutation({
+    mutationFn: (position: Position) => api.closePosition(position.id),
+    onSuccess: (_data, position) => {
+      qc.invalidateQueries({ queryKey: ['positions'] })
+      qc.invalidateQueries({ queryKey: ['trades'] })
+      toast('success', `${fmtSymbol(position.symbol, position.market_type)} closed`)
+      onSuccess?.()
+    },
+    onError: (err: any, position) => {
+      const detail = err?.message || 'close failed'
+      const isLive = detail.includes('live_position_requires_exchange_close') || detail.includes('live')
+      toast(
+        'error',
+        isLive
+          ? `${fmtSymbol(position.symbol, position.market_type)} — close this live position directly on the exchange.`
+          : `Could not close: ${detail}`,
+      )
+    },
+  })
+
+  const close = useCallback(async (position: Position) => {
+    const mode = position.execution_mode || ''
+    const isLive = mode.endsWith('_live_limited')
+    if (isLive) {
+      toast(
+        'error',
+        `${fmtSymbol(position.symbol, position.market_type)} — close this live position directly on the exchange.`,
+      )
+      return
+    }
+    const ok = await confirm({
+      title: `Close ${fmtSymbol(position.symbol, position.market_type)}?`,
+      description: `Market-close this ${humanize(position.direction)} position at current price.`,
+      detail: position.unrealized_pnl != null
+        ? `Unrealized PnL: ${fmtSigned(position.unrealized_pnl)} USDT`
+        : undefined,
+      confirmLabel: 'Close position',
+      cancelLabel: 'Cancel',
+      variant: 'danger',
+    })
+    if (ok) mutation.mutate(position)
+  }, [confirm, toast, mutation])
+
+  return { close, isPending: mutation.isPending }
+}
+
 export default function TradesPositions() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -108,6 +164,10 @@ export default function TradesPositions() {
   const { data: orders = [] } = useQuery({ queryKey: ['trades'], queryFn: api.getTrades })
   const { data: reconciliation } = useQuery({ queryKey: ['positions-reconciliation'], queryFn: api.getPositionsReconciliation })
   const [sel, setSel] = useState<Selection>(null)
+
+  // useManualClose: row-inline close button. Closing from the drawer shares the
+  // same hook so both paths invalidate the same query keys and show the same toast.
+  const { close: manualClose, isPending: closePending } = useManualClose(() => setSel(null))
 
   const allPos = positions as Position[]
   const open = allPos.filter(p => p.status === 'open')
@@ -133,7 +193,27 @@ export default function TradesPositions() {
         return <span className="mono">{fmtNum(notional)} / {pct.toFixed(1)}%</span>
       },
     }),
-  ], [totalNotional])
+    // Inline close button. Live positions show a disabled badge (close on exchange UI).
+    posCol.display({
+      id: 'manual_close',
+      header: '',
+      cell: ({ row }) => {
+        const pos = row.original
+        const isLive = (pos.execution_mode || '').endsWith('_live_limited')
+        if (isLive) {
+          return <span className="text-muted text-xs">exchange only</span>
+        }
+        return (
+          <Button
+            variant="danger"
+            size="sm"
+            disabled={closePending}
+            onClick={e => { e.stopPropagation(); manualClose(pos) }}
+          >Close</Button>
+        )
+      },
+    }),
+  ], [totalNotional, closePending, manualClose])
 
   return (
     <div>
@@ -228,7 +308,7 @@ export default function TradesPositions() {
         title={sel?.kind === 'order' ? 'Order Detail' : 'Position Detail'}
       >
         {sel?.kind === 'order' && <OrderDetail order={sel.order} navigate={navigate} />}
-        {sel?.kind === 'position' && <PositionDetail position={sel.position} />}
+        {sel?.kind === 'position' && <PositionDetail position={sel.position} onClose={() => setSel(null)} />}
       </DetailDrawer>
     </div>
   )
@@ -375,7 +455,7 @@ function OrderDetail({ order, navigate }: { order: Order; navigate: (p: string) 
   )
 }
 
-function PositionDetail({ position }: { position: Position }) {
+function PositionDetail({ position, onClose }: { position: Position; onClose: () => void }) {
   return (
     <>
       <DrawerSection label="Position">
@@ -439,7 +519,85 @@ function PositionDetail({ position }: { position: Position }) {
       <DrawerSection label="Thesis Lineage">
         <ThesisLineagePanel position={position} />
       </DrawerSection>
+      {position.status === 'open' && (
+        <ClosePositionPanel position={position} onClose={onClose} />
+      )}
     </>
+  )
+}
+
+/** Drawer action panel — manual market/limit close for paper/demo positions. */
+function ClosePositionPanel({ position, onClose }: { position: Position; onClose: () => void }) {
+  const { close, isPending } = useManualClose(onClose)
+  const isLive = (position.execution_mode || '').endsWith('_live_limited')
+  const [showLimit, setShowLimit] = useState(false)
+  const [limitPrice, setLimitPrice] = useState('')
+  const confirm = useConfirm()
+  const { toast } = useToast()
+  const qc = useQueryClient()
+
+  const submitLimit = async () => {
+    const price = parseFloat(limitPrice)
+    if (!isFinite(price) || price <= 0) {
+      toast('error', 'Limit price must be a positive number')
+      return
+    }
+    const ok = await confirm({
+      title: `Set limit exit at ${fmtNum(price)} USDT?`,
+      description: `Position will close when price reaches ${fmtNum(price)}. OCO: stop still fires first if hit.`,
+      confirmLabel: 'Set limit exit',
+      cancelLabel: 'Cancel',
+    })
+    if (!ok) return
+    try {
+      await api.closePosition(position.id, { order_type: 'limit', limit_price: price })
+      qc.invalidateQueries({ queryKey: ['positions'] })
+      toast('success', `Limit exit set at ${fmtNum(price)} USDT`)
+      setShowLimit(false)
+      setLimitPrice('')
+      onClose()
+    } catch (err: any) {
+      toast('error', err?.message || 'Could not set limit exit')
+    }
+  }
+
+  if (isLive) {
+    return (
+      <DrawerSection label="Manual Close">
+        <p className="text-muted text-sm">
+          Live positions must be closed directly on the exchange UI.
+        </p>
+      </DrawerSection>
+    )
+  }
+
+  return (
+    <DrawerSection label="Manual Close">
+      <ActionRow align="start">
+        <Button variant="danger" onClick={() => close(position)} disabled={isPending}>
+          {isPending ? 'Closing…' : 'Close at market price'}
+        </Button>
+        <Button variant="secondary" onClick={() => setShowLimit(v => !v)} disabled={isPending}>
+          {showLimit ? 'Cancel limit' : 'Set limit exit'}
+        </Button>
+      </ActionRow>
+      {showLimit && (
+        <div className="close-limit-row">
+          <input
+            type="number"
+            placeholder="Limit price (USDT)"
+            value={limitPrice}
+            onChange={e => setLimitPrice(e.target.value)}
+            className="dt-filter close-limit-input"
+          />
+          <Button variant="primary" onClick={submitLimit} disabled={!limitPrice}>Confirm limit</Button>
+        </div>
+      )}
+      <p className="text-muted text-sm close-panel-note">
+        Market close uses a fresh mark price (never uses stored current_price). Limit exit
+        is watched locally — position stays open until price crosses the level, then closes at market.
+      </p>
+    </DrawerSection>
   )
 }
 

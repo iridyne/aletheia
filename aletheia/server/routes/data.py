@@ -1114,6 +1114,80 @@ def run_positions_reconcile():
     return run_reconcile()
 
 
+class ManualCloseRequest(BaseModel):
+    """Payload for a dashboard-initiated manual close of a single position."""
+    order_type: str = "market"        # "market" or "limit"
+    limit_price: float | None = None   # required when order_type=="limit"
+    reason: str | None = None          # optional human-readable note
+
+
+@router.post("/positions/{position_id}/close")
+async def manual_close_position(position_id: str, req: ManualCloseRequest):
+    """Owner-initiated manual close of one open position.
+
+    Routing and constraints (execution_contract.md §10.2):
+    - `paper_internal` → resolved-mark local close via paper_broker.
+    - `*_demo` / `*_testnet` → real exchange close order via the matching broker.
+    - `*_live_limited` → HTTP 409 with code ``live_position_requires_exchange_close``;
+      live positions hold REAL funds and must be closed from the exchange UI.
+    - `market` closes immediately; `limit` rests exit_limit_price + exit_limit_source.
+    - Authentication: guarded by ``_PROTECTED_METHOD_PREFIXES`` POST /api/positions/
+      (app.py) — requires X-Aletheia-Token when Remote Control or tunnel is active.
+    - Audit: writes `position_closed` audit event (via pnl.close_position) with
+      actor='human', source='dashboard_manual_close'.
+    """
+    _ensure_db()
+
+    order_type = (req.order_type or "market").strip().lower()
+    if order_type not in ("market", "limit"):
+        raise HTTPException(400, {"code": "invalid_order_type",
+                                   "message": "order_type must be 'market' or 'limit'"})
+
+    import asyncio
+    from aletheia.storage.repositories import get_position
+    from aletheia.portfolio.position_manager import proactive_exit
+
+    pos = get_position(position_id)
+    if pos is None or pos.get("status") != "open":
+        raise HTTPException(404, {"code": "position_not_found_or_not_open",
+                                   "position_id": position_id})
+
+    exec_mode = pos.get("execution_mode", "")
+    if exec_mode.endswith("_live_limited"):
+        raise HTTPException(
+            409,
+            {
+                "code": "live_position_requires_exchange_close",
+                "position_id": position_id,
+                "execution_mode": exec_mode,
+                "message": (
+                    "Live positions hold real funds and must be closed from the exchange "
+                    "UI directly. This endpoint is restricted to paper/demo positions."
+                ),
+            },
+        )
+
+    def _do_close() -> dict:
+        result = proactive_exit(
+            position_id,
+            order_type=order_type,
+            limit_price=req.limit_price,
+            reason=req.reason,
+            actor="human",
+        )
+        if result.get("error"):
+            error_code = result["error"]
+            if error_code == "limit_price_required":
+                raise HTTPException(400, {"code": error_code,
+                                           "message": "limit_price must be a positive finite number"})
+            if error_code == "limit_exit_not_supported_for_live":
+                raise HTTPException(409, result)
+            raise HTTPException(409, result)
+        return result
+
+    return await asyncio.to_thread(_do_close)
+
+
 @router.get("/audit/events")
 def get_audit_events(limit: int = 100):
     _ensure_db()

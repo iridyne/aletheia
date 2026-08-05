@@ -445,6 +445,12 @@ class Position(_Provenanced):
     pending_close_order_id: str | None = None
     pending_close_status: str | None = None
     pending_close_requested_at: str | None = None
+    # Resting locally-watched limit exit and who authored it. exit_limit_source is
+    # 'human' (dashboard manual close) or 'system_operator' (AI proactive exit); it
+    # selects the honest close_reason when the level is crossed so a human's manual
+    # limit is never attributed to AI exit discretion. NULL = no resting limit.
+    exit_limit_price: float | None = None
+    exit_limit_source: str | None = None
     decision_reasoning: str | None = None
     entry_fee: float | None = None
     exit_fee: float | None = None

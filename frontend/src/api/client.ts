@@ -1482,6 +1482,16 @@ export const api = {
   closeAllPaperPositions: () => post<any>('/settings/paper-account/close-all'),
   closePaperSpotPositions: () => post<any>('/settings/paper-account/close-spot'),
 
+  // Manual single-position close (human actor, paper/demo only; live returns 409).
+  // order_type: 'market' (immediate) | 'limit' (rest exit_limit_price locally)
+  closePosition: (
+    positionId: string,
+    opts: { order_type?: 'market' | 'limit'; limit_price?: number; reason?: string } = {}
+  ) => post<{ closed?: boolean; pending_limit_exit?: boolean; position_id: string; close_reason?: string; limit_price?: number; error?: string }>(
+    `/positions/${encodeURIComponent(positionId)}/close`,
+    { order_type: opts.order_type ?? 'market', limit_price: opts.limit_price ?? null, reason: opts.reason ?? null },
+  ),
+
   // Audit / Activity
   getAuditEvents: (limit = 50) => fetchJson<any[]>(`/audit/events?limit=${limit}`),
 

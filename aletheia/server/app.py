@@ -696,6 +696,10 @@ _PROTECTED_METHOD_PREFIXES: tuple[tuple[frozenset[str], str], ...] = (
     # All owner-facing Proposal mutations (approve, reject, and any future
     # state-changing routes under /api/proposals/) must be authenticated.
     (frozenset({"POST", "PUT", "PATCH", "DELETE"}), "/api/proposals/"),
+    # Manual position close. A POST to /api/positions/{id}/close executes a real
+    # exchange order (demo) or a local close (paper) on behalf of the owner.
+    # Unauthenticated tunnel callers must not be able to force-close positions.
+    (frozenset({"POST"}), "/api/positions/"),
 )
 
 # Minimal anonymous surface when tunnel is active.  Every /api/* and /_infra/*
