@@ -600,6 +600,19 @@ def close_position(
         }
     if funding_evidence is not None:
         outcome_evidence["funding"] = dict(funding_evidence)
+        if (
+            local_paper_fill
+            and market_type == "usdt_futures"
+            and evidence_status == "complete"
+        ):
+            from aletheia.portfolio.paper_account import _economics_fingerprint
+
+            outcome_evidence["funding_economics_fingerprint"] = (
+                _economics_fingerprint(funding_evidence)
+            )
+            outcome_evidence["funding_accounting_version"] = funding_evidence.get(
+                "accounting_version", "local-paper-funding-v2",
+            )
     exit_reasoning = build_exit_reasoning(
         row,
         exit_price=exit_price,
