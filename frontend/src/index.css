@@ -998,6 +998,60 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   border-radius: var(--r);
   margin-bottom: var(--space-3);
 }
+/* Settings form primitives. These semantic classes use Tailwind through @apply
+   without publishing new global utility names: T1 intentionally keeps source
+   scanning disabled so old inert class strings cannot change appearance.
+   No current page uses these classes yet; the first section migration is the
+   browser-review gate for their visual shape. */
+.settings-config-section {
+  @apply grid min-w-0 grid-cols-1 gap-4 py-6;
+  border-bottom: 1px solid var(--border);
+}
+.settings-config-section:last-child { border-bottom: 0; }
+.settings-config-copy,
+.settings-config-content,
+.settings-form-field { @apply min-w-0; }
+.settings-config-title {
+  margin: 0; color: var(--text); font: 600 var(--fs-md) var(--display);
+}
+.settings-config-description {
+  margin: var(--space-1) 0 0; color: var(--muted);
+  font-size: var(--fs-sm); line-height: 1.45;
+}
+@media (min-width: 1024px) {
+  .settings-config-section {
+    grid-template-columns: 240px minmax(0, 1fr);
+    column-gap: 40px;
+  }
+}
+.settings-scroll-area {
+  @apply min-h-0 flex-1 overflow-y-auto overscroll-contain;
+  scrollbar-gutter: stable;
+}
+.settings-form-grid {
+  @apply grid min-w-0 grid-cols-1 gap-4;
+  align-items: start;
+  margin-bottom: var(--space-4);
+}
+@media (min-width: 768px) {
+  .settings-form-grid { @apply grid-cols-2; }
+}
+.settings-form-field-full { grid-column: 1 / -1; }
+.settings-form-label {
+  @apply block text-sm;
+  margin-bottom: 6px; color: var(--text); font-weight: 500;
+}
+.settings-form-field > input,
+.settings-form-field > select,
+.settings-form-field > textarea { width: 100%; }
+.settings-form-description,
+.settings-form-error {
+  @apply text-xs;
+  margin: var(--space-1) 0 0; line-height: 1.4;
+}
+.settings-form-description { color: var(--muted); }
+.settings-form-error { color: var(--red); }
+
 /* Numeric field grid (universe config etc.) — labels stack, inputs FILL the column
    (no fixed widths); units live in the label text, not as sibling spans. */
 .settings-field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--space-4) var(--space-5); margin-bottom: var(--space-4); align-items: start; }
