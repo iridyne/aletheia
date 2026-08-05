@@ -1,0 +1,71 @@
+direction: down
+
+classes: {
+  signal: { style.fill: "#E8F6FF"; style.stroke: "#397BA8" }
+  memory: { style.fill: "#EAF8F1"; style.stroke: "#2E8B67" }
+  operator: { style.fill: "#F2ECFF"; style.stroke: "#7452B8"; style.stroke-width: 3 }
+  terminal: { style.fill: "#FFF3D9"; style.stroke: "#B47B16" }
+  safety: { style.fill: "#FFE8E5"; style.stroke: "#C33D32"; style.stroke-width: 3 }
+}
+
+title: "Agent Decision Loop / Agent 决策闭环" {
+  near: top-center
+  shape: text
+  style.font-size: 26
+  style.bold: true
+}
+
+producers: "Signal producers / 信号生产者" {
+  universe: "Universe scanners\n确定性特征与 scanner family" { class: signal }
+  observer: "Market Observer\nLLM 市场解读" { class: signal }
+  research: "Research / equity / prediction observers\n研究与跨市场观察" { class: signal }
+}
+
+opportunity: "Durable Opportunity generation\n带 snapshot、source manifest 与 valid_until" { class: signal }
+
+ranker: "Paper Trader Ranker / 候选准入" {
+  class: signal
+  gates: "Eligibility gates\ntradability · TTL · direction · dedupe"
+  enrich: "Evidence enrichment\nfeatures · regime · guards · factor history"
+  pending: "PiDecision(action=signal_pending)\n耐久候选载体"
+}
+
+context: "Three-layer decision context / 三层决策上下文" {
+  market: "1 · Environment\nmarket · features · regime · risk"
+  portfolio: "2 · Current state\npositions · balance · recent outcomes"
+  wisdom: "3 · Long-term wisdom\ncases · lessons · memo · guards"
+}
+
+operator: "System Operator / 唯一 AI 入场决策者" {
+  class: operator
+  hydrate: "Hydrate one exact candidate\n按因果 ID 读取候选"
+  reason: "Structured assessment\n证据化推理与 sizing"
+  decide: "Terminal decision\ntrade · skip · watch/defer"
+}
+
+terminal: "Decision outcomes / 决策出口" {
+  trade: "trade → immutable TradeProposal" { class: terminal }
+  skip: "skip → reason + attribution" { class: terminal }
+  defer: "watch/defer → durable retry or expiry" { class: terminal }
+}
+
+safety: "Risk Engine + Execution Gateway\nAI 决策不能绕过硬性风控" { class: safety }
+
+producers.universe -> opportunity
+producers.observer -> opportunity
+producers.research -> opportunity
+opportunity -> ranker.gates
+ranker.gates -> ranker.enrich
+ranker.enrich -> ranker.pending
+ranker.pending -> operator.hydrate
+context.market -> operator.reason
+context.portfolio -> operator.reason
+context.wisdom -> operator.reason
+operator.hydrate -> operator.reason
+operator.reason -> operator.decide
+operator.decide -> terminal.trade
+operator.decide -> terminal.skip
+operator.decide -> terminal.defer
+terminal.trade -> safety
+terminal.skip -> context.portfolio: "future review" { style.stroke-dash: 5 }
+terminal.defer -> ranker.pending: "wake on fresh facts" { style.stroke-dash: 5 }
