@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 from typing import Any, Sequence
 
 from aletheia.storage import repositories as repo
 
 
-COMMAND_VERSION = "paper-funding-reconciliation-v1"
+logger = logging.getLogger(__name__)
+
+
+COMMAND_VERSION = "paper-funding-reconciliation-v2"
 ACCOUNTING_VERSION = "local-paper-funding-v2"
 
 
@@ -154,24 +158,84 @@ def _proposed_result(row: dict) -> tuple[dict, float | None, float | None, bool,
     return funding.evidence, float(funding.funding_cost), realized, eligible, reason
 
 
+def _stored_funding_identity(row: dict) -> dict[str, Any]:
+    """Parse and validate the exact funding evidence persisted by the close."""
+    evidence_root: dict[str, Any] = {}
+    raw_evidence = row.get("reconciliation_evidence")
+    if raw_evidence:
+        try:
+            parsed = json.loads(str(raw_evidence))
+            if isinstance(parsed, dict):
+                evidence_root = parsed
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+
+    funding_evidence = evidence_root.get("funding")
+    nested_fingerprint = (
+        _fingerprint(funding_evidence)
+        if isinstance(funding_evidence, dict)
+        else None
+    )
+    claimed_complete = (
+        isinstance(funding_evidence, dict)
+        and funding_evidence.get("status") == "complete"
+        and funding_evidence.get("accounting_version") == ACCOUNTING_VERSION
+    )
+    validated = False
+    if isinstance(funding_evidence, dict) and claimed_complete:
+        from aletheia.portfolio.pnl import _validate_complete_funding_evidence
+
+        try:
+            _validate_complete_funding_evidence(
+                row=row,
+                position_id=str(row["id"]),
+                closed_at=str(row.get("closed_at") or ""),
+                funding_cost=row.get("funding_cost"),
+                funding_source=row.get("funding_source"),
+                evidence=funding_evidence,
+            )
+        except (TypeError, ValueError):
+            pass
+        else:
+            validated = True
+    return {
+        "evidence_root": evidence_root,
+        "funding_evidence": funding_evidence,
+        "nested_fingerprint": nested_fingerprint,
+        "root_accounting_version": evidence_root.get(
+            "funding_accounting_version",
+        ),
+        "root_fingerprint": evidence_root.get(
+            "funding_economics_fingerprint",
+        ),
+        "claimed_complete": claimed_complete,
+        "validated": validated,
+    }
+
+
 def _plan_row(row: dict) -> dict:
     position_id = str(row["id"])
     evidence, funding_cost, proposed_pnl, eligible, reason = _proposed_result(row)
+    recomputed_fingerprint = (
+        _fingerprint(evidence)
+        if isinstance(evidence, dict) and evidence.get("status") == "complete"
+        else None
+    )
+    stored_identity = _stored_funding_identity(row)
     close_events = _close_event_values(position_id)
     cash_total, cash_events = _cash_total(position_id)
     hooks = repo.list_outcome_hook_jobs(position_id=position_id, limit=20)
     current_pnl = row.get("realized_pnl")
-    current_accounting_version: str | None = None
-    if row.get("reconciliation_evidence"):
-        try:
-            parsed_evidence = json.loads(str(row["reconciliation_evidence"]))
-            if isinstance(parsed_evidence, dict):
-                current_accounting_version = parsed_evidence.get(
-                    "funding_accounting_version",
-                )
-        except (TypeError, ValueError, json.JSONDecodeError):
-            pass
     categories: list[str] = []
+
+    if proposed_pnl is not None and (
+        not stored_identity["claimed_complete"]
+        or not stored_identity["validated"]
+        or stored_identity["root_accounting_version"] != ACCOUNTING_VERSION
+        or stored_identity["root_fingerprint"]
+        != stored_identity["nested_fingerprint"]
+    ):
+        categories.append("funding_identity_mismatch")
 
     if proposed_pnl is None:
         categories.append("still_incomplete")
@@ -181,8 +245,17 @@ def _plan_row(row: dict) -> dict:
             if row.get("outcome_exclusion_reason") == "funding_permanently_unrecoverable"
             else "recoverable_null_pnl"
         )
-    elif not math.isclose(
-        float(current_pnl), proposed_pnl, rel_tol=0.0, abs_tol=1e-8,
+    elif (
+        funding_cost is None
+        or row.get("funding_cost") is None
+        or not math.isclose(
+            float(row["funding_cost"]), funding_cost,
+            rel_tol=0.0, abs_tol=1e-12,
+        )
+        or not math.isclose(
+            float(current_pnl), proposed_pnl,
+            rel_tol=0.0, abs_tol=1e-8,
+        )
     ):
         categories.append("duplicate_settlement_numeric_mismatch")
 
@@ -204,23 +277,70 @@ def _plan_row(row: dict) -> dict:
         or not math.isclose(float(current_pnl), cash_total, rel_tol=0.0, abs_tol=1e-8)
     ):
         categories.append("paper_cash_ledger_mismatch")
-    if bool(row.get("outcome_eligible")) and not hooks:
+    if proposed_pnl is not None and (
+        bool(row.get("outcome_eligible")) != bool(eligible)
+        or row.get("outcome_exclusion_reason") != reason
+    ):
+        categories.append("outcome_projection_mismatch")
+    expected_hooks: set[str] = set()
+    if eligible:
+        expected_hooks.add("shadow_trades")
+        if row.get("trade_school") == "serenity" and row.get("opportunity_id"):
+            expected_hooks.add("serenity_post_mortem")
+    actual_hooks = {str(item["hook_type"]) for item in hooks}
+    if not expected_hooks.issubset(actual_hooks):
         categories.append("missing_outcome_hooks")
+
+    category_set = set(categories)
+    if not category_set:
+        repair_mode = "already_current"
+    elif (
+        category_set == {"funding_identity_mismatch"}
+        and stored_identity["validated"]
+    ):
+        repair_mode = "identity_only"
+    else:
+        repair_mode = "economics_materialization"
+    preserve_stored_evidence = repair_mode in {
+        "already_current",
+        "identity_only",
+    } and stored_identity["validated"]
+    proposed_evidence = (
+        stored_identity["funding_evidence"]
+        if preserve_stored_evidence
+        else evidence
+    )
+    proposed_fingerprint = (
+        _fingerprint(proposed_evidence)
+        if isinstance(proposed_evidence, dict)
+        and proposed_evidence.get("status") == "complete"
+        else None
+    )
 
     proposed = {
         "funding_accounting_version": ACCOUNTING_VERSION,
+        "funding_economics_fingerprint": proposed_fingerprint,
+        "recomputed_funding_economics_fingerprint": recomputed_fingerprint,
         "funding_cost": funding_cost,
         "realized_pnl": proposed_pnl,
         "outcome_eligible": bool(eligible),
         "outcome_exclusion_reason": reason,
-        "funding_evidence": evidence,
+        "funding_evidence": proposed_evidence,
         "required_cash_compensation": (
             None if proposed_pnl is None or cash_total is None
             else round(proposed_pnl - cash_total, 8)
         ),
     }
     current = {
-        "funding_accounting_version": current_accounting_version,
+        "funding_accounting_version": stored_identity[
+            "root_accounting_version"
+        ],
+        "funding_economics_fingerprint": stored_identity[
+            "root_fingerprint"
+        ],
+        "nested_funding_economics_fingerprint": stored_identity[
+            "nested_fingerprint"
+        ],
         "funding_cost": row.get("funding_cost"),
         "realized_pnl": current_pnl,
         "outcome_eligible": bool(row.get("outcome_eligible")),
@@ -237,6 +357,7 @@ def _plan_row(row: dict) -> dict:
         "accounting_version": ACCOUNTING_VERSION,
         "position_id": position_id,
         "causal_ids": _causal_ids(position_id),
+        "repair_mode": repair_mode,
         "current": current,
         "proposed": proposed,
     }
@@ -244,6 +365,7 @@ def _plan_row(row: dict) -> dict:
         "position_id": position_id,
         "symbol": row.get("symbol"),
         "categories": sorted(set(categories)),
+        "repair_mode": repair_mode,
         "causal_ids": guarded["causal_ids"],
         "current": current,
         "proposed": proposed,
@@ -258,11 +380,13 @@ def inspect_paper_funding_reconciliation(
 ) -> dict[str, Any]:
     rows = [_plan_row(row) for row in _position_rows(position_ids, limit=limit)]
     category_names = (
+        "funding_identity_mismatch",
         "recoverable_null_pnl",
         "terminal_now_recoverable",
         "duplicate_settlement_numeric_mismatch",
         "close_event_projection_mismatch",
         "paper_cash_ledger_mismatch",
+        "outcome_projection_mismatch",
         "missing_outcome_hooks",
         "still_incomplete",
     )
@@ -286,6 +410,110 @@ def inspect_paper_funding_reconciliation(
     return report
 
 
+def _apply_funding_identity_repair(item: dict[str, Any]) -> dict[str, Any]:
+    """Add root identity without touching close-time evidence or projections."""
+    from aletheia.files.jsonl import write_audit
+    from aletheia.storage.models import AuditEvent
+
+    position_id = str(item["position_id"])
+    audit_payload: dict[str, Any] | None = None
+    with repo.transaction(immediate=True):
+        current = repo._select_one("positions", position_id)
+        if current is None:
+            raise ValueError(f"position not found: {position_id}")
+        fresh = _plan_row(current)
+        if fresh["repair_fingerprint"] != item["repair_fingerprint"]:
+            raise ValueError(
+                f"position {position_id} funding identity facts changed"
+            )
+        if fresh["repair_mode"] != "identity_only":
+            raise ValueError(
+                f"position {position_id} is not an identity-only repair"
+            )
+
+        raw_evidence = current.get("reconciliation_evidence")
+        try:
+            evidence_root = json.loads(str(raw_evidence))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("stored reconciliation evidence is invalid") from exc
+        if not isinstance(evidence_root, dict):
+            raise ValueError("stored reconciliation evidence is invalid")
+        stored_funding = evidence_root.get("funding")
+        proposed = fresh["proposed"]
+        if stored_funding != proposed["funding_evidence"]:
+            raise ValueError("stored funding evidence changed before identity repair")
+        expected_fingerprint = proposed["funding_economics_fingerprint"]
+        if (
+            not isinstance(expected_fingerprint, str)
+            or _fingerprint(stored_funding) != expected_fingerprint
+        ):
+            raise ValueError("stored funding evidence fingerprint does not match")
+
+        before = {
+            "funding_accounting_version": evidence_root.get(
+                "funding_accounting_version",
+            ),
+            "funding_economics_fingerprint": evidence_root.get(
+                "funding_economics_fingerprint",
+            ),
+        }
+        evidence_root["funding_accounting_version"] = ACCOUNTING_VERSION
+        evidence_root["funding_economics_fingerprint"] = expected_fingerprint
+        repo.update_position(
+            position_id,
+            reconciliation_evidence=json.dumps(
+                evidence_root,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ),
+        )
+        after = {
+            "funding_accounting_version": ACCOUNTING_VERSION,
+            "funding_economics_fingerprint": expected_fingerprint,
+        }
+        repo.insert_audit_event(AuditEvent(
+            actor="human",
+            source="paper_funding_reconciliation",
+            event_type="paper_position_funding_identity_repaired",
+            entity_type="position",
+            entity_id=position_id,
+            before_state=json.dumps(before, sort_keys=True),
+            after_state=json.dumps(after, sort_keys=True),
+            message=(
+                f"Repaired paper funding evidence identity for {position_id}; "
+                "economic and ledger projections unchanged"
+            ),
+        ))
+        audit_payload = {
+            "actor": "human",
+            "source": "paper_funding_reconciliation",
+            "event_type": "paper_position_funding_identity_repaired",
+            "entity_type": "position",
+            "entity_id": position_id,
+            "before": before,
+            "after": after,
+            "message": f"Repaired paper funding evidence identity for {position_id}",
+        }
+
+    if audit_payload is not None:
+        try:
+            write_audit(audit_payload, mirror_db=False)
+        except Exception as exc:
+            logger.error(
+                "paper funding identity JSONL audit sink failed (%s)",
+                type(exc).__name__,
+            )
+    return {
+        "position_id": position_id,
+        "status": "identity_repaired",
+        "realized_pnl": item["current"]["realized_pnl"],
+        "funding_cost": item["current"]["funding_cost"],
+        "fingerprint": item["proposed"]["funding_economics_fingerprint"],
+        "cash_compensation": 0.0,
+    }
+
+
 def apply_paper_funding_reconciliation(
     *,
     position_ids: Sequence[str],
@@ -302,6 +530,19 @@ def apply_paper_funding_reconciliation(
     results: list[dict] = []
     for item in report["rows"]:
         proposed = item["proposed"]
+        if item["repair_mode"] == "already_current":
+            results.append({
+                "position_id": item["position_id"],
+                "status": "already_current",
+                "realized_pnl": item["current"]["realized_pnl"],
+                "funding_cost": item["current"]["funding_cost"],
+                "fingerprint": proposed["funding_economics_fingerprint"],
+                "cash_compensation": 0.0,
+            })
+            continue
+        if item["repair_mode"] == "identity_only":
+            results.append(_apply_funding_identity_repair(item))
+            continue
         if proposed["realized_pnl"] is None or proposed["funding_cost"] is None:
             raise ValueError(f"position {item['position_id']} remains incomplete")
         results.append(materialize_position_economics(

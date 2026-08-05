@@ -2190,6 +2190,7 @@ def _probe_paper_funding_accounting(report: Report) -> None:
 
         result = paper_funding_diagnostic_summary(limit=100)
         summary = result["summary"]
+        identity = int(summary["funding_identity_mismatch"])
         numeric = int(summary["duplicate_settlement_numeric_mismatch"])
         ledgers = int(summary["close_event_projection_mismatch"]) + int(
             summary["paper_cash_ledger_mismatch"]
@@ -2198,19 +2199,27 @@ def _probe_paper_funding_accounting(report: Report) -> None:
             summary["terminal_now_recoverable"]
         )
         missing_hooks = int(summary["missing_outcome_hooks"])
+        outcome_projection = int(summary["outcome_projection_mismatch"])
         incomplete = int(summary["still_incomplete"])
         detail = (
             f"version={result['accounting_version']}; scanned={result['scanned']}; "
+            f"identity_mismatch={identity}; "
             f"numeric_mismatch={numeric}; ledger_mismatch={ledgers}; "
             f"recoverable={recoverable}; incomplete={incomplete}; "
-            f"missing_hooks={missing_hooks}"
+            f"outcome_mismatch={outcome_projection}; missing_hooks={missing_hooks}"
         )
         if numeric or ledgers:
             report.add(
                 "accounting.paper_funding", "blocker", detail,
                 "run `aletheia data reconcile-paper-funding` and review the dry run",
             )
-        elif recoverable or incomplete or missing_hooks:
+        elif (
+            identity
+            or recoverable
+            or incomplete
+            or outcome_projection
+            or missing_hooks
+        ):
             report.add(
                 "accounting.paper_funding", "warn", detail,
                 "review the dry run; apply requires explicit position IDs and fingerprint",

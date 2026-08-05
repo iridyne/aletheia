@@ -549,6 +549,10 @@ at the tail. Full `VACUUM` runs only in the one-shot backfill with the gateway s
 | `funding_cost` | `broker_ledger` 的账户实际 funding，或 `local_simulation` 按完整结算快照窗与结算前已成交 entry Fill 名义额分段计算的确定性模拟值；正数为成本、负数为返还 | `NULL` |
 | `funding_source` | `not_applicable` / `broker_ledger` / `local_simulation` / `unavailable`；本地模拟的逐事件原件（active Fill ids/notional、事件成本和持有窗）在 `reconciliation_evidence.funding`，完整 handoff 由中央关闭入口复核 | `unavailable` |
 
+`funding_economics_fingerprint` 必须对已持久化的完整 `reconciliation_evidence.funding` 原件本身做
+canonical fingerprint，包括 close 时记录的 `seed_close_anchor`；历史 identity repair 不得重新计算或
+替换该 nested evidence，也不得借机改变任何经济、ledger、eligibility 或 hook 投影。
+
 `realized_pnl` 是原始关闭经济字段，不是缺失事实的默认值。open Position 可从 `0` 开始；closed futures
 在没有可信 broker ledger 或完整 local-simulation 时间窗时必须保留 `NULL`。这种关闭仍有真实 close Order/Fill 和 closed 生命周期，
 但固定为 `incomplete_funding_economics`、不得进入 eligible Outcome/outbox，也不得追加

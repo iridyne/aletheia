@@ -475,6 +475,12 @@ bracket 的历史序列才可完成；公开历史费率在这里仍是本地模
 以带 position/source/fingerprint 的 `manual_credit` 或 `manual_debit` 追加差额，不删除旧事件。
 `aletheia data reconcile-paper-funding` 默认只读；apply 必须显式列出 Position IDs 并匹配当次 report
 fingerprint。
+已完成数值、full-close、paper cash、eligibility 和 outcome hook 都一致，但顶层 funding version/fingerprint
+缺失或不匹配的旧行，必须单独报告为 `funding_identity_mismatch`。只有它是唯一差异、且原始 nested
+funding evidence 仍可按持仓窗与逐事件合计复核时，apply 才可走 identity-only repair：保留该 nested
+evidence（包括 close 时的 `seed_close_anchor`）不变，只补它自身的 canonical version/fingerprint 和
+权威 repair audit。任何 funding/PnL、close event、cash、eligibility/reason 或必需 hook 差异都不得被
+identity-only 路径吸收；已经 current 的行再次 apply 必须为 no-op。
 
 exchange-backed futures 仍只接受对应账户私有账单的 `broker_ledger`；公开费率不得替代真实扣款。
 
