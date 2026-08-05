@@ -48,6 +48,10 @@ def _setup_db(tmp_path, monkeypatch):
 
 def _config():
     return SimpleNamespace(
+        # PL-PCM-09 imports the complete ASGI app after installing this fake.
+        # Match the module-level CORS config read instead of relying on another
+        # test having imported and cached aletheia.server.app first.
+        app=SimpleNamespace(bind_host="127.0.0.1"),
         trading=SimpleNamespace(
             slippage_bps=SLIPPAGE_BPS,
             execution_fee_pct=FEE_RATE * 100.0,
@@ -69,8 +73,12 @@ def _patch_config(monkeypatch):
     from aletheia.portfolio import position_manager
 
     cfg = _config()
-    monkeypatch.setattr(loader, "load_config", lambda: cfg)
-    monkeypatch.setattr(position_manager, "load_config", lambda: cfg)
+
+    def fake_load_config(*_args, **_kwargs):
+        return cfg
+
+    monkeypatch.setattr(loader, "load_config", fake_load_config)
+    monkeypatch.setattr(position_manager, "load_config", fake_load_config)
     return cfg
 
 
