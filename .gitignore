@@ -36,6 +36,7 @@ CLAUDE.local.md
 # pi / pi-lens local config (pi-lens auto-format and autofix settings)
 .pi-lens.json
 pi-lens.json
+.pi-subagents/
 
 # Trae local/private state
 .trae/

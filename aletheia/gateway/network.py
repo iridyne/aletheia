@@ -58,7 +58,7 @@ def frontdoor_bind_hosts(cfg) -> list[str]:
     remote_control = getattr(cfg, "remote_control", None)
     if not getattr(remote_control, "enabled", False):
         return [_LOOPBACK_HOST]
-    return normalize_remote_bind_hosts(getattr(remote_control, "bind_hosts", []))
+    return [_LOOPBACK_HOST, *normalize_remote_bind_hosts(getattr(remote_control, "bind_hosts", []))]
 
 
 def local_frontdoor_host() -> str:

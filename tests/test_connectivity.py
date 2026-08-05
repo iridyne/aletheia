@@ -399,6 +399,32 @@ async def test_startup_gate_passes_when_exchange_up(tmp_path, monkeypatch):
     assert cfg_after.runtime.paused is False
 
 
+@pytest.mark.asyncio
+async def test_startup_gate_logs_zero_latency_when_probe_has_no_latency(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _reset_connectivity_state()
+
+    from aletheia.config.loader import load_config
+    import aletheia.agent_runtime.connectivity as conn_mod
+
+    cfg = load_config()
+    cfg.exchange.name = "local-paper"
+    monkeypatch.setattr(
+        conn_mod,
+        "_probe_exchange_and_external",
+        AsyncMock(return_value=(
+            {"reachable": True, "latency_ms": None, "error": None, "exchange": "local-paper"},
+            {"reachable": True, "latency_ms": 1.0, "error_code": None},
+        )),
+    )
+    logged = []
+    monkeypatch.setattr(conn_mod.logger, "info", lambda *args: logged.append(args))
+
+    await conn_mod.startup_exchange_gate(cfg)
+
+    assert logged == [("startup exchange gate: %s reachable (%.0fms)", "local-paper", 0)]
+
+
 # ---------------------------------------------------------------------------
 # Test 5: Smart self-heal: stale data + exchange unreachable → no restart
 # ---------------------------------------------------------------------------

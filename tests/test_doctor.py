@@ -133,6 +133,23 @@ def test_process_probe_keeps_two_runtime_contexts_independent(monkeypatch):
     assert "runtime-isolated-a" not in details[1] and ":8791" not in details[1]
 
 
+def test_process_probe_warns_when_supervisor_has_no_frontdoor_listener(monkeypatch):
+    import aletheia.gateway.pidfile as pidfile
+
+    monkeypatch.delenv("ALETHEIA_RUNTIME_ID", raising=False)
+    monkeypatch.delenv("ALETHEIA_RUNTIME_PORT", raising=False)
+    monkeypatch.setattr(pidfile, "is_running", lambda: True)
+    monkeypatch.setattr(pidfile, "read_pid", lambda: 4242)
+    monkeypatch.setattr(pidfile, "port_in_use", lambda *_args: False)
+
+    report = dx.Report()
+    dx._probe_process(report)
+
+    process = next(check for check in report.checks if check.name == "process.gateway")
+    assert process.severity == "warn"
+    assert "no listener" in process.detail
+
+
 def test_git_hook_probe_reports_manual_lifecycle_when_legacy_hooks_are_absent(monkeypatch):
     from aletheia.gateway import git_hooks
 
