@@ -250,19 +250,21 @@ def _build_research_cycle_payload(opportunity: dict) -> dict:
     timeline = []
     for snap in snapshots:
         snap_payload = _parse_replay_payload(snap.get("payload"))
-        timeline.append({
-            "id": snap["id"],
-            "as_of": snap["as_of"],
-            "created_at": snap["created_at"],
-            "event_type": snap.get("event_type"),
-            "event_title": snap.get("event_title"),
-            "stage": snap.get("stage"),
-            "score_total": snap.get("score_total"),
-            "bucket": snap_payload.get("bucket"),
-            "evidence_count": snap.get("evidence_count"),
-            "risk_fail_gates": snap.get("risk_fail_gates"),
-            "risk_warn_gates": snap.get("risk_warn_gates"),
-        })
+        timeline.append(
+            {
+                "id": snap["id"],
+                "as_of": snap["as_of"],
+                "created_at": snap["created_at"],
+                "event_type": snap.get("event_type"),
+                "event_title": snap.get("event_title"),
+                "stage": snap.get("stage"),
+                "score_total": snap.get("score_total"),
+                "bucket": snap_payload.get("bucket"),
+                "evidence_count": snap.get("evidence_count"),
+                "risk_fail_gates": snap.get("risk_fail_gates"),
+                "risk_warn_gates": snap.get("risk_warn_gates"),
+            }
+        )
 
     payload = _score_serenity_opportunity_payload(opportunity, include_evidence=False, include_gates=False)
     payload["serenity_score"] = score
@@ -345,24 +347,24 @@ def get_agent_run_steps(run_id: str):
 # gate_check: True → block when kill_switch_active or runtime paused
 _MANUAL_AGENT_ALLOWLIST: dict[str, dict] = {
     # Observational — read-only market data, no model calls, no artifacts
-    "market_observer":     {"side_effect_class": "observe",   "cost_class": "low",    "gate_check": False},
-    "equity_observer":     {"side_effect_class": "observe",   "cost_class": "low",    "gate_check": False},
-    "stock_observer":      {"side_effect_class": "observe",   "cost_class": "low",    "gate_check": False},
-    "prediction_observer": {"side_effect_class": "observe",   "cost_class": "low",    "gate_check": False},
-    "divergence_scanner":  {"side_effect_class": "observe",   "cost_class": "low",    "gate_check": False},
+    "market_observer": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
+    "equity_observer": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
+    "stock_observer": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
+    "prediction_observer": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
+    "divergence_scanner": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
     # Research / analysis — uses LLM, writes knowledge/insight artifacts only
-    "research_agent":      {"side_effect_class": "research",  "cost_class": "high",   "gate_check": False},
-    "research_worker":     {"side_effect_class": "research",  "cost_class": "high",   "gate_check": False},
+    "research_agent": {"side_effect_class": "research", "cost_class": "high", "gate_check": False},
+    "research_worker": {"side_effect_class": "research", "cost_class": "high", "gate_check": False},
     # Review / critique — uses LLM, writes review/lesson/signal artifacts
-    "post_trade_reviewer": {"side_effect_class": "review",    "cost_class": "medium", "gate_check": False},
-    "risk_critic":         {"side_effect_class": "review",    "cost_class": "medium", "gate_check": False},
-    "lesson_reviewer":     {"side_effect_class": "review",    "cost_class": "medium", "gate_check": False},
-    "dreaming_agent":      {"side_effect_class": "review",    "cost_class": "medium", "gate_check": False},
-    "portfolio_agent":     {"side_effect_class": "review",    "cost_class": "medium", "gate_check": False},
+    "post_trade_reviewer": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
+    "risk_critic": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
+    "lesson_reviewer": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
+    "dreaming_agent": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
+    "portfolio_agent": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     # Ranking — deterministic, no LLM, no orders
-    "paper_trader_ranker": {"side_effect_class": "rank",      "cost_class": "low",    "gate_check": False},
+    "paper_trader_ranker": {"side_effect_class": "rank", "cost_class": "low", "gate_check": False},
     # Behavior-producing — creates paper proposals/orders; respects kill-switch and pause
-    "paper_trader":        {"side_effect_class": "behavior",  "cost_class": "medium", "gate_check": True},
+    "paper_trader": {"side_effect_class": "behavior", "cost_class": "medium", "gate_check": True},
 }
 
 
@@ -405,14 +407,18 @@ def start_agent_run(req: StartAgentRequest, request: Request):
         if getattr(getattr(cfg, "runtime", None), "kill_switch_active", False):
             raise HTTPException(
                 status_code=503,
-                detail={"error": "kill_switch_active",
-                        "message": "Kill switch is active; behavior-producing agents cannot be started manually."},
+                detail={
+                    "error": "kill_switch_active",
+                    "message": "Kill switch is active; behavior-producing agents cannot be started manually.",
+                },
             )
         if getattr(getattr(cfg, "runtime", None), "paused", False):
             raise HTTPException(
                 status_code=503,
-                detail={"error": "gateway_paused",
-                        "message": "Gateway is paused; behavior-producing agents cannot be started manually."},
+                detail={
+                    "error": "gateway_paused",
+                    "message": "Gateway is paused; behavior-producing agents cannot be started manually.",
+                },
             )
 
     # Actor attribution: authenticated tunnel callers are recorded as "owner";
@@ -637,6 +643,7 @@ def create_serenity_opportunity(payload: SerenityOpportunityCreate):
     # is trusted to add evidence via the /serenity/evidence route, not to
     # skip the assessment step.
     from aletheia.trading.serenity_evidence import assess_opportunity_tier
+
     normalized_tier = normalize_tier(payload.evidence_tier)
     theme_evidence = repo.list_serenity_evidence(theme_id=payload.theme_id, limit=200)
     derived_tier, derived_by = assess_opportunity_tier({}, theme_evidence)
@@ -814,15 +821,15 @@ def get_serenity_pipeline():
     """Serenity research pipeline summary: recent runs + active opportunity count (D7)."""
     _ensure_db()
     from aletheia.storage.sqlite import get_db as _get_db
+
     runs = repo.list_serenity_research_runs(limit=20)
     db = _get_db()
-    active_count = db.execute(
-        "SELECT COUNT(*) FROM serenity_opportunities WHERE status = 'active'"
-    ).fetchone()[0]
+    active_count = db.execute("SELECT COUNT(*) FROM serenity_opportunities WHERE status = 'active'").fetchone()[0]
     return {"runs": runs, "active_opportunity_count": active_count}
 
 
 _PROPOSAL_SKIP = frozenset({"attribution_snapshot"})
+
 
 @router.get("/proposals")
 def get_proposals():
@@ -837,6 +844,7 @@ def get_proposal(proposal_id: str):
     row = repo.get_trade_proposal(proposal_id)
     if not row:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="proposal not found")
     return row
 
@@ -854,6 +862,7 @@ def approve_proposal(proposal_id: str, request: Request):
         )
     _ensure_db()
     from aletheia.files.jsonl import write_audit
+
     p = repo.get_trade_proposal(proposal_id)
     if p is None:
         raise HTTPException(404, "Proposal not found")
@@ -881,10 +890,18 @@ def approve_proposal(proposal_id: str, request: Request):
     if status == "pending":
         repo.update_trade_proposal(proposal_id, status="approved")
         try:
-            write_audit({"actor": "human", "source": _source, "event_type": "proposal_approved",
-                         "entity_type": "trade_proposal", "entity_id": proposal_id,
-                         "before": {"status": status}, "after": {"status": "approved"},
-                         "message": "Proposal approved for paper execution"})
+            write_audit(
+                {
+                    "actor": "human",
+                    "source": _source,
+                    "event_type": "proposal_approved",
+                    "entity_type": "trade_proposal",
+                    "entity_id": proposal_id,
+                    "before": {"status": status},
+                    "after": {"status": "approved"},
+                    "message": "Proposal approved for paper execution",
+                }
+            )
         except Exception as exc:
             # The SQLite approval is authoritative. A process can also die in
             # this gap, so approved/executing states above deliberately re-enter
@@ -895,6 +912,7 @@ def approve_proposal(proposal_id: str, request: Request):
                 type(exc).__name__,
             )
     from aletheia.execution.gateway import execute_existing_proposal
+
     try:
         result = execute_existing_proposal(proposal_id, execution_mode="paper_internal")
     except Exception as exc:
@@ -908,10 +926,18 @@ def approve_proposal(proposal_id: str, request: Request):
         )
         repo.update_trade_proposal(proposal_id, status="error")
         try:
-            write_audit({"actor": "system", "source": _source, "event_type": "execution_error",
-                         "entity_type": "trade_proposal", "entity_id": proposal_id,
-                         "before": {"status": "approved"}, "after": {"status": "error"},
-                         "message": "paper_execution_failed: Paper execution could not be completed."})
+            write_audit(
+                {
+                    "actor": "system",
+                    "source": _source,
+                    "event_type": "execution_error",
+                    "entity_type": "trade_proposal",
+                    "entity_id": proposal_id,
+                    "before": {"status": "approved"},
+                    "after": {"status": "error"},
+                    "message": "paper_execution_failed: Paper execution could not be completed.",
+                }
+            )
         except Exception as audit_exc:
             logger.warning(
                 "Proposal %s execution error kept after audit failure (%s)",
@@ -933,6 +959,7 @@ def approve_proposal(proposal_id: str, request: Request):
 def reject_proposal(proposal_id: str, request: Request):
     _ensure_db()
     from aletheia.files.jsonl import write_audit
+
     # Re-read under the writer claim so an execution worker cannot acquire its
     # lease or insert an Order between this check and the status transition. This
     # route declines only intent that has not crossed the execution boundary; it
@@ -962,9 +989,16 @@ def reject_proposal(proposal_id: str, request: Request):
         repo.release_entry_risk_reservation(proposal_id)
     _source = "owner" if getattr(request.state, "tunnel_authenticated", False) else "dashboard"
     try:
-        write_audit({"actor": "human", "source": _source, "event_type": "proposal_rejected",
-                     "entity_type": "trade_proposal", "entity_id": proposal_id,
-                     "message": "Proposal rejected by human before execution began"})
+        write_audit(
+            {
+                "actor": "human",
+                "source": _source,
+                "event_type": "proposal_rejected",
+                "entity_type": "trade_proposal",
+                "entity_id": proposal_id,
+                "message": "Proposal rejected by human before execution began",
+            }
+        )
     except Exception as exc:
         # SQLite is authoritative after commit. A secondary JSONL failure must not
         # turn a completed rejection into a retryable-looking API error.
@@ -1001,10 +1035,7 @@ def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit: int =
     _ensure_db()
     from aletheia.portfolio.pnl import position_realized_pnl_view
 
-    rows = [
-        position_realized_pnl_view(row)
-        for row in repo.list_positions(status="closed", limit=limit)
-    ]
+    rows = [position_realized_pnl_view(row) for row in repo.list_positions(status="closed", limit=limit)]
     if not rows:
         return StreamingResponse(
             iter(["no data\n"]),
@@ -1013,12 +1044,26 @@ def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit: int =
         )
 
     columns = [
-        "opened_at", "closed_at", "symbol", "market_type", "direction",
-        "quantity", "entry_price", "current_price", "realized_pnl",
-        "realized_pnl_complete", "realized_pnl_unavailable_reason",
-        "entry_fee", "exit_fee", "slippage_cost",
-        "execution_mode", "close_reason", "btc_entry_price", "btc_exit_price",
-        "trade_school", "position_id",
+        "opened_at",
+        "closed_at",
+        "symbol",
+        "market_type",
+        "direction",
+        "quantity",
+        "entry_price",
+        "current_price",
+        "realized_pnl",
+        "realized_pnl_complete",
+        "realized_pnl_unavailable_reason",
+        "entry_fee",
+        "exit_fee",
+        "slippage_cost",
+        "execution_mode",
+        "close_reason",
+        "btc_entry_price",
+        "btc_exit_price",
+        "trade_school",
+        "position_id",
     ]
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -1027,19 +1072,30 @@ def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit: int =
         # `current_price` on a closed position is the exit price (pnl.close_position
         # writes exit_price into current_price at close). Keep the column labelled
         # `current_price` so we don't invent a schema, but the semantic is exit.
-        writer.writerow([
-            row.get("opened_at", ""), row.get("closed_at", ""),
-            row.get("symbol", ""), row.get("market_type", ""),
-            row.get("direction", ""), row.get("quantity", ""),
-            row.get("entry_price", ""), row.get("current_price", ""),
-            row.get("realized_pnl", ""),
-            row.get("realized_pnl_complete", ""),
-            row.get("realized_pnl_unavailable_reason", ""),
-            row.get("entry_fee", ""), row.get("exit_fee", ""), row.get("slippage_cost", ""),
-            row.get("execution_mode", ""), row.get("close_reason", ""),
-            row.get("btc_entry_price", ""), row.get("btc_exit_price", ""),
-            row.get("trade_school", ""), row.get("id", ""),
-        ])
+        writer.writerow(
+            [
+                row.get("opened_at", ""),
+                row.get("closed_at", ""),
+                row.get("symbol", ""),
+                row.get("market_type", ""),
+                row.get("direction", ""),
+                row.get("quantity", ""),
+                row.get("entry_price", ""),
+                row.get("current_price", ""),
+                row.get("realized_pnl", ""),
+                row.get("realized_pnl_complete", ""),
+                row.get("realized_pnl_unavailable_reason", ""),
+                row.get("entry_fee", ""),
+                row.get("exit_fee", ""),
+                row.get("slippage_cost", ""),
+                row.get("execution_mode", ""),
+                row.get("close_reason", ""),
+                row.get("btc_entry_price", ""),
+                row.get("btc_exit_price", ""),
+                row.get("trade_school", ""),
+                row.get("id", ""),
+            ]
+        )
 
     buf.seek(0)
     return StreamingResponse(
@@ -1083,6 +1139,7 @@ def get_exchange_account():
     """
     _ensure_db()
     from aletheia.portfolio import exchange_sync
+
     state = exchange_sync.get_cached_state()
     status = exchange_sync.status_for(state)
     return {"status": status, "state": state}
@@ -1099,6 +1156,7 @@ def get_positions_reconciliation():
     """
     _ensure_db()
     from aletheia.portfolio.position_reconciler import classify_positions
+
     return classify_positions().to_dict()
 
 
@@ -1111,14 +1169,16 @@ def run_positions_reconcile():
     """
     _ensure_db()
     from aletheia.portfolio.position_reconciler import run_reconcile
+
     return run_reconcile()
 
 
 class ManualCloseRequest(BaseModel):
     """Payload for a dashboard-initiated manual close of a single position."""
-    order_type: str = "market"        # "market" or "limit"
-    limit_price: float | None = None   # required when order_type=="limit"
-    reason: str | None = None          # optional human-readable note
+
+    order_type: str = "market"  # "market" or "limit"
+    limit_price: float | None = None  # required when order_type=="limit"
+    reason: str | None = None  # optional human-readable note
 
 
 @router.post("/positions/{position_id}/close")
@@ -1140,8 +1200,7 @@ async def manual_close_position(position_id: str, req: ManualCloseRequest):
 
     order_type = (req.order_type or "market").strip().lower()
     if order_type not in ("market", "limit"):
-        raise HTTPException(400, {"code": "invalid_order_type",
-                                   "message": "order_type must be 'market' or 'limit'"})
+        raise HTTPException(400, {"code": "invalid_order_type", "message": "order_type must be 'market' or 'limit'"})
 
     import asyncio
     from aletheia.storage.repositories import get_position
@@ -1149,8 +1208,7 @@ async def manual_close_position(position_id: str, req: ManualCloseRequest):
 
     pos = get_position(position_id)
     if pos is None or pos.get("status") != "open":
-        raise HTTPException(404, {"code": "position_not_found_or_not_open",
-                                   "position_id": position_id})
+        raise HTTPException(404, {"code": "position_not_found_or_not_open", "position_id": position_id})
 
     exec_mode = pos.get("execution_mode", "")
     if exec_mode.endswith("_live_limited"):
@@ -1178,10 +1236,9 @@ async def manual_close_position(position_id: str, req: ManualCloseRequest):
         if result.get("error"):
             error_code = result["error"]
             if error_code == "limit_price_required":
-                raise HTTPException(400, {"code": error_code,
-                                           "message": "limit_price must be a positive finite number"})
-            if error_code == "limit_exit_not_supported_for_live":
-                raise HTTPException(409, result)
+                raise HTTPException(
+                    400, {"code": error_code, "message": "limit_price must be a positive finite number"}
+                )
             raise HTTPException(409, result)
         return result
 
@@ -1215,31 +1272,15 @@ def _strategy_operator_summary(strategies: list[dict]) -> dict:
     under_review = [item for item in strategies if _truthy_strategy_flag(item.get("under_review"))]
     paused_paper = [item for item in strategies if _truthy_strategy_flag(item.get("paper_trading_paused"))]
     active_paper = [
-        item
-        for item in strategies
-        if item.get("state") in {"paper_candidate", "paper_running", "paper_passed"}
+        item for item in strategies if item.get("state") in {"paper_candidate", "paper_running", "paper_passed"}
     ]
-    live_candidate = [
-        item
-        for item in strategies
-        if item.get("state") in {"live_candidate", "live_limited_candidate"}
-    ]
+    live_candidate = [item for item in strategies if item.get("state") in {"live_candidate", "live_limited_candidate"}]
 
-    flagged_ids = {
-        str(item.get("id"))
-        for item in [*under_review, *paused_paper]
-        if item.get("id")
-    }
+    flagged_ids = {str(item.get("id")) for item in [*under_review, *paused_paper] if item.get("id")}
     promotion_ids = {
-        str(item.get("id"))
-        for item in strategies
-        if item.get("id") and item.get("state") == "paper_passed"
+        str(item.get("id")) for item in strategies if item.get("id") and item.get("state") == "paper_passed"
     }
-    live_limited_ids = {
-        str(item.get("id"))
-        for item in live_candidate
-        if item.get("id")
-    }
+    live_limited_ids = {str(item.get("id")) for item in live_candidate if item.get("id")}
 
     return {
         "active_paper_strategies": active_paper,
@@ -1260,7 +1301,6 @@ def get_strategy_summary():
     """Operator-facing strategy summary used by the local operator shell."""
     _ensure_db()
     return _strategy_operator_summary(repo.list_strategies(limit=500))
-
 
 
 @router.get("/market/snapshots")
@@ -1311,6 +1351,7 @@ async def get_market_ohlcv(
     from aletheia.data.ccxt_provider import get_market_data_provider, timeframe_ms
     from aletheia.data.cache import get_cache
     from aletheia.data.symbols import to_canonical, InstrumentId
+
     cfg = load_config()
     md_cfg = cfg.market_data
     sym = to_canonical(symbol)
@@ -1340,17 +1381,27 @@ async def get_market_ohlcv(
     use_cache = since_ms is None and limit == 100
     data_source = "memory_cache"
     try:
-        candles = cache.get(
-            cache_key, timeframe, limit,
-            market_type=market_type, exchange=effective_exchange,
-        ) if use_cache else None
+        candles = (
+            cache.get(
+                cache_key,
+                timeframe,
+                limit,
+                market_type=market_type,
+                exchange=effective_exchange,
+            )
+            if use_cache
+            else None
+        )
         if candles is None:
             data_source = "provider_fetch"
             provider = get_market_data_provider(effective_exchange)
             try:
                 try:
                     candles = await provider.get_ohlcv(
-                        instrument, timeframe=timeframe, limit=limit, since=since_ms,
+                        instrument,
+                        timeframe=timeframe,
+                        limit=limit,
+                        since=since_ms,
                     )
                 except Exception:
                     # The chart remains usable during a provider outage, but exact
@@ -1370,11 +1421,16 @@ async def get_market_ohlcv(
                     data_source = "database_fallback"
                 if use_cache and data_source == "provider_fetch":
                     cache.set(
-                        cache_key, timeframe, limit, candles,
-                        market_type=market_type, exchange=effective_exchange,
+                        cache_key,
+                        timeframe,
+                        limit,
+                        candles,
+                        market_type=market_type,
+                        exchange=effective_exchange,
                     )
             finally:
                 await provider.close()
+
         def _value(candle, key: str):
             return candle.get(key) if isinstance(candle, dict) else getattr(candle, key)
 
@@ -1382,28 +1438,27 @@ async def get_market_ohlcv(
         # on the frontend never overlaps the existing left-most bar.
         if before > 0:
             cutoff_ms = before * 1000
-            candles = [
-                c for c in candles
-                if _value(c, "ts" if isinstance(c, dict) else "timestamp") < cutoff_ms
-            ]
+            candles = [c for c in candles if _value(c, "ts" if isinstance(c, dict) else "timestamp") < cutoff_ms]
         # lightweight-charts wants ascending time in seconds
-        rows = [{
-            "time": int(_value(c, "ts" if isinstance(c, dict) else "timestamp") / 1000),
-            "open": _value(c, "open"),
-            "high": _value(c, "high"),
-            "low": _value(c, "low"),
-            "close": _value(c, "close"),
-            "volume": _value(c, "volume"),
-        } for c in sorted(
-            candles,
-            key=lambda candle: _value(
-                candle, "ts" if isinstance(candle, dict) else "timestamp",
-            ),
-        )]
+        rows = [
+            {
+                "time": int(_value(c, "ts" if isinstance(c, dict) else "timestamp") / 1000),
+                "open": _value(c, "open"),
+                "high": _value(c, "high"),
+                "low": _value(c, "low"),
+                "close": _value(c, "close"),
+                "volume": _value(c, "volume"),
+            }
+            for c in sorted(
+                candles,
+                key=lambda candle: _value(
+                    candle,
+                    "ts" if isinstance(candle, dict) else "timestamp",
+                ),
+            )
+        ]
         response.headers["X-Aletheia-Data-Source"] = data_source
-        response.headers["X-Aletheia-Data-Instrument"] = (
-            f"{effective_exchange}:{sym}:{market_type}:{timeframe}"
-        )
+        response.headers["X-Aletheia-Data-Instrument"] = f"{effective_exchange}:{sym}:{market_type}:{timeframe}"
         return rows
     except Exception as e:
         logging.getLogger("aletheia.routes.data").warning("OHLCV fetch failed: %s", e)
@@ -1441,10 +1496,7 @@ def get_account_equity_history(limit: int | None = None, days: int | None = None
         limit=limit,
         days=days,
     )
-    points = [
-        {"time": row["snapshot_at"], "equity_usdt": row["account_equity_usdt"]}
-        for row in rows
-    ]
+    points = [{"time": row["snapshot_at"], "equity_usdt": row["account_equity_usdt"]} for row in rows]
     capital_flow_markers: list[dict] = []
     adjusted_points: list[dict] = []
     if points:
@@ -1456,32 +1508,35 @@ def get_account_equity_history(limit: int | None = None, days: int | None = None
         cumulative_net_flow = 0.0
         for point in points:
             while (
-                event_index < len(capital_events)
-                and str(capital_events[event_index]["detected_at"]) <= point["time"]
+                event_index < len(capital_events) and str(capital_events[event_index]["detected_at"]) <= point["time"]
             ):
                 event = capital_events[event_index]
                 signed_amount = float(event["amount_usdt"])
                 if event["event_type"] == "withdraw":
                     signed_amount = -signed_amount
                 cumulative_net_flow += signed_amount
-                capital_flow_markers.append({
-                    "id": event["id"],
-                    "time": event["detected_at"],
-                    "broker_id": event["broker_id"],
-                    "event_type": event["event_type"],
-                    "amount_usdt": float(event["amount_usdt"]),
-                    "signed_amount_usdt": round(signed_amount, 4),
-                })
+                capital_flow_markers.append(
+                    {
+                        "id": event["id"],
+                        "time": event["detected_at"],
+                        "broker_id": event["broker_id"],
+                        "event_type": event["event_type"],
+                        "amount_usdt": float(event["amount_usdt"]),
+                        "signed_amount_usdt": round(signed_amount, 4),
+                    }
+                )
                 event_index += 1
-            adjusted_points.append({
-                "time": point["time"],
-                "raw_equity_usdt": point["equity_usdt"],
-                "cumulative_net_flow_usdt": round(cumulative_net_flow, 4),
-                "adjusted_equity_usdt": round(
-                    float(point["equity_usdt"]) - cumulative_net_flow,
-                    4,
-                ),
-            })
+            adjusted_points.append(
+                {
+                    "time": point["time"],
+                    "raw_equity_usdt": point["equity_usdt"],
+                    "cumulative_net_flow_usdt": round(cumulative_net_flow, 4),
+                    "adjusted_equity_usdt": round(
+                        float(point["equity_usdt"]) - cumulative_net_flow,
+                        4,
+                    ),
+                }
+            )
     result = {
         "source": "local_paper_ledger" if local_paper else "exchange_account_snapshot",
         "state": "available" if points else "unavailable",
@@ -1577,13 +1632,17 @@ def _guard_experiments_by_id() -> dict[str, dict]:
     if not get_learning_path("ranker_learned_guard").measurement_supported:
         return {}
     try:
-        rows = get_db().execute(
-            "SELECT e.experiment_id, e.stage, e.status, e.created_at, h.scope_json "
-            "FROM learning_experiments e JOIN learning_hypotheses h "
-            "ON h.hypothesis_id=e.hypothesis_id "
-            "WHERE h.path_id='ranker_learned_guard' AND e.ended_at IS NULL "
-            "ORDER BY datetime(e.created_at) DESC, e.experiment_id DESC"
-        ).fetchall()
+        rows = (
+            get_db()
+            .execute(
+                "SELECT e.experiment_id, e.stage, e.status, e.created_at, h.scope_json "
+                "FROM learning_experiments e JOIN learning_hypotheses h "
+                "ON h.hypothesis_id=e.hypothesis_id "
+                "WHERE h.path_id='ranker_learned_guard' AND e.ended_at IS NULL "
+                "ORDER BY datetime(e.created_at) DESC, e.experiment_id DESC"
+            )
+            .fetchall()
+        )
     except Exception:
         logger.debug("Guard experiment metadata is unavailable", exc_info=True)
         return {}
@@ -1601,7 +1660,10 @@ def _guard_experiments_by_id() -> dict[str, dict]:
 
 
 def _guard_response(
-    guard, experiment: dict | None = None, *, evaluation_enabled: bool = True,
+    guard,
+    experiment: dict | None = None,
+    *,
+    evaluation_enabled: bool = True,
 ) -> dict:
     """Project storage state separately from authority and effective baseline behavior."""
     from aletheia.knowledge.guards import guard_origin
@@ -1609,9 +1671,7 @@ def _guard_response(
 
     row = guard.model_dump()
     origin = guard_origin(guard)
-    learned_measurement_supported = get_learning_path(
-        "ranker_learned_guard"
-    ).measurement_supported
+    learned_measurement_supported = get_learning_path("ranker_learned_guard").measurement_supported
     if origin == "learned" and not learned_measurement_supported:
         experiment = None
     proposed_block = guard.proposed_block_candidate
@@ -1660,28 +1720,28 @@ def _guard_response(
     else:
         activation_effect = actual_effect
 
-    row.update({
-        "lifecycle_status": lifecycle_status,
-        "origin": origin,
-        "proposed_effect": {
-            "block_candidate": bool(proposed_block),
-            "score_penalty": proposed_penalty_value,
-        },
-        "activation_effect": activation_effect,
-        "experiment_id": experiment.get("experiment_id") if experiment else None,
-        "experiment_stage": experiment.get("stage") if experiment else None,
-        "experiment_status": experiment.get("status") if experiment else None,
-        # Assignment is unavailable now; a future supported path would resolve it per candidate.
-        "assignment": None,
-        "authority_granted": guard_authority,
-        "authority_scope": (
-            "exact_candidate_treatment" if learned_measurement_supported else "unsupported"
-        ) if origin == "learned" else (
-            "guard" if guard_authority else "none"
-        ),
-        "evaluation_enabled": evaluation_enabled,
-        "actual_effect": actual_effect,
-    })
+    row.update(
+        {
+            "lifecycle_status": lifecycle_status,
+            "origin": origin,
+            "proposed_effect": {
+                "block_candidate": bool(proposed_block),
+                "score_penalty": proposed_penalty_value,
+            },
+            "activation_effect": activation_effect,
+            "experiment_id": experiment.get("experiment_id") if experiment else None,
+            "experiment_stage": experiment.get("stage") if experiment else None,
+            "experiment_status": experiment.get("status") if experiment else None,
+            # Assignment is unavailable now; a future supported path would resolve it per candidate.
+            "assignment": None,
+            "authority_granted": guard_authority,
+            "authority_scope": ("exact_candidate_treatment" if learned_measurement_supported else "unsupported")
+            if origin == "learned"
+            else ("guard" if guard_authority else "none"),
+            "evaluation_enabled": evaluation_enabled,
+            "actual_effect": actual_effect,
+        }
+    )
     return row
 
 
@@ -1690,13 +1750,16 @@ def get_guards():
     """List active guards with lifecycle and authority projected separately."""
     try:
         from aletheia.knowledge.guards import load_trading_guards
+
         guards = load_trading_guards(status="active")
         experiments = _guard_experiments_by_id()
         cfg = load_config(persist_migrations=False)
         evaluation_enabled = bool(cfg.guard.enabled and cfg.guard.enforce_in_paper_ranker)
         return [
             _guard_response(
-                g, experiments.get(g.guard_id), evaluation_enabled=evaluation_enabled,
+                g,
+                experiments.get(g.guard_id),
+                evaluation_enabled=evaluation_enabled,
             )
             for g in guards
         ]
@@ -1709,6 +1772,7 @@ def get_guard_candidates():
     """List guard candidates with proposed effects and no implied authority."""
     try:
         from aletheia.knowledge.guards import load_trading_guards
+
         guards = load_trading_guards(status="candidate")
         experiments = _guard_experiments_by_id()
         return [_guard_response(g, experiments.get(g.guard_id), evaluation_enabled=False) for g in guards]
@@ -1749,6 +1813,7 @@ def get_guard_stats():
     """Guard effectiveness statistics."""
     try:
         from aletheia.analytics.guard_effectiveness import compute_guard_stats
+
         return compute_guard_stats()
     except Exception as e:
         raise HTTPException(503, "guard_stats_read_failed") from e
@@ -1778,6 +1843,7 @@ def get_dreaming_summary():
     """
     _ensure_db()
     from datetime import datetime, timezone
+
     cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
 
@@ -1854,9 +1920,7 @@ def get_reviews_summary():
     )
     from aletheia.portfolio.pnl import position_realized_pnl_view
 
-    recent_closed_positions = [
-        position_realized_pnl_view(row) for row in recent_closed_positions
-    ]
+    recent_closed_positions = [position_realized_pnl_view(row) for row in recent_closed_positions]
 
     # Exclude archived/deprecated reviews: an owner who archives an invalid
     # review must be able to schedule a replacement (#269).
@@ -1883,17 +1947,12 @@ def get_reviews_summary():
             continue
         if not isinstance(tags, list):
             continue
-        reviewed_position_ids.update(
-            str(tag).split(":", 1)[1]
-            for tag in tags
-            if str(tag).startswith("position:")
-        )
+        reviewed_position_ids.update(str(tag).split(":", 1)[1] for tag in tags if str(tag).startswith("position:"))
     missing_review_strategy_ids = sorted(
         {
             str(position.get("strategy_id"))
             for position in recent_closed_positions
-            if position.get("strategy_id")
-            and str(position.get("id")) not in reviewed_position_ids
+            if position.get("strategy_id") and str(position.get("id")) not in reviewed_position_ids
         }
     )
 
@@ -1910,6 +1969,7 @@ def get_knowledge_content(item_id: str):
     """Read the markdown content of a knowledge item by its file_path."""
     _ensure_db()
     from pathlib import Path
+
     items = repo._select_all("knowledge_items", where="id = ?", params=(item_id,), limit=1)
     if not items:
         raise HTTPException(404, "Knowledge item not found")
@@ -1930,6 +1990,7 @@ def get_knowledge_content(item_id: str):
 # Serenity Research Workbench endpoints
 # ---------------------------------------------------------------------------
 
+
 @router.get("/serenity/status")
 def get_serenity_status():
     """Workbench status: engine state, current/last runs, artifact counts."""
@@ -1939,9 +2000,7 @@ def get_serenity_status():
     themes = repo.list_serenity_themes(status="active")
 
     last_attempted = all_runs[0] if all_runs else None
-    last_successful = next(
-        (r for r in all_runs if r["status"] in ("completed", "completed_empty")), None
-    )
+    last_successful = next((r for r in all_runs if r["status"] in ("completed", "completed_empty")), None)
 
     if active:
         engine_status = "running"
@@ -1959,6 +2018,7 @@ def get_serenity_status():
     # An actively-running job is shown as "running" regardless — it needs to finish.
     try:
         from aletheia.config.loader import load_config as _load_cfg
+
         if not getattr(_load_cfg().serenity, "enabled", True) and engine_status != "running":
             engine_status = "disabled"
     except Exception:
@@ -2055,6 +2115,7 @@ def create_serenity_run(body: dict):
     repo.insert_serenity_research_run(run)
 
     from aletheia.agents.research_worker import enqueue_research_run
+
     enqueue_research_run(run.id)
 
     return {"runId": run.id, "status": "queued"}
@@ -2143,6 +2204,7 @@ def retry_serenity_run(run_id: str):
     repo.insert_serenity_research_run(new_run)
 
     from aletheia.agents.research_worker import enqueue_research_run
+
     enqueue_research_run(new_run.id)
 
     return {"runId": new_run.id, "status": "queued", "parentRunId": run_id}
@@ -2159,8 +2221,9 @@ def cancel_serenity_run(run_id: str):
 
     now = datetime.now(timezone.utc).isoformat()
     repo.update_serenity_research_run(run_id, status="cancelled", finished_at=now, updated_at=now)
-    repo.insert_serenity_run_event(SerenityRunEvent(
-        run_id=run_id, event_type="run.cancelled", message="Cancelled by user"))
+    repo.insert_serenity_run_event(
+        SerenityRunEvent(run_id=run_id, event_type="run.cancelled", message="Cancelled by user")
+    )
     return {"runId": run_id, "status": "cancelled"}
 
 
@@ -2250,8 +2313,7 @@ def patch_serenity_theme_status(theme_id: str, body: dict):
     theme = repo.get_serenity_theme(theme_id)
     if not theme:
         raise HTTPException(404, "Theme not found")
-    repo.update_serenity_theme(theme_id, status=new_status,
-                               updated_at=datetime.now(timezone.utc).isoformat())
+    repo.update_serenity_theme(theme_id, status=new_status, updated_at=datetime.now(timezone.utc).isoformat())
     # Cascade dismiss/expire to child opportunities so thesis-invalidation exit fires
     if new_status in ("dismissed", "expired"):
         active_opps = repo.list_serenity_opportunities(theme_id=theme_id, status="active", limit=200)
@@ -2298,6 +2360,7 @@ def post_serenity_theme_deep_dive(theme_id: str, body: dict):
     repo.insert_serenity_research_run(run)
 
     from aletheia.agents.research_worker import enqueue_research_run
+
     enqueue_research_run(run.id)
 
     return {"runId": run.id, "status": "queued"}
@@ -2346,6 +2409,7 @@ def promote_serenity_theme(theme_id: str):
 
     try:
         from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+
         notify_pi_daemon(source="serenity_promote")
     except Exception:
         pass
@@ -2431,8 +2495,17 @@ def _parse_brief_to_profile(brief: str) -> dict:
     exclude_topics: list[str] = []
     warnings: list[str] = []
 
-    danger_patterns = ["buy", "sell", "trade", "order", "execute", "ignore previous",
-                       "bypass", "unlock", "disable risk"]
+    danger_patterns = [
+        "buy",
+        "sell",
+        "trade",
+        "order",
+        "execute",
+        "ignore previous",
+        "bypass",
+        "unlock",
+        "disable risk",
+    ]
     brief_lower = brief.lower()
     for pattern in danger_patterns:
         if pattern in brief_lower:
@@ -2482,12 +2555,14 @@ def _parse_brief_to_profile(brief: str) -> dict:
 
 # ── Edge Lab: analytics endpoints ───────────────────────────────────────────
 
+
 @router.get("/analytics/family-scorecard")
 def get_family_scorecard():
     """Per-scanner_family performance statistics (win_rate, expectancy, alpha)."""
     _ensure_db()
     from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
     from aletheia.analytics.family_scorecard import compute_family_scorecard
+
     return {
         "families": compute_family_scorecard(),
         **build_outcome_cohort_summary(),

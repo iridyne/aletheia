@@ -75,6 +75,7 @@ def _mount_static_dashboard() -> None:
                       without ctrl+shift+R. ETag (already added by StaticFiles)
                       keeps revalidations cheap (304 Not Modified).
         """
+
         async def get_response(self, path, scope):
             response = await super().get_response(path, scope)
             # `path` arg uses OS separator on Windows ("assets\\foo.js"), so match
@@ -173,6 +174,7 @@ async def _llm_startup_gate(cfg) -> None:
         return
     try:
         from aletheia.agent_runtime.startup_gate import probe_llm_providers_at_startup
+
         result = await probe_llm_providers_at_startup(cfg)
     except asyncio.CancelledError:
         raise  # lifespan shutdown cancelled us mid-probe — propagate, don't swallow
@@ -183,14 +185,15 @@ async def _llm_startup_gate(cfg) -> None:
         # can run without code duplication.
         logger.warning(
             "LLM startup gate probe raised an unexpected error — pausing trading loop "
-            "(fail-safe).  Fix the error and resume from the dashboard.  Error: %s", e,
+            "(fail-safe).  Fix the error and resume from the dashboard.  Error: %s",
+            e,
         )
-        result = {"any_usable": False, "checked": 0, "results": [], "attempts": 1,
-                  "_probe_exception": str(e)}
+        result = {"any_usable": False, "checked": 0, "results": [], "attempts": 1, "_probe_exception": str(e)}
 
     if result["any_usable"]:
         # Clear any stale failure count so /api/health starts clean.
         from aletheia.agent_runtime.health import record_llm_success
+
         record_llm_success()
         return
 
@@ -200,6 +203,7 @@ async def _llm_startup_gate(cfg) -> None:
     # otherwise jobs keep firing for the gap until each one re-reads the flag.
     try:
         from aletheia.agent_runtime.scheduler import pause_scheduler
+
         pause_scheduler()
     except Exception:
         pass
@@ -209,39 +213,46 @@ async def _llm_startup_gate(cfg) -> None:
     # because the port is already serving). Full elimination of the last-writer
     # race would need a file lock and is outside this startup safeguard's scope.
     from aletheia.config.loader import load_config as _load_config, save_config
+
     fresh = _load_config()
     fresh.runtime.paused = True
     save_config(fresh)
 
     from aletheia.agent_runtime.health import record_llm_failure
+
     for _ in range(max(1, cfg.health.llm_unavailable_alert_after)):
         record_llm_failure()
 
-    errors = "; ".join(
-        f"{r['provider']}={r['error']}" for r in result["results"]
-    ) or "no enabled providers"
+    errors = "; ".join(f"{r['provider']}={r['error']}" for r in result["results"]) or "no enabled providers"
     logger.warning(
         "LLM startup gate: NO usable provider (%d checked) — trading loop PAUSED. "
         "Fix a provider and resume from the dashboard. Details: %s",
-        result["checked"], errors,
+        result["checked"],
+        errors,
     )
     try:
         from aletheia.files.jsonl import write_audit
+
         attempts = result.get("attempts", 1)
-        write_audit({
-            "actor": "system", "source": "startup_gate",
-            "event_type": "llm_startup_gate_paused",
-            "entity_type": "gateway", "entity_id": "gateway",
-            "message": (
-                f"No usable LLM provider at startup ({result['checked']} checked, "
-                f"{attempts} attempts); trading loop paused. {errors}"
-            ),
-        })
+        write_audit(
+            {
+                "actor": "system",
+                "source": "startup_gate",
+                "event_type": "llm_startup_gate_paused",
+                "entity_type": "gateway",
+                "entity_id": "gateway",
+                "message": (
+                    f"No usable LLM provider at startup ({result['checked']} checked, "
+                    f"{attempts} attempts); trading loop paused. {errors}"
+                ),
+            }
+        )
     except Exception:
         pass
 
     try:
         from aletheia.notifications import notify_operator
+
         attempts = result.get("attempts", 1)
         notify_operator(
             "Aletheia Gateway Paused",
@@ -260,6 +271,7 @@ async def _llm_startup_gate(cfg) -> None:
     if fresh.health.auto_resume_enabled:
         try:
             from aletheia.agent_runtime.auto_resume import start_auto_resume_task
+
             start_auto_resume_task(interval_sec=fresh.health.auto_resume_interval_sec)
         except Exception as e:
             logger.debug("auto_resume task start failed: %s", e)
@@ -304,6 +316,7 @@ async def lifespan(app: FastAPI):
     # Uvicorn already configures root logging handlers, so we just set level.
     try:
         from aletheia.logging_config import configure_logging
+
         configure_logging()
     except Exception:
         pass
@@ -317,6 +330,7 @@ async def lifespan(app: FastAPI):
     # Ensures watchdog-started processes (which inherit no session env vars) still
     # route through the proxy specified in config.yaml.
     from aletheia.net import apply_proxy_env
+
     apply_proxy_env()
     runtime_context = runtime_process_context()
     app.state.runtime_context = runtime_context
@@ -325,6 +339,7 @@ async def lifespan(app: FastAPI):
     # supervisor, foreground CLI, or bare uvicorn). Without this, /api/status
     # and /api/gateway/restart break when the supervisor PID file is missing.
     from aletheia.gateway.pidfile import write_pid, read_pid
+
     _owns_pid = should_write_gateway_pidfile(runtime_context) and read_pid() is None
     if _owns_pid:
         write_pid()
@@ -333,12 +348,14 @@ async def lifespan(app: FastAPI):
     # thread starts — lets /api/health flag "code updated, restart needed".
     if background_services_enabled:
         from aletheia.agent_runtime.build_info import record_boot_commit
+
         record_boot_commit()
         # Migrate legacy checkouts away from implicit git-triggered restarts.
         # Lifecycle is owner-controlled; cleanup is idempotent and never touches
         # foreign hooks.
         try:
             from aletheia.gateway.git_hooks import remove_managed_git_hooks
+
             for action in remove_managed_git_hooks():
                 logger.info("git-hook: %s", action)
         except Exception as e:
@@ -350,6 +367,7 @@ async def lifespan(app: FastAPI):
     # reach the OS keyring) always find secrets in the file fallback path.
     try:
         from aletheia.config.secrets import migrate_keyring_to_file
+
         n = migrate_keyring_to_file()
         if n:
             logger.info("Migrated %d secret(s) from keyring to file store", n)
@@ -359,10 +377,12 @@ async def lifespan(app: FastAPI):
     from aletheia.storage.migrations import run_migrations
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     from aletheia.agent_runtime.scheduler import init_scheduler, stop_scheduler
+
     run_migrations()
     # Backfill FTS5 index so the experience loop has full coverage on every boot.
     try:
         from aletheia.knowledge.retrieval import reindex_all
+
         fts_count = reindex_all()
         if fts_count:
             logger.info("FTS reindex: %d knowledge items indexed", fts_count)
@@ -385,6 +405,7 @@ async def lifespan(app: FastAPI):
         # Core trading facts produced this boot inherit its identity. Best-effort.
         try:
             from aletheia.agent_runtime.runtime_session import start_runtime_session
+
             start_runtime_session(cfg, runtime_context)
         except Exception as e:
             logger.warning("Runtime session start failed (non-fatal): %s", e)
@@ -419,31 +440,31 @@ async def lifespan(app: FastAPI):
     # The scheduler's periodic exchange-sync keeps state fresh regardless.
     startup_sync_task = None
     if background_services_enabled:
+
         async def _startup_exchange_sync():
             try:
                 from aletheia.portfolio.exchange_sync import sync_all_exchanges
+
                 await _run_startup_sync(sync_all_exchanges)
                 logger.info("startup exchange sync complete")
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 logger.warning("startup exchange sync failed (non-fatal): %s", e)
-        startup_sync_task = asyncio.create_task(
-            _startup_exchange_sync(), name="startup_exchange_sync"
-        )
+
+        startup_sync_task = asyncio.create_task(_startup_exchange_sync(), name="startup_exchange_sync")
 
     # Exchange connectivity gate — if exchange is unreachable at startup, pause
     # immediately and start auto-resume (same pattern as LLM gate).
     exchange_gate_task = None
     if background_services_enabled:
         from aletheia.agent_runtime.connectivity import startup_exchange_gate, set_uvicorn_loop
+
         # #145: capture the persistent uvicorn loop so a mid-run connectivity loss (detected
         # on an ephemeral scheduler-job loop) can schedule its auto-resume task HERE, where it
         # survives — not on the per-job loop that is torn down right after the check runs.
         set_uvicorn_loop(asyncio.get_running_loop())
-        exchange_gate_task = asyncio.create_task(
-            startup_exchange_gate(cfg), name="startup_exchange_gate"
-        )
+        exchange_gate_task = asyncio.create_task(startup_exchange_gate(cfg), name="startup_exchange_gate")
 
     # Startup Behavior Gate — hold AI decisions + new trading PAUSED until a set
     # of ground-truth checks pass (DB integrity, config↔active-scope, exchange
@@ -457,6 +478,7 @@ async def lifespan(app: FastAPI):
     gate_permits_pi_daemon = True
     if background_services_enabled:
         from aletheia.agent_runtime import startup_behavior_gate as behavior_gate
+
         behavior_gate.set_uvicorn_loop(asyncio.get_running_loop())
         # Fast local verdict decides whether the System Operator daemon may start
         # at all — "pi_daemon must not start before the gate passes".
@@ -465,9 +487,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error("startup behaviour gate pre-check raised — blocking PI daemon: %s", e)
             gate_permits_pi_daemon = False
-        behavior_gate_task = asyncio.create_task(
-            behavior_gate.startup_behavior_gate(cfg), name="startup_behavior_gate"
-        )
+        behavior_gate_task = asyncio.create_task(behavior_gate.startup_behavior_gate(cfg), name="startup_behavior_gate")
 
     # System Operator event-driven daemon — wakes immediately on signal arrival.
     # Gated by the Startup Behavior Gate: it must not start while the gate blocks
@@ -476,6 +496,7 @@ async def lifespan(app: FastAPI):
     if background_services_enabled and cfg.pi_daemon.enabled and gate_permits_pi_daemon:
         try:
             from aletheia.agent_runtime.pi_daemon import start_pi_daemon
+
             pi_daemon_task = start_pi_daemon(
                 loop=asyncio.get_running_loop(),
                 debounce_sec=cfg.pi_daemon.debounce_sec,
@@ -489,6 +510,7 @@ async def lifespan(app: FastAPI):
     telegram_task = None
     if background_services_enabled:
         from aletheia.telegram.bot import TelegramBot
+
         telegram_bot = TelegramBot()
         if telegram_bot.configure():
             if telegram_bot.allowed_chat_ids:
@@ -532,6 +554,7 @@ async def lifespan(app: FastAPI):
         # stop it explicitly (same pattern as the LLM/exchange auto-resume loops).
         try:
             from aletheia.agent_runtime.startup_behavior_gate import stop_startup_gate_recheck
+
             await stop_startup_gate_recheck()
         except Exception as exc:
             logger.debug("startup gate recheck shutdown failed: %s", exc)
@@ -540,11 +563,13 @@ async def lifespan(app: FastAPI):
         # module-owned rather than direct lifespan children, so stop them explicitly.
         try:
             from aletheia.agent_runtime.auto_resume import stop_auto_resume_task
+
             await stop_auto_resume_task()
         except Exception as exc:
             logger.debug("LLM auto-resume shutdown failed: %s", exc)
         try:
             from aletheia.agent_runtime.connectivity import stop_exchange_auto_resume_task
+
             await stop_exchange_auto_resume_task()
         except Exception as exc:
             logger.debug("exchange auto-resume shutdown failed: %s", exc)
@@ -565,6 +590,7 @@ async def lifespan(app: FastAPI):
         if pi_daemon_task is not None:
             try:
                 from aletheia.agent_runtime.pi_daemon import stop_pi_daemon
+
                 stop_pi_daemon()
                 await _cancel_background_task(pi_daemon_task, "PI daemon")
             except Exception:
@@ -575,6 +601,7 @@ async def lifespan(app: FastAPI):
         if background_services_enabled:
             try:
                 from aletheia.agent_runtime.runtime_session import end_runtime_session
+
                 end_runtime_session(clean=True)
             except Exception as e:
                 logger.debug("Runtime session end failed: %s", e)
@@ -582,6 +609,7 @@ async def lifespan(app: FastAPI):
         # In supervised mode the PID belongs to the supervisor — don't touch it.
         if getattr(app.state, "_owns_pid", False):
             from aletheia.gateway.pidfile import clear_pid
+
             clear_pid()
         logger.info("Aletheia shutting down")
 
@@ -603,19 +631,23 @@ from fastapi.responses import JSONResponse
 async def _sanitized_validation_error(_request, exc: RequestValidationError):
     safe_errors = []
     for err in exc.errors():
-        safe_errors.append({
-            "loc": err.get("loc"),
-            "msg": err.get("msg"),
-            "type": err.get("type"),
-        })
+        safe_errors.append(
+            {
+                "loc": err.get("loc"),
+                "msg": err.get("msg"),
+                "type": err.get("type"),
+            }
+        )
     return JSONResponse(status_code=422, content={"detail": safe_errors})
 
 
 _cfg_for_cors = load_config()
 _bind_host = _cfg_for_cors.app.bind_host
 _loopback_origins = [
-    "http://localhost:5173", "http://127.0.0.1:5173",
-    "http://localhost:8787", "http://127.0.0.1:8787",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8787",
+    "http://127.0.0.1:8787",
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -638,20 +670,28 @@ app.add_middleware(
 # explicit presence here serves as a checklist that they cannot accidentally be
 # moved to _PUBLIC_PATHS.
 _PROTECTED_PATHS = {
-    "/api/settings/live-unlock", "/api/settings/live-lock",
+    "/api/settings/live-unlock",
+    "/api/settings/live-lock",
     "/api/risk/kill-switch",
     # #137/#42: these config mutations are trust-boundary (they can disable the
     # kill switch, widen risk limits, flip demo->live, or elevate the agent
     # permission mode), so they must require the tunnel token too — otherwise the
     # protection on /api/risk/kill-switch is trivially bypassed via /settings/risk.
-    "/api/settings/risk", "/api/settings/exchange-mode", "/api/settings/permission-mode",
-    "/api/settings/learning", "/api/settings/autonomous-learning",
-    "/api/gateway/restart", "/api/gateway/stop",
+    "/api/settings/risk",
+    "/api/settings/exchange-mode",
+    "/api/settings/permission-mode",
+    "/api/settings/learning",
+    "/api/settings/autonomous-learning",
+    "/api/gateway/restart",
+    "/api/gateway/stop",
     # #42 completion: operator command surfaces can trigger the AI to execute trades
     # (even under permission-gate #40, the gate only checks the configured mode —
     # if mode is PaperAuto, an unauthenticated tunnel caller can inject commands).
-    "/api/operator/command", "/api/operator/command-preview",
-    "/api/operator/pause", "/api/operator/resume", "/api/operator/wake",
+    "/api/operator/command",
+    "/api/operator/command-preview",
+    "/api/operator/pause",
+    "/api/operator/resume",
+    "/api/operator/wake",
     "/api/operator/loop/trigger",
     # Capital events (deposit/withdraw) alter the capital baseline used by drawdown
     # and kill-switch calculations — fabricating one lowers the safety net.
@@ -677,9 +717,7 @@ _PROTECTED_PATHS = {
 # These are LEGITIMATE for the local TypeScript bridge (loopback), so we don't
 # strictly forbid them; we require the same tunnel token the trust-boundary
 # routes require when public exposure is on.
-_PROTECTED_PATH_PREFIXES = (
-    "/api/operator/internal/",
-)
+_PROTECTED_PATH_PREFIXES = ("/api/operator/internal/",)
 
 _PROTECTED_MUTATION_PATHS = (
     ("/api/settings/learning/experiments/", "/admit-trial"),
@@ -705,11 +743,13 @@ _PROTECTED_METHOD_PREFIXES: tuple[tuple[frozenset[str], str], ...] = (
 # Minimal anonymous surface when tunnel is active.  Every /api/* and /_infra/*
 # path not listed here requires owner authentication.  Keep this list as small
 # as possible: liveness probes only, no config/positions/diagnostics content.
-_PUBLIC_PATHS = frozenset({
-    "/api/ready",
-    "/_infra/livez",
-    "/_infra/readyz",
-})
+_PUBLIC_PATHS = frozenset(
+    {
+        "/api/ready",
+        "/_infra/livez",
+        "/_infra/readyz",
+    }
+)
 
 
 @app.middleware("http")
@@ -732,10 +772,7 @@ async def _tunnel_auth_guard(request, call_next):
     routes continue to attribute authenticated owner actions correctly.
     """
     path = request.url.path
-    _is_private = (
-        (path.startswith("/api/") or path.startswith("/_infra/"))
-        and path not in _PUBLIC_PATHS
-    )
+    _is_private = (path.startswith("/api/") or path.startswith("/_infra/")) and path not in _PUBLIC_PATHS
 
     if _is_private:
         # persist_migrations=False: the auth guard is read-only; it must not
@@ -744,8 +781,7 @@ async def _tunnel_auth_guard(request, call_next):
         tunnel_enabled = bool(getattr(getattr(cfg, "tunnel", None), "enabled", False))
         remote_control = getattr(cfg, "remote_control", None)
         remote_token_required = bool(
-            getattr(remote_control, "enabled", False)
-            and getattr(remote_control, "require_token", False)
+            getattr(remote_control, "enabled", False) and getattr(remote_control, "require_token", False)
         )
         if tunnel_enabled or remote_token_required:
             from aletheia.config.secrets import get_secret
@@ -756,12 +792,15 @@ async def _tunnel_auth_guard(request, call_next):
             expected = get_secret("remote_control_api_token") or get_secret("tunnel_api_token")
             if not expected:
                 return JSONResponse(
-                    {"detail": "Remote Control is enabled but no API token is configured. "
-                               "Save a token in Settings or run "
-                               "'aletheia secrets set remote_control_api_token <value>'."},
+                    {
+                        "detail": "Remote Control is enabled but no API token is configured. "
+                        "Save a token in Settings or run "
+                        "'aletheia secrets set remote_control_api_token <value>'."
+                    },
                     status_code=401,
                 )
             import hmac as _hmac
+
             token = request.headers.get("x-aletheia-token", "")
             if not _hmac.compare_digest(token, expected):
                 return JSONResponse(
@@ -805,9 +844,7 @@ async def _request_timing(request, call_next):
         if response is not None:
             app_timing = f"app;dur={duration_ms:.1f}"
             existing = response.headers.get("Server-Timing")
-            response.headers["Server-Timing"] = (
-                f"{existing}, {app_timing}" if existing else app_timing
-            )
+            response.headers["Server-Timing"] = f"{existing}, {app_timing}" if existing else app_timing
 
         http_logger = logging.getLogger("aletheia.http")
         log_args = (request.method, path, status_code, duration_ms)
@@ -821,6 +858,7 @@ async def _request_timing(request, call_next):
                 "http_request method=%s path=%s status=%d duration_ms=%.1f",
                 *log_args,
             )
+
 
 app.include_router(health_router)
 app.include_router(infra_router)
@@ -848,8 +886,10 @@ app.include_router(ws_router, prefix="/api")
 
 # Dev-reload routes — only mounted when ALETHEIA_DEV_RELOAD=1 and live is disabled.
 from aletheia.server.dev_reload import is_dev_reload_enabled
+
 if is_dev_reload_enabled():
     from aletheia.server.routes.dev_reload import router as dev_reload_router
+
     app.include_router(dev_reload_router)
 
 # Static dashboard is mounted during lifespan startup (see _mount_static_dashboard)

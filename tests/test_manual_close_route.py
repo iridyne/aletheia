@@ -21,6 +21,7 @@ from aletheia.storage.sqlite import reset_db
 from aletheia.storage import repositories as repo
 
 
+# ponytail: copy of _setup_env from test_paper_account.py; extract to conftest if a third copy appears
 def _setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.files.jsonl as jsonl
@@ -55,19 +56,29 @@ def _insert_open(execution_mode: str = "paper_internal") -> str:
 # _decide_exit: human_limit_exit vs operator_limit_exit based on exit_limit_source
 # ---------------------------------------------------------------------------
 
+
 def test_decide_exit_human_limit_exit():
     import aletheia.portfolio.position_manager as pm
     from types import SimpleNamespace
 
     cfg = SimpleNamespace(
         trading=SimpleNamespace(
-            default_stop_loss_pct=2.0, default_take_profit_pct=4.0, max_position_hold_hours=72.0,
+            default_stop_loss_pct=2.0,
+            default_take_profit_pct=4.0,
+            max_position_hold_hours=72.0,
         ),
         serenity=SimpleNamespace(max_hold_days=90),
         risk=SimpleNamespace(horizon_hard_backstop_mult=3.0),
     )
-    pos = {"id": "p1", "symbol": "BTC/USDT", "direction": "long", "entry_price": 100.0,
-           "exit_limit_price": 110.0, "exit_limit_source": "human", "take_profit_price": 200.0}
+    pos = {
+        "id": "p1",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "entry_price": 100.0,
+        "exit_limit_price": 110.0,
+        "exit_limit_source": "human",
+        "take_profit_price": 200.0,
+    }
     # Not yet crossed: no decision
     assert pm._decide_exit(pos, 105.0, cfg) is None
     # Crossed: human_limit_exit
@@ -80,13 +91,22 @@ def test_decide_exit_operator_limit_exit_for_system_operator():
 
     cfg = SimpleNamespace(
         trading=SimpleNamespace(
-            default_stop_loss_pct=2.0, default_take_profit_pct=4.0, max_position_hold_hours=72.0,
+            default_stop_loss_pct=2.0,
+            default_take_profit_pct=4.0,
+            max_position_hold_hours=72.0,
         ),
         serenity=SimpleNamespace(max_hold_days=90),
         risk=SimpleNamespace(horizon_hard_backstop_mult=3.0),
     )
-    pos = {"id": "p1", "symbol": "BTC/USDT", "direction": "long", "entry_price": 100.0,
-           "exit_limit_price": 110.0, "exit_limit_source": "system_operator", "take_profit_price": 200.0}
+    pos = {
+        "id": "p1",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "entry_price": 100.0,
+        "exit_limit_price": 110.0,
+        "exit_limit_source": "system_operator",
+        "take_profit_price": 200.0,
+    }
     assert pm._decide_exit(pos, 111.0, cfg) == ("operator_limit_exit", 110.0)
 
 
@@ -97,19 +117,28 @@ def test_decide_exit_legacy_null_source_defaults_to_operator():
 
     cfg = SimpleNamespace(
         trading=SimpleNamespace(
-            default_stop_loss_pct=2.0, default_take_profit_pct=4.0, max_position_hold_hours=72.0,
+            default_stop_loss_pct=2.0,
+            default_take_profit_pct=4.0,
+            max_position_hold_hours=72.0,
         ),
         serenity=SimpleNamespace(max_hold_days=90),
         risk=SimpleNamespace(horizon_hard_backstop_mult=3.0),
     )
-    pos = {"id": "p1", "symbol": "BTC/USDT", "direction": "long", "entry_price": 100.0,
-           "exit_limit_price": 110.0, "take_profit_price": 200.0}
+    pos = {
+        "id": "p1",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "entry_price": 100.0,
+        "exit_limit_price": 110.0,
+        "take_profit_price": 200.0,
+    }
     assert pm._decide_exit(pos, 111.0, cfg) == ("operator_limit_exit", 110.0)
 
 
 # ---------------------------------------------------------------------------
 # proactive_exit: actor='human' market close
 # ---------------------------------------------------------------------------
+
 
 def test_proactive_exit_human_market_sets_close_reason(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
@@ -118,8 +147,7 @@ def test_proactive_exit_human_market_sets_close_reason(tmp_path, monkeypatch):
 
     pid = _insert_open()
     calls = []
-    monkeypatch.setattr(pm, "close_position_routed",
-                        lambda *a, **kw: calls.append(kw) or {"closed": True})
+    monkeypatch.setattr(pm, "close_position_routed", lambda *a, **kw: calls.append(kw) or {"closed": True})
     monkeypatch.setattr(pm, "_latest_price", lambda s: 105.0)
 
     result = pm.proactive_exit(pid, actor="human")
@@ -136,8 +164,7 @@ def test_proactive_exit_system_operator_keeps_original_reason(tmp_path, monkeypa
 
     pid = _insert_open()
     calls = []
-    monkeypatch.setattr(pm, "close_position_routed",
-                        lambda *a, **kw: calls.append(kw) or {"closed": True})
+    monkeypatch.setattr(pm, "close_position_routed", lambda *a, **kw: calls.append(kw) or {"closed": True})
     monkeypatch.setattr(pm, "_latest_price", lambda s: 105.0)
 
     result = pm.proactive_exit(pid, actor="system_operator")
@@ -183,6 +210,7 @@ def test_proactive_exit_missing_position_returns_error(tmp_path, monkeypatch):
 # POST /api/positions/{id}/close — HTTP integration
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_manual_close_route_market_dispatches_human_close(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
@@ -192,8 +220,7 @@ async def test_manual_close_route_market_dispatches_human_close(tmp_path, monkey
 
     pid = _insert_open()
     calls = []
-    monkeypatch.setattr(pm, "close_position_routed",
-                        lambda *a, **kw: calls.append(kw) or {"closed": True})
+    monkeypatch.setattr(pm, "close_position_routed", lambda *a, **kw: calls.append(kw) or {"closed": True})
     monkeypatch.setattr(pm, "_latest_price", lambda s: 105.0)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -215,8 +242,7 @@ async def test_manual_close_route_live_returns_409(tmp_path, monkeypatch):
 
     pid = _insert_open(execution_mode="bitget_live_limited")
     calls = []
-    monkeypatch.setattr(pm, "close_position_routed",
-                        lambda *a, **kw: calls.append(kw) or {})
+    monkeypatch.setattr(pm, "close_position_routed", lambda *a, **kw: calls.append(kw) or {})
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(f"/api/positions/{pid}/close", json={"order_type": "market"})
@@ -248,8 +274,7 @@ async def test_manual_close_route_invalid_order_type_returns_400(tmp_path, monke
     pid = _insert_open()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post(f"/api/positions/{pid}/close",
-                                 json={"order_type": "vwap_magic"})
+        resp = await client.post(f"/api/positions/{pid}/close", json={"order_type": "vwap_magic"})
 
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "invalid_order_type"
@@ -264,8 +289,7 @@ async def test_manual_close_route_limit_sets_exit_limit_source_human(tmp_path, m
     pid = _insert_open()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post(f"/api/positions/{pid}/close",
-                                 json={"order_type": "limit", "limit_price": 110.0})
+        resp = await client.post(f"/api/positions/{pid}/close", json={"order_type": "limit", "limit_price": 110.0})
 
     assert resp.status_code == 200
     data = resp.json()
@@ -284,8 +308,7 @@ async def test_manual_close_route_limit_requires_price(tmp_path, monkeypatch):
     pid = _insert_open()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post(f"/api/positions/{pid}/close",
-                                 json={"order_type": "limit", "limit_price": None})
+        resp = await client.post(f"/api/positions/{pid}/close", json={"order_type": "limit", "limit_price": None})
 
     assert resp.status_code == 400
 
@@ -293,6 +316,7 @@ async def test_manual_close_route_limit_requires_price(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Auth guard: _PROTECTED_METHOD_PREFIXES includes POST /api/positions/
 # ---------------------------------------------------------------------------
+
 
 def test_protected_method_prefixes_includes_positions_post():
     """POST /api/positions/ must be in _PROTECTED_METHOD_PREFIXES.
@@ -334,6 +358,7 @@ def test_protected_method_prefixes_includes_positions_post():
 # exit_driver attribution: human_* not miscounted as AI
 # ---------------------------------------------------------------------------
 
+
 def test_exit_driver_human_reasons_classified_correctly():
     from aletheia.analytics.exit_driver_comparison import exit_driver, HUMAN_DRIVEN
 
@@ -352,8 +377,8 @@ def test_exit_driver_human_does_not_inflate_operator_stats():
 
     rows = [
         {"close_reason": "human_manual_close", "realized_pnl": 100.0},
-        {"close_reason": "operator_close",     "realized_pnl": -5.0},
-        {"close_reason": "stop_loss",           "realized_pnl": -3.0},
+        {"close_reason": "operator_close", "realized_pnl": -5.0},
+        {"close_reason": "stop_loss", "realized_pnl": -3.0},
     ]
     stats = compare_exit_outcomes(rows)
     # human is its own bucket
