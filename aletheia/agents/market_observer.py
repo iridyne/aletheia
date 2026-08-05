@@ -525,6 +525,53 @@ def _empty_rendered_sources() -> dict[str, list[dict]]:
     return {kind: [] for kind in _T1_SOURCE_KINDS}
 
 
+def _news_rendered_source(row: dict) -> dict:
+    """Prompt-free provenance for one rendered News line."""
+    line = f"- [{row.get('published_at', '')[:10]}] {row.get('title', '')} ({row.get('source', '')})"
+    return {
+        "id": row.get("id"), "published_at": row.get("published_at"),
+        "source": row.get("source"), "analyzed_at": row.get("analyzed_at"),
+        "analysis_state": "analyzed_metadata", "freshness_status": "fresh",
+        "selection_reason": "exact_entity_match", "rendered_chars": len(line),
+    }
+
+
+def _record_observer_context_artifacts(
+    *, run_id, symbol, context, learning_text, learning_manifest, rendered_sources,
+) -> None:
+    from aletheia.economics.context_artifacts import record_context_artifacts
+
+    news = rendered_sources.get("news") or []
+    artifacts = [{
+        "kind": "environment", "stable_id": f"market_context:{symbol}",
+        "source": "market_observer", "selected_reason": "required_environment",
+        "trust_class": "first_party_observed", "freshness_status": "unknown",
+        "rendered_chars": max(
+            0, len(context) - sum(int(item.get("rendered_chars") or 0) for item in news),
+        ),
+    }]
+    artifacts.extend({
+        "kind": "news", "stable_id": f"news_item:{item['id']}",
+        "source": item.get("source"), "selected_reason": item.get("selection_reason"),
+        "trust_class": "external_untrusted", "freshness_status": item.get("freshness_status"),
+        "published_at": item.get("published_at"), "observed_at": item.get("analyzed_at"),
+        "rendered_chars": item.get("rendered_chars"),
+        "metadata": {"analysis_state": item.get("analysis_state")},
+    } for item in news if item.get("id"))
+    if learning_text:
+        artifacts.append({
+            "kind": "learning",
+            "stable_id": learning_manifest.get("bundle_id") or "observer_learning_bundle",
+            "source": "paper_authority_adapter",
+            "selected_reason": "authorized_learning_bundle",
+            "trust_class": "learned_advisory", "freshness_status": "unknown",
+            "rendered_chars": len(learning_text),
+        })
+    record_context_artifacts(
+        run_id=run_id, caller="market_observer", symbol=symbol, artifacts=artifacts,
+    )
+
+
 def _bounded_rendered_sources(sources: dict[str, list[dict]]) -> dict[str, list[dict]]:
     limits = {
         "news": 3,
@@ -864,14 +911,7 @@ async def _prefetch_symbol(
             f"- [{r.get('published_at', '')[:10]}] {r.get('title', '')} ({r.get('source', '')})" for r in news_rows
         ]
         context += "\n\n## Recent News\n" + "\n".join(news_lines)
-        rendered_sources["news"] = [
-            {
-                "id": row.get("id"),
-                "published_at": row.get("published_at"),
-                "source": row.get("source"),
-            }
-            for row in news_rows
-        ]
+        rendered_sources["news"] = [_news_rendered_source(row) for row in news_rows]
 
     # Phase E: pre-filter scoring
     pf = _evaluate_pre_filter(ctx_debug)
@@ -1230,14 +1270,7 @@ async def _analyze_symbol(
                     for r in news_rows
                 ]
                 context += "\n\n## Recent News\n" + "\n".join(news_lines)
-                rendered_sources["news"] = [
-                    {
-                        "id": row.get("id"),
-                        "published_at": row.get("published_at"),
-                        "source": row.get("source"),
-                    }
-                    for row in news_rows
-                ]
+                rendered_sources["news"] = [_news_rendered_source(row) for row in news_rows]
         except Exception:
             pass
 
@@ -1367,11 +1400,20 @@ async def _analyze_symbol(
         else ""
     )
 
+    _record_observer_context_artifacts(
+        run_id=run_id,
+        symbol=symbol,
+        context=context,
+        learning_text=authorized_learning,
+        learning_manifest=learning_manifest,
+        rendered_sources=rendered_sources,
+    )
     record_step(
         run_id,
         f"market_read_input:{symbol}",
-        input_data=f"symbol={symbol} ctx_len={len(context)} memory={len(sym_memory) > 0}",
-        output_data=context[:1000],
+        input_data=(f"symbol={symbol} ctx_len={len(context)} "
+                    f"memory_chars={len(sym_memory)} scanner={scanner_family or 'none'}"),
+        output_data="context_metadata_recorded",
     )
 
     _t0 = _time.monotonic()

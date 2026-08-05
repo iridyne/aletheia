@@ -21,6 +21,10 @@ from aletheia.economics.budgets import (
     list_budgets,
     list_recent_would_block_events,
 )
+from aletheia.economics.context_artifacts import (
+    list_context_artifacts,
+    summarize_context_artifacts,
+)
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.tracing import (
     list_cost_breakdown_by_provider,
@@ -233,6 +237,20 @@ def budgets_would_block(
     """Recent shadow-mode observations of calls that would have been blocked."""
     events = list_recent_would_block_events(days=days, limit=limit, scope=scope)
     return {"events": events, "window_days": days, "limit": limit}
+
+
+@router.get("/context-artifacts")
+def context_artifacts(
+    days: int = Query(7, ge=1, le=365),
+    run_id: Optional[str] = None,
+    include_artifacts: bool = False,
+    limit: int = Query(200, ge=1, le=5_000),
+) -> dict:
+    """Prompt-free Market Observer context-consumption audit."""
+    report = summarize_context_artifacts(days=days, run_id=run_id)
+    if include_artifacts:
+        report["items"] = list_context_artifacts(days=days, run_id=run_id, limit=limit)
+    return report
 
 
 @router.get("/pricing")
