@@ -219,29 +219,32 @@ def test_market_data_stale_snapshot_triggers_risk_violation(tmp_path, monkeypatc
 
 
 # ---------------------------------------------------------------------------
-# PL-MD-05  L2b  xstock_infra_event: xStock consecutive failures trigger infra_event
-# MD-1 drift fixed: write_audit called at 3rd consecutive xStock failure
+# PL-MD-05  L2b  xstock_infra_event: one event per consecutive-failure window
+# MD-1 drift fixed: write_audit called once at the 3rd consecutive failure
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
         "PL-MD-05", "pipeline_market_data", "§4 xstock_infra_event", "L2b",
-        "When xStock fetch fails 3 consecutive times, an infra_event row "
-        "must be written to signal infrastructure degradation to operators",
+        "When xStock fetch reaches 3 consecutive failures, exactly one infra_event "
+        "must mark that threshold transition; later failures in the same window do "
+        "not amplify durable writes",
         status="implemented",
     ),
 )
-def test_xstock_consecutive_failures_trigger_infra_event(tmp_path, monkeypatch):
-    """Verify that 3 consecutive xStock fetch failures produce an infra_event row.
+def test_xstock_consecutive_failures_emit_one_threshold_event(tmp_path, monkeypatch):
+    """Five failures emit once at three while indeterminate listing preserves intent.
 
     Exercises the actual collect_market_snapshots code path with a monkeypatched
     CCXTProvider that always raises, so the failure counter in market_data.py
-    accumulates and write_audit is called on the 3rd failure.
+    keeps accumulating without turning every later failure into another durable write.
     """
     import asyncio
     import aletheia.trading.market_data as md_mod
+    import aletheia.config.loader as loader_mod
     import aletheia.data.ccxt_provider as ccxt_mod
+    import aletheia.data.venue_listing_cache as venue_cache_mod
 
     conn = _setup_db(tmp_path, monkeypatch)
 
@@ -253,10 +256,14 @@ def test_xstock_consecutive_failures_trigger_infra_event(tmp_path, monkeypatch):
     cfg = AletheiaConfig()
     cfg.market_data = MarketDataConfig(
         observed_symbols=[],
-        observed_xstocks=["AAPL/USDT"],
+        observed_stock_tokens=[],
+        observed_xstocks=["AAPLON/USDT"],
         ccxt_exchange="binance",
     )
     monkeypatch.setattr(md_mod, "load_config", lambda: cfg)
+
+    saved_configs: list = []
+    monkeypatch.setattr(loader_mod, "save_config", lambda value: saved_configs.append(value))
 
     # Patch _build_dynamic_instruments to return empty (no regular instruments)
     monkeypatch.setattr(md_mod, "_build_dynamic_instruments", lambda cfg: [])
@@ -279,22 +286,28 @@ def test_xstock_consecutive_failures_trigger_infra_event(tmp_path, monkeypatch):
         lambda **kwargs: _FailingCCXTProvider(),
     )
 
-    # Run collect_market_snapshots 3 times — each run is one "consecutive failure"
-    for _ in range(3):
+    async def _indeterminate_listing(exchange_name):
+        assert exchange_name == "bitget"
+        return None
+
+    monkeypatch.setattr(venue_cache_mod, "get_venue_listing", _indeterminate_listing)
+    monkeypatch.setattr(md_mod, "_listed_symbols_on_exchange", _indeterminate_listing)
+
+    # Runs 3-5 remain one continuous degradation window.
+    for _ in range(5):
         asyncio.run(md_mod.collect_market_snapshots())
 
-    # The infra_event should now exist in audit_events
     audit_rows = conn.execute(
-        "SELECT * FROM audit_events WHERE event_type LIKE '%infra%' OR event_type LIKE '%xstock%'",
-    ).fetchall()
-    ki_rows = conn.execute(
-        "SELECT * FROM knowledge_items WHERE item_type LIKE '%infra%' OR title LIKE '%xstock%'",
+        "SELECT * FROM audit_events "
+        "WHERE source='market_data' AND event_type='infra_event' "
+        "AND entity_id='AAPLON/USDT'",
     ).fetchall()
 
-    assert len(audit_rows) + len(ki_rows) >= 1, (
-        "No infra_event row written after 3 consecutive xStock fetch failures. "
-        "MD-1: infrastructure failures must surface as structured audit events."
-    )
+    assert len(audit_rows) == 1
+    assert md_mod._xstock_failure_counts["AAPLON/USDT"] == 5
+    assert saved_configs == []
+    assert cfg.market_data.observed_stock_tokens == []
+    assert cfg.market_data.observed_xstocks == ["AAPLON/USDT"]
 
 
 # ---------------------------------------------------------------------------

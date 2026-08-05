@@ -393,7 +393,10 @@ async def collect_market_snapshots() -> dict:
                     sym = instrument.symbol
                     _xstock_failure_counts[sym] = _xstock_failure_counts.get(sym, 0) + 1
                     consecutive = _xstock_failure_counts[sym]
-                    if consecutive >= _XSTOCK_FAILURE_THRESHOLD:
+                    # Emit once when this failure window crosses the threshold.
+                    # Per-cycle warning logs continue below/above the threshold;
+                    # repeating the durable audit forever only amplifies writes.
+                    if consecutive == _XSTOCK_FAILURE_THRESHOLD:
                         from aletheia.files.jsonl import write_audit
                         write_audit({
                             "actor": "system",
