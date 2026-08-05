@@ -18,6 +18,8 @@ import {
 } from '../components/ui'
 import { fmtNum, humanize, humanizeBool } from '../lib/format'
 import { isUnsavedEdit, shouldBlockNavigation } from '../features/settings/dirtyGuard'
+import { listToCsv, parseCsvList } from '../features/settings/csvList'
+import { executionExchangeFromPaperMode } from '../features/settings/execution/exchangeMode'
 import { ModelProvidersSection } from '../features/settings/model-providers/ModelProvidersSection'
 import { MODEL_PROVIDERS_SECTION } from '../features/settings/model-providers/modelProviderState'
 import { HEALTH_MONITORING_SECTION, WEBHOOK_SECTION } from '../features/settings/health/healthState'
@@ -27,6 +29,10 @@ import {
   APP_SECTION, DATA_EXPORT_SECTION, DATA_RETENTION_SECTION, NETWORK_PROXY_SECTION,
   RuntimeSystemTab, SOFTWARE_UPDATES_SECTION,
 } from '../features/settings/tabs/RuntimeSystemTab'
+import {
+  EQUITIES_SECTION, MACRO_SIGNALS_SECTION, MARKET_DATA_SECTION, NEWS_FEEDS_SECTION,
+  PREDICTION_MARKETS_SECTION, SignalsTab,
+} from '../features/settings/tabs/SignalsTab'
 import {
   RISK_BOOLS, RISK_CORR, RISK_DEMO, RISK_FAMILY_GATE, RISK_FUTURES_DEMO,
   RISK_FUTURES_LIVE, RISK_LIVE, RISK_MARGIN, RISK_SHARED,
@@ -151,11 +157,11 @@ const SETTINGS_INDEX: { title: string; tab: Tab; slug: string; alt?: string[] }[
   { title: SOFTWARE_UPDATES_SECTION.title, tab: SOFTWARE_UPDATES_SECTION.tab, slug: SOFTWARE_UPDATES_SECTION.id, alt: [...SOFTWARE_UPDATES_SECTION.searchTerms] },
   { title: NETWORK_PROXY_SECTION.title,    tab: NETWORK_PROXY_SECTION.tab, slug: NETWORK_PROXY_SECTION.id, alt: [...NETWORK_PROXY_SECTION.searchTerms] },
   // Signals
-  { title: 'Market Data Sources',      tab: 'signals', slug: 'market-data-sources', alt: ['ohlcv', 'data provider', 'override', 'long short', 'lsr'] },
-  { title: 'Macro & Sentiment Signals',tab: 'signals', slug: 'macro-sentiment-signals', alt: ['fear greed', 'sentiment', 'coingecko', 'top movers', 'macro'] },
-  { title: 'News Feeds',               tab: 'signals', slug: 'news-feeds', alt: ['rss', 'ingestion'] },
-  { title: 'Prediction Markets',       tab: 'signals', slug: 'prediction-markets', alt: ['polymarket', 'categories'] },
-  { title: 'Observed US Equities',     tab: 'signals', slug: 'observed-us-equities', alt: ['xstocks', 'equity'] },
+  { title: MARKET_DATA_SECTION.title,        tab: MARKET_DATA_SECTION.tab, slug: MARKET_DATA_SECTION.id, alt: [...MARKET_DATA_SECTION.searchTerms] },
+  { title: MACRO_SIGNALS_SECTION.title,      tab: MACRO_SIGNALS_SECTION.tab, slug: MACRO_SIGNALS_SECTION.id, alt: [...MACRO_SIGNALS_SECTION.searchTerms] },
+  { title: NEWS_FEEDS_SECTION.title,         tab: NEWS_FEEDS_SECTION.tab, slug: NEWS_FEEDS_SECTION.id, alt: [...NEWS_FEEDS_SECTION.searchTerms] },
+  { title: PREDICTION_MARKETS_SECTION.title, tab: PREDICTION_MARKETS_SECTION.tab, slug: PREDICTION_MARKETS_SECTION.id, alt: [...PREDICTION_MARKETS_SECTION.searchTerms] },
+  { title: EQUITIES_SECTION.title,           tab: EQUITIES_SECTION.tab, slug: EQUITIES_SECTION.id, alt: [...EQUITIES_SECTION.searchTerms] },
   // Advanced
   { title: ADVANCED_SECTION.title,     tab: ADVANCED_SECTION.tab, slug: ADVANCED_SECTION.id, alt: [...ADVANCED_SECTION.searchTerms] },
 ]
@@ -191,13 +197,6 @@ function parseTab(value: string | null): Tab | null {
   return TAB_ALIASES[value] ?? null
 }
 
-function parseCsvList(raw: string): string[] {
-  return raw.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
-}
-
-function listToCsv(value: unknown): string {
-  return Array.isArray(value) ? value.join(', ') : ''
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main page
@@ -1349,17 +1348,6 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
 // EXECUTION TAB — exchange, credentials, mode, markets, live unlock, trading params
 // ─────────────────────────────────────────────────────────────────────────────
 
-function executionExchangeFromPaperMode(mode: string, configuredExchange = ''): string | null {
-  if (mode === 'paper_internal') return null
-  const byMode: Record<string, string> = {
-    bitget_demo: 'bitget',
-    binance_testnet: 'binance',
-    binance_live: 'binance',
-    okx_demo: 'okx',
-    okx_live: 'okx',
-  }
-  return byMode[mode] || configuredExchange || null
-}
 
 function ExecutionTab({ status, settings, qc, onDirty }: any) {
   const currentPaperMode = String((settings?.exchange as any)?.paper_execution_mode || '')
@@ -1575,208 +1563,6 @@ function CapitalEventsCard() {
   )
 }
 
-function MarketDataCard({ settings, qc, onDirty }: any) {
-  const md = settings?.market_data || {}
-  const exchangeSettings = settings?.exchange || {}
-  const EXCHANGES = ['binance', 'bybit', 'okx', 'bitget', 'gate', 'kucoin', 'htx']
-
-  const [primary, setPrimary] = useState(md.ccxt_exchange || 'binance')
-  const [fallback, setFallback] = useState(md.ccxt_fallback || 'bybit')
-  const [cacheTtl, setCacheTtl] = useState(md.ohlcv_cache_ttl_min ?? 10)
-  const [yfinance, setYfinance] = useState(!!md.enable_yfinance_macro)
-  const [longShortRatio, setLongShortRatio] = useState(md.enable_long_short_ratio ?? true)
-  const [historyHours, setHistoryHours] = useState(md.derivatives_history_hours ?? 24)
-  const [stocks, setStocks] = useState(listToCsv(md.observed_stocks))
-  const [stockTokens, setStockTokens] = useState(listToCsv(md.observed_stock_tokens))
-  const [predMarkets, setPredMarkets] = useState(listToCsv(md.observed_prediction_markets))
-  const [confirmExchangeDivergence, setConfirmExchangeDivergence] = useState(false)
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  useEffect(() => {
-    setPrimary(md.ccxt_exchange || 'binance')
-    setFallback(md.ccxt_fallback || 'bybit')
-    setCacheTtl(md.ohlcv_cache_ttl_min ?? 10)
-    setYfinance(!!md.enable_yfinance_macro)
-    setLongShortRatio(md.enable_long_short_ratio ?? true)
-    setHistoryHours(md.derivatives_history_hours ?? 24)
-    setStocks(listToCsv(md.observed_stocks))
-    setStockTokens(listToCsv(md.observed_stock_tokens))
-    setPredMarkets(listToCsv(md.observed_prediction_markets))
-    setConfirmExchangeDivergence(false)
-  }, [settings])
-
-  const executionExchange = executionExchangeFromPaperMode(
-    String(exchangeSettings.paper_execution_mode || ''),
-    String(exchangeSettings.name || ''),
-  )
-  const createsDivergence = executionExchange !== null
-    && primary !== executionExchange
-    && primary !== String(md.ccxt_exchange || 'binance')
-
-  const mut = useMutation({
-    mutationFn: () => api.updateMarketDataConfig({
-      ccxt_exchange: primary,
-      ccxt_fallback: fallback,
-      ohlcv_cache_ttl_min: cacheTtl,
-      enable_yfinance_macro: yfinance,
-      enable_long_short_ratio: longShortRatio,
-      derivatives_history_hours: historyHours,
-      observed_stocks: parseCsvList(stocks),
-      observed_stock_tokens: parseCsvList(stockTokens),
-      observed_prediction_markets: parseCsvList(predMarkets),
-      confirm_exchange_divergence: confirmExchangeDivergence,
-    }),
-    onSuccess: () => { setConfirmExchangeDivergence(false); setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
-
-  const dirty = primary !== (md.ccxt_exchange || 'binance')
-    || fallback !== (md.ccxt_fallback || 'bybit')
-    || cacheTtl !== (md.ohlcv_cache_ttl_min ?? 10)
-    || yfinance !== !!md.enable_yfinance_macro
-    || longShortRatio !== (md.enable_long_short_ratio ?? true)
-    || historyHours !== (md.derivatives_history_hours ?? 24)
-    || stocks !== listToCsv(md.observed_stocks)
-    || stockTokens !== listToCsv(md.observed_stock_tokens)
-    || predMarkets !== listToCsv(md.observed_prediction_markets)
-
-  useEffect(() => { onDirty?.('market-data', dirty) }, [dirty])
-
-  return (
-    <>
-      <Row label="Primary exchange" hint="CCXT exchange ID used for OHLCV and ticker data. Must match a supported CCXT exchange.">
-        <select value={primary} onChange={e => { setPrimary(e.target.value); setConfirmExchangeDivergence(false); setMsg(null) }} className="w-auto">
-          {EXCHANGES.map(ex => <option key={ex} value={ex}>{ex}</option>)}
-        </select>
-      </Row>
-      <Row label="Fallback exchange" hint="Used when the primary exchange fails or returns stale data.">
-        <select value={fallback} onChange={e => { setFallback(e.target.value); setMsg(null) }} className="w-auto">
-          {EXCHANGES.map(ex => <option key={ex} value={ex}>{ex}</option>)}
-        </select>
-      </Row>
-      {createsDivergence && (
-        <div className="settings-save-msg err mb-2">
-          <Toggle
-            checked={confirmExchangeDivergence}
-            onChange={setConfirmExchangeDivergence}
-            label={`I understand: orders will execute on ${executionExchange}, while market analysis will use ${primary}.`}
-          />
-        </div>
-      )}
-      <Row label="OHLCV cache TTL" hint="Minutes to cache candlestick data before re-fetching. Lower = fresher data, higher = fewer API calls.">
-        <input type="number" min={1} max={60} value={cacheTtl}
-          onChange={e => { setCacheTtl(Math.max(1, Math.min(60, parseInt(e.target.value) || 1))); setMsg(null) }}
-          style={{ width: '80px' }} />
-        <span className="hint">min</span>
-      </Row>
-      <Row label="Yahoo Finance macro" hint="Enable macro indicator collection (DXY, VIX, S&P 500) via yfinance. Requires network access to Yahoo.">
-        <Toggle checked={yfinance} label="" onChange={v => { setYfinance(v); setMsg(null) }} />
-      </Row>
-      <Row label="Long/Short ratio" hint="Pull Binance Futures globalLongShortAccountRatio per observed symbol every 2 min. Filled into open_interest_snapshots.long_short_ratio and folded into crowding_score. USDT-margined linear perps only.">
-        <Toggle checked={longShortRatio} label="" onChange={v => { setLongShortRatio(v); setMsg(null) }} />
-      </Row>
-      <Row label="Derivatives backfill" hint="Backfill funding/OI history on startup if the local window is sparse (idempotent — re-running with ≥3 rows in window is a no-op). 0 disables. Bitget OI history is not supported by CCXT; the path silently skips that exchange.">
-        <input type="number" min={0} max={168} value={historyHours}
-          onChange={e => { setHistoryHours(Math.max(0, Math.min(168, parseInt(e.target.value) || 0))); setMsg(null) }}
-          style={{ width: '80px' }} />
-        <span className="hint">hours (0 = off)</span>
-      </Row>
-      <Row label="Observed stocks" hint="Yahoo Finance tickers for macro correlation. Comma-separated (e.g. SPY, QQQ, NVDA).">
-        <input value={stocks} placeholder="SPY, QQQ, NVDA, AAPL"
-          onChange={e => { setStocks(e.target.value); setMsg(null) }}
-          className="mono w-full" />
-      </Row>
-      <Row label="Stock tokens" hint="Exchange-traded equity tokens for real-time price tracking. Supports Bitget r-series (rNVDA/USDT, rTSLA/USDT) and ON-series (AAPLON/USDT). Comma-separated. Used by equity_observer for cross-validation and Serenity for supply-chain research.">
-        <input value={stockTokens} placeholder="rNVDA/USDT, rTSLA/USDT, AAPLON/USDT"
-          onChange={e => { setStockTokens(e.target.value); setMsg(null) }}
-          className="mono w-full" />
-      </Row>
-      <Row label="Prediction markets" hint="Polymarket category slugs to track. Comma-separated.">
-        <input value={predMarkets} placeholder="crypto, politics"
-          onChange={e => { setPredMarkets(e.target.value); setMsg(null) }}
-          className="mono w-full" />
-      </Row>
-      {dirty && (
-        <div className="flex justify-end" style={{ padding: '0.5rem 0' }}>
-          <button onClick={() => mut.mutate()} disabled={mut.isPending || (createsDivergence && !confirmExchangeDivergence)}>
-            {mut.isPending ? 'Saving…' : 'Save market data config'}
-          </button>
-        </div>
-      )}
-      <SaveMsg msg={msg} />
-    </>
-  )
-}
-
-function MacroSignalsCard({ settings, qc, onDirty }: any) {
-  const md = settings?.market_data || {}
-
-  const [fearGreed, setFearGreed] = useState(md.enable_fear_greed ?? true)
-  const [cgTop, setCgTop] = useState(md.enable_coingecko_top ?? true)
-  const [cgTopN, setCgTopN] = useState(md.coingecko_top_n ?? 100)
-  const [hyperliquid, setHyperliquid] = useState(md.enable_hyperliquid ?? true)
-  const [defillama, setDefillama] = useState(md.enable_defillama ?? true)
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  useEffect(() => {
-    setFearGreed(md.enable_fear_greed ?? true)
-    setCgTop(md.enable_coingecko_top ?? true)
-    setCgTopN(md.coingecko_top_n ?? 100)
-    setHyperliquid(md.enable_hyperliquid ?? true)
-    setDefillama(md.enable_defillama ?? true)
-  }, [settings])
-
-  const mut = useMutation({
-    mutationFn: () => api.updateMarketDataConfig({
-      enable_fear_greed: fearGreed,
-      enable_coingecko_top: cgTop,
-      coingecko_top_n: cgTopN,
-      enable_hyperliquid: hyperliquid,
-      enable_defillama: defillama,
-    }),
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
-
-  const dirty = fearGreed !== (md.enable_fear_greed ?? true)
-    || cgTop !== (md.enable_coingecko_top ?? true)
-    || cgTopN !== (md.coingecko_top_n ?? 100)
-    || hyperliquid !== (md.enable_hyperliquid ?? true)
-    || defillama !== (md.enable_defillama ?? true)
-
-  useEffect(() => { onDirty?.('macro-signals', dirty) }, [dirty])
-
-  return (
-    <>
-      <Row label="Fear & Greed Index" hint="Pull Alternative.me's crypto fear/greed index (single 0-100 value, updated daily). No API key. Surfaces in the macro block of enriched_context fed to the LLM.">
-        <Toggle checked={fearGreed} label="" onChange={v => { setFearGreed(v); setMsg(null) }} />
-      </Row>
-      <Row label="CoinGecko top markets" hint="Pull top-N coins by market cap every ~10 min. Builds a 'Top Gainers / Top Losers' string folded into the macro block. No API key.">
-        <Toggle checked={cgTop} label="" onChange={v => { setCgTop(v); setMsg(null) }} />
-      </Row>
-      <Row label="Top-N count" hint="How many coins to pull per tick (10-250). Higher = broader universe context; CoinGecko free tier caps at 30 req/min.">
-        <input type="number" min={10} max={250} value={cgTopN}
-          onChange={e => { setCgTopN(Math.max(10, Math.min(250, parseInt(e.target.value) || 10))); setMsg(null) }}
-          style={{ width: '80px' }} />
-        <span className="hint">coins</span>
-      </Row>
-      <Row label="Hyperliquid cross-venue" hint="Pull perp open-interest + funding from Hyperliquid's public API (no key) every ~10 min. Tagged as a cross-venue feed (kept separate from the primary exchange's per-symbol read), surfaced as cross-venue derivatives context.">
-        <Toggle checked={hyperliquid} label="" onChange={v => { setHyperliquid(v); setMsg(null) }} />
-      </Row>
-      <Row label="DefiLlama on-chain" hint="Pull total stablecoin market cap, DeFi TVL, and DEX volume from DefiLlama's public API (no key) every ~10 min. Folded into the macro block of the LLM context as on-chain regime signal.">
-        <Toggle checked={defillama} label="" onChange={v => { setDefillama(v); setMsg(null) }} />
-      </Row>
-      {dirty && (
-        <div className="flex justify-end" style={{ padding: '0.5rem 0' }}>
-          <button onClick={() => mut.mutate()} disabled={mut.isPending}>
-            {mut.isPending ? 'Saving…' : 'Save macro signals config'}
-          </button>
-        </div>
-      )}
-      <SaveMsg msg={msg} />
-    </>
-  )
-}
 
 const PRIMARY_EXCHANGES = [
   { id: 'okx',           label: 'OKX',             desc: 'Data + paper execution via OKX Demo' },
@@ -2700,97 +2486,6 @@ function RiskTab({ settings, qc, onDirty }: any) {
   )
 }
 
-// ─── Prediction Markets Toggle ───
-
-function PredictionToggleCard({ qc }: { qc: any }) {
-  const { data: status } = useQuery({
-    queryKey: ['prediction-status'],
-    queryFn: api.getPredictionStatus,
-  })
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  const mut = useMutation({
-    mutationFn: (enabled: boolean) => api.togglePrediction(enabled),
-    onSuccess: (data) => {
-      setMsg({ ok: true, text: data.enabled ? '✓ enabled' : '✓ disabled' })
-      qc.invalidateQueries({ queryKey: ['prediction-status'] })
-      qc.invalidateQueries({ queryKey: ['settings'] })
-    },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
-
-  const enabled = status?.enabled ?? false
-
-  return (
-    <div className="card" style={{ marginBottom: 0 }}>
-      <Row label="Prediction observer" hint="When ON, the scheduler fetches Polymarket data every 30 min. When OFF, all prediction-related agent work stops.">
-        <Toggle checked={enabled} onChange={v => mut.mutate(v)} disabled={mut.isPending} />
-      </Row>
-      <SaveMsg msg={msg} />
-    </div>
-  )
-}
-
-// ─── Equities ───
-
-function EquitiesCard({ settings, qc }: any) {
-  const serverTickers: string[] = settings?.market_data?.observed_equities ?? []
-  const [draft, setDraft] = useState<string[]>(serverTickers)
-  const [input, setInput] = useState('')
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  useEffect(() => { setDraft(serverTickers) }, [settings])
-
-  const mut = useMutation({
-    mutationFn: () => api.updateEquities(draft),
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
-
-  const add = () => {
-    const t = input.trim().toUpperCase()
-    if (!t || draft.includes(t)) return
-    setDraft(prev => [...prev, t]); setInput(''); setMsg(null)
-  }
-  const remove = (t: string) => { setDraft(prev => prev.filter(x => x !== t)); setMsg(null) }
-
-  const dirty = JSON.stringify(draft.slice().sort()) !== JSON.stringify(serverTickers.slice().sort())
-
-  return (
-    <div className="card" style={{ marginBottom: 0 }}>
-      <div className="flex flex-wrap gap-1 mb-3" style={{ minHeight: '2rem' }}>
-        {draft.map(t => (
-          <span key={t} className="symbol-chip allow">
-            {t}
-            <button onClick={() => remove(t)} title={`Remove ${t}`}>×</button>
-          </span>
-        ))}
-        {draft.length === 0 && (
-          <span className="hint" style={{ margin: 0 }}>No tickers — equity_observer will not run.</span>
-        )}
-      </div>
-      <div className="flex items-center gap-2 flex-wrap">
-        <input
-          value={input} placeholder="e.g. AAPL"
-          onChange={e => setInput(e.target.value.toUpperCase())}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
-          style={{ width: '120px', fontFamily: 'var(--mono)', textTransform: 'uppercase' }}
-        />
-        <button className="secondary" onClick={add}>Add</button>
-        {dirty && (
-          <button onClick={() => mut.mutate()} disabled={mut.isPending}>
-            {mut.isPending ? 'Saving…' : 'Save changes'}
-          </button>
-        )}
-      </div>
-      <SaveMsg msg={msg} />
-      <p className="hint">
-        US equity tickers observed by equity_observer (yfinance daily bars + Bitget xStock price deviation).
-        Observation-only — not traded. Changes take effect on next agent cycle (Mon–Fri market hours).
-      </p>
-    </div>
-  )
-}
 
 // ─── Symbols ───
 
@@ -3204,121 +2899,6 @@ function RiskCard({ settings, qc }: any) {
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SIGNALS TAB — market data, news, macro signals, prediction markets, equities
-// ─────────────────────────────────────────────────────────────────────────────
-
-function SignalsTab({ settings, qc, onDirty }: any) {
-  return (
-    <div>
-      <Section
-        title="Market Data Sources"
-        description="Override primary exchange data routing. Normally managed by the Primary Exchange selector in Execution."
-      >
-        <Collapsible title="Data Source Overrides">
-          <MarketDataCard settings={settings} qc={qc} onDirty={onDirty} />
-        </Collapsible>
-      </Section>
-
-      <Section
-        title="Macro & Sentiment Signals"
-        description="Whole-market context fed into the LLM enriched_context: Fear & Greed Index (Alternative.me) and CoinGecko top movers. All free, no API key required."
-      >
-        <MacroSignalsCard settings={settings} qc={qc} onDirty={onDirty} />
-      </Section>
-
-      <Section
-        title="News Feeds"
-        description="Automated RSS news ingestion. Feeds are fetched periodically and displayed on the News Intelligence page."
-      >
-        <NewsFeedsCard settings={settings} qc={qc} />
-      </Section>
-
-      <Section
-        title="Prediction Markets"
-        description="Polymarket observer — fetches probability data for information-edge signals. Observation-only, never routed to execution."
-      >
-        <PredictionToggleCard qc={qc} />
-      </Section>
-
-      <Section
-        title="Observed US Equities"
-        description="US equity tickers for equity_observer (observation-only, not traded). Requires Bitget xStock support for the ticker."
-      >
-        <EquitiesCard settings={settings} qc={qc} />
-      </Section>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// RUNTIME & SYSTEM TAB — display, app, retention, updates, network
-// ─────────────────────────────────────────────────────────────────────────────
-
-
-// ─── News Feeds config ───
-
-function NewsFeedsCard({ settings, qc }: any) {
-  const news = settings?.news as any
-  const [enabled, setEnabled] = useState(true)
-  const [interval, setInterval_] = useState(15)
-  const [feeds, setFeeds] = useState<any[]>([])
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  useEffect(() => {
-    if (!news) return
-    setEnabled(news.enabled ?? true)
-    setInterval_(news.fetch_interval_minutes ?? 15)
-    setFeeds(news.feeds ?? [])
-  }, [settings])
-
-  const mut = useMutation({
-    mutationFn: () => api.updateNewsConfig({
-      enabled,
-      fetch_interval_minutes: interval,
-      feeds: feeds.map((f: any) => ({ name: f.name, url: f.url, source: f.source, enabled: f.enabled })),
-    }),
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
-
-  const toggleFeed = (idx: number) => {
-    setFeeds(prev => prev.map((f, i) => i === idx ? { ...f, enabled: !f.enabled } : f))
-    setMsg(null)
-  }
-
-  if (!news) return null
-
-  return (
-    <div className="card mb-0">
-      <Row label="News ingestion" hint="Master switch for automatic RSS feed collection.">
-        <Toggle checked={enabled} onChange={setEnabled} />
-      </Row>
-      <Row label="Fetch interval" hint="Minutes between feed checks (5–120).">
-        <input type="number" min={5} max={120} step={5} value={interval}
-          onChange={e => { setInterval_(Number(e.target.value)); setMsg(null) }}
-          className="mono" style={{ width: '70px' }}
-        />
-      </Row>
-      <div className="section-label mt-4">Feeds</div>
-      <div className="news-feeds-grid">
-        {feeds.map((f: any, i: number) => (
-          <div key={f.url} className="news-feed-row">
-            <Toggle checked={f.enabled} onChange={() => toggleFeed(i)} />
-            <div className="news-feed-info">
-              <span className="news-feed-name">{f.name}</span>
-              <span className="news-feed-source text-muted text-xs">{f.source}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="settings-action-row">
-        <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save news config'}</button>
-      </div>
-      <SaveMsg msg={msg} />
-    </div>
-  )
-}
 
 
 

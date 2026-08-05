@@ -9,6 +9,13 @@ import {
 	NETWORK_PROXY_SECTION,
 	SOFTWARE_UPDATES_SECTION,
 } from "../features/settings/tabs/RuntimeSystemTab";
+import {
+	EQUITIES_SECTION,
+	MACRO_SIGNALS_SECTION,
+	MARKET_DATA_SECTION,
+	NEWS_FEEDS_SECTION,
+	PREDICTION_MARKETS_SECTION,
+} from "../features/settings/tabs/SignalsTab";
 import { TELEGRAM_SECTION } from "../features/settings/telegram/telegramState";
 import CSS from "../index.css?raw";
 import SRC from "./Settings.tsx?raw";
@@ -24,6 +31,11 @@ const EXTRACTED_DESCRIPTORS = [
 	{ symbol: "DATA_EXPORT_SECTION", descriptor: DATA_EXPORT_SECTION },
 	{ symbol: "SOFTWARE_UPDATES_SECTION", descriptor: SOFTWARE_UPDATES_SECTION },
 	{ symbol: "NETWORK_PROXY_SECTION", descriptor: NETWORK_PROXY_SECTION },
+	{ symbol: "MARKET_DATA_SECTION", descriptor: MARKET_DATA_SECTION },
+	{ symbol: "MACRO_SIGNALS_SECTION", descriptor: MACRO_SIGNALS_SECTION },
+	{ symbol: "NEWS_FEEDS_SECTION", descriptor: NEWS_FEEDS_SECTION },
+	{ symbol: "PREDICTION_MARKETS_SECTION", descriptor: PREDICTION_MARKETS_SECTION },
+	{ symbol: "EQUITIES_SECTION", descriptor: EQUITIES_SECTION },
 ] as const;
 
 const EXTRACTED_COMPONENTS = [
@@ -41,6 +53,16 @@ const EXTRACTED_COMPONENTS = [
 			DATA_EXPORT_SECTION,
 			SOFTWARE_UPDATES_SECTION,
 			NETWORK_PROXY_SECTION,
+		],
+	},
+	{
+		component: "SignalsTab",
+		descriptors: [
+			MARKET_DATA_SECTION,
+			MACRO_SIGNALS_SECTION,
+			NEWS_FEEDS_SECTION,
+			PREDICTION_MARKETS_SECTION,
+			EQUITIES_SECTION,
 		],
 	},
 ] as const;
