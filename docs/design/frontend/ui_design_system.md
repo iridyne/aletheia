@@ -492,6 +492,10 @@ html {
 - **信任 / destructive 路径**（kill switch、proposals approve/reject、pause/resume、live unlock）→ **inline error**，显示在按钮下方，sticky 直到下次操作。**不能用 toast** — toast 自动消失，操作员可能错过失败信号。
 - **辅助路径**（start agent、news create、refresh、send chat）→ **toast** — 不阻塞，辅助通知即可。
 
+Command Palette 中的 mutation command 也必须返回并 `await` 其 Promise；等待期间禁止重复触发，成功后才关闭
+palette 并 invalidate 对应事实 query，失败则保持 palette 打开并显示带命令名的 sticky inline error。禁止用关闭
+palette 或丢弃 Promise 的方式暗示命令已经生效。
+
 `.lever-err` CSS pattern（信任路径用）：
 ```css
 .lever-err {
