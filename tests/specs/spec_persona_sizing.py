@@ -18,6 +18,17 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
+_PAPER_TRADING_SETTINGS = (
+    Path(__file__).resolve().parents[2]
+    / "frontend"
+    / "src"
+    / "features"
+    / "settings"
+    / "execution"
+    / "PaperTradingSettings.tsx"
+)
+
+
 def _setup_db(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
@@ -181,10 +192,7 @@ def test_persona_notional_reaches_proposal_quantity(tmp_path, monkeypatch):
     assert proposal.price == 100.0
     assert proposal.quantity == 0.5
 
-    settings_src = (
-        Path(__file__).resolve().parents[2]
-        / "frontend" / "src" / "pages" / "Settings.tsx"
-    ).read_text(encoding="utf-8")
+    settings_src = _PAPER_TRADING_SETTINGS.read_text(encoding="utf-8")
     assert "Active entry consumers:" in settings_src
     assert "Leverage, stop, and add parameters remain experimental/reference-only." in settings_src
 
@@ -454,10 +462,7 @@ def test_progressive_unlock_ladder(tmp_path, monkeypatch):
     cfg.runtime.kill_switch_active = True
     assert effective_operator_decidable(roll, cfg) == {}, "distress must refreeze all unlocked params"
 
-    settings_src = (
-        Path(__file__).resolve().parents[2]
-        / "frontend" / "src" / "pages" / "Settings.tsx"
-    ).read_text(encoding="utf-8")
+    settings_src = _PAPER_TRADING_SETTINGS.read_text(encoding="utf-8")
     assert "only active entry parameters" in settings_src
     assert "counts eligible historical" in settings_src
     assert "does not establish a fresh Persona-specific evidence window" in settings_src
@@ -542,10 +547,7 @@ def test_pyramid_plan(tmp_path, monkeypatch):
     assert result["trading"]["persona_pyramid_enabled"] is False
     assert len(saved_configs) == 1
 
-    settings_src = (
-        Path(__file__).resolve().parents[2]
-        / "frontend" / "src" / "pages" / "Settings.tsx"
-    ).read_text(encoding="utf-8")
+    settings_src = _PAPER_TRADING_SETTINGS.read_text(encoding="utf-8")
     assert "Pyramid add-on policy helper (no runtime trigger)" in settings_src
     assert "does not create a paper, demo, or live order" in settings_src
     assert "new enablement is blocked" in settings_src
@@ -635,10 +637,7 @@ def test_advance_persona_rollout(tmp_path, monkeypatch):
     assert advance_persona_rollout()["action"] == "hold"
     assert cfg2.trading.persona_progressive_unlock_enabled is False  # not advanced under distress
 
-    settings_src = (
-        Path(__file__).resolve().parents[2]
-        / "frontend" / "src" / "pages" / "Settings.tsx"
-    ).read_text(encoding="utf-8")
+    settings_src = _PAPER_TRADING_SETTINGS.read_text(encoding="utf-8")
     assert "Auto-advance rollout (Experimental safety hold)" in settings_src
     assert "The 8-hour job is currently read-only" in settings_src
     assert "new enablement is blocked" in settings_src

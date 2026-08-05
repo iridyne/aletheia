@@ -47,7 +47,9 @@ _OKX_BROKER = _ROOT / "aletheia" / "execution" / "okx_broker.py"
 _RECONCILER = _ROOT / "aletheia" / "portfolio" / "position_reconciler.py"
 _POSITION_MANAGER = _ROOT / "aletheia" / "portfolio" / "position_manager.py"
 _SETTINGS_ROUTES = _ROOT / "aletheia" / "server" / "routes" / "settings.py"
-_SETTINGS_TSX = _ROOT / "frontend" / "src" / "pages" / "Settings.tsx"
+_AGENT_SETTINGS_TAB = (
+    _ROOT / "frontend" / "src" / "features" / "settings" / "tabs" / "AgentModelsTab.tsx"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +280,7 @@ def test_position_manager_branches_on_trade_school():
     SpecClaim(
         "SH-S07", _CONTRACT, "§settings UI — Serenity stop_loss_pct + max_hold_days controls", "L2a",
         "POST /api/settings/serenity exposes stop_loss_pct + max_hold_days fields with "
-        "bounds, AND frontend Settings.tsx Serenity section renders controls for both "
+        "bounds, AND frontend AgentModelsTab.tsx renders controls for both "
         "(config↔UI rule, CLAUDE.md)",
     ),
 )
@@ -304,19 +306,20 @@ def test_settings_ui_exposes_holding_fields():
         "_SERENITY_BOUNDS missing max_hold_days — invalid input would write to config"
     )
     # Frontend: Serenity section must render controls for both
-    tsx_src = _SETTINGS_TSX.read_text(encoding="utf-8")
-    # Anchor on the existing Serenity section title
-    sect_start = tsx_src.index('title="Serenity Research"')
+    tsx_src = _AGENT_SETTINGS_TAB.read_text(encoding="utf-8")
+    sect_start = tsx_src.index(
+        "<SettingsFeatureSection descriptor={SERENITY_SECTION}>"
+    )
     sect_tail = tsx_src[sect_start:]
-    sect_end_idx = sect_tail.find("</Section>")
-    assert sect_end_idx > 0, "Serenity section in Settings.tsx is malformed"
+    sect_end_idx = sect_tail.find("</SettingsFeatureSection>")
+    assert sect_end_idx > 0, "Serenity section in AgentModelsTab.tsx is malformed"
     sect_block = sect_tail[:sect_end_idx]
     assert "stop_loss_pct" in sect_block, (
-        "Settings.tsx Serenity section has no stop_loss_pct control — config↔UI "
+        "AgentModelsTab.tsx Serenity section has no stop_loss_pct control — config↔UI "
         "rule violated (every config field must be reachable from UI)"
     )
     assert "max_hold_days" in sect_block, (
-        "Settings.tsx Serenity section has no max_hold_days control — config↔UI "
+        "AgentModelsTab.tsx Serenity section has no max_hold_days control — config↔UI "
         "rule violated"
     )
 

@@ -36,7 +36,8 @@ _REPOSITORIES = _ROOT / "aletheia" / "storage" / "repositories.py"
 _SCHEDULER = _ROOT / "aletheia" / "agent_runtime" / "scheduler.py"
 _CONTEXT_BUILDER = _ROOT / "aletheia" / "data" / "context_builder.py"
 _MARKET_OBSERVER = _ROOT / "aletheia" / "agents" / "market_observer.py"
-_SETTINGS_TSX = _ROOT / "frontend" / "src" / "pages" / "Settings.tsx"
+_SETTINGS_SHELL = _ROOT / "frontend" / "src" / "pages" / "Settings.tsx"
+_SIGNALS_TAB = _ROOT / "frontend" / "src" / "features" / "settings" / "tabs" / "SignalsTab.tsx"
 
 _CONTRACT = "data_layer_contract"
 
@@ -602,14 +603,14 @@ def test_oi_history_swallows_not_supported(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "MS-S14", _CONTRACT, "§6 Settings UI coupling", "L2a",
-        "frontend/src/pages/Settings.tsx contains the literal config field name "
+        "SignalsTab.tsx contains the literal config field name "
         "'enable_long_short_ratio' so toggle state and persistence are wired",
     ),
 )
 def test_settings_tsx_has_long_short_ratio_field():
-    src = _SETTINGS_TSX.read_text(encoding="utf-8")
+    src = _SIGNALS_TAB.read_text(encoding="utf-8")
     assert "enable_long_short_ratio" in src, (
-        "Settings.tsx must reference 'enable_long_short_ratio' — without it the "
+        "SignalsTab.tsx must reference 'enable_long_short_ratio' — without it the "
         "toggle either does not exist or does not save (Config↔UI rule violation)."
     )
 
@@ -617,48 +618,48 @@ def test_settings_tsx_has_long_short_ratio_field():
 @spec_claim(
     SpecClaim(
         "MS-S14b", _CONTRACT, "§6 Settings UI coupling", "L2a",
-        "frontend/src/pages/Settings.tsx contains 'enable_fear_greed' literal and "
-        "the 'Macro & Sentiment Signals' Section, with a matching SETTINGS_INDEX entry",
+        "SignalsTab.tsx contains 'enable_fear_greed' and the Macro descriptor, "
+        "with a matching SETTINGS_INDEX entry in the Settings shell",
     ),
 )
 def test_settings_tsx_has_fear_greed_and_macro_section():
-    src = _SETTINGS_TSX.read_text(encoding="utf-8")
+    src = _SIGNALS_TAB.read_text(encoding="utf-8")
+    shell = _SETTINGS_SHELL.read_text(encoding="utf-8")
     assert "enable_fear_greed" in src, (
-        "Settings.tsx must reference 'enable_fear_greed' (Config↔UI rule violation)."
+        "SignalsTab.tsx must reference 'enable_fear_greed' (Config↔UI rule violation)."
     )
     assert "Macro & Sentiment Signals" in src, (
-        "Settings.tsx must contain the 'Macro & Sentiment Signals' Section title"
+        "SignalsTab.tsx must contain the Macro & Sentiment Signals descriptor title"
     )
-    # SETTINGS_INDEX entry must match the Section title (file invariant — comment at line 63-64).
-    assert src.count("Macro & Sentiment Signals") >= 2, (
-        "SETTINGS_INDEX entry missing for 'Macro & Sentiment Signals' — inline search will miss it"
+    assert "title: MACRO_SIGNALS_SECTION.title" in shell, (
+        "SETTINGS_INDEX entry missing for MACRO_SIGNALS_SECTION — inline search will miss it"
     )
 
 
 @spec_claim(
     SpecClaim(
         "MS-S14c", _CONTRACT, "§6 Settings UI coupling", "L2a",
-        "Settings.tsx contains 'enable_coingecko_top' and 'coingecko_top_n' literals",
+        "SignalsTab.tsx contains 'enable_coingecko_top' and 'coingecko_top_n' literals",
     ),
 )
 def test_settings_tsx_has_coingecko_fields():
-    src = _SETTINGS_TSX.read_text(encoding="utf-8")
+    src = _SIGNALS_TAB.read_text(encoding="utf-8")
     for key in ("enable_coingecko_top", "coingecko_top_n"):
         assert key in src, (
-            f"Settings.tsx must reference '{key}' (Config↔UI rule violation)."
+            f"SignalsTab.tsx must reference '{key}' (Config↔UI rule violation)."
         )
 
 
 @spec_claim(
     SpecClaim(
         "MS-S14d", _CONTRACT, "§6 Settings UI coupling", "L2a",
-        "Settings.tsx contains 'derivatives_history_hours' literal",
+        "SignalsTab.tsx contains 'derivatives_history_hours' literal",
     ),
 )
 def test_settings_tsx_has_history_hours_field():
-    src = _SETTINGS_TSX.read_text(encoding="utf-8")
+    src = _SIGNALS_TAB.read_text(encoding="utf-8")
     assert "derivatives_history_hours" in src, (
-        "Settings.tsx must reference 'derivatives_history_hours' (Config↔UI rule)."
+        "SignalsTab.tsx must reference 'derivatives_history_hours' (Config↔UI rule)."
     )
 
 
