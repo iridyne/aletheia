@@ -213,7 +213,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "event_name == 'pull_request_target'" in schedule["if"]
     assert "draft == false" in schedule["if"]
     assert schedule["permissions"] == {"contents": "write"}
-    assert set(schedule["env"]) == {"OPERATION", "PR_NUMBER"}
+    assert set(schedule["env"]) == {"OPERATION", "PR_NUMBER", "EXPECTED_HEAD_SHA"}
     assert "do-not-auto-merge" in schedule["env"]["OPERATION"]
     assert len(schedule["steps"]) == 1
     schedule_step = schedule["steps"][0]
@@ -240,7 +240,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "pull-requests": "write",
     }
     assert update["timeout-minutes"] == "15"
-    assert set(update["env"]) == {"OPERATION", "PR_NUMBER"}
+    assert set(update["env"]) == {"OPERATION", "PR_NUMBER", "EXPECTED_HEAD_SHA"}
     assert len(update["steps"]) == 1
     update_step = update["steps"][0]
     assert update_step["name"] == "Apply pull request auto-merge state"
@@ -264,6 +264,31 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         for workflow_job in workflow["jobs"].values()
         for step in workflow_job["steps"]
     )
+
+
+def test_auto_merge_clean_state_uses_exact_head_protected_merge() -> None:
+    workflow = _auto_merge_workflow()
+    schedule = workflow["jobs"]["schedule"]
+    update = workflow["jobs"]["update"]
+
+    assert set(schedule["env"]) == {"OPERATION", "PR_NUMBER", "EXPECTED_HEAD_SHA"}
+    assert "pull_request.head.sha" in schedule["env"]["EXPECTED_HEAD_SHA"]
+    schedule_script = schedule["steps"][0]["with"]["script"]
+    assert "expected_head_sha" in schedule_script
+
+    assert set(update["env"]) == {"OPERATION", "PR_NUMBER", "EXPECTED_HEAD_SHA"}
+    update_script = update["steps"][0]["with"]["script"]
+    assert "headRefOid" in update_script
+    assert "pullRequest.headRefOid !== expectedHeadSha" in update_script
+    assert "pullRequest.mergeStateStatus === 'CLEAN'" in update_script
+    assert "github.rest.pulls.merge" in update_script
+    assert "sha: expectedHeadSha" in update_script
+    assert "merge_method: 'merge'" in update_script
+    assert "const autoMergeStates = new Set(['BEHIND', 'BLOCKED', 'HAS_HOOKS'])" in update_script
+    assert "enablePullRequestAutoMerge" in update_script
+    assert "String(error).includes('clean status')" in update_script
+    assert "admin" not in update_script.lower()
+    assert "bypass" not in update_script.lower()
 
 
 def test_delete_merged_branch_only_touches_merged_same_repo_head_refs() -> None:
