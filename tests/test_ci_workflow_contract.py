@@ -183,11 +183,11 @@ def test_superseded_pull_request_runs_are_cancelled() -> None:
     assert "github.event.pull_request.number" in concurrency["group"]
 
 
-def test_auto_merge_queues_ready_master_pull_requests_without_running_their_code() -> None:
+def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code() -> None:
     workflow = _auto_merge_workflow()
     triggers = workflow["on"]
 
-    assert set(triggers) == {"pull_request_target"}
+    assert set(triggers) == {"pull_request_target", "repository_dispatch"}
     assert triggers["pull_request_target"]["branches"] == ["master"]
     assert triggers["pull_request_target"]["types"] == [
         "opened",
@@ -198,41 +198,66 @@ def test_auto_merge_queues_ready_master_pull_requests_without_running_their_code
         "labeled",
         "unlabeled",
     ]
-    assert workflow["permissions"] == {
-        "contents": "write",
-        "pull-requests": "write",
-    }
+    assert triggers["repository_dispatch"]["types"] == ["auto_merge_update"]
+    assert workflow["permissions"] == {"contents": "read"}
 
-    assert set(workflow["jobs"]) == {"enable", "disable"}
-    job = workflow["jobs"]["enable"]
-    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
-    assert "draft == false" in job["if"]
-    assert "do-not-auto-merge" in job["if"]
-    assert len(job["steps"]) == 1
-    enable_step = job["steps"][0]
-    assert enable_step["name"] == "Queue pull request"
-    assert enable_step["uses"] == GITHUB_SCRIPT_ACTION
-    assert enable_step["with"]["retries"] == "3"
-    assert "enablePullRequestAutoMerge" in enable_step["with"]["script"]
-    assert "PR_NODE_ID" in job["env"]
-
-    disable_job = workflow["jobs"]["disable"]
-    assert disable_job["runs-on"] == [
+    assert set(workflow["jobs"]) == {"schedule", "update"}
+    schedule = workflow["jobs"]["schedule"]
+    assert schedule["name"] == "Schedule auto-merge update"
+    assert schedule["runs-on"] == [
         "self-hosted",
         "Linux",
         "X64",
         "ubuntu-24.04",
     ]
-    assert "do-not-auto-merge" in disable_job["if"]
-    assert len(disable_job["steps"]) == 1
-    disable_step = disable_job["steps"][0]
-    assert disable_step["name"] == "Remove pull request from auto-merge"
-    assert disable_step["uses"] == GITHUB_SCRIPT_ACTION
-    assert "disablePullRequestAutoMerge" in disable_step["with"]["script"]
-    assert "PR_NODE_ID" in disable_job["env"]
+    assert "event_name == 'pull_request_target'" in schedule["if"]
+    assert "draft == false" in schedule["if"]
+    assert schedule["permissions"] == {"contents": "write"}
+    assert set(schedule["env"]) == {"OPERATION", "PR_NUMBER"}
+    assert "do-not-auto-merge" in schedule["env"]["OPERATION"]
+    assert len(schedule["steps"]) == 1
+    schedule_step = schedule["steps"][0]
+    assert schedule_step["name"] == "Dispatch trusted auto-merge update"
+    assert schedule_step["uses"] == GITHUB_SCRIPT_ACTION
+    assert schedule_step["with"]["retries"] == "3"
+    schedule_script = schedule_step["with"]["script"]
+    assert "createDispatchEvent" in schedule_script
+    assert "auto_merge_update" in schedule_script
+    assert "pull_request_number" in schedule_script
+    assert "process.env.OPERATION" in schedule_script
 
-    # pull_request_target carries a write-capable base-repository token. Keep
-    # both jobs metadata-only: never check out or execute pull-request content.
+    update = workflow["jobs"]["update"]
+    assert update["name"] == "Apply auto-merge update"
+    assert update["runs-on"] == [
+        "self-hosted",
+        "Linux",
+        "X64",
+        "ubuntu-24.04",
+    ]
+    assert "event_name == 'repository_dispatch'" in update["if"]
+    assert update["permissions"] == {
+        "contents": "write",
+        "pull-requests": "write",
+    }
+    assert update["timeout-minutes"] == "15"
+    assert set(update["env"]) == {"OPERATION", "PR_NUMBER"}
+    assert len(update["steps"]) == 1
+    update_step = update["steps"][0]
+    assert update_step["name"] == "Apply pull request auto-merge state"
+    assert update_step["uses"] == GITHUB_SCRIPT_ACTION
+    assert update_step["with"]["retries"] == "3"
+    update_script = update_step["with"]["script"]
+    assert "repository(owner:" in update_script
+    assert "pullRequest(number:" in update_script
+    assert "mergeStateStatus" in update_script
+    assert "autoMergeRequest" in update_script
+    assert "UNSTABLE" in update_script
+    assert "setTimeout" in update_script
+    assert "enablePullRequestAutoMerge" in update_script
+    assert "disablePullRequestAutoMerge" in update_script
+
+    # Both phases carry write-capable base-repository tokens. Keep them
+    # metadata-only: never check out or execute pull-request content.
     assert not any(
         str(step.get("uses", "")).startswith("actions/checkout@")
         or bool(step.get("run"))
