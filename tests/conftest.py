@@ -379,8 +379,16 @@ def _no_network_market_data(request, monkeypatch):
         return Ticker(symbol=str(symbol), last_price=50000.0,
                       volume_24h=1_000_000.0, change_pct_24h=1.5)
 
+    async def _empty_funding(*_args, **_kwargs):
+        return None
+
     monkeypatch.setattr(CCXTProvider, "get_ohlcv", _empty_ohlcv)
     monkeypatch.setattr(CCXTProvider, "get_ticker", _empty_ticker)
+    # Local paper futures closes use the raw CCXT funding endpoint through this
+    # bounded helper, outside CCXTProvider.get_ticker/get_ohlcv. Keep that path
+    # offline too; focused tests can override this patch in their own body.
+    from aletheia.portfolio import local_funding
+    monkeypatch.setattr(local_funding, "_fetch_funding_from", _empty_funding)
     # close() is NOT patched: the fake data methods above create no real CCXT
     # session, so the real idempotent close() is safe. Patching it to a no-op
     # (#238) prevented cleanup of any owned session opened by unguarded paths.
