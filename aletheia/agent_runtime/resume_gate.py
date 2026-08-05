@@ -64,12 +64,23 @@ async def resume_if_llm_available(
     cause: str = "manual_resume",
     max_retries: int | None = None,
 ) -> dict[str, Any]:
-    """Resume only if every enabled startup gate permits it.
+    """Resume only if every active runtime gate permits it.
 
     `max_retries` is forwarded to the probe; a manual operator resume passes 1 so
     the request returns within a single probe instead of the full startup window.
     """
     cfg = load_config()
+
+    if cfg.runtime.paused and cfg.runtime.paused_by_connectivity:
+        response = {
+            "allowed": False,
+            "reason": "exchange_connectivity_pause",
+            "checked": 0,
+            "results": [],
+            "blockers": ["exchange_connectivity"],
+        }
+        _audit_resume_blocked(actor=actor, source=source, cause=cause, result=response)
+        return response
 
     if cfg.health.startup_behavior_gate_enabled:
         try:
