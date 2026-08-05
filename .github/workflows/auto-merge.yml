@@ -25,6 +25,7 @@ jobs:
     env:
       OPERATION: ${{ contains(github.event.pull_request.labels.*.name, 'do-not-auto-merge') && 'disable' || 'enable' }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Dispatch trusted auto-merge update
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
@@ -33,11 +34,15 @@ jobs:
           script: |
             const operation = process.env.OPERATION;
             const pullRequestNumber = Number.parseInt(process.env.PR_NUMBER, 10);
+            const expectedHeadSha = process.env.EXPECTED_HEAD_SHA;
             if (!['enable', 'disable'].includes(operation)) {
               throw new Error(`unsupported auto-merge operation: ${operation}`);
             }
             if (!Number.isInteger(pullRequestNumber) || pullRequestNumber <= 0) {
               throw new Error('pull request number must be a positive integer');
+            }
+            if (!/^[0-9a-f]{40}$/.test(expectedHeadSha)) {
+              throw new Error('expected head SHA must be a 40-character lowercase Git object ID');
             }
             await github.rest.repos.createDispatchEvent({
               ...context.repo,
@@ -45,6 +50,7 @@ jobs:
               client_payload: {
                 operation,
                 pull_request_number: pullRequestNumber,
+                expected_head_sha: expectedHeadSha,
               },
             });
 
@@ -59,6 +65,7 @@ jobs:
     env:
       OPERATION: ${{ github.event.client_payload.operation }}
       PR_NUMBER: ${{ github.event.client_payload.pull_request_number }}
+      EXPECTED_HEAD_SHA: ${{ github.event.client_payload.expected_head_sha }}
     steps:
       - name: Apply pull request auto-merge state
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
@@ -67,11 +74,15 @@ jobs:
           script: |
             const operation = process.env.OPERATION;
             const pullRequestNumber = Number.parseInt(process.env.PR_NUMBER, 10);
+            const expectedHeadSha = process.env.EXPECTED_HEAD_SHA;
             if (!['enable', 'disable'].includes(operation)) {
               throw new Error(`unsupported auto-merge operation: ${operation}`);
             }
             if (!Number.isInteger(pullRequestNumber) || pullRequestNumber <= 0) {
               throw new Error('pull request number must be a positive integer');
+            }
+            if (!/^[0-9a-f]{40}$/.test(expectedHeadSha)) {
+              throw new Error('expected head SHA must be a 40-character lowercase Git object ID');
             }
 
             const pullRequestQuery = `query($owner: String!, $repo: String!, $number: Int!) {
@@ -81,6 +92,7 @@ jobs:
                   number
                   state
                   isDraft
+                  headRefOid
                   mergeStateStatus
                   autoMergeRequest { enabledAt }
                 }
@@ -115,7 +127,7 @@ jobs:
               return;
             }
 
-            const acceptableStates = new Set(['BEHIND', 'BLOCKED', 'CLEAN', 'HAS_HOOKS']);
+            const autoMergeStates = new Set(['BEHIND', 'BLOCKED', 'HAS_HOOKS']);
             const maxAttempts = 150;
             for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
               const pullRequest = await fetchPullRequest();
@@ -125,6 +137,13 @@ jobs:
               }
               if (pullRequest.isDraft) {
                 core.info('pull request returned to Draft; auto-merge remains disabled');
+                return;
+              }
+              if (pullRequest.headRefOid !== expectedHeadSha) {
+                core.info(
+                  `pull request head changed from ${expectedHeadSha} to ${pullRequest.headRefOid}; ` +
+                  'a newer pull request event must authorize the merge',
+                );
                 return;
               }
               if (pullRequest.autoMergeRequest) {
@@ -144,7 +163,21 @@ jobs:
                 await new Promise((resolve) => setTimeout(resolve, 5000));
                 continue;
               }
-              if (!acceptableStates.has(pullRequest.mergeStateStatus)) {
+              if (pullRequest.mergeStateStatus === 'CLEAN') {
+                const mergeResult = await github.rest.pulls.merge({
+                  ...context.repo,
+                  pull_number: pullRequestNumber,
+                  merge_method: 'merge',
+                  sha: expectedHeadSha,
+                });
+                if (!mergeResult.data.merged) {
+                  throw new Error(
+                    `GitHub declined protected merge: ${mergeResult.data.message || 'unknown reason'}`,
+                  );
+                }
+                return;
+              }
+              if (!autoMergeStates.has(pullRequest.mergeStateStatus)) {
                 throw new Error(
                   `pull request cannot enter auto-merge from ${pullRequest.mergeStateStatus}`,
                 );
@@ -165,7 +198,10 @@ jobs:
               } catch (error) {
                 if (
                   attempt < maxAttempts &&
-                  String(error).includes('unstable status')
+                  (
+                    String(error).includes('unstable status') ||
+                    String(error).includes('clean status')
+                  )
                 ) {
                   await new Promise((resolve) => setTimeout(resolve, 5000));
                   continue;
