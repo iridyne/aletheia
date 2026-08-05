@@ -366,6 +366,7 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
 
     pause_scheduler()
     cfg.runtime.paused = True
+    cfg.runtime.paused_by_connectivity = True
     save_config(cfg)
 
     emit_infra_event(
@@ -503,7 +504,16 @@ def _escalate_exchange_stall(cfg, last_result: dict, consecutive: int) -> None:
 
 
 async def _resume_from_network(cfg) -> None:
-    """Resume scheduler after exchange connectivity is restored."""
+    """Release the connectivity-owned pause after exchange recovery."""
+    from aletheia.config.loader import load_config
+
+    # Reload immediately before deciding: this task can outlive the outage that
+    # created it, and a different gate/operator may now own the shared pause.
+    cfg = load_config()
+    if not cfg.runtime.paused_by_connectivity:
+        logger.info("exchange_auto_resume: pause is not connectivity-owned — exiting")
+        return
+
     # #146: the paused flag is shared with the LLM startup gate. If the LLM is still
     # unavailable, do NOT clear paused on exchange recovery — that would un-pause a
     # system the LLM gate still requires paused, and the LLM auto-resume loop would
@@ -525,7 +535,14 @@ async def _resume_from_network(cfg) -> None:
     from aletheia.infra.events import emit_infra_event
     from aletheia.files.jsonl import write_audit
 
+    # Re-read after the asynchronous LLM probe so a newer pause cannot be
+    # released by this older recovery task.
+    cfg = load_config()
+    if not cfg.runtime.paused_by_connectivity:
+        logger.info("exchange_auto_resume: pause ownership changed — exiting")
+        return
     cfg.runtime.paused = False
+    cfg.runtime.paused_by_connectivity = False
     save_config(cfg)
     resume_scheduler()
 

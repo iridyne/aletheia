@@ -90,6 +90,34 @@ def db(tmp_path, monkeypatch):
     reset_db()
 
 
+def test_exchange_upnl_is_scoped_to_its_broker_and_duplicate_is_rejected(db, monkeypatch):
+    """Same-symbol exchange uPnL must never cross broker/account projections."""
+    from aletheia.portfolio import pnl, exchange_sync
+
+    for mode in ("bitget_demo", "okx_demo", "binance_testnet"):
+        repo.insert_position(Position(
+            id=f"upnl-{mode}", symbol="BTC/USDT", market_type="usdt_futures",
+            direction="long", quantity=1.0, entry_price=100.0,
+            execution_mode=mode,
+        ))
+    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "positions": [
+            {"broker_id": "bitget_demo", "symbol": "BTC/USDT", "side": "long", "unrealized_pnl": 7.0},
+            {"broker_id": "okx_demo", "symbol": "BTC/USDT", "side": "long", "unrealized_pnl": -3.0},
+            # Ambiguous candidates must fail closed, not last-write-wins.
+            {"broker_id": "binance_testnet", "symbol": "BTC/USDT", "side": "long", "unrealized_pnl": 1.0},
+            {"broker_id": "binance_testnet", "symbol": "BTC/USDT", "side": "long", "unrealized_pnl": 99.0},
+        ],
+    })
+
+    marked = {row["execution_mode"]: row for row in pnl.mark_positions_to_market()}
+
+    assert marked["bitget_demo"]["unrealized_pnl"] == 7.0
+    assert marked["okx_demo"]["unrealized_pnl"] == -3.0
+    assert marked["binance_testnet"]["unrealized_pnl"] == 10.0
+
+
 # ---------- P1-2: compute_portfolio realized_pnl respects execution_mode ----------
 
 class TestRealizedPnlIsolation:

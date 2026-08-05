@@ -47,9 +47,18 @@ class AppConfig(BaseModel):
 
 
 class RuntimeConfig(BaseModel):
+    def __setattr__(self, name: str, value) -> None:
+        super().__setattr__(name, value)
+        if name == "paused" and value is True:
+            # Every non-connectivity pause assignment takes ownership unless the
+            # connectivity monitor explicitly claims it immediately afterward.
+            super().__setattr__("paused_by_connectivity", False)
+
     gateway_mode: str = "background"
     scheduler_enabled: bool = True
     paused: bool = False
+    # Only connectivity recovery may release a pause it acquired.
+    paused_by_connectivity: bool = False
     # Global trading brake. When true, the risk engine rejects every proposal
     # (paper and live). Set by human action or auto-tripped on daily-loss limit.
     kill_switch_active: bool = False

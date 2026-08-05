@@ -32,6 +32,43 @@ _OPEN_CLOSE_STATES = {
     "pending", "submitted", "partial", "partially_filled", "submission_unknown",
     "materialization_missing", "overfilled",
 }
+_PENDING_CLOSE_STALE_HOURS = 4
+
+
+def _pending_close_age_hours(requested_at: str | None) -> float | None:
+    requested = _parse_dt(requested_at)
+    if requested is None:
+        return float("inf")  # unknown age must not suppress protection silently
+    age_hours = (datetime.now(timezone.utc) - requested).total_seconds() / 3600
+    return age_hours if age_hours >= 0 else float("inf")
+
+
+def _escalate_stale_pending_close(position: dict, age_hours: float) -> None:
+    """Durably surface a stale close claim without releasing or retrying it."""
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
+
+    with repo.transaction(immediate=True):
+        existing = repo.get_db().execute(
+            "SELECT 1 FROM audit_events WHERE source='position_manager' "
+            "AND event_type='pending_close_reconciliation_required' "
+            "AND entity_id=? LIMIT 1",
+            (position["id"],),
+        ).fetchone()
+        if existing is not None:
+            return
+        repo.insert_audit_event(AuditEvent(
+            actor="system",
+            source="position_manager",
+            event_type="pending_close_reconciliation_required",
+            entity_type="position",
+            entity_id=position["id"],
+            message=(
+                f"Pending close {position.get('pending_close_order_id')} has remained "
+                f"{position.get('pending_close_status')} for {age_hours:.1f}h; "
+                "retain the claim and reconcile before any further close action."
+            ),
+        ))
 
 
 class LocalPaperClosePreflightError(RuntimeError):
@@ -847,12 +884,28 @@ def evaluate_open_positions() -> dict:
             continue
         checked += 1
         if p.get("pending_close_status") in _OPEN_CLOSE_STATES:
-            logger.info(
-                "skip close for %s: pending close order %s status=%s",
-                p["id"],
-                p.get("pending_close_order_id"),
-                p.get("pending_close_status"),
-            )
+            age_hours = _pending_close_age_hours(p.get("pending_close_requested_at"))
+            if age_hours is not None and age_hours >= _PENDING_CLOSE_STALE_HOURS:
+                _escalate_stale_pending_close(p, age_hours)
+                errors.append({
+                    "position_id": p["id"],
+                    "symbol": p.get("symbol"),
+                    "market_type": p.get("market_type"),
+                    "code": "pending_close_reconciliation_required",
+                })
+                logger.warning(
+                    "pending close requires reconciliation for %s: order=%s status=%s age=%.1fh",
+                    p["id"], p.get("pending_close_order_id"),
+                    p.get("pending_close_status"), age_hours,
+                )
+            else:
+                logger.info(
+                    "skip close for %s: pending close order %s status=%s",
+                    p["id"], p.get("pending_close_order_id"),
+                    p.get("pending_close_status"),
+                )
+            # Never release an unresolved close claim or submit a replacement.
+            # The scheduler's read-only reconciliation job owns convergence.
             continue
         try:
             price_venue = protective_price_venue(

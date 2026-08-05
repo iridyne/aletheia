@@ -266,6 +266,7 @@ async def test_auto_resume_on_connectivity_restored(tmp_path, monkeypatch):
     cfg = load_config()
     cfg.exchange.name = "okx"
     cfg.runtime.paused = True  # Already paused
+    cfg.runtime.paused_by_connectivity = True
     cfg.health.exchange_auto_resume_interval_sec = 0
     cfg.health.exchange_auto_resume_success_threshold = 2
     save_config(cfg)
@@ -624,3 +625,83 @@ async def test_no_double_pause_when_already_paused(tmp_path, monkeypatch):
 
     # No pause_scheduler call — already paused
     assert pause_called == []
+
+
+@pytest.mark.asyncio
+async def test_network_recovery_keeps_a_pause_not_owned_by_connectivity(tmp_path, monkeypatch):
+    """Recovery must not clear a pause another gate or operator owns."""
+    setup_env(tmp_path, monkeypatch)
+    _reset_connectivity_state()
+
+    from aletheia.config.loader import load_config, save_config
+    import aletheia.agent_runtime.connectivity as conn_mod
+
+    cfg = load_config()
+    cfg.runtime.paused = True
+    cfg.runtime.paused_by_connectivity = False
+    save_config(cfg)
+    resumed = []
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.resume_scheduler",
+        lambda: resumed.append(True),
+    )
+
+    await conn_mod._resume_from_network(cfg)
+
+    assert resumed == []
+    assert load_config().runtime.paused is True
+
+
+@pytest.mark.asyncio
+async def test_operator_pause_after_network_pause_replaces_ownership(tmp_path, monkeypatch):
+    """A later pause assignment supersedes the original connectivity claim."""
+    setup_env(tmp_path, monkeypatch)
+    _reset_connectivity_state()
+
+    from aletheia.config.loader import load_config, save_config
+    import aletheia.agent_runtime.connectivity as conn_mod
+
+    cfg = load_config()
+    cfg.runtime.paused = True
+    cfg.runtime.paused_by_connectivity = True
+    save_config(cfg)
+    # This is the same assignment made by existing manual/gate pause callers.
+    cfg = load_config()
+    cfg.runtime.paused = True
+    save_config(cfg)
+    resumed = []
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.resume_scheduler",
+        lambda: resumed.append(True),
+    )
+
+    await conn_mod._resume_from_network(cfg)
+
+    assert resumed == []
+    assert load_config().runtime.paused_by_connectivity is False
+
+
+@pytest.mark.asyncio
+async def test_network_recovery_clears_its_own_pause(tmp_path, monkeypatch):
+    """Recovery clears the durable connectivity pause only after reloading it."""
+    setup_env(tmp_path, monkeypatch)
+    _reset_connectivity_state()
+
+    from aletheia.config.loader import load_config, save_config
+    import aletheia.agent_runtime.connectivity as conn_mod
+
+    cfg = load_config()
+    cfg.runtime.paused = True
+    cfg.runtime.paused_by_connectivity = True
+    save_config(cfg)
+    resumed = []
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.resume_scheduler",
+        lambda: resumed.append(True),
+    )
+
+    await conn_mod._resume_from_network(cfg)
+
+    assert resumed == [True]
+    assert load_config().runtime.paused is False
+    assert load_config().runtime.paused_by_connectivity is False
