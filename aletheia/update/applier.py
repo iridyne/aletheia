@@ -160,13 +160,23 @@ def _frontend_deps_changed(changed_files: list[str]) -> bool:
     return any(path in {"frontend/package.json", "frontend/package-lock.json"} for path in changed_files)
 
 
+def _run_npm(args: list[str], *, env: dict) -> subprocess.CompletedProcess | None:
+    """Run npm, using its Windows command shim when present."""
+    commands = ("npm.cmd", "npm") if os.name == "nt" else ("npm",)
+    for command in commands:
+        try:
+            return subprocess.run(
+                [command, *args], cwd=str(_FRONTEND_DIR), capture_output=True, text=True,
+                env=env, **_no_window_kwargs(),
+            )
+        except FileNotFoundError:
+            continue
+    return None
+
+
 def _install_frontend_deps() -> dict:
-    try:
-        result = subprocess.run(
-            ["npm", "ci"], cwd=str(_FRONTEND_DIR), capture_output=True, text=True,
-            env=_safe_env(), **_no_window_kwargs(),
-        )
-    except FileNotFoundError:
+    result = _run_npm(["ci"], env=_safe_env())
+    if result is None:
         return {"ok": False, "reason": "npm_unavailable"}
     return {"ok": result.returncode == 0, "reason": "npm_ci_failed" if result.returncode else None}
 
@@ -176,12 +186,8 @@ def _build_frontend() -> dict:
     shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
     env = _safe_env()
     env["VITE_BUILD_OUT_DIR"] = str(_STAGED_DASHBOARD_STATIC)
-    try:
-        result = subprocess.run(
-            ["npm", "run", "build"], cwd=str(_FRONTEND_DIR), capture_output=True, text=True,
-            env=env, **_no_window_kwargs(),
-        )
-    except FileNotFoundError:
+    result = _run_npm(["run", "build"], env=env)
+    if result is None:
         return {"ok": False, "reason": "npm_unavailable"}
     if result.returncode or not (_STAGED_DASHBOARD_STATIC / "index.html").is_file():
         shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)

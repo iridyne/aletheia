@@ -33,6 +33,23 @@ class _FakeProc:
         self.stderr = stderr
 
 
+def test_run_npm_uses_windows_cmd_shim(tmp_path, monkeypatch):
+    from aletheia.update import applier
+
+    calls = []
+    monkeypatch.setattr(applier.os, "name", "nt")
+    monkeypatch.setattr(
+        applier.subprocess,
+        "run",
+        lambda command, **kwargs: calls.append(command) or _FakeProc(stdout="11.0.0\n"),
+    )
+
+    result = applier._run_npm(["--version"], env={})
+
+    assert result.returncode == 0
+    assert calls == [["npm.cmd", "--version"]]
+
+
 def test_behind_count_parses_rev_list(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import git_ops
