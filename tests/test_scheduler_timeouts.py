@@ -243,6 +243,69 @@ def test_async_timeout_worker_reuses_one_thread(monkeypatch):
         scheduler._async_timeout_worker.close()
 
 
+def test_insight_synthesizer_uses_owned_async_timeout_loop(monkeypatch):
+    """The memo job must not create and close a disposable event loop."""
+    from aletheia.agent_runtime import scheduler
+    from aletheia.analytics import insight_synthesizer, reasoning_feedback
+
+    submitted = []
+    successes = []
+
+    async def synthesize():
+        return {"sample_size": 2}
+
+    def run_bounded(job_id, awaitable):
+        submitted.append(job_id)
+        return asyncio.run(awaitable)
+
+    monkeypatch.setattr(scheduler, "load_config", _cfg)
+    monkeypatch.setattr(scheduler, "_run_async_with_timeout", run_bounded)
+    monkeypatch.setattr(scheduler, "_record_job_success", successes.append)
+    monkeypatch.setattr(insight_synthesizer, "synthesize_trading_memo", synthesize)
+    monkeypatch.setattr(reasoning_feedback, "build_reasoning_feedback", lambda: None)
+
+    scheduler._run_insight_synthesizer()
+
+    assert submitted == ["insight_synthesizer"]
+    assert successes == ["insight_synthesizer"]
+
+
+def test_insight_synthesizer_preserves_timeout_failure_and_feedback(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.analytics import insight_synthesizer, reasoning_feedback
+
+    failures = []
+    feedback_runs = []
+
+    async def synthesize():
+        return None
+
+    def time_out(job_id, awaitable):
+        assert job_id == "insight_synthesizer"
+        awaitable.close()
+        raise TimeoutError
+
+    monkeypatch.setattr(scheduler, "load_config", _cfg)
+    monkeypatch.setattr(scheduler, "_run_async_with_timeout", time_out)
+    monkeypatch.setattr(scheduler, "_record_job_failure", lambda *args: failures.append(args))
+    monkeypatch.setattr(
+        scheduler,
+        "_record_job_success",
+        lambda *_args: pytest.fail("a timed-out memo must not be recorded as successful"),
+    )
+    monkeypatch.setattr(insight_synthesizer, "synthesize_trading_memo", synthesize)
+    monkeypatch.setattr(
+        reasoning_feedback,
+        "build_reasoning_feedback",
+        lambda: feedback_runs.append("ran"),
+    )
+
+    scheduler._run_insight_synthesizer()
+
+    assert failures == [("insight_synthesizer", "timeout")]
+    assert feedback_runs == ["ran"]
+
+
 def test_async_timeout_worker_rejects_when_capacity_is_exhausted(monkeypatch):
     """An unresponsive loop cannot build an unbounded scheduler queue."""
     from aletheia.agent_runtime import scheduler
