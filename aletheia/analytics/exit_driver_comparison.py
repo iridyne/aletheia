@@ -6,6 +6,10 @@ outcome quality (count, win rate, avg / total realized PnL, avg hold) per
 driver:
 
   • operator — System Operator proactively exited (operator_close / operator_limit_exit)
+  • human    — the OWNER manually exited from the dashboard (human_manual_close /
+               human_limit_exit). Deliberately NOT folded into `operator`: an owner's
+               manual close is not evidence about AI exit discretion, and counting it
+               as such would let human decisions distort the AI's measured edge.
   • rule     — deterministic strategy rule fired (stop_loss / take_profit / max_hold /
                thesis_invalidated / market_signal_exit)
   • safety   — Layer-0 hard control fired (catastrophic_stop / liquidation_proximity)
@@ -28,9 +32,18 @@ from datetime import datetime, timezone
 from typing import Any
 
 OPERATOR_DRIVEN = frozenset({"operator_close", "operator_limit_exit"})
-RULE_DRIVEN = frozenset({
-    "stop_loss", "take_profit", "max_hold", "thesis_invalidated", "market_signal_exit",
-})
+# Owner-initiated manual exits from the dashboard. Kept separate from OPERATOR_DRIVEN
+# so "do AI-discretionary exits beat rules?" is never answered with human decisions.
+HUMAN_DRIVEN = frozenset({"human_manual_close", "human_limit_exit"})
+RULE_DRIVEN = frozenset(
+    {
+        "stop_loss",
+        "take_profit",
+        "max_hold",
+        "thesis_invalidated",
+        "market_signal_exit",
+    }
+)
 SAFETY_DRIVEN = frozenset({"catastrophic_stop", "liquidation_proximity"})
 
 
@@ -38,6 +51,8 @@ def exit_driver(reason: str | None) -> str:
     r = (reason or "").strip()
     if r in OPERATOR_DRIVEN:
         return "operator"
+    if r in HUMAN_DRIVEN:
+        return "human"
     if r in RULE_DRIVEN:
         return "rule"
     if r in SAFETY_DRIVEN:
@@ -68,13 +83,16 @@ class ExitOutcomeStats:
     wins: int
     total_pnl: float
     avg_pnl: float
-    win_rate: float          # 0..1
+    win_rate: float  # 0..1
     avg_hold_hours: float | None
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "driver": self.driver, "count": self.count, "wins": self.wins,
-            "total_pnl": round(self.total_pnl, 6), "avg_pnl": round(self.avg_pnl, 6),
+            "driver": self.driver,
+            "count": self.count,
+            "wins": self.wins,
+            "total_pnl": round(self.total_pnl, 6),
+            "avg_pnl": round(self.avg_pnl, 6),
             "win_rate": round(self.win_rate, 4),
             "avg_hold_hours": round(self.avg_hold_hours, 2) if self.avg_hold_hours is not None else None,
         }
@@ -110,14 +128,13 @@ def format_comparison(stats: dict[str, ExitOutcomeStats]) -> str:
     lines = ["exit-outcome comparison by driver", ""]
     header = f"  {'driver':<10}{'n':>5}{'win%':>7}{'avg_pnl':>11}{'total_pnl':>12}{'avg_hold_h':>12}"
     lines.append(header)
-    for driver in ("operator", "rule", "safety", "other"):
+    for driver in ("operator", "human", "rule", "safety", "other"):
         s = stats.get(driver)
         if not s:
             continue
         hold = f"{s.avg_hold_hours:.1f}" if s.avg_hold_hours is not None else "-"
         lines.append(
-            f"  {driver:<10}{s.count:>5}{s.win_rate * 100:>6.1f}%"
-            f"{s.avg_pnl:>11.4f}{s.total_pnl:>12.4f}{hold:>12}"
+            f"  {driver:<10}{s.count:>5}{s.win_rate * 100:>6.1f}%{s.avg_pnl:>11.4f}{s.total_pnl:>12.4f}{hold:>12}"
         )
     return "\n".join(lines)
 

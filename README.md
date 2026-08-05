@@ -64,6 +64,13 @@ AGENTS.md contains the deeper *Read when needed* task-to-document routing.
 
 ## Architecture
 
+> **[Open the complete interactive architecture map →](https://iridite.github.io/aletheia/docs/diagrams/interactive/)**
+> Drag to pan, use the wheel or pinch to zoom, and double-click to fit. GitHub
+> sanitizes executable content inside README Markdown, so the same D2-rendered
+> map opens in the repository's GitHub Pages viewer for full interaction.
+
+[![Complete Aletheia architecture map](docs/diagrams/rendered/readme_complete_architecture.svg)](https://iridite.github.io/aletheia/docs/diagrams/interactive/)
+
 - Python 3.12 backend (FastAPI + Typer CLI), Bitget spot + USDT futures (BTC/ETH/SOL)
 - SQLite + JSONL + Markdown storage; secrets in OS keyring / encrypted file (never in config or logs)
 - React/Vite dashboard served from localhost — primary control surface
@@ -72,17 +79,57 @@ AGENTS.md contains the deeper *Read when needed* task-to-document routing.
 - Risk Engine enforces the full §21.3 check matrix + a global kill switch; every order flows through the Execution Gateway (paper broker or live Bitget broker)
 - Paper/demo first; live strictly gated behind explicit human unlock, with order reconciliation against the exchange
 
-### System overview
+### 1. System overview — one durable trading cognition loop
 
-![System Overview](docs/diagrams/rendered/01_system_overview.png)
+![Aletheia system overview](docs/diagrams/rendered/readme_system_overview.svg)
 
-### Trading flow (system operator sole decision maker)
+Aletheia is organized around a durable evidence loop, not a sequence of
+isolated LLM calls. Market facts, decisions, risk verdicts, fills, outcomes,
+reviews, and the learning evidence used by later decisions remain traceable in
+local state.
 
-![Trading Flow](docs/diagrams/rendered/trading_flow_pi_sole_decision_maker.png)
+### 2. Agent decision loop — signals advise, the System Operator decides
 
-> Detailed flow diagrams (data collection, signal discovery, decision process,
-> execution, position management, feedback loop, strategy lifecycle) live in the
-> [System Architecture Guide](docs/design/architecture/SYSTEM_ARCHITECTURE_GUIDE.md).
+![Aletheia agent decision loop](docs/diagrams/rendered/readme_agent_decision_loop.svg)
+
+Universe scanners, observers, and research workers may produce opportunities,
+but they cannot place orders. Candidate admission creates a durable
+`signal_pending` carrier; the System Operator hydrates that exact candidate,
+reads current state and relevant experience, and emits a terminal decision.
+
+### 3. Learning and controlled evolution — experience must earn influence
+
+![Aletheia learning and controlled evolution loop](docs/diagrams/rendered/readme_learning_evolution_loop.svg)
+
+Closed trades and untraded counterfactuals become reviewable evidence. Cases,
+lessons, memos, and guard candidates can affect future ranking or reasoning only
+through scope, integrity, contribution-measurement, and lifecycle gates. Draft
+skills do not activate themselves, and learning cannot bypass Risk or enable
+live trading.
+
+### 4. Execution and risk — every order crosses the same hard boundary
+
+![Aletheia execution and risk architecture](docs/diagrams/rendered/readme_execution_risk.svg)
+
+Every `TradeProposal` enters the Execution Gateway and receives a persisted
+RiskDecision before routing to paper, exchange-demo, or explicitly unlocked
+live execution. Proposal, decision, order, fill, position, settlement, and audit
+records retain their causal identity.
+
+### 5. End-to-end data flow — from market facts to net-outcome evidence
+
+![Aletheia end-to-end data flow](docs/diagrams/rendered/readme_data_flow.svg)
+
+The economically important chain is:
+
+```text
+market facts → opportunity → decision → risk → execution
+             → cost-complete net outcome → attribution → measured learning
+```
+
+The [System Architecture Guide](docs/design/architecture/SYSTEM_ARCHITECTURE_GUIDE.md)
+contains the deeper subsystem narrative. Editable D2 sources and rendering
+instructions live in [docs/diagrams](docs/diagrams/README.md).
 
 ## Safety invariants
 

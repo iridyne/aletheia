@@ -92,6 +92,7 @@ operators do not infer the real order target from the retained exchange preferen
 | GET | `/positions` | List positions; closed rows expose only reproducible net PnL plus explicit completeness/reason fields |
 | GET | `/positions/reconciliation` | Local vs exchange position comparison |
 | POST | `/positions/reconcile` | Trigger position reconciliation |
+| POST | `/positions/{id}/close` | Owner-initiated manual close of one open position. `paper_internal` uses a fresh configured-venue mark; `*_demo`/`*_testnet` places a real exchange close order. `*_live_limited` returns HTTP 409 `live_position_requires_exchange_close` — close live positions from the exchange UI. Body: `{ order_type: "market"|"limit", limit_price?: number, reason?: string }`. Writes `actor=human`, `close_reason=human_manual_close` or `human_limit_exit`, keeping the attribution separate from AI exit discretion. Guarded by `_PROTECTED_METHOD_PREFIXES POST /api/positions/` when Remote Control / tunnel is enabled. |
 | GET | `/trades` | List completed trades (closed positions) |
 | GET | `/trades/export` | CSV export of trade history; incomplete legacy PnL is blank and labelled, never exported as a valid tax/PnL number |
 

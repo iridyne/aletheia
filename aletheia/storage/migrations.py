@@ -2167,6 +2167,12 @@ _ADDITIVE_COLUMNS = [
     # the position once price reaches it (a locally-watched limit exit, OCO with the
     # stop — whichever price hits first closes the position). NULL = no limit exit.
     ("exit_limit_price", "positions", "REAL"),
+    # Who authored the resting exit_limit_price: 'human' (dashboard manual close) or
+    # 'system_operator' (AI proactive exit). Read by _decide_exit to pick the honest
+    # close_reason — human_limit_exit vs operator_limit_exit — so a human's manual
+    # limit is never counted as an AI-discretionary exit in exit-driver attribution.
+    # NULL on legacy rows → treated as system_operator (the only pre-existing author).
+    ("exit_limit_source", "positions", "TEXT"),
     # M2: carry the Operator's exit intent on the proposal so it reaches the position
     # at open (stamped by the execution gateway). NULL on legacy proposals.
     ("expected_horizon_hours", "trade_proposals", "REAL"),

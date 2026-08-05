@@ -1,0 +1,82 @@
+direction: down
+
+classes: {
+  decision: { style.fill: "#F2ECFF"; style.stroke: "#7452B8" }
+  safety: { style.fill: "#FFE9E7"; style.stroke: "#C33D32"; style.stroke-width: 3 }
+  execution: { style.fill: "#FFF2E8"; style.stroke: "#C4672D" }
+  store: { shape: cylinder; style.fill: "#F4F6F8"; style.stroke: "#5E6873" }
+  paper: { style.fill: "#E9F8F1"; style.stroke: "#2D8968" }
+  human: { style.fill: "#FFF4CC"; style.stroke: "#B88400" }
+}
+
+title: "Execution & Risk / 执行与风控" {
+  near: top-center
+  shape: text
+  style.font-size: 26
+  style.bold: true
+}
+
+decision: "System Operator trade decision\nentry · stop · target · quantity · causal IDs" { class: decision }
+proposal: "Immutable TradeProposal\n不可变交易提案" { class: execution }
+
+gateway: "Execution Gateway / 唯一下单入口" {
+  class: safety
+  persist: "Persist proposal"
+  evaluate: "Call Risk Engine"
+  route: "Route approved order"
+}
+
+risk: "Risk Engine / 硬性审批矩阵" {
+  class: safety
+  mode: "Permission mode + live state"
+  limits: "position · exposure · leverage · daily loss"
+  market: "price freshness · venue · symbol · liquidation buffer"
+  kill: "global kill switch"
+}
+
+rejected: "Rejected\n持久化 RiskDecision，禁止下单" { class: safety }
+
+brokers: "Execution modes / 执行模式" {
+  paper: "paper_internal\n本地模拟成交" { class: paper }
+  demo: "exchange demo / testnet\n交易所模拟盘" { class: execution }
+  live: "live_limited\n显式人工解锁后才可达" { class: human }
+}
+
+ledger: "Causal trading ledger / 因果交易账本" {
+  class: store
+  label: "Proposal → RiskDecision → Order → Fill → Position\n保留 proposal_id / decision_id / order_id / position_id"
+}
+
+manager: "Position Manager / 自治安全层" {
+  class: safety
+  protect: "TP/SL · trailing · timeout close"
+  reconcile: "exchange reconciliation"
+  settle: "close settlement + cost-complete net outcome"
+}
+
+audit: "Audit + account truth\n审计、余额与持仓真相" { class: store }
+
+human: "Human controls\nrisk settings · kill switch · live unlock" { class: human }
+
+decision -> proposal
+proposal -> gateway.persist
+gateway.persist -> gateway.evaluate
+gateway.evaluate -> risk.mode
+risk.mode -> risk.limits
+risk.limits -> risk.market
+risk.market -> risk.kill
+risk.kill -> rejected: "reject"
+risk.kill -> gateway.route: "approve"
+gateway.route -> brokers.paper: "paper_internal"
+gateway.route -> brokers.demo: "demo"
+gateway.route -> brokers.live: "live_limited"
+brokers.paper -> ledger
+brokers.demo -> ledger
+brokers.live -> ledger
+ledger -> manager.protect
+manager.protect -> manager.reconcile
+manager.reconcile -> manager.settle
+manager.settle -> audit
+human -> risk.mode
+human -> brokers.live: "explicit unlock"
+audit -> risk.limits: "daily loss / exposure" { style.stroke-dash: 5 }

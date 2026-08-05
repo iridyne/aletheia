@@ -1,0 +1,78 @@
+direction: down
+
+classes: {
+  evidence: { style.fill: "#EDF3FA"; style.stroke: "#536D86" }
+  learning: { style.fill: "#E8F8F0"; style.stroke: "#27866A" }
+  gate: { style.fill: "#FFF3D8"; style.stroke: "#B47B16"; style.stroke-width: 2 }
+  influence: { style.fill: "#F1ECFF"; style.stroke: "#7357B4" }
+  boundary: { style.fill: "#FFE9E7"; style.stroke: "#C33D32" }
+}
+
+title: "Learning & Controlled Evolution / 学习与受控进化闭环" {
+  near: top-center
+  shape: text
+  style.font-size: 26
+  style.bold: true
+}
+
+experience: "Trade experience / 交易经历" {
+  decision: "Decision manifest\n看到了什么、引用了什么经验" { class: evidence }
+  execution: "Execution path\nproposal · risk · order · fill" { class: evidence }
+  outcome: "Cost-complete outcome\nrealized PnL · fees · funding evidence" { class: evidence }
+  counterfactual: "Shadow / forward outcomes\n未交易候选的对照结果" { class: evidence }
+}
+
+review: "Review & attribution / 复盘归因" {
+  class: learning
+  settle: "Outcome settlement\n结算净结果与完整性"
+  attribute: "Causal attribution\n区分信号、决策、执行与成本"
+  reviewer: "Post-trade review + risk critique\n形成结构化复盘"
+}
+
+assets: "Persistent learning assets / 长期经验资产" {
+  class: learning
+  cases: "Trade cases & structured lessons"
+  memo: "Trading memo & calibrated evidence"
+  guards: "Guard candidates / applied lessons"
+  skills: "Draft skills\n不会自动激活"
+}
+
+validation: "Evidence gate / 证据门" {
+  class: gate
+  scope: "Scope & regime match\n标的、方向、scanner、市场状态"
+  quality: "Data integrity & net economics\n拒绝不完整成本或错误归因"
+  contribution: "Contribution measurement\n相对 baseline / control 的真实增量"
+  lifecycle: "Lifecycle policy\nobserve → shadow/paper influence → freeze"
+}
+
+future: "Bounded future influence / 有界影响未来" {
+  ranker: "Candidate ranking\n因子与 guard 上下文" { class: influence }
+  operator: "System Operator retrieval\n案例、Lesson、Memo" { class: influence }
+  paper: "Paper-only lifecycle effects\n必须满足开关与完整性门" { class: influence }
+}
+
+boundary: "Not autonomous self-modification\n不直接改代码、不绕过 Risk、不自动开启 Live" { class: boundary }
+
+experience.decision -> review.settle
+experience.execution -> review.settle
+experience.outcome -> review.settle
+experience.counterfactual -> review.attribute
+review.settle -> review.attribute
+review.attribute -> review.reviewer
+review.reviewer -> assets.cases
+review.reviewer -> assets.guards
+assets.cases -> assets.memo
+assets.cases -> assets.skills
+assets.cases -> validation.scope
+assets.memo -> validation.scope
+assets.guards -> validation.scope
+validation.scope -> validation.quality
+validation.quality -> validation.contribution
+validation.contribution -> validation.lifecycle
+validation.lifecycle -> future.ranker
+validation.lifecycle -> future.operator
+validation.lifecycle -> future.paper
+future.ranker -> experience.decision: "next cohort" { style.stroke-dash: 5 }
+future.operator -> experience.decision: "next decision" { style.stroke-dash: 5 }
+future.paper -> experience.outcome: "fresh evidence window" { style.stroke-dash: 5 }
+boundary -> validation.lifecycle: "hard boundary" { style.stroke-dash: 5 }

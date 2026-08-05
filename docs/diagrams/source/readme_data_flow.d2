@@ -1,0 +1,88 @@
+direction: down
+
+classes: {
+  source: { style.fill: "#E8F1FF"; style.stroke: "#3973B7" }
+  process: { style.fill: "#EDF8FF"; style.stroke: "#397BA8" }
+  store: { shape: cylinder; style.fill: "#F4F6F8"; style.stroke: "#5E6873" }
+  decision: { style.fill: "#F2ECFF"; style.stroke: "#7452B8" }
+  trade: { style.fill: "#FFEDE8"; style.stroke: "#C45C3D" }
+  learning: { style.fill: "#E8F8F0"; style.stroke: "#27866A" }
+}
+
+title: "End-to-End Data Flow / 端到端数据流" {
+  near: top-center
+  shape: text
+  style.font-size: 26
+  style.bold: true
+}
+
+sources: "External facts / 外部事实" {
+  class: source
+  market: "Market venues\nprice · OHLCV · microstructure"
+  context: "Context\nnews · macro · prediction · research"
+  account: "Exchange/account\nbalance · positions · fills"
+}
+
+ingest: "Ingestion & normalization / 采集规范化" {
+  class: process
+  collect: "Scheduled collectors"
+  canonical: "Canonical instrument identity\nsymbol · market_type · venue"
+  feature: "Feature + quality computation\n含 freshness 与 source manifest"
+}
+
+market_store: "Market truth\nmarket snapshots · OHLCV · universe features\norder book · funding · OI · news" { class: store }
+
+discovery: "Discovery / 机会发现" {
+  class: process
+  observe: "Universe + Market Observer"
+  opportunity: "Opportunity generation"
+  rank: "Admission + ranking"
+}
+
+decision_store: "Decision truth\nOpportunity · PiDecision · learning manifest" { class: store }
+
+operator: "System Operator\nexact candidate + three-layer context\n→ trade / skip / defer" { class: decision }
+
+execution: "Risk & execution / 风控执行" {
+  class: trade
+  proposal: "TradeProposal"
+  risk: "RiskDecision"
+  order: "Order · Fill · Position"
+}
+
+trade_store: "Trading truth\nproposals · risk decisions · orders · fills\npositions · account events · audits" { class: store }
+
+settlement: "Settlement & evidence / 结算与证据" {
+  class: learning
+  net: "Cost-complete net outcome"
+  attribution: "Attribution + forward/shadow outcomes"
+  review: "Review · cases · lessons · memo"
+  measure: "Contribution measurement"
+}
+
+learning_store: "Learning truth\nknowledge · lessons · guards · memo\nexposures · verdicts · lifecycle events" { class: store }
+
+sources.market -> ingest.collect
+sources.context -> ingest.collect
+sources.account -> ingest.collect
+ingest.collect -> ingest.canonical
+ingest.canonical -> ingest.feature
+ingest.feature -> market_store
+market_store -> discovery.observe
+discovery.observe -> discovery.opportunity
+discovery.opportunity -> discovery.rank
+discovery.rank -> decision_store
+decision_store -> operator
+learning_store -> operator: "retrieved evidence" { style.stroke-dash: 5 }
+operator -> execution.proposal: "trade"
+operator -> decision_store: "skip / defer"
+execution.proposal -> execution.risk
+execution.risk -> execution.order: "approved only"
+execution.order -> trade_store
+trade_store -> settlement.net
+market_store -> settlement.attribution: "future prices"
+settlement.net -> settlement.attribution
+settlement.attribution -> settlement.review
+settlement.review -> settlement.measure
+settlement.measure -> learning_store
+learning_store -> discovery.rank: "bounded feedback" { style.stroke-dash: 5 }
