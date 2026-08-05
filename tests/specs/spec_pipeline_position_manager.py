@@ -870,8 +870,10 @@ def test_market_aware_settings_describes_wake_only_authority():
         Path(__file__).resolve().parents[2]
         / "frontend"
         / "src"
-        / "pages"
-        / "Settings.tsx"
+        / "features"
+        / "settings"
+        / "execution"
+        / "PaperTradingSettings.tsx"
     ).read_text(encoding="utf-8")
 
     assert "Market-Aware Position Review" in settings
