@@ -226,6 +226,14 @@ def test_paper_funding_cli_and_doctor_expose_guarded_reconciliation(
     position_id = _seed_recoverable_position()
     from aletheia.cli.data_cmd import data_app
     from aletheia.diagnostics.doctor import Report, _probe_paper_funding_accounting
+    from aletheia.storage import migrations
+
+    migration_calls: list[str] = []
+    monkeypatch.setattr(
+        migrations,
+        "run_migrations",
+        lambda: migration_calls.append("run_migrations"),
+    )
 
     runner = CliRunner()
     dry_run = runner.invoke(
@@ -242,6 +250,7 @@ def test_paper_funding_cli_and_doctor_expose_guarded_reconciliation(
     )
 
     assert dry_run.exit_code == 0
+    assert migration_calls == []
     assert json.loads(dry_run.output)["summary"]["recoverable_null_pnl"] == 1
     assert unguarded.exit_code != 0
     # Strip ANSI color codes before checking: FORCE_COLOR (set by GitHub Actions)

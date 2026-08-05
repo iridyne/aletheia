@@ -113,16 +113,19 @@ def reconcile_paper_funding(
         apply_paper_funding_reconciliation,
         inspect_paper_funding_reconciliation,
     )
-    from aletheia.storage.migrations import run_migrations
 
-    run_migrations()
     try:
         if apply:
+            from aletheia.storage.migrations import run_migrations
+
+            run_migrations()
             result = apply_paper_funding_reconciliation(
                 position_ids=position_ids,
                 expected_fingerprint=expected_fingerprint,
             )
         else:
+            # The default inspection path is contractually read-only. Schema
+            # upgrades belong to explicit apply/startup paths, never a dry run.
             result = inspect_paper_funding_reconciliation(position_ids=position_ids)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
