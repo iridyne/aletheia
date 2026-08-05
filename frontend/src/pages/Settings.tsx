@@ -20,6 +20,9 @@ import { fmtNum, humanize, humanizeBool } from '../lib/format'
 import { isUnsavedEdit, shouldBlockNavigation } from '../features/settings/dirtyGuard'
 import { ModelProvidersSection } from '../features/settings/model-providers/ModelProvidersSection'
 import { MODEL_PROVIDERS_SECTION } from '../features/settings/model-providers/modelProviderState'
+import { HEALTH_MONITORING_SECTION, WEBHOOK_SECTION } from '../features/settings/health/healthState'
+import { HealthNotificationsTab } from '../features/settings/tabs/HealthNotificationsTab'
+import { TELEGRAM_SECTION } from '../features/settings/telegram/telegramState'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -101,11 +104,11 @@ function SettingsNavIcon({ tab }: { tab: Tab }) {
  * lives on; clicking a result switches tabs (and the existing ?section= deep-link
  * mechanism takes care of scrolling).
  *
- * MAINTAIN INVARIANT: every `<Section>` in this file must render a title listed
- * below, and `Section` resolves its own anchor id from this registry. A section
- * that is not registered gets no id, so `settings.test.ts` fails — the invariant
- * is enforced by a test rather than by this comment, which had already drifted
- * three times (#632).
+ * MAINTAIN INVARIANT: every local `<Section>` and extracted feature section must
+ * render metadata listed below. Local `Section` resolves its anchor id from this
+ * registry; extracted features use the same descriptor for their wrapper and
+ * registry row. The invariant is enforced by a test rather than this comment,
+ * which had already drifted three times (#632).
  */
 const SETTINGS_INDEX: { title: string; tab: Tab; slug: string; alt?: string[] }[] = [
   // Agent & Models
@@ -129,9 +132,9 @@ const SETTINGS_INDEX: { title: string; tab: Tab; slug: string; alt?: string[] }[
   { title: 'Tradable Symbols',         tab: 'risk', slug: 'tradable-symbols', alt: ['allowlist', 'symbol filter'] },
   { title: 'Risk Limits',              tab: 'risk', slug: 'risk-limits', alt: ['notional cap', 'leverage', 'daily loss', 'margin ratio', 'kill switch', 'force close'] },
   // Health & Alerts
-  { title: 'Health Monitoring',        tab: 'health', slug: 'health-monitoring', alt: ['alert thresholds', 'self-heal'] },
-  { title: 'Telegram',                 tab: 'health', slug: 'telegram', alt: ['bot', 'chat id', 'notification'] },
-  { title: 'Webhook',                  tab: 'health', slug: 'webhook', alt: ['slack', 'discord', 'n8n', 'hmac'] },
+  { title: HEALTH_MONITORING_SECTION.title, tab: HEALTH_MONITORING_SECTION.tab, slug: HEALTH_MONITORING_SECTION.id, alt: [...HEALTH_MONITORING_SECTION.searchTerms] },
+  { title: TELEGRAM_SECTION.title,          tab: TELEGRAM_SECTION.tab, slug: TELEGRAM_SECTION.id, alt: [...TELEGRAM_SECTION.searchTerms] },
+  { title: WEBHOOK_SECTION.title,           tab: WEBHOOK_SECTION.tab, slug: WEBHOOK_SECTION.id, alt: [...WEBHOOK_SECTION.searchTerms] },
   // Runtime & System
   { title: 'App',                      tab: 'runtime', slug: 'app', alt: ['theme', 'dashboard', 'shell', 'auto open browser', 'pnl mode'] },
   { title: 'Data & Retention',         tab: 'runtime', slug: 'data-retention', alt: ['backfill', 'ohlcv storage', 'backtest', 'prune', 'cleanup', 'telemetry'] },
@@ -3330,28 +3333,6 @@ function RiskCard({ settings, qc }: any) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HEALTH & ALERTS TAB — health, self-heal, startup gate, notification delivery
-// ─────────────────────────────────────────────────────────────────────────────
-
-function HealthNotificationsTab({ settings, qc }: any) {
-  return (
-    <div>
-      <Section title="Health Monitoring" description="Thresholds that determine when the system raises internal health alerts.">
-        <HealthCard settings={settings} qc={qc} />
-      </Section>
-
-      <Section title="Telegram" description="Alert delivery when agents act or limits are breached. Token is stored in secrets (write-only via CLI).">
-        <TelegramCard settings={settings} qc={qc} />
-      </Section>
-
-      <Section title="Webhook" description="Push JSON events to an external URL (Slack, Discord, n8n, etc). Payloads are HMAC-signed when a secret is set.">
-        <WebhookCard settings={settings} qc={qc} />
-      </Section>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // SIGNALS TAB — market data, news, macro signals, prediction markets, equities
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -3734,71 +3715,6 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
   )
 }
 
-// ─── Health config ───
-
-function HealthCard({ settings, qc }: any) {
-  const health = settings?.health as any
-  const [vals, setVals] = useState<Record<string, any>>({})
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  useEffect(() => {
-    if (!health) return
-    setVals({ ...health })
-  }, [settings])
-
-  const set = (k: string, v: any) => { setVals(prev => ({ ...prev, [k]: v })); setMsg(null) }
-
-  const mut = useMutation({
-    mutationFn: () => api.updateHealthConfig(vals as any),
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
-
-  if (!health) return null
-
-  const HEALTH_FIELDS: NumField[] = [
-    { key: 'max_agent_failure_ratio',      label: 'Max agent failure ratio',  unit: '',    min: 0,  max: 1,     step: 0.01 },
-    { key: 'llm_unavailable_alert_after',  label: 'LLM alert after N failures', unit: '', min: 1,  max: 100,   step: 1, isInt: true },
-    { key: 'market_data_max_staleness_min',label: 'Market data staleness',    unit: 'min', min: 5,  max: 1440,  step: 1, isInt: true },
-    { key: 'supervisor_max_restarts',      label: 'Supervisor max restarts',  unit: '',    min: 1,  max: 50,    step: 1, isInt: true },
-    { key: 'supervisor_restart_window_sec',label: 'Restart window',           unit: 'sec', min: 60, max: 86400, step: 60, isInt: true },
-    { key: 'supervisor_backoff_cap_sec',   label: 'Backoff cap',              unit: 'sec', min: 5,  max: 3600,  step: 1, isInt: true },
-    { key: 'self_heal_min_interval_sec',   label: 'Self-heal min interval',   unit: 'sec', min: 300,max: 86400, step: 60, isInt: true },
-    { key: 'self_heal_max_per_hour',       label: 'Self-heal max per hour',   unit: '',    min: 0,  max: 12,    step: 1, isInt: true },
-    { key: 'startup_gate_max_retries',     label: 'LLM gate retries',         unit: '',    min: 1,  max: 10,    step: 1, isInt: true },
-    { key: 'startup_gate_retry_delay_sec', label: 'LLM gate retry delay',     unit: 'sec', min: 5,  max: 120,   step: 5, isInt: true },
-    { key: 'auto_resume_interval_sec',     label: 'Auto-resume probe interval', unit: 'sec', min: 30, max: 3600,  step: 30, isInt: true },
-    { key: 'exchange_probe_interval_sec',  label: 'Exchange probe interval',    unit: 'sec', min: 10, max: 300,   step: 10, isInt: true },
-    { key: 'exchange_probe_failure_threshold', label: 'Exchange fail threshold', unit: '',    min: 1,  max: 20,    step: 1, isInt: true },
-    { key: 'exchange_auto_resume_interval_sec', label: 'Exchange resume interval', unit: 'sec', min: 10, max: 600, step: 10, isInt: true },
-    { key: 'exchange_auto_resume_success_threshold', label: 'Exchange resume successes', unit: '', min: 1, max: 10, step: 1, isInt: true },
-    { key: 'startup_gate_recheck_interval_sec', label: 'Startup gate recheck interval', unit: 'sec', min: 5, max: 3600, step: 5, isInt: true },
-  ]
-  const HEALTH_TOGGLES: BoolField[] = [
-    { key: 'enabled', label: 'Health monitoring' },
-    { key: 'alert_via_telegram', label: 'Telegram alerts' },
-    { key: 'alert_via_windows_toast', label: 'Windows toast alerts' },
-    { key: 'require_llm_at_startup', label: 'Require LLM at startup' },
-    { key: 'startup_behavior_gate_enabled', label: 'Startup behavior gate' },
-    { key: 'self_heal_enabled', label: 'Self-heal enabled' },
-    { key: 'self_heal_code_drift', label: 'Restart on code drift' },
-    { key: 'self_heal_market_data', label: 'Restart on stale market data' },
-    { key: 'self_heal_port_cleanup', label: 'Clean orphan port holders' },
-    { key: 'auto_resume_enabled', label: 'Auto-resume after LLM gate' },
-  ]
-
-  return (
-    <div className="card mb-0">
-      <ToggleGrid fields={HEALTH_TOGGLES} vals={vals} set={set} />
-      <NumGrid fields={HEALTH_FIELDS} vals={vals} set={set} />
-      <div className="settings-action-row">
-        <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
-      </div>
-      <SaveMsg msg={msg} />
-    </div>
-  )
-}
-
 // ─── News Feeds config ───
 
 function NewsFeedsCard({ settings, qc }: any) {
@@ -3903,210 +3819,6 @@ function RetentionCard({ settings, qc }: any) {
       </div>
       <SaveMsg msg={msg} />
       <p className="hint">Trades, proposals, knowledge, and audit events are never pruned — only raw telemetry.</p>
-    </div>
-  )
-}
-
-// ─── Telegram ───
-
-function TelegramCard({ settings, qc }: any) {
-  const { data: health } = useQuery({
-    queryKey: ['telegram-health'], queryFn: api.getTelegramHealth, refetchInterval: 30000,
-  })
-  const tg = settings?.telegram as any || {}
-  const [enabled, setEnabled] = useState(false)
-  const [chatIdsInput, setChatIdsInput] = useState('')
-  const [notifyFills, setNotifyFills] = useState(true)
-  const [notifySummary, setNotifySummary] = useState(true)
-  const [summaryHour, setSummaryHour] = useState(8)
-  const [dndEnabled, setDndEnabled] = useState(false)
-  const [dndStart, setDndStart] = useState(23)
-  const [dndEnd, setDndEnd] = useState(7)
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  useEffect(() => {
-    if (!tg) return
-    setEnabled(!!tg.enabled)
-    setChatIdsInput((tg.allowed_chat_ids || []).join(', '))
-    setNotifyFills(tg.notify_trade_fills !== false)
-    setNotifySummary(tg.notify_daily_summary !== false)
-    setSummaryHour(tg.daily_summary_hour_cst ?? 8)
-    setDndEnabled(!!tg.dnd_enabled)
-    setDndStart(tg.dnd_start_hour ?? 23)
-    setDndEnd(tg.dnd_end_hour ?? 7)
-  }, [settings])
-
-  const mut = useMutation({
-    mutationFn: () => {
-      const ids = chatIdsInput.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n))
-      return api.updateTelegramConfig({
-        enabled, allowed_chat_ids: ids,
-        notify_trade_fills: notifyFills,
-        notify_daily_summary: notifySummary,
-        daily_summary_hour_cst: summaryHour,
-        dnd_enabled: dndEnabled,
-        dnd_start_hour: dndStart,
-        dnd_end_hour: dndEnd,
-      })
-    },
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
-
-  let state: ConnState = 'muted'
-  let connText = 'not configured'
-  if (health) {
-    if (health.reachable) { state = 'green'; connText = health.username ? `@${health.username}` : 'reachable' }
-    else if (health.error === 'not_configured') { state = 'muted'; connText = 'not configured' }
-    else { state = 'red'; connText = `✗ ${health.error || 'unreachable'}` }
-  }
-
-  return (
-    <div className="card mb-0">
-      <div className="mb-3">
-        <ConnectionStatus label="telegram bot" state={state} text={connText} />
-      </div>
-      <div className="form-grid mb-3">
-        <label className="col-full">
-          <span>Allowed chat IDs</span>
-          <input
-            value={chatIdsInput}
-            placeholder="123456789, 987654321"
-            onChange={e => { setChatIdsInput(e.target.value); setMsg(null) }}
-            className="mono"
-          />
-        </label>
-      </div>
-      <div className="settings-action-row settings-action-row-start">
-        <Toggle checked={enabled} label="Telegram delivery" onChange={v => { setEnabled(v); setMsg(null) }} />
-      </div>
-      <div className="settings-action-row settings-action-row-start">
-        <Toggle checked={notifyFills} label="Trade fill notifications" onChange={v => { setNotifyFills(v); setMsg(null) }} />
-      </div>
-      <div className="settings-action-row settings-action-row-start">
-        <Toggle checked={notifySummary} label={`Daily PnL summary (${String(summaryHour).padStart(2, '0')}:00 CST)`} onChange={v => { setNotifySummary(v); setMsg(null) }} />
-      </div>
-      {notifySummary && (
-        <div className="form-grid mb-3">
-          <label>
-            <span>Summary hour (CST)</span>
-            <input type="number" min={0} max={23} value={summaryHour}
-              onChange={e => { setSummaryHour(parseInt(e.target.value) || 8); setMsg(null) }} />
-          </label>
-        </div>
-      )}
-      <div className="settings-action-row settings-action-row-start">
-        <Toggle checked={dndEnabled} label="Do-not-disturb (suppress info alerts)" onChange={v => { setDndEnabled(v); setMsg(null) }} />
-      </div>
-      {dndEnabled && (
-        <div className="form-grid mb-3">
-          <label>
-            <span>DND start hour</span>
-            <input type="number" min={0} max={23} value={dndStart}
-              onChange={e => { setDndStart(parseInt(e.target.value) || 23); setMsg(null) }} />
-          </label>
-          <label>
-            <span>DND end hour</span>
-            <input type="number" min={0} max={23} value={dndEnd}
-              onChange={e => { setDndEnd(parseInt(e.target.value) || 7); setMsg(null) }} />
-          </label>
-        </div>
-      )}
-      <div className="settings-action-row">
-        <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
-      </div>
-      <SaveMsg msg={msg} />
-      <p className="hint">
-        Bot token is write-only — set via <code>aletheia secrets set telegram.bot_token</code>.
-        Chat IDs are comma-separated Telegram user or group IDs.
-      </p>
-    </div>
-  )
-}
-
-// ─── Webhook ───
-
-function WebhookCard({ settings, qc }: any) {
-  const wh = settings?.webhook as any || {}
-  const [enabled, setEnabled] = useState(false)
-  const [url, setUrl] = useState('')
-  const [secret, setSecret] = useState('')
-  const [notifyFills, setNotifyFills] = useState(true)
-  const [notifyAlerts, setNotifyAlerts] = useState(true)
-  const [notifySummary, setNotifySummary] = useState(true)
-  const [timeoutSec, setTimeoutSec] = useState(10)
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  useEffect(() => {
-    if (!wh) return
-    setEnabled(!!wh.enabled)
-    setUrl(wh.url || '')
-    setNotifyFills(wh.notify_trade_fills !== false)
-    setNotifyAlerts(wh.notify_alerts !== false)
-    setNotifySummary(wh.notify_daily_summary !== false)
-    setTimeoutSec(wh.timeout_sec ?? 10)
-  }, [settings])
-
-  const mut = useMutation({
-    mutationFn: () => api.updateWebhookConfig({
-      enabled, url, secret: secret || undefined,
-      notify_trade_fills: notifyFills,
-      notify_alerts: notifyAlerts,
-      notify_daily_summary: notifySummary,
-      timeout_sec: timeoutSec,
-    }),
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); setSecret(''); qc.invalidateQueries({ queryKey: ['settings'] }) },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
-
-  return (
-    <div className="card mb-0">
-      <div className="form-grid mb-3">
-        <label className="col-full">
-          <span>Webhook URL</span>
-          <input
-            value={url}
-            placeholder="https://hooks.slack.com/services/..."
-            onChange={e => { setUrl(e.target.value); setMsg(null) }}
-            className="mono"
-          />
-        </label>
-        <label className="col-full">
-          <span>HMAC secret (write-only)</span>
-          <input
-            type="password"
-            value={secret}
-            placeholder={wh.url ? '••••••• (unchanged)' : 'optional'}
-            onChange={e => { setSecret(e.target.value); setMsg(null) }}
-            className="mono"
-          />
-        </label>
-        <label>
-          <span>Timeout (sec)</span>
-          <input type="number" min={1} max={60} value={timeoutSec}
-            onChange={e => { setTimeoutSec(parseFloat(e.target.value) || 10); setMsg(null) }} />
-        </label>
-      </div>
-      <div className="settings-action-row settings-action-row-start">
-        <Toggle checked={enabled} label="Webhook delivery" onChange={v => { setEnabled(v); setMsg(null) }} />
-      </div>
-      <div className="settings-action-row settings-action-row-start">
-        <Toggle checked={notifyAlerts} label="Alert events" onChange={v => { setNotifyAlerts(v); setMsg(null) }} />
-      </div>
-      <div className="settings-action-row settings-action-row-start">
-        <Toggle checked={notifyFills} label="Trade fill events" onChange={v => { setNotifyFills(v); setMsg(null) }} />
-      </div>
-      <div className="settings-action-row settings-action-row-start">
-        <Toggle checked={notifySummary} label="Daily summary event" onChange={v => { setNotifySummary(v); setMsg(null) }} />
-      </div>
-      <div className="settings-action-row">
-        <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
-      </div>
-      <SaveMsg msg={msg} />
-      <p className="hint">
-        Payload is signed with <code>X-Aletheia-Signature</code> (HMAC SHA-256) when a secret is set.
-        Secret is write-only — leave blank to keep the current value.
-      </p>
     </div>
   )
 }
