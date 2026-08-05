@@ -103,6 +103,14 @@ function AppRows({ status, settings, qc }: any) {
   const remoteControl = settings?.remote_control as any || {}
   const remoteBindHosts = Array.isArray(remoteControl.bind_hosts) ? remoteControl.bind_hosts as string[] : []
   const [remoteToken, setRemoteToken] = useState('')
+  const [remoteTokenMessage, setRemoteTokenMessage] = useState<{ ok: boolean; text: string } | null>(null)
+  const storeRemoteControlToken = () => {
+    const result = api.setRemoteControlToken(remoteToken)
+    setRemoteTokenMessage({
+      ok: result.ok,
+      text: result.ok ? 'Token saved in this browser.' : result.error,
+    })
+  }
   const { data: remoteInterfaces } = useQuery({
     queryKey: ['remote-control-interfaces'],
     queryFn: api.getRemoteControlInterfaces,
@@ -123,7 +131,7 @@ function AppRows({ status, settings, qc }: any) {
   const remoteControlMut = useMutation({
     mutationFn: (body: { enabled?: boolean; bind_hosts?: string[]; require_token?: boolean; api_token?: string }) => api.updateRemoteControl(body),
     onSuccess: () => {
-      if (remoteToken.trim()) api.setRemoteControlToken(remoteToken)
+      if (remoteToken.trim()) storeRemoteControlToken()
       qc.invalidateQueries({ queryKey: ['settings'] })
     },
   })
@@ -202,7 +210,7 @@ function AppRows({ status, settings, qc }: any) {
         <input
           type="password"
           value={remoteToken}
-          onChange={e => setRemoteToken(e.target.value)}
+          onChange={e => { setRemoteToken(e.target.value); setRemoteTokenMessage(null) }}
           placeholder="Optional owner API token"
           autoComplete="off"
           className="w-56"
@@ -211,9 +219,15 @@ function AppRows({ status, settings, qc }: any) {
         <button
           type="button"
           className="button-secondary"
-          onClick={() => api.setRemoteControlToken(remoteToken)}
+          onClick={storeRemoteControlToken}
           disabled={!remoteToken.trim()}
         >Use in this browser</button>
+        {remoteTokenMessage && (
+          <span
+            className={`settings-save-msg ${remoteTokenMessage.ok ? 'ok' : 'err'}`}
+            role={remoteTokenMessage.ok ? 'status' : 'alert'}
+          >{remoteTokenMessage.text}</span>
+        )}
         <span className="text-xs text-muted">Write-only; stored only in this browser so the local dashboard keeps access after Token protection is enabled.</span>
       </Row>
       <Row label="Gateway mode" hint="Process lifecycle mode used by the CLI/supervisor.">

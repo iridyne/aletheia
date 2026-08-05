@@ -13,14 +13,23 @@ function remoteControlHeaders(): Record<string, string> {
 	}
 }
 
-function setRemoteControlToken(token: string): void {
+type RemoteControlTokenStorageResult =
+	| { ok: true }
+	| { ok: false; error: string };
+
+function setRemoteControlToken(token: string): RemoteControlTokenStorageResult {
 	try {
 		const normalized = token.trim();
 		if (normalized)
 			window.localStorage.setItem(REMOTE_CONTROL_TOKEN_KEY, normalized);
 		else window.localStorage.removeItem(REMOTE_CONTROL_TOKEN_KEY);
+		return { ok: true };
 	} catch {
-		// Browser storage may be disabled; callers can still use the API manually.
+		return {
+			ok: false,
+			error:
+				"Browser storage is unavailable; the Remote Control Token was not saved.",
+		};
 	}
 }
 
