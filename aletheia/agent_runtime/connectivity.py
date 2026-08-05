@@ -518,8 +518,8 @@ async def _resume_from_network(cfg) -> None:
     # unavailable, do NOT clear paused on exchange recovery — that would un-pause a
     # system the LLM gate still requires paused, and the LLM auto-resume loop would
     # then exit early seeing paused=False. Stay paused; the LLM auto-resume clears it
-    # once the LLM is back (exchange is already up by then). Fail-safe: on any probe
-    # error we proceed (pre-existing behaviour), never blocking a legitimate resume.
+    # once the LLM is back (exchange is already up by then). If the required probe
+    # itself fails, availability is unverified and cannot authorize a resume.
     try:
         if cfg.health.require_llm_at_startup:
             from aletheia.agent_runtime.startup_gate import probe_llm_providers_at_startup
@@ -528,7 +528,10 @@ async def _resume_from_network(cfg) -> None:
                 logger.info("exchange reachable again but LLM still unavailable — staying paused")
                 return
     except Exception:
-        pass  # intentional: a probe failure must not block a legitimate resume
+        logger.warning(
+            "exchange reachable again but required LLM probe failed — staying paused"
+        )
+        return
 
     from aletheia.agent_runtime.scheduler import resume_scheduler
     from aletheia.config.loader import save_config

@@ -705,3 +705,41 @@ async def test_network_recovery_clears_its_own_pause(tmp_path, monkeypatch):
     assert resumed == [True]
     assert load_config().runtime.paused is False
     assert load_config().runtime.paused_by_connectivity is False
+
+
+@pytest.mark.asyncio
+async def test_network_recovery_keeps_pause_when_required_llm_probe_raises(
+    tmp_path, monkeypatch
+):
+    """An unverified required LLM probe cannot authorize scheduler resume."""
+    setup_env(tmp_path, monkeypatch)
+    _reset_connectivity_state()
+
+    from aletheia.config.loader import load_config, save_config
+    import aletheia.agent_runtime.connectivity as conn_mod
+
+    cfg = load_config()
+    cfg.runtime.paused = True
+    cfg.runtime.paused_by_connectivity = True
+    cfg.health.require_llm_at_startup = True
+    save_config(cfg)
+
+    async def _llm_probe_raises(cfg, max_retries=1):
+        raise RuntimeError("provider probe unavailable")
+
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.startup_gate.probe_llm_providers_at_startup",
+        _llm_probe_raises,
+    )
+    resumed = []
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.resume_scheduler",
+        lambda: resumed.append(True),
+    )
+
+    await conn_mod._resume_from_network(cfg)
+
+    persisted = load_config()
+    assert resumed == []
+    assert persisted.runtime.paused is True
+    assert persisted.runtime.paused_by_connectivity is True
