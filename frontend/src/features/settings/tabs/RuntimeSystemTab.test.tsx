@@ -47,4 +47,11 @@ describe('RuntimeSystemTab', () => {
     expect(html).toContain('Enforce (fail-closed)')
     expect(html).toContain('Test Connection')
   })
+
+  it('projects Remote Control Token browser-storage success and failure', () => {
+    expect(SRC).toContain('const [remoteTokenMessage, setRemoteTokenMessage]')
+    expect(SRC).toContain('const result = api.setRemoteControlToken(remoteToken)')
+    expect(SRC).toContain("role={remoteTokenMessage.ok ? 'status' : 'alert'}")
+    expect(SRC).toContain("text: result.ok ? 'Token saved in this browser.' : result.error")
+  })
 })
