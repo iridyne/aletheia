@@ -187,9 +187,9 @@ def test_auto_merge_queues_ready_master_pull_requests_without_running_their_code
     workflow = _auto_merge_workflow()
     triggers = workflow["on"]
 
-    assert set(triggers) == {"pull_request"}
-    assert triggers["pull_request"]["branches"] == ["master"]
-    assert triggers["pull_request"]["types"] == [
+    assert set(triggers) == {"pull_request_target"}
+    assert triggers["pull_request_target"]["branches"] == ["master"]
+    assert triggers["pull_request_target"]["types"] == [
         "opened",
         "reopened",
         "ready_for_review",
@@ -230,6 +230,15 @@ def test_auto_merge_queues_ready_master_pull_requests_without_running_their_code
     assert disable_step["uses"] == GITHUB_SCRIPT_ACTION
     assert "disablePullRequestAutoMerge" in disable_step["with"]["script"]
     assert "PR_NODE_ID" in disable_job["env"]
+
+    # pull_request_target carries a write-capable base-repository token. Keep
+    # both jobs metadata-only: never check out or execute pull-request content.
+    assert not any(
+        str(step.get("uses", "")).startswith("actions/checkout@")
+        or bool(step.get("run"))
+        for workflow_job in workflow["jobs"].values()
+        for step in workflow_job["steps"]
+    )
 
 
 def test_delete_merged_branch_only_touches_merged_same_repo_head_refs() -> None:

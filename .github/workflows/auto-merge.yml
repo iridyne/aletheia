@@ -1,7 +1,7 @@
 name: Queue pull requests for auto-merge
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [master]
     types: [opened, reopened, ready_for_review, edited, synchronize, labeled, unlabeled]
 
