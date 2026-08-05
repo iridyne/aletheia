@@ -154,31 +154,55 @@ def _account_environment(execution_mode: str) -> str:
     return "unknown"
 
 
-def _build_exchange_upnl_index() -> dict[tuple[str, str, str], float]:
-    """Build exact (canonical_symbol, broker_id, direction) exchange uPnL matches.
+_UPNL_DERIVATIVE_MARKET_TYPES = frozenset({
+    "perp", "futures", "swap", "usdt_futures",
+})
 
-    Legacy exchange caches lack broker identity, so they are deliberately not
-    used for per-position PnL. Ambiguous duplicate records also fall back to the
-    local estimate rather than selecting an arbitrary exposure.
+
+def _normalize_upnl_market_type(market_type: object) -> str | None:
+    """Return the stable market family used by the uPnL identity key."""
+    normalized = str(market_type or "").strip().lower()
+    if normalized == "spot":
+        return "spot"
+    if normalized in _UPNL_DERIVATIVE_MARKET_TYPES:
+        return "perp"
+    return None
+
+
+def _build_exchange_upnl_index() -> dict[tuple[str, str, str, str], float]:
+    """Build exact broker/instrument/direction exchange uPnL matches.
+
+    Legacy exchange caches lacking broker or market identity are deliberately
+    not used for per-position PnL. Ambiguous duplicate records also fall back
+    to the local estimate rather than selecting an arbitrary exposure.
     """
     try:
         from aletheia.data.symbols import to_canonical
         from aletheia.portfolio import exchange_sync
 
-        candidates: dict[tuple[str, str, str], list[float]] = {}
+        candidates: dict[tuple[str, str, str, str], list[float]] = {}
         cached = exchange_sync.get_unified_cached_state()
         for position in (cached or {}).get("positions") or []:
             symbol = to_canonical(position.get("symbol", ""))
             broker_id = str(position.get("broker_id") or "")
+            market_type = _normalize_upnl_market_type(position.get("market_type"))
             side = str(position.get("side") or "").lower()
             direction = "long" if side in ("long", "buy") else "short" if side in ("short", "sell") else None
             upnl = position.get("unrealized_pnl")
-            if not symbol or not broker_id or direction is None or upnl is None:
+            if (
+                not symbol
+                or not broker_id
+                or market_type is None
+                or direction is None
+                or upnl is None
+            ):
                 continue
-            candidates.setdefault((symbol, broker_id, direction), []).append(float(upnl))
+            candidates.setdefault(
+                (symbol, broker_id, market_type, direction), [],
+            ).append(float(upnl))
         return {
-            (symbol, broker_id, direction): values[0]
-            for (symbol, broker_id, direction), values in candidates.items()
+            match_key: values[0]
+            for match_key, values in candidates.items()
             if len(values) == 1
         }
     except Exception:
@@ -204,13 +228,17 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
     # A venue Position is an aggregate exposure. Without a direct broker
     # Position identity, one aggregate uPnL cannot be allocated independently to
     # multiple local Position rows that share the same current match key.
-    local_match_counts: dict[tuple[str, str, str], int] = {}
+    local_match_counts: dict[tuple[str, str, str, str], int] = {}
     for position in positions:
         direction = position["direction"]
         norm_dir = "long" if direction in ("long", "buy") else "short"
+        market_type = _normalize_upnl_market_type(position.get("market_type"))
+        if market_type is None:
+            continue
         match_key = (
             to_canonical(position["symbol"]),
             position.get("execution_mode") or "",
+            market_type,
             norm_dir,
         )
         local_match_counts[match_key] = local_match_counts.get(match_key, 0) + 1
@@ -224,15 +252,19 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
         entry = p["entry_price"]
         direction = p["direction"]
         norm_dir = "long" if direction in ("long", "buy") else "short"
-        # Exchange uPnL is authoritative only for an exact broker-scoped match.
+        # Exchange uPnL is authoritative only for an exact broker/instrument match.
         # A single aggregate remote value is also ambiguous when more than one
         # local Position shares the key; never copy the full value to every row.
+        market_type = _normalize_upnl_market_type(p.get("market_type"))
         match_key = (
-            to_canonical(p["symbol"]), p.get("execution_mode") or "", norm_dir,
+            to_canonical(p["symbol"]),
+            p.get("execution_mode") or "",
+            market_type,
+            norm_dir,
         )
         exc_val = (
             exc_upnl_index.get(match_key)
-            if local_match_counts.get(match_key) == 1
+            if market_type is not None and local_match_counts.get(match_key) == 1
             else None
         )
         if exc_val is not None:

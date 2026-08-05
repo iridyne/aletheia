@@ -104,11 +104,11 @@ def test_exchange_upnl_is_scoped_to_its_broker_and_duplicate_is_rejected(db, mon
     monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "positions": [
-            {"broker_id": "bitget_demo", "symbol": "BTC/USDT", "side": "long", "unrealized_pnl": 7.0},
-            {"broker_id": "okx_demo", "symbol": "BTC/USDT", "side": "long", "unrealized_pnl": -3.0},
+            {"broker_id": "bitget_demo", "symbol": "BTC/USDT", "market_type": "perp", "side": "long", "unrealized_pnl": 7.0},
+            {"broker_id": "okx_demo", "symbol": "BTC/USDT", "market_type": "usdt_futures", "side": "long", "unrealized_pnl": -3.0},
             # Ambiguous candidates must fail closed, not last-write-wins.
-            {"broker_id": "binance_testnet", "symbol": "BTC/USDT", "side": "long", "unrealized_pnl": 1.0},
-            {"broker_id": "binance_testnet", "symbol": "BTC/USDT", "side": "long", "unrealized_pnl": 99.0},
+            {"broker_id": "binance_testnet", "symbol": "BTC/USDT", "market_type": "usdt_futures", "side": "long", "unrealized_pnl": 1.0},
+            {"broker_id": "binance_testnet", "symbol": "BTC/USDT", "market_type": "usdt_futures", "side": "long", "unrealized_pnl": 99.0},
         ],
     })
 
@@ -117,6 +117,53 @@ def test_exchange_upnl_is_scoped_to_its_broker_and_duplicate_is_rejected(db, mon
     assert marked["bitget_demo"]["unrealized_pnl"] == 7.0
     assert marked["okx_demo"]["unrealized_pnl"] == -3.0
     assert marked["binance_testnet"]["unrealized_pnl"] == 10.0
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PM-17",
+        "pipeline_position_manager",
+        "§1 exchange uPnL market identity",
+        "L2c",
+        "Exchange uPnL may be assigned only when the remote and local Position "
+        "share a known normalized market type; missing, unknown, or mismatched "
+        "market types must fall back to the local mark estimate.",
+        status="implemented",
+    )
+)
+@pytest.mark.parametrize("remote_market_type", [None, "unknown", "usdt_futures"])
+def test_exchange_upnl_market_type_mismatch_falls_back_to_local_estimate(
+    db, monkeypatch, remote_market_type,
+):
+    """Unproven market identity must not overwrite a local spot Position."""
+    from aletheia.portfolio import exchange_sync, pnl
+
+    repo.insert_position(Position(
+        id="upnl-okx-spot",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="okx_demo",
+    ))
+    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "positions": [{
+            "broker_id": "okx_demo",
+            "symbol": "BTC/USDT",
+            "market_type": remote_market_type,
+            "side": "long",
+            "unrealized_pnl": 777.0,
+        }],
+    })
+
+    [marked] = pnl.mark_positions_to_market(persist=True)
+
+    assert marked["unrealized_pnl"] == 10.0
+    stored = repo._select_one("positions", "upnl-okx-spot")
+    assert stored is not None
+    assert stored["unrealized_pnl"] == 10.0
 
 
 @spec_claim(
