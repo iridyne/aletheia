@@ -1,5 +1,28 @@
 import { describe, expect, it } from "vitest";
+import { HEALTH_MONITORING_SECTION, WEBHOOK_SECTION } from "../features/settings/health/healthState";
+import { MODEL_PROVIDERS_SECTION } from "../features/settings/model-providers/modelProviderState";
+import { TELEGRAM_SECTION } from "../features/settings/telegram/telegramState";
+import CSS from "../index.css?raw";
 import SRC from "./Settings.tsx?raw";
+
+const EXTRACTED_DESCRIPTORS = [
+	{ symbol: "MODEL_PROVIDERS_SECTION", descriptor: MODEL_PROVIDERS_SECTION },
+	{ symbol: "HEALTH_MONITORING_SECTION", descriptor: HEALTH_MONITORING_SECTION },
+	{ symbol: "TELEGRAM_SECTION", descriptor: TELEGRAM_SECTION },
+	{ symbol: "WEBHOOK_SECTION", descriptor: WEBHOOK_SECTION },
+] as const;
+
+const EXTRACTED_COMPONENTS = [
+	{ component: "ModelProvidersSection", descriptors: [MODEL_PROVIDERS_SECTION] },
+	{
+		component: "HealthNotificationsTab",
+		descriptors: [HEALTH_MONITORING_SECTION, TELEGRAM_SECTION, WEBHOOK_SECTION],
+	},
+] as const;
+
+const EXTRACTED_BY_SYMBOL = new Map<string, { id: string; title: string }>(
+	EXTRACTED_DESCRIPTORS.map(({ symbol, descriptor }) => [symbol, descriptor]),
+);
 
 /**
  * Enforces the SETTINGS_INDEX invariant that was previously documented in a
@@ -20,8 +43,8 @@ function registeredTitles(): string[] {
 	expect(start, "SETTINGS_INDEX declaration not found").toBeGreaterThan(-1);
 	expect(end, "sectionSlug helper not found").toBeGreaterThan(start);
 	const block = SRC.slice(start, end);
-	return [...block.matchAll(/\{ title: (?:'([^']+)'|MODEL_PROVIDERS_SECTION\.title)/g)].map(
-		(m) => m[1] ?? "@model-providers",
+	return [...block.matchAll(/\{ title: (?:'([^']+)'|([A-Z_]+)\.title)/g)].map(
+		(match) => match[1] ?? EXTRACTED_BY_SYMBOL.get(match[2])?.title ?? "",
 	);
 }
 
@@ -30,8 +53,8 @@ function registeredSlugs(): string[] {
 	const start = SRC.indexOf("const SETTINGS_INDEX");
 	const end = SRC.indexOf("/** Anchor id for a registered section title");
 	const block = SRC.slice(start, end);
-	return [...block.matchAll(/slug: (?:'([^']+)'|MODEL_PROVIDERS_SECTION\.id)/g)].map(
-		(m) => m[1] ?? "@model-providers",
+	return [...block.matchAll(/slug: (?:'([^']+)'|([A-Z_]+)\.id)/g)].map(
+		(match) => match[1] ?? EXTRACTED_BY_SYMBOL.get(match[2])?.id ?? "",
 	);
 }
 
@@ -50,6 +73,11 @@ function renderedTitles(): string[] {
 			}
 		}
 	}
+	for (const { component, descriptors } of EXTRACTED_COMPONENTS) {
+		if (body.includes(`<${component}`)) {
+			out.push(...descriptors.map((descriptor) => descriptor.title));
+		}
+	}
 	return out;
 }
 
@@ -63,7 +91,7 @@ describe("SETTINGS_INDEX registry", () => {
 	it("has no registry entry without a rendered Section", () => {
 		// A stale entry produces a search result that navigates nowhere.
 		const rendered = new Set(renderedTitles());
-		const stale = registeredTitles().filter((t) => t !== "@model-providers" && !rendered.has(t));
+		const stale = registeredTitles().filter((title) => !rendered.has(title));
 		expect(stale, "SETTINGS_INDEX entry with no rendered <Section>").toEqual([]);
 	});
 
@@ -79,7 +107,7 @@ describe("SETTINGS_INDEX registry", () => {
 
 	it("uses url-safe slugs", () => {
 		const bad = registeredSlugs().filter(
-			(s) => s !== "@model-providers" && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(s),
+			(slug) => !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug),
 		);
 		expect(bad, "slug is not url-safe lowercase-kebab").toEqual([]);
 	});
@@ -87,6 +115,12 @@ describe("SETTINGS_INDEX registry", () => {
 	it("preserves the pre-existing ?section=universe deep link", () => {
 		// This was the only working anchor before #632; other surfaces may link to it.
 		expect(registeredSlugs()).toContain("universe");
+	});
+
+	it("keeps deep-linked section headings below the fixed header", () => {
+		expect(CSS).toMatch(
+			/\.settings-section\s*\{[^}]*scroll-margin-top:\s*calc\(var\(--header-height\)\s*\+\s*var\(--space-4\)\)/,
+		);
 	});
 
 	it("resolves ids through the registry, not per-call-site id props", () => {

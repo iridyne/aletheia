@@ -867,7 +867,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
    square. Keep the nav vertical at every width; do not reintroduce 900. */
 
 /* Section: display-font header + accent-dim left bar + sealing rule. */
-.settings-section { margin-bottom: var(--space-8); }
+.settings-section { margin-bottom: var(--space-8); scroll-margin-top: calc(var(--header-height) + var(--space-4)); }
 .settings-section-head {
   display: flex; flex-direction: column; gap: var(--space-1);
   padding-left: var(--space-3); border-left: 2px solid var(--accent-dim); margin-bottom: var(--space-4);
