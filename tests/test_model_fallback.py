@@ -213,6 +213,114 @@ async def test_complete_with_fallback_does_not_hide_non_transient_errors(tmp_pat
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("exc", "code"),
+    [
+        ("InferenceQueueFull", "llm_broker_queue_full"),
+        ("InferenceTimeout", "llm_broker_timeout"),
+        ("InferenceRateLimitExceeded", "llm_broker_rate_limit_exceeded"),
+        ("InferenceBrokerClosed", "llm_broker_closed"),
+    ],
+)
+async def test_terminal_broker_failures_emit_safe_typed_events(tmp_path, monkeypatch, exc, code):
+    _setup_config(tmp_path, monkeypatch, fallback_models=["claude-fallback"])
+    from aletheia.infra.events import list_infra_events
+    from aletheia.model_provider import fallback
+    from aletheia.model_provider import broker
+
+    secret = "sk-terminal-secret"
+    prompt = "prompt that must never reach observability"
+    failure = getattr(broker, exc)(f"Authorization: Bearer {secret}; {prompt}")
+
+    async def fail(*args, **kwargs):  # noqa: ARG001
+        raise failure
+
+    monkeypatch.setattr(fallback, "brokered_complete", fail)
+    with pytest.raises(type(failure)):
+        await fallback.complete_with_fallback(
+            ModelRequest(messages=[{"role": "user", "content": prompt}]),
+            provider=FakeProvider(),
+        )
+
+    event = next(event for event in list_infra_events() if event["code"] == code)
+    assert event["metadata"]["attempted_models"] == ["claude-primary"]
+    assert secret not in str(event)
+    assert prompt not in str(event)
+
+
+@pytest.mark.anyio
+async def test_no_candidate_broker_failure_emits_safe_typed_event(tmp_path, monkeypatch):
+    _setup_config(tmp_path, monkeypatch)
+    from aletheia.infra.events import list_infra_events
+    from aletheia.model_provider import fallback
+    from aletheia.model_provider.broker import InferenceQueueFull
+
+    secret = "sk-terminal-secret"
+
+    async def no_models(*args, **kwargs):  # noqa: ARG001
+        return []
+
+    async def fail(*args, **kwargs):  # noqa: ARG001
+        raise InferenceQueueFull(f"Authorization: Bearer {secret}")
+
+    monkeypatch.setattr(fallback, "_candidate_models", no_models)
+    monkeypatch.setattr(fallback, "brokered_complete", fail)
+    with pytest.raises(InferenceQueueFull):
+        await fallback.complete_with_fallback(ModelRequest(messages=[]), provider=FakeProvider(model=""))
+
+    event = next(event for event in list_infra_events() if event["code"] == "llm_broker_queue_full")
+    assert event["metadata"]["attempted_models"] == []
+    assert secret not in str(event)
+
+
+@pytest.mark.anyio
+async def test_terminal_provider_failures_emit_safe_typed_events(tmp_path, monkeypatch):
+    _setup_config(tmp_path, monkeypatch, fallback_models=["claude-fallback"])
+    from aletheia.infra.events import list_infra_events
+    from aletheia.model_provider import fallback
+
+    secret = "sk-terminal-secret"
+    prompt = "prompt that must never reach observability"
+    provider = FakeProvider(fail_models={"claude-primary": f"401 {secret}; {prompt}"})
+    with pytest.raises(RuntimeError):
+        await fallback.complete_with_fallback(
+            ModelRequest(messages=[{"role": "user", "content": prompt}]),
+            provider=provider,
+        )
+
+    event = next(event for event in list_infra_events() if event["code"] == "llm_call_non_transient_error")
+    assert event["metadata"]["attempted_models"] == ["claude-primary"]
+    assert secret not in str(event)
+    assert prompt not in str(event)
+
+
+@pytest.mark.anyio
+async def test_exhausted_transient_fallback_emits_safe_typed_event(tmp_path, monkeypatch):
+    _setup_config(tmp_path, monkeypatch, fallback_models=["claude-fallback"])
+    from aletheia.infra.events import list_infra_events
+    from aletheia.model_provider import fallback
+
+    secret = "sk-terminal-secret"
+    prompt = "prompt that must never reach observability"
+    provider = FakeProvider(
+        fail_models={
+            "claude-primary": f"503 {secret}; {prompt}",
+            "claude-fallback": f"503 {secret}; {prompt}",
+        }
+    )
+    with pytest.raises(RuntimeError):
+        await fallback.complete_with_fallback(
+            ModelRequest(messages=[{"role": "user", "content": prompt}]),
+            provider=provider,
+        )
+
+    event = next(event for event in list_infra_events() if event["code"] == "llm_call_exhausted")
+    assert event["metadata"]["attempted_models"] == ["claude-primary", "claude-fallback"]
+    assert secret not in str(event)
+    assert prompt not in str(event)
+
+
+@pytest.mark.anyio
 async def test_settings_model_persists_fallback_models_without_key_echo(client):
     secret = "sk-secret-should-not-echo"
     resp = await client.post("/api/settings/model", json={

@@ -19,7 +19,14 @@ import httpx
 from aletheia.config.loader import load_config
 from aletheia.infra.events import emit_infra_event
 from aletheia.model_provider.base import ModelProvider, ModelRequest, ModelResponse
-from aletheia.model_provider.broker import brokered_complete
+from aletheia.model_provider.broker import (
+    InferenceBrokerClosed,
+    InferenceBrokerError,
+    InferenceQueueFull,
+    InferenceRateLimitExceeded,
+    InferenceTimeout,
+    brokered_complete,
+)
 from aletheia.model_provider import router as provider_router
 
 logger = logging.getLogger("aletheia.model_provider.fallback")
@@ -323,6 +330,71 @@ async def _candidate_models(provider_name: str, provider: ModelProvider) -> list
     return ordered
 
 
+def _emit_terminal_failure(
+    exc: BaseException,
+    *,
+    provider_name: str,
+    requested_model: str,
+    attempted_models: list[str],
+    skipped_cooldown_models: list[str],
+) -> None:
+    """Expose a terminal failure without copying exception or request contents."""
+    broker_events = {
+        InferenceBrokerClosed: (
+            "critical",
+            "llm_broker_closed",
+            "LLM inference broker is unavailable",
+            "wait_for_broker_availability",
+        ),
+        InferenceQueueFull: (
+            "warning",
+            "llm_broker_queue_full",
+            "LLM inference broker queue is full",
+            "reduce_inference_load",
+        ),
+        InferenceRateLimitExceeded: (
+            "warning",
+            "llm_broker_rate_limit_exceeded",
+            "LLM inference broker rate limit denied request",
+            "review_provider_rate_limit",
+        ),
+        InferenceTimeout: (
+            "warning",
+            "llm_broker_timeout",
+            "LLM inference broker deadline expired",
+            "review_inference_capacity",
+        ),
+    }
+    if isinstance(exc, InferenceBrokerError):
+        severity, code, message, action = next(
+            (event for error_type, event in broker_events.items() if isinstance(exc, error_type)),
+            ("warning", "llm_broker_error", "LLM inference broker rejected request", "review_inference_broker"),
+        )
+    elif is_transient_model_error(exc):
+        severity, code, message, action = (
+            "warning", "llm_call_exhausted", "LLM model fallback attempts exhausted", "retry_after_provider_recovers"
+        )
+    else:
+        severity, code, message, action = (
+            "warning", "llm_call_non_transient_error", "LLM provider rejected request", "review_provider_configuration"
+        )
+    emit_infra_event(
+        severity=severity,
+        source="llm",
+        code=code,
+        entity_id=f"{provider_name}/{requested_model}",
+        message=message,
+        action=action,
+        metadata={
+            "provider": provider_name,
+            "requested_model": requested_model,
+            "attempted_models": attempted_models,
+            "skipped_cooldown_models": skipped_cooldown_models,
+        },
+        dedupe_sec=60,
+    )
+
+
 def _with_fallback_meta(
     response: ModelResponse,
     *,
@@ -380,7 +452,17 @@ async def complete_with_fallback(
     _enforce_budget_if_configured(cfg, request)
     models = await _candidate_models(resolved_provider_name, provider)
     if not models:
-        return await brokered_complete(resolved_provider_name, provider, request)
+        try:
+            return await brokered_complete(resolved_provider_name, provider, request)
+        except Exception as exc:  # noqa: BLE001 - caller expects provider errors
+            _emit_terminal_failure(
+                exc,
+                provider_name=resolved_provider_name,
+                requested_model=str(getattr(provider, "model", "") or ""),
+                attempted_models=[],
+                skipped_cooldown_models=[],
+            )
+            raise
 
     requested_model = models[0]
     skipped_cooldown = [
@@ -397,7 +479,12 @@ async def complete_with_fallback(
             entity_id=resolved_provider_name,
             message=f"All candidate LLM models are cooling down for provider {resolved_provider_name}",
             action="wait_for_cooldown_or_change_provider",
-            metadata={"provider": resolved_provider_name, "models": models},
+            metadata={
+                "provider": resolved_provider_name,
+                "models": models,
+                "attempted_models": [],
+                "skipped_cooldown_models": skipped_cooldown,
+            },
             dedupe_sec=60,
         )
         raise RuntimeError(f"all LLM candidate models are cooling down for {resolved_provider_name}")
@@ -443,12 +530,26 @@ async def complete_with_fallback(
             )
         except Exception as exc:  # noqa: BLE001 - caller expects provider errors
             last_exc = exc
+            if isinstance(exc, InferenceBrokerError):
+                _emit_terminal_failure(
+                    exc,
+                    provider_name=resolved_provider_name,
+                    requested_model=requested_model,
+                    attempted_models=attempted,
+                    skipped_cooldown_models=skipped_cooldown,
+                )
+                raise
             transient = is_transient_model_error(exc)
             if transient:
                 _record_model_failure(resolved_provider_name, model, exc)
-            if not transient:
-                raise
-            if idx == len(models_to_try) - 1:
+            if not transient or idx == len(models_to_try) - 1:
+                _emit_terminal_failure(
+                    exc,
+                    provider_name=resolved_provider_name,
+                    requested_model=requested_model,
+                    attempted_models=attempted,
+                    skipped_cooldown_models=skipped_cooldown,
+                )
                 raise
             logger.warning(
                 "LLM model %s/%s transient failure on %s; trying fallback %s",
