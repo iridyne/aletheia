@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { HEALTH_MONITORING_SECTION, WEBHOOK_SECTION } from "../features/settings/health/healthState";
 import { MODEL_PROVIDERS_SECTION } from "../features/settings/model-providers/modelProviderState";
 import { ADVANCED_SECTION } from "../features/settings/tabs/AdvancedTab";
+import {
+	APP_SECTION,
+	DATA_EXPORT_SECTION,
+	DATA_RETENTION_SECTION,
+	NETWORK_PROXY_SECTION,
+	SOFTWARE_UPDATES_SECTION,
+} from "../features/settings/tabs/RuntimeSystemTab";
 import { TELEGRAM_SECTION } from "../features/settings/telegram/telegramState";
 import CSS from "../index.css?raw";
 import SRC from "./Settings.tsx?raw";
@@ -12,6 +19,11 @@ const EXTRACTED_DESCRIPTORS = [
 	{ symbol: "TELEGRAM_SECTION", descriptor: TELEGRAM_SECTION },
 	{ symbol: "WEBHOOK_SECTION", descriptor: WEBHOOK_SECTION },
 	{ symbol: "ADVANCED_SECTION", descriptor: ADVANCED_SECTION },
+	{ symbol: "APP_SECTION", descriptor: APP_SECTION },
+	{ symbol: "DATA_RETENTION_SECTION", descriptor: DATA_RETENTION_SECTION },
+	{ symbol: "DATA_EXPORT_SECTION", descriptor: DATA_EXPORT_SECTION },
+	{ symbol: "SOFTWARE_UPDATES_SECTION", descriptor: SOFTWARE_UPDATES_SECTION },
+	{ symbol: "NETWORK_PROXY_SECTION", descriptor: NETWORK_PROXY_SECTION },
 ] as const;
 
 const EXTRACTED_COMPONENTS = [
@@ -21,6 +33,16 @@ const EXTRACTED_COMPONENTS = [
 		descriptors: [HEALTH_MONITORING_SECTION, TELEGRAM_SECTION, WEBHOOK_SECTION],
 	},
 	{ component: "AdvancedTab", descriptors: [ADVANCED_SECTION] },
+	{
+		component: "RuntimeSystemTab",
+		descriptors: [
+			APP_SECTION,
+			DATA_RETENTION_SECTION,
+			DATA_EXPORT_SECTION,
+			SOFTWARE_UPDATES_SECTION,
+			NETWORK_PROXY_SECTION,
+		],
+	},
 ] as const;
 
 const EXTRACTED_BY_SYMBOL = new Map<string, { id: string; title: string }>(
