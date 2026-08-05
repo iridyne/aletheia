@@ -1875,3 +1875,84 @@ def test_overfilled_close_claim_never_reaches_exchange_again(
         "materialization_missing",
         "overfilled",
     }.issubset(position_manager._OPEN_CLOSE_STATES)
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-RX-22",
+        "pipeline_risk_execution_integrity",
+        "§12 venue-reported position absence",
+        "L2c",
+        "A Bitget close rejected because the venue reports no matching position "
+        "retains one durable reconciliation claim across later manager cycles and "
+        "must not fabricate a Fill or resubmit the close.",
+        status="implemented",
+    )
+)
+def test_position_absence_claim_survives_restart_without_close_resubmission(
+    tmp_path,
+    monkeypatch,
+):
+    import importlib
+
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.portfolio import position_manager
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Order, Position
+
+    exchange_calls: list[str] = []
+
+    class _MustNotReachExchange:
+        def __init__(self, *args, **kwargs):
+            exchange_calls.append("client_init")
+
+        async def place_order(self, order):
+            exchange_calls.append(order.client_oid)
+            raise AssertionError("unverified position absence reached exchange")
+
+        async def close(self):
+            pass
+
+    broker = importlib.import_module("aletheia.execution.bitget_broker")
+    monkeypatch.setattr(broker, "BitgetClient", _MustNotReachExchange)
+    position = Position(
+        id="position-absence-unverified",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=60_000.0,
+        current_price=60_100.0,
+        execution_mode="bitget_demo",
+    )
+    repo.insert_position(position)
+    close_order = Order(
+        id="position-absence-close-order",
+        client_order_id=f"close-{position.id}",
+        position_id=position.id,
+        close_reason="stop_loss",
+        symbol=position.symbol,
+        market_type=position.market_type,
+        direction=position.direction,
+        order_type="market",
+        quantity=position.quantity,
+        price=position.current_price,
+        execution_mode=position.execution_mode,
+        status="error",
+        error_reason="close_position_absence_unverified",
+    )
+    repo.insert_order(close_order)
+    repo.update_position(
+        position.id,
+        pending_close_order_id=close_order.id,
+        pending_close_status="position_absence_unverified",
+    )
+
+    result = broker.close_demo_position(position.id, reason="stop_loss")
+
+    assert result["already_pending"] is True
+    assert result["status"] == "position_absence_unverified"
+    assert exchange_calls == []
+    assert [row["id"] for row in repo.list_orders(limit=20)] == [close_order.id]
+    assert repo.list_fills(limit=20) == []
+    assert "position_absence_unverified" in position_manager._OPEN_CLOSE_STATES

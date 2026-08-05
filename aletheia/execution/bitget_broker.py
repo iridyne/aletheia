@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from aletheia.data.symbols import to_bitget
 from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest
 from aletheia.exchanges.submission_errors import (
+    ClosePositionAbsentError,
     is_ambiguous_submission_error as _is_ambiguous_submission_error,
 )
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
@@ -46,7 +47,7 @@ logger = logging.getLogger("aletheia.bitget_broker")
 _LIVE_FEE_RATE = 0.0006
 _OPEN_CLOSE_STATES = {
     "pending", "submitted", "partial", "partially_filled", "submission_unknown",
-    "materialization_missing", "overfilled",
+    "materialization_missing", "position_absence_unverified", "overfilled",
 }
 _RETRY_SUPPRESSING_ORDER_STATES = (
     "pending", "submitted", "partial", "partially_filled", "submission_unknown",
@@ -448,7 +449,37 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
             hold_side=hold_side,
         )))
     except Exception as e:
-        if _is_ambiguous_submission_error(e):
+        if isinstance(e, ClosePositionAbsentError):
+            # The new order is definitely rejected, but the local Position now
+            # conflicts with venue evidence. Retain one durable claim while the
+            # read-only position reconciler establishes whether this was a prior
+            # fill, an external close, an identity mismatch, or unavailable evidence.
+            with transaction():
+                update_order(
+                    close_order.id,
+                    status="error",
+                    error_reason="close_position_absence_unverified",
+                )
+                update_position(
+                    position_id,
+                    pending_close_status="position_absence_unverified",
+                )
+            write_post_commit_audit({
+                "actor": "system", "source": "bitget_broker",
+                "event_type": "close_position_absence_unverified",
+                "entity_type": "position", "entity_id": position_id,
+                "reason": "venue_reported_no_position_for_close",
+                "before": {"pending_close_status": "pending"},
+                "after": {
+                    "pending_close_status": "position_absence_unverified",
+                    "pending_close_order_id": close_order.id,
+                },
+                "message": (
+                    "Venue rejected close because no matching position was available; "
+                    "retained claim for exact reconciliation"
+                ),
+            })
+        elif _is_ambiguous_submission_error(e):
             # A transport timeout cannot tell us whether the exchange accepted
             # the close.  Keep it unresolved and suppress automatic resubmission.
             update_order(

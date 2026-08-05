@@ -12,6 +12,14 @@ class SubmissionResponseUnknownError(RuntimeError):
     """The venue may have accepted a request but its response is unusable."""
 
 
+class ClosePositionAbsentError(RuntimeError):
+    """The venue rejected a close because it reported no matching exposure.
+
+    This proves only that the new close was rejected. It does not prove how the
+    position disappeared and must never be treated as fill evidence.
+    """
+
+
 def is_ambiguous_submission_error(error: BaseException) -> bool:
     """Return True when exchange acceptance cannot be proven either way."""
     current: BaseException | None = error

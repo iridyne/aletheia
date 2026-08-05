@@ -509,6 +509,55 @@ def test_bitget_explicit_create_order_rejection_remains_known(monkeypatch):
 
 
 @pytest.mark.real_place_order
+@pytest.mark.parametrize("response_code", ("22002", "25227"))
+def test_bitget_no_position_close_rejection_is_structured(
+    monkeypatch, response_code,
+):
+    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.exchanges.submission_errors import ClosePositionAbsentError
+
+    class _Response:
+        status_code = 400
+
+        @staticmethod
+        def json():
+            return {
+                "code": response_code,
+                "msg": "No position available to close",
+                "data": None,
+            }
+
+    class _HTTP:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, *_args, **_kwargs):
+            return _Response()
+
+    monkeypatch.setattr(bitget_client, "httpx_client", lambda **_kwargs: _HTTP())
+    monkeypatch.setattr(
+        bitget_client.BitgetClient,
+        "_headers",
+        lambda *_args, **_kwargs: {},
+    )
+    request = bitget_client.OrderRequest(
+        symbol="BTCUSDT",
+        market_type="usdt_futures",
+        side="buy",
+        order_type="market",
+        quantity=0.001,
+        client_oid="close-position-1",
+        hold_side="long",
+    )
+
+    with pytest.raises(ClosePositionAbsentError, match=response_code):
+        asyncio.run(bitget_client.BitgetClient(mode="demo").place_order(request))
+
+
+@pytest.mark.real_place_order
 def test_bitget_success_without_order_id_is_unknown_through_gateway_and_not_retried(
     tmp_path,
     monkeypatch,
@@ -1069,6 +1118,66 @@ def test_concurrent_close_claim_reaches_exchange_once(
         assert first_result["status"] == "materialization_missing"
     assert calls == [f"close-{position.id}"]
     assert len(repo.list_orders(limit=10)) == 1
+
+
+def test_bitget_no_position_close_rejection_keeps_single_durable_claim(
+    tmp_path, monkeypatch,
+):
+    """A venue-reported absence must investigate, not resubmit a close."""
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.exchanges.submission_errors import ClosePositionAbsentError
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    calls = []
+
+    async def _no_position(order):
+        calls.append(order.client_oid)
+        raise ClosePositionAbsentError(
+            "Bitget close rejected: no position available (code=25227)"
+        )
+
+    broker = _prepare_broker(
+        monkeypatch,
+        "aletheia.execution.bitget_broker",
+        "BitgetClient",
+        _no_position,
+    )
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=101.0,
+        execution_mode="bitget_demo",
+    )
+    repo.insert_position(position)
+
+    with pytest.raises(ClosePositionAbsentError, match="25227"):
+        broker.close_demo_position(position.id, reason="stop_loss")
+    first_order = repo.list_orders(limit=10)[0]
+    first_order_id = first_order["id"]
+    first_position = repo._select_one("positions", position.id)
+    assert first_position is not None
+    assert first_order["status"] == "error"
+    assert first_order["error_reason"] == "close_position_absence_unverified"
+    assert first_position["status"] == "open"
+    assert first_position["pending_close_status"] == "position_absence_unverified"
+
+    # Simulate the next Position Manager cycle reaching the same broker boundary.
+    # What must not recur is the exchange side effect or a replacement durable
+    # Close Order while disappearance remains unverified.
+    retry = broker.close_demo_position(position.id, reason="stop_loss")
+
+    orders = repo.list_orders(limit=10)
+    stored_position = repo._select_one("positions", position.id)
+    assert stored_position is not None
+    assert retry["already_pending"] is True
+    assert retry["status"] == "position_absence_unverified"
+    assert calls == [f"close-{position.id}"]
+    assert len(orders) == 1
+    assert stored_position["pending_close_order_id"] == first_order_id
 
 
 @pytest.mark.parametrize(
