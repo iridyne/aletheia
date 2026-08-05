@@ -392,7 +392,7 @@ def test_stale_pending_close_is_escalated_without_resubmission(tmp_path, monkeyp
 
 @pytest.mark.parametrize("requested_at", [
     None,
-    (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+    "2099-01-01T00:00:00+00:00",
 ])
 def test_pending_close_with_unknown_age_is_escalated(tmp_path, monkeypatch, requested_at):
     """Missing or future close age is unsafe, not permission to suppress forever."""
