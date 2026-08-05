@@ -5,6 +5,62 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
 
+/* Tailwind without Preflight. `@import 'tailwindcss'` would also inject
+   preflight.css into @layer base, and three of its rules regress this app:
+
+     ol,ul,menu { list-style: none }   removes bullets from the Kill Switch
+       trigger list (Settings), Learning's rendered markdown, and the Live
+       authority consequence list — none of which declare list-style, so they
+       relied on the browser default.
+     h1..h6 { font-size/font-weight: inherit }  and  button { … }
+       are survivable only because index.css happens to style those already.
+
+   This project has owned its own reset since long before Tailwind (see the
+   `* { box-sizing: border-box; margin: 0; padding: 0 }` rule below), so
+   preflight is redundant as well as harmful. Importing only theme.css, then
+   importing utilities with `source(none)` at the former utility block below,
+   preserves the old cascade without activating unrelated Tailwind-looking class
+   names that were previously inert. */
+@import 'tailwindcss/theme.css' layer(theme);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Tailwind v4 theme — the project's scales, not Tailwind's defaults.
+
+   Before Tailwind, ~48 utility classes were hand-written further down this file
+   (.flex, .gap-2, .mb-3, .text-sm …). Most matched Tailwind's names AND values,
+   but the font sizes did not: .text-sm was 0.78rem vs Tailwind's 0.875rem, and
+   .text-xs was 0.70rem vs 0.75rem — so simply enabling Tailwind would have
+   silently enlarged 157 call sites across every page.
+
+   `--text-*: initial` clears Tailwind's entire font-size namespace, then the
+   values below re-declare it.
+
+   These deliberately reproduce the OLD hand-written values EXACTLY, not the
+   --fs-* density scale:
+       .text-sm  0.78rem   (--fs-sm  would be 0.75rem,   -3.8%)
+       .text-xs  0.70rem   (--fs-xs  would be 0.6875rem, -1.8%)
+       .text-2xs 0.68rem   (--fs-2xs would be 0.625rem,  -8.1%)
+   Snapping these to --fs-* would shrink text on ~158 call sites across every
+   page. That is a visual change requiring owner review, so it is intentionally
+   NOT bundled into the Tailwind adoption. Enabling Tailwind is mechanical and
+   must stay invisible; the density snap is a separate, reviewable step.
+
+   Spacing is fixed at 4px so gap-2 resolves to 8px, exactly matching the old
+   var(--space-2). Tailwind's 0.25rem default is normally 4px but would drift when
+   a user changes the browser root font size; fixed pixels preserve old behavior.
+   ──────────────────────────────────────────────────────────────────────────── */
+@theme {
+  --spacing: 4px;
+  --text-*: initial;
+  --text-2xs: 0.68rem;   /* was .text-2xs */
+  --text-xs:  0.7rem;    /* was .text-xs  */
+  --text-sm:  0.78rem;   /* was .text-sm  */
+
+  /* Font families mirror the --mono / --sans tokens declared in :root below. */
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+}
+
 :root {
   --bg:        #0a0e12;   /* app background, near-black with cool tint */
   --bg-2:      #0f141a;   /* recessed (main area) */
@@ -942,6 +998,60 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   border-radius: var(--r);
   margin-bottom: var(--space-3);
 }
+/* Settings form primitives. These semantic classes use Tailwind through @apply
+   without publishing new global utility names: T1 intentionally keeps source
+   scanning disabled so old inert class strings cannot change appearance.
+   No current page uses these classes yet; the first section migration is the
+   browser-review gate for their visual shape. */
+.settings-config-section {
+  @apply grid min-w-0 grid-cols-1 gap-4 py-6;
+  border-bottom: 1px solid var(--border);
+}
+.settings-config-section:last-child { border-bottom: 0; }
+.settings-config-copy,
+.settings-config-content,
+.settings-form-field { @apply min-w-0; }
+.settings-config-title {
+  margin: 0; color: var(--text); font: 600 var(--fs-md) var(--display);
+}
+.settings-config-description {
+  margin: var(--space-1) 0 0; color: var(--muted);
+  font-size: var(--fs-sm); line-height: 1.45;
+}
+@media (min-width: 1024px) {
+  .settings-config-section {
+    grid-template-columns: 240px minmax(0, 1fr);
+    column-gap: 40px;
+  }
+}
+.settings-scroll-area {
+  @apply min-h-0 flex-1 overflow-y-auto overscroll-contain;
+  scrollbar-gutter: stable;
+}
+.settings-form-grid {
+  @apply grid min-w-0 grid-cols-1 gap-4;
+  align-items: start;
+  margin-bottom: var(--space-4);
+}
+@media (min-width: 768px) {
+  .settings-form-grid { @apply grid-cols-2; }
+}
+.settings-form-field-full { grid-column: 1 / -1; }
+.settings-form-label {
+  @apply block text-sm;
+  margin-bottom: 6px; color: var(--text); font-weight: 500;
+}
+.settings-form-field > input,
+.settings-form-field > select,
+.settings-form-field > textarea { width: 100%; }
+.settings-form-description,
+.settings-form-error {
+  @apply text-xs;
+  margin: var(--space-1) 0 0; line-height: 1.4;
+}
+.settings-form-description { color: var(--muted); }
+.settings-form-error { color: var(--red); }
+
 /* Numeric field grid (universe config etc.) — labels stack, inputs FILL the column
    (no fixed widths); units live in the label text, not as sibling spans. */
 .settings-field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--space-4) var(--space-5); margin-bottom: var(--space-4); align-items: start; }
@@ -1206,42 +1316,37 @@ th.sortable:hover { color: var(--text); }
 .drawer-field-label { color: var(--muted); }
 .drawer-field-value { color: var(--text); text-align: right; max-width: 60%; word-break: break-word; }
 
-/* ---------- Utility classes ---------- */
-.flex { display: flex; }
-.flex-col { flex-direction: column; }
-.flex-wrap { flex-wrap: wrap; }
-.gap-1 { gap: var(--space-1); }
-.gap-2 { gap: var(--space-2); }
-.gap-3 { gap: var(--space-3); }
-.gap-4 { gap: var(--space-4); }
-.items-center { align-items: center; }
-.items-baseline { align-items: baseline; }
-.justify-between { justify-content: space-between; }
+/* ---------- Utility classes ----------
+   Layout / spacing / sizing utilities that used to be hand-written here are now
+   generated by Tailwind (see the @theme block at the top of this file). Deleted:
+     flex flex-col flex-wrap flex-1  gap-1..4  items-center items-baseline
+     justify-between justify-end  mt-1..4  mb-0..4  m-0 ml-auto pt-3
+     w-auto w-full  text-sm text-xs text-2xs
+   The names and computed values are unchanged: --space-1..4 equal Tailwind's
+   1..4 steps, and the font sizes are re-declared from --fs-* in @theme.
+
+   Keep this import HERE and unlayered. The old utility rules occupied this exact
+   cascade position. Putting generated utilities in `@layer utilities` is not
+   equivalent: every unlayered project rule would outrank them, changing
+   `.card.mb-0` from 0 to 12px and `.hint.mt-1` from 4px to 8px.
+
+   `source(none)` is equally load-bearing. The codebase already contains inert
+   Tailwind-looking names such as `border rounded p-3`; automatic source scanning
+   would make those spring to life during this mechanical migration. The inline
+   list is therefore the exact set of deleted hand-written utilities. Expand it
+   only when deliberately migrating a component, with visual review.
+
+   What remains below is project semantics that Tailwind has no equivalent for,
+   so these must stay hand-written. */
+@import 'tailwindcss/utilities.css' source(none);
+@source inline("flex flex-col flex-wrap flex-1 gap-1 gap-2 gap-3 gap-4 items-center items-baseline justify-between justify-end mt-1 mt-2 mt-3 mt-4 mb-0 mb-1 mb-2 mb-3 mb-4 m-0 ml-auto pt-3 w-auto w-full text-sm text-xs text-2xs");
+
 .text-muted { color: var(--muted); }
 .text-error { color: var(--red); }
-.text-sm { font-size: 0.78rem; }
 .text-pre-wrap { white-space: pre-wrap; }
-.text-xs { font-size: 0.7rem; }
 .mono { font-family: var(--mono); }
-.mt-1 { margin-top: var(--space-1); }
-.mt-2 { margin-top: var(--space-2); }
-.mt-3 { margin-top: var(--space-3); }
-.mt-4 { margin-top: var(--space-4); }
-.mb-0 { margin-bottom: 0; }
-.mb-1 { margin-bottom: var(--space-1); }
-.mb-2 { margin-bottom: var(--space-2); }
-.mb-3 { margin-bottom: var(--space-3); }
-.mb-4 { margin-bottom: var(--space-4); }
-.m-0 { margin: 0; }
-.ml-auto { margin-left: auto; }
 .chart-h-sm { height: 180px; }
-.w-auto { width: auto; }
-.w-full { width: 100%; }
 .col-full { grid-column: 1 / -1; }
-.justify-end { justify-content: flex-end; }
-.flex-1 { flex: 1; }
-.pt-3 { padding-top: var(--space-3); }
-.text-2xs { font-size: 0.68rem; }
 .section-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: var(--space-2); }
 /* Standalone PnL coloring (the .hero-value/.metric-value scoped variants exist
    separately; these let any element use semantic up/down color). */
