@@ -113,7 +113,9 @@ def test_paper_influence_support_requires_every_capability(monkeypatch):
 ))
 def test_learning_settings_uses_registry_backed_path_checkboxes():
     root = Path(__file__).resolve().parents[2]
-    settings = (root / "frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
+    settings = (
+        root / "frontend/src/features/settings/tabs/AgentModelsTab.tsx"
+    ).read_text(encoding="utf-8")
     client = (root / "frontend/src/api/client.ts").read_text(encoding="utf-8")
     start = settings.index('label="Allowed paper paths"')
     end = settings.index('label="Auto-refreeze"', start)

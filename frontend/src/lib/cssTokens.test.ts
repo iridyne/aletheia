@@ -2,6 +2,17 @@ import { describe, expect, it } from "vitest";
 import CSS from "../index.css?raw";
 import SETTINGS_SRC from "../pages/Settings.tsx?raw";
 
+const SETTINGS_FEATURE_SOURCES = Object.entries(
+	import.meta.glob("../features/settings/**/*.{ts,tsx}", {
+		eager: true,
+		query: "?raw",
+		import: "default",
+	}),
+)
+	.filter(([path]) => !path.includes(".test."))
+	.map(([, source]) => source as string);
+const SETTINGS_SOURCES = [SETTINGS_SRC, ...SETTINGS_FEATURE_SOURCES];
+
 /**
  * Guards against the failure mode found in the Live-authority warning wall:
  * it styled itself with `var(--color-danger-bg, #fff5f5)`, but neither
@@ -47,12 +58,12 @@ describe("CSS custom properties", () => {
 		expect(missing, "var(--x) in index.css with no declaration").toEqual([]);
 	});
 
-	it("defines every token Settings.tsx references", () => {
-		// Settings.tsx has the most inline styles of any page (68 blocks), so it is
-		// the likeliest source of a token typo reaching an operator-facing surface.
+	it("defines every token the Settings implementation references", () => {
 		const declared = declaredTokens();
-		const missing = [...referencedTokens(SETTINGS_SRC)].filter((t) => !declared.has(t));
-		expect(missing, "var(--x) in Settings.tsx with no declaration").toEqual([]);
+		const missing = [...referencedTokens(SETTINGS_SOURCES.join("\n"))].filter(
+			(t) => !declared.has(t),
+		);
+		expect(missing, "var(--x) in Settings modules with no declaration").toEqual([]);
 	});
 
 	it("declares the base tokens the danger surfaces rely on", () => {
@@ -65,11 +76,14 @@ describe("CSS custom properties", () => {
 	it("keeps the Live authority wall on themed classes, not inline colours", () => {
 		// Regression guard: this wall previously inlined light-theme hex fallbacks
 		// (`var(--color-danger-bg, #fff5f5)`), painting near-white on a dark app.
-		const start = SETTINGS_SRC.indexOf("function LiveUnlockWarningWall");
-		expect(start, "LiveUnlockWarningWall not found").toBeGreaterThan(-1);
+		const source = SETTINGS_SOURCES.find((item) =>
+			item.includes("function LiveUnlockWarningWall"),
+		);
+		expect(source, "LiveUnlockWarningWall not found").toBeDefined();
+		const start = source!.indexOf("function LiveUnlockWarningWall");
 		// Slice to the function's own closing brace. `\n}` alone would stop at the
 		// destructured-props block, truncating the body before its JSX.
-		const wall = SETTINGS_SRC.slice(start, SETTINGS_SRC.indexOf("\n}\n", start));
+		const wall = source!.slice(start, source!.indexOf("\n}\n", start));
 		expect(wall).toContain("danger-zone");
 		// Comments are stripped: the fix documents the old hex values in prose, and
 		// that explanation should not read as a violation.

@@ -253,13 +253,18 @@ def test_exchange_source_divergence_is_guarded_and_visible():
     settings_route = (_ROOT / "aletheia" / "server" / "routes" / "settings.py").read_text(encoding="utf-8")
     health_route = (_ROOT / "aletheia" / "server" / "routes" / "health.py").read_text(encoding="utf-8")
     overview = (_ROOT / "frontend" / "src" / "pages" / "Overview.tsx").read_text(encoding="utf-8")
-    settings_ui = (_ROOT / "frontend" / "src" / "pages" / "Settings.tsx").read_text(encoding="utf-8")
+    settings_ui = "\n".join(
+        (
+            _ROOT / "frontend" / "src" / "features" / "settings" / "tabs" / name
+        ).read_text(encoding="utf-8")
+        for name in ("ExecutionTab.tsx", "SignalsTab.tsx")
+    )
 
     assert "paper_internal" in alignment and "okx_demo" in alignment
     assert settings_route.count("confirm_exchange_divergence") >= 2
     assert "exchange_alignment" in health_route
     assert "exchange_diverged" in overview
-    assert "confirmExchangeDivergence" in settings_ui
+    assert settings_ui.count("confirmExchangeDivergence") >= 2
 
 
 @spec_claim(

@@ -532,9 +532,13 @@ def test_live_lock_resets_operator_permission(tmp_path, monkeypatch):
 def test_ui_warning_wall_three_elements():
     import pathlib
 
-    settings_tsx = pathlib.Path(__file__).parents[2] / "frontend" / "src" / "pages" / "Settings.tsx"
+    frontend = pathlib.Path(__file__).parents[2] / "frontend" / "src"
+    settings_tsx = frontend / "pages" / "Settings.tsx"
+    execution_tab = frontend / "features" / "settings" / "tabs" / "ExecutionTab.tsx"
     assert settings_tsx.exists(), f"Settings.tsx not found at {settings_tsx}"
-    source = settings_tsx.read_text(encoding="utf-8")
+    assert execution_tab.exists(), f"ExecutionTab.tsx not found at {execution_tab}"
+    assert "<ExecutionTab" in settings_tsx.read_text(encoding="utf-8")
+    source = execution_tab.read_text(encoding="utf-8")
 
     required_phrases = [
         "不会把新 Proposal 路由到实盘",

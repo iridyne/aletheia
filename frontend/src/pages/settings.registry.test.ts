@@ -2,25 +2,138 @@ import { describe, expect, it } from "vitest";
 import { HEALTH_MONITORING_SECTION, WEBHOOK_SECTION } from "../features/settings/health/healthState";
 import { MODEL_PROVIDERS_SECTION } from "../features/settings/model-providers/modelProviderState";
 import { ADVANCED_SECTION } from "../features/settings/tabs/AdvancedTab";
+import {
+	INFERENCE_ADMISSION_SECTION,
+	LEARNING_SECTION,
+	LLM_COST_SECTION,
+	PERMISSION_SECTION,
+	REGIME_SECTION,
+	SCHEDULER_SECTION,
+	SERENITY_SECTION,
+} from "../features/settings/tabs/AgentModelsTab";
+import {
+	CAPITAL_EVENTS_SECTION,
+	EXCHANGE_CONNECTION_SECTION,
+	PAPER_ACCOUNT_SECTION,
+	PAPER_PARAMETERS_SECTION,
+	TRADING_MODE_SECTION,
+} from "../features/settings/tabs/ExecutionTab";
+import {
+	APP_SECTION,
+	DATA_EXPORT_SECTION,
+	DATA_RETENTION_SECTION,
+	NETWORK_PROXY_SECTION,
+	SOFTWARE_UPDATES_SECTION,
+} from "../features/settings/tabs/RuntimeSystemTab";
+import {
+	EQUITIES_SECTION,
+	MACRO_SIGNALS_SECTION,
+	MARKET_DATA_SECTION,
+	NEWS_FEEDS_SECTION,
+	PREDICTION_MARKETS_SECTION,
+} from "../features/settings/tabs/SignalsTab";
+import {
+	EVENT_TRIGGERS_SECTION,
+	RISK_LIMITS_SECTION,
+	TRADABLE_SYMBOLS_SECTION,
+	UNIVERSE_SECTION,
+} from "../features/settings/tabs/RiskTab";
 import { TELEGRAM_SECTION } from "../features/settings/telegram/telegramState";
 import CSS from "../index.css?raw";
 import SRC from "./Settings.tsx?raw";
 
 const EXTRACTED_DESCRIPTORS = [
+	{ symbol: "PERMISSION_SECTION", descriptor: PERMISSION_SECTION },
+	{ symbol: "LEARNING_SECTION", descriptor: LEARNING_SECTION },
+	{ symbol: "REGIME_SECTION", descriptor: REGIME_SECTION },
+	{ symbol: "SERENITY_SECTION", descriptor: SERENITY_SECTION },
+	{ symbol: "SCHEDULER_SECTION", descriptor: SCHEDULER_SECTION },
 	{ symbol: "MODEL_PROVIDERS_SECTION", descriptor: MODEL_PROVIDERS_SECTION },
+	{ symbol: "INFERENCE_ADMISSION_SECTION", descriptor: INFERENCE_ADMISSION_SECTION },
+	{ symbol: "LLM_COST_SECTION", descriptor: LLM_COST_SECTION },
+	{ symbol: "EXCHANGE_CONNECTION_SECTION", descriptor: EXCHANGE_CONNECTION_SECTION },
+	{ symbol: "TRADING_MODE_SECTION", descriptor: TRADING_MODE_SECTION },
+	{ symbol: "PAPER_PARAMETERS_SECTION", descriptor: PAPER_PARAMETERS_SECTION },
+	{ symbol: "CAPITAL_EVENTS_SECTION", descriptor: CAPITAL_EVENTS_SECTION },
+	{ symbol: "PAPER_ACCOUNT_SECTION", descriptor: PAPER_ACCOUNT_SECTION },
 	{ symbol: "HEALTH_MONITORING_SECTION", descriptor: HEALTH_MONITORING_SECTION },
 	{ symbol: "TELEGRAM_SECTION", descriptor: TELEGRAM_SECTION },
 	{ symbol: "WEBHOOK_SECTION", descriptor: WEBHOOK_SECTION },
 	{ symbol: "ADVANCED_SECTION", descriptor: ADVANCED_SECTION },
+	{ symbol: "APP_SECTION", descriptor: APP_SECTION },
+	{ symbol: "DATA_RETENTION_SECTION", descriptor: DATA_RETENTION_SECTION },
+	{ symbol: "DATA_EXPORT_SECTION", descriptor: DATA_EXPORT_SECTION },
+	{ symbol: "SOFTWARE_UPDATES_SECTION", descriptor: SOFTWARE_UPDATES_SECTION },
+	{ symbol: "NETWORK_PROXY_SECTION", descriptor: NETWORK_PROXY_SECTION },
+	{ symbol: "MARKET_DATA_SECTION", descriptor: MARKET_DATA_SECTION },
+	{ symbol: "MACRO_SIGNALS_SECTION", descriptor: MACRO_SIGNALS_SECTION },
+	{ symbol: "NEWS_FEEDS_SECTION", descriptor: NEWS_FEEDS_SECTION },
+	{ symbol: "PREDICTION_MARKETS_SECTION", descriptor: PREDICTION_MARKETS_SECTION },
+	{ symbol: "EQUITIES_SECTION", descriptor: EQUITIES_SECTION },
+	{ symbol: "UNIVERSE_SECTION", descriptor: UNIVERSE_SECTION },
+	{ symbol: "EVENT_TRIGGERS_SECTION", descriptor: EVENT_TRIGGERS_SECTION },
+	{ symbol: "TRADABLE_SYMBOLS_SECTION", descriptor: TRADABLE_SYMBOLS_SECTION },
+	{ symbol: "RISK_LIMITS_SECTION", descriptor: RISK_LIMITS_SECTION },
 ] as const;
 
 const EXTRACTED_COMPONENTS = [
-	{ component: "ModelProvidersSection", descriptors: [MODEL_PROVIDERS_SECTION] },
+	{
+		component: "AgentModelsTab",
+		descriptors: [
+			PERMISSION_SECTION,
+			LEARNING_SECTION,
+			REGIME_SECTION,
+			SERENITY_SECTION,
+			SCHEDULER_SECTION,
+			MODEL_PROVIDERS_SECTION,
+			INFERENCE_ADMISSION_SECTION,
+			LLM_COST_SECTION,
+		],
+	},
+	{
+		component: "ExecutionTab",
+		descriptors: [
+			EXCHANGE_CONNECTION_SECTION,
+			TRADING_MODE_SECTION,
+			PAPER_PARAMETERS_SECTION,
+			CAPITAL_EVENTS_SECTION,
+			PAPER_ACCOUNT_SECTION,
+		],
+	},
 	{
 		component: "HealthNotificationsTab",
 		descriptors: [HEALTH_MONITORING_SECTION, TELEGRAM_SECTION, WEBHOOK_SECTION],
 	},
 	{ component: "AdvancedTab", descriptors: [ADVANCED_SECTION] },
+	{
+		component: "RuntimeSystemTab",
+		descriptors: [
+			APP_SECTION,
+			DATA_RETENTION_SECTION,
+			DATA_EXPORT_SECTION,
+			SOFTWARE_UPDATES_SECTION,
+			NETWORK_PROXY_SECTION,
+		],
+	},
+	{
+		component: "SignalsTab",
+		descriptors: [
+			MARKET_DATA_SECTION,
+			MACRO_SIGNALS_SECTION,
+			NEWS_FEEDS_SECTION,
+			PREDICTION_MARKETS_SECTION,
+			EQUITIES_SECTION,
+		],
+	},
+	{
+		component: "RiskTab",
+		descriptors: [
+			UNIVERSE_SECTION,
+			EVENT_TRIGGERS_SECTION,
+			TRADABLE_SYMBOLS_SECTION,
+			RISK_LIMITS_SECTION,
+		],
+	},
 ] as const;
 
 const EXTRACTED_BY_SYMBOL = new Map<string, { id: string; title: string }>(
@@ -42,9 +155,9 @@ const EXTRACTED_BY_SYMBOL = new Map<string, { id: string; title: string }>(
 /** Titles registered in SETTINGS_INDEX. */
 function registeredTitles(): string[] {
 	const start = SRC.indexOf("const SETTINGS_INDEX");
-	const end = SRC.indexOf("/** Anchor id for a registered section title");
+	const end = SRC.indexOf("function matchesSearch");
 	expect(start, "SETTINGS_INDEX declaration not found").toBeGreaterThan(-1);
-	expect(end, "sectionSlug helper not found").toBeGreaterThan(start);
+	expect(end, "matchesSearch helper not found").toBeGreaterThan(start);
 	const block = SRC.slice(start, end);
 	return [...block.matchAll(/\{ title: (?:'([^']+)'|([A-Z_]+)\.title)/g)].map(
 		(match) => match[1] ?? EXTRACTED_BY_SYMBOL.get(match[2])?.title ?? "",
@@ -54,7 +167,7 @@ function registeredTitles(): string[] {
 /** Slugs registered in SETTINGS_INDEX. */
 function registeredSlugs(): string[] {
 	const start = SRC.indexOf("const SETTINGS_INDEX");
-	const end = SRC.indexOf("/** Anchor id for a registered section title");
+	const end = SRC.indexOf("function matchesSearch");
 	const block = SRC.slice(start, end);
 	return [...block.matchAll(/slug: (?:'([^']+)'|([A-Z_]+)\.id)/g)].map(
 		(match) => match[1] ?? EXTRACTED_BY_SYMBOL.get(match[2])?.id ?? "",

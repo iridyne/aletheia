@@ -377,7 +377,9 @@ def test_dreaming_summary_excludes_archived_from_recent(tmp_path, monkeypatch):
 )
 def test_capital_events_ui_distinguishes_raw_adjusted_and_trading_series():
     root = pathlib.Path(_project_root())
-    settings = (root / "frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
+    settings = (
+        root / "frontend/src/features/settings/tabs/ExecutionTab.tsx"
+    ).read_text(encoding="utf-8")
     capital_route = (
         root / "aletheia/server/routes/capital.py"
     ).read_text(encoding="utf-8")

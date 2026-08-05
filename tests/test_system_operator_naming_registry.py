@@ -65,12 +65,12 @@ def test_settings_ui_label_uses_system_operator():
     primary label / heading must not regress."""
     from pathlib import Path
 
-    settings_tsx = Path(__file__).resolve().parents[1] / "frontend" / "src" / "pages" / "Settings.tsx"
-    text = settings_tsx.read_text(encoding="utf-8")
+    agent_tab = Path(__file__).resolve().parents[1] / "frontend" / "src" / "features" / "settings" / "tabs" / "AgentModelsTab.tsx"
+    text = agent_tab.read_text(encoding="utf-8")
 
     # Primary label — must appear.
     assert "System Operator daemon" in text, (
-        "frontend/src/pages/Settings.tsx must contain the label "
+        "AgentModelsTab.tsx must contain the label "
         "'System Operator daemon' — the visible UI heading for the "
         "pi_daemon config section."
     )
@@ -81,7 +81,7 @@ def test_settings_ui_label_uses_system_operator():
     # Assert no VISIBLE-copy occurrence of the old capitalised names.
     for banned in ("PI Agent daemon", "PI daemon (event-driven)"):
         assert banned not in text, (
-            f"frontend Settings.tsx must not re-introduce visible copy {banned!r}; "
+            f"AgentModelsTab.tsx must not re-introduce visible copy {banned!r}; "
             "System Operator rename (#97) explicitly forbids it. If a legacy "
             "label needs to reappear for compat, add it as an ARIA description "
             "or a search alias, not as visible heading text."
