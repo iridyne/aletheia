@@ -46,13 +46,14 @@ _T = TypeVar("_T")
 # not a capacity problem.  The previous 32 s value allowed broken callers to block
 # all other writers for half a minute before failing, compounding the problem.
 #
-# New values:
-#   _WRITE_LOCK_TIMEOUT_S  = 6 s  (process-wide Python threading.Lock)
-#   PRAGMA busy_timeout    = 3 s  (SQLite's own cross-thread/cross-process fallback)
+# Current values:
+#   _WRITE_LOCK_TIMEOUT_S  = 6 s  (application writer permit; fail fast)
+#   PRAGMA busy_timeout    = 30 s (SQLite's last-resort fallback)
 #   _acquire_file_write_lock timeout is derived from the same _WRITE_LOCK_TIMEOUT_S
 #
-# If either fires, it is a fast-fail signal to the operator that something is holding
-# a write transaction open across I/O.  Raise an issue; do not raise the timeout.
+# The application permit is the fast-fail signal for a write transaction held across
+# I/O. SQLite's longer timeout remains a last-resort guard for contention outside that
+# permit. Raise an issue when either fires; do not tune around the underlying holder.
 _WRITE_LOCK = threading.Lock()
 _WRITE_LOCK_TIMEOUT_S = 6.0
 _write_lock_state = threading.local()
@@ -273,7 +274,7 @@ def _open_connection(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA busy_timeout=3000")  # 3 s — fast-fail, not retry budget
+    conn.execute("PRAGMA busy_timeout=30000")  # 30 s — last-resort SQLite fallback
     conn.execute("PRAGMA wal_autocheckpoint=1000")
     return conn
 
