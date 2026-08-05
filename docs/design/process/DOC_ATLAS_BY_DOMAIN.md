@@ -55,7 +55,7 @@
 
 - **L2 契约**：[`execution_contract §10`](../contracts/execution_contract.md) ✅**(本会话新建——退出触发器优先级/路由/paused 不变量)**
 - **Spec**：`spec_pipeline_position_manager`(7,含 PL-PM-07 paused 不挡平仓) · `spec_pipeline_stop_propagation`
-- **当前状态**：本会话前是二等公民、现已补；paused 已对齐 kill_switch(都挡开仓不挡平仓)。⛔ **live 人工平仓路径未实现**(`allow_live=True` 无调用点，BACKLOG，触信任边界)。
+- **当前状态**：本会话前是二等公民、现已补；paused 已对齐 kill_switch(都挡开仓不挡平仓)。✅ **paper/demo 手工单仓平仓已实现**(`POST /api/positions/{id}/close`，`human_manual_close`/`human_limit_exit`，独立 exit_driver bucket)。⛔ **live 人工平仓路径仍未实现**(`allow_live=True` 无调用点，live 返回 409，BACKLOG，触信任边界)。
 
 ## D4 · 风控与执行（信任边界）★最强
 

@@ -37,12 +37,7 @@ _CLOSE_ECONOMIC_SNAPSHOT_FIELDS = (
 def _same_snapshot_value(left: object, right: object) -> bool:
     if left == right:
         return True
-    return (
-        isinstance(left, float)
-        and isinstance(right, float)
-        and math.isnan(left)
-        and math.isnan(right)
-    )
+    return isinstance(left, float) and isinstance(right, float) and math.isnan(left) and math.isnan(right)
 
 
 def _parse_utc_instant(value: object) -> datetime | None:
@@ -122,6 +117,7 @@ def _validate_complete_funding_evidence(
 
 def _latest_price(symbol: str) -> float | None:
     from aletheia.data.price_feed import get_price_for_pnl
+
     return get_price_for_pnl(symbol)
 
 
@@ -129,6 +125,7 @@ def _btc_price_at_close() -> float | None:
     """Fetch BTC/USDT price for benchmark recording on position close."""
     try:
         from aletheia.trading.market_data import latest_snapshot
+
         snap = latest_snapshot("BTC/USDT")
         return float(snap["price"]) if snap else None
     except Exception:
@@ -140,11 +137,7 @@ def _close_provenance() -> dict:
     try:
         from aletheia.agent_runtime.runtime_session import current_close_provenance
 
-        return {
-            key: value
-            for key, value in current_close_provenance().items()
-            if value is not None
-        }
+        return {key: value for key, value in current_close_provenance().items() if value is not None}
     except Exception:
         return {}
 
@@ -170,6 +163,7 @@ def _build_exchange_upnl_index() -> dict[tuple[str, str], float]:
     try:
         from aletheia.portfolio import exchange_sync
         from aletheia.data.symbols import to_canonical
+
         cached = exchange_sync.get_cached_state()
         if cached is None or exchange_sync.status_for(cached) not in ("ok", "stale"):
             return {}
@@ -262,16 +256,31 @@ def build_exit_reasoning(
         default_reason = "Take-profit target was reached; this is the rule committed at entry, not a new AI judgment."
     elif reason == "max_hold":
         known_trigger["opened_at"] = position.get("opened_at")
-        default_reason = "The configured maximum holding period elapsed; this is an automatic lifecycle rule, not a new AI judgment."
+        default_reason = (
+            "The configured maximum holding period elapsed; this is an automatic lifecycle rule, not a new AI judgment."
+        )
     elif reason == "market_signal_exit":
         known_trigger["market_signal_reason"] = position.get("last_market_signal_reason")
         default_reason = "The market-aware exit rule fired; this is an automatic lifecycle rule, not a new AI judgment."
+    elif reason == "human_manual_close":
+        default_reason = (
+            "The owner manually closed this position from the dashboard; this is a human decision, not an AI judgment."
+        )
+    elif reason == "human_limit_exit":
+        known_trigger["exit_limit_price"] = position.get("exit_limit_price")
+        default_reason = (
+            "A limit exit level set manually by the owner was reached; this is a human decision, not an AI judgment."
+        )
     elif reason == "exchange_bracket_triggered":
         default_reason = "The exchange reported that the pre-existing protective bracket closed the position; no new AI judgment was recorded."
     elif reason in {"verified_exit", "reconciled_gone"}:
-        default_reason = "The position was closed from verified reconciliation evidence; no AI trade judgment was recorded."
+        default_reason = (
+            "The position was closed from verified reconciliation evidence; no AI trade judgment was recorded."
+        )
     else:
-        default_reason = "The position was closed through the recorded lifecycle path; no AI trade judgment was recorded."
+        default_reason = (
+            "The position was closed through the recorded lifecycle path; no AI trade judgment was recorded."
+        )
     if trigger:
         known_trigger.update(trigger)
     text = reasoning.strip()[:1200] if isinstance(reasoning, str) and reasoning.strip() else default_reason
@@ -325,12 +334,12 @@ def persist_exit_reasoning(
 # Exit fee rate per execution mode. Must match the open-leg constants in each broker
 # file so realized PnL is internally consistent regardless of which path opened it.
 _EXIT_FEE_BY_MODE: dict[str, float] = {
-    "paper_internal": 0.0006,      # matches paper_broker default (Bitget taker)
-    "bitget_demo": 0.0006,         # bitget_broker._DEMO_FEE_RATE
-    "bitget_live_limited": 0.0006, # bitget_broker._LIVE_FEE_RATE
-    "okx_demo": 0.0005,            # okx_broker._OKX_FEE_RATE
+    "paper_internal": 0.0006,  # matches paper_broker default (Bitget taker)
+    "bitget_demo": 0.0006,  # bitget_broker._DEMO_FEE_RATE
+    "bitget_live_limited": 0.0006,  # bitget_broker._LIVE_FEE_RATE
+    "okx_demo": 0.0005,  # okx_broker._OKX_FEE_RATE
     "okx_live_limited": 0.0005,
-    "binance_testnet": 0.0004,     # binance_broker._TESTNET_FEE_RATE
+    "binance_testnet": 0.0004,  # binance_broker._TESTNET_FEE_RATE
     "binance_live_limited": 0.0004,
 }
 
@@ -372,12 +381,12 @@ def close_position(
     of reading already-persisted Position funding fields.
     """
     from aletheia.analytics.close_reasons import is_synthetic_close
+
     if is_synthetic_close(reason):
-        raise ValueError(
-            "administrative close reasons must use close_position_administrative"
-        )
+        raise ValueError("administrative close reasons must use close_position_administrative")
     from aletheia.storage import repositories as repo
     from aletheia.files.jsonl import write_audit
+
     row = repo._select_one("positions", position_id)
     if row is None:
         raise ValueError(f"position not found: {position_id}")
@@ -418,16 +427,10 @@ def close_position(
     market_type = str(row.get("market_type") or "")
     explicit_funding = funding_cost is not None or funding_source is not None
     raw_funding_cost = funding_cost if explicit_funding else row.get("funding_cost")
-    raw_funding_source = (
-        funding_source if explicit_funding else row.get("funding_source")
-    )
+    raw_funding_source = funding_source if explicit_funding else row.get("funding_source")
     if funding_evidence is not None and not isinstance(funding_evidence, dict):
         raise ValueError("funding_evidence must be a mapping")
-    evidence_status = (
-        funding_evidence.get("status")
-        if isinstance(funding_evidence, dict)
-        else None
-    )
+    evidence_status = funding_evidence.get("status") if isinstance(funding_evidence, dict) else None
     # An explicit incomplete computation always supersedes any stale Position
     # value. A claimed-complete handoff is accepted only when its identity,
     # window, and per-event sum reproduce the supplied total.
@@ -449,14 +452,8 @@ def close_position(
     funding_cost, funding_source = validated_funding_economics(
         market_type=market_type,
         execution_mode=row.get("execution_mode"),
-        funding_cost=(
-            0.0 if market_type == "spot" else raw_funding_cost
-        ),
-        funding_source=(
-            "not_applicable"
-            if market_type == "spot"
-            else raw_funding_source
-        ),
+        funding_cost=(0.0 if market_type == "spot" else raw_funding_cost),
+        funding_source=("not_applicable" if market_type == "spot" else raw_funding_source),
     )
 
     # A futures close is operationally complete once its Fill is durable, but
@@ -492,8 +489,7 @@ def close_position(
             or abs(evidence_quantity - float(row["quantity"])) > tolerance
         ):
             raise ValueError(
-                "verified exchange close requires complete private fill identity, "
-                "quantity, fee, and timestamp"
+                "verified exchange close requires complete private fill identity, quantity, fee, and timestamp"
             )
 
     exit_fill_verified = local_paper_fill or private_exchange_fill
@@ -560,15 +556,11 @@ def close_position(
         "exit_fee": round(exit_fee, 8),
         "funding_cost": funding_cost,
         "funding_source": funding_source,
-        "slippage_cost": (
-            row.get("slippage_cost") if local_paper_fill else None
-        ),
+        "slippage_cost": (row.get("slippage_cost") if local_paper_fill else None),
         "exit_reasoning": json.dumps(exit_reasoning, sort_keys=True),
         "close_category": "strategy",
         "exit_price_source": (
-            "local_fill" if local_paper_fill
-            else "broker_fill" if private_exchange_fill
-            else "unavailable"
+            "local_fill" if local_paper_fill else "broker_fill" if private_exchange_fill else "unavailable"
         ),
         "exit_fill_verified": exit_fill_verified,
         "reconciliation_identity": json.dumps(
@@ -592,10 +584,12 @@ def close_position(
             {**row, **update_fields},
             exit_fill_verified=exit_fill_verified,
         )
-    update_fields.update({
-        "outcome_eligible": outcome_eligible,
-        "outcome_exclusion_reason": outcome_exclusion_reason,
-    })
+    update_fields.update(
+        {
+            "outcome_eligible": outcome_eligible,
+            "outcome_exclusion_reason": outcome_exclusion_reason,
+        }
+    )
     update_fields.update(_close_provenance())
     audit_before = {
         "status": row.get("status"),
@@ -630,23 +624,16 @@ def close_position(
         ]
         if changed_fields:
             raise RuntimeError(
-                "position economics changed before close; retry with a fresh "
-                f"snapshot ({', '.join(changed_fields)})"
+                f"position economics changed before close; retry with a fresh snapshot ({', '.join(changed_fields)})"
             )
         if materialize_close is not None:
             materialize_close()
         repo.update_position(position_id, **update_fields)
-        if (
-            outcome_eligible
-            or outcome_exclusion_reason == "attribution_read_failed"
-        ):
+        if outcome_eligible or outcome_exclusion_reason == "attribution_read_failed":
             from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs
 
             enqueue_outcome_hook_jobs({**row, **update_fields})
-        if (
-            row.get("execution_mode") == "paper_internal"
-            and realized is not None
-        ):
+        if row.get("execution_mode") == "paper_internal" and realized is not None:
             from aletheia.portfolio.paper_account import settle_position_closed
 
             settle_position_closed(position_id, realized)
@@ -655,36 +642,41 @@ def close_position(
         # Per-close ledger (exit-intent R1): committed atomically with the Position
         # close so a crash between COMMIT and the ledger write cannot leave a closed
         # Position with no close event. is_partial=0 for a full close.
-        repo.insert_position_close_event({
-            "id": new_id(),
-            "position_id": position_id,
-            "symbol": row.get("symbol"),
-            "direction": row.get("direction"),
-            "execution_mode": row.get("execution_mode"),
-            "close_reason": reason,
-            "exit_price": exit_price,
-            "closed_qty": row["quantity"],
-            "realized_pnl": realized,
-            "entry_fee": round(entry_fee, 8),
-            "exit_fee": round(exit_fee, 8),
-            "is_partial": 0,
-            "closed_at": closed_at,
-        })
-        repo.insert_audit_event(AuditEvent(
-            actor=actor,
-            source=source,
-            event_type="position_closed",
-            entity_type="position",
-            entity_id=position_id,
-            before_state=json.dumps(audit_before, sort_keys=True),
-            after_state=json.dumps(audit_after, sort_keys=True),
-            message=audit_message,
-        ))
+        repo.insert_position_close_event(
+            {
+                "id": new_id(),
+                "position_id": position_id,
+                "symbol": row.get("symbol"),
+                "direction": row.get("direction"),
+                "execution_mode": row.get("execution_mode"),
+                "close_reason": reason,
+                "exit_price": exit_price,
+                "closed_qty": row["quantity"],
+                "realized_pnl": realized,
+                "entry_fee": round(entry_fee, 8),
+                "exit_fee": round(exit_fee, 8),
+                "is_partial": 0,
+                "closed_at": closed_at,
+            }
+        )
+        repo.insert_audit_event(
+            AuditEvent(
+                actor=actor,
+                source=source,
+                event_type="position_closed",
+                entity_type="position",
+                entity_id=position_id,
+                before_state=json.dumps(audit_before, sort_keys=True),
+                after_state=json.dumps(audit_after, sort_keys=True),
+                message=audit_message,
+            )
+        )
     row["closed_at"] = closed_at  # so the Serenity hook computes real hold_h
 
     audit_payload = {
         "actor": actor,
-        "source": source,        "event_type": "position_closed",
+        "source": source,
+        "event_type": "position_closed",
         "entity_type": "position",
         "entity_id": position_id,
         "before": audit_before,
@@ -700,12 +692,11 @@ def close_position(
         # The database event above is the durable audit authority. A secondary
         # JSONL sink outage after commit must not make the caller retry a close
         # that has already settled, but it remains visible in process logs.
-        logger.error(
-            "position close JSONL audit sink failed (%s)", type(exc).__name__
-        )
+        logger.error("position close JSONL audit sink failed (%s)", type(exc).__name__)
     # Notify operator of trade close (Telegram + toast)
     try:
         from aletheia.notifications import notify_operator
+
         pnl_emoji = "+" if realized is not None and realized > 0 else ""
         if realized is None:
             pnl_message = (
@@ -723,15 +714,8 @@ def close_position(
             )
         notify_operator(
             title=f"Position Closed: {row.get('symbol')}",
-            message=(
-                f"{row.get('direction')} → {reason} @ {exit_price:.4f}\n"
-                + pnl_message
-            ),
-            level=(
-                "warning"
-                if realized is None or realized < 0
-                else "info"
-            ),
+            message=(f"{row.get('direction')} → {reason} @ {exit_price:.4f}\n" + pnl_message),
+            level=("warning" if realized is None or realized < 0 else "info"),
             event_type="trade_notification",
             entity_type="position",
             entity_id=position_id,
@@ -835,10 +819,7 @@ def reduce_position(
         return {
             "error": "partial_reduce_unsupported_on_paper_internal",
             "position_id": position_id,
-            "hint": (
-                "active product supports full closes only; partial reduce is not "
-                "production-authorized"
-            ),
+            "hint": ("active product supports full closes only; partial reduce is not production-authorized"),
         }
     qty = float(row["quantity"])
     reduce_qty = float(reduce_qty)
@@ -869,31 +850,35 @@ def reduce_position(
     # position shrunk with no close event (or a close event with a stale quantity).
     with repo.transaction():
         update_position(position_id, quantity=new_qty, entry_fee=remaining_entry_fee)
-        repo.insert_position_close_event({
-            "id": new_id(),
-            "position_id": position_id,
-            "symbol": row.get("symbol"),
-            "direction": row.get("direction"),
-            "execution_mode": row.get("execution_mode"),
-            "close_reason": reason,
-            "exit_price": exit_price,
-            "closed_qty": reduce_qty,
-            "realized_pnl": realized,
-            "entry_fee": round(entry_fee_portion, 8),
-            "exit_fee": round(exit_fee, 8),
-            "is_partial": 1,
-            "closed_at": closed_at,
-        })
-    write_audit({
-        "actor": "system",
-        "source": "position_lifecycle",
-        "event_type": "position_reduced",
-        "entity_type": "position",
-        "entity_id": position_id,
-        "before": {"quantity": qty},
-        "after": {"quantity": new_qty, "reduced_qty": reduce_qty, "realized_pnl": realized, "reason": reason},
-        "message": f"Position {row.get('symbol')} reduced {reduce_qty}@{exit_price} ({reason}); realized={realized}",
-    })
+        repo.insert_position_close_event(
+            {
+                "id": new_id(),
+                "position_id": position_id,
+                "symbol": row.get("symbol"),
+                "direction": row.get("direction"),
+                "execution_mode": row.get("execution_mode"),
+                "close_reason": reason,
+                "exit_price": exit_price,
+                "closed_qty": reduce_qty,
+                "realized_pnl": realized,
+                "entry_fee": round(entry_fee_portion, 8),
+                "exit_fee": round(exit_fee, 8),
+                "is_partial": 1,
+                "closed_at": closed_at,
+            }
+        )
+    write_audit(
+        {
+            "actor": "system",
+            "source": "position_lifecycle",
+            "event_type": "position_reduced",
+            "entity_type": "position",
+            "entity_id": position_id,
+            "before": {"quantity": qty},
+            "after": {"quantity": new_qty, "reduced_qty": reduce_qty, "realized_pnl": realized, "reason": reason},
+            "message": f"Position {row.get('symbol')} reduced {reduce_qty}@{exit_price} ({reason}); realized={realized}",
+        }
+    )
     return {
         "reduced": True,
         "position_id": position_id,
@@ -937,9 +922,7 @@ def _realized_economics_value(row: dict) -> float | None:
     pnl = _finite_number(row.get("realized_pnl"))
     entry = _finite_number(row.get("entry_price"))
     exit_price = _finite_number(
-        row.get("current_price")
-        if row.get("current_price") is not None
-        else row.get("exit_price")
+        row.get("current_price") if row.get("current_price") is not None else row.get("exit_price")
     )
     quantity = _finite_number(row.get("quantity"))
     entry_fee = _finite_number(row.get("entry_fee"))
@@ -1015,6 +998,7 @@ def position_realized_pnl_view(row: dict) -> dict:
     # substitute for current verified realized PnL.  Keep the fields distinct
     # so a legacy Risk decision cannot silently appear as a verified outcome.
     from aletheia.maintenance.historical_accounting import historical_accounting_for_position
+
     historical = historical_accounting_for_position(str(row.get("id") or ""))
     if historical is not None:
         view["historical_accounting_status"] = historical["status"]
@@ -1102,9 +1086,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
     total_unrealized = sum(p["unrealized_pnl"] for p in positions)
     total_notional = sum(p["quantity"] * (p.get("current_price") or p["entry_price"]) for p in positions)
     today_closed = _closed_today(execution_mode)
-    total_today_realized, today_realized_unavailable_count = (
-        _complete_realized_total(today_closed)
-    )
+    total_today_realized, today_realized_unavailable_count = _complete_realized_total(today_closed)
 
     # Realized PnL: per-mode for the requested execution_mode (paper dashboard),
     # plus all-mode total for the exchange_account row.
@@ -1116,6 +1098,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
     total_realized, realized_unavailable_count = _complete_realized_total(mode_closed)
     all_realized, all_realized_unavailable_count = _complete_realized_total(all_closed)
     from aletheia.maintenance.historical_accounting import historical_accounting_summary
+
     historical_accounting = historical_accounting_summary(execution_mode=execution_mode)
     all_historical_accounting = historical_accounting_summary(execution_mode=None)
 
@@ -1147,6 +1130,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
     account_equity_usdt: float | None = None
     exchange_external_summary: list = []
     from aletheia.config.loader import load_config
+
     uses_external_exchange = load_config().exchange.paper_execution_mode != "paper_internal"
     sync_status = "not_applicable" if not uses_external_exchange else "unconfigured"
     if not uses_external_exchange:
@@ -1162,6 +1146,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
     else:
         try:
             from aletheia.portfolio import exchange_sync
+
             cached = exchange_sync.get_cached_state()
             sync_status = exchange_sync.status_for(cached)
             if cached is not None and sync_status in ("ok", "stale"):
@@ -1181,6 +1166,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
                 # back-compat int is derived from the precise list below.
                 try:
                     from aletheia.portfolio.position_reconciler import classify_positions
+
                     _recon = classify_positions()
                     exchange_external_summary = [i.to_dict() for i in _recon.external]
                     exchange_external_positions = len(_recon.external)
@@ -1217,6 +1203,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
     if uses_external_exchange:
         try:
             from aletheia.portfolio import exchange_sync
+
             unified = exchange_sync.get_unified_cached_state()
             if unified is not None:
                 uta_age = unified.get("age_seconds")
@@ -1243,15 +1230,11 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
             pass
 
     return {
-        "total_value_usdt": (
-            round(final_total_value, 4) if final_total_value is not None else None
-        ),
+        "total_value_usdt": (round(final_total_value, 4) if final_total_value is not None else None),
         "account_equity_usdt": account_equity_usdt,
         "position_notional_usdt": round(total_notional, 4),
         "unrealized_pnl": round(final_unrealized, 4),
-        "realized_pnl": (
-            round(total_realized, 4)
-        ),
+        "realized_pnl": (round(total_realized, 4)),
         "realized_pnl_complete": realized_unavailable_count == 0,
         "realized_pnl_unavailable_count": realized_unavailable_count,
         "all_realized_pnl": round(all_realized, 4),
@@ -1263,7 +1246,9 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         **historical_accounting,
         "all_historical_reconciled_pnl": all_historical_accounting["historical_reconciled_pnl"],
         "all_historical_reconciled_count": all_historical_accounting["historical_reconciled_count"],
-        "all_historical_reconciliation_unavailable_count": all_historical_accounting["historical_reconciliation_unavailable_count"],
+        "all_historical_reconciliation_unavailable_count": all_historical_accounting[
+            "historical_reconciliation_unavailable_count"
+        ],
         # #56 note (2026-07-08): `today_pnl` is a legacy misnomer — it's
         # `unrealized_pnl (lifetime for all currently-open positions) +
         # today_realized_pnl`. It is NOT PnL earned today alone. A card
@@ -1278,14 +1263,14 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         "today_pnl": round(final_today_pnl, 4),
         "positions_count": final_positions_count,
         "exposure_by_symbol": {k: round(v, 4) for k, v in final_exposure.items()},
-        "unrealized_by_symbol": {p["symbol"]: round(p["unrealized_pnl"], 4) for p in positions if p.get("unrealized_pnl")},
+        "unrealized_by_symbol": {
+            p["symbol"]: round(p["unrealized_pnl"], 4) for p in positions if p.get("unrealized_pnl")
+        },
         "today_pnl_by_symbol": today_pnl_by_symbol(execution_mode),
         "positions": positions,
         "today_realized_pnl": round(total_today_realized, 4),
         "today_realized_pnl_complete": today_realized_unavailable_count == 0,
-        "today_realized_pnl_unavailable_count": (
-            today_realized_unavailable_count
-        ),
+        "today_realized_pnl_unavailable_count": (today_realized_unavailable_count),
         # Exchange-account view (closes WEBUI_BACKEND_HANDOFF #3 / portfolio-sync-gap).
         "exchange_equity_usdt": exchange_equity_usdt,
         "exchange_state_age_sec": exchange_state_age_sec,
@@ -1313,23 +1298,13 @@ def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> Portfo
     # Row 1: mode-specific reading.  Local-paper snapshots are only persisted as
     # account-equity readings when the cash ledger is complete; they must never
     # silently fall back to position notional.
-    mode_positions = [p for p in summary.get("positions", [])
-                      if p.get("execution_mode") == execution_mode]
+    mode_positions = [p for p in summary.get("positions", []) if p.get("execution_mode") == execution_mode]
     local_unrealized = sum(p.get("unrealized_pnl", 0) for p in mode_positions)
-    local_notional = sum(
-        p["quantity"] * (p.get("current_price") or p["entry_price"])
-        for p in mode_positions
-    )
-    local_account_equity = (
-        summary.get("account_equity_usdt")
-        if execution_mode == "paper_internal"
-        else None
-    )
+    local_notional = sum(p["quantity"] * (p.get("current_price") or p["entry_price"]) for p in mode_positions)
+    local_account_equity = summary.get("account_equity_usdt") if execution_mode == "paper_internal" else None
     snap = PortfolioSnapshot(
         total_value_usdt=round(
-            local_account_equity
-            if local_account_equity is not None
-            else local_notional,
+            local_account_equity if local_account_equity is not None else local_notional,
             4,
         ),
         unrealized_pnl=round(local_unrealized, 4),
@@ -1341,9 +1316,7 @@ def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> Portfo
     if execution_mode != "paper_internal" or local_account_equity is not None:
         insert_portfolio_snapshot(snap)
     else:
-        logger.warning(
-            "Skipping local-paper account-equity snapshot: local ledger economics are incomplete."
-        )
+        logger.warning("Skipping local-paper account-equity snapshot: local ledger economics are incomplete.")
 
     # Row 2: exchange account — prefer UTA unified equity (multi-broker sum),
     # fallback to legacy single-broker Bitget cache.
@@ -1362,6 +1335,7 @@ def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> Portfo
     # to this — only the unified-sum path can misattribute another broker's balance.
     if uta_equity is not None:
         from aletheia.portfolio.exchange_sync import active_broker_view_complete
+
         _view_complete, _view_reason = active_broker_view_complete()
         if not _view_complete:
             logger.warning(
@@ -1454,8 +1428,13 @@ def _compute_holding_hours(opened_at: str | None, closed_at: str | None) -> floa
         return None
     try:
         from datetime import datetime as _dt
-        fmt_candidates = ["%Y-%m-%dT%H:%M:%S.%f+00:00", "%Y-%m-%dT%H:%M:%S+00:00",
-                          "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"]
+
+        fmt_candidates = [
+            "%Y-%m-%dT%H:%M:%S.%f+00:00",
+            "%Y-%m-%dT%H:%M:%S+00:00",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S",
+        ]
         t_open = t_close = None
         for fmt in fmt_candidates:
             try:

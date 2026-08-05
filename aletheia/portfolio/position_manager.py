@@ -14,6 +14,7 @@ Governance:
 """
 
 import logging
+import math
 from datetime import datetime, timezone
 
 from aletheia.config.loader import load_config
@@ -24,7 +25,6 @@ from aletheia.data.price_feed import (
 from aletheia.storage.repositories import list_all_open_positions
 from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exit_plan, save_exit_plan
 from aletheia.portfolio.pnl import close_position, _latest_price
-from aletheia.storage.repositories import list_positions
 logger = logging.getLogger("aletheia.position_manager")
 
 _PAPER_MODES = {"paper_internal", "bitget_demo", "binance_testnet", "okx_demo"}
@@ -629,14 +629,19 @@ def _decide_exit(position: dict, price: float, cfg) -> tuple[str, float] | None:
     if stop is not None:
         if (is_long and price <= stop) or (not is_long and price >= stop):
             return "stop_loss", stop
-    # Upside exit: an operator-placed limit exit (M3.5) REPLACES the take-profit — the
-    # Operator deliberately chose this exit level, so it overrides the auto/default TP
+    # Upside exit: an author-placed limit exit (M3.5) REPLACES the take-profit — the
+    # author deliberately chose this exit level, so it overrides the auto/default TP
     # (otherwise a lower default TP would pre-empt the chosen level on the way up).
     # Downside is still protected by the stop checked above → local OCO, stop wins ties.
     elp = position.get("exit_limit_price")
     if elp:
         elp = float(elp)
         if (is_long and price >= elp) or (not is_long and price <= elp):
+            # Attribute the fill to whoever authored the level. A human's manual limit
+            # must not be reported as AI exit discretion; NULL means the only author
+            # that existed before exit_limit_source was persisted (system_operator).
+            if position.get("exit_limit_source") == "human":
+                return "human_limit_exit", elp
             return "operator_limit_exit", elp
     elif tp is not None:
         if (is_long and price >= tp) or (not is_long and price <= tp):
@@ -1025,12 +1030,14 @@ def apply_operator_adjustment(
     'operator', re-arms the horizon wake when the horizon changed, syncs the exchange
     stop bracket, and writes an audit event. Returns a result dict.
     """
-    from aletheia.storage.repositories import update_position
+    from aletheia.storage.repositories import get_position, update_position
 
     cfg = load_config()
-    rows = list_positions(status="open", limit=500)
-    pos = next((p for p in rows if p["id"] == position_id), None)
-    if pos is None:
+    # Fetch by durable identity rather than scanning a capped list: the previous
+    # list_positions(status="open", limit=500) scan silently reported a legitimately
+    # open position as missing once more than 500 positions were open.
+    pos = get_position(position_id)
+    if pos is None or pos.get("status") != "open":
         return {"error": "position_not_found_or_not_open", "position_id": position_id}
 
     if new_stop is not None:
@@ -1097,6 +1104,7 @@ def proactive_exit(
     order_type: str = "market",
     limit_price: float | None = None,
     reason: str | None = None,
+    actor: str = "system_operator",
 ) -> dict:
     """Operator proactively exits a position ahead of its passive stop/target
     (exit-intent plan M3.5). ``market`` closes now through the routed path (which
@@ -1107,13 +1115,27 @@ def proactive_exit(
     A true resting reduce-only limit order + exchange-native OCO is a follow-on
     refinement; the locally-watched limit works uniformly across paper/demo/live and
     needs no untested broker order path.
-    """
-    from aletheia.storage.repositories import update_position
 
-    rows = list_positions(status="open", limit=500)
-    pos = next((p for p in rows if p["id"] == position_id), None)
-    if pos is None:
+    ``actor`` distinguishes the two legitimate authors of a proactive exit and is the
+    ONLY thing that decides attribution: ``system_operator`` is the AI's own
+    discretionary exit (``operator_close`` / ``operator_limit_exit``), ``human`` is an
+    owner-initiated dashboard close (``human_manual_close`` / ``human_limit_exit``).
+    A human close must never be recorded as AI exit discretion, because
+    ``analytics/exit_driver_comparison.py`` reads ``close_reason`` to judge whether
+    AI-discretionary exits beat deterministic rules.
+    """
+    from aletheia.storage.repositories import get_position, update_position
+
+    if actor not in ("system_operator", "human"):
+        return {"error": "unsupported_exit_actor", "position_id": position_id, "actor": actor}
+
+    # Fetch by durable identity: the previous list_positions(limit=500) scan silently
+    # failed to find a legitimately open position once more than 500 were open.
+    pos = get_position(position_id)
+    if pos is None or pos.get("status") != "open":
         return {"error": "position_not_found_or_not_open", "position_id": position_id}
+
+    is_human = actor == "human"
 
     if (order_type or "market") == "limit":
         # Issue #416: the locally-watched limit executor (evaluate_open_positions)
@@ -1132,30 +1154,46 @@ def proactive_exit(
                     "Use order_type='market' or close from the exchange UI."
                 ),
             }
-        if limit_price is None or float(limit_price) <= 0:
+        # Parse once, guarded: a non-numeric or non-finite level must never reach
+        # update_position and rest on the Position as an unexecutable exit trigger.
+        try:
+            level = float(limit_price)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
             return {"error": "limit_price_required", "position_id": position_id}
-        update_position(position_id, exit_limit_price=round(float(limit_price), 8))
+        if not math.isfinite(level) or level <= 0:
+            return {"error": "limit_price_required", "position_id": position_id}
+        level = round(level, 8)
+        # exit_limit_source is persisted with the level so the executor can pick the
+        # honest close_reason later, when the original caller is long gone.
+        update_position(
+            position_id,
+            exit_limit_price=level,
+            exit_limit_source=actor,
+        )
         logger.info(
-            "proactive_exit(limit): %s resting exit at %.6f reason=%s",
-            position_id, float(limit_price), (reason or "")[:80],
+            "proactive_exit(limit): %s resting exit at %.6f actor=%s reason=%s",
+            position_id, level, actor, (reason or "")[:80],
         )
         return {
             "pending_limit_exit": True,
             "position_id": position_id,
-            "limit_price": round(float(limit_price), 8),
+            "limit_price": level,
+            "exit_limit_source": actor,
         }
 
     # market: close now.
     price = _latest_price(pos["symbol"])
     result = close_position_routed(
         position_id,
-        reason="operator_close",
+        reason="human_manual_close" if is_human else "operator_close",
         fallback_exit_price=float(price) if price else None,
         decision_reasoning=reason,
-        decision_actor="system_operator",
-        decision_source="operator_proactive_exit",
+        decision_actor=actor,
+        decision_source="dashboard_manual_close" if is_human else "operator_proactive_exit",
+        allow_live=False,
     )
     return {
         "closed": bool(result.get("closed", True)) if isinstance(result, dict) else True,
         "position_id": position_id,
+        "close_reason": "human_manual_close" if is_human else "operator_close",
     }

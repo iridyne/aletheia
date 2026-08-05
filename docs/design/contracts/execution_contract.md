@@ -325,7 +325,8 @@ Proposal 的这一权限边界。
 
 ### 10.5 已知状态与边界
 
-- ⚠️ **live 人工平仓路径未实现**:`allow_live=True` 全库无调用点(`position_manager.py:53` 仅文档注释);前端无 force-close 按钮,无 `/api/positions/{id}/close` 端点。**当前 `live_limited` 仓位须在交易所界面手动平仓。** 未来加 close 端点**触信任边界**,须走 [trust §6](../../governance/policies/trust_and_change_control.md) change-control + 人工确认(`allow_live=True`)。
+- ✅ **paper/demo 手工单仓平仓已实现**:`POST /api/positions/{id}/close` + 前端 Open Positions 行内 Close 按钮 + Position Detail 抽屉 Manual Close 面板。`paper_internal` 走本地新鲜 mark；`*_demo` / `*_testnet` 走真实交易所 close 订单。市价立即平；限价挂 `exit_limit_price`（本地看守，OCO 与止损）。人工平仓写 `actor='human'`、`close_reason='human_manual_close'`（市价）或 `'human_limit_exit'`（限价触发），不污染 AI 出场统计（`exit_driver_comparison.py` 里 `human` 是独立 bucket）。新字段 `exit_limit_source TEXT`（`_ADDITIVE_COLUMNS`）记录谁挂了限价：`'human'` 或 `'system_operator'`；NULL = 历史行，向后兼容当 `system_operator` 处理。
+- ⚠️ **live 人工平仓路径仍未实现**:`POST /api/positions/{id}/close` 对 `*_live_limited` 返回 HTTP 409 `live_position_requires_exchange_close`，前端显示 "exchange only"。**live_limited 仓位仍须在交易所界面手动平仓。** 未来加 live close 路径**触信任边界**，须走 [trust §6](../../governance/policies/trust_and_change_control.md) change-control + `allow_live=True` 人工确认。
 - ⚠️ **live 对账仍受 paused**:`_run_reconciliation`(live-only,`scheduler.py:822`)仍有 paused 门,本次未改(live 默认禁用,且仅做收敛检测,优先级低)。若未来 live 常开,应一并对齐本节语义。
 
 **Spec claims**:`PL-PM-01~06`(mark/stop/TP/max_hold/ATR/audit) + `PL-PM-07`(paused 不挡保护性平仓) + `PL-PM-10~13`(fresh exact venue/market mark / 逐仓 close 与 market-aware 失败可见) + `PL-PCM-05/11~15`(dashboard 全量枚举、mark 预检、单仓 fallback 隔离与部分失败诚实返回)。
