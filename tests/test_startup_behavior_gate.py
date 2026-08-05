@@ -22,6 +22,7 @@ All scheduler/notification side effects are mocked — no real network here.
 
 import asyncio
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -261,6 +262,99 @@ def test_unknown_status_position_blocks_as_pending_close(tmp_path, monkeypatch):
     verdict = gate.evaluate_startup_gate()
     assert verdict["passed"] is False
     assert "pending_closes" in verdict["blockers"]
+
+
+def test_core_pending_close_claim_blocks_startup_behavior(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg()
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        id="position-awaiting-absence-verification",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=60_000.0,
+        execution_mode="bitget_demo",
+        pending_close_order_id="close-awaiting-absence-verification",
+        pending_close_status="position_absence_unverified",
+    )
+    repo.insert_position(position)
+
+    verdict = gate.evaluate_startup_gate()
+    pending_closes = next(
+        check for check in verdict["checks"] if check["name"] == "pending_closes"
+    )
+
+    assert verdict["passed"] is False
+    assert "pending_closes" in verdict["blockers"]
+    assert pending_closes["ok"] is False
+    assert "position_absence_unverified=1" in pending_closes["detail"]
+
+
+def test_stale_submitted_core_close_blocks_startup_behavior(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg()
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    repo.insert_position(Position(
+        id="position-stale-submitted-close",
+        symbol="ETH/USDT",
+        market_type="usdt_futures",
+        direction="short",
+        quantity=0.1,
+        entry_price=3_000.0,
+        execution_mode="bitget_demo",
+        pending_close_order_id="close-stale-submitted",
+        pending_close_status="submitted",
+        pending_close_requested_at=(
+            datetime.now(timezone.utc) - timedelta(hours=5)
+        ).isoformat(),
+    ))
+
+    verdict = gate.evaluate_startup_gate()
+    pending_closes = next(
+        check for check in verdict["checks"] if check["name"] == "pending_closes"
+    )
+
+    assert verdict["passed"] is False
+    assert pending_closes["ok"] is False
+    assert "stale:submitted=1" in pending_closes["detail"]
+
+
+def test_recent_submitted_core_close_does_not_block_startup_behavior(
+    tmp_path, monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg()
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    repo.insert_position(Position(
+        id="position-recent-submitted-close",
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=150.0,
+        execution_mode="bitget_demo",
+        pending_close_order_id="close-recent-submitted",
+        pending_close_status="submitted",
+        pending_close_requested_at=datetime.now(timezone.utc).isoformat(),
+    ))
+
+    verdict = gate.evaluate_startup_gate()
+    pending_closes = next(
+        check for check in verdict["checks"] if check["name"] == "pending_closes"
+    )
+
+    assert pending_closes["ok"] is True, verdict
 
 
 def test_open_position_alone_does_not_block(tmp_path, monkeypatch):

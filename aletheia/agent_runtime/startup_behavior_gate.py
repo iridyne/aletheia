@@ -232,18 +232,77 @@ def _check_pending_orders(cfg, state_store) -> tuple[bool, str]:
 
 
 def _check_pending_closes(cfg, state_store) -> tuple[bool, str]:
-    """No unexplained pending closes: a position in 'unknown' status is one the
-    reconciler could not confirm — a close left in limbo. Normal OPEN positions
-    are expected during trading and do NOT block."""
-    from aletheia.storage import sqlite as _sqlite
+    """Block unexplained core close claims without treating normal flight as failure.
 
+    The legacy persistence projection still uses ps_positions.status=unknown.
+    The authoritative trading ledger instead keeps an open Position plus
+    pending_close_status. Reconciliation-required states block immediately;
+    ordinary pending/submitted/partial states block only after Position Manager's
+    existing stale threshold.
+    """
     try:
-        unknown = _sqlite.get_db().execute(
+        from aletheia.portfolio.position_manager import (
+            _OPEN_CLOSE_STATES,
+            _PENDING_CLOSE_STALE_HOURS,
+            _pending_close_age_hours,
+        )
+        from aletheia.storage import sqlite as _sqlite
+
+        db = _sqlite.get_db()
+        unknown = db.execute(
             "SELECT count(*) FROM ps_positions WHERE status='unknown'"
         ).fetchone()[0]
+        placeholders = ",".join("?" for _ in _OPEN_CLOSE_STATES)
+        core_rows = db.execute(
+            f"""
+            SELECT pending_close_status, pending_close_requested_at
+            FROM positions
+            WHERE status='open'
+              AND pending_close_status IN ({placeholders})
+            """,
+            tuple(sorted(_OPEN_CLOSE_STATES)),
+        ).fetchall()
+
+        immediate_reconciliation_states = {
+            "submission_unknown",
+            "materialization_missing",
+            "position_absence_unverified",
+            "overfilled",
+        }
+        core_problems: dict[str, int] = {}
+        for row in core_rows:
+            status = str(row["pending_close_status"])
+            if status in immediate_reconciliation_states:
+                label = status
+            else:
+                age_hours = _pending_close_age_hours(
+                    row["pending_close_requested_at"]
+                )
+                if (
+                    age_hours is None
+                    or age_hours < _PENDING_CLOSE_STALE_HOURS
+                ):
+                    continue
+                label = f"stale:{status}"
+            core_problems[label] = core_problems.get(label, 0) + 1
+
+        problems = []
         if unknown:
-            return False, f"{unknown} position(s) in 'unknown' status (pending close)"
-        return True, "no pending closes"
+            problems.append(
+                f"{unknown} legacy position(s) in 'unknown' status"
+            )
+        if core_problems:
+            detail = ", ".join(
+                f"{status}={count}"
+                for status, count in sorted(core_problems.items())
+            )
+            problems.append(
+                f"{sum(core_problems.values())} core pending close(s) "
+                f"require reconciliation ({detail})"
+            )
+        if problems:
+            return False, "; ".join(problems)
+        return True, "no unexplained pending closes"
     except Exception as e:
         return False, f"pending-close check failed: {e}"
 
