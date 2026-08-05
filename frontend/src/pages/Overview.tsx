@@ -19,12 +19,22 @@ import { humanize, fmtTimestamp } from '../lib/format'
  * -> what needs YOU (right rail: pending proposals = the one human-in-loop control point,
  * risk state, system health). Bloomberg dense zoning + OpenAlice agent-narrative-primary.
  */
+export function operatorMutationError(action: string, error: unknown): string {
+  const detail = error instanceof Error && error.message
+    ? error.message
+    : typeof error === 'string' && error
+      ? error
+      : 'request failed'
+  return `${action}: ${detail}`
+}
+
 export default function Overview() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [collectorsExpanded, setCollectorsExpanded] = useState(false)
   const [coverageExpanded, setCoverageExpanded] = useState(false)
   const [modeExpanded, setModeExpanded] = useState(false)
+  const [gatewayCommandError, setGatewayCommandError] = useState('')
   const chdRef = useRef<HTMLDivElement>(null)
   const coverageRef = useRef<HTMLDivElement>(null)
   const modeRef = useRef<HTMLDivElement>(null)
@@ -74,8 +84,19 @@ export default function Overview() {
     staleTime: 14000,
     enabled: usesExternalExchange,
   })
-  const pauseMut = useMutation({ mutationFn: api.pause, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
-  const resumeMut = useMutation({ mutationFn: api.resume, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
+  const pauseMut = useMutation({
+    mutationFn: api.pause,
+    onMutate: () => setGatewayCommandError(''),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }),
+    onError: error => setGatewayCommandError(operatorMutationError('Pause gateway failed', error)),
+  })
+  const resumeMut = useMutation({
+    mutationFn: api.resume,
+    onMutate: () => setGatewayCommandError(''),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }),
+    onError: error => setGatewayCommandError(operatorMutationError('Resume gateway failed', error)),
+  })
+  const gatewayCommandPending = pauseMut.isPending || resumeMut.isPending
 
   const s = (status as any) ?? {}
   const running = !!s.gateway_running
@@ -169,10 +190,11 @@ export default function Overview() {
             <div className="flex items-center justify-between mb-2">
               <h3>System</h3>
               <div className="flex gap-2">
-                <Button className="btn-control" onClick={() => pauseMut.mutate()} disabled={paused || !running}>⏸</Button>
-                <Button className="btn-control" variant="secondary" onClick={() => resumeMut.mutate()} disabled={!paused}>▶</Button>
+                <Button className="btn-control" onClick={() => pauseMut.mutate()} disabled={gatewayCommandPending || paused || !running}>⏸</Button>
+                <Button className="btn-control" variant="secondary" onClick={() => resumeMut.mutate()} disabled={gatewayCommandPending || !paused}>▶</Button>
               </div>
             </div>
+            {gatewayCommandError && <div className="lever-err mb-2" role="alert">{gatewayCommandError}</div>}
             <table className="status-board">
               <tbody>
                 <StatusRow label="Gateway" light={running ? 'green' : 'red'} value={running ? 'up' : 'down'} />
