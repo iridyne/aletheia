@@ -7,7 +7,10 @@ from urllib.parse import urlencode
 
 from aletheia.net import httpx_client
 from aletheia.exchanges.bitget.auth import build_headers
-from aletheia.exchanges.submission_errors import SubmissionResponseUnknownError
+from aletheia.exchanges.submission_errors import (
+    ClosePositionAbsentError,
+    SubmissionResponseUnknownError,
+)
 from aletheia.config.secrets import get_secret, redact
 from aletheia.data.symbols import to_canonical
 
@@ -429,6 +432,14 @@ class BitgetClient:
             ):
                 raise SubmissionResponseUnknownError(
                     "Bitget create-order acknowledgement was not a recognizable rejection"
+                )
+            # Bitget documents both codes across its futures account families.
+            # Scope this classification to hedge-mode closes: the response proves
+            # only that this submission was rejected, not why local exposure and
+            # the venue disagree or whether any earlier close filled.
+            if order.hold_side and response_code in {"22002", "25227"}:
+                raise ClosePositionAbsentError(
+                    f"Bitget close rejected: no position available (code={response_code})"
                 )
             raise RuntimeError(f"Bitget order error: {response_message}")
 

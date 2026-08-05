@@ -95,6 +95,11 @@ Rules:
   required local Fill/Position chain is incomplete; automatic resubmission is
   forbidden. The detailed recovery contract is authoritative in
   `docs/design/contracts/execution_contract.md`.
+- `position_absence_unverified` is limited to `Position.pending_close_status`:
+  the venue rejected a close because it reported no matching exposure, while the
+  local Position is still open. It retains the original close claim, forbids
+  resubmission, and requires exact reconciliation; it is not a Proposal/Order
+  success state and is never fill or outcome evidence.
 - Do not use status changes as a substitute for missing records. If execution
   occurs, an order must exist. If risk evaluation occurs, a risk decision must
   exist.

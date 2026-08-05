@@ -899,7 +899,13 @@ def test_market_aware_settings_describes_wake_only_authority():
         status="implemented",
     ),
 )
-def test_stale_pending_close_escalates_without_creating_a_replacement(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "pending_close_status",
+    ("submission_unknown", "position_absence_unverified"),
+)
+def test_stale_pending_close_escalates_without_creating_a_replacement(
+    tmp_path, monkeypatch, pending_close_status,
+):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.portfolio.position_manager import evaluate_open_positions
     from aletheia.storage import repositories as repo
@@ -908,7 +914,8 @@ def test_stale_pending_close_escalates_without_creating_a_replacement(tmp_path, 
     position = Position(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=1.0, entry_price=100.0, execution_mode="bitget_demo",
-        pending_close_order_id="unresolved-close", pending_close_status="submission_unknown",
+        pending_close_order_id="unresolved-close",
+        pending_close_status=pending_close_status,
         pending_close_requested_at=(datetime.now(timezone.utc) - timedelta(hours=5)).isoformat(),
     )
     repo.insert_position(position)

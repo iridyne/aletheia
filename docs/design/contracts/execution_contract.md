@@ -235,7 +235,8 @@ broker/environment/execution-mode 这类非秘密配置身份生成，绝不读�
 每个重要状态转换写 `data/logs/audit.jsonl`,最小字段见 [trust §1.4](../../governance/policies/trust_and_change_control.md):`timestamp/actor/source/event_type/entity_type/entity_id/message`,可选 `before/after`。`entity_id` 必须指向实际被改的行;审计消息不得含密钥/签名。
 
 执行边界跨过后，SQLite 中已提交的 Order/Fill/Position/Proposal 或禁止重发的
-`submission_unknown`/`materialization_missing` 是权威事实；此后的 JSONL 审计属于次要写入。
+`submission_unknown`/`materialization_missing`/`position_absence_unverified` 是权威事实；此后的
+JSONL 审计属于次要写入。
 审计写失败只能记录不含异常正文的 warning（仅异常类型），不得把已提交的
 `submitted`/`executed`/未决状态改写成 `error`，也不得把失败抛给调用方触发重发。
 三家 exchange broker 的 entry 与 close 路径统一使用
@@ -299,6 +300,12 @@ manager 必须重新取得精确新鲜 mark。最终结果和 wake fingerprint �
 - 交易所腿不可跳过:demo 模式仍走真实交易所 close;`paper_internal` 本地撮合。
 - **保护性平仓价格不可伪造**：触发判断和 `paper_internal` close Fill 只使用 Position 精确 `exchange + symbol + market_type` 的新鲜 mark。单仓路由即使收到 `fallback_exit_price`，本地分支也必须忽略它并在 manager 内重新取价。交易所仓由 `execution_mode` 固定 venue（OKX / Bitget / Binance），只有 `paper_internal` 使用配置的 market-data venue。内存 exact-instrument cache 必须小于 90 秒；SQLite 只能回退到同 venue、同 `spot` / `perp`（兼容旧 `usdt_futures` 拼写）且不超过 120 秒的 snapshot。不得用 `Position.current_price`、symbol-only、跨 venue、跨 spot/perp 或过期价格触发/生成退出成交。
 - **逐仓失败必须可见**：一个仓位的 mark 查询、market-aware 评估或 close 异常不得中止其余仓位；`evaluate_open_positions()` 返回稳定的 per-position `errors`，close 异常另计入 `failed_close_count`。`closed=0` 且 close 全失败不能被调度层当作健康空跑。
+- **交易所报告无仓位不能触发重发或伪造成交**：Bitget hedge close 返回确定性的无仓位错误码
+  `22002`/`25227` 时，本次 Order 保持确认拒绝的 `error`，Position 保持 `open` 并以
+  `pending_close_status=position_absence_unverified` 留住原 durable claim。后续 manager cycle 不得新建
+  Close Order 或再次触达交易所；既有只读 position reconciler 负责按 broker/account/instrument 的完整视图
+  查明先前成交、外部关闭、身份错配或证据不可用。该响应自身绝不创建 Fill、realized PnL 或 eligible
+  Outcome，超过 pending-close 时限仍走一次性 reconciliation-required escalation。可执行检查：`PL-RX-22`。
 - **dashboard 批量平仓先完整预检**：`close_local_positions_batch()` 先无上限枚举目标 `paper_internal` 仓位，并在 manager 内为每个仓位取得上述 exact mark；任一 mark 缺失或读取失败，在第一笔 close 前整体拒绝。预检全部通过后才逐仓物化；若之后出现非行情执行错误，响应必须同时列出 `closed_position_ids` 与逐仓 `failed`，不得把部分成功显示成 close-all 成功。
 
 ### 10.3 paused / kill_switch 对平仓的语义(核心不变量)
