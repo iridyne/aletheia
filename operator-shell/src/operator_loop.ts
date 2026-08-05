@@ -39,6 +39,8 @@ interface OperatorLoopDeps {
 export class OperatorLoop {
   private static readonly RECOVERY_INTENT_CHAR_BUDGET = 1200
   private static readonly RECOVERY_BRANCH_FETCH_LIMIT = 12
+  private static readonly RECOVERY_CONTEXT_EVENT_LIMIT = 20
+  private static readonly RECOVERY_REPAIR_EVENT_LIMIT = 500
   private static readonly SUPERVISION_SCAN_INTERVAL_MS = 30_000
   private static readonly SUBSYSTEM_REVIEW_INTERVAL_MS = 5 * 60_000
   private static readonly OPERATOR_PERMISSION_ORDER: Record<string, number> = {
@@ -2475,6 +2477,20 @@ export class OperatorLoop {
     }
   }
 
+  private seedAttemptedRepairDecisionIds(events: PersistedOperatorEvent[]): void {
+    for (const event of events) {
+      const decisionId = event.related_entity_id?.trim()
+      if (
+        event.event_type === 'repair_attempted' &&
+        event.source === 'operator_loop' &&
+        event.related_entity_type === 'repair' &&
+        decisionId
+      ) {
+        this.attemptedRepairDecisionIds.add(decisionId)
+      }
+    }
+  }
+
   private previousUtcDate(): string {
     return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
   }
@@ -2495,7 +2511,7 @@ export class OperatorLoop {
       return
     }
 
-    const [operatorStatus, sessionDetail, sessionSummaries, recentTasks, queuedTasks, failedTasks, recentEvents] = await Promise.all([
+    const [operatorStatus, sessionDetail, sessionSummaries, recentTasks, queuedTasks, failedTasks, persistedEvents] = await Promise.all([
       this.backendClient.getOperatorStatus(),
       this.backendClient.getOperatorSession(this.config.mainSessionId).catch(() => null),
       this.backendClient.getOperatorSessions(50).catch(() => []),
@@ -2507,8 +2523,9 @@ export class OperatorLoop {
       // supersession rule before it can replay after restart.
       this.backendClient.getOperatorTasks('queued', 500).catch(() => []),
       this.backendClient.getOperatorTasks('failed').catch(() => []),
-      this.backendClient.getOperatorEvents(20).catch(() => []),
+      this.backendClient.getOperatorEvents(OperatorLoop.RECOVERY_REPAIR_EVENT_LIMIT).catch(() => []),
     ])
+    const recentEvents = persistedEvents.slice(0, OperatorLoop.RECOVERY_CONTEXT_EVENT_LIMIT)
 
     const descendantSummaries = this.descendantSessionSummaries(sessionSummaries)
     const prioritizedChildSessionSummaries = (() => {
@@ -2557,6 +2574,7 @@ export class OperatorLoop {
     this.lastError = recoveryLastError
     this.lastSuccessAt = operatorStatus.last_success_at
     this.seedCompactedDates(sessionDetail?.artifacts || [])
+    this.seedAttemptedRepairDecisionIds(persistedEvents)
     const activeBranch = this.sessionRuntime.getActiveBranch()
     const orderedBranches = this.sessionRuntime.getBranches()
     const recoveryBranches =
