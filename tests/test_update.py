@@ -142,6 +142,32 @@ def test_apply_pull_failure_graceful(tmp_path, monkeypatch):
     assert any(e.get("event_type") == "update_failed" for e in read_jsonl("audit.jsonl"))
 
 
+def test_cli_update_apply_restarts_by_default(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier
+
+    seen = {}
+
+    def apply(*, restart):
+        seen["restart"] = restart
+        return {
+            "applied": True,
+            "old_commit": "old111",
+            "new_commit": "new222",
+            "deps_reinstalled": False,
+        }
+
+    monkeypatch.setattr(applier, "apply_update", apply)
+    from typer.testing import CliRunner
+    from aletheia.cli.update_cmd import update_app
+
+    result = CliRunner().invoke(update_app, ["apply", "--yes"])
+
+    assert result.exit_code == 0
+    assert seen["restart"] is True
+    assert "Gateway restarted and readiness verified." in result.output
+
+
 def test_cli_update_check_smoke(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import applier
@@ -276,19 +302,22 @@ def test_apply_restart_restores_old_release_on_restart_failure(tmp_path, monkeyp
     assert resets == ["old111"]
 
 
-def test_apply_restart_does_not_build_unchanged_frontend(tmp_path, monkeypatch):
+def test_apply_restart_rebuilds_frontend_without_source_changes(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import applier
     _stub_clean_pull(monkeypatch)
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
-    monkeypatch.setattr(applier, "_build_frontend", lambda: pytest.fail("frontend should not build"))
-    monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": True})
+    calls = []
+    monkeypatch.setattr(applier, "_build_frontend", lambda: calls.append("build") or {"ok": True})
+    monkeypatch.setattr(applier, "_activate_frontend_build", lambda: calls.append("activate") or True)
+    monkeypatch.setattr(applier, "_restart_gateway", lambda: calls.append("restart") or {"ok": True})
 
     result = applier.apply_update(restart=True)
 
     assert result["applied"] is True
-    assert result["frontend_built"] is False
+    assert result["frontend_built"] is True
     assert result["restart_completed"] is True
+    assert calls == ["build", "activate", "restart"]
 
 
 def test_apply_restart_rolls_back_when_frontend_build_fails(tmp_path, monkeypatch):
