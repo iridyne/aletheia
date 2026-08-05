@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { RISK_FUTURES_DEMO, RISK_FUTURES_LIVE, RISK_MARGIN } from '../risk/riskFields'
 import { AdvancedTab } from './AdvancedTab'
 
 describe('AdvancedTab', () => {
@@ -33,5 +34,20 @@ describe('AdvancedTab', () => {
     expect(html).not.toContain('secret')
     expect(html).not.toContain('token')
     expect(html).not.toContain('refresh')
+  })
+
+  it('classifies every rendered futures-risk control as editable above', () => {
+    const fields = [...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN]
+    const risk = Object.fromEntries(fields.map(field => [field.key, field.min]))
+    const html = renderToStaticMarkup(<AdvancedTab settings={{ risk }} />)
+
+    for (const field of fields) {
+      const row = html.match(new RegExp(
+        `<tr><td class="mono">risk\\.${field.key}</td>[\\s\\S]*?</tr>`,
+      ))?.[0]
+      expect(row, `missing Configuration Matrix row for risk.${field.key}`).toBeDefined()
+      expect(row).toContain('editable above')
+      expect(row).not.toContain('config.yaml')
+    }
   })
 })

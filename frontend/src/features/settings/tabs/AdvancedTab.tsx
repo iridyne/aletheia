@@ -1,5 +1,8 @@
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
-import { RISK_BOOLS, RISK_CORR, RISK_DEMO, RISK_FAMILY_GATE, RISK_LIVE, RISK_SHARED } from '../risk/riskFields'
+import {
+  RISK_BOOLS, RISK_CORR, RISK_DEMO, RISK_FAMILY_GATE, RISK_FUTURES_DEMO,
+  RISK_FUTURES_LIVE, RISK_LIVE, RISK_MARGIN, RISK_SHARED,
+} from '../risk/riskFields'
 
 export const ADVANCED_SECTION = {
   id: 'configuration-matrix',
@@ -47,6 +50,9 @@ function ConfigCoverageCard({ settings }: { settings: unknown }) {
     ...RISK_BOOLS.map(f => `risk.${f.key}`),
     ...RISK_CORR.map(f => `risk.${f.key}`),
     ...RISK_FAMILY_GATE.map(f => `risk.${f.key}`),
+    ...RISK_FUTURES_LIVE.map(f => `risk.${f.key}`),
+    ...RISK_FUTURES_DEMO.map(f => `risk.${f.key}`),
+    ...RISK_MARGIN.map(f => `risk.${f.key}`),
     'trading.default_stop_loss_pct', 'trading.default_take_profit_pct', 'trading.max_position_hold_hours',
     'trading.slippage_bps', 'trading.execution_fee_pct', 'trading.min_confidence_to_trade', 'trading.auto_adopt_enabled',
     'trading.trail_enabled', 'trading.trail_atr_mult', 'trading.trail_pct', 'trading.breakeven_trigger_pct', 'trading.exchange_tpsl_enabled',
