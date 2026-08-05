@@ -20,6 +20,7 @@ import type {
   OperatorHeartbeat,
   OperatorMessageCreate,
   PersistedOperatorCommand,
+  PersistedOperatorEvent,
   OperatorSessionDetail,
   OperatorSessionSummary,
   OperatorRecommendation,
@@ -5598,6 +5599,100 @@ test('operator loop materializes and executes low-risk repair decisions through 
   assert.ok(calls.createdTasks.some(task => task.task_type === 'diagnose_system_health'))
   assert.ok(calls.createdTasks.some(task => task.task_type === 'create_diagnostic_report'))
   assert.ok(calls.updatedTasks.some(item => item.payload.status === 'completed'))
+})
+
+test('operator loop does not repeat a persisted repair attempt after restart recovery', async () => {
+  const snapshot = makeSnapshot({
+    health: {
+      status: 'degraded',
+      issues: ['market_data_stale:45m'],
+    },
+  })
+  const firstRuntime = makeFakeBackend(snapshot)
+  const firstLoop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'Research',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: firstRuntime.backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(firstRuntime.backend),
+      eventRouter: new EventRouter(firstRuntime.backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  assert.equal(await firstLoop.runOnce(), true)
+  assert.equal(firstRuntime.calls.executedCommands.length, 1)
+  const firstAttempt = firstRuntime.calls.createdEvents.find(
+    event => event.event_type === 'repair_attempted',
+  )
+  assert.ok(firstAttempt)
+  const persistedAttempt = {
+    id: 'event-repair-attempted-1',
+    runtime_id: null,
+    event_type: firstAttempt.event_type,
+    severity: firstAttempt.severity,
+    source: firstAttempt.source,
+    session_id: firstAttempt.session_id || null,
+    task_id: firstAttempt.task_id || null,
+    related_entity_type: firstAttempt.related_entity_type || null,
+    related_entity_id: firstAttempt.related_entity_id || null,
+    payload: firstAttempt.payload || {},
+    created_at: new Date().toISOString(),
+  } satisfies PersistedOperatorEvent
+
+  const restartedRuntime = makeFakeBackend(snapshot)
+  const newerContextEvents = Array.from({ length: 20 }, (_, index) => ({
+    id: `event-context-${index}`,
+    runtime_id: null,
+    event_type: 'operator_observed',
+    severity: 'info',
+    source: 'operator_loop',
+    session_id: 'operator-main',
+    task_id: null,
+    related_entity_type: null,
+    related_entity_id: null,
+    payload: {},
+    created_at: new Date(Date.now() - index * 1_000).toISOString(),
+  } satisfies PersistedOperatorEvent))
+  const persistedEvents = [...newerContextEvents, persistedAttempt]
+  restartedRuntime.backend.getOperatorEvents = async (limit = 50) => persistedEvents.slice(0, limit)
+  const restartedLoop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'Research',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: restartedRuntime.backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(restartedRuntime.backend),
+      eventRouter: new EventRouter(restartedRuntime.backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  await restartedLoop.recoverState()
+  assert.equal(await restartedLoop.runOnce(), true)
+
+  assert.equal(restartedRuntime.calls.executedCommands.length, 0)
+  assert.equal(restartedRuntime.calls.createdArtifacts.length, 0)
+  assert.equal(restartedRuntime.calls.createdSessions.length, 0)
+  assert.deepEqual(
+    restartedRuntime.calls.createdEvents.filter(event => event.event_type.startsWith('repair_')),
+    [],
+  )
 })
 
 test('operator loop parents repair-decision sessions under the persisted active branch', async () => {
