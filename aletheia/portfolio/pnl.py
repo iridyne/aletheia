@@ -154,7 +154,7 @@ def _account_environment(execution_mode: str) -> str:
     return "unknown"
 
 
-def _build_exchange_upnl_index() -> dict[tuple[str, str], float]:
+def _build_exchange_upnl_index() -> dict[tuple[str, str, str], float]:
     """Build exact (canonical_symbol, broker_id, direction) exchange uPnL matches.
 
     Legacy exchange caches lack broker identity, so they are deliberately not
@@ -199,6 +199,22 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
     """
     positions = list_all_open_positions()
     exc_upnl_index = _build_exchange_upnl_index()
+    from aletheia.data.symbols import to_canonical
+
+    # A venue Position is an aggregate exposure. Without a direct broker
+    # Position identity, one aggregate uPnL cannot be allocated independently to
+    # multiple local Position rows that share the same current match key.
+    local_match_counts: dict[tuple[str, str, str], int] = {}
+    for position in positions:
+        direction = position["direction"]
+        norm_dir = "long" if direction in ("long", "buy") else "short"
+        match_key = (
+            to_canonical(position["symbol"]),
+            position.get("execution_mode") or "",
+            norm_dir,
+        )
+        local_match_counts[match_key] = local_match_counts.get(match_key, 0) + 1
+
     updated = []
     for p in positions:
         price = _latest_price(p["symbol"])
@@ -209,11 +225,16 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
         direction = p["direction"]
         norm_dir = "long" if direction in ("long", "buy") else "short"
         # Exchange uPnL is authoritative only for an exact broker-scoped match.
-        # Fall back to the local estimate when its identity is unavailable/ambiguous.
-        from aletheia.data.symbols import to_canonical
-        exc_val = exc_upnl_index.get((
+        # A single aggregate remote value is also ambiguous when more than one
+        # local Position shares the key; never copy the full value to every row.
+        match_key = (
             to_canonical(p["symbol"]), p.get("execution_mode") or "", norm_dir,
-        ))
+        )
+        exc_val = (
+            exc_upnl_index.get(match_key)
+            if local_match_counts.get(match_key) == 1
+            else None
+        )
         if exc_val is not None:
             upnl = exc_val
         elif direction in ("long", "buy"):
