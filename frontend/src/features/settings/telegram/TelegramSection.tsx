@@ -30,6 +30,112 @@ function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : "Request failed";
 }
 
+interface TelegramDraftInputs {
+	chatIdsInput: string;
+	summaryHourInput: string;
+	dndStartInput: string;
+	dndEndInput: string;
+}
+
+type TelegramDraftError = {
+	ok: false;
+	field: keyof TelegramDraftInputs;
+	error: string;
+};
+
+interface TelegramDraftValue {
+	allowed_chat_ids: number[];
+	daily_summary_hour_cst: number;
+	dnd_start_hour: number;
+	dnd_end_hour: number;
+}
+
+type TelegramDraftResult =
+	| { ok: true; value: TelegramDraftValue }
+	| TelegramDraftError;
+
+function parseHourDraft(
+	field: keyof TelegramDraftInputs,
+	label: string,
+	rawValue: string,
+): { ok: true; value: number } | TelegramDraftError {
+	const value = rawValue.trim();
+	if (!/^\d+$/.test(value)) {
+		return {
+			ok: false,
+			field,
+			error: `${label} must be a whole hour from 0 to 23.`,
+		};
+	}
+	const hour = Number(value);
+	if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+		return {
+			ok: false,
+			field,
+			error: `${label} must be a whole hour from 0 to 23.`,
+		};
+	}
+	return { ok: true, value: hour };
+}
+
+export function parseTelegramDraft({
+	chatIdsInput,
+	summaryHourInput,
+	dndStartInput,
+	dndEndInput,
+}: TelegramDraftInputs): TelegramDraftResult {
+	const chatIds: number[] = [];
+	for (const rawToken of chatIdsInput.split(",")) {
+		const token = rawToken.trim();
+		if (!token) continue;
+		if (!/^[+-]?\d+$/.test(token)) {
+			return {
+				ok: false,
+				field: "chatIdsInput",
+				error: "Each Chat ID must be a complete signed integer.",
+			};
+		}
+		const chatId = Number(token);
+		if (!Number.isSafeInteger(chatId)) {
+			return {
+				ok: false,
+				field: "chatIdsInput",
+				error: "Each Chat ID must be a safe signed integer.",
+			};
+		}
+		chatIds.push(chatId);
+	}
+
+	const summaryHour = parseHourDraft(
+		"summaryHourInput",
+		"Summary hour",
+		summaryHourInput,
+	);
+	if (!summaryHour.ok) return summaryHour;
+	const dndStart = parseHourDraft(
+		"dndStartInput",
+		"DND start hour",
+		dndStartInput,
+	);
+	if (!dndStart.ok) return dndStart;
+	const dndEnd = parseHourDraft(
+		"dndEndInput",
+		"DND end hour",
+		dndEndInput,
+	);
+	if (!dndEnd.ok) return dndEnd;
+
+	return {
+		ok: true,
+		value: {
+			allowed_chat_ids: chatIds,
+			daily_summary_hour_cst: summaryHour.value,
+			dnd_start_hour: dndStart.value,
+			dnd_end_hour: dndEnd.value,
+		},
+	};
+}
+
 export function TelegramSection({
 	settings,
 	qc,
@@ -46,10 +152,10 @@ export function TelegramSection({
 	const [chatIdsInput, setChatIdsInput] = useState("");
 	const [notifyFills, setNotifyFills] = useState(true);
 	const [notifySummary, setNotifySummary] = useState(true);
-	const [summaryHour, setSummaryHour] = useState(8);
+	const [summaryHourInput, setSummaryHourInput] = useState("8");
 	const [dndEnabled, setDndEnabled] = useState(false);
-	const [dndStart, setDndStart] = useState(23);
-	const [dndEnd, setDndEnd] = useState(7);
+	const [dndStartInput, setDndStartInput] = useState("23");
+	const [dndEndInput, setDndEndInput] = useState("7");
 	const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(
 		null,
 	);
@@ -60,27 +166,30 @@ export function TelegramSection({
 		setChatIdsInput((telegram.allowed_chat_ids ?? []).join(", "));
 		setNotifyFills(telegram.notify_trade_fills !== false);
 		setNotifySummary(telegram.notify_daily_summary !== false);
-		setSummaryHour(telegram.daily_summary_hour_cst ?? 8);
+		setSummaryHourInput(String(telegram.daily_summary_hour_cst ?? 8));
 		setDndEnabled(!!telegram.dnd_enabled);
-		setDndStart(telegram.dnd_start_hour ?? 23);
-		setDndEnd(telegram.dnd_end_hour ?? 7);
+		setDndStartInput(String(telegram.dnd_start_hour ?? 23));
+		setDndEndInput(String(telegram.dnd_end_hour ?? 7));
 	}, [settings]);
+
+	const draft = parseTelegramDraft({
+		chatIdsInput,
+		summaryHourInput,
+		dndStartInput,
+		dndEndInput,
+	});
+	const inputErrorId = "telegram-input-error";
+	const summaryHourLabel = summaryHourInput.trim() || "--";
 
 	const mutation = useMutation({
 		mutationFn: () => {
-			const ids = chatIdsInput
-				.split(",")
-				.map((value) => parseInt(value.trim()))
-				.filter((value) => !Number.isNaN(value));
+			if (!draft.ok) throw new Error(draft.error);
 			return api.updateTelegramConfig({
 				enabled,
-				allowed_chat_ids: ids,
 				notify_trade_fills: notifyFills,
 				notify_daily_summary: notifySummary,
-				daily_summary_hour_cst: summaryHour,
 				dnd_enabled: dndEnabled,
-				dnd_start_hour: dndStart,
-				dnd_end_hour: dndEnd,
+				...draft.value,
 			});
 		},
 		onSuccess: () => {
@@ -125,6 +234,12 @@ export function TelegramSection({
 								setChatIdsInput(event.target.value);
 								setMessage(null);
 							}}
+							aria-invalid={!draft.ok && draft.field === "chatIdsInput"}
+							aria-describedby={
+								!draft.ok && draft.field === "chatIdsInput"
+									? inputErrorId
+									: undefined
+							}
 							className="mono"
 						/>
 					</label>
@@ -152,7 +267,7 @@ export function TelegramSection({
 				<div className="settings-action-row settings-action-row-start">
 					<Toggle
 						checked={notifySummary}
-						label={`Daily PnL summary (${String(summaryHour).padStart(2, "0")}:00 CST)`}
+						label={`Daily PnL summary (${summaryHourLabel.padStart(2, "0")}:00 CST)`}
 						onChange={(value) => {
 							setNotifySummary(value);
 							setMessage(null);
@@ -167,11 +282,17 @@ export function TelegramSection({
 								type="number"
 								min={0}
 								max={23}
-								value={summaryHour}
+								value={summaryHourInput}
 								onChange={(event) => {
-									setSummaryHour(Number.parseInt(event.target.value, 10) || 8);
+									setSummaryHourInput(event.target.value);
 									setMessage(null);
 								}}
+								aria-invalid={!draft.ok && draft.field === "summaryHourInput"}
+								aria-describedby={
+									!draft.ok && draft.field === "summaryHourInput"
+										? inputErrorId
+										: undefined
+								}
 							/>
 						</label>
 					</div>
@@ -194,11 +315,17 @@ export function TelegramSection({
 								type="number"
 								min={0}
 								max={23}
-								value={dndStart}
+								value={dndStartInput}
 								onChange={(event) => {
-									setDndStart(Number.parseInt(event.target.value, 10) || 23);
+									setDndStartInput(event.target.value);
 									setMessage(null);
 								}}
+								aria-invalid={!draft.ok && draft.field === "dndStartInput"}
+								aria-describedby={
+									!draft.ok && draft.field === "dndStartInput"
+										? inputErrorId
+										: undefined
+								}
 							/>
 						</label>
 						<label>
@@ -207,19 +334,30 @@ export function TelegramSection({
 								type="number"
 								min={0}
 								max={23}
-								value={dndEnd}
+								value={dndEndInput}
 								onChange={(event) => {
-									setDndEnd(Number.parseInt(event.target.value, 10) || 7);
+									setDndEndInput(event.target.value);
 									setMessage(null);
 								}}
+								aria-invalid={!draft.ok && draft.field === "dndEndInput"}
+								aria-describedby={
+									!draft.ok && draft.field === "dndEndInput"
+										? inputErrorId
+										: undefined
+								}
 							/>
 						</label>
+					</div>
+				)}
+				{!draft.ok && (
+					<div className="save-err-banner" id={inputErrorId} role="alert">
+						{draft.error}
 					</div>
 				)}
 				<div className="settings-action-row">
 					<button
 						onClick={() => mutation.mutate()}
-						disabled={mutation.isPending}
+						disabled={mutation.isPending || !draft.ok}
 					>
 						{mutation.isPending ? "Saving…" : "Save"}
 					</button>

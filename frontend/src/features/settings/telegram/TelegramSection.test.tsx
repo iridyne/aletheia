@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { TelegramSection } from "./TelegramSection";
+import { parseTelegramDraft, TelegramSection } from "./TelegramSection";
 import { TELEGRAM_SECTION } from "./telegramState";
 
 function renderTelegram(health: {
@@ -19,6 +19,44 @@ function renderTelegram(health: {
 }
 
 describe("TelegramSection", () => {
+	it("preserves zero hours and complete signed chat IDs", () => {
+		expect(
+			parseTelegramDraft({
+				chatIdsInput: "123, -456, +789",
+				summaryHourInput: "0",
+				dndStartInput: "0",
+				dndEndInput: "0",
+			}),
+		).toEqual({
+			ok: true,
+			value: {
+				allowed_chat_ids: [123, -456, 789],
+				daily_summary_hour_cst: 0,
+				dnd_start_hour: 0,
+				dnd_end_hour: 0,
+			},
+		});
+	});
+
+	it.each([
+		["123abc", "8", "23", "7", "Chat ID"],
+		["123", "", "23", "7", "Summary hour"],
+		["123", "8", "24", "7", "DND start hour"],
+	])(
+		"rejects malformed Telegram drafts without coercing them",
+		(chatIdsInput, summaryHourInput, dndStartInput, dndEndInput, errorField) => {
+			const result = parseTelegramDraft({
+				chatIdsInput,
+				summaryHourInput,
+				dndStartInput,
+				dndEndInput,
+			});
+
+			expect(result.ok).toBe(false);
+			if (!result.ok) expect(result.error).toContain(errorField);
+		},
+	);
+
 	it("keeps the registered deep-link descriptor", () => {
 		expect(TELEGRAM_SECTION).toEqual({
 			id: "telegram",
