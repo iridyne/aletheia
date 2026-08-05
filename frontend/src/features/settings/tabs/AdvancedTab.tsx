@@ -1,5 +1,8 @@
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
-import { RISK_BOOLS, RISK_CORR, RISK_DEMO, RISK_FAMILY_GATE, RISK_LIVE, RISK_SHARED } from '../risk/riskFields'
+import {
+  RISK_LEGACY_POLICY_KEYS, RISK_POLICY_BOOLS, RISK_POLICY_LIVE_FIELDS,
+  RISK_POLICY_NUM_FIELDS,
+} from '../risk/riskFields'
 
 export const ADVANCED_SECTION = {
   id: 'configuration-matrix',
@@ -28,6 +31,7 @@ function flattenConfig(value: unknown, prefix = ''): Array<{ key: string; value:
 }
 
 function ConfigCoverageCard({ settings }: { settings: unknown }) {
+  const policyFields = [...RISK_POLICY_NUM_FIELDS, ...RISK_POLICY_BOOLS]
   const controlled = new Set([
     'agent.permission_mode', 'agent.autonomous_learning', 'agent.bypass_distress_gate',
     'remote_control.enabled',
@@ -41,12 +45,9 @@ function ConfigCoverageCard({ settings }: { settings: unknown }) {
     'exchange.mode', 'exchange.enabled_markets.spot', 'exchange.enabled_markets.usdt_futures', 'exchange.paper_execution_mode',
     'live.state',
     'risk.symbol_filter_mode', 'risk.symbol_list',
-    ...RISK_LIVE.map(f => `risk.${f.key}`),
-    ...RISK_DEMO.map(f => `risk.${f.key}`),
-    ...RISK_SHARED.map(f => `risk.${f.key}`),
-    ...RISK_BOOLS.map(f => `risk.${f.key}`),
-    ...RISK_CORR.map(f => `risk.${f.key}`),
-    ...RISK_FAMILY_GATE.map(f => `risk.${f.key}`),
+    ...policyFields.map(field => `risk.demo.${field.key}`),
+    ...policyFields.map(field => `risk.live.${field.key}`),
+    ...RISK_POLICY_LIVE_FIELDS.map(field => `risk.live.${field.key}`),
     'trading.default_stop_loss_pct', 'trading.default_take_profit_pct', 'trading.max_position_hold_hours',
     'trading.slippage_bps', 'trading.execution_fee_pct', 'trading.min_confidence_to_trade', 'trading.auto_adopt_enabled',
     'trading.trail_enabled', 'trading.trail_atr_mult', 'trading.trail_pct', 'trading.breakeven_trigger_pct', 'trading.exchange_tpsl_enabled',
@@ -96,6 +97,9 @@ function ConfigCoverageCard({ settings }: { settings: unknown }) {
     'update.last_', 'update.current_commit',
     'live.first_live_confirmation_done', 'tunnel.credentials_path', 'tunnel.cloudflared_path', 'tunnel.metrics_port',
   ]
+  const legacyRiskPolicyKeys = new Set(
+    RISK_LEGACY_POLICY_KEYS.map(key => `risk.${key}`),
+  )
 
   const rows = flattenConfig(settings)
     .filter(r => !r.key.includes('api_key') && !r.key.includes('oauth_token') && !r.key.includes('oauth_refresh'))
@@ -121,9 +125,11 @@ function ConfigCoverageCard({ settings }: { settings: unknown }) {
                 <td className="mono">{row.key}</td>
                 <td className="mono" style={{ maxWidth: '520px', wordBreak: 'break-word' }}>{formatConfigValue(row.value)}</td>
                 <td>
-                  {controlled.has(row.key)
-                    ? <span className="badge badge-green">editable above</span>
-                    : readOnlyPrefixes.some(prefix => row.key === prefix || row.key.startsWith(prefix))
+                  {legacyRiskPolicyKeys.has(row.key)
+                    ? <span className="badge badge-muted">legacy compatibility / not authoritative</span>
+                    : controlled.has(row.key)
+                      ? <span className="badge badge-green">editable above</span>
+                      : readOnlyPrefixes.some(prefix => row.key === prefix || row.key.startsWith(prefix))
                       ? <span className="badge badge-muted">read-only visible here</span>
                       : <span className="badge badge-muted">read-only / config.yaml</span>}
                 </td>
