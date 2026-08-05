@@ -315,6 +315,12 @@ manager 必须重新取得精确新鲜 mark。最终结果和 wake fingerprint �
   Close Order 或再次触达交易所；既有只读 position reconciler 负责按 broker/account/instrument 的完整视图
   查明先前成交、外部关闭、身份错配或证据不可用。该响应自身绝不创建 Fill、realized PnL 或 eligible
   Outcome，超过 pending-close 时限仍走一次性 reconciliation-required escalation。可执行检查：`PL-RX-22`。
+- **启动准入必须读取权威 Position 主账**：Startup Behavior Gate 的 `pending_closes` 检查不能只读取
+  遗留 `ps_positions.status=unknown` 投影；它还必须读取 open `positions.pending_close_status`。
+  `submission_unknown`、`materialization_missing`、`position_absence_unverified`、`overfilled` 立即阻挡新的
+  AI decision/trading loop；普通 `pending` / `submitted` / partial 状态只在超过 Position Manager 既有
+  stale 时限后阻挡，刚提交的正常在途 close 不得被误报。Layered pause 不得停止 Position Manager、
+  Order reconciliation 或 verified-exit settlement，因而未决状态仍可在阻挡期间收敛。可执行检查：`PL-RX-23`。
 - **dashboard 批量平仓先完整预检**：`close_local_positions_batch()` 先无上限枚举目标 `paper_internal` 仓位，并在 manager 内为每个仓位取得上述 exact mark；任一 mark 缺失或读取失败，在第一笔 close 前整体拒绝。预检全部通过后才逐仓物化；若之后出现非行情执行错误，响应必须同时列出 `closed_position_ids` 与逐仓 `failed`，不得把部分成功显示成 close-all 成功。
 
 ### 10.3 paused / kill_switch 对平仓的语义(核心不变量)

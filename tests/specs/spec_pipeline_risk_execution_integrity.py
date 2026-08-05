@@ -7,9 +7,10 @@ exchange network.
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 import sqlite3
 import threading
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -1956,3 +1957,69 @@ def test_position_absence_claim_survives_restart_without_close_resubmission(
     assert [row["id"] for row in repo.list_orders(limit=20)] == [close_order.id]
     assert repo.list_fills(limit=20) == []
     assert "position_absence_unverified" in position_manager._OPEN_CLOSE_STATES
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-RX-23",
+        "pipeline_risk_execution_integrity",
+        "§12 startup admission for unresolved close claims",
+        "L2c",
+        "Startup admission reads authoritative core Position close claims, blocks "
+        "reconciliation-required or stale states, and does not misclassify a recent "
+        "submitted close as failed.",
+        status="implemented",
+    )
+)
+def test_startup_gate_reads_core_pending_close_truth(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.agent_runtime.startup_behavior_gate import _check_pending_closes
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    repo.insert_position(Position(
+        id="recent-submitted-close",
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=150.0,
+        execution_mode="bitget_demo",
+        pending_close_order_id="close-recent",
+        pending_close_status="submitted",
+        pending_close_requested_at=datetime.now(timezone.utc).isoformat(),
+    ))
+
+    allowed, detail = _check_pending_closes(None, None)
+    assert allowed is True, detail
+
+    repo.insert_position(Position(
+        id="absence-unverified-close",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=60_000.0,
+        execution_mode="bitget_demo",
+        pending_close_order_id="close-absence-unverified",
+        pending_close_status="position_absence_unverified",
+    ))
+    repo.insert_position(Position(
+        id="stale-submitted-close",
+        symbol="ETH/USDT",
+        market_type="usdt_futures",
+        direction="short",
+        quantity=0.1,
+        entry_price=3_000.0,
+        execution_mode="bitget_demo",
+        pending_close_order_id="close-stale",
+        pending_close_status="submitted",
+        pending_close_requested_at=(
+            datetime.now(timezone.utc) - timedelta(hours=5)
+        ).isoformat(),
+    ))
+
+    allowed, detail = _check_pending_closes(None, None)
+    assert allowed is False
+    assert "position_absence_unverified=1" in detail
+    assert "stale:submitted=1" in detail
