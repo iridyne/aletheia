@@ -3,6 +3,15 @@ import { HEALTH_MONITORING_SECTION, WEBHOOK_SECTION } from "../features/settings
 import { MODEL_PROVIDERS_SECTION } from "../features/settings/model-providers/modelProviderState";
 import { ADVANCED_SECTION } from "../features/settings/tabs/AdvancedTab";
 import {
+	INFERENCE_ADMISSION_SECTION,
+	LEARNING_SECTION,
+	LLM_COST_SECTION,
+	PERMISSION_SECTION,
+	REGIME_SECTION,
+	SCHEDULER_SECTION,
+	SERENITY_SECTION,
+} from "../features/settings/tabs/AgentModelsTab";
+import {
 	APP_SECTION,
 	DATA_EXPORT_SECTION,
 	DATA_RETENTION_SECTION,
@@ -27,7 +36,14 @@ import CSS from "../index.css?raw";
 import SRC from "./Settings.tsx?raw";
 
 const EXTRACTED_DESCRIPTORS = [
+	{ symbol: "PERMISSION_SECTION", descriptor: PERMISSION_SECTION },
+	{ symbol: "LEARNING_SECTION", descriptor: LEARNING_SECTION },
+	{ symbol: "REGIME_SECTION", descriptor: REGIME_SECTION },
+	{ symbol: "SERENITY_SECTION", descriptor: SERENITY_SECTION },
+	{ symbol: "SCHEDULER_SECTION", descriptor: SCHEDULER_SECTION },
 	{ symbol: "MODEL_PROVIDERS_SECTION", descriptor: MODEL_PROVIDERS_SECTION },
+	{ symbol: "INFERENCE_ADMISSION_SECTION", descriptor: INFERENCE_ADMISSION_SECTION },
+	{ symbol: "LLM_COST_SECTION", descriptor: LLM_COST_SECTION },
 	{ symbol: "HEALTH_MONITORING_SECTION", descriptor: HEALTH_MONITORING_SECTION },
 	{ symbol: "TELEGRAM_SECTION", descriptor: TELEGRAM_SECTION },
 	{ symbol: "WEBHOOK_SECTION", descriptor: WEBHOOK_SECTION },
@@ -49,7 +65,19 @@ const EXTRACTED_DESCRIPTORS = [
 ] as const;
 
 const EXTRACTED_COMPONENTS = [
-	{ component: "ModelProvidersSection", descriptors: [MODEL_PROVIDERS_SECTION] },
+	{
+		component: "AgentModelsTab",
+		descriptors: [
+			PERMISSION_SECTION,
+			LEARNING_SECTION,
+			REGIME_SECTION,
+			SERENITY_SECTION,
+			SCHEDULER_SECTION,
+			MODEL_PROVIDERS_SECTION,
+			INFERENCE_ADMISSION_SECTION,
+			LLM_COST_SECTION,
+		],
+	},
 	{
 		component: "HealthNotificationsTab",
 		descriptors: [HEALTH_MONITORING_SECTION, TELEGRAM_SECTION, WEBHOOK_SECTION],
