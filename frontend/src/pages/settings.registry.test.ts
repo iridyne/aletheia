@@ -12,6 +12,13 @@ import {
 	SERENITY_SECTION,
 } from "../features/settings/tabs/AgentModelsTab";
 import {
+	CAPITAL_EVENTS_SECTION,
+	EXCHANGE_CONNECTION_SECTION,
+	PAPER_ACCOUNT_SECTION,
+	PAPER_PARAMETERS_SECTION,
+	TRADING_MODE_SECTION,
+} from "../features/settings/tabs/ExecutionTab";
+import {
 	APP_SECTION,
 	DATA_EXPORT_SECTION,
 	DATA_RETENTION_SECTION,
@@ -44,6 +51,11 @@ const EXTRACTED_DESCRIPTORS = [
 	{ symbol: "MODEL_PROVIDERS_SECTION", descriptor: MODEL_PROVIDERS_SECTION },
 	{ symbol: "INFERENCE_ADMISSION_SECTION", descriptor: INFERENCE_ADMISSION_SECTION },
 	{ symbol: "LLM_COST_SECTION", descriptor: LLM_COST_SECTION },
+	{ symbol: "EXCHANGE_CONNECTION_SECTION", descriptor: EXCHANGE_CONNECTION_SECTION },
+	{ symbol: "TRADING_MODE_SECTION", descriptor: TRADING_MODE_SECTION },
+	{ symbol: "PAPER_PARAMETERS_SECTION", descriptor: PAPER_PARAMETERS_SECTION },
+	{ symbol: "CAPITAL_EVENTS_SECTION", descriptor: CAPITAL_EVENTS_SECTION },
+	{ symbol: "PAPER_ACCOUNT_SECTION", descriptor: PAPER_ACCOUNT_SECTION },
 	{ symbol: "HEALTH_MONITORING_SECTION", descriptor: HEALTH_MONITORING_SECTION },
 	{ symbol: "TELEGRAM_SECTION", descriptor: TELEGRAM_SECTION },
 	{ symbol: "WEBHOOK_SECTION", descriptor: WEBHOOK_SECTION },
@@ -76,6 +88,16 @@ const EXTRACTED_COMPONENTS = [
 			MODEL_PROVIDERS_SECTION,
 			INFERENCE_ADMISSION_SECTION,
 			LLM_COST_SECTION,
+		],
+	},
+	{
+		component: "ExecutionTab",
+		descriptors: [
+			EXCHANGE_CONNECTION_SECTION,
+			TRADING_MODE_SECTION,
+			PAPER_PARAMETERS_SECTION,
+			CAPITAL_EVENTS_SECTION,
+			PAPER_ACCOUNT_SECTION,
 		],
 	},
 	{
@@ -133,9 +155,9 @@ const EXTRACTED_BY_SYMBOL = new Map<string, { id: string; title: string }>(
 /** Titles registered in SETTINGS_INDEX. */
 function registeredTitles(): string[] {
 	const start = SRC.indexOf("const SETTINGS_INDEX");
-	const end = SRC.indexOf("/** Anchor id for a registered section title");
+	const end = SRC.indexOf("function matchesSearch");
 	expect(start, "SETTINGS_INDEX declaration not found").toBeGreaterThan(-1);
-	expect(end, "sectionSlug helper not found").toBeGreaterThan(start);
+	expect(end, "matchesSearch helper not found").toBeGreaterThan(start);
 	const block = SRC.slice(start, end);
 	return [...block.matchAll(/\{ title: (?:'([^']+)'|([A-Z_]+)\.title)/g)].map(
 		(match) => match[1] ?? EXTRACTED_BY_SYMBOL.get(match[2])?.title ?? "",
@@ -145,7 +167,7 @@ function registeredTitles(): string[] {
 /** Slugs registered in SETTINGS_INDEX. */
 function registeredSlugs(): string[] {
 	const start = SRC.indexOf("const SETTINGS_INDEX");
-	const end = SRC.indexOf("/** Anchor id for a registered section title");
+	const end = SRC.indexOf("function matchesSearch");
 	const block = SRC.slice(start, end);
 	return [...block.matchAll(/slug: (?:'([^']+)'|([A-Z_]+)\.id)/g)].map(
 		(match) => match[1] ?? EXTRACTED_BY_SYMBOL.get(match[2])?.id ?? "",
