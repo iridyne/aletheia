@@ -976,29 +976,31 @@ def adjust_stop(position_id: str, new_stop_price: float) -> dict:
     update_position(position_id, stop_price=round(float(new_stop_price), 8))
     logger.info("adjust_stop: %s new_stop=%.6f", position_id, new_stop_price)
 
-    cfg = load_config()
-    if cfg.trading.exchange_tpsl_enabled and pos.get("execution_mode") in ("bitget_demo", "bitget_live_limited"):
-        try:
-            from aletheia.execution.bitget_broker import replace_exchange_stop
-            replace_exchange_stop(position_id, float(new_stop_price))
-        except Exception as e:
-            logger.warning("exchange stop sync failed pos=%s: %s", position_id, e)
+    try:
+        from aletheia.execution.stops import replace_exchange_protective_stop
+        exchange_synced = replace_exchange_protective_stop(
+            position_id, float(new_stop_price),
+        )
+    except Exception as e:
+        logger.warning("exchange stop sync failed pos=%s: %s", position_id, e)
+        exchange_synced = False
 
-    return {"updated": True, "position_id": position_id, "new_stop_price": new_stop_price}
+    return {
+        "updated": True,
+        "position_id": position_id,
+        "new_stop_price": new_stop_price,
+        "exchange_synced": exchange_synced,
+    }
 
 
 def _sync_exchange_stop(position_id: str, new_stop: float, position: dict, cfg) -> bool:
-    """Push a revised stop to the exchange TPSL bracket (bitget). Returns True if synced."""
-    if cfg.trading.exchange_tpsl_enabled and position.get("execution_mode") in (
-        "bitget_demo", "bitget_live_limited",
-    ):
-        try:
-            from aletheia.execution.bitget_broker import replace_exchange_stop
-            replace_exchange_stop(position_id, float(new_stop))
-            return True
-        except Exception as e:
-            logger.warning("exchange stop sync failed pos=%s: %s", position_id, e)
-    return False
+    """Replace the broker-native stop and report only a confirmed dispatch."""
+    try:
+        from aletheia.execution.stops import replace_exchange_protective_stop
+        return replace_exchange_protective_stop(position_id, float(new_stop))
+    except Exception as e:
+        logger.warning("exchange stop sync failed pos=%s: %s", position_id, e)
+        return False
 
 
 def _stop_beyond_catastrophic(position: dict, new_stop: float, cfg) -> bool:

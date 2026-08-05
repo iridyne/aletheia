@@ -115,6 +115,7 @@ class Position:
     unrealized_pnl: float = 0.0
     leverage: int | None = None
     mark_price: float = 0.0  # current exchange mark price (for honest valuation)
+    ctime_ms: int | None = None  # exchange-reported position open time
 
 
 def _bitget_int(value) -> int:
@@ -533,6 +534,10 @@ class BitgetClient:
             # exist in this response, so the old mapping silently produced 0.0 —
             # kept as a defensive fallback only.
             entry = p.get("openPriceAvg") or p.get("averageOpenPrice") or 0
+            try:
+                ctime_ms = int(p.get("cTime") or p.get("openTime") or 0) or None
+            except (TypeError, ValueError):
+                ctime_ms = None
             positions.append(Position(
                 symbol=p.get("symbol", ""),
                 side=p.get("holdSide", ""),
@@ -541,6 +546,7 @@ class BitgetClient:
                 unrealized_pnl=float(p.get("unrealizedPL", 0) or 0),
                 leverage=int(lev) if lev not in (None, "") else None,
                 mark_price=float(p.get("markPrice", 0) or 0),
+                ctime_ms=ctime_ms,
             ))
         return positions
 

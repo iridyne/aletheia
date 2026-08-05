@@ -355,6 +355,22 @@ def test_adopted_positions_carry_synthetic_chain(tmp_path, monkeypatch):
     assert order["status"] == "filled"
 
 
+def test_adopt_preserves_exchange_open_time(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio.position_reconciler import adopt_position
+
+    opened_at_ms = 1784044800000
+    result = adopt_position({
+        "symbol": "BTCUSDT", "side": "long", "quantity": 0.1,
+        "entry_price": 60000.0, "cTime": opened_at_ms,
+    }, "demo")
+
+    position = repo._select_one("positions", result["position_id"])
+    assert position["opened_at"] == datetime.fromtimestamp(
+        opened_at_ms / 1000, tz=timezone.utc,
+    ).isoformat()
+
+
 def test_adopt_live_position_is_human_only_by_execution_mode(tmp_path, monkeypatch):
     """An adopted LIVE position must get execution_mode=bitget_live_limited, which
     position_manager skips — so live stays human-only by construction."""

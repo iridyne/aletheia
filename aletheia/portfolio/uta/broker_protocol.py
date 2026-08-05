@@ -22,6 +22,7 @@ class BrokerPosition:
     unrealized_pnl: float
     leverage: int = 1
     mark_price: float = 0.0
+    opened_at_ms: int | None = None  # exchange-reported position open time
 
 
 @runtime_checkable

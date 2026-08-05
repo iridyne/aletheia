@@ -75,16 +75,17 @@ def place_exchange_protective_orders(position: dict) -> dict:
     return {}
 
 
-def replace_exchange_protective_stop(position_id: str, new_stop_price: float) -> None:
+def replace_exchange_protective_stop(position_id: str, new_stop_price: float) -> bool:
     """Broker-agnostic dispatch: replace the exchange-side protective SL for a
-    position whose trailed stop just tightened.
+    position whose trailed stop just tightened. Returns True only after a
+    supported broker replacement call completes; otherwise returns False.
 
     #139 fix: the trail loop previously only reached Bitget — okx_demo and
     binance_testnet positions could see their DB stop_price tighten while the
     exchange bracket stayed at the OLD level, so a gateway outage would let the
     original (looser) stop close them. The trail feature is gated behind the
     default-off `exchange_tpsl_enabled` flag; when the operator opts in, all
-    three brokers must honour it consistently. Non-fatal.
+    supported brokers must honour it consistently. Non-fatal.
 
     Gating repeats the same rules as `place_exchange_protective_orders`:
       1. cfg.trading.exchange_tpsl_enabled True (default False)
@@ -95,18 +96,20 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
 
     row = _repo._select_one("positions", position_id)
     if row is None:
-        return
+        return False
     cfg = load_config()
     if not cfg.trading.exchange_tpsl_enabled:
-        return
+        return False
 
     mode = row.get("execution_mode") or ""
     if mode in ("bitget_demo", "bitget_live_limited"):
         from aletheia.execution.bitget_broker import replace_exchange_stop
         replace_exchange_stop(position_id, new_stop_price)
+        return True
     elif mode == "okx_demo":
         from aletheia.execution.okx_broker import replace_okx_exchange_stop
         replace_okx_exchange_stop(position_id, new_stop_price)
+        return True
     elif mode == "binance_testnet":
         # Binance USDT-M client currently exposes only place_order (no
         # place_stop / cancel_algo yet). The DB stop_price is still tightened by
@@ -121,3 +124,4 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
         )
     # Live modes (okx_live_limited / binance_live_limited): deliberately no-op —
     # placing an exchange order from an autonomous trail update is forbidden.
+    return False

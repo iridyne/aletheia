@@ -92,6 +92,19 @@ async def test_get_positions(fake_http):
 
 
 @pytest.mark.anyio
+async def test_get_positions_preserves_exchange_open_time(fake_http):
+    fake_http.routes = {"/api/v2/mix/position/all-position": {
+        "code": "00000",
+        "data": [{
+            "symbol": "BTCUSDT", "holdSide": "long", "total": "0.5",
+            "averageOpenPrice": "60000", "openTime": "1784044800000",
+        }],
+    }}
+    positions = await bg.BitgetClient(mode="demo").get_positions()
+    assert positions[0].ctime_ms == 1784044800000
+
+
+@pytest.mark.anyio
 async def test_get_open_orders(fake_http):
     fake_http.routes = {"/api/v2/spot/trade/unfilled-orders": {
         "code": "00000",
