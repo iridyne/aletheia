@@ -902,7 +902,10 @@ function ClosePositionPanel({
 
 	const limitMutation = useMutation({
 		mutationFn: (price: number) =>
-			api.closePosition(position.id, { order_type: "limit", limit_price: price }),
+			api.closePosition(position.id, {
+				order_type: "limit",
+				limit_price: price,
+			}),
 		onSuccess: (_data, price) => {
 			qc.invalidateQueries({ queryKey: ["positions"] });
 			toast("success", `Limit exit set at ${fmtNum(price)} USDT`);
