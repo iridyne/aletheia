@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
 const MASTER_API_TARGET = 'http://127.0.0.1:8787'
@@ -50,7 +51,7 @@ export default defineConfig(() => {
   const outputDir = process.env.VITE_BUILD_OUT_DIR?.trim()
     || path.resolve(__dirname, '../aletheia/dashboard_static')
   return {
-    plugins: [react(), readonlyMasterApi(apiTarget)],
+    plugins: [react(), tailwindcss(), readonlyMasterApi(apiTarget)],
     build: {
       outDir: outputDir,
       emptyOutDir: true,
