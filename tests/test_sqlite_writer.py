@@ -188,6 +188,29 @@ def test_cross_process_writer_permit_times_out_before_sqlite_busy(
     sqlite_store.reset_db()
 
 
+def test_windows_file_lock_backend_serializes_cross_process_writes(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    calls = []
+
+    class FakeMsvcrt:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        @staticmethod
+        def locking(file_fd, mode, length):
+            calls.append((file_fd, mode, length))
+
+    monkeypatch.setattr(sqlite_store, "fcntl", None)
+    monkeypatch.setattr(sqlite_store, "msvcrt", FakeMsvcrt)
+    try:
+        sqlite_store.acquire_write_lock(timeout=0.05)
+    finally:
+        sqlite_store.release_write_lock()
+        sqlite_store.reset_db()
+
+    assert [call[1] for call in calls] == [FakeMsvcrt.LK_NBLCK, FakeMsvcrt.LK_UNLCK]
+
+
 def test_writer_lane_rejects_before_admission_when_queue_remains_full(
     tmp_path,
     monkeypatch,
