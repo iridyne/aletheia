@@ -377,6 +377,41 @@ def test_resume_gate_allows_when_one_provider_usable(tmp_path, monkeypatch):
     assert load_config().runtime.paused is False
 
 
+def test_resume_gate_keeps_connectivity_owned_pause(tmp_path, monkeypatch):
+    """A usable LLM cannot release a pause owned by exchange connectivity."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import resume_gate
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
+    cfg.runtime.paused = True
+    cfg.runtime.paused_by_connectivity = True
+    save_config(cfg)
+    probe_called = False
+
+    async def usable_probe(_cfg):
+        nonlocal probe_called
+        probe_called = True
+        return {"any_usable": True, "checked": 1, "results": []}
+
+    monkeypatch.setattr(resume_gate, "probe_llm_providers_at_startup", usable_probe)
+
+    result = asyncio.run(resume_gate.resume_if_llm_available(actor="system", source="test"))
+
+    assert result["allowed"] is False
+    assert result["reason"] == "exchange_connectivity_pause"
+    assert result["blockers"] == ["exchange_connectivity"]
+    assert probe_called is False
+    persisted = load_config()
+    assert persisted.runtime.paused is True
+    assert persisted.runtime.paused_by_connectivity is True
+    from aletheia.files.jsonl import read_jsonl
+
+    events = [e for e in read_jsonl("audit.jsonl") if e.get("event_type") == "gateway_resume_blocked"]
+    assert len(events) == 1
+    assert "exchange_connectivity_pause" in events[0]["message"]
+
+
 def test_resume_gate_keeps_startup_behavior_blocker_paused(tmp_path, monkeypatch):
     """A usable LLM cannot override an active Startup Behavior Gate blocker.
 
