@@ -30,6 +30,7 @@ from typing import Any, TypeVar
 from aletheia.model_provider.base import ModelRequest, ModelResponse, StreamChunk
 
 logger = logging.getLogger("aletheia.model_provider.broker")
+_DEFAULT_EXECUTOR_SHUTDOWN_TIMEOUT_SEC = 4.0
 
 T = TypeVar("T")
 
@@ -333,6 +334,12 @@ class InferenceBroker:
             if pending:
                 loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
             loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.run_until_complete(
+                # AbstractEventLoop's stub omits the Python 3.12+ concrete timeout.
+                loop.shutdown_default_executor(
+                    timeout=_DEFAULT_EXECUTOR_SHUTDOWN_TIMEOUT_SEC  # pyright: ignore[reportCallIssue]
+                )
+            )
             loop.close()
             self._loop = None
 
