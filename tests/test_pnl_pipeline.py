@@ -103,6 +103,7 @@ def test_exchange_upnl_is_scoped_to_its_broker_and_duplicate_is_rejected(db, mon
         ))
     monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "age_seconds": 0.0,
         "positions": [
             {"broker_id": "bitget_demo", "symbol": "BTC/USDT", "market_type": "perp", "side": "long", "unrealized_pnl": 7.0},
             {"broker_id": "okx_demo", "symbol": "BTC/USDT", "market_type": "usdt_futures", "side": "long", "unrealized_pnl": -3.0},
@@ -149,6 +150,7 @@ def test_exchange_upnl_market_type_mismatch_falls_back_to_local_estimate(
     ))
     monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "age_seconds": 0.0,
         "positions": [{
             "broker_id": "okx_demo",
             "symbol": "BTC/USDT",
@@ -204,6 +206,7 @@ def test_exchange_aggregate_upnl_is_not_reused_across_local_positions(
     ))
     monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "age_seconds": 0.0,
         "positions": [{
             "broker_id": "bitget_demo",
             "symbol": "BTC/USDT",
@@ -225,6 +228,54 @@ def test_exchange_aggregate_upnl_is_not_reused_across_local_positions(
     assert stored_b is not None
     assert stored_a["unrealized_pnl"] == 10.0
     assert stored_b["unrealized_pnl"] == -20.0
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PM-18",
+        "pipeline_position_manager",
+        "§1 exchange uPnL cache health",
+        "L2c",
+        "Exchange uPnL may be assigned and persisted only from a fresh unified "
+        "cache; stale or unclassified cache data must fall back to the local "
+        "mark estimate.",
+        status="implemented",
+    )
+)
+@pytest.mark.parametrize("age_seconds", [None, 601.0])
+def test_stale_exchange_upnl_is_not_applied_or_persisted(
+    db, monkeypatch, age_seconds,
+):
+    """A preserved old venue value must not masquerade as the current mark."""
+    from aletheia.portfolio import exchange_sync, pnl
+
+    repo.insert_position(Position(
+        id="upnl-stale-okx",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="okx_demo",
+    ))
+    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "age_seconds": age_seconds,
+        "positions": [{
+            "broker_id": "okx_demo",
+            "symbol": "BTC/USDT",
+            "market_type": "usdt_futures",
+            "side": "long",
+            "unrealized_pnl": 777.0,
+        }],
+    })
+
+    [marked] = pnl.mark_positions_to_market(persist=True)
+
+    assert marked["unrealized_pnl"] == 10.0
+    stored = repo._select_one("positions", "upnl-stale-okx")
+    assert stored is not None
+    assert stored["unrealized_pnl"] == 10.0
 
 
 # ---------- P1-2: compute_portfolio realized_pnl respects execution_mode ----------
