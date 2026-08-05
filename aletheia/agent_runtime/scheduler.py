@@ -2850,18 +2850,12 @@ def _run_insight_synthesizer():
     try:
         from aletheia.analytics.insight_synthesizer import synthesize_trading_memo
 
-        loop = asyncio.new_event_loop()
-        try:
-            memo = loop.run_until_complete(
-                asyncio.wait_for(synthesize_trading_memo(), timeout=_ASYNC_JOB_TIMEOUT_SEC["insight_synthesizer"])
-            )
-            if memo:
-                _record_job_success("insight_synthesizer")
-                logger.info("insight_synthesizer produced memo: %d trades", memo.get("sample_size", 0))
-            else:
-                _record_job_success("insight_synthesizer")
-        finally:
-            loop.close()
+        memo = _run_async_with_timeout("insight_synthesizer", synthesize_trading_memo())
+        if memo:
+            _record_job_success("insight_synthesizer")
+            logger.info("insight_synthesizer produced memo: %d trades", memo.get("sample_size", 0))
+        else:
+            _record_job_success("insight_synthesizer")
     except asyncio.TimeoutError:
         logger.warning("insight_synthesizer timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC["insight_synthesizer"])
         _record_job_failure("insight_synthesizer", "timeout")

@@ -53,7 +53,7 @@ _EXECUTOR_WORKERS = {
 
 **总工人数**：2 + 1 + 1 + 1 + 1 = **6**。
 
-注：各池 `max_workers` 全部 ≤ 3，满足 spec AC-S01（`spec_agent_contracts.py:18–33`）。`_run_async_with_timeout` / `_run_sync_with_timeout` 内部会为每次调用临时创建 `max_workers=1` 的 `concurrent.futures.ThreadPoolExecutor`（`scheduler.py:165`、`scheduler.py:253`），用完立即 `shutdown(wait=False)`，不持久。
+注：各池 `max_workers` 全部 ≤ 3，满足 spec AC-S01（`spec_agent_contracts.py:18–33`）。timeout 层不计入上述 APScheduler 命名池：`_run_async_with_timeout` 复用一条进程级常驻 event-loop lane，`_run_sync_with_timeout` 复用一条常驻 daemon lane；两者 outstanding 容量均固定为 16，不为每次调用创建新的 loop、executor 或替代线程（见 §4.3）。
 
 ---
 
