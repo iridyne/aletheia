@@ -178,6 +178,29 @@ def test_cli_update_check_smoke(tmp_path, monkeypatch):
     from aletheia.cli.update_cmd import update_app
     result = CliRunner().invoke(update_app, ["check"])
     assert result.exit_code == 0
+    assert "[deprecated]" not in result.stderr
+
+
+def test_cli_update_apply_restarts_by_default(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier
+    calls = []
+    monkeypatch.setattr(
+        applier,
+        "apply_update",
+        lambda *, restart: calls.append(restart) or {
+            "applied": True,
+            "old_commit": "old111",
+            "new_commit": "new222",
+            "deps_reinstalled": False,
+        },
+    )
+    from typer.testing import CliRunner
+    from aletheia.cli.update_cmd import update_app
+    result = CliRunner().invoke(update_app, ["apply", "--yes"])
+    assert result.exit_code == 0
+    assert calls == [True]
+    assert "Gateway restarted and readiness verified." in result.output
 
 
 async def test_api_update_status_smoke(tmp_path, monkeypatch):

@@ -15,16 +15,6 @@ def _is_packaged() -> bool:
     return is_packaged_mode()
 
 
-@update_app.callback()
-def _mode_notice():
-    # The Web UI remains the primary human surface, but installed CLI update commands
-    # are first-class recovery/automation tools and should not be labelled deprecated.
-    if not _is_packaged():
-        from aletheia.cli._deprecated import warn_deprecated
-
-        warn_deprecated("Settings → Update")
-
-
 @update_app.command()
 def status(json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON.")):
     """Show durable local update progress without repeating a network check."""

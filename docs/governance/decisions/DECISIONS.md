@@ -878,3 +878,16 @@ workflow concern without improving trading-system correctness.
 A new coordination need must first be solved through the external orchestrator,
 a clear agent prompt, isolated worktrees, GitHub issues/PRs, or a static project
 instruction/decision document.
+
+---
+
+## 2026-08-05 — Update CLI is a first-class operator workflow
+
+**Decision:** `aletheia update` is not deprecated. It remains the supported
+human-operated source-checkout update path, including its verified dashboard
+rebuild and gateway restart. The dashboard may offer the same workflow, but it
+is not the sole maintained surface.
+
+**Reason:** An update crosses the dashboard process boundary. The CLI can
+perform the checked update and controlled restart in one explicit command,
+including when the dashboard is unavailable or needs replacing.
