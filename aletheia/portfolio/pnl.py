@@ -155,29 +155,32 @@ def _account_environment(execution_mode: str) -> str:
 
 
 def _build_exchange_upnl_index() -> dict[tuple[str, str], float]:
-    """Build (canonical_symbol, normalised_direction) → exchange uPnL from cache.
+    """Build exact (canonical_symbol, broker_id, direction) exchange uPnL matches.
 
-    Returns empty dict when cache is unavailable — callers fall back to the local
-    estimate so the system degrades honestly rather than showing zeros.
+    Legacy exchange caches lack broker identity, so they are deliberately not
+    used for per-position PnL. Ambiguous duplicate records also fall back to the
+    local estimate rather than selecting an arbitrary exposure.
     """
     try:
-        from aletheia.portfolio import exchange_sync
         from aletheia.data.symbols import to_canonical
+        from aletheia.portfolio import exchange_sync
 
-        cached = exchange_sync.get_cached_state()
-        if cached is None or exchange_sync.status_for(cached) not in ("ok", "stale"):
-            return {}
-        index: dict[tuple[str, str], float] = {}
-        for p in cached.get("positions") or []:
-            sym = to_canonical(p.get("symbol", ""))
-            side = (p.get("side") or "").lower()
+        candidates: dict[tuple[str, str, str], list[float]] = {}
+        cached = exchange_sync.get_unified_cached_state()
+        for position in (cached or {}).get("positions") or []:
+            symbol = to_canonical(position.get("symbol", ""))
+            broker_id = str(position.get("broker_id") or "")
+            side = str(position.get("side") or "").lower()
             direction = "long" if side in ("long", "buy") else "short" if side in ("short", "sell") else None
-            if not sym or direction is None:
+            upnl = position.get("unrealized_pnl")
+            if not symbol or not broker_id or direction is None or upnl is None:
                 continue
-            upnl = p.get("unrealized_pnl")
-            if upnl is not None:
-                index[(sym, direction)] = float(upnl)
-        return index
+            candidates.setdefault((symbol, broker_id, direction), []).append(float(upnl))
+        return {
+            (symbol, broker_id, direction): values[0]
+            for (symbol, broker_id, direction), values in candidates.items()
+            if len(values) == 1
+        }
     except Exception:
         return {}
 
@@ -205,9 +208,12 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
         entry = p["entry_price"]
         direction = p["direction"]
         norm_dir = "long" if direction in ("long", "buy") else "short"
-        # Exchange uPnL is authoritative (real mark-price + funding fees).
-        # Fall back to local estimate when exchange data is unavailable.
-        exc_val = exc_upnl_index.get((p["symbol"], norm_dir))
+        # Exchange uPnL is authoritative only for an exact broker-scoped match.
+        # Fall back to the local estimate when its identity is unavailable/ambiguous.
+        from aletheia.data.symbols import to_canonical
+        exc_val = exc_upnl_index.get((
+            to_canonical(p["symbol"]), p.get("execution_mode") or "", norm_dir,
+        ))
         if exc_val is not None:
             upnl = exc_val
         elif direction in ("long", "buy"):

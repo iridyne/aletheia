@@ -889,3 +889,34 @@ def test_market_aware_settings_describes_wake_only_authority():
     ).read_text(encoding="utf-8")
     assert 'record_error(p, "operator_wake_unavailable")' in manager
     assert 'last_market_signal_action=f"wake_failed:{action.action}"' in manager
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PM-15", "pipeline_position_manager", "§2 pending close convergence", "L2b",
+        "A stale unresolved exchange close remains retry-suppressing, emits one durable "
+        "reconciliation-required incident, and never creates a replacement close Order.",
+        status="implemented",
+    ),
+)
+def test_stale_pending_close_escalates_without_creating_a_replacement(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.portfolio.position_manager import evaluate_open_positions
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=1.0, entry_price=100.0, execution_mode="bitget_demo",
+        pending_close_order_id="unresolved-close", pending_close_status="submission_unknown",
+        pending_close_requested_at=(datetime.now(timezone.utc) - timedelta(hours=5)).isoformat(),
+    )
+    repo.insert_position(position)
+
+    result = evaluate_open_positions()
+
+    assert result["closed"] == 0
+    assert any(error["code"] == "pending_close_reconciliation_required"
+               for error in result["errors"])
+    assert repo._select_one("positions", position.id)["pending_close_order_id"] == "unresolved-close"
+    assert repo._select_all("orders", where="position_id=?", params=(position.id,), limit=10) == []

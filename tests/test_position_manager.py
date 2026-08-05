@@ -360,3 +360,54 @@ def test_live_market_exit_still_works(tmp_path, monkeypatch):
 
     # No error — market exit is routed regardless of execution_mode.
     assert "error" not in result, f"Unexpected error on market exit: {result}"
+
+
+def test_stale_pending_close_is_escalated_without_resubmission(tmp_path, monkeypatch):
+    """A stale uncertain close remains claimed while reconciliation is escalated once."""
+    setup_env(tmp_path, monkeypatch)
+    p = Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=1.0, entry_price=100.0, current_price=100.0,
+        execution_mode="bitget_demo", stop_price=98.0,
+        pending_close_order_id="unresolved-close",
+        pending_close_status="submission_unknown",
+        pending_close_requested_at=(datetime.now(timezone.utc) - timedelta(hours=5)).isoformat(),
+    )
+    repo.insert_position(p)
+
+    from aletheia.portfolio.position_manager import evaluate_open_positions
+    first = evaluate_open_positions()
+    second = evaluate_open_positions()
+
+    assert first["closed"] == second["closed"] == 0
+    assert {error["code"] for error in first["errors"]} == {
+        "pending_close_reconciliation_required"
+    }
+    assert repo._select_one("positions", p.id)["pending_close_order_id"] == "unresolved-close"
+    assert repo._select_all("orders", where="position_id=?", params=(p.id,), limit=10) == []
+    incidents = [event for event in repo.list_audit_events(limit=20)
+                 if event["event_type"] == "pending_close_reconciliation_required"]
+    assert len(incidents) == 1
+
+
+@pytest.mark.parametrize("requested_at", [
+    None,
+    (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+])
+def test_pending_close_with_unknown_age_is_escalated(tmp_path, monkeypatch, requested_at):
+    """Missing or future close age is unsafe, not permission to suppress forever."""
+    setup_env(tmp_path, monkeypatch)
+    p = Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=1.0, entry_price=100.0, execution_mode="bitget_demo",
+        pending_close_order_id="unresolved-close", pending_close_status="submission_unknown",
+        pending_close_requested_at=requested_at,
+    )
+    repo.insert_position(p)
+
+    from aletheia.portfolio.position_manager import evaluate_open_positions
+    result = evaluate_open_positions()
+
+    assert result["closed"] == 0
+    assert result["errors"][0]["code"] == "pending_close_reconciliation_required"
+    assert repo._select_one("positions", p.id)["pending_close_order_id"] == "unresolved-close"
