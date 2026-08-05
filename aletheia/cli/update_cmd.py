@@ -80,7 +80,7 @@ def check():
         typer.echo(
             f"  current: {result['current_commit'][:8]}  remote: {result['remote_commit'][:8]}"
         )
-        typer.echo("Run `aletheia update apply` to update, then restart the gateway.")
+        typer.echo("Run `aletheia update apply` to rebuild the dashboard and restart the gateway.")
     else:
         typer.echo(f"Up to date on origin/{result['branch']} ({result['current_commit'][:8]}).")
 
@@ -88,7 +88,7 @@ def check():
 @update_app.command()
 def apply(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
-    restart: bool = typer.Option(False, "--restart", help="Build changed frontend assets and restart after verification."),
+    restart: bool = typer.Option(True, "--restart/--no-restart", help="Rebuild dashboard assets and restart after verification."),
 ):
     """Stage an installed release or apply the development Git update."""
 
@@ -121,7 +121,7 @@ def apply(
         return
 
     if not yes:
-        confirm = typer.confirm("Pull latest code and apply update? Gateway restart required after.")
+        confirm = typer.confirm("Pull latest code, rebuild the dashboard, and restart the gateway?")
         if not confirm:
             typer.echo("Aborted.")
             raise typer.Exit(0)
