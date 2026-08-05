@@ -1,0 +1,73 @@
+direction: down
+
+classes: {
+  external: { style.fill: "#E8F1FF"; style.stroke: "#3973B7" }
+  runtime: { style.fill: "#F4F0FF"; style.stroke: "#7357B4" }
+  store: { shape: cylinder; style.fill: "#F5F7FA"; style.stroke: "#59636E" }
+  safety: { style.fill: "#FFE9E7"; style.stroke: "#C33D32"; style.stroke-width: 3 }
+  learning: { style.fill: "#E9F9F2"; style.stroke: "#27866A" }
+  human: { style.fill: "#FFF4CC"; style.stroke: "#B88400" }
+}
+
+title: "Aletheia Trading OS — System Overview / 系统总览" {
+  near: top-center
+  shape: text
+  style.font-size: 26
+  style.bold: true
+}
+
+inputs: "Market & Account Inputs\n市场与账户输入" {
+  class: external
+  exchanges: "Market venues\nOHLCV · order book · funding · OI"
+  context: "Context feeds\nnews · macro · prediction markets"
+  account: "Account state\nbalance · positions · fills"
+}
+
+runtime: "Local-first Runtime / 本地运行时" {
+  class: runtime
+  collectors: "Collectors & feature pipelines\n采集与特征计算"
+  observer: "Market Observer + Universe\n发现并持久化 Opportunity"
+  ranker: "Candidate admission & ranking\n筛选、排序、signal_pending"
+  operator: "System Operator\n唯一 AI 入场决策者"
+  gateway: "Execution Gateway\n所有订单的唯一入口" { class: safety }
+  risk: "Risk Engine\n硬性审批 + kill switch" { class: safety }
+  positions: "Position Manager\nTP/SL · close · reconcile" { class: safety }
+}
+
+truth: "Durable Local Truth / 持久化真相" {
+  class: store
+  label: "SQLite + JSONL + knowledge assets\nOpportunity · PiDecision · Proposal · RiskDecision\nOrder · Fill · Position · Outcome · Audit"
+}
+
+learning: "Evidence-driven Learning / 证据驱动学习" {
+  class: learning
+  review: "Review & attribution\n净结果、因子归因、交易复盘"
+  knowledge: "Cases · lessons · memo · guards\n可追踪长期经验"
+  measurement: "Contribution measurement & lifecycle gates\n测量有效性后才允许受控影响"
+}
+
+control: "Human Control Plane / 人类控制面" {
+  class: human
+  dashboard: "Dashboard & operator commands"
+  settings: "Settings · credentials · risk limits"
+  unlock: "Explicit live unlock\n实盘必须人工解锁"
+}
+
+inputs -> runtime.collectors
+runtime.collectors -> truth: "snapshots / features"
+truth -> runtime.observer
+runtime.observer -> runtime.ranker: "Opportunity"
+runtime.ranker -> runtime.operator: "signal_pending"
+runtime.operator -> runtime.gateway: "TradeProposal"
+runtime.gateway -> runtime.risk
+runtime.risk -> runtime.gateway: "approved only"
+runtime.gateway -> runtime.positions: "Order · Fill · Position"
+runtime.positions -> truth: "state + net outcome"
+truth -> learning.review
+learning.review -> learning.knowledge
+learning.knowledge -> learning.measurement
+learning.measurement -> runtime.ranker: "bounded feedback" { style.stroke-dash: 5 }
+learning.measurement -> runtime.operator: "retrieved evidence" { style.stroke-dash: 5 }
+control.dashboard -> truth: "inspect"
+control.settings -> runtime.risk: "configured limits"
+control.unlock -> runtime.gateway: "live_limited gate"
