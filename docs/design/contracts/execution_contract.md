@@ -221,6 +221,12 @@ Live 作用域从 `exchange.name` 派生对应的 `*_live_limited`，不得硬�
 不可用，不能据此推断本地仓已从交易所消失（`PL-ADOPT-24`）。统一快照当前不包含 Live 账户，禁止用
 Demo 聚合结果解释 Live 仓位；Live 继续只告警、不自动收敛。
 
+交易所返回的 Position uPnL 是账户内的聚合暴露，不能被复制成多个本地 Position 各自的完整 uPnL。
+在没有可直连的 broker Position identity 时，远端当前 match key 只有一个候选且本地 open Position 也
+只有一个候选，才允许采用该聚合值；任一侧基数大于一都必须拒绝分配，逐仓保留现有本地 mark estimate，
+持久化路径也不得把同一聚合值写入每一行。该基数守卫不替代 market type、account fingerprint 与直接
+Position identity 的完整匹配要求。可执行检查：`PL-PM-16`。
+
 一次新鲜快照里缺少本地持仓，只能创建 `position_disappearance_candidates` 和一条不可变 observation，
 不能直接调用 fallback-price close。重复读取同一个 cache、时间倒退、stale/incomplete/wrong-account
 view 不累计；第二个更新且完整的 view 只把 candidate 标为 ready for verified exit。交易所行在新鲜完整

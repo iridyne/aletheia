@@ -22,6 +22,7 @@ from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import Position, PortfolioSnapshot
 from aletheia.storage import repositories as repo
 from aletheia.portfolio.pnl import compute_portfolio, compute_and_store_snapshot
+from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
 def _insert_verified_closed_position(
@@ -116,6 +117,67 @@ def test_exchange_upnl_is_scoped_to_its_broker_and_duplicate_is_rejected(db, mon
     assert marked["bitget_demo"]["unrealized_pnl"] == 7.0
     assert marked["okx_demo"]["unrealized_pnl"] == -3.0
     assert marked["binance_testnet"]["unrealized_pnl"] == 10.0
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PM-16",
+        "pipeline_position_manager",
+        "§1 exchange uPnL cardinality",
+        "L2c",
+        "One aggregate venue uPnL may be assigned only when exactly one local "
+        "open Position shares its current broker/symbol/direction match key; "
+        "local multiplicity must not duplicate or persist the aggregate value.",
+        status="implemented",
+    )
+)
+def test_exchange_aggregate_upnl_is_not_reused_across_local_positions(
+    db, monkeypatch,
+):
+    """One venue aggregate must not become each local Position's full uPnL."""
+    from aletheia.portfolio import exchange_sync, pnl
+
+    repo.insert_position(Position(
+        id="upnl-bitget-leg-a",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="bitget_demo",
+    ))
+    repo.insert_position(Position(
+        id="upnl-bitget-leg-b",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=2.0,
+        entry_price=120.0,
+        execution_mode="bitget_demo",
+    ))
+    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "positions": [{
+            "broker_id": "bitget_demo",
+            "symbol": "BTC/USDT",
+            "market_type": "usdt_futures",
+            "side": "long",
+            "unrealized_pnl": 777.0,
+        }],
+    })
+
+    marked = {
+        row["id"]: row for row in pnl.mark_positions_to_market(persist=True)
+    }
+
+    assert marked["upnl-bitget-leg-a"]["unrealized_pnl"] == 10.0
+    assert marked["upnl-bitget-leg-b"]["unrealized_pnl"] == -20.0
+    stored_a = repo._select_one("positions", "upnl-bitget-leg-a")
+    stored_b = repo._select_one("positions", "upnl-bitget-leg-b")
+    assert stored_a is not None
+    assert stored_b is not None
+    assert stored_a["unrealized_pnl"] == 10.0
+    assert stored_b["unrealized_pnl"] == -20.0
 
 
 # ---------- P1-2: compute_portfolio realized_pnl respects execution_mode ----------
