@@ -55,24 +55,18 @@ def test_settings_exposes_universe_control_in_symbols_tab():
     Registry-to-render drift is covered by
     ``frontend/src/pages/settings.registry.test.ts``.
     """
-    settings = Path("frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
+    settings = SETTINGS_PAGE.read_text(encoding="utf-8")
+    settings_graph = read_settings_source_graph()
     assert "Risk & Universe" in settings
 
-    # The deep-link target Universe.tsx links to must be a registered slug.
-    # Matched on the registry entry itself (title + slug on one line) rather than
-    # the bare `slug: 'universe'` substring, which also appears in a nearby
-    # explanatory comment -- so the loose form passed even when the real entry
-    # was renamed.
-    assert re.search(
-        r"\{\s*title:\s*'Universe Board',[^}]*slug:\s*'universe'", settings
-    ), "SETTINGS_INDEX must register 'Universe Board' with slug 'universe'"
-    # Section anchors must still be emitted as settings-section-<slug> ids.
+    # The shell registry and extracted descriptor jointly own the deep link.
+    # Registry-to-render drift is covered by the frontend registry test.
+    assert "title: UNIVERSE_SECTION.title" in settings
+    assert "slug: UNIVERSE_SECTION.id" in settings
+    assert re.search(r"id:\s*'universe'.*title:\s*'Universe Board'", settings_graph)
     assert "settings-section-${section}" in settings
-
-    assert settings.count("<UniverseConfigCard") == 1
-    risk_tab = settings.index("function RiskTab")
-    universe_card = settings.index("<UniverseConfigCard")
-    assert universe_card > risk_tab
+    assert settings_graph.count("<UniverseConfigCard") == 1
+    assert "descriptor={UNIVERSE_SECTION}" in settings_graph
 
 
 def test_settings_has_config_coverage_matrix_for_hidden_keys():

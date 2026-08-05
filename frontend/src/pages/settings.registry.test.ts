@@ -16,6 +16,12 @@ import {
 	NEWS_FEEDS_SECTION,
 	PREDICTION_MARKETS_SECTION,
 } from "../features/settings/tabs/SignalsTab";
+import {
+	EVENT_TRIGGERS_SECTION,
+	RISK_LIMITS_SECTION,
+	TRADABLE_SYMBOLS_SECTION,
+	UNIVERSE_SECTION,
+} from "../features/settings/tabs/RiskTab";
 import { TELEGRAM_SECTION } from "../features/settings/telegram/telegramState";
 import CSS from "../index.css?raw";
 import SRC from "./Settings.tsx?raw";
@@ -36,6 +42,10 @@ const EXTRACTED_DESCRIPTORS = [
 	{ symbol: "NEWS_FEEDS_SECTION", descriptor: NEWS_FEEDS_SECTION },
 	{ symbol: "PREDICTION_MARKETS_SECTION", descriptor: PREDICTION_MARKETS_SECTION },
 	{ symbol: "EQUITIES_SECTION", descriptor: EQUITIES_SECTION },
+	{ symbol: "UNIVERSE_SECTION", descriptor: UNIVERSE_SECTION },
+	{ symbol: "EVENT_TRIGGERS_SECTION", descriptor: EVENT_TRIGGERS_SECTION },
+	{ symbol: "TRADABLE_SYMBOLS_SECTION", descriptor: TRADABLE_SYMBOLS_SECTION },
+	{ symbol: "RISK_LIMITS_SECTION", descriptor: RISK_LIMITS_SECTION },
 ] as const;
 
 const EXTRACTED_COMPONENTS = [
@@ -63,6 +73,15 @@ const EXTRACTED_COMPONENTS = [
 			NEWS_FEEDS_SECTION,
 			PREDICTION_MARKETS_SECTION,
 			EQUITIES_SECTION,
+		],
+	},
+	{
+		component: "RiskTab",
+		descriptors: [
+			UNIVERSE_SECTION,
+			EVENT_TRIGGERS_SECTION,
+			TRADABLE_SYMBOLS_SECTION,
+			RISK_LIMITS_SECTION,
 		],
 	},
 ] as const;
