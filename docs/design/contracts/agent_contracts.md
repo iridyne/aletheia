@@ -404,7 +404,7 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 
 All agents share the same SQLite DB. Invariants that MUST hold (full detail in [data_model §1, §9](../data/data_model.md)):
 1. `_WRITE_LOCK` (`sqlite.py`) — process-wide `threading.Lock`, acquired by `transaction()` before every `BEGIN`, released after `COMMIT`/`ROLLBACK`. Primary write serialization; `database is locked` cannot occur in normal operation.
-2. WAL mode + `busy_timeout=30000ms` (30s) as last-resort fallback — `storage/sqlite.py:43`
+2. WAL mode + `busy_timeout=30000ms` (30s) as last-resort fallback — `storage/sqlite.py::_open_connection`
 3. One connection per thread via `threading.local`
 4. `was_in_tx = db.in_transaction` captured BEFORE writes; commit only `if not was_in_tx`
 5. Scheduler `max_workers=3` (do not raise)

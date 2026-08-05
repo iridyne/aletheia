@@ -146,6 +146,26 @@ def test_threads_get_different_connections(tmp_path, monkeypatch):
     assert isinstance(sq._local, threading.local), "_local must be threading.local()"
 
 
+@spec_claim(
+    SpecClaim(
+        "DM-B07", "data_model", "§1 SQLite fallback timeout", "L2b",
+        "Production SQLite connections retain a 30-second busy_timeout as the "
+        "last-resort fallback behind the application writer permit",
+    ),
+)
+def test_production_connection_uses_30_second_busy_timeout(tmp_path):
+    """Pin the documented fallback independently of the 6-second writer permit."""
+    from aletheia.storage.sqlite import _open_connection
+
+    connection = _open_connection(tmp_path / "busy-timeout.db")
+    try:
+        configured_ms = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+    finally:
+        connection.close()
+
+    assert configured_ms == 30_000
+
+
 # ---------------------------------------------------------------------------
 # L2a — Table existence claims (SYSTEM_MAP alignment)
 # ---------------------------------------------------------------------------

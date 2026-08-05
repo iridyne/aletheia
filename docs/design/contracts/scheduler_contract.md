@@ -248,11 +248,11 @@ daemon worker。两条 lane 的 outstanding 容量都固定为 16，不再为每
 **支柱 1 — 进程级写锁 `_WRITE_LOCK`**（`aletheia/storage/sqlite.py`，`repositories.py:transaction()`）
 
 `_WRITE_LOCK = threading.Lock()`（`sqlite.py`）是所有写事务的序列化点。`transaction()` 在每次
-`BEGIN` 之前调用 `_WRITE_LOCK.acquire(timeout=32)`，在 `COMMIT`/`ROLLBACK` 之后释放。所有写线程
-在 Python 层排队，**`database is locked` 在正常运营下不可能出现**。超时 32s 专门用于暴露"在
-事务内做了 I/O"这类 bug（会抛 `write_lock_timeout` `OperationalError`，而非无声重试）。
+`BEGIN` 之前获取应用级 writer permit（6 秒超时），在 `COMMIT`/`ROLLBACK` 之后释放。所有写线程
+在 Python 层排队，**`database is locked` 在正常运营下不可能出现**。应用级 6 秒超时专门用于
+暴露"在事务内做了 I/O"这类 bug（会抛 `write_lock_timeout` `OperationalError`，而非无声重试）。
 
-**支柱 2 — WAL + busy_timeout（最后防线）**（`aletheia/storage/sqlite.py:37–43`）
+**支柱 2 — WAL + busy_timeout（最后防线）**（`aletheia/storage/sqlite.py::_open_connection`）
 
 每个新连接在首次打开时执行：
 ```sql
