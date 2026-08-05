@@ -295,11 +295,14 @@ def stop_scheduler() -> None:
         _scheduler.shutdown(wait=False)   # 不等待 running jobs 完成
         _scheduler = None
     _async_timeout_worker.close()
+    _news_analyzer_timeout_worker.close()
 ```
 
-APScheduler 使用 `wait=False`，不等待其 executor 中的 running job。常驻 async worker 收到
-loop stop 后会取消 pending task，并最多等待 5 秒完成线程清理；固定 sync worker 是 daemon，
-非协作的运行中调用只能等自身返回或随进程退出，且不会产生第二条替代线程。
+APScheduler 使用 `wait=False`，不等待其 executor 中的 running job。两条常驻 async worker 收到
+loop stop 后会取消并 gather pending task、关闭 async generator，再给 default executor 最多 4 秒
+完成收尾；整个 owner thread 仍使用 5 秒 join 上限。已经运行且不响应取消的 executor thread 无法
+被 Python 强杀：超出 4 秒会发出 `RuntimeWarning`，该 thread 只能等自身返回或随进程退出。固定
+sync worker 同样是 daemon，非协作调用不会产生第二条替代线程。
 
 `pause_scheduler(layered=True)` 只暂停非 essential job；`resume_scheduler()` 恢复这些选择性暂停项。`layered=False`
 才暂停/恢复 APScheduler 整体派发循环。两种模式都不修改已注册的 job 表。

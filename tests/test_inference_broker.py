@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -307,3 +308,78 @@ async def test_broker_can_restart_after_orderly_close():
     await broker.aclose()
     assert await broker.submit("provider-a", lambda: _immediate("second")) == "second"
     await broker.aclose()
+
+
+@pytest.mark.anyio
+async def test_broker_drains_default_executor_before_loop_close():
+    shutdown_waits = []
+
+    class TrackingExecutor(ThreadPoolExecutor):
+        def shutdown(self, wait=True, *, cancel_futures=False):
+            shutdown_waits.append(wait)
+            return super().shutdown(wait=wait, cancel_futures=cancel_futures)
+
+    broker = InferenceBroker(policy_loader=lambda _name: _policy())
+    executor = TrackingExecutor(max_workers=1)
+
+    async def install_executor():
+        asyncio.get_running_loop().set_default_executor(executor)
+
+    try:
+        await broker.run_auxiliary(lambda: install_executor())
+    finally:
+        await broker.aclose()
+
+    assert True in shutdown_waits
+
+
+@pytest.mark.anyio
+async def test_broker_bounds_noncooperative_executor_shutdown(monkeypatch):
+    import aletheia.model_provider.broker as broker_module
+
+    monkeypatch.setattr(broker_module, "_DEFAULT_EXECUTOR_SHUTDOWN_TIMEOUT_SEC", 0.01)
+    baseline_threads = set(threading.enumerate())
+    entered = threading.Event()
+    release = threading.Event()
+    broker = InferenceBroker(policy_loader=lambda _name: _policy())
+    executor_threads = []
+
+    def block():
+        entered.set()
+        release.wait()
+
+    async def operation():
+        await asyncio.to_thread(block)
+
+    task = asyncio.create_task(broker.run_auxiliary(lambda: operation()))
+    try:
+        for _ in range(100):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert entered.is_set()
+        executor_threads = [
+            thread
+            for thread in threading.enumerate()
+            if thread not in baseline_threads and thread.name.startswith("asyncio_")
+        ]
+        with pytest.warns(RuntimeWarning, match="executor did not.*joining"):
+            await broker.aclose()
+
+        assert not broker.running
+        assert executor_threads and any(thread.is_alive() for thread in executor_threads)
+    finally:
+        release.set()
+        if broker.running:
+            await broker.aclose()
+        shutdown_threads = [
+            thread for thread in threading.enumerate() if "_do_shutdown" in thread.name
+        ]
+        for thread in executor_threads + shutdown_threads:
+            thread.join(timeout=1)
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass

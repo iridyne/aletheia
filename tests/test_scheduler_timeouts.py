@@ -1,5 +1,6 @@
 import asyncio
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -241,6 +242,70 @@ def test_async_timeout_worker_reuses_one_thread(monkeypatch):
         assert metrics["abandoned_threads"] == 0
     finally:
         scheduler._async_timeout_worker.close()
+
+
+def test_async_timeout_worker_drains_default_executor_before_loop_close():
+    from aletheia.agent_runtime import scheduler
+
+    shutdown_waits = []
+
+    class TrackingExecutor(ThreadPoolExecutor):
+        def shutdown(self, wait=True, *, cancel_futures=False):
+            shutdown_waits.append(wait)
+            return super().shutdown(wait=wait, cancel_futures=cancel_futures)
+
+    worker = scheduler._PersistentAsyncTimeoutWorker("default-executor-owner")
+    executor = TrackingExecutor(max_workers=1)
+
+    async def install_executor():
+        asyncio.get_running_loop().set_default_executor(executor)
+
+    try:
+        worker.submit(install_executor()).result(timeout=1)
+    finally:
+        worker.close()
+
+    assert True in shutdown_waits
+
+
+def test_async_timeout_worker_bounds_noncooperative_executor_shutdown(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+
+    monkeypatch.setattr(scheduler, "_DEFAULT_EXECUTOR_SHUTDOWN_TIMEOUT_SEC", 0.01)
+    baseline_threads = set(threading.enumerate())
+    entered = threading.Event()
+    release = threading.Event()
+    worker = scheduler._PersistentAsyncTimeoutWorker("blocked-default-executor")
+    executor_threads = []
+
+    def block():
+        entered.set()
+        release.wait()
+
+    async def use_default_executor():
+        await asyncio.to_thread(block)
+
+    future = worker.submit(use_default_executor())
+    try:
+        assert entered.wait(timeout=1)
+        executor_threads = [
+            thread
+            for thread in threading.enumerate()
+            if thread not in baseline_threads and thread.name.startswith("asyncio_")
+        ]
+        with pytest.warns(RuntimeWarning, match="executor did not.*joining"):
+            future.cancel()
+            worker.close()
+
+        assert not worker.thread_alive
+        assert executor_threads and any(thread.is_alive() for thread in executor_threads)
+    finally:
+        release.set()
+        shutdown_threads = [
+            thread for thread in threading.enumerate() if "_do_shutdown" in thread.name
+        ]
+        for thread in executor_threads + shutdown_threads:
+            thread.join(timeout=1)
 
 
 def test_insight_synthesizer_uses_owned_async_timeout_loop(monkeypatch):

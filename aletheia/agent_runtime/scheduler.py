@@ -123,6 +123,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
 # These fixed workers bound both threads and pending work for the process life.
 _TIMEOUT_WORKER_CAPACITY = 16
 _SYNC_TIMEOUT_WORKERS = 1
+_DEFAULT_EXECUTOR_SHUTDOWN_TIMEOUT_SEC = 4.0
 _timeout_metrics_lock = threading.Lock()
 _timeout_workers_lock = threading.Lock()
 _timeout_metrics: dict[str, int] = {
@@ -246,6 +247,12 @@ class _PersistentAsyncTimeoutWorker:
             if pending:
                 loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
             loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.run_until_complete(
+                # AbstractEventLoop's stub omits the Python 3.12+ concrete timeout.
+                loop.shutdown_default_executor(
+                    timeout=_DEFAULT_EXECUTOR_SHUTDOWN_TIMEOUT_SEC  # pyright: ignore[reportCallIssue]
+                )
+            )
             loop.close()
             with self._lock:
                 self._loop = None
