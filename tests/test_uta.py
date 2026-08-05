@@ -201,6 +201,24 @@ async def test_positions_merged_across_brokers(monkeypatch):
     assert broker_ids == {"bitget_demo", "binance_testnet"}
 
 
+@pytest.mark.asyncio
+async def test_unified_state_preserves_broker_open_time(monkeypatch):
+    opened_at_ms = 1784044800000
+    adapter = MockAdapter(
+        "bitget_demo", "Bitget",
+        positions=[BrokerPosition("BTC/USDT", "long", 0.1, 60000, 100,
+                                   opened_at_ms=opened_at_ms)],
+    )
+    monkeypatch.setattr(
+        "aletheia.portfolio.uta.registry.create_all_configured",
+        lambda: [adapter],
+    )
+
+    state = await get_unified_state()
+
+    assert state.positions[0]["cTime"] == opened_at_ms
+
+
 # ---------------------------------------------------------------------------
 # Sync wrapper
 # ---------------------------------------------------------------------------

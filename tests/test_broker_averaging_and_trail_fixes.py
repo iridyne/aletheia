@@ -312,7 +312,7 @@ def test_replace_exchange_protective_stop_dispatches_to_okx_when_okx_demo(
 
     from aletheia.execution.stops import replace_exchange_protective_stop
 
-    replace_exchange_protective_stop(position_id, 97.5)
+    assert replace_exchange_protective_stop(position_id, 97.5) is True
 
     assert called == {"pos_id": position_id, "new_stop_price": 97.5}
 
@@ -343,7 +343,7 @@ def test_replace_exchange_protective_stop_still_dispatches_bitget(
 
     from aletheia.execution.stops import replace_exchange_protective_stop
 
-    replace_exchange_protective_stop(position_id, 97.5)
+    assert replace_exchange_protective_stop(position_id, 97.5) is True
 
     assert called == {"pos_id": position_id, "new_stop_price": 97.5}
 
@@ -366,7 +366,7 @@ def test_replace_exchange_protective_stop_is_noop_when_flag_disabled(
     monkeypatch.setattr("aletheia.execution.bitget_broker.replace_exchange_stop", _fail)
 
     from aletheia.execution.stops import replace_exchange_protective_stop
-    replace_exchange_protective_stop(position_id, 97.5)
+    assert replace_exchange_protective_stop(position_id, 97.5) is False
 
     assert called == []
 
@@ -390,7 +390,7 @@ def test_replace_exchange_protective_stop_binance_logs_and_skips(
     import logging
 
     with caplog.at_level(logging.WARNING, logger="aletheia.execution.stops"):
-        replace_exchange_protective_stop(position_id, 97.5)
+        assert replace_exchange_protective_stop(position_id, 97.5) is False
 
     warnings = [r for r in caplog.records if "Binance trailed-stop" in r.message]
     assert warnings, "Binance skip must be logged so operator can see it"

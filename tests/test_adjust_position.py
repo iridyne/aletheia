@@ -78,6 +78,22 @@ def test_horizon_change_rearms_wake():
     assert row["horizon_wake_sent_at"] is None   # re-armed → can wake again at the new horizon
 
 
+def test_stop_sync_only_reports_success_when_dispatcher_replaces(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "aletheia.execution.stops.replace_exchange_protective_stop",
+        lambda position_id, stop: calls.append((position_id, stop)) or True,
+    )
+    assert pm._sync_exchange_stop("supported", 99.0, {}, object()) is True
+    assert calls == [("supported", 99.0)]
+
+    monkeypatch.setattr(
+        "aletheia.execution.stops.replace_exchange_protective_stop",
+        lambda position_id, stop: False,
+    )
+    assert pm._sync_exchange_stop("unsupported", 99.0, {}, object()) is False
+
+
 def test_adjust_missing_position():
     res = pm.apply_operator_adjustment("does-not-exist", new_stop=99.0)
     assert res.get("error") == "position_not_found_or_not_open"
