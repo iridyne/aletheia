@@ -135,6 +135,7 @@ def test_run_supervised_default_uses_frontdoor_and_internal_backend_port(tmp_pat
     # _spawn_server receives the live frontdoor via the mutable holder.
     assert isinstance(captured["frontdoor_proc"], FakeFrontdoor)
     assert isinstance(captured["collector_holder"], list)
+    assert captured["collector_proc"] is None  # collector waits for backend readiness
     assert captured["killed_frontdoor"] == 1234
 
 
@@ -205,6 +206,31 @@ def test_spawn_server_can_bind_internal_backend_port(tmp_path, monkeypatch):
     assert route is not None
     assert route["backend_base_url"] == "http://127.0.0.1:9876"
     assert route["backend_pid"] == 1357
+
+
+def test_collector_starts_only_after_backend_listens(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia import _gateway_runner as runner
+    from aletheia.config.loader import load_config
+
+    class FakeBackend:
+        pid = 12345
+
+        def poll(self):
+            return None
+
+    holder = [None]
+    started = []
+    monkeypatch.setattr(runner.subprocess, "Popen", lambda *args, **kwargs: FakeBackend())
+    monkeypatch.setattr(runner, "port_in_use", lambda *args: True)
+    monkeypatch.setattr(runner, "_spawn_collector_process", lambda cfg: started.append(cfg) or object())
+    monkeypatch.setattr(runner, "_sleep", lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt))
+
+    with pytest.raises(KeyboardInterrupt):
+        runner._spawn_server(load_config(), collector_holder=holder)
+
+    assert len(started) == 1
+    assert holder[0] is not None
 
 
 def test_inner_server_is_restarted_when_port_never_listens(tmp_path, monkeypatch):
@@ -570,6 +596,8 @@ def fake_spawn_server(cfg, *, port=None, frontdoor_holder=None, collector_holder
     p = _sleeper(); children["backend"] = p.pid
     if backend_holder is not None:
         backend_holder[0] = p
+    if collector_holder is not None and collector_holder[0] is None:
+        collector_holder[0] = fake_collector(cfg)
     _maybe_dump()
     return p.wait()  # blocks until SIGTERM unwinds the supervisor
 

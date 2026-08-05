@@ -178,6 +178,7 @@ def test_cli_update_check_smoke(tmp_path, monkeypatch):
     from aletheia.cli.update_cmd import update_app
     result = CliRunner().invoke(update_app, ["check"])
     assert result.exit_code == 0
+    assert "[deprecated]" not in result.stderr
 
 
 async def test_api_update_status_smoke(tmp_path, monkeypatch):

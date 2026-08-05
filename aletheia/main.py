@@ -70,7 +70,9 @@ app.add_typer(model_app, name="model", help="[deprecated → Settings] Model pro
 app.add_typer(permission_app, name="permission", help="[deprecated → Settings] Agent permission mode.")
 app.add_typer(secrets_app, name="secrets", help="[deprecated → Settings] Secrets management.")
 app.add_typer(risk_app, name="risk", help="[deprecated → Risk panel] Risk / kill-switch commands.")
-app.add_typer(update_app, name="update", help="[deprecated → Settings] Code self-upgrade commands.")
+
+# Update crosses the running dashboard process boundary, so its CLI remains supported.
+app.add_typer(update_app, name="update", help="Code self-upgrade commands.")
 
 
 @app.command()

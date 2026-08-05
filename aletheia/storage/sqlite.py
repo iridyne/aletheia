@@ -16,8 +16,13 @@ from aletheia.config.loader import get_data_dir
 
 try:
     import fcntl
-except ImportError:  # pragma: no cover - Windows fallback retains process locking.
+except ImportError:  # pragma: no cover - Windows uses msvcrt byte-range locks.
     fcntl = None
+
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - POSIX uses flock.
+    msvcrt = None
 
 # One connection per OS thread — eliminates "database is locked" / "no transaction is
 # active" races between APScheduler background threads and uvicorn async handlers.
@@ -105,7 +110,11 @@ def release_write_lock() -> None:
     file_fd = getattr(_write_lock_state, "file_fd", None)
     if file_fd is not None:
         try:
-            fcntl.flock(file_fd, fcntl.LOCK_UN)
+            if fcntl is not None:
+                fcntl.flock(file_fd, fcntl.LOCK_UN)
+            elif msvcrt is not None:
+                os.lseek(file_fd, 0, os.SEEK_SET)
+                msvcrt.locking(file_fd, msvcrt.LK_UNLCK, 1)
         finally:
             os.close(file_fd)
             _write_lock_state.file_fd = None
@@ -117,7 +126,7 @@ def write_lock_held_by_current_thread() -> bool:
 
 
 def _acquire_file_write_lock(*, started: float, timeout: float) -> None:
-    if fcntl is None or (_injected_db_active and _injected_db_path is None):
+    if (fcntl is None and msvcrt is None) or (_injected_db_active and _injected_db_path is None):
         return
     lock_path = Path(_injected_db_path or db_path()).with_suffix(".write.lock")
     try:
@@ -125,12 +134,18 @@ def _acquire_file_write_lock(*, started: float, timeout: float) -> None:
     except OSError as exc:
         raise sqlite3.OperationalError(f"cannot open SQLite writer lock: {exc}") from exc
     try:
+        if msvcrt is not None and os.fstat(file_fd).st_size == 0:
+            os.write(file_fd, b"\0")
         while True:
             try:
-                fcntl.flock(file_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                os.lseek(file_fd, 0, os.SEEK_SET)
+                if fcntl is not None:
+                    fcntl.flock(file_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                else:
+                    msvcrt.locking(file_fd, msvcrt.LK_NBLCK, 1)
                 _write_lock_state.file_fd = file_fd
                 return
-            except BlockingIOError:
+            except (BlockingIOError, OSError):
                 if time.perf_counter() - started >= timeout:
                     waited_ms = (time.perf_counter() - started) * 1000.0
                     _logger.warning("sqlite_cross_process_write_lock_timeout wait_ms=%.1f", waited_ms)

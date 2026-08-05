@@ -293,6 +293,13 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
             if port_in_use(runtime_context["port"], runtime_context["host"]):
                 saw_listening_port = True
                 port_missing_since = None
+                # The collector immediately writes its first tick. Do not let it
+                # race the backend's migrations and boot writes for SQLite's only
+                # writer slot, especially on Windows where processes need their
+                # own cross-process lock. The backend port binds only after its
+                # lifespan is ready, so this keeps the first collector tick safe.
+                if collector_holder is not None and collector_holder[0] is None:
+                    collector_holder[0] = _spawn_collector_process(cfg)
                 # One-shot: emit the ready beacon the first time the backend port
                 # is confirmed alive.  T6: lets _verify_started short-circuit its
                 # HTTP polling loop instead of waiting for the full 60s deadline.
@@ -527,7 +534,6 @@ def run_supervised(spawn_fn=None) -> dict:
                 _cleanup_backend_before_spawn(cfg, backend_port)
                 _publish_frontdoor_route(cfg, backend_port=backend_port, reason="supervisor_start")
                 frontdoor_holder[0] = _ensure_frontdoor_running(cfg, backend_port, frontdoor_holder[0])
-                collector_holder[0] = _spawn_collector_process(cfg)
             while True:
                 code: int | None = None
                 try:
