@@ -1149,30 +1149,19 @@ def try_seed_close_anchor_snapshot(
     except RuntimeError:
         pass
 
-    # Manage the loop by hand so aiohttp's internal connector-close
-    # background tasks get one extra tick to finish before we close the
-    # loop. asyncio.run tears down eagerly and provokes aiohttp's
-    # "Unclosed client session" / "Unclosed connector" warnings.
-    loop = asyncio.new_event_loop()
     try:
-        result = loop.run_until_complete(
+        # asyncio.run owns the complete loop lifecycle. In particular, it
+        # cancels and awaits CCXT's load-markets/throttler tasks before closing
+        # the loop; a fixed grace-period sleep can still leave those tasks
+        # pending after a bounded venue timeout.
+        return asyncio.run(
             _seed_close_anchor_snapshot_async(
                 row, closed_at, fetch_timeout_sec=timeout_sec,
             )
         )
-        try:
-            loop.run_until_complete(asyncio.sleep(0.05))
-        except Exception:
-            pass
-        return result
     except Exception as exc:
         return {
             "inserted": False,
             "attempts": [],
             "skipped": f"loop_exception:{type(exc).__name__}",
         }
-    finally:
-        try:
-            loop.close()
-        except Exception:
-            pass
