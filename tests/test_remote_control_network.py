@@ -15,11 +15,11 @@ def test_frontdoor_binds_loopback_when_remote_control_is_disabled():
     assert network.backend_bind_host() == "127.0.0.1"
 
 
-def test_frontdoor_binds_only_selected_remote_control_hosts():
+def test_frontdoor_keeps_loopback_with_selected_remote_control_hosts():
     cfg = AletheiaConfig()
     cfg.remote_control.enabled = True
     cfg.remote_control.bind_hosts = ["100.64.0.8", "10.42.0.8"]
-    assert network.frontdoor_bind_hosts(cfg) == ["100.64.0.8", "10.42.0.8"]
+    assert network.frontdoor_bind_hosts(cfg) == ["127.0.0.1", "100.64.0.8", "10.42.0.8"]
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "0.0.0.0", "::1", "not-an-ip"])

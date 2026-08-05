@@ -127,6 +127,13 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
         _auto_start_tunnel(cfg)
 
 
+def _local_urlopen(request, *, timeout: float):
+    """Open a local gateway request without inheriting external proxy settings."""
+    import urllib.request
+
+    return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=timeout)
+
+
 def _verify_webui_accessible(cfg) -> bool:
     """验证 WebUI 根路径返回 HTML（不是 JSON 404）。
 
@@ -137,7 +144,7 @@ def _verify_webui_accessible(cfg) -> bool:
     try:
         url = f"http://{local_frontdoor_host()}:{cfg.app.dashboard_port}/"
         req = urllib.request.Request(url, headers={"User-Agent": "aletheia-preflight"})
-        with urllib.request.urlopen(req, timeout=2) as response:
+        with _local_urlopen(req, timeout=2) as response:
             content_type = response.getheader("Content-Type", "")
             return response.status == 200 and "text/html" in content_type
     except Exception:
@@ -154,7 +161,7 @@ def _verify_api_ready_accessible(cfg) -> bool:
     try:
         url = f"http://{local_frontdoor_host()}:{cfg.app.dashboard_port}/api/ready"
         req = urllib.request.Request(url, headers={"User-Agent": "aletheia-preflight"})
-        with urllib.request.urlopen(req, timeout=2) as response:
+        with _local_urlopen(req, timeout=2) as response:
             return response.status == 200
     except Exception:
         return False
@@ -587,9 +594,15 @@ def do_status() -> None:
     cfg = load_config()
     running = is_running()
     pid = read_pid()
-    typer.echo(f"Gateway: {'running' if running else 'stopped'}" + (f" (PID {pid})" if running else ""))
+    from aletheia.gateway.network import frontdoor_bind_hosts
+    urls = [f"http://{host}:{cfg.app.dashboard_port}" for host in frontdoor_bind_hosts(cfg)]
+    typer.echo(f"Gateway process: {'running' if running else 'stopped'}" + (f" (PID {pid})" if running else ""))
+    if running:
+        typer.echo(f"Front door: {'ready' if _verify_api_ready_accessible(cfg) else 'not ready'}")
     typer.echo(f"Paused: {cfg.runtime.paused}")
-    typer.echo(f"Dashboard: http://{local_frontdoor_host()}:{cfg.app.dashboard_port}")
+    typer.echo(f"Dashboard: {urls[0]}")
+    for url in urls[1:]:
+        typer.echo(f"Remote dashboard: {url}")
     exchange_label = (
         "Local paper (no external exchange)"
         if cfg.exchange.paper_execution_mode == "paper_internal"
@@ -774,14 +787,21 @@ def _post_gateway_resume_api(cfg) -> dict:
     import urllib.request
 
     url = f"http://{local_frontdoor_host()}:{cfg.app.dashboard_port}/api/gateway/resume"
-    req = urllib.request.Request(
-        url,
-        data=b"{}",
-        headers={"Content-Type": "application/json"},
-        method="POST",
+    headers = {"Content-Type": "application/json"}
+    remote_control = getattr(cfg, "remote_control", None)
+    token_required = bool(
+        getattr(getattr(cfg, "tunnel", None), "enabled", False)
+        or (getattr(remote_control, "enabled", False) and getattr(remote_control, "require_token", False))
     )
+    if token_required:
+        from aletheia.config.secrets import get_secret
+
+        token = get_secret("remote_control_api_token") or get_secret("tunnel_api_token")
+        if token:
+            headers["X-Aletheia-Token"] = token
+    req = urllib.request.Request(url, data=b"{}", headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=30.0) as resp:
+        with _local_urlopen(req, timeout=30.0) as resp:
             body = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")

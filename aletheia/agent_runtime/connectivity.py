@@ -571,7 +571,7 @@ async def startup_exchange_gate(cfg=None) -> None:
     _record_probe_result(result)
     _record_external_probe_result(external_result)
     if result["reachable"]:
-        logger.info("startup exchange gate: %s reachable (%.0fms)", cfg.exchange.name, result.get("latency_ms", 0))
+        logger.info("startup exchange gate: %s reachable (%.0fms)", cfg.exchange.name, result.get("latency_ms") or 0)
         return
 
     logger.warning("startup exchange gate: %s unreachable — will pause", cfg.exchange.name)

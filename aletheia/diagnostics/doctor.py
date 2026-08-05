@@ -481,8 +481,11 @@ def _probe_process(report: Report) -> None:
         pid = read_pid()
 
         if running:
-            report.add("process.gateway", "ok", f"running (PID {pid}) on {host}:{port}")
-            _probe_frontdoor_process(report, host, port)
+            if port_in_use(port, host):
+                report.add("process.gateway", "ok", f"running (PID {pid}) on {host}:{port}")
+                _probe_frontdoor_process(report, host, port)
+            else:
+                report.add("process.gateway", "warn", f"process running (PID {pid}) but no listener on {host}:{port}")
         elif port_in_use(port, host):
             report.add("process.gateway", "warn",
                        f"port {port} held but no tracked PID (orphan / ghost socket)",

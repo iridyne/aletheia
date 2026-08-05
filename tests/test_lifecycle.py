@@ -276,6 +276,106 @@ def test_do_start_foreground_guard_refuses_when_port_taken(tmp_path, monkeypatch
     assert ran == [] and wrote == []  # guard fired before write_pid / _run_server
 
 
+def test_local_gateway_requests_bypass_environment_proxy(monkeypatch):
+    import urllib.request
+    from aletheia.gateway import lifecycle
+
+    seen = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Opener:
+        def open(self, request, timeout):
+            seen["url"] = request.full_url
+            seen["timeout"] = timeout
+            return Response()
+
+    def build_opener(*handlers):
+        seen["handlers"] = handlers
+        return Opener()
+
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.setenv("ALL_PROXY", "socks5://127.0.0.1:7890")
+    monkeypatch.setattr(urllib.request, "build_opener", build_opener)
+
+    with lifecycle._local_urlopen(urllib.request.Request("http://127.0.0.1:8787/api/ready"), timeout=2):
+        pass
+
+    assert seen["url"] == "http://127.0.0.1:8787/api/ready"
+    assert seen["timeout"] == 2
+    assert seen["handlers"][0].proxies == {}
+
+
+def test_do_status_reports_process_readiness_and_remote_listener(tmp_path, monkeypatch, capsys):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.gateway import lifecycle, service_control, tunnel
+
+    cfg = load_config()
+    cfg.remote_control.enabled = True
+    cfg.remote_control.bind_hosts = ["10.42.0.8"]
+    save_config(cfg)
+    monkeypatch.setattr(lifecycle, "is_running", lambda: True)
+    monkeypatch.setattr(lifecycle, "read_pid", lambda: 4242)
+    monkeypatch.setattr(lifecycle, "_verify_api_ready_accessible", lambda _cfg: True)
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {"registration": "persistent", "platform": "task_scheduler", "installed": True, "enabled": True, "recovery_scope": "login"},
+    )
+    monkeypatch.setattr(tunnel, "tunnel_status", lambda: {"enabled": False, "running": False})
+
+    lifecycle.do_status()
+
+    out = capsys.readouterr().out
+    assert "Gateway process: running (PID 4242)" in out
+    assert "Front door: ready" in out
+    assert "Dashboard: http://127.0.0.1:8787" in out
+    assert "Remote dashboard: http://10.42.0.8:8787" in out
+
+
+def test_resume_api_sends_existing_remote_control_token(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.gateway import lifecycle
+
+    cfg = load_config()
+    cfg.remote_control.enabled = True
+    cfg.remote_control.require_token = True
+    save_config(cfg)
+    monkeypatch.setattr(
+        "aletheia.config.secrets.get_secret",
+        lambda key: "owner-token" if key == "remote_control_api_token" else None,
+    )
+    seen = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"paused": false}'
+
+    def fake_open(request, *, timeout):
+        seen["headers"] = dict(request.header_items())
+        seen["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(lifecycle, "_local_urlopen", fake_open)
+
+    assert lifecycle._post_gateway_resume_api(cfg) == {"paused": False}
+    assert seen["headers"]["X-aletheia-token"] == "owner-token"
+    assert seen["timeout"] == 30.0
+
+
 # --- Headless detection + safe echo ---
 
 def test_is_headless_false_on_posix(monkeypatch):
