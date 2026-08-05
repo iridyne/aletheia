@@ -2,6 +2,37 @@ import re
 from pathlib import Path
 
 
+SETTINGS_PAGE = Path("frontend/src/pages/Settings.tsx").resolve()
+SETTINGS_FEATURE_ROOT = Path("frontend/src/features/settings").resolve()
+
+
+def read_settings_source_graph() -> str:
+    """Read the Settings shell and only feature modules reachable from it."""
+    pending = [SETTINGS_PAGE]
+    visited: set[Path] = set()
+    sources: list[str] = []
+    while pending:
+        path = pending.pop()
+        if path in visited:
+            continue
+        visited.add(path)
+        source = path.read_text(encoding="utf-8")
+        sources.append(source)
+        for specifier in re.findall(r"(?:from\s+|import\s*)['\"](\.[^'\"]+)['\"]", source):
+            base = (path.parent / specifier).resolve()
+            candidates = [
+                base,
+                base.with_suffix(".ts"),
+                base.with_suffix(".tsx"),
+                base / "index.ts",
+                base / "index.tsx",
+            ]
+            target = next((candidate for candidate in candidates if candidate.is_file()), None)
+            if target and (target == SETTINGS_PAGE or SETTINGS_FEATURE_ROOT in target.parents):
+                pending.append(target)
+    return "\n".join(sources)
+
+
 def test_universe_board_has_direct_settings_link():
     """Disabled Universe Board must point to the exact setting that enables it."""
     page = Path("frontend/src/pages/Universe.tsx").read_text(encoding="utf-8")
@@ -46,7 +77,7 @@ def test_settings_exposes_universe_control_in_symbols_tab():
 
 def test_settings_has_config_coverage_matrix_for_hidden_keys():
     """Config keys without a dedicated control must still be discoverable."""
-    settings = Path("frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
+    settings = read_settings_source_graph()
     assert "Configuration Matrix" in settings
     assert "flattenConfig(settings)" in settings
     assert "read-only / config.yaml" in settings
@@ -56,7 +87,7 @@ def test_settings_has_config_coverage_matrix_for_hidden_keys():
 
 
 def test_settings_controls_match_backend_config_fields():
-    settings = Path("frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
+    settings = read_settings_source_graph()
     client = Path("frontend/src/api/client.ts").read_text(encoding="utf-8")
 
     expected_fields = [
@@ -85,7 +116,8 @@ def test_settings_controls_match_backend_config_fields():
 
 
 def test_settings_uses_vertical_information_architecture_and_switches():
-    settings = Path("frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
+    settings = SETTINGS_PAGE.read_text(encoding="utf-8")
+    settings_graph = read_settings_source_graph()
     css = Path("frontend/src/index.css").read_text(encoding="utf-8")
     ui_index = Path("frontend/src/components/ui/index.ts").read_text(encoding="utf-8")
 
@@ -108,8 +140,8 @@ def test_settings_uses_vertical_information_architecture_and_switches():
     assert "settings-toggle-grid" in Path("frontend/src/components/ui/SettingsSection.tsx").read_text(encoding="utf-8")
     # The paper-influence path picker intentionally uses a native multi-select
     # checkbox list; ordinary boolean controls still use the shared Switch.
-    assert "paperInfluencePaths" in settings
-    assert "type=\"checkbox\"" in settings
+    assert "paperInfluencePaths" in settings_graph
+    assert "type=\"checkbox\"" in settings_graph
     assert "type=\"checkbox\"" in Path("frontend/src/components/ui/Switch.tsx").read_text(encoding="utf-8")
     assert css.count(".settings-switch-input") >= 1
     assert "settings-switch-input:checked + .settings-switch-track" in css
