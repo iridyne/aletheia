@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 
@@ -115,7 +116,9 @@ def test_paper_funding_reconciliation_dry_run_is_deterministic_and_read_only(
     second = inspect_paper_funding_reconciliation(position_ids=[position_id])
 
     assert first == second
+    assert first["summary"]["funding_identity_mismatch"] == 1
     assert first["summary"]["recoverable_null_pnl"] == 1
+    assert first["rows"][0]["repair_mode"] == "economics_materialization"
     assert first["rows"][0]["current"]["funding_accounting_version"] is None
     assert (
         first["rows"][0]["proposed"]["funding_accounting_version"]
@@ -204,6 +207,202 @@ def test_paper_funding_reconciliation_apply_is_guarded_and_idempotent(
         (position_id,),
     ).fetchone()["n"] == 1
     assert len(repo.list_outcome_hook_jobs(position_id=position_id)) <= 1
+
+
+@spec_claim(
+    SpecClaim(
+        "PFA-REC-04",
+        "paper_funding_reconciliation",
+        "identity-only historical convergence",
+        "L2c",
+        "A completed local-paper close with missing root funding identity is "
+        "reported explicitly and repaired without rewriting its close-time funding "
+        "evidence or any economic, ledger, eligibility, or hook projection.",
+        status="implemented",
+    )
+)
+def test_paper_funding_identity_repair_preserves_close_time_evidence_and_projections(
+    tmp_path, monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    position_id = _seed_recoverable_position()
+    from aletheia.diagnostics.doctor import Report, _probe_paper_funding_accounting
+    from aletheia.maintenance.paper_funding_reconciliation import (
+        apply_paper_funding_reconciliation,
+        inspect_paper_funding_reconciliation,
+    )
+    from aletheia.storage import repositories as repo
+
+    initial = inspect_paper_funding_reconciliation(position_ids=[position_id])
+    apply_paper_funding_reconciliation(
+        position_ids=[position_id],
+        expected_fingerprint=initial["report_fingerprint"],
+    )
+    stored = repo._select_one("positions", position_id)
+    assert stored is not None
+    evidence_root = json.loads(stored["reconciliation_evidence"])
+    evidence_root["funding"]["seed_close_anchor"] = {
+        "attempts": [],
+        "inserted": False,
+        "skipped": "close_anchor_already_covered",
+    }
+    evidence_root.pop("funding_accounting_version")
+    evidence_root.pop("funding_economics_fingerprint")
+    repo.update_position(
+        position_id,
+        reconciliation_evidence=json.dumps(
+            evidence_root, sort_keys=True, separators=(",", ":"),
+        ),
+    )
+
+    before_position = repo._select_one("positions", position_id)
+    assert before_position is not None
+    before_root = json.loads(before_position["reconciliation_evidence"])
+    before_funding_bytes = json.dumps(
+        before_root["funding"], sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    expected_identity = (
+        "sha256:" + hashlib.sha256(before_funding_bytes).hexdigest()
+    )
+    economic_fields = (
+        "funding_cost",
+        "funding_source",
+        "realized_pnl",
+        "outcome_eligible",
+        "outcome_exclusion_reason",
+    )
+    before_economics = {
+        field: before_position[field] for field in economic_fields
+    }
+    before_close_events = [
+        dict(row) for row in conn.execute(
+            "SELECT * FROM position_close_events WHERE position_id=? ORDER BY rowid",
+            (position_id,),
+        ).fetchall()
+    ]
+    before_cash_events = [
+        dict(row) for row in conn.execute(
+            "SELECT * FROM paper_account_events WHERE position_id=? ORDER BY rowid",
+            (position_id,),
+        ).fetchall()
+    ]
+    before_hooks = [
+        dict(row) for row in conn.execute(
+            "SELECT * FROM outcome_hook_jobs WHERE position_id=? ORDER BY rowid",
+            (position_id,),
+        ).fetchall()
+    ]
+
+    report = inspect_paper_funding_reconciliation(position_ids=[position_id])
+    row = report["rows"][0]
+    assert row["categories"] == ["funding_identity_mismatch"]
+    assert row["repair_mode"] == "identity_only"
+    assert row["current"]["funding_economics_fingerprint"] is None
+    assert (
+        row["current"]["nested_funding_economics_fingerprint"]
+        == expected_identity
+    )
+    assert row["proposed"]["funding_economics_fingerprint"] == expected_identity
+    assert row["proposed"]["funding_evidence"] == before_root["funding"]
+    assert (
+        row["proposed"]["recomputed_funding_economics_fingerprint"]
+        != expected_identity
+    )
+    doctor = Report()
+    _probe_paper_funding_accounting(doctor)
+    check = next(
+        item for item in doctor.checks if item.name == "accounting.paper_funding"
+    )
+    assert check.severity == "warn"
+    assert "identity_mismatch=1" in check.detail
+
+    result = apply_paper_funding_reconciliation(
+        position_ids=[position_id],
+        expected_fingerprint=report["report_fingerprint"],
+    )
+    after_position = repo._select_one("positions", position_id)
+    assert after_position is not None
+    after_root = json.loads(after_position["reconciliation_evidence"])
+    after_funding_bytes = json.dumps(
+        after_root["funding"], sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+
+    assert result["results"][0]["status"] == "identity_repaired"
+    assert after_funding_bytes == before_funding_bytes
+    assert after_root["funding_accounting_version"] == "local-paper-funding-v2"
+    assert after_root["funding_economics_fingerprint"] == expected_identity
+    assert {
+        field: after_position[field] for field in economic_fields
+    } == before_economics
+    assert [
+        dict(item) for item in conn.execute(
+            "SELECT * FROM position_close_events WHERE position_id=? ORDER BY rowid",
+            (position_id,),
+        ).fetchall()
+    ] == before_close_events
+    assert [
+        dict(item) for item in conn.execute(
+            "SELECT * FROM paper_account_events WHERE position_id=? ORDER BY rowid",
+            (position_id,),
+        ).fetchall()
+    ] == before_cash_events
+    assert [
+        dict(item) for item in conn.execute(
+            "SELECT * FROM outcome_hook_jobs WHERE position_id=? ORDER BY rowid",
+            (position_id,),
+        ).fetchall()
+    ] == before_hooks
+
+    refreshed = inspect_paper_funding_reconciliation(position_ids=[position_id])
+    repeated = apply_paper_funding_reconciliation(
+        position_ids=[position_id],
+        expected_fingerprint=refreshed["report_fingerprint"],
+    )
+    assert refreshed["rows"][0]["categories"] == []
+    assert refreshed["rows"][0]["repair_mode"] == "already_current"
+    assert repeated["results"][0]["status"] == "already_current"
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM audit_events "
+        "WHERE entity_id=? AND event_type='paper_position_funding_identity_repaired'",
+        (position_id,),
+    ).fetchone()["n"] == 1
+
+    after_root.pop("funding_accounting_version")
+    after_root.pop("funding_economics_fingerprint")
+    repo.update_position(
+        position_id,
+        funding_cost=float(after_position["funding_cost"]) + 0.01,
+        reconciliation_evidence=json.dumps(
+            after_root, sort_keys=True, separators=(",", ":"),
+        ),
+    )
+    divergent = inspect_paper_funding_reconciliation(position_ids=[position_id])
+    divergent_row = divergent["rows"][0]
+    assert "funding_identity_mismatch" in divergent_row["categories"]
+    assert "duplicate_settlement_numeric_mismatch" in divergent_row["categories"]
+    assert divergent_row["repair_mode"] == "economics_materialization"
+
+    poisoned_root = json.loads(json.dumps(after_root))
+    poisoned_root["funding"]["position_id"] = f"other-{position_id}"
+    poisoned_funding_bytes = json.dumps(
+        poisoned_root["funding"], sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    poisoned_root["funding_accounting_version"] = "local-paper-funding-v2"
+    poisoned_root["funding_economics_fingerprint"] = (
+        "sha256:" + hashlib.sha256(poisoned_funding_bytes).hexdigest()
+    )
+    repo.update_position(
+        position_id,
+        funding_cost=after_position["funding_cost"],
+        reconciliation_evidence=json.dumps(
+            poisoned_root, sort_keys=True, separators=(",", ":"),
+        ),
+    )
+    invalid_nested = inspect_paper_funding_reconciliation(
+        position_ids=[position_id],
+    )["rows"][0]
+    assert invalid_nested["categories"] == ["funding_identity_mismatch"]
+    assert invalid_nested["repair_mode"] == "economics_materialization"
 
 
 @spec_claim(
