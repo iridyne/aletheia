@@ -7,6 +7,8 @@ their separate broker-ledger requirement and are deliberately out of scope.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 import sqlite3
 
 import pytest
@@ -745,9 +747,18 @@ def test_close_position_accepts_explicit_local_funding_and_merges_evidence(
     assert stored["funding_cost"] == pytest.approx(0.1)
     assert stored["funding_source"] == "local_simulation"
     assert result["realized_pnl"] == pytest.approx(20.0 - 0.12 - 0.132 - 0.1)
-    evidence = __import__("json").loads(stored["reconciliation_evidence"])
+    evidence = json.loads(stored["reconciliation_evidence"])
     assert evidence["funding"]["status"] == "complete"
     assert evidence["funding"]["events"][0]["scheduled_at"] == _iso(4)
+    fingerprint_payload = json.dumps(
+        evidence["funding"], sort_keys=True, separators=(",", ":"), default=str,
+    )
+    expected_fingerprint = (
+        "sha256:"
+        + hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest()
+    )
+    assert evidence["funding_accounting_version"] == "local-paper-funding-v2"
+    assert evidence["funding_economics_fingerprint"] == expected_fingerprint
 
 
 @spec_claim(
@@ -814,6 +825,10 @@ def test_close_position_incomplete_funding_evidence_clears_stale_position_value(
     assert stored["realized_pnl"] is None
     assert result["outcome_eligible"] is False
     assert result["outcome_exclusion_reason"] == "incomplete_funding_economics"
+    evidence = json.loads(stored["reconciliation_evidence"])
+    assert evidence["funding"]["status"] == "incomplete"
+    assert "funding_accounting_version" not in evidence
+    assert "funding_economics_fingerprint" not in evidence
 
 
 @pytest.mark.parametrize(
