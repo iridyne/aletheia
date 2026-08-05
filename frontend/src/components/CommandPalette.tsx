@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { Command } from 'cmdk'
 import { api } from '../api/client'
 
@@ -10,32 +10,82 @@ interface CmdAction {
   group: string
   keywords?: string
   dangerous?: boolean
-  action: () => unknown
+  action: () => unknown | Promise<unknown>
+}
+
+type CommandActionResult = { ok: true } | { ok: false; error: string }
+
+export async function runCommandAction(
+  action: () => unknown | Promise<unknown>,
+): Promise<CommandActionResult> {
+  try {
+    await action()
+    return { ok: true }
+  } catch (error) {
+    if (error instanceof Error && error.message) {
+      return { ok: false, error: error.message }
+    }
+    if (typeof error === 'string' && error) {
+      return { ok: false, error }
+    }
+    return { ok: false, error: 'request failed' }
+  }
 }
 
 export default function CommandPalette() {
   const [open, setOpen] = useState(false)
+  const [commandError, setCommandError] = useState('')
+  const [executingCommand, setExecutingCommand] = useState<string | null>(null)
+  const executingRef = useRef(false)
   const navigate = useNavigate()
   const qc = useQueryClient()
-
-  const pauseMut = useMutation({ mutationFn: api.pause, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
-  const resumeMut = useMutation({ mutationFn: api.resume, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
-        setOpen(prev => !prev)
+        if (!executingRef.current) setOpen(prev => !prev)
       }
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
   }, [])
 
-  const exec = useCallback((action: () => unknown) => {
-    setOpen(false)
-    action()
+  const exec = useCallback(async (command: CmdAction) => {
+    if (executingRef.current) return
+    executingRef.current = true
+    setExecutingCommand(command.id)
+    setCommandError('')
+
+    const result = await runCommandAction(command.action)
+    if (result.ok) {
+      setOpen(false)
+    } else {
+      setCommandError(`${command.label}: ${result.error}`)
+    }
+
+    executingRef.current = false
+    setExecutingCommand(null)
   }, [])
+
+  const setKillSwitch = async (active: boolean) => {
+    const confirmedState = await api.setKillSwitch(active, 'cmd_palette', !active)
+    qc.setQueryData(['kill-switch'], confirmedState)
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ['kill-switch'] }),
+      qc.invalidateQueries({ queryKey: ['risk-status'] }),
+    ])
+  }
+
+  const setGatewayPaused = async (paused: boolean) => {
+    await (paused ? api.pause() : api.resume())
+    await qc.invalidateQueries({ queryKey: ['status'] })
+  }
+
+  const startAgent = async (agentName: string) => {
+    await api.startAgentRun(agentName)
+    await qc.invalidateQueries({ queryKey: ['agent-runs'] })
+  }
 
   const commands: CmdAction[] = [
     { id: 'nav-command-center', label: 'Open Command Center', group: 'Navigation', keywords: 'operator chat control room shell', action: () => navigate('/command-center') },
@@ -55,15 +105,15 @@ export default function CommandPalette() {
     { id: 'nav-risk', label: 'Go to Risk & Controls', group: 'Navigation', action: () => navigate('/risk') },
     { id: 'nav-settings', label: 'Go to Settings', group: 'Navigation', action: () => navigate('/settings') },
 
-    { id: 'sys-pause', label: 'Pause Gateway', group: 'System', keywords: 'stop halt', action: () => pauseMut.mutate() },
-    { id: 'sys-resume', label: 'Resume Gateway', group: 'System', keywords: 'start continue', action: () => resumeMut.mutate() },
-    { id: 'sys-kill', label: 'Engage Kill Switch', group: 'System', dangerous: true, action: () => { if (confirm('Engage kill switch? All trading will halt.')) api.setKillSwitch(true, 'cmd_palette') } },
-    { id: 'sys-unkill', label: 'Release Kill Switch', group: 'System', action: () => { if (confirm('Release Kill Switch? Trading will resume immediately.')) api.setKillSwitch(false, 'cmd_palette', true) } },
+    { id: 'sys-pause', label: 'Pause Gateway', group: 'System', keywords: 'stop halt', action: () => setGatewayPaused(true) },
+    { id: 'sys-resume', label: 'Resume Gateway', group: 'System', keywords: 'start continue', action: () => setGatewayPaused(false) },
+    { id: 'sys-kill', label: 'Engage Kill Switch', group: 'System', dangerous: true, action: async () => { if (confirm('Engage kill switch? All trading will halt.')) await setKillSwitch(true) } },
+    { id: 'sys-unkill', label: 'Release Kill Switch', group: 'System', action: async () => { if (confirm('Release Kill Switch? Trading will resume immediately.')) await setKillSwitch(false) } },
 
-    { id: 'agent-observer', label: 'Run Market Observer', group: 'Agents', keywords: 'trigger start market', action: () => api.startAgentRun('market_observer') },
-    { id: 'agent-research', label: 'Run Research Agent', group: 'Agents', keywords: 'trigger start research', action: () => api.startAgentRun('research_agent') },
-    { id: 'agent-dreaming', label: 'Run Dreaming Agent', group: 'Agents', keywords: 'trigger start dream consolidate', action: () => api.startAgentRun('dreaming_agent') },
-    { id: 'agent-paper', label: 'Run Paper Trader', group: 'Agents', keywords: 'trigger start paper trade', action: () => api.startAgentRun('paper_trader') },
+    { id: 'agent-observer', label: 'Run Market Observer', group: 'Agents', keywords: 'trigger start market', action: () => startAgent('market_observer') },
+    { id: 'agent-research', label: 'Run Research Agent', group: 'Agents', keywords: 'trigger start research', action: () => startAgent('research_agent') },
+    { id: 'agent-dreaming', label: 'Run Dreaming Agent', group: 'Agents', keywords: 'trigger start dream consolidate', action: () => startAgent('dreaming_agent') },
+    { id: 'agent-paper', label: 'Run Paper Trader', group: 'Agents', keywords: 'trigger start paper trade', action: () => startAgent('paper_trader') },
   ]
 
   const groups = [...new Set(commands.map(c => c.group))]
@@ -71,7 +121,7 @@ export default function CommandPalette() {
   if (!open) return null
 
   return (
-    <div className="cmd-backdrop" onClick={() => { setOpen(false) }}>
+    <div className="cmd-backdrop" onClick={() => { if (!executingRef.current) setOpen(false) }}>
       <div className="cmd-dialog" onClick={e => e.stopPropagation()}>
         <Command
           onKeyDown={(e) => {
@@ -98,6 +148,7 @@ export default function CommandPalette() {
             placeholder="Jump somewhere, or type a natural-language command (20+ chars) for AI..."
             autoFocus
           />
+          {commandError && <div className="lever-err" role="alert">{commandError}</div>}
           <Command.List className="cmd-list">
             <Command.Empty className="cmd-empty">
               Press Enter to open Command Center with this draft
@@ -108,10 +159,11 @@ export default function CommandPalette() {
                   <Command.Item
                     key={cmd.id}
                     value={`${cmd.label} ${cmd.keywords || ''}`}
-                    onSelect={() => exec(cmd.action)}
+                    onSelect={() => { void exec(cmd) }}
                     className={`cmd-item ${cmd.dangerous ? 'dangerous' : ''}`}
+                    disabled={executingCommand !== null}
                   >
-                    <span>{cmd.label}</span>
+                    <span>{cmd.label}{executingCommand === cmd.id ? '…' : ''}</span>
                   </Command.Item>
                 ))}
               </Command.Group>
