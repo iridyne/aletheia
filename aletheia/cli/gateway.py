@@ -3,6 +3,7 @@
 import platform
 from pathlib import Path
 import sys
+import time
 
 import typer
 
@@ -145,8 +146,16 @@ def restart(
     """
     _maybe_configure_windows_lan_firewall(enabled=lan_firewall)
     from aletheia.gateway.lifecycle import do_stop, do_start
+    started_at = time.monotonic()
     do_stop()
+    stopped_at = time.monotonic()
     do_start(no_browser=not browser, foreground=False)
+    finished_at = time.monotonic()
+    typer.echo(
+        "Gateway restart completed in "
+        f"{finished_at - started_at:.1f}s "
+        f"(stop {stopped_at - started_at:.1f}s; start/readiness {finished_at - stopped_at:.1f}s)."
+    )
 
 
 @gateway_app.command()
