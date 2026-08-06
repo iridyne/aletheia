@@ -3,13 +3,13 @@
 > Complete index of Aletheia Trading OS data layer.
 > ~96 SQLite table declarations, 59 Pydantic models, WAL mode, versioned additive migrations.
 > Source of truth: `aletheia/storage/migrations.py` (DDL) + `models.py` (types).
-> Last updated: 2026-07-20
+> Last updated: 2026-08-06
 
 ---
 
 ## 1. Architecture Overview
 
-- **Engine**: SQLite 3, WAL mode, `busy_timeout=30000ms` (30s, fallback only), `synchronous=NORMAL`, `wal_autocheckpoint=1000`, `isolation_level=None` (true autocommit, no implicit BEGIN)
+- **Engine**: SQLite 3, WAL mode, `busy_timeout=30000ms` (30s, fallback only), `synchronous=NORMAL`, `wal_autocheckpoint=1000`, per-connection `journal_size_limit=67108864`, `isolation_level=None` (true autocommit, no implicit BEGIN)
 - **Concurrency**: one read/legacy connection per thread via `threading.local`; scheduler capped at `max_workers=3`
 - **Write serialization**: transaction-external repository DML enters a bounded 256-item writer lane backed by one dedicated connection. Accepted jobs synchronously return an exact commit/rollback result; queue admission may time out before acceptance, but an accepted authoritative write never returns an ambiguous timeout. Existing multi-statement `transaction()` closures stay on their caller connection and share the same writer permit.
 - **Cross-process safety**: the process `_WRITE_LOCK` is paired with an advisory `app.write.lock` file permit, automatically released by the OS on process death. Gateway, collector, and supervisor writers therefore contend before SQLite's writer slot; `busy_timeout` remains the last-resort fallback.
@@ -98,7 +98,7 @@ from the Operator working set unless a `submitting` claim requires crash recover
 |-------|---------|-------------|
 | `knowledge_items` | Research notes, reviews, lessons | item_type, content (TEXT), tags, confidence |
 | `news_items` | External news signals | source, headline, sentiment, symbols (JSON) |
-| `market_ohlcv` | Historical candlestick data; rows are isolated by full instrument identity | exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume |
+| `market_ohlcv` | Historical candlestick data; rows are isolated by full instrument identity. Explicit offline compact may cluster the composite PK as `WITHOUT ROWID`; the logical schema is unchanged. | exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume |
 
 ### C-bis. Measured Learning Ledger (7 tables)
 
@@ -411,6 +411,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 7. Production apply holds the process and cross-process SQLite writer permit across ledger recheck, migration execution, and success recording. This is an upgrade-only critical section; the Gateway must not be serving normal writers during it.
 8. Pytest retains the in-memory blueprint optimization and records the same ledger rows in the cloned schema; test fixtures may continue to call the compatibility `run_migrations()` helper.
 9. Dataset-size-sensitive repair is never an implicit read/startup side effect. Schema v3 rebuilds `knowledge_fts` once as migration `20260806_0002_startup_dataset_boundary_v3` and installs indexes for startup reconciliation and windowed telemetry reads. Normal knowledge writes maintain FTS incrementally; later full rebuilds require the explicit `knowledge reindex` maintenance command or a new versioned migration.
+10. Physical packing is outside the migration ledger. In particular, `market_ohlcv` rowid-to-`WITHOUT ROWID` conversion runs only inside explicit offline `data compact --apply`, after a verified backup and with the Gateway stopped; fresh deploy and normal Gateway startup never perform it.
 
 Automatic readers must use indexed, bounded keys or a declared retained evidence window. User-requested export/backup may traverse a complete dataset, but it must stream through a cursor/disk-backed archive rather than materialize a table or archive in process memory.
 
@@ -512,10 +513,13 @@ An existing `auto_vacuum=NONE` database must set the pragma **before** a one-tim
 offline `VACUUM`; calling `incremental_vacuum` alone on it is a no-op.
 The recurring `_run_cleanup` pass reclaims freelist pages via bounded `PRAGMA incremental_vacuum(N)`
 at the tail with a bounded 16 MiB normal / 64 MiB capacity-pressure budget and records
-the physical/logical size to `logs/database_capacity.jsonl`.
+the physical/logical size plus a non-blocking PASSIVE-checkpoint backlog to
+`logs/database_capacity.jsonl`.
 Full `VACUUM` runs only through explicit `aletheia data compact --apply` with the Gateway
 stopped. The default 2048 MiB capacity budget is an alert threshold, not a reason to drop
-authoritative writes. See `RETENTION_POLICY.md` §6 for the full sequence.
+authoritative writes. Compact can also rebuild an eligible `market_ohlcv` as
+`WITHOUT ROWID`, after full equality verification, without changing retention or
+market-data semantics. See `RETENTION_POLICY.md` §6 for the full sequence.
 
 The due-settlement queue uses a partial index over pending rows only:
 `(due_at,id) WHERE status='pending'`. Deep capacity inspection uses `dbstat` aggregate

@@ -66,7 +66,8 @@ def test_hot_queries_use_matching_indexes(tmp_path, monkeypatch):
     )
     assert "idx_market_ohlcv_timeframe_ts" in _plan(
         db,
-        "SELECT rowid FROM market_ohlcv WHERE timeframe=? AND ts < ?",
+        "SELECT exchange,symbol,market_type,timeframe,ts FROM market_ohlcv "
+        "WHERE timeframe=? AND ts < ?",
         ("1m", 1),
     )
     assert "idx_opportunities_status_created" in _plan(

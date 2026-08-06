@@ -2658,20 +2658,42 @@ def _run_cleanup():
             )
         except Exception as vac_err:  # noqa: BLE001 — best-effort reclaim
             logger.debug("incremental_vacuum skipped: %s", vac_err)
-        # WAL checkpoint: copy written WAL frames back to the main DB file.
-        # wal_autocheckpoint fires passively at 1000 pages but will not
-        # truncate the WAL while any reader holds an older snapshot.  An
-        # explicit PASSIVE checkpoint here (after prunes release rows) gives
-        # the WAL file a daily opportunity to shrink, preventing multi-month
-        # unbounded growth on a long-running CASI instance.
+        # WAL checkpoint: copy eligible frames back and expose reader-pinned
+        # backlog without blocking runtime. Later WAL resets apply the
+        # per-connection 64 MiB retention limit.
+        wal_checkpoint = None
         try:
-            get_db().execute("PRAGMA wal_checkpoint(PASSIVE)")
+            from aletheia.maintenance.database_capacity import passive_wal_checkpoint
+
+            wal_checkpoint = passive_wal_checkpoint(get_db())
+            counts["wal_checkpoint"] = wal_checkpoint
         except Exception as chk_err:  # noqa: BLE001 — best-effort checkpoint
             logger.debug("wal_checkpoint skipped: %s", chk_err)
         try:
             from aletheia.maintenance.database_capacity import record_database_capacity
 
-            capacity = record_database_capacity(capacity_mb=r.app_db_capacity_mb)
+            capacity = record_database_capacity(
+                capacity_mb=r.app_db_capacity_mb,
+                wal_checkpoint=wal_checkpoint,
+            )
+            if wal_checkpoint and wal_checkpoint.get("status") == "backlogged":
+                from aletheia.infra.events import emit_infra_event
+
+                remaining_mb = float(wal_checkpoint.get("remaining_bytes", 0)) / (1024 * 1024)
+                emit_infra_event(
+                    severity="warning",
+                    source="scheduler",
+                    code="sqlite_wal_checkpoint_backlog",
+                    message=(
+                        f"SQLite PASSIVE checkpoint left {remaining_mb:.1f} MiB "
+                        "in the WAL after nightly cleanup"
+                    ),
+                    action=(
+                        "Inspect `logs/database_capacity.jsonl` for repeated remaining_frames; "
+                        "a long-lived reader or external process may be pinning an old snapshot"
+                    ),
+                    dedupe_sec=86400,
+                )
             if capacity.get("capacity_status") in {"warning", "over_budget"}:
                 from aletheia.infra.events import emit_infra_event
 

@@ -68,6 +68,16 @@ def database_capacity(
         capacity_bytes=snapshot.get("capacity_bytes"),
     )
     payload = {"current": snapshot, "trend": trend}
+    latest_checkpoint = next(
+        (
+            sample["wal_checkpoint"]
+            for sample in reversed(trend_history)
+            if isinstance(sample.get("wal_checkpoint"), dict)
+        ),
+        None,
+    )
+    if latest_checkpoint is not None:
+        payload["latest_wal_checkpoint"] = latest_checkpoint
     if history:
         payload["history"] = trend_history[-history:]
     if json_output:
@@ -87,6 +97,16 @@ def database_capacity(
         f"({float(snapshot.get('capacity_ratio', 0)):.1%} of {budget} MiB); "
         f"incremental_vacuum={'enabled' if snapshot['incremental_vacuum_enabled'] else 'disabled'}"
     )
+    typer.echo(
+        f"WAL: {snapshot['wal_bytes'] / (1024 * 1024):.1f} MiB "
+        f"({snapshot['wal_status']}, retained limit 64 MiB)"
+    )
+    if latest_checkpoint is not None:
+        typer.echo(
+            "Latest checkpoint: "
+            f"{latest_checkpoint.get('status')} with "
+            f"{int(latest_checkpoint.get('remaining_frames', 0))} frame(s) remaining"
+        )
     for row in snapshot.get("top_objects", []):
         packing = row.get("packing_ratio")
         packing_text = f", {float(packing):.1%} packed" if packing is not None else ""
@@ -119,11 +139,23 @@ def compact_database_command(
         help="Run offline compaction. Default is a read-only plan.",
     ),
 ):
-    """Reclaim reusable pages and enable future incremental vacuuming."""
+    """Reclaim pages and optimize eligible physical table layouts offline."""
+    import time
+
     from aletheia.maintenance.database_capacity import compact_database
 
+    started = time.perf_counter()
+
+    def progress(stage: str, message: str) -> None:
+        typer.echo(f"[{time.perf_counter() - started:6.1f}s] {stage}: {message}")
+
+    if apply:
+        typer.echo(
+            "Offline compaction started. Duration depends on retained data and disk speed; "
+            "keep the Gateway stopped."
+        )
     try:
-        result = compact_database(apply=apply)
+        result = compact_database(apply=apply, progress=progress if apply else None)
     except RuntimeError as exc:
         typer.echo(f"Compaction refused: {exc}", err=True)
         raise typer.Exit(1) from exc

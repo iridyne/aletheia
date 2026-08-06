@@ -3648,6 +3648,7 @@ def _classify_db_capacity(
     reclaimable_mb: float,
     capacity_mb: float | None = None,
     auto_vacuum: int | None = None,
+    wal_mb: float = 0.0,
 ) -> tuple[str, str, str | None]:
     """Classify storage pressure separately from normal retained database growth."""
     minimum_free_mb = max(500.0, db_mb * 1.2)
@@ -3656,6 +3657,14 @@ def _classify_db_capacity(
             "warn",
             "low disk space",
             "free disk space before SQLite writes fail; database compaction also needs temporary free space",
+        )
+
+    if wal_mb > 64.0:
+        return (
+            "warn",
+            "WAL above retained limit",
+            "inspect `logs/database_capacity.jsonl` for repeated checkpoint backlog; "
+            "a long-lived reader or external process may be pinning an old snapshot",
         )
 
     if capacity_mb and capacity_mb > 0 and db_mb >= capacity_mb:
@@ -3703,6 +3712,7 @@ def _probe_infra_db_size(report: Report) -> None:
         freelist_count = int(db.execute("PRAGMA freelist_count").fetchone()[0])
         auto_vacuum = int(db.execute("PRAGMA auto_vacuum").fetchone()[0])
         reclaimable_mb = page_size * freelist_count / (1024 * 1024)
+        wal_mb = wal_bytes / (1024 * 1024)
         from aletheia.config.loader import load_config
 
         capacity_mb = float(
@@ -3717,6 +3727,7 @@ def _probe_infra_db_size(report: Report) -> None:
         reclaimable_mb=reclaimable_mb,
         capacity_mb=capacity_mb,
         auto_vacuum=auto_vacuum,
+        wal_mb=wal_mb,
     )
     detail = (
         f"{label}: app.db + WAL {db_mb:.0f} MB, reusable {reclaimable_mb:.1f} MB, "

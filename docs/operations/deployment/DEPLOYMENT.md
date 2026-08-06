@@ -60,6 +60,9 @@ uv run aletheia data capacity --deep --history 30
   3 个且横跨至少 7 天的样本判断初步斜率，生产容量判断仍建议观察 30 天。
   `data capacity` 使用抗单次 WAL/checkpoint 尖峰的 median pairwise slope，并明确标注
   provisional/established，而不是用两个偶然文件点给出伪精确 ETA。
+- 每个应用 SQLite 连接都设置 64 MiB `journal_size_limit`。夜间 cleanup 运行一次
+  非阻塞 PASSIVE checkpoint，并把 log/checkpointed/remaining frame 数量写进同一历史；
+  连续 backlog 通常意味着长期 reader 或外部进程钉住了旧快照，应先诊断而不是阻塞运行时。
 - 普通 DELETE 只把页放入 freelist；`auto_vacuum=NONE` 的旧库不会因
   `incremental_vacuum` 缩小文件。需要回收操作系统空间时执行：
 
@@ -72,7 +75,10 @@ uv run aletheia doctor
 ```
 
 `--apply` 会拒绝仍在运行的 Gateway 或不足的临时磁盘空间，并先创建、校验
-`backup_pre_compact_*.tar.gz`；它不删行、不缩短保留期。
+`backup_pre_compact_*.tar.gz`。它持有目标数据库的跨进程 writer permit，显示各阶段
+elapsed，校验 integrity/foreign keys，并在 VACUUM 前把符合预期 schema 的
+`market_ohlcv` 重建为 `WITHOUT ROWID`；它不删行、不缩短保留期。该物理重建不属于
+Migration，也不会在 Gateway 启动或首次部署时自动执行。
 
 日常 cleanup 在正常容量下每次最多回收 16 MiB freelist；达到 80% 容量水位后最多
 回收 64 MiB。操作持有跨进程 writer permit，只改变空闲页分配，不删除任何保留行。

@@ -46,8 +46,39 @@ def test_new_sqlite_database_enables_incremental_vacuum(tmp_path):
     db = _open_connection(path)
     try:
         assert db.execute("PRAGMA auto_vacuum").fetchone()[0] == 2
+        assert db.execute("PRAGMA journal_size_limit").fetchone()[0] == 64 * 1024 * 1024
     finally:
         db.close()
+
+
+def test_passive_checkpoint_reports_exact_backlog(tmp_path):
+    from aletheia.maintenance.database_capacity import passive_wal_checkpoint
+
+    path = tmp_path / "app.db"
+    path.touch()
+    path.with_name("app.db-wal").write_bytes(b"x" * 10)
+
+    class _Cursor:
+        def __init__(self, value):
+            self._value = value
+
+        def fetchone(self):
+            return self._value
+
+    class _Database:
+        def execute(self, sql):
+            if sql == "PRAGMA page_size":
+                return _Cursor((4096,))
+            assert sql == "PRAGMA wal_checkpoint(PASSIVE)"
+            return _Cursor((0, 1500, 200))
+
+    result = passive_wal_checkpoint(_Database(), path=path)
+
+    assert result["log_frames"] == 1500
+    assert result["checkpointed_frames"] == 200
+    assert result["remaining_frames"] == 1300
+    assert result["remaining_bytes"] == 1300 * 4096
+    assert result["status"] == "backlogged"
 
 
 def test_capacity_budget_has_schema_bounds():
@@ -167,3 +198,90 @@ def test_compaction_refuses_running_gateway(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="Gateway is running"):
         compact_database(path=path, apply=True)
+
+
+def test_compaction_converts_ohlcv_layout_and_restores_wal(tmp_path, monkeypatch):
+    from aletheia.maintenance.database_capacity import compact_database
+
+    path = tmp_path / "app.db"
+    db = sqlite3.connect(path, isolation_level=None)
+    db.executescript(
+        """
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE market_ohlcv (
+            exchange TEXT NOT NULL DEFAULT 'legacy_unknown', symbol TEXT NOT NULL,
+            market_type TEXT NOT NULL DEFAULT 'spot', timeframe TEXT NOT NULL,
+            ts INTEGER NOT NULL, open REAL NOT NULL, high REAL NOT NULL,
+            low REAL NOT NULL, close REAL NOT NULL, volume REAL NOT NULL,
+            provider TEXT NOT NULL DEFAULT 'ccxt',
+            PRIMARY KEY(exchange,symbol,market_type,timeframe,ts)
+        );
+        CREATE INDEX idx_market_ohlcv_timeframe_ts ON market_ohlcv(timeframe,ts);
+        INSERT INTO market_ohlcv VALUES
+            ('bitget','BTC/USDT','swap','1m',1,100,101,99,100.5,12,'ccxt');
+        """
+    )
+    db.close()
+    monkeypatch.setattr("aletheia.gateway.pidfile.is_running", lambda: False)
+    progress: list[tuple[str, str]] = []
+
+    result = compact_database(
+        path=path,
+        apply=True,
+        progress=lambda stage, message: progress.append((stage, message)),
+    )
+
+    assert result["market_ohlcv_optimization"]["applied"] is True
+    assert [stage for stage, _message in progress] == [
+        "backup",
+        "preflight",
+        "ohlcv_layout",
+        "vacuum",
+        "verify",
+        "complete",
+    ]
+    verify = sqlite3.connect(path)
+    try:
+        schema = verify.execute("SELECT sql FROM sqlite_schema WHERE name='market_ohlcv'").fetchone()[0]
+        assert "WITHOUT ROWID" in schema.upper()
+        assert verify.execute("SELECT COUNT(*) FROM market_ohlcv").fetchone()[0] == 1
+        assert verify.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+        assert verify.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        verify.close()
+
+
+def test_compaction_refusal_restores_original_wal_mode(tmp_path, monkeypatch):
+    from aletheia.maintenance.database_capacity import compact_database
+
+    path = tmp_path / "app.db"
+    db = sqlite3.connect(path, isolation_level=None)
+    db.executescript(
+        """
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE market_ohlcv (
+            exchange TEXT NOT NULL DEFAULT 'legacy_unknown', symbol TEXT NOT NULL,
+            market_type TEXT NOT NULL DEFAULT 'spot', timeframe TEXT NOT NULL,
+            ts INTEGER NOT NULL, open REAL NOT NULL, high REAL NOT NULL,
+            low REAL NOT NULL, close REAL NOT NULL, volume REAL NOT NULL,
+            provider TEXT NOT NULL DEFAULT 'ccxt',
+            PRIMARY KEY(exchange,symbol,market_type,timeframe,ts)
+        );
+        CREATE INDEX owner_custom_index ON market_ohlcv(close);
+        INSERT INTO market_ohlcv VALUES
+            ('bitget','BTC/USDT','swap','1m',1,100,101,99,100.5,12,'ccxt');
+        """
+    )
+    db.close()
+    monkeypatch.setattr("aletheia.gateway.pidfile.is_running", lambda: False)
+
+    with pytest.raises(RuntimeError, match="unexpected indexes"):
+        compact_database(path=path, apply=True)
+
+    verify = sqlite3.connect(path)
+    try:
+        assert verify.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+        assert verify.execute("SELECT COUNT(*) FROM market_ohlcv").fetchone()[0] == 1
+        assert verify.execute("SELECT rowid FROM market_ohlcv").fetchone() is not None
+    finally:
+        verify.close()

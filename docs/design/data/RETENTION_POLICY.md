@@ -3,7 +3,7 @@
 > Authoritative retention contract for the local SQLite (`~/.aletheia/app.db`),
 > secondary SQLite (`~/.aletheia/tasks.db`), and filesystem artefact trees under
 > `~/.aletheia/`.
-> Last updated: 2026-08-06 (capacity guardrails and measured-size correction).
+> Last updated: 2026-08-06 (offline layout optimization and WAL backlog evidence).
 > Source: `/tmp/RETENTION_SPEC.md` + `/tmp/RETENTION_SYNTHESIS.json` (workflow output).
 
 Two hard rules govern every retention decision here:
@@ -203,16 +203,23 @@ below are the Phase 3 target lines.
 
 ## 6. VACUUM strategy
 
-Sequenced post-prune, in the Phase 4 backfill script and mirrored in the
-recurring cleanup pass:
+The explicit offline `aletheia data compact --apply` sequence is:
 
-1. `PRAGMA wal_checkpoint(TRUNCATE)` — flush WAL into main DB, truncate `-wal`.
-2. `PRAGMA integrity_check` — abort if not `ok`.
-3. `PRAGMA auto_vacuum = INCREMENTAL` — select the persistent page-reclaim mode.
-4. `VACUUM` (one-shot full compact) — rebuilds the database in that mode. Requires
+1. Hold the target database's process/cross-process writer permit, then create and
+   verify a WAL-consistent `pre_compact` backup.
+2. `PRAGMA wal_checkpoint(TRUNCATE)`, `integrity_check`, and `foreign_key_check`;
+   abort if another user blocks the checkpoint or either check fails.
+3. Temporarily use rollback-journal mode so the table rebuild does not create a
+   second database-sized WAL.
+4. If its logical schema and explicit indexes exactly match the owned contract,
+   rebuild `market_ohlcv` as `WITHOUT ROWID`; verify copied row count and every
+   value before atomically replacing the old table. Unexpected owner indexes fail closed.
+5. `PRAGMA auto_vacuum = INCREMENTAL`, then `VACUUM` (one-shot full compact).
+   This rebuilds the database in that mode and requires
    ≥ 2× current `app.db` size plus 512 MiB free.
-5. `PRAGMA journal_size_limit = 67108864` — cap WAL at 64 MiB.
-6. `PRAGMA optimize` — refresh query planner stats.
+6. Restore WAL when it was the original mode, set
+   `PRAGMA journal_size_limit = 67108864`, run `PRAGMA optimize`, and repeat
+   integrity and foreign-key verification.
 
 After (4), the recurring `_run_cleanup` pass reclaims freelist pages via
 bounded `PRAGMA incremental_vacuum(N)` at the tail: at most 16 MiB normally or
@@ -227,6 +234,13 @@ databases with `PRAGMA auto_vacuum=0` do not reclaim file bytes when
 refuses a running Gateway, creates and verifies a WAL-consistent `pre_compact`
 backup, checks free disk, integrity and foreign keys before and after, and never
 deletes rows or changes retention windows.
+
+Normal runtime does not perform the table rebuild or full VACUUM. Every application
+connection sets the connection-local 64 MiB `journal_size_limit`. The nightly cleanup
+runs a non-blocking PASSIVE checkpoint and records `log_frames`,
+`checkpointed_frames`, and `remaining_frames` in `database_capacity.jsonl`; a backlog
+of at least 1000 remaining frames emits an operational warning. PASSIVE does not wait
+for readers or writers, so this observation cannot extend Gateway readiness.
 
 `~/.aletheia/tasks.db` (12 KiB): repeat steps (1)-(3) only. Trivial cost.
 
@@ -255,7 +269,8 @@ not be extrapolated as a precise forward forecast.
 
 The runtime now appends one exact post-cleanup sample to
 `logs/database_capacity.jsonl`, including main DB, WAL, logical used bytes,
-freelist bytes, capacity ratio, and reclaim mode. Use at least 30 samples before
+freelist bytes, capacity ratio, reclaim mode, and the latest PASSIVE-checkpoint
+backlog. Use at least 30 samples before
 claiming a new steady-state curve. A first-order post-v4 estimate is roughly
 1.4–1.7 GiB after redundant-index removal and offline compaction, with a 2 GiB
 operational budget; this remains a model until the nightly history validates it.
@@ -266,12 +281,21 @@ packing from legitimate retained payload. Capacity trend uses the median of
 pairwise physical-size slopes; fewer than 3 samples or less than 7 elapsed days is
 reported as provisional/insufficient rather than a reliable ETA.
 
-### 7.1 Further structural opportunities, not automatic maintenance
+### 7.1 Explicit physical-layout optimization and remaining boundaries
 
-- `market_ohlcv` is a composite-primary-key rowid table. SQLite `WITHOUT ROWID`
-  could remove its separate primary-key B-tree, but the current generic retention
-  helper deletes by `rowid`; conversion therefore requires an isolated v6 table
-  rebuild, PK-based prune implementation, query-plan benchmark, and rollback test.
+- `market_ohlcv` retention now deletes by the durable composite primary key rather
+  than hidden `rowid`. Explicit offline compact can therefore rebuild the table as
+  `WITHOUT ROWID`, eliminating the separate primary-key B-tree while preserving
+  the logical schema and indexed timeframe query. This is intentionally not a v6
+  migration: migrations remain additive-only, and no dataset-sized rebuild is an
+  implicit first-deploy or Gateway-start side effect.
+- A read-only CASI sample on 2026-08-06 copied 250,000 real retained rows into both
+  layouts. Rowid table + PK + timeframe index used 38,699,008 bytes; WITHOUT ROWID
+  table + timeframe index used 33,611,776 bytes, a 13.15% reduction. Point primary-key
+  lookup measured 0.021277 ms versus 0.021260 ms and the prune selector 0.024 ms versus
+  0.023 ms, so no regression was measurable at this sample size. Applied to the current
+  post-v4 OHLCV objects, the projected saving is about 36 MiB; this remains a projection
+  until an owner schedules and measures production compaction.
 - Permanent Learning/audit ledgers must not be TTL-pruned. If their growth becomes
   material, use a separately specified content-addressed manifest or verified cold
   archive with transparent replay; never silently delete or detach authority evidence.

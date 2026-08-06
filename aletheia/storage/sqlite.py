@@ -61,6 +61,7 @@ _write_lock_state = threading.local()
 
 _WRITE_QUEUE_CAPACITY = 256
 _WRITE_QUEUE_STOP = object()
+_JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
 _MUTATING_SQL = {
     "ALTER",
     "ANALYZE",
@@ -78,7 +79,11 @@ _TRANSACTION_END_SQL = {"COMMIT", "END", "RELEASE", "ROLLBACK"}
 _WITH_WRITE_RE = re.compile(r"\b(?:INSERT|UPDATE|DELETE|REPLACE)\b", re.IGNORECASE)
 
 
-def acquire_write_lock(*, timeout: float = _WRITE_LOCK_TIMEOUT_S) -> float:
+def acquire_write_lock(
+    *,
+    timeout: float = _WRITE_LOCK_TIMEOUT_S,
+    path: Path | None = None,
+) -> float:
     """Acquire process and cross-process writer permits; return wait time in ms."""
 
     depth = getattr(_write_lock_state, "depth", 0)
@@ -91,7 +96,7 @@ def acquire_write_lock(*, timeout: float = _WRITE_LOCK_TIMEOUT_S) -> float:
         _logger.warning("sqlite_write_lock_timeout wait_ms=%.1f", waited_ms)
         raise sqlite3.OperationalError("write_lock_timeout: a write transaction was held open too long")
     try:
-        _acquire_file_write_lock(started=started, timeout=timeout)
+        _acquire_file_write_lock(started=started, timeout=timeout, path=path)
     except BaseException:
         _WRITE_LOCK.release()
         raise
@@ -127,10 +132,15 @@ def write_lock_held_by_current_thread() -> bool:
     return bool(getattr(_write_lock_state, "depth", 0))
 
 
-def _acquire_file_write_lock(*, started: float, timeout: float) -> None:
+def _acquire_file_write_lock(
+    *,
+    started: float,
+    timeout: float,
+    path: Path | None = None,
+) -> None:
     if (fcntl is None and msvcrt is None) or (_injected_db_active and _injected_db_path is None):
         return
-    lock_path = Path(_injected_db_path or db_path()).with_suffix(".write.lock")
+    lock_path = Path(path or _injected_db_path or db_path()).with_suffix(".write.lock")
     try:
         file_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     except OSError as exc:
@@ -283,6 +293,9 @@ def _open_connection(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA busy_timeout=30000")  # 30 s — last-resort SQLite fallback
     conn.execute("PRAGMA wal_autocheckpoint=1000")
+    # journal_size_limit is connection-local. Set it on every connection so a
+    # successfully reset WAL cannot retain an old multi-GiB allocation forever.
+    conn.execute(f"PRAGMA journal_size_limit={_JOURNAL_SIZE_LIMIT_BYTES}")
     return conn
 
 
