@@ -226,7 +226,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
         <label className="settings-field">
           <span>Snapshot TTL</span>
           <div className="flex items-center gap-2">
-            <Toggle checked={snapshotTtlEnabled} onChange={v => { setSnapshotTtlEnabled(v); setChanged(true); setMsg(null) }} />
+            <Toggle checked={snapshotTtlEnabled} aria-label="Enable snapshot TTL" onChange={v => { setSnapshotTtlEnabled(v); setChanged(true); setMsg(null) }} />
             <input type="number" min={1} max={72} step={1} value={snapshotTtlHours}
               disabled={!snapshotTtlEnabled}
               onChange={e => { setSnapshotTtlHours(e.target.value); setChanged(true); setMsg(null) }} />

@@ -48,6 +48,10 @@ def record_context_artifacts(
     caller: str,
     symbol: str | None,
     artifacts: list[dict[str, Any]],
+    logical_call_id: str | None = None,
+    evaluation_pair_id: str | None = None,
+    evaluation_arm: str | None = None,
+    fixture_id: str | None = None,
     observed_at: str | None = None,
 ) -> int:
     """Persist rendered-context metadata best-effort; never raise to a caller."""
@@ -75,6 +79,10 @@ def record_context_artifacts(
                 _SCHEMA_VERSION,
                 run_id,
                 caller,
+                _bounded_text(logical_call_id),
+                _bounded_text(evaluation_pair_id),
+                _bounded_text(evaluation_arm),
+                _bounded_text(fixture_id),
                 _bounded_text(symbol),
                 kind,
                 stable_id,
@@ -96,10 +104,11 @@ def record_context_artifacts(
         was_in_tx = db.in_transaction
         db.executemany(
             """INSERT INTO llm_context_artifacts (
-                id, schema_version, run_id, caller, symbol, kind, stable_id,
+                id, schema_version, run_id, caller, logical_call_id,
+                evaluation_pair_id, evaluation_arm, fixture_id, symbol, kind, stable_id,
                 source, selected_reason, trust_class, freshness_status,
                 published_at, observed_at, rendered_chars, metadata_json, created_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             rows,
         )
         if not was_in_tx:

@@ -384,7 +384,7 @@ function NewsFeedsCard({ settings, qc }: any) {
       <div className="news-feeds-grid">
         {feeds.map((f: any, i: number) => (
           <div key={f.url} className="news-feed-row">
-            <Toggle checked={f.enabled} onChange={() => toggleFeed(i)} />
+            <Toggle checked={f.enabled} aria-label={`Enable ${f.name}`} onChange={() => toggleFeed(i)} />
             <div className="news-feed-info">
               <span className="news-feed-name">{f.name}</span>
               <span className="news-feed-source text-muted text-xs">{f.source}</span>

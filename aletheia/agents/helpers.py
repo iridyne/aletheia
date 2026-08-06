@@ -8,9 +8,11 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import StrEnum
 import threading
+from contextvars import ContextVar
 
 from aletheia.model_provider.base import ModelRequest, StreamChunk
 from aletheia.model_provider.base import model_json_schema_payload
+from aletheia.model_provider.inference_contract import InferenceCall, build_inference_call
 from aletheia.model_provider.router import get_provider
 from aletheia.model_provider.fallback import BudgetExceededError, complete_with_fallback
 
@@ -21,6 +23,9 @@ logger = logging.getLogger("aletheia.agents")
 # calls need their own total budget across all repair attempts so scheduler cancellation
 # never abandons the event-loop thread mid-request.
 _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC = 180.0
+_LAST_INFERENCE_CALL_ID: ContextVar[str | None] = ContextVar(
+    "aletheia_last_inference_call_id", default=None
+)
 
 
 def _exception_detail(exc: BaseException) -> str:
@@ -47,6 +52,18 @@ class HarnessContext:
     live_enabled: bool
     agent_run_id: str | None = None
     logical_agent: str | None = None
+
+    def manifest(self) -> dict[str, object]:
+        return {
+            "model_visible": True,
+            "adapter_id": self.adapter_id,
+            "observed_at": self.observed_at,
+            "execution_mode": self.execution_mode,
+            "live_enabled": self.live_enabled,
+            "agent_run_id": self.agent_run_id,
+            "logical_agent": self.logical_agent,
+            "tool_authority_statement": "runtime-enforced:no-live-order",
+        }
 
     def render(self, system: str) -> str:
         identity = " ".join(
@@ -100,6 +117,29 @@ def render_context_adapter(system: str, *, adapter: ContextAdapter | str) -> str
     raise AssertionError(f"unhandled context adapter: {selected}")
 
 
+def _prepare_context_adapter(
+    system: str,
+    *,
+    include: bool | None = None,
+    adapter: ContextAdapter | str | None = None,
+) -> tuple[str, str, dict[str, object]]:
+    if adapter is None:
+        from aletheia.config.loader import load_config
+
+        enabled = (
+            load_config().economics.harness_header_default_on
+            if include is None
+            else include
+        )
+        selected = ContextAdapter.MINIMAL_V1 if enabled else ContextAdapter.NONE
+    else:
+        selected = ContextAdapter(adapter)
+    if selected is ContextAdapter.NONE:
+        return system, selected.value, {"model_visible": False, "adapter_id": selected.value}
+    context = build_harness_context()
+    return context.render(system), selected.value, context.manifest()
+
+
 def prepend_environment_header(
     system: str,
     *,
@@ -107,13 +147,55 @@ def prepend_environment_header(
     adapter: ContextAdapter | str | None = None,
 ) -> str:
     """Render a default-off adapter while retaining the legacy bool experiment switch."""
-    if adapter is not None:
-        return render_context_adapter(system, adapter=adapter)
-    from aletheia.config.loader import load_config
+    rendered, _, _ = _prepare_context_adapter(system, include=include, adapter=adapter)
+    return rendered
 
-    enabled = load_config().economics.harness_header_default_on if include is None else include
-    selected = ContextAdapter.MINIMAL_V1 if enabled else ContextAdapter.NONE
-    return render_context_adapter(system, adapter=selected)
+
+def _record_call_started(call: InferenceCall, artifacts: list[dict] | None, symbol: str | None) -> None:
+    from aletheia.economics.inference_calls import record_inference_started
+
+    _LAST_INFERENCE_CALL_ID.set(call.logical_call_id)
+    record_inference_started(call)
+    if not artifacts:
+        return
+    from aletheia.economics.context_artifacts import record_context_artifacts
+
+    record_context_artifacts(
+        run_id=call.environment.get("agent_run_id"),
+        caller=call.caller.caller_id,
+        logical_call_id=call.logical_call_id,
+        symbol=symbol,
+        artifacts=artifacts,
+        evaluation_pair_id=call.evaluation.get("evaluation_pair_id"),
+        evaluation_arm=call.evaluation.get("evaluation_arm"),
+        fixture_id=call.evaluation.get("fixture_id"),
+    )
+
+
+def _record_call_finished(
+    call: InferenceCall,
+    *,
+    status: str,
+    response=None,
+    parse_valid: bool | None = None,
+    schema_valid: bool | None = None,
+    error_type: str | None = None,
+) -> None:
+    from aletheia.economics.inference_calls import record_inference_finished
+
+    record_inference_finished(
+        call,
+        status=status,
+        response=response,
+        parse_valid=parse_valid,
+        schema_valid=schema_valid,
+        error_type=error_type,
+    )
+
+
+def current_inference_call_id() -> str | None:
+    """Return the most recent logical inference in the current async task."""
+    return _LAST_INFERENCE_CALL_ID.get()
 
 
 async def llm_complete(
@@ -123,6 +205,13 @@ async def llm_complete(
     max_tokens: int = 800,
     provider: str | None = None,
     include_harness_header: bool | None = None,
+    context_adapter: ContextAdapter | str | None = None,
+    caller: str = "unregistered",
+    allowed_tool_ids: list[str] | tuple[str, ...] | None = None,
+    allow_model_fallback: bool = True,
+    context_artifacts: list[dict] | None = None,
+    context_symbol: str | None = None,
+    evaluation: dict[str, object] | None = None,
 ) -> tuple[str | None, str | None]:
     """Call the model provider. Returns (content, error).
 
@@ -139,24 +228,53 @@ async def llm_complete(
     # cooldown, and (b) fall back through default_provider's candidate list —
     # not the tier's.
     provider_name = provider
+    rendered_system, adapter_id, context_manifest = _prepare_context_adapter(
+        system,
+        include=include_harness_header,
+        adapter=context_adapter,
+    )
+    messages = [{"role": "user", "content": user}]
+    inference_call = build_inference_call(
+        caller=caller,
+        system=rendered_system,
+        prompt_static_text=system,
+        messages=messages,
+        context_adapter_id=adapter_id,
+        context_manifest=context_manifest,
+        requested_provider=provider_name,
+        max_tokens=max_tokens,
+        allow_model_fallback=allow_model_fallback,
+        allowed_tool_ids=allowed_tool_ids,
+        evaluation=evaluation,
+    )
+    _record_call_started(inference_call, context_artifacts, context_symbol)
     try:
         provider_instance = get_provider(provider_name)
         resp = await complete_with_fallback(
             ModelRequest(
-                messages=[{"role": "user", "content": user}],
-                system=prepend_environment_header(system, include=include_harness_header),
+                messages=messages,
+                system=rendered_system,
                 max_tokens=max_tokens,
+                inference=inference_call,
+                allow_model_fallback=allow_model_fallback,
             ),
             provider=provider_instance,
             provider_name=provider_name,
         )
+        _record_call_finished(inference_call, status="success", response=resp)
         _record_llm(True)
         return resp.content, None
     except BudgetExceededError:
+        _record_call_finished(
+            inference_call, status="error", error_type="llm_budget_exhausted"
+        )
         _record_llm(False)
         return None, "llm_budget_exhausted"
     except Exception as e:
         detail = _exception_detail(e)
+        _record_call_finished(
+            inference_call, status="error", error_type=type(e).__name__
+        )
         logger.warning("LLM call failed: %s", detail)
         _record_llm(False)
         return None, f"llm_unavailable: {detail}"
@@ -220,6 +338,130 @@ def _extract_json_object(text: str):
     return None
 
 
+def _validate_json_schema_value(
+    value: object,
+    schema: dict,
+    *,
+    root: dict,
+    path: str = "$",
+) -> None:
+    """Validate the JSON-Schema subset used by Aletheia's lightweight shims."""
+    ref = schema.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/"):
+        target: object = root
+        for part in ref[2:].split("/"):
+            if not isinstance(target, dict) or part not in target:
+                raise ValueError(f"{path}: unresolved schema reference")
+            target = target[part]
+        if not isinstance(target, dict):
+            raise ValueError(f"{path}: invalid schema reference")
+        _validate_json_schema_value(value, target, root=root, path=path)
+        return
+
+    if "const" in schema and value != schema["const"]:
+        raise ValueError(f"{path}: value does not match const")
+    if "enum" in schema and value not in schema["enum"]:
+        raise ValueError(f"{path}: value is outside enum")
+
+    for combinator in ("anyOf", "oneOf"):
+        variants = schema.get(combinator)
+        if isinstance(variants, list):
+            matches = 0
+            for variant in variants:
+                try:
+                    _validate_json_schema_value(value, variant, root=root, path=path)
+                    matches += 1
+                except (TypeError, ValueError):
+                    pass
+            if matches == 0 or (combinator == "oneOf" and matches != 1):
+                raise ValueError(f"{path}: value does not satisfy {combinator}")
+            return
+    variants = schema.get("allOf")
+    if isinstance(variants, list):
+        for variant in variants:
+            _validate_json_schema_value(value, variant, root=root, path=path)
+
+    expected = schema.get("type")
+    if isinstance(expected, list):
+        errors = []
+        for expected_type in expected:
+            try:
+                _validate_json_schema_value(
+                    value, {**schema, "type": expected_type}, root=root, path=path
+                )
+                return
+            except (TypeError, ValueError) as exc:
+                errors.append(exc)
+        raise ValueError(f"{path}: value does not match allowed types") from errors[-1]
+    if expected == "null":
+        if value is not None:
+            raise ValueError(f"{path}: expected null")
+        return
+    if expected == "object" or "properties" in schema:
+        if not isinstance(value, dict):
+            raise ValueError(f"{path}: expected object")
+        required = schema.get("required") or []
+        missing = [name for name in required if name not in value]
+        if missing:
+            raise ValueError(f"{path}: missing required field {missing[0]}")
+        properties = schema.get("properties") or {}
+        for name, child_schema in properties.items():
+            if name in value and isinstance(child_schema, dict):
+                _validate_json_schema_value(
+                    value[name], child_schema, root=root, path=f"{path}.{name}"
+                )
+        if schema.get("additionalProperties") is False:
+            extras = set(value) - set(properties)
+            if extras:
+                raise ValueError(f"{path}: unexpected field {sorted(extras)[0]}")
+        return
+    if expected == "array":
+        if not isinstance(value, list):
+            raise ValueError(f"{path}: expected array")
+        if "minItems" in schema and len(value) < int(schema["minItems"]):
+            raise ValueError(f"{path}: array is too short")
+        if "maxItems" in schema and len(value) > int(schema["maxItems"]):
+            raise ValueError(f"{path}: array is too long")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(value):
+                _validate_json_schema_value(
+                    item, item_schema, root=root, path=f"{path}[{index}]"
+                )
+        return
+    if expected == "string":
+        if not isinstance(value, str):
+            raise ValueError(f"{path}: expected string")
+        if "minLength" in schema and len(value) < int(schema["minLength"]):
+            raise ValueError(f"{path}: string is too short")
+        if "maxLength" in schema and len(value) > int(schema["maxLength"]):
+            raise ValueError(f"{path}: string is too long")
+        return
+    if expected == "integer":
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{path}: expected integer")
+    elif expected == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{path}: expected number")
+    elif expected == "boolean":
+        if not isinstance(value, bool):
+            raise ValueError(f"{path}: expected boolean")
+        return
+    if expected in {"integer", "number"}:
+        if "minimum" in schema and value < schema["minimum"]:  # type: ignore[operator]
+            raise ValueError(f"{path}: value is below minimum")
+        if "maximum" in schema and value > schema["maximum"]:  # type: ignore[operator]
+            raise ValueError(f"{path}: value is above maximum")
+
+
+def _validate_structured_payload(data: dict, schema: object, schema_dict: dict) -> None:
+    validator = getattr(schema, "model_validate", None)
+    if callable(validator):
+        validator(data)
+        return
+    _validate_json_schema_value(data, schema_dict, root=schema_dict)
+
+
 async def llm_structured(
     system: str,
     user: str,
@@ -229,6 +471,12 @@ async def llm_structured(
     provider: str | None = None,
     fallback_to_defaults: bool = False,
     include_harness_header: bool | None = None,
+    context_adapter: ContextAdapter | str | None = None,
+    caller: str = "unregistered.structured",
+    allow_model_fallback: bool = True,
+    context_artifacts: list[dict] | None = None,
+    context_symbol: str | None = None,
+    evaluation: dict[str, object] | None = None,
     deadline: float | None = None,
 ) -> tuple[dict | None, str | None]:
     """Call the provider's structured() and return (parsed_dict, error).
@@ -251,8 +499,22 @@ async def llm_structured(
     # provider actually in use, not cfg.models.default_provider.
     provider_name = provider
     schema_dict: dict = {}
+    inference_call: InferenceCall | None = None
+    inference_finished = False
+    last_response = None
 
     def _failure(error: str) -> tuple[dict | None, str]:
+        nonlocal inference_finished
+        if inference_call is not None and not inference_finished:
+            _record_call_finished(
+                inference_call,
+                status="error",
+                response=last_response,
+                parse_valid=not error.startswith("structured_parse_error"),
+                schema_valid=False if error.startswith("structured_schema_invalid") else None,
+                error_type=error.split(":", 1)[0],
+            )
+            inference_finished = True
         if fallback_to_defaults:
             return _schema_defaults_dict(schema_dict), f"{error}(fallback)"
         return None, error
@@ -274,8 +536,27 @@ async def llm_structured(
         # Prepend /no_think for Qwen3-series reasoning models: without it the model
         # exhausts the token budget on internal reasoning and returns empty text output.
         # Other models ignore this prefix safely.
-        caller_system = prepend_environment_header(system, include=include_harness_header)
+        caller_system, adapter_id, context_manifest = _prepare_context_adapter(
+            system,
+            include=include_harness_header,
+            adapter=context_adapter,
+        )
         structured_system = f"/no_think\n{caller_system}" if caller_system else "/no_think"
+        inference_call = build_inference_call(
+            caller=caller,
+            system=structured_system,
+            prompt_static_text=f"/no_think\n{system}" if system else "/no_think",
+            messages=base_messages,
+            context_adapter_id=adapter_id,
+            context_manifest=context_manifest,
+            schema=schema,
+            requested_provider=provider_name,
+            temperature=0.3,
+            max_tokens=max_tokens,
+            allow_model_fallback=allow_model_fallback,
+            evaluation=evaluation,
+        )
+        _record_call_started(inference_call, context_artifacts, context_symbol)
         loop = asyncio.get_running_loop()
         if deadline is None:
             deadline = loop.time() + _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC
@@ -341,12 +622,15 @@ async def llm_structured(
                             system=structured_system,
                             temperature=0.3 if attempt == 0 else 0.0,
                             max_tokens=attempt_max_tokens,
+                            inference=inference_call,
+                            allow_model_fallback=allow_model_fallback,
                         ),
                         provider=provider_instance,
                         provider_name=provider_name,
                     ),
                     timeout=remaining,
                 )
+                last_response = resp
             except TimeoutError:
                 logger.warning(
                     "LLM structured call exceeded %.0fs total wall-clock budget", _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC
@@ -392,6 +676,26 @@ async def llm_structured(
 
             data = _extract_json_object(content)
             if isinstance(data, dict):
+                try:
+                    _validate_structured_payload(data, schema, schema_dict)
+                except (TypeError, ValueError) as exc:
+                    last_err = f"structured_schema_invalid: {_exception_detail(exc)}"
+                    if attempt < max_attempts - 1:
+                        logger.warning(
+                            "LLM structured call: schema validation failed (attempt %d/%d) — retrying",
+                            attempt + 1,
+                            max_attempts,
+                        )
+                        continue
+                    break
+                _record_call_finished(
+                    inference_call,
+                    status="success",
+                    response=resp,
+                    parse_valid=True,
+                    schema_valid=True,
+                )
+                inference_finished = True
                 _record_llm(True)
                 return data, None
             if data is not None:
@@ -478,6 +782,8 @@ async def llm_stream(
     max_tokens: int = 800,
     provider: str | None = None,
     include_harness_header: bool | None = None,
+    context_adapter: ContextAdapter | str | None = None,
+    caller: str = "unregistered.stream",
 ) -> AsyncIterator[StreamChunk]:
     """Stream response chunks from the provider.
 
@@ -486,6 +792,23 @@ async def llm_stream(
     provider: explicit provider name (or None → use default_provider).
     """
     provider_name = provider
+    rendered_system, adapter_id, context_manifest = _prepare_context_adapter(
+        system,
+        include=include_harness_header,
+        adapter=context_adapter,
+    )
+    messages = [{"role": "user", "content": user}]
+    inference_call = build_inference_call(
+        caller=caller,
+        system=rendered_system,
+        prompt_static_text=system,
+        messages=messages,
+        context_adapter_id=adapter_id,
+        context_manifest=context_manifest,
+        requested_provider=provider_name,
+        max_tokens=max_tokens,
+    )
+    _record_call_started(inference_call, None, None)
     try:
         provider_instance = get_provider(provider_name)
         from aletheia.config.loader import load_config
@@ -496,14 +819,19 @@ async def llm_stream(
             resolved_name,
             provider_instance,
             ModelRequest(
-                messages=[{"role": "user", "content": user}],
-                system=prepend_environment_header(system, include=include_harness_header),
+                messages=messages,
+                system=rendered_system,
                 max_tokens=max_tokens,
+                inference=inference_call,
             ),
         ):
             yield chunk
+        _record_call_finished(inference_call, status="success")
         _record_llm(True)
     except Exception as e:
+        _record_call_finished(
+            inference_call, status="error", error_type=type(e).__name__
+        )
         logger.warning("LLM stream failed: %s", _exception_detail(e))
         _record_llm(False)
         yield StreamChunk(content="", done=True)
@@ -609,6 +937,7 @@ def log_tool(
     permitted: bool,
     output: str | None = None,
     input_data: str | None = None,
+    inference_call_id: str | None = None,
 ) -> None:
     """Best-effort tool-call logging (never raises).
 
@@ -630,6 +959,7 @@ def log_tool(
             "permitted": permitted,
             "output_data": output,
             "input_data": input_data,
+            "inference_call_id": inference_call_id or current_inference_call_id(),
         },
     )
 

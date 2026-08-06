@@ -144,7 +144,7 @@ async def test_portfolio_review_can_close_old_target_beyond_default_position_pag
         },
     )
 
-    async def choose_old_target(_system, _user, *, schema):
+    async def choose_old_target(_system, _user, *, schema, **_kwargs):
         return ({
             "action": "close_one",
             "target_symbol": target.symbol,
@@ -224,7 +224,7 @@ async def test_wake_driven_portfolio_review_scopes_and_persists_hold(
         },
     )
 
-    async def choose_hold(_system, user, *, schema):
+    async def choose_hold(_system, user, *, schema, **_kwargs):
         assert target.id in user
         assert "adverse_signal" in user
         assert unrelated.id not in user
@@ -287,7 +287,7 @@ async def test_wake_driven_portfolio_review_adjusts_exact_position(
         },
     )
 
-    async def choose_adjust(_system, _user, *, schema):
+    async def choose_adjust(_system, _user, *, schema, **_kwargs):
         return ({
             "action": "adjust_position",
             "target_position_id": target.id,
@@ -348,7 +348,7 @@ async def test_wake_driven_portfolio_review_persists_unavailable_result(
         },
     )
 
-    async def unavailable(_system, _user, *, schema):
+    async def unavailable(_system, _user, *, schema, **_kwargs):
         return None, "provider_timeout"
 
     monkeypatch.setattr("aletheia.agents.helpers.llm_structured", unavailable)
@@ -416,7 +416,7 @@ async def test_portfolio_review_stale_mark_leaves_position_and_close_facts_untou
         },
     )
 
-    async def choose_close(_system, _user, *, schema):
+    async def choose_close(_system, _user, *, schema, **_kwargs):
         return ({
             "action": "close_one",
             "target_position_id": target.id,
@@ -469,7 +469,7 @@ async def test_portfolio_review_legacy_reduce_exposure_cannot_full_close(
 
     seen_schema: dict = {}
 
-    async def legacy_reduce(_system, _user, *, schema):
+    async def legacy_reduce(_system, _user, *, schema, **_kwargs):
         seen_schema.update(schema.model_json_schema())
         return ({
             "action": "reduce_exposure",

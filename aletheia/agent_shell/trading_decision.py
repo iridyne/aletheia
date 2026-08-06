@@ -1212,8 +1212,13 @@ async def _assess_opportunity(ctx: dict) -> dict | None:
     user = _build_assessment_prompt(ctx)
     schema_text = _json_schema_hint(_DECISION_SCHEMA)
     full_user = f"{user}\n\nReturn JSON: {schema_text}"
-    result, err = await llm_structured(system, full_user, schema=_DummySchema(_DECISION_SCHEMA),
-                                       provider=get_provider_for_tier("deep"))
+    result, err = await llm_structured(
+        system,
+        full_user,
+        schema=_DummySchema(_DECISION_SCHEMA),
+        provider=get_provider_for_tier("deep"),
+        caller="system_operator.assess_opportunity",
+    )
     if err or result is None:
         logger.warning("LLM assessment failed: %s", err)
         raise DecisionUnavailable("llm_assessment_unavailable")
@@ -1272,6 +1277,7 @@ async def _reassess_direct_skip(
         f"{user}\n\nReturn JSON: {schema_text}",
         schema=_DummySchema(_DECISION_SCHEMA),
         provider=get_provider_for_tier("deep"),
+        caller="system_operator.reassess_direct_skip",
     )
     if err or result is None:
         raise DecisionUnavailable(
@@ -1354,9 +1360,11 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
     _deep_provider = get_provider_for_tier("deep")
     (bull_result, bull_err), (bear_result, bear_err) = await asyncio.gather(
         llm_structured(system_bull, f"{bull_user}\n\nReturn JSON: {bull_schema_hint}",
-                       schema=_DummySchema(_BULL_SCHEMA), provider=_deep_provider),
+                       schema=_DummySchema(_BULL_SCHEMA), provider=_deep_provider,
+                       caller="system_operator.debate_bull"),
         llm_structured(system_bear, f"{bear_user}\n\nReturn JSON: {bear_schema_hint}",
-                       schema=_DummySchema(_BEAR_SCHEMA), provider=_deep_provider),
+                       schema=_DummySchema(_BEAR_SCHEMA), provider=_deep_provider,
+                       caller="system_operator.debate_bear"),
     )
     if bull_err or bear_err or not bull_result or not bear_result:
         logger.debug("debate failed bull_err=%s bear_err=%s", bull_err, bear_err)

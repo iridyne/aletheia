@@ -88,7 +88,7 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
   artifact taxonomy/FTS/two-store paths.
 - **Spec**：`spec_learning_{registry,attribution,ledger,contribution,authority,lifecycle,continuity,verdict_runtime,final_consumers}`
   + `spec_learning_pipeline` + adjacent lesson/guard/factor/outcome specs. Owner projection is
-  `spec_learning_observability` (`LCO-*`, implemented and remaining strict xfail/missing claims). The direct conformance matrix must
+  `spec_learning_observability` (`LCO-*`, implemented and partial claims). The direct conformance matrix must
   import this complete family; do not rely on incidental collection order.
 - **历史实施证据**：归档的
   [`learning_positive_contribution_implementation_plan_2026-07-12`](../../archive/legacy/plans/learning/learning_positive_contribution_implementation_plan_2026-07-12.md)
@@ -96,10 +96,9 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
   [`universe_family_calibration_execution_plan_2026-07-24`](../../archive/legacy/plans/learning/universe_family_calibration_execution_plan_2026-07-24.md)
   保存交付顺序和当时的运行 checkpoint；当前语义只由上述 contracts/proposals
   决定。`self_evolution_plan` 和更早修复计划同样只是历史证据。
-- **Issue**：剩余 owner projection 由 `LCO-*` claims 与 GitHub issue #489 跟踪；legacy
-  `/settings/autonomous-learning` 主开关的 tunnel-token 缺口已由 #488 修复，scheduler
-  partial-health 已由 #490 修复，JSONL audit 可观测性与幂等补写已由 #491 修复；旧
-  `LEARNING_LOOP_AUDIT` 仅是历史证据。
+- **Issue**：Learning 的唯一路线图权威是 GitHub master issue #470；资格化窗口由 #447，
+  #692 保存连续覆盖语义的实施记录，完整 owner workbench 由 #614 跟踪。已关闭的 #488-#491 只作
+  历史交付证据；旧 `LEARNING_LOOP_AUDIT` 仅是历史证据。
 - **Current state**：A1 has permanent ledger, full-arm exact-key complete-cluster measurement,
   append-only metric history, lifecycle recommendation, evaluator + catch-up and durable failure
   identity. `universe_family_calibration` is the only measurement-supported path;
@@ -169,7 +168,7 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
 
 **Scope**：愿景/红线/度量/SDD 方法/金字塔/协作流程——统领其余 11 域。
 
-- **L0–L1**：[`Product Direction`](../../product/definition/DIRECTION.md) 是唯一产品定义；[`Product Scope`](../../product/SCOPE.md)、`METRICS`、`PHASE_GATES`、`EXPERIMENT_{PROTOCOL,MVP_GATE,BACKLOG}` 分别承载范围、度量与准入；`DOC_SYSTEM_PLAN` 是已执行迁移计划，不是当前状态页
+- **L0–L1**：[`Product Direction`](../../product/definition/DIRECTION.md) 是唯一产品定义；[`Product Scope`](../../product/SCOPE.md)、`METRICS`、`PHASE_GATES`、`EXPERIMENT_PROTOCOL` 分别承载范围、度量、准入与观察窗治理；`EXPERIMENT_{MVP_GATE,BACKLOG}` 是已退休兼容指针，`DOC_SYSTEM_PLAN` 是已执行迁移计划，都不是当前状态页
 - **历史状态证据**：[`ROADMAP`](../../archive/legacy/status/roadmap/ROADMAP.md) · `WORLD_MAP` · `PIPELINE_STATUS` · `REMAINING_WORK_2026-06-30`；均已归档为 point-in-time evidence
 - **方法/导航**：[`docs/README`](../../README.md)(总入口) · [`design/README`](../README.md)(契约索引) · [`SDD_METHODOLOGY`](SDD_METHODOLOGY.md) · [`SYSTEM_MAP`](../architecture/SYSTEM_MAP.md) · **本文(域索引)**
 - **治理**：[governance/`trust_and_change_control`](../../governance/policies/trust_and_change_control.md) · `implementation_guide`

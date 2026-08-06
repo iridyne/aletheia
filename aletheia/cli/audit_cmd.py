@@ -532,3 +532,92 @@ def viability(
         typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
         return
     typer.echo(render_viability(report))
+
+
+@audit_app.command("learning-context-b1")
+def learning_context_b1(
+    review_output: str = typer.Option(
+        ..., "--review-output", help="Ephemeral blinded packet path outside the repository."
+    ),
+    fixture: Optional[str] = typer.Option(
+        None, "--fixture", help="Frozen Learning B fixture JSON."
+    ),
+    provider: Optional[str] = typer.Option(
+        None, "--provider", help="Configured provider profile; defaults to the active profile."
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """Run one paper-only paired Learning context evaluation."""
+    import asyncio
+    from pathlib import Path
+
+    from aletheia.economics.context_effectiveness import run_learning_b_pair
+
+    fixture_path = (
+        Path(fixture)
+        if fixture
+        else Path(__file__).resolve().parents[2]
+        / "docs"
+        / "research"
+        / "llm_harness"
+        / "fixtures"
+        / "learning_b_market_observer_v1.json"
+    )
+    report = asyncio.run(
+        run_learning_b_pair(
+            fixture_path=fixture_path,
+            review_output=Path(review_output),
+            provider_name=provider,
+        )
+    )
+    if output_json:
+        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"Learning B status: {report['status']}")
+    if report.get("blocker"):
+        typer.echo(f"Blocker: {report['blocker']}")
+    if report.get("evaluation_pair_id"):
+        typer.echo(f"Pair: {report['evaluation_pair_id']}")
+    if report.get("review_packet"):
+        typer.echo(f"Blinded review packet: {report['review_packet']}")
+    typer.echo("Effectiveness conclusion: none")
+
+
+@audit_app.command("learning-context-b1-score")
+def learning_context_b1_score(
+    pair_id: str = typer.Option(..., "--pair-id"),
+    scores: str = typer.Option(..., "--scores", help="Aggregate A/B owner-score JSON."),
+    output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """Import aggregate blinded owner scores; never import raw model outputs."""
+    from pathlib import Path
+
+    from aletheia.economics.context_effectiveness import record_learning_b_review
+
+    report = record_learning_b_review(pair_id=pair_id, scores_path=Path(scores))
+    if output_json:
+        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"Learning B review: {report['verdict']}")
+    typer.echo(f"Quality delta (treatment-control): {report['quality_delta']}")
+    typer.echo("This pair alone is not a framework-wide effectiveness conclusion.")
+
+
+@audit_app.command("learning-context-b1-summary")
+def learning_context_b1_summary(
+    output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """Summarize aggregate reviewed Learning B pairs without raw content."""
+    from aletheia.economics.context_effectiveness import summarize_learning_b_reviews
+
+    report = summarize_learning_b_reviews()
+    if output_json:
+        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"Reviewed pairs: {report['reviewed_pairs']}")
+    typer.echo(
+        "Treatment/control/tie: "
+        f"{report['treatment_better']}/{report['control_better']}/{report['ties']}"
+    )
+    typer.echo(f"Mean quality delta: {report['mean_quality_delta']}")
+    typer.echo("Effectiveness conclusion: none until the owner-defined evidence gate is met.")

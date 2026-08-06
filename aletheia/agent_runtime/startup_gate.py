@@ -68,15 +68,34 @@ def _ordered_enabled_providers(cfg) -> list[str]:
 
 async def _probe_one(name: str) -> dict:
     """Run one real minimal completion. Returns {provider, usable, error}."""
+    inference_call = None
     try:
+        from aletheia.economics.inference_calls import (
+            record_inference_finished,
+            record_inference_started,
+        )
         from aletheia.model_provider.fallback import complete_with_fallback
+        from aletheia.model_provider.inference_contract import build_inference_call
+
+        messages = [{"role": "user", "content": "ping"}]
+        inference_call = build_inference_call(
+            caller="startup_gate.provider_probe",
+            system=None,
+            messages=messages,
+            context_adapter_id="none",
+            requested_provider=name,
+            max_tokens=_PROBE_MAX_TOKENS,
+        )
+        record_inference_started(inference_call)
         resp = await asyncio.wait_for(
             complete_with_fallback(ModelRequest(
-                messages=[{"role": "user", "content": "ping"}],
+                messages=messages,
                 max_tokens=_PROBE_MAX_TOKENS,
+                inference=inference_call,
             ), provider_name=name),
             timeout=_PROBE_TIMEOUT_SEC,
         )
+        record_inference_finished(inference_call, status="success", response=resp)
         content = (resp.content or "").strip() if resp is not None else ""
         if content:
             return {"provider": name, "usable": True, "error": None}
@@ -90,8 +109,16 @@ async def _probe_one(name: str) -> dict:
             return {"provider": name, "usable": True, "error": None}
         return {"provider": name, "usable": False, "error": "empty_response"}
     except asyncio.TimeoutError:
+        if inference_call is not None:
+            record_inference_finished(
+                inference_call, status="error", error_type="TimeoutError"
+            )
         return {"provider": name, "usable": False, "error": f"timeout>{_PROBE_TIMEOUT_SEC}s"}
     except Exception as e:  # unknown provider type, network, auth, etc.
+        if inference_call is not None:
+            record_inference_finished(
+                inference_call, status="error", error_type=type(e).__name__
+            )
         # 429 means the provider is alive but rate-limiting — not truly unavailable.
         if "429" in str(e):
             return {"provider": name, "usable": True, "error": None}

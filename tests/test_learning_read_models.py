@@ -123,6 +123,31 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
             "harm_indeterminate_reason": "insufficient_samples",
             "breached": False,
             "breach_reasons": [],
+            "market_day_coverage": {
+                "basis": "eligible_assignment_unit_exposure_utc_day_either_arm",
+                "status": "gap",
+                "required_consecutive_days": 7,
+                "max_allowed_missing_days": 0,
+                "outage_waiver": "unsupported_fail_closed",
+                "first_observed_day": "2026-07-17",
+                "last_observed_day": "2026-07-24",
+                "current_window_start": "2026-07-24",
+                "current_window_end": "2026-07-24",
+                "current_consecutive_market_days": 1,
+                "longest_consecutive_market_days": 1,
+                "observed_treatment_day_n": 2,
+                "observed_control_day_n": 2,
+                "qualified_treatment_n": 1,
+                "qualified_control_n": 1,
+                "invalid_exposure_time_n": 0,
+                "missing_treatment_day_n": 6,
+                "missing_control_day_n": 6,
+                "missing_market_day_n": 6,
+                "missing_treatment_days": ["2026-07-18"],
+                "missing_control_days": ["2026-07-18"],
+                "missing_market_days": ["2026-07-18"],
+                "missing_days_truncated": True,
+            },
             "source_code_commits": ["commit-current"],
             "source_code_commit_unknown_n": 0,
             "code_commit_provenance_complete": True,
@@ -175,6 +200,11 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     assert item["experiment_id"] == experiment_id
     assert item["current_identity"]["matches_running_cohort"] is True
     assert item["measurement"]["state"] == "insufficient_data"
+    assert item["measurement"]["coverage"]["status"] == "gap"
+    assert item["measurement"]["coverage"]["missing_market_day_n"] == 6
+    assert item["measurement"]["coverage"]["missing_market_days"] == [
+        "2026-07-18"
+    ]
     assert item["samples"] == {
         "raw_exposures": 18,
         "treatment_assignment_units": 4,

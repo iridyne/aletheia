@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v5"
+SCHEMA_VERSION = "aletheia-sqlite-v6"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3368,6 +3368,14 @@ _PENDING_OUTCOME_PARTIAL_INDEX_CHECKSUM = hashlib.sha256(
     (_PENDING_OUTCOME_PARTIAL_INDEX_SQL + "\nPRAGMA optimize").encode("utf-8")
 ).hexdigest()
 
+_LLM_INFERENCE_LINKAGE_COLUMNS = (
+    ("agent_shell_commands", "inference_call_id", "TEXT"),
+    ("agent_tool_calls", "inference_call_id", "TEXT"),
+)
+_LLM_INFERENCE_LINKAGE_CHECKSUM = hashlib.sha256(
+    (repr(_LLM_INFERENCE_LINKAGE_COLUMNS) + "\nadditive_columns_v1").encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -3415,6 +3423,7 @@ _MIGRATION_DESCRIPTIONS = {
     "20260806_0002_startup_dataset_boundary_v3": "startup indexes and one-time FTS rebuild",
     "20260806_0003_capacity_guardrails_v4": "capacity indexes and cleanup lookup",
     "20260806_0004_pending_outcome_partial_index_v5": "pending-outcome partial index",
+    "20260806_0005_llm_inference_linkage_v6": "LLM inference audit linkage columns",
 }
 
 
@@ -3494,6 +3503,17 @@ def _apply_pending_outcome_partial_index_v5(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_llm_inference_linkage_v6(db: sqlite3.Connection) -> None:
+    """Add content-free inference linkage without rewriting the frozen baseline."""
+
+    for table, column, column_type in _LLM_INFERENCE_LINKAGE_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -3516,8 +3536,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260806_0004_pending_outcome_partial_index_v5",
         checksum=_PENDING_OUTCOME_PARTIAL_INDEX_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v5",
         apply=_apply_pending_outcome_partial_index_v5,
+    ),
+    MigrationStep(
+        migration_id="20260806_0005_llm_inference_linkage_v6",
+        checksum=_LLM_INFERENCE_LINKAGE_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_llm_inference_linkage_v6,
     ),
 )
 

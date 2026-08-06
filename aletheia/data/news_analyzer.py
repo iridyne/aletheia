@@ -85,6 +85,7 @@ async def _analyze_single_row(row: dict, db) -> bool:
                 user=user_msg,
                 schema=_AnalysisSchema,
                 max_tokens=256,
+                caller="news_analyzer.analysis",
             ),
             timeout=_ANALYSIS_ITEM_TIMEOUT_SEC,
         )

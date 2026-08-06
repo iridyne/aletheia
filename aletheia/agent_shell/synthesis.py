@@ -25,7 +25,12 @@ async def synthesize_answer(command_result: dict, user_input: str, context: dict
             f"Command result:\n{json.dumps(command_result, indent=2, default=str)[:1500]}\n\n"
             f"Provide a concise answer."
         )
-        content, error = await llm_complete(SYNTHESIS_SYSTEM_PROMPT, user_prompt, max_tokens=600)
+        content, error = await llm_complete(
+            SYNTHESIS_SYSTEM_PROMPT,
+            user_prompt,
+            max_tokens=600,
+            caller="agent_shell.synthesis",
+        )
         if content and not error:
             return content
     except Exception as e:

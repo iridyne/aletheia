@@ -21,7 +21,9 @@ supersedes: []
 > Historical sequencing alias: "Learning A2 Observability". Current normative
 > documents must use the canonical name above because `A2` has unrelated meanings
 > elsewhere in the repository.
-> Last aligned with code: 2026-07-31, after the measured-path and owner-surface reconciliation.
+> Last aligned with code: 2026-08-06. The executable registry contains implemented
+> and partial claims; it has no strict-xfail placeholders. Full workbench delivery is
+> tracked by GitHub issue #614 under the #470 Learning umbrella.
 
 This proposal defines the intended owner-facing, read-only projection of the measured
 Learning loop. Current behavior remains defined by
@@ -77,7 +79,7 @@ surface look shipped.
 | --- | --- | --- |
 | Measured ledger | Seven permanent Learning tables exist | Read-only typed projection |
 | Measurable path | `universe_family_calibration` has a current causal cohort adapter; Operator remains consumer-wired but measurement-unsupported | Explicit `measurement_supported` per path |
-| Current metric | `universe_family_calibration_cluster_allocation_utility_v3` | Current identity plus append-only metric history |
+| Current metric | `universe_family_calibration_cluster_allocation_utility_v4` | Current identity plus append-only metric history |
 | Cohort inspection | Internal aggregate inspection exists | Bounded aggregate plus selected cluster detail |
 | Lifecycle inspection | Internal read function returns progress, recommendation and job health | Public sanitized projection |
 | Job health | Current and durable last-failure fields exist | Current, recovery and catch-up states remain separate |
@@ -304,7 +306,7 @@ Each item contains:
     "policy_epoch": "...",
     "target_horizon": "4h",
     "outcome_contract_version": "...",
-    "metric_version": "universe_family_calibration_cluster_allocation_utility_v3",
+    "metric_version": "universe_family_calibration_cluster_allocation_utility_v4",
     "behavior_contract_hash": "...",
     "code_commit": "...",
     "matches_running_cohort": true,
@@ -320,7 +322,16 @@ Each item contains:
     "confidence_high": null,
     "evaluated_at": "...",
     "window_start": "...",
-    "window_end": "..."
+    "window_end": "...",
+    "coverage": {
+      "basis": "eligible_assignment_unit_exposure_utc_day_either_arm",
+      "status": "gap",
+      "required_consecutive_days": 7,
+      "current_consecutive_market_days": 3,
+      "missing_market_day_n": 1,
+      "missing_market_days": ["2026-08-03"],
+      "outage_waiver": "unsupported_fail_closed"
+    }
   },
   "samples": {
     "raw_exposures": 0,
@@ -752,9 +763,10 @@ states. This is adjacent UI honesty work, not contribution authority.
 | LCO-C05 | L2c | desktop/mobile layouts and native keyboard/label semantics preserve access to the current measured-path selector and Contribution summary | partial — component Vitest proof exists, but the Python executable claim still checks source/proof presence rather than running the UI behavior |
 | LCO-C06 | L2c | the current summary uses a monotonic TTL cache and emits explainable cold/cache-hit `Server-Timing` | implemented for the current summary route; immutable publication/order have adjacent tests, while future endpoint and stable-runtime latency slices retain separate obligations |
 
-Unimplemented claims remain strict xfail. A claim changes to `implemented` only
-after its placeholder is replaced by a behavioral test. Source-string presence
-alone cannot make a behavioral claim GREEN.
+Partial claims stay partial until their executable proof runs the claimed behavior.
+This proposal currently has no strict-xfail placeholder for future workbench slices;
+their delivery state belongs to GitHub issue #614. Source-string presence alone
+cannot make a behavioral claim GREEN.
 
 ## 12. Acceptance Matrix
 

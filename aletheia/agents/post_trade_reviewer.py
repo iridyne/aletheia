@@ -326,6 +326,7 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
                 ),
                 user=f"{ctx}{prompt_suffix}",
                 max_tokens=600,
+                caller="post_trade_reviewer.review",
             )
             log_tool(run_id, "llm_complete", "observe", True)
             if err:

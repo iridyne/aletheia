@@ -21,3 +21,8 @@ Legacy or retired mechanisms belong in [`../history/`](../history/).
 Use [template.md](template.md) for new Contracts. Contract changes and their
 executable claims must remain aligned, but claim conformance does not determine
 Product Support.
+
+Current framework-wide contracts include the
+[LLM Inference Harness Contract](llm_inference_harness_contract.md), which owns
+logical model-call identity, prompt/context/tool/output policy, and its link to
+physical tokenomics attempts.

@@ -64,6 +64,7 @@ async def run_research_agent(permission_mode: str = "Observe", run_id: str | Non
         system=system_prompt,
         user=user_prompt,
         max_tokens=900,
+        caller="research_agent.note",
     )
     log_tool(run_id, "llm_complete", "observe", True)
     if err:

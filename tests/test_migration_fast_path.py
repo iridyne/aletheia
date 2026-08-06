@@ -259,10 +259,11 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert migrations._MIGRATIONS[0].schema_version == "aletheia-sqlite-v2"
-    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v3"
-    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v4"
+    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v3"
+    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v4"
+    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v5"
     assert migrations._MIGRATIONS[-1].schema_version == migrations.SCHEMA_VERSION
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v5"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v6"
     connection.close()
 
 
@@ -359,6 +360,29 @@ def test_pending_outcome_partial_index_covers_due_queue_only():
     ).fetchone()[3]
     assert "idx_filter_outcomes_pending_due" in pending_plan
     assert "idx_filter_outcomes_pending_due" not in settled_plan
+    connection.close()
+
+
+def test_llm_inference_linkage_migration_is_additive_and_idempotent():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        """
+        CREATE TABLE agent_shell_commands (id TEXT PRIMARY KEY);
+        CREATE TABLE agent_tool_calls (
+            id TEXT PRIMARY KEY,
+            inference_call_id TEXT
+        );
+        """
+    )
+
+    migrations._apply_llm_inference_linkage_v6(connection)
+    migrations._apply_llm_inference_linkage_v6(connection)
+
+    for table in ("agent_shell_commands", "agent_tool_calls"):
+        columns = [row[1] for row in connection.execute(f"PRAGMA table_info({table})")]
+        assert columns.count("inference_call_id") == 1
     connection.close()
 
 

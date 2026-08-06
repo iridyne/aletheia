@@ -480,6 +480,7 @@ Focus on: what specific combination of regime + direction + timing gives the str
             system="You are a quantitative trading analyst. Write concise, data-driven insights. No disclaimers.",
             user=prompt,
             max_tokens=300,
+            caller="insight_synthesizer.insight",
         )
         if err:
             logger.debug("LLM insight synthesis failed: %s", err)

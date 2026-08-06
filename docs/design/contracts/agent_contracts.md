@@ -370,8 +370,11 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 - **Outcome precedence**: `filter_candidate_outcomes` is canonical full-arm truth;
   `universe_forward_outcomes` is a selected-member mirror/fallback and disagreement fails closed
 - **Outputs**: append-only verdicts under
-  `universe_family_calibration_cluster_allocation_utility_v3`; old metric verdicts remain history
-- **Time semantics**: verdict `created_at` is evaluation time; window fields are observation bounds
+  `universe_family_calibration_cluster_allocation_utility_v4`; old metric verdicts remain history
+- **Time semantics**: a market day is a UTC date with at least one complete eligible exposure unit
+  from either arm. Seven consecutive days plus 50 units in each arm inside that run are required;
+  a missing day resets the current window, planned outages receive no implicit waiver, and verdict
+  `created_at` remains evaluation time
 - **Authority**: measurement only; cannot change experiment stage, multiplier, paper authority,
   Risk, Execution, exchange, or live state
 - **Current owner projection**: the implemented bounded summary is read-only and

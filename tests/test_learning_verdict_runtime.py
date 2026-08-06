@@ -814,6 +814,97 @@ def test_insufficient_unique_samples_remain_insufficient_data():
     assert verdict.unique_treatment_n == verdict.unique_control_n == 1
 
 
+def test_elapsed_span_cannot_bridge_missing_market_days():
+    hypothesis, experiment = _experiment(min_samples=2, min_days=7)
+    for day in (0, 7):
+        for assignment, net in (("treatment", 1.0), ("control", 0.0)):
+            candidate = f"gapped-{assignment}-{day}"
+            _exposure(
+                experiment,
+                hypothesis,
+                candidate=candidate,
+                assignment=assignment,
+                exposed_at=_iso(day),
+            )
+            _outcome(candidate, net=net, entry_at=_iso(day, 1))
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "insufficient_data"
+    assert verdict.reason == "market_day_coverage_gap"
+    coverage = metrics["market_day_coverage"]
+    assert coverage["basis"] == "eligible_assignment_unit_exposure_utc_day_either_arm"
+    assert coverage["status"] == "gap"
+    assert coverage["required_consecutive_days"] == 7
+    assert coverage["max_allowed_missing_days"] == 0
+    assert coverage["current_consecutive_market_days"] == 1
+    assert coverage["longest_consecutive_market_days"] == 1
+    assert coverage["missing_market_day_n"] == 6
+    assert coverage["missing_market_days"] == [
+        _iso(day)[:10] for day in range(1, 7)
+    ]
+    assert verdict.window_start.startswith(_iso(7)[:10])
+    assert verdict.window_end.startswith(_iso(7)[:10])
+
+
+def test_seven_consecutive_market_days_with_fifty_units_per_arm_is_eligible():
+    hypothesis, experiment = _experiment(min_samples=50, min_days=7)
+    for index in range(50):
+        day = index % 7
+        for assignment, net in (("treatment", 1.0), ("control", 0.0)):
+            candidate = f"continuous-{assignment}-{index}"
+            _exposure(
+                experiment,
+                hypothesis,
+                candidate=candidate,
+                assignment=assignment,
+                exposed_at=_iso(day, index),
+            )
+            _outcome(candidate, net=net, entry_at=_iso(day, index + 1))
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "positive"
+    assert metrics["market_day_coverage"]["status"] == "qualified"
+    assert metrics["market_day_coverage"]["longest_consecutive_market_days"] == 7
+    assert metrics["harm_state"] == "clear"
+
+
+def test_malformed_exposure_time_fails_closed_for_continuity():
+    hypothesis, experiment = _experiment(min_samples=1, min_days=1)
+    _exposure(
+        experiment,
+        hypothesis,
+        candidate="malformed-time-treatment",
+        assignment="treatment",
+    )
+    _exposure(
+        experiment,
+        hypothesis,
+        candidate="malformed-time-control",
+        assignment="control",
+    )
+    _outcome("malformed-time-treatment", net=1.0)
+    _outcome("malformed-time-control", net=0.0)
+
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "UPDATE learning_exposures SET exposed_at='not-a-time' WHERE candidate_key=?",
+        ("malformed-time-treatment",),
+    )
+    db.commit()
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "invalid"
+    assert metrics["invalid_reasons"]["missing_exposure_time"] == 1
+
+
 def test_small_non_negative_effect_is_neutral_not_positive():
     hypothesis, experiment = _experiment()
     _exposure(experiment, hypothesis, candidate="neutral-treatment", assignment="treatment")

@@ -1,4 +1,5 @@
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useId, useState } from 'react'
+import { SettingsRowLabelContext } from './SettingsRowLabelContext'
 import { Switch } from './Switch'
 
 export interface NumField {
@@ -50,14 +51,20 @@ export function SettingsRow({
   children: ReactNode
   danger?: boolean
 }) {
+  // Published to child controls so a label-less one adopts this text as its
+  // accessible name. See SettingsRowLabelContext for why the visible label
+  // stays a <div> instead of becoming a <label>.
+  const labelId = useId()
   return (
     <div className="settings-row">
       <div>
-        <div className={`settings-row-label${danger ? ' danger' : ''}`}>{label}</div>
+        <div id={labelId} className={`settings-row-label${danger ? ' danger' : ''}`}>{label}</div>
         {hint && <div className="settings-row-hint">{hint}</div>}
       </div>
       <div className="settings-row-control">
-        {children}
+        <SettingsRowLabelContext.Provider value={labelId}>
+          {children}
+        </SettingsRowLabelContext.Provider>
       </div>
     </div>
   )
