@@ -8,14 +8,13 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from aletheia.storage.sqlite import get_db
-from aletheia.storage.migrations import run_migrations
 
 router = APIRouter(prefix="/api", tags=["news"])
 logger = logging.getLogger("aletheia.news")
 
 
 def _ensure_db():
-    # No-op: migrations run once at startup (see aletheia/server/routes/data.py:_ensure_db).
+    # No-op: backend startup already verified the durable migration ledger.
     pass
 
 

@@ -293,8 +293,8 @@ async def collect_market_snapshots() -> dict:
     (TTL 6h) before the fetch loop so that delisted tokens never enter the
     loop and never accumulate error counts or trigger DB writes.
     """
-    # Migrations run once at gateway startup (aletheia/server/app.py:44); scheduler
-    # jobs MUST NOT call run_migrations() — concurrent executescript() across threads
+    # The gateway owner applies pending migrations before process start; scheduler
+    # jobs MUST NOT apply migrations — schema ownership stays outside workers.
     # was the dominant `database is locked` source.
     cfg = load_config()
 

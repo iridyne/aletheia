@@ -15,8 +15,8 @@ async def run_agent(
     existing_run: AgentRun | None = None,
 ) -> dict:
     """Run a named agent with full lifecycle logging."""
-    # Migrations run once at gateway startup (aletheia/server/app.py:44); scheduler
-    # jobs MUST NOT call run_migrations() — concurrent executescript() across threads
+    # The gateway owner applies pending migrations before process start; scheduler
+    # jobs MUST NOT apply migrations — schema ownership stays outside workers.
     # was the dominant `database is locked` source.
     # Ensure tool permissions are registered even if the app lifespan didn't run
     # (e.g. tests using ASGITransport, or a direct orchestrator call).

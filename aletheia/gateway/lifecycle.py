@@ -42,10 +42,54 @@ class GatewayResumeApiError(RuntimeError):
         self.payload = payload or {}
 
 
+def _apply_gateway_migrations() -> bool:
+    """Apply pending DB upgrades before any managed process/readiness clock starts."""
+
+    import time
+
+    from aletheia.storage.migrations import (
+        MigrationStateError,
+        apply_migrations,
+        migration_status,
+    )
+
+    try:
+        status = migration_status()
+        if status["current"]:
+            return False
+        pending = ", ".join(status["pending"])
+        _echo_stdout_safe(f"Applying pending database migration(s): {pending} ...")
+        started = time.perf_counter()
+        applied = apply_migrations()
+        elapsed = time.perf_counter() - started
+        _echo_stdout_safe(f"Database migration completed in {elapsed:.1f}s.")
+        return applied
+    except MigrationStateError as exc:
+        message = f"Database migration state is invalid: {exc}"
+    except Exception as exc:
+        message = f"Database migration failed: {type(exc).__name__}: {exc}"
+
+    _notify_gateway_problem(
+        "Aletheia database migration failed",
+        message,
+        source="gateway_lifecycle",
+    )
+    _echo_safe(
+        message
+        + " Gateway was not started. Collect redacted diagnostics with "
+        "`uv run aletheia doctor --verbose` and `uv run aletheia gateway logs --lines 200`."
+    )
+    raise typer.Exit(1)
+
+
 def do_start(*, no_browser: bool = False, foreground: bool = False) -> bool | None:
     """Start the gateway (foreground or background)."""
     from aletheia.gateway import service_control
     if not foreground and service_control.is_machine_selected():
+        if is_running():
+            _echo_stdout_safe(f"Gateway already running (PID {read_pid()}).")
+            raise typer.Exit(0)
+        _apply_gateway_migrations()
         _echo_stdout_safe("Starting Aletheia machine gateway service (Windows UAC may prompt)...")
         result = service_control.start(no_browser=True)
         if not result.get("ok"):
@@ -109,6 +153,11 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> bool | No
                 f"unverified holder(s): {holders or 'unknown'}.",
             )
             raise typer.Exit(1)
+
+    # This is the single migration owner for an interactive start/restart. It runs
+    # after process/port ownership is safe and before service creation, so the 15 s
+    # readiness budget measures only process/application startup.
+    _apply_gateway_migrations()
 
     if foreground:
         _echo_stdout_safe(f"Starting Aletheia gateway on http://{local_frontdoor_host()}:{cfg.app.dashboard_port} (foreground)...")

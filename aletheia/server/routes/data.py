@@ -12,7 +12,6 @@ from pydantic import BaseModel
 from aletheia.config.loader import is_preview_mode, load_config
 from aletheia.portfolio.pnl import compute_portfolio
 from aletheia.storage.sqlite import get_db
-from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
     SerenityTheme,
@@ -64,10 +63,8 @@ _equity_history_cache: "dict[tuple, tuple[float, dict]]" = {}
 
 
 def _ensure_db():
-    # No-op: migrations run once at app startup (aletheia/server/app.py:44).
-    # Calling run_migrations() per request was the dominant `database is locked` source
-    # — `executescript(SCHEMA_SQL)` + 19 ALTER probes contended with every concurrent
-    # writer. Kept as a function so existing route call sites stay valid.
+    # No-op: the backend verifies the durable migration ledger before yielding.
+    # Kept as a function so existing route call sites stay focused on route behavior.
     pass
 
 

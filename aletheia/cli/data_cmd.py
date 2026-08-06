@@ -10,15 +10,38 @@ import typer
 data_app = typer.Typer(no_args_is_help=True)
 
 
+@data_app.command("migrate")
+def migrate_database():
+    """Explicitly apply pending versioned database migrations."""
+    import time
+
+    from aletheia.storage.migrations import apply_migrations, migration_status
+
+    before = migration_status()
+    if before["current"]:
+        typer.echo(
+            f"Database schema is current ({before['schema_version']}); no migrations applied."
+        )
+        return
+    typer.echo("Applying pending migration(s): " + ", ".join(before["pending"]))
+    started = time.perf_counter()
+    apply_migrations()
+    after = migration_status()
+    typer.echo(
+        f"Database migrations completed in {time.perf_counter() - started:.1f}s; "
+        f"schema={after['schema_version']}."
+    )
+
+
 @data_app.command("ingest-perp-structure")
 def ingest_perp_structure(
     path: Path = typer.Argument(..., exists=True, readable=True, dir_okay=False),
 ):
     """Import an owner-authorized aggregate Position X export (observation-only)."""
     from aletheia.data.collectors.vergex_structure import ingest_owner_aggregate
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
 
-    run_migrations()
+    assert_migrations_current()
     payload = json.loads(path.read_text(encoding="utf-8"))
     typer.echo(json.dumps(
         ingest_owner_aggregate(payload), indent=2, ensure_ascii=False, sort_keys=True,
@@ -37,10 +60,10 @@ def reconcile_local_paper_accounting(
     This command never writes an exchange, Risk decision, Position economics, or
     paper cash event.  It reports unavailable evidence instead of estimating it.
     """
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
     from aletheia.maintenance.historical_accounting import reconcile_historical_local_paper_accounting
 
-    run_migrations()
+    assert_migrations_current()
     typer.echo(json.dumps(
         reconcile_historical_local_paper_accounting(dry_run=not apply),
         indent=2, ensure_ascii=False, sort_keys=True,
@@ -65,9 +88,9 @@ def requeue_unobserved_settlements(
     from aletheia.maintenance.settlement_requeue import (
         requeue_unobserved_failed_outcomes,
     )
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
 
-    run_migrations()
+    assert_migrations_current()
     typer.echo(json.dumps(
         requeue_unobserved_failed_outcomes(dry_run=not apply),
         indent=2, ensure_ascii=False, sort_keys=True,
@@ -83,9 +106,9 @@ def archive_unmeasurable_learning_experiments(
 ):
     """Soft-terminalize historical experiments that cannot produce verdicts."""
     from aletheia.learning.maintenance import archive_unmeasurable_experiments
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
 
-    run_migrations()
+    assert_migrations_current()
     typer.echo(json.dumps(
         archive_unmeasurable_experiments(dry_run=not apply),
         indent=2, ensure_ascii=False, sort_keys=True,
@@ -116,9 +139,9 @@ def reconcile_paper_funding(
 
     try:
         if apply:
-            from aletheia.storage.migrations import run_migrations
+            from aletheia.storage.migrations import assert_migrations_current
 
-            run_migrations()
+            assert_migrations_current()
             result = apply_paper_funding_reconciliation(
                 position_ids=position_ids,
                 expected_fingerprint=expected_fingerprint,

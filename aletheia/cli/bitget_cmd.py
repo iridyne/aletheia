@@ -27,10 +27,10 @@ def test():
 @bitget_app.command()
 def sync():
     """Pull real account state from Bitget once (debug helper for the cached sync)."""
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
     from aletheia.portfolio.exchange_sync import sync_exchange_account, get_cached_state, status_for
 
-    run_migrations()
+    assert_migrations_current()
     state = sync_exchange_account()
     cached = get_cached_state()
     if state is None and cached is None:

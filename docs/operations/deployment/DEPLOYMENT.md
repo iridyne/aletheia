@@ -35,7 +35,18 @@ uv run aletheia gateway status
 
 # 查看日志（多日志尾部，已脱敏）
 uv run aletheia gateway logs
+
+# 显式查看并应用待执行数据库迁移（部署/恢复窗口）
+uv run aletheia data migrate
 ```
+
+## 数据库迁移边界
+
+- 每个 Migration 使用稳定 ID、不可变 checksum，并在 `aletheia_schema_migrations` 中留下成功账本；同一 ID 不会因重启而重跑。
+- `gateway start/restart` 在创建 supervisor/frontdoor/backend **之前**执行一次 pending-migration 检查和必要升级；完成后才启动 15 秒 readiness 计时，因此大型首次升级不会伪装成 Gateway readiness 超时。
+- supervisor 的 Runtime 读取、frontdoor/backend 启动上下文、FastAPI lifespan、API 路由和 scheduler 都只有只读验证权限，不能触发升级。
+- 新空库或没有账本的旧库会执行一次冻结的 legacy baseline。checksum 漂移、数据库含当前代码未知的 migration ID、或升级异常都会 fail closed，并保留明确的 migrate/doctor/log 指针。
+- 受控 `update apply` 会在激活候选版本时执行同一 migration apply/SQLite validation；普通重启在账本已 current 时仅有毫秒级核对。
 
 ---
 
@@ -98,9 +109,10 @@ uv run aletheia doctor --bundle data/diagnostics/doctor.json
 
 ## 启动顺序（首次 / 恢复）
 
-1. `uv run aletheia update apply --yes --restart`（拉取、按需安装依赖、构建前端、烟测并重启）
-2. `uv run aletheia doctor`（确认健康）
-3. 打开 `http://127.0.0.1:8787/`
+1. `uv run aletheia update apply --yes --restart`（拉取、按需安装依赖、构建前端、显式迁移/验证并重启）
+2. 手动部署或数据库恢复时先运行 `uv run aletheia data migrate`；重复执行在账本 current 时是 no-op
+3. `uv run aletheia doctor`（确认健康）
+4. 打开 `http://127.0.0.1:8787/`
 
 若必须手动维护，再使用 `git pull --ff-only`、前端 build 和 gateway restart 的分步流程。
 

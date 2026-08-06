@@ -1,32 +1,21 @@
-"""Idempotent SQLite schema migrations."""
+"""Versioned SQLite schema migrations."""
 
+from dataclasses import dataclass
 import hashlib
+import logging
 import sqlite3
-import threading
+import time
 from pathlib import Path
+from typing import Callable
 
-from aletheia.storage.sqlite import get_db
+from aletheia.storage.sqlite import (
+    acquire_write_lock,
+    get_db,
+    readonly_db,
+    release_write_lock,
+)
 
-# Declared DB schema version recorded on each Runtime Session so a session can be
-# tied to the schema it booted on. There is no per-migration numbering; bump this
-# string when the schema shape changes in a way worth attributing to.
-SCHEMA_VERSION = "aletheia-sqlite-v2"
-
-_MIGRATION_STATE_DDL = """
-CREATE TABLE IF NOT EXISTS aletheia_schema_migration_state (
-    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    source_fingerprint TEXT NOT NULL,
-    schema_version TEXT NOT NULL,
-    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-"""
-
-# The durable marker avoids replaying the complete idempotent migration suite on
-# every production process start. The source digest deliberately covers DDL and
-# repair/backfill code together: changing either invalidates the marker without
-# relying on a developer to remember a manual migration number bump.
-_fingerprint_cache: str | None = None
-_verified_migration = threading.local()
+logger = logging.getLogger("aletheia.storage.migrations")
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS settings (
@@ -3300,10 +3289,255 @@ def _run_all_ddl(db) -> None:
     _ensure_knowledge_fts_outcome_column(db)
     _ensure_knowledge_fts(db)
     db.executescript(_CORE_INDEXES_SQL)
-    db.executescript(_MIGRATION_STATE_DDL)
     _clear_learning_verdict_runner_zombie(db)
     _backfill_fco_allocation_selected(db)
     db.commit()
+
+
+# MIGRATION_LEDGER_START
+# Everything above this marker is the immutable implementation of the imported
+# legacy baseline. Future schema changes must be new MigrationStep entries below;
+# editing the baseline changes its checksum and fails CI/runtime verification.
+
+# Recorded on Runtime Sessions so every process lifecycle can be attributed to the
+# exact schema contract it verified.
+SCHEMA_VERSION = "aletheia-sqlite-v2"
+
+_MIGRATION_LEDGER_DDL = """
+CREATE TABLE IF NOT EXISTS aletheia_schema_migrations (
+    migration_id TEXT PRIMARY KEY,
+    checksum TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    applied_at TEXT NOT NULL,
+    duration_ms REAL NOT NULL CHECK (duration_ms >= 0)
+);
+"""
+
+_LEGACY_BASELINE_ID = "20260806_0001_legacy_schema_v2"
+# Filled from the normalized source preceding MIGRATION_LEDGER_START. The value is
+# deliberately stable: changing an applied migration is drift, not a reason to replay
+# it. Add a new MigrationStep for every future schema or data upgrade.
+_LEGACY_BASELINE_CHECKSUM = "b210b180fa4392a542a5275941ca15d1a443374b3e951055d8a4bbc12d32f8ee"
+_MIGRATION_LOCK_TIMEOUT_SEC = 120.0
+
+
+class MigrationStateError(RuntimeError):
+    """Base class for durable migration-ledger contract failures."""
+
+
+class PendingMigrationsError(MigrationStateError):
+    """The database has not applied every migration required by this code."""
+
+
+class MigrationChecksumMismatch(MigrationStateError):
+    """An applied migration ID no longer has its immutable checksum."""
+
+
+class DatabaseSchemaAheadError(MigrationStateError):
+    """The database contains migration IDs unknown to this older code."""
+
+
+@dataclass(frozen=True)
+class MigrationStep:
+    migration_id: str
+    checksum: str
+    schema_version: str
+    apply: Callable[[sqlite3.Connection], None]
+
+
+_MIGRATIONS = (
+    MigrationStep(
+        migration_id=_LEGACY_BASELINE_ID,
+        checksum=_LEGACY_BASELINE_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_run_all_ddl,
+    ),
+)
+
+
+def _legacy_baseline_implementation_checksum() -> str:
+    """Hash only the frozen legacy baseline, normalized across Git line endings."""
+
+    try:
+        source = Path(__file__).read_bytes().replace(b"\r\n", b"\n")
+        baseline, marker, _ = source.partition(b"# MIGRATION_LEDGER_START")
+        if not marker:
+            raise MigrationStateError("migration ledger source marker is missing")
+        return hashlib.sha256(baseline).hexdigest()
+    except OSError:
+        # Frozen builds may not expose their original source. CI verifies the literal
+        # against source before packaging; the signed artifact then carries that value.
+        return _LEGACY_BASELINE_CHECKSUM
+
+
+def _validate_migration_registry() -> None:
+    seen: set[str] = set()
+    previous_id: str | None = None
+    for migration in _MIGRATIONS:
+        if migration.migration_id in seen:
+            raise MigrationStateError(
+                f"duplicate migration id: {migration.migration_id}"
+            )
+        seen.add(migration.migration_id)
+        if previous_id is not None and migration.migration_id <= previous_id:
+            raise MigrationStateError(
+                "migration registry must be strictly ordered by migration id"
+            )
+        previous_id = migration.migration_id
+        if len(migration.checksum) != 64:
+            raise MigrationStateError(
+                f"invalid checksum for migration {migration.migration_id}"
+            )
+        try:
+            int(migration.checksum, 16)
+        except ValueError as exc:
+            raise MigrationStateError(
+                f"invalid checksum for migration {migration.migration_id}"
+            ) from exc
+
+    legacy = next(
+        (m for m in _MIGRATIONS if m.migration_id == _LEGACY_BASELINE_ID),
+        None,
+    )
+    if legacy and legacy.checksum != _legacy_baseline_implementation_checksum():
+        raise MigrationChecksumMismatch(
+            "legacy migration implementation changed without a new migration id"
+        )
+
+
+def _read_applied_migrations(db) -> dict[str, sqlite3.Row]:
+    try:
+        rows = db.execute(
+            "SELECT migration_id, checksum, schema_version, applied_at, duration_ms "
+            "FROM aletheia_schema_migrations ORDER BY migration_id"
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table: aletheia_schema_migrations" in str(exc).lower():
+            return {}
+        raise
+    return {str(row["migration_id"]): row for row in rows}
+
+
+def _validate_applied_migrations(
+    applied: dict[str, sqlite3.Row],
+) -> tuple[MigrationStep, ...]:
+    registered = {migration.migration_id: migration for migration in _MIGRATIONS}
+    unknown = sorted(set(applied) - set(registered))
+    if unknown:
+        raise DatabaseSchemaAheadError(
+            "database contains migrations unknown to this code: " + ", ".join(unknown)
+        )
+
+    for migration_id, row in applied.items():
+        expected = registered[migration_id]
+        if row["checksum"] != expected.checksum:
+            raise MigrationChecksumMismatch(
+                f"migration checksum mismatch for {migration_id}"
+            )
+        if row["schema_version"] != expected.schema_version:
+            raise MigrationStateError(
+                f"migration schema version mismatch for {migration_id}"
+            )
+
+    applied_ids = set(applied)
+    first_pending_index = next(
+        (
+            index
+            for index, migration in enumerate(_MIGRATIONS)
+            if migration.migration_id not in applied_ids
+        ),
+        len(_MIGRATIONS),
+    )
+    out_of_order = [
+        migration.migration_id
+        for migration in _MIGRATIONS[first_pending_index + 1 :]
+        if migration.migration_id in applied_ids
+    ]
+    if out_of_order:
+        raise MigrationStateError(
+            "migration ledger is not a contiguous prefix; applied after a gap: "
+            + ", ".join(out_of_order)
+        )
+    return tuple(
+        migration for migration in _MIGRATIONS if migration.migration_id not in applied
+    )
+
+
+def migration_status() -> dict:
+    """Return the durable, read-only migration state for diagnostics and CLI output."""
+
+    _validate_migration_registry()
+    try:
+        with readonly_db() as db:
+            applied = _read_applied_migrations(db)
+    except FileNotFoundError:
+        applied = {}
+    pending = _validate_applied_migrations(applied)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "applied": list(applied),
+        "pending": [migration.migration_id for migration in pending],
+        "current": not pending,
+    }
+
+
+def assert_migrations_current() -> None:
+    """Verify migration state without creating or mutating the database."""
+
+    status = migration_status()
+    if status["pending"]:
+        raise PendingMigrationsError(
+            "pending database migrations: "
+            + ", ".join(status["pending"])
+            + "; run `uv run aletheia data migrate` before starting the backend"
+        )
+
+
+def _ensure_migration_ledger(db) -> None:
+    db.executescript(_MIGRATION_LEDGER_DDL)
+
+
+def _record_migration_applied(
+    db,
+    migration: MigrationStep,
+    *,
+    duration_ms: float,
+) -> None:
+    db.execute(
+        "INSERT INTO aletheia_schema_migrations "
+        "(migration_id, checksum, schema_version, applied_at, duration_ms) "
+        "VALUES (?, ?, ?, datetime('now'), ?)",
+        (
+            migration.migration_id,
+            migration.checksum,
+            migration.schema_version,
+            max(float(duration_ms), 0.0),
+        ),
+    )
+    db.commit()
+
+
+def _apply_production_migrations() -> bool:
+    _validate_migration_registry()
+    db = get_db()
+    acquire_write_lock(timeout=_MIGRATION_LOCK_TIMEOUT_SEC)
+    try:
+        _ensure_migration_ledger(db)
+        pending = _validate_applied_migrations(_read_applied_migrations(db))
+        for migration in pending:
+            started = time.perf_counter()
+            migration.apply(db)
+            duration_ms = (time.perf_counter() - started) * 1000.0
+            _record_migration_applied(db, migration, duration_ms=duration_ms)
+            logger.info(
+                "database_migration_applied id=%s checksum=%s duration_ms=%.1f",
+                migration.migration_id,
+                migration.checksum[:12],
+                duration_ms,
+            )
+        return bool(pending)
+    finally:
+        release_write_lock()
 
 
 # In-memory blueprint used during pytest runs to avoid re-running DDL for every test.
@@ -3316,84 +3550,16 @@ def _is_pytest() -> bool:
     return "PYTEST_CURRENT_TEST" in os.environ
 
 
-def _migration_source_fingerprint() -> str:
-    global _fingerprint_cache
-    if _fingerprint_cache is None:
-        try:
-            source = Path(__file__).read_bytes()
-        except OSError:
-            # Aletheia normally runs from a checkout. Keep packaged/frozen builds
-            # functional while still requiring an explicit schema-version bump.
-            source = SCHEMA_VERSION.encode("utf-8")
-        _fingerprint_cache = hashlib.sha256(source).hexdigest()
-    return _fingerprint_cache
-
-
-def _migration_marker_matches(db, fingerprint: str) -> bool:
-    try:
-        row = db.execute(
-            "SELECT source_fingerprint, schema_version "
-            "FROM aletheia_schema_migration_state WHERE singleton = 1"
-        ).fetchone()
-    except sqlite3.OperationalError as exc:
-        if "no such table: aletheia_schema_migration_state" in str(exc).lower():
-            return False
-        raise
-    return bool(
-        row
-        and row["source_fingerprint"] == fingerprint
-        and row["schema_version"] == SCHEMA_VERSION
-    )
-
-
-def _record_migration_marker(db, fingerprint: str) -> None:
-    db.execute(
-        "INSERT INTO aletheia_schema_migration_state "
-        "(singleton, source_fingerprint, schema_version, applied_at) "
-        "VALUES (1, ?, ?, datetime('now')) "
-        "ON CONFLICT(singleton) DO UPDATE SET "
-        "source_fingerprint=excluded.source_fingerprint, "
-        "schema_version=excluded.schema_version, "
-        "applied_at=excluded.applied_at",
-        (fingerprint, SCHEMA_VERSION),
-    )
-    db.commit()
-
-
-def run_migrations() -> bool:
-    """Run all idempotent schema creation statements.
-
-    In pytest: builds a shared in-memory blueprint on first call, then clones it into
-    the current test connection via backup() — skipping 80+ CREATE TABLE statements on
-    every subsequent call. Production paths persist a digest of this module after a
-    successful full pass and return immediately while that digest still matches.
-
-    Returns True when the full migration suite ran, otherwise False.
-    """
+def _apply_pytest_migrations() -> bool:
     db = get_db()
-
-    if not _is_pytest():
-        fingerprint = _migration_source_fingerprint()
-        if (
-            getattr(_verified_migration, "connection", None) is db
-            and getattr(_verified_migration, "fingerprint", None) == fingerprint
-        ):
-            return False
-        if _migration_marker_matches(db, fingerprint):
-            _verified_migration.connection = db
-            _verified_migration.fingerprint = fingerprint
-            return False
-        _run_all_ddl(db)
-        _record_migration_marker(db, fingerprint)
-        _verified_migration.connection = db
-        _verified_migration.fingerprint = fingerprint
-        return True
-
     global _blueprint
     if _blueprint is None:
         _blueprint = sqlite3.connect(":memory:", check_same_thread=False)
         _blueprint.row_factory = sqlite3.Row
         _run_all_ddl(_blueprint)
+        _ensure_migration_ledger(_blueprint)
+        for migration in _MIGRATIONS:
+            _record_migration_applied(_blueprint, migration, duration_ms=0.0)
 
     # Only use backup when the destination is empty (no tables yet).
     # Tests that pre-populate data before calling run_migrations() (e.g. migration
@@ -3410,4 +3576,27 @@ def run_migrations() -> bool:
             pass  # destination busy — fall through to normal DDL
 
     _run_all_ddl(db)
+    _ensure_migration_ledger(db)
+    for migration in _MIGRATIONS:
+        db.execute(
+            "INSERT OR IGNORE INTO aletheia_schema_migrations "
+            "(migration_id, checksum, schema_version, applied_at, duration_ms) "
+            "VALUES (?, ?, ?, datetime('now'), 0)",
+            (migration.migration_id, migration.checksum, migration.schema_version),
+        )
+    db.commit()
     return True
+
+
+def apply_migrations() -> bool:
+    """Apply pending migrations under one process/cross-process writer permit."""
+
+    if _is_pytest():
+        return _apply_pytest_migrations()
+    return _apply_production_migrations()
+
+
+def run_migrations() -> bool:
+    """Compatibility alias for test fixtures; production owners use apply_migrations."""
+
+    return apply_migrations()

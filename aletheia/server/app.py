@@ -389,15 +389,16 @@ async def lifespan(app: FastAPI):
     except Exception as _e:
         logger.debug("Keyring-to-file migration skipped: %s", _e)
     stage_started = _log_startup_stage("secret_migration", stage_started, startup_started)
-    # Ensure DB schema + register agents/tools, then start the scheduler.
-    from aletheia.storage.migrations import run_migrations
+    # Database upgrades belong to the owner-controlled gateway/deployment phase.
+    # The backend only verifies the durable ledger before starting any writer.
+    from aletheia.storage.migrations import assert_migrations_current
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     from aletheia.agent_runtime.scheduler import init_scheduler, stop_scheduler
 
     stage_started = _log_startup_stage("startup_dependency_imports", stage_started, startup_started)
-    migrations_applied = run_migrations()
-    stage_started = _log_startup_stage("database_migrations", stage_started, startup_started)
-    logger.info("gateway_startup_migrations full_run=%s", migrations_applied)
+    assert_migrations_current()
+    stage_started = _log_startup_stage("database_migration_verification", stage_started, startup_started)
+    logger.info("gateway_startup_migrations verified=true pending=0")
     # Backfill FTS5 index so the experience loop has full coverage on every boot.
     try:
         from aletheia.knowledge.retrieval import reindex_all

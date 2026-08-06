@@ -40,6 +40,7 @@ def setup_env(tmp_path, monkeypatch):
     # These lifecycle tests do not register a real OS service or tunnel.
     from aletheia.gateway import lifecycle
     monkeypatch.setattr(lifecycle, "_auto_start_tunnel", lambda cfg: None)
+    monkeypatch.setattr(lifecycle, "_apply_gateway_migrations", lambda: False)
     # Default: port-holder discovery returns empty — no real lsof/netstat (#233).
     # Tests that exercise the holder kill path override this in their own body.
     monkeypatch.setattr(lifecycle, "find_port_holders", lambda port: [])
@@ -256,6 +257,59 @@ def test_do_start_proceeds_when_port_free(tmp_path, monkeypatch):
 
     lifecycle.do_start(no_browser=True)
     assert started == [{"no_browser": True}]
+
+
+def test_do_start_applies_pending_migrations_before_service_and_readiness(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, service_control
+
+    events: list[str] = []
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(
+        lifecycle,
+        "wait_port_free",
+        lambda port, host, timeout=10.0: True,
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_apply_gateway_migrations",
+        lambda: events.append("migrate") or True,
+    )
+    monkeypatch.setattr(
+        service_control,
+        "start",
+        lambda **_kwargs: events.append("service_start") or {"ok": True},
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_verify_started",
+        lambda _cfg: events.append("readiness") or True,
+    )
+
+    assert lifecycle.do_start(no_browser=True) is True
+    assert events == ["migrate", "service_start", "readiness"]
+
+
+def test_machine_service_start_has_one_migration_owner_before_service(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, service_control
+
+    events: list[str] = []
+    monkeypatch.setattr(service_control, "is_machine_selected", lambda: True)
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(
+        lifecycle,
+        "_apply_gateway_migrations",
+        lambda: events.append("migrate") or True,
+    )
+    monkeypatch.setattr(
+        service_control,
+        "start",
+        lambda **_kwargs: events.append("service_start") or {"ok": True},
+    )
+
+    assert lifecycle.do_start(no_browser=True) is False
+    assert events == ["migrate", "service_start"]
 
 
 def test_do_start_foreground_guard_refuses_when_port_taken(tmp_path, monkeypatch, capsys):

@@ -6,7 +6,6 @@ from pydantic import BaseModel
 from aletheia.agent_shell.operator_recommendations import build_risk_summary
 from aletheia.config.loader import load_config
 from aletheia.risk import kill_switch
-from aletheia.storage.migrations import run_migrations
 from aletheia.storage.repositories import list_risk_decisions
 
 router = APIRouter(prefix="/api/risk", tags=["risk"])

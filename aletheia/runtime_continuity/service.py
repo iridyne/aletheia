@@ -16,7 +16,7 @@ from uuid import uuid4
 logger = logging.getLogger(__name__)
 
 from aletheia.gateway.frontdoor_route import write_frontdoor_route
-from aletheia.storage.migrations import run_migrations
+from aletheia.storage.migrations import assert_migrations_current
 from aletheia.storage.sqlite import get_db
 
 
@@ -138,7 +138,7 @@ class RuntimeContinuityService:
         self.lock_ttl_sec = lock_ttl_sec
         self.enabled = enabled
         self.shadow_gateway_launcher = shadow_gateway_launcher
-        run_migrations()
+        assert_migrations_current()
 
     def _db(self):
         return get_db()
