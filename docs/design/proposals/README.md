@@ -40,3 +40,6 @@ Proposal as stable decision history.
 - [Model provider profiles and access methods](model_provider_profiles_and_access_methods.md):
   API profile instances, CLI harness integrations, OAuth connections, and the
   staged retirement of the legacy model-settings mutation path.
+- [Visual system renewal](visual_system_renewal.md): dark financial-workstation
+  identity, productive typography, Settings information architecture, shared
+  visual primitives, and incremental application-wide convergence.
