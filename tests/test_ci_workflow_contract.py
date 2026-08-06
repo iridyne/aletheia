@@ -266,7 +266,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     )
 
 
-def test_auto_merge_clean_state_uses_exact_head_protected_merge() -> None:
+def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     workflow = _auto_merge_workflow()
     schedule = workflow["jobs"]["schedule"]
     update = workflow["jobs"]["update"]
@@ -283,9 +283,11 @@ def test_auto_merge_clean_state_uses_exact_head_protected_merge() -> None:
     assert "pullRequest.mergeStateStatus === 'CLEAN'" in update_script
     assert "github.rest.pulls.merge" in update_script
     assert "sha: expectedHeadSha" in update_script
-    assert "merge_method: 'merge'" in update_script
+    assert "merge_method: 'squash'" in update_script
     assert "const autoMergeStates = new Set(['BEHIND', 'BLOCKED', 'HAS_HOOKS'])" in update_script
     assert "enablePullRequestAutoMerge" in update_script
+    assert "mergeMethod: SQUASH" in update_script
+    assert "mergeMethod: MERGE" not in update_script
     assert "String(error).includes('clean status')" in update_script
     assert "admin" not in update_script.lower()
     assert "bypass" not in update_script.lower()

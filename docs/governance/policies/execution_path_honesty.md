@@ -153,12 +153,18 @@ Aletheia 是**镜像的另一半**：
 
 ## 6. 经验闭环现状（补充事实，更正旧表述）
 
-- ✅ **已闭合，但仅靠 prompt 注入**：`aletheia/knowledge/retrieval.py:177-228`（FTS5 + BM25×recency×importance，
-  quality-gated 仅 high_confidence + active）→ `market_observer.py:251-263` 与 `strategy_designer.py:60-70`
-  把 memory block 注入 LLM prompt。
-- ⚠️ **只影响 LLM 的"读"，不改任何确定性参数**：学到的 lesson 进 prompt 影响下一次 LLM 市场解读，
-  但**不调 scanner 权重 / 不调 TTL / 不改 risk 限额**——与原始设计 §3.9 的"scanner weight updates / TTL tuning"
-  这类**参数化反馈**有明确差距。当前是 advisory 文本注入，不是闭环控制。
+- ✅ **结果与复盘链已闭合**：符合 Outcome Integrity 的平仓会结算净结果、创建 durable Outcome hook，
+  并可生成 case、review、lesson 与 Learning exposure。材料存在只证明经验可被观察，不等于已经改善决策。
+- ✅ **唯一 measurement-supported 行为路径是 `universe_family_calibration`**：它通过 prospective
+  treatment/control、贡献 verdict 和统一 authority gate，才可能获得有界 paper score multiplier 权限。
+- ⚠️ **其余 consumer-wired 路径当前都是零影响或 advisory fallback**：`ranker_case_score`、
+  `ranker_memo_score`、`ranker_factor_filter`、`ranker_learned_guard`、`operator_learning_bundle`、
+  `risk_lesson_constraint`、`persona_sizing` 均未具备 measurement authority；代码存在消费者不代表
+  treatment 已生效。
+- ⚠️ **不能从“循环在运行”推导“产生正向效应”**：正贡献必须来自成本完整、身份一致、实际施加过
+  treatment 的 prospective cohort；shadow/零干预、历史相关性或单纯 portfolio PnL 都不能授权。
+- 📌 **确定性 Operator config-control 不是 Learning treatment**：安全收紧与既有 bounded-neutral
+  recovery 由独立策略合同管理，不得计入 Learning 贡献或冒充 outcome-driven 自学习。
 - 📌 **更正**：`docs/references/external-systems/comparative_systems.md` §6（2026-06-08 表述）称 "market_observer：LLM 只看 latest_snapshot，
   不读任何历史/教训"——**已过时**。现在 market_observer 确实注入 memory block。该文件已同步更正。
 

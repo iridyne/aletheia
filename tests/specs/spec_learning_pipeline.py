@@ -544,26 +544,26 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# LP-S12 — Ranker must consume _memo_scoring + _lesson_penalty; adjustments
-#           must NOT reach risk_engine or sizing (§8.1 invariant)
+# LP-S12 — Ranker routes proposed memo/case deltas through its authority boundary;
+#           they must NOT reach risk_engine or sizing (§8.1 invariant)
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim("LP-S12", "learning_pipeline", "§8.1 Ranker consumption", "L2a",
-              "paper_trader_ranker._score_opportunity() calls both _memo_scoring() "
+              "paper_trader_ranker._compute_trade_score() calls both _memo_scoring() "
               "(reads trading_memo knowledge item) and _lesson_penalty() (reads "
-              "trade_case_study items); and those helpers are NOT imported by or "
-              "called from aletheia/risk/engine.py or any sizing path — Ranker "
-              "adjustments only affect opportunity sort order, never risk gates or "
-              "position sizing (knowledge_contract.md §8.1 boundary)",
+              "trade_case_study items), then routes each proposed delta through "
+              "_authorized_ranker_delta(); those helpers are NOT imported by or "
+              "called from aletheia/risk/engine.py or any sizing path. Unsupported "
+              "measurement stays at the zero-delta baseline.",
               status="implemented"),
 )
 def test_ranker_consumes_memo_and_lesson_penalty_not_risk():
     """LP-S12: §8.1 Ranker-side learning consumption invariant.
 
-    (a) _score_opportunity() in paper_trader_ranker calls both _memo_scoring
-        and _lesson_penalty — the two §8.1 learning paths.
+    (a) _compute_trade_score() calls both proposed-delta producers and the
+        prospective authority adapter; current unsupported paths remain zero.
     (b) risk/engine.py does NOT import or reference _memo_scoring or
         _lesson_penalty — so Ranker score adjustments never propagate into
         risk checks or sizing.
@@ -604,6 +604,9 @@ def test_ranker_consumes_memo_and_lesson_penalty_not_risk():
     assert "_lesson_penalty" in score_fn_body_src, (
         "_lesson_penalty is not called inside _compute_trade_score — "
         "trade_case_study penalty never reaches Ranker scoring"
+    )
+    assert "_authorized_ranker_delta" in score_fn_body_src, (
+        "Ranker case/memo deltas bypassed the prospective authority boundary"
     )
 
     # (b) risk/engine.py must not reference these Ranker-internal helpers

@@ -2992,7 +2992,10 @@ Return JSON: {_json.dumps(schema)}"""
     if wake_position_ids:
         wake_ids = set(wake_position_ids)
         candidates = [p for p in candidates if p["id"] in wake_ids]
-    if target_id:
+    mutating_action = action in {"adjust_position", "close_one"}
+    if mutating_action and not target_id:
+        matching = []
+    elif target_id:
         matching = [p for p in candidates if p["id"] == target_id]
     else:
         matching = [p for p in candidates if p["symbol"] == sym]
@@ -3001,8 +3004,69 @@ Return JSON: {_json.dumps(schema)}"""
         if direction:
             matching = [p for p in matching if p["direction"] == direction]
 
-    if action in {"adjust_position", "close_one"} and not matching:
-        result[f"{action}_error"] = "no_target_position"
+    if mutating_action and not matching:
+        result[f"{action}_error"] = (
+            "target_position_id_required" if not target_id else "no_target_position"
+        )
+
+    target = matching[0] if matching else (
+        open_positions[0] if len(open_positions) == 1 else None
+    )
+
+    def _effect(*, pending: bool = False) -> dict:
+        if pending:
+            return {"status": "pending"}
+        return {
+            key: value
+            for key, value in result.items()
+            if key in {
+                "adjust",
+                "adjust_position_error",
+                "close",
+                "close_error",
+                "close_one_error",
+                "positions_closed",
+            }
+        }
+
+    def _evidence(*, pending: bool = False) -> dict:
+        return {
+            "position_review": {
+                "trigger": params.get("trigger") or params.get("_trigger") or "manual",
+                "wake_fingerprint": wake_fingerprint,
+                "wake_batches": wake_batches,
+                "target_position_id": target.get("id") if target else None,
+                "effect": _effect(pending=pending),
+            }
+        }
+
+    # Persist the Operator's exact intent before any position mutation or close
+    # submission. If a later broker/SQLite operation fails, the causal decision
+    # remains durable with effect.status=pending instead of leaving an orphaned
+    # position side effect with no PiDecision authority record.
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision, update_pi_decision
+
+    mutating = mutating_action and bool(matching)
+    persisted = PiDecision(
+        symbol=target.get("symbol") if target else None,
+        direction=target.get("direction") if target else None,
+        market_type=target.get("market_type") if target else None,
+        action="close" if action == "close_one" else action,
+        conviction=0,
+        reasoning=reasoning,
+        proposal_status="not_applicable",
+        proposal_reason="position_review",
+        evidence_manifest_json=_json.dumps(
+            _evidence(pending=mutating),
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ),
+    )
+    insert_pi_decision(persisted)
+    result["position_review_decision_id"] = persisted.id
+    result["wake_fingerprint"] = wake_fingerprint
 
     if action == "adjust_position" and matching:
         from aletheia.portfolio.position_manager import apply_operator_adjustment
@@ -3022,7 +3086,7 @@ Return JSON: {_json.dumps(schema)}"""
             try:
                 from aletheia.portfolio.position_manager import close_position_routed
 
-                close_position_routed(
+                close_result = close_position_routed(
                     pos["id"],
                     reason="pi_agent_portfolio_review",
                     fallback_exit_price=None,
@@ -3030,54 +3094,22 @@ Return JSON: {_json.dumps(schema)}"""
                     decision_actor="system_operator",
                     decision_source="portfolio_review",
                 )
-                closed_count += 1
+                result["close"] = close_result
+                if isinstance(close_result, dict) and close_result.get("closed") is True:
+                    closed_count += 1
             except Exception as exc:
                 result["close_error"] = str(exc)[:100]
         result["positions_closed"] = closed_count
 
-    target = matching[0] if matching else (
-        open_positions[0] if len(open_positions) == 1 else None
-    )
-    evidence = {
-        "position_review": {
-            "trigger": params.get("trigger") or params.get("_trigger") or "manual",
-            "wake_fingerprint": wake_fingerprint,
-            "wake_batches": wake_batches,
-            "target_position_id": target.get("id") if target else None,
-            "effect": {
-                key: value
-                for key, value in result.items()
-                if key in {
-                    "adjust",
-                    "adjust_position_error",
-                    "close_error",
-                    "positions_closed",
-                }
-            },
-        }
-    }
-    from aletheia.storage.models import PiDecision
-    from aletheia.storage.repositories import insert_pi_decision
-
-    persisted = PiDecision(
-        symbol=target.get("symbol") if target else None,
-        direction=target.get("direction") if target else None,
-        market_type=target.get("market_type") if target else None,
-        action="close" if action == "close_one" else action,
-        conviction=0,
-        reasoning=reasoning,
-        proposal_status="not_applicable",
-        proposal_reason="position_review",
+    update_pi_decision(
+        persisted.id,
         evidence_manifest_json=_json.dumps(
-            evidence,
+            _evidence(),
             sort_keys=True,
             separators=(",", ":"),
             default=str,
         ),
     )
-    insert_pi_decision(persisted)
-    result["position_review_decision_id"] = persisted.id
-    result["wake_fingerprint"] = wake_fingerprint
     return result
 
 

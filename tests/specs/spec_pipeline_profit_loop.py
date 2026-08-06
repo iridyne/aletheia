@@ -1,10 +1,13 @@
-"""Spec: Pipeline — Minimum Profit Loop health (end-to-end)
+"""Spec: Pipeline — Minimum Profit Loop front-half health
 
-The minimum profit loop is the system's core revenue closed loop:
+This file covers the candidate-to-position front half of the minimum profit loop:
     opportunities -> paper_trader ranks -> signal_pending pi_decisions
     -> System Operator LLM decides -> trade_proposals -> risk -> orders -> positions
 
-This spec pins the invariants that keep that loop OBSERVABLE and correctly fed,
+Close/accounting/Outcome and measured Learning influence have separate executable
+contracts; a fresh Proposal here is not evidence that the economic feedback loop
+is complete or positive. This spec pins the invariants that keep this front half
+OBSERVABLE and correctly fed,
 so a silent stall surfaces in tests + `aletheia doctor` instead of reaching the
 user. Born from the 2026-06-23 incident: the System Operator was fed a phantom $167
 balance (wrong broker cache) and skipped every signal for 20h while the observe
@@ -156,7 +159,7 @@ def test_bitget_active_keeps_legacy_cache(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# PL-PROFIT-03/04 — doctor profit-loop probe catches the decoupling
+# PL-PROFIT-03/04 — doctor front-half probe catches the decoupling
 # ---------------------------------------------------------------------------
 
 

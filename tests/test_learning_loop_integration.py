@@ -1,21 +1,23 @@
-"""Integration tests for the learning loop — lesson-aware scoring (P1).
+"""Integration tests for the ranker's proposed lesson delta producer (P1).
 
 P0 (ranker regime-aware strategy filtering), P2 (executable RuleSet bonus), and
 P3 (post-trade → strategy_designer event chain) were removed with the rules
 engine (Position C, 2026-07-02): regime scoring moved to the universe
 scanner-family layer (see universe pipeline UP-* specs), and the
-strategy-designer trigger chain no longer exists. Lesson-aware scoring (P1)
-survives and is the sole learning-loop hook exercised here.
+strategy-designer trigger chain no longer exists. ``_lesson_penalty`` still
+derives a candidate delta, but the final ranker score must pass it through the
+prospective Learning authority gate. These tests cover the producer only; they
+do not claim the delta is currently authorized or improves later decisions.
 """
 from unittest.mock import patch
 
 
 # ---------------------------------------------------------------------------
-# P1: Lesson-aware scoring
+# P1: Proposed lesson delta calculation (pre-authority)
 # ---------------------------------------------------------------------------
 
 class TestLessonAwareScoring:
-    """Test _lesson_penalty logic."""
+    """Test _lesson_penalty's bounded proposed delta, not final score authority."""
 
     def test_no_lessons_no_penalty(self):
         from aletheia.agents.paper_trader_ranker import _lesson_penalty

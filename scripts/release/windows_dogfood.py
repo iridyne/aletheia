@@ -51,8 +51,11 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from scripts.release.build_packaged_runtime import BuildResult
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SIGNING_KEY = Path.home() / ".aletheia" / "release-signing" / "update-signing-private-key.pem"
@@ -510,7 +513,7 @@ def run_dogfood_session(
             tray_pid = _launch_tray(tray_exe, host_root)
             print(f"[dogfood] tray launched (pid={tray_pid}), waiting for gateway...")
             _wait_for_tray_ready(TRAY_READINESS_TIMEOUT_SEC)
-            print(f"[dogfood] gateway ready at http://127.0.0.1:8787")
+            print("[dogfood] gateway ready at http://127.0.0.1:8787")
         return {
             "mode": "bootstrap",
             "release_id": release_id,

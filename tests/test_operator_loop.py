@@ -412,7 +412,7 @@ class TestRunOperatorLoop:
         assert "artifact_id" in result
 
 
-# ─── Bidirectional Feedback System ───────────────────────────────────────────
+# ─── Deterministic config-control policy (not Learning contribution) ─────────
 
 class TestParamDrift:
     def test_drift_detects_tightened_confidence(self, tmp_path, monkeypatch):
