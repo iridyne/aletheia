@@ -1,235 +1,50 @@
 # Aletheia Agent Guide
 
-This is the root instruction file for this repository. Read it first, then load
-only the topic-specific document named in **Read when needed**. Do not bulk-load
-the linked documents: they are mandatory only when their trigger matches the
-work.
+This file is the repository-wide router, not the full handbook. Read it first,
+then read only the `@` guide whose scope matches the task.
 
-- DO NOT run any large or big scale pytest mission on macOS device, use ssh to run this work on other machines
+## Always
 
-## Detect the runtime first
+- Aletheia is a local-first automated trading system: market data → agents →
+  strategy proposal → Risk Engine → Execution Gateway → Bitget.
+- This MVP is being hardened, not expanded. Do not add exchanges or broad
+  infrastructure such as Docker, Postgres, Redis, or vector search without
+  explicit scope.
+- Optimize for:
+  `State consistency > Safety > Auditability > Semantic honesty > Tests > Capability > Agent autonomy`.
+- Before changing code, name the boundary being changed and what remains
+  unchanged. Analysis-only work does not authorize code changes. Stop if a task
+  weakens an invariant, changes trading safety without approval, or cannot be
+  proved safely.
+- Orders reach exchanges only through the backend Execution Gateway. Live is
+  off by default, and Risk approval always precedes execution.
+- Never read, reveal, log, prompt, or commit credentials. Never expand agent
+  authority by editing instructions or exposing restricted tools.
+- Use `uv run` for Python. Do not run large pytest suites on macOS; use the
+  Windows validation host instead.
+- For Mac-to-Windows Agent work, prefer Orca Remote Runtime over ad-hoc SSH:
+  Windows runs `orca serve` on the EasyTier-private network, and Mac connects
+  through a paired Orca Environment. This makes remote worktrees, terminals,
+  Agent sessions, output cursors, and supervised workers first-class Orca
+  objects. Before the first Orca operation, run `orca skills get orca-cli` and
+  read the returned version-matched guide. SSH remains for bootstrap, recovery,
+  or OS-level diagnosis, not the normal Agent control plane. Treat an Orca
+  pairing code as a high-privilege credential: never log, prompt, commit, or
+  share it outside the intended Mac/Windows pair.
+- Never invent reassuring UI/runtime state. Use `not available` or
+  `not configured` when no backend fact exists.
 
-Before your first repo-mutating action, decide whether you are inside an
-Orca-managed session. If ANY of these signals holds, you MUST use the Orca CLI
-for worktree creation, workspace status, terminals, and handoffs — **not** raw
-`git worktree`, and not ad-hoc terminal control:
+## Load only when matched
 
-- the `ORCA_CLI_COMMAND` environment variable is set;
-- the current working directory is under `~/orca/workspaces/`;
-- your harness lists an `orca-cli` skill, tool, or system-reminder entry.
+- Trading, live, risk, execution, credentials, permissions, audit, or controlled
+  modules → [@SAFETY_AND_TRUST.md](docs/operations/development/agent-guides/SAFETY_AND_TRUST.md)
+- SQLite, runtime files, market data, symbols, paper accounting, config, or async
+  API behavior → [@STATE_AND_DATA.md](docs/operations/development/agent-guides/STATE_AND_DATA.md)
+- File/tool use, Orca, worktrees, tests, Git/PR/CI, documentation, preview, or
+  gateway operation → [@DEVELOPMENT_WORKFLOW.md](docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md)
+- Bug classification, experiments, unfamiliar subsystems, or deciding which
+  authority to read → [@TASK_ROUTING.md](docs/operations/development/agent-guides/TASK_ROUTING.md)
 
-When inside Orca, run `orca skills get orca-cli` once at session start and read
-[docs/operations/development/ORCA_CLI_WORKFLOW.md](docs/operations/development/ORCA_CLI_WORKFLOW.md)
-before your first repo mutation; that runbook covers worktree creation,
-Windows `uv` cache recovery, upstream handling, and PR auto-merge handoff. The
-"External agent orchestration" section below explains why this is a hard rule.
-
-## Mission and priorities
-
-Aletheia is a local-first automated trading system. Its core path is:
-market data → agent analysis → strategy proposal → Risk Engine → Execution
-Gateway → Bitget.
-
-This is an MVP being hardened for trust, not a greenfield platform: do not add
-an exchange, Docker/Postgres/Redis, vector search, or other broad infrastructure
-without explicit scope.
-
-Optimize in this order:
-
-`State consistency > Safety > Auditability > Semantic honesty > Tests > Capability > Agent autonomy`
-
-Before changing code, say which boundary you will touch and what you will not
-change. If code is not needed, do not change it. Stop and ask when a request
-would weaken an invariant, spans several controlled modules, conflicts with
-the implementation guide in a way that changes trading safety, or cannot be
-proved locally.
-
-## Always-on safety boundaries
-
-- Orders may reach an exchange only through the backend Execution Gateway. Never
-add direct `agent`, dashboard, or Telegram order placement.
-- Live trading is off by default. Do not unlock it, place a live order, change a
-hard risk limit, change credentials/signer logic, or alter gateway semantics
-without the user's explicit approval.
-- Risk approval is required before execution. Preserve causal IDs from proposal
-through risk decision, order, fill, and position; audit logs must name the
-real actor, source, entity, and change.
-- Never read, reveal, log, commit, or put API keys, secrets, or credentials into
-prompts or Markdown. Do not commit `.env`, `.secret.key`, `secrets.enc`, or
-token files.
-- Do not edit this file to give an agent more authority. Restricted tools must
-remain unavailable to LLM-driven agents.
-- Trust boundaries (change-controlled; touch only when the task explicitly requires it):
-  `aletheia/risk/`, `aletheia/execution/`, `aletheia/exchanges/bitget/auth.py`, `aletheia/exchanges/bitget/client.py`
-  `aletheia/config/secrets.py`, `aletheia/agent_runtime/permissions.py`, `aletheia/agent_runtime/tool_registry.py`
-  `aletheia/agent_shell/registry.py`, `aletheia/files/jsonl.py`, `aletheia/server/routes/live.py`
-
-A behavior change here needs a focused regression test. The commit, PR, and CI
-record are the verification evidence.
-Read [trust and change control](docs/governance/policies/trust_and_change_control.md)
-before changing one; this list must stay aligned with the machine-readable policy.
-
-## Rules that prevent recurring data mistakes
-
-- Use `get_market_data_provider()` for market data. Do not use `BitgetClient`
-outside the execution context. Providers are per-call, never cached. The only
-exception is a documented Bitget-only ON-series xStock call site.
-- `aletheia/data/` is source code; runtime state belongs under the current user's
-`~/.aletheia/` (or an explicit absolute `ALETHEIA_DATA_DIR`). Repository-root
-`data/` is a legacy migration source only and must not receive new runtime writes.
-Keep its compatibility `.gitignore` rule root-anchored as `/data/`.
-- Store symbols canonically as `BTC/USDT`; convert to exchange-native `BTCUSDT`
-only at the execution adapter (`to_bitget()`). In the frontend, every rendered
-market symbol must use `fmtSymbol(symbol, marketType)`: perpetual/futures has
-no slash; spot and unknown keep it.
-- Keep SQLite's four safeguards: (1) `_WRITE_LOCK` in `sqlite.py` — process-wide
-`threading.Lock` acquired by `transaction()` before every `BEGIN`, serializing all
-writers at the Python level so `database is locked` cannot occur in normal operation;
-(2) WAL + `busy_timeout=30000ms` as a last-resort fallback only; (3) one thread-local
-connection via `threading.local`; (4) capture `was_in_tx = db.in_transaction` **before**
-every write, committing only when it was false. Do not raise scheduler `max_workers`
-above 3. Never open a `with transaction():` block that spans an `await` or any
-network/I/O call — that would hold `_WRITE_LOCK` across I/O and block all other writers.
-- A new config-schema field needs a Settings UI control; users do not edit
-`~/.aletheia/config.yaml`. After frontend changes run `cd frontend && npm run build`.
-`aletheia/dashboard_static/` is generated and untracked. For worktree UI HMR,
-use Vite on `http://127.0.0.1:5173`; it proxies the master `:8787` API as
-read-only by default. See `docs/operations/development/DEVELOPMENT_PREVIEW.md` before
-starting an isolated dev API.
-- An async FastAPI handler must not perform blocking I/O on the event loop. Read
-[the async performance checklist](docs/operations/development/ASYNC_PERFORMANCE.md)
-before adding or changing a hot endpoint; measure new endpoints directly on
-backend port `8788`.
-- **Paper-ledger two-table invariant**: every `paper_internal` close must write to
-BOTH `positions.realized_pnl` (set by the close path) AND
-`paper_account_events` (written by `settle_position_closed()`). Breaking this
-sync causes `paper_ledger_mismatch` in the next daily-loss check, blocking all
-paper trades for the rest of the UTC day. The `PAPER_PNL_CONSERVATIVE_ESTIMATE`
-warning in the system log signals that positions have `realized_pnl=NULL`; the
-risk engine continues with a conservative gross-minus-fees estimate rather than
-blocking. **Never write `positions.realized_pnl` directly** (e.g. a DB repair
-script) without also calling `settle_position_closed(position_id, realized_pnl)`.
-See `aletheia/portfolio/account_loss.py` module docstring for the full diagnosis
-and manual recovery procedure. Auto-recovery: `settle_unsettled_paper_closes()`
-reconciles both the `NULL` funding case and the orphaned-ledger case.
-
-## Honest product behavior
-
-- Never show a reassuring UI state without a real backend value. Prefer “not
-available” or “not configured” to invented readiness, risk status, reviews,
-or capabilities.
-- Keep knowledge-item types truthful. Do not repurpose an item type to populate
-a page, and do not hard-delete knowledge: archive or deprecate it.
-- Keep Git-tracked intent separate from local runtime facts. Do not record the
-gateway process, `app.db`, local config, credentials, or external orchestrator
-session state in tracked documents.
-
-## External agent orchestration
-
-Agent/session assignment, parallel panes, worktree lifecycle, and completion
-state belong to the external development orchestrator (for example ORCA), not
-to Aletheia. This repository must not implement its own development-task
-database, worker lease, task packet, handoff ledger, or orchestration CLI.
-
-When the session is running inside Orca (see "Detect the runtime first" at the
-top of this file for the exact signals), you MUST use the version-matched Orca
-CLI for worktree creation, workspace status, terminals, and handoffs — not raw
-`git worktree` or ad-hoc terminal control. The
-[Orca CLI development workflow](docs/operations/development/ORCA_CLI_WORKFLOW.md)
-is the deep-dive runbook; read it before the first Orca-managed mutation.
-
-Use an isolated worktree for non-trivial parallel changes and give each agent a
-clear prompt containing goal, allowed paths, excluded paths, acceptance checks,
-and expected final report. Git/PR/CI remain the durable code and proof surfaces.
-
-## Work safely and prove changes
-
-Use `uv run` for every Python command (`uv run python`, `uv run pytest`,
-`uv run aletheia ...`); do not call bare `python` or `python -m`.
-
-At session start, run:
-
-```sh
-git pull --ff-only
-uv sync
-uv run aletheia doctor
-```
-
-The external orchestrator supplies session/worktree context; `doctor` is the source of local
-runtime truth. For a change, inspect the path, add or update the focused
-regression test first for safety/trading/audit/secrets/lifecycle behavior, make
-the smallest change, run the focused test, then broaden verification as
-warranted. Do not claim a safety-sensitive fix without evidence in Git/PR/CI.
-
-For decision-pipeline coverage, prefer expanding failure-path E2E tests; the
-Golden Path is frozen unless the user explicitly changes that direction. When a
-change has a documented contract surface, update its document and executable
-spec together. Register a new data source in the data-utilization table and add
-its DU claim before writing collection code.
-
-At the end, commit only implementation/documentation changes, run the relevant
-focused commands directly, and publish through the normal PR workflow. Put durable
-decisions in design/decision documents and use the PR for review context. Do not
-add repository-local task state, worker leases, verification ledgers, or handoff
-packets; the external orchestrator owns ephemeral coordination.
-
-Repository documentation records medium- or long-lived product truth, behavioral
-contracts, decisions, substantial proposals, operating procedures, and frozen
-evidence. It is not a task tracker. Ownership, priority, progress, open defects,
-and completion state belong in GitHub Issues and PRs. Create a design Proposal
-only for a major new capability, a cross-domain change, or a trust-boundary
-change; handle ordinary bugs with a GitHub Issue and PR. Read
-`docs/governance/policies/documentation_governance.md` before creating a new
-documentation family.
-
-Use a dedicated worktree and branch for non-trivial edits. If the user explicitly
-requires the current shared checkout, re-check branch and status before every
-commit/push/merge/checkout, stage only named files, preserve unrelated changes,
-and do not use destructive Git commands or amend commits without approval.
-The gateway is global: do not restart it casually or from competing worktrees.
-Every GitHub Actions job must target a repository self-hosted runner. Do not add
-a GitHub-hosted `runs-on` target; `tests/test_ci_workflow_contract.py` enforces
-this across every workflow file.
-If a GitHub Actions workflow is broken, disable that workflow to stop alerts; do
-not archive the repository.
-
-In owner-facing updates, lead with the plain-language outcome, consequence, and
-current state; explain internal names when they are necessary. Do not bury the
-owner in unexplained project jargon.
-
-## Classify before fixing
-
-- **A — repair now:** crash/hang, wrong persistence target, false accounting,
-or a safety-boundary bypass.
-- **B — new observation window:** decision logic, guards, sizing/quota, or
-weighting changes. Close the old experiment, create a new policy epoch, and
-collect a fresh window before comparing results.
-- **C — defer:** new agents/assets/pages, self-evolution modes, strategy features,
-or broad new abstractions while core stability work remains.
-
-Read the full [bug triage protocol](docs/governance/protocols/BUG_TRIAGE_PROTOCOL.md)
-before classifying a non-obvious case.
-
-## Read when needed
-
-
-| If the task involves…                                                                               | Read before acting                                                                                                                                                                                                                                                                                                                                                                                                  |
-| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Any controlled module, live unlock, risk, execution, secrets, permissions, or audit chain           | [Trust and change control](docs/governance/policies/trust_and_change_control.md) and affected `tests/specs/`                                                                                                                                                                                                                                                                                                        |
-| Agent decisions, strategy, learning, `paper_trader`, or market observer                             | [Experiment protocol](docs/product/experiments/EXPERIMENT_PROTOCOL.md); update affected `tests/specs/spec_*.py` and run `aletheia doctor`                                                                                                                                                                                                                                                                           |
-| An async route, polling UI, settings/config read, or endpoint latency                               | [Async API performance](docs/operations/development/ASYNC_PERFORMANCE.md)                                                                                                                                                                                                                                                                                                                                            |
-| A new/changed API route, data table, data source, scheduler job, promotion gate, or restricted tool | [Implementation guide](docs/governance/policies/implementation_guide.md), then the matching [API](docs/design/api/api_reference.md), [data model](docs/design/data/data_model.md), [data utilization](docs/design/data/data_utilization.md), [agent contracts](docs/design/contracts/agent_contracts.md), current Contract, or qualifying Proposal and its executable spec |
-| System ownership, data flow, agent jobs, or an unfamiliar subsystem                                 | [System map](docs/design/architecture/SYSTEM_MAP.md) and [agent contracts](docs/design/contracts/agent_contracts.md)                                                                                                                                                                                                                                                                                                |
-| Parallel work, a dirty checkout, merge, worktree, or frontend build conflict                        | [Worktree playbook](docs/operations/development/GIT_WORKTREE_PLAYBOOK.md)                                                                                                                                                                                                                                                                                                                                            |
-| Orca workspace creation, terminals, handoff, or PR auto-merge handoff                               | [Orca CLI development workflow](docs/operations/development/ORCA_CLI_WORKFLOW.md), then the [worktree playbook](docs/operations/development/GIT_WORKTREE_PLAYBOOK.md)                                                                                                                                                                                                                                                 |
-| Cross-machine development, handoff, or what belongs in Git                                          | [Qualification development protocol](docs/operations/development/QUALIFICATION_DEVELOPMENT_PROTOCOL.md)                                                                                                                                                                                                                                                                                                             |
-| A backend bug or a UI honesty gap                                                                   | [Bug triage protocol](docs/governance/protocols/BUG_TRIAGE_PROTOCOL.md), then the current GitHub Issue or a new one when tracking is needed                                                                                                                                                                                                                                                                          |
-
-
-For routine tests, run the narrow `uv run pytest tests/test_<area>.py -q` first.
-The full suite is `uv run pytest tests/ -q --tb=line`; do not let it replace
-focused proof. For gateway operations use
-`uv run aletheia gateway <start|stop|restart|status|logs>` rather than manually
-killing processes. Use `http://127.0.0.1:8787/` for daily operation and release
-acceptance. Use Vite `:5173` only for worktree HMR as documented in
-`docs/operations/development/DEVELOPMENT_PREVIEW.md`.
+Read a matched guide completely before acting. Do not bulk-load unrelated
+guides. More specific nested `AGENTS.md` files override this file for their
+directory scope.
