@@ -38,10 +38,12 @@ utility. The current metric version is
 | Operational health | Evaluator/lifecycle freshness, failures, watermark, and catch-up state | `learning_job_health` and `lco-v1` |
 
 `min_market_days` is a consecutive coverage gate, not elapsed wall-clock span. A
-missing UTC day in either arm resets the current window; samples before that gap do
-not satisfy counts, economics, confidence, or harm gates afterward. Planned and
-partial outages have no implicit waiver and fail closed. Metric v4 and UFC behavior
-contract v5 therefore start a from-zero cohort while v3/v4 evidence remains history.
+UTC date with no eligible unit in either arm resets the current window; samples
+before that gap do not satisfy counts, economics, confidence, or harm gates
+afterward. Daily arm imbalance remains visible and is handled by the independent
+50-per-arm gate. Planned or partial outages have no implicit waiver when they leave
+a full UTC day uncovered. Metric v4 and UFC behavior contract v5 therefore start a
+from-zero cohort while v3/v4 evidence remains history.
 
 ### Verdict meaning
 

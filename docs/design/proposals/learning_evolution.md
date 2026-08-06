@@ -325,7 +325,8 @@ For current UFC qualification, one market day is one UTC date containing at leas
 eligible assignment unit from either randomized arm. The independent sample gate still requires
 50 treatment and 50 control units inside the current continuous run; daily arm imbalance is
 reported but does not impersonate a runtime outage. The latest
-uninterrupted run must contain `min_market_days` dates. A missing day in either arm resets that run,
+uninterrupted run must contain `min_market_days` dates. A UTC date with no eligible unit in either
+arm resets that run,
 and all pre-gap samples are excluded from the post-gap sample, economic, confidence and harm gates.
 Continuity is derived from durable exposure timestamps; transient scheduler health alone cannot
 reconstruct historical coverage. Planned and partial outages have no waiver representation in v5
