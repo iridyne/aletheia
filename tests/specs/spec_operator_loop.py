@@ -1031,7 +1031,7 @@ def test_scanner_weight_persistence():
         "OL-C12", "operator_layer", "§retired recommendation path", "L2a",
         "The Python retire/demote recommendation path and its stale-row escalation are "
         "removed after ownership converged to the TS operator-shell.",
-        status="superseded",
+        status="implemented",
     ),
 )
 def test_stale_recommendation_escalation_exists():
