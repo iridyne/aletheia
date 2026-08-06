@@ -322,6 +322,165 @@ async def test_wake_driven_portfolio_review_adjusts_exact_position(
 
 
 @pytest.mark.asyncio
+async def test_portfolio_review_persists_intent_before_close_submission(
+    tmp_path, monkeypatch
+):
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import _select_one, insert_position
+
+    target = Position(
+        id="review-close-intent-target",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.1,
+        entry_price=100.0,
+        execution_mode="bitget_demo",
+    )
+    insert_position(target)
+    monkeypatch.setattr(
+        "aletheia.agent_shell.context.build_app_context",
+        lambda sections=None: {
+            "trading": {"open_positions": [_select_one("positions", target.id)]},
+            "risk": {"max_open_positions_demo": 3, "kill_switch": False},
+        },
+    )
+
+    async def choose_close(_system, _user, *, schema, **_kwargs):
+        return ({
+            "action": "close_one",
+            "target_position_id": target.id,
+            "reasoning": "exit after the thesis failed",
+        }, None)
+
+    def submit_close(position_id, **_kwargs):
+        assert position_id == target.id
+        row = conn.execute(
+            "SELECT action, evidence_manifest_json FROM pi_decisions "
+            "WHERE proposal_reason='position_review' ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        assert row is not None
+        assert row["action"] == "close"
+        assert json.loads(row["evidence_manifest_json"])["position_review"][
+            "effect"
+        ] == {"status": "pending"}
+        return {
+            "closed": False,
+            "status": "submitted",
+            "order_id": "pending-close-order",
+        }
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_close)
+    monkeypatch.setattr(
+        "aletheia.portfolio.position_manager.close_position_routed", submit_close
+    )
+
+    result = await review_portfolio_state({"trigger": "horizon_wake"})
+
+    assert result["positions_closed"] == 0
+    assert result["close"]["status"] == "submitted"
+    persisted = conn.execute(
+        "SELECT evidence_manifest_json FROM pi_decisions WHERE id=?",
+        (result["position_review_decision_id"],),
+    ).fetchone()
+    effect = json.loads(persisted["evidence_manifest_json"])["position_review"][
+        "effect"
+    ]
+    assert effect["close"]["closed"] is False
+    assert effect["positions_closed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_portfolio_review_requires_exact_id_for_mutating_action(
+    tmp_path, monkeypatch
+):
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import insert_position
+
+    target = Position(
+        id="review-exact-id-target",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="paper_internal",
+    )
+    insert_position(target)
+    monkeypatch.setattr(
+        "aletheia.agent_shell.context.build_app_context",
+        lambda sections=None: {
+            "trading": {"open_positions": []},
+            "risk": {"max_open_positions_demo": 3, "kill_switch": False},
+        },
+    )
+
+    async def choose_ambiguous_close(_system, _user, *, schema, **_kwargs):
+        return ({
+            "action": "close_one",
+            "target_symbol": target.symbol,
+            "reasoning": "close without an exact durable identity",
+        }, None)
+
+    close_calls: list[str] = []
+    monkeypatch.setattr(
+        "aletheia.agents.helpers.llm_structured", choose_ambiguous_close
+    )
+    monkeypatch.setattr(
+        "aletheia.portfolio.position_manager.close_position_routed",
+        lambda position_id, **_kwargs: close_calls.append(position_id),
+    )
+
+    result = await review_portfolio_state({})
+
+    assert result["close_one_error"] == "target_position_id_required"
+    assert close_calls == []
+    row = conn.execute(
+        "SELECT evidence_manifest_json FROM pi_decisions WHERE id=?",
+        (result["position_review_decision_id"],),
+    ).fetchone()
+    assert json.loads(row["evidence_manifest_json"])["position_review"]["effect"] == {
+        "close_one_error": "target_position_id_required"
+    }
+
+
+def test_proactive_exit_never_defaults_an_unconfirmed_close_to_success(
+    tmp_path, monkeypatch
+):
+    _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.portfolio.position_manager import proactive_exit
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import insert_position
+
+    target = Position(
+        id="proactive-unconfirmed-target",
+        symbol="ETH/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="paper_internal",
+    )
+    insert_position(target)
+    monkeypatch.setattr(
+        "aletheia.portfolio.position_manager._latest_price", lambda _symbol: 101.0
+    )
+    monkeypatch.setattr(
+        "aletheia.portfolio.position_manager.close_position_routed",
+        lambda *_args, **_kwargs: {"error": "close_not_confirmed"},
+    )
+
+    result = proactive_exit(target.id, reason="test unconfirmed close")
+
+    assert result["closed"] is False
+    assert result["error"] == "close_not_confirmed"
+
+
+@pytest.mark.asyncio
 async def test_wake_driven_portfolio_review_persists_unavailable_result(
     tmp_path, monkeypatch
 ):

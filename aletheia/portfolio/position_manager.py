@@ -201,7 +201,7 @@ def close_local_positions_batch(
                 actor=decision_actor,
                 source=decision_source,
             )
-            if result.get("closed", True):
+            if result.get("closed") is True:
                 closed_position_ids.append(position["id"])
             else:
                 failed.append(_bulk_close_failure(
@@ -1002,7 +1002,7 @@ def evaluate_open_positions() -> dict:
             # (live positions are already filtered out above; demo modes still need
             # their real exchange close, paper closes locally).
             close_result = close_position_routed(p["id"], reason, fallback_exit_price=exit_price)
-            if close_result.get("closed", True):
+            if close_result.get("closed") is True:
                 closed += 1
         except Exception as e:
             logger.warning("close failed for %s: %s", p["id"], e)
@@ -1253,8 +1253,12 @@ def proactive_exit(
         decision_source="dashboard_manual_close" if is_human else "operator_proactive_exit",
         allow_live=False,
     )
+    routed_result = result if isinstance(result, dict) else {
+        "error": "invalid_close_result",
+    }
     return {
-        "closed": bool(result.get("closed", True)) if isinstance(result, dict) else True,
+        **routed_result,
+        "closed": routed_result.get("closed") is True,
         "position_id": position_id,
         "close_reason": "human_manual_close" if is_human else "operator_close",
     }
