@@ -1035,6 +1035,34 @@ async def test_model_test_candidate_pass(client, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_model_test_candidate_probe_succeeds_without_model_catalogue(client, monkeypatch):
+    """An inference probe must not require optional /models list permission."""
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from aletheia.model_provider.base import ModelHealth
+    import aletheia.model_provider.broker as broker
+
+    async def unavailable_catalogue(self):
+        return ModelHealth(provider="openai_compatible", available=False, model=self.model)
+
+    async def successful_inference(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", unavailable_catalogue)
+    monkeypatch.setattr(broker, "brokered_complete", successful_inference)
+    await client.post("/api/settings/model", json={"provider": "openai_compatible"})
+
+    resp = await client.post("/api/model/test-candidate", json={
+        "provider": "openai_compatible",
+        "base_url": "http://localhost:9000/v1",
+        "model": "probe-model",
+        "api_key": "sk-candidate-not-saved-8888",
+        "probe": True,
+    })
+    assert resp.status_code == 200
+    assert resp.json()["available"] is True
+
+
+@pytest.mark.anyio
 async def test_model_test_candidate_fail(client, monkeypatch):
     """An unreachable candidate returns available=false + error, persists nothing."""
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
