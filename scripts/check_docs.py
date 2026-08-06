@@ -6,6 +6,7 @@ documentation database, status tracker, or generated-site pipeline.
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 import sys
@@ -44,6 +45,7 @@ CURRENT_DOC_PREFIXES = (
     "docs/product/definition/",
     "docs/product/gates/",
     "docs/product/experiments/",
+    "docs/product/capability-integrity/",
     "docs/design/contracts/",
     "docs/design/decisions/",
     "docs/design/proposals/",
@@ -59,6 +61,7 @@ CURRENT_DOC_FILES = {
     "AGENTS.md",
     "docs/README.md",
     "docs/product/README.md",
+    "docs/product/SCOPE.md",
     "docs/product/ACTIVE_RUNTIME_SCOPE.md",
     "docs/product/CAPABILITY_GROUND_TRUTH.md",
     "docs/product/capability-integrity/README.md",
@@ -185,11 +188,112 @@ def governance_failures() -> list[str]:
     return failures
 
 
+def semantic_truth_failures() -> list[str]:
+    """Guard a few cross-document truths that structural link checks cannot see."""
+    failures: list[str] = []
+
+    registry_path = ROOT / "aletheia/learning/registry.py"
+    registry_tree = ast.parse(registry_path.read_text(encoding="utf-8"))
+    measured_paths: list[str] = []
+    for node in ast.walk(registry_tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name) or node.func.id != "LearningPath":
+            continue
+        if not node.args or not isinstance(node.args[0], ast.Constant):
+            continue
+        measurement_supported = next(
+            (
+                keyword.value
+                for keyword in node.keywords
+                if keyword.arg == "measurement_supported"
+            ),
+            None,
+        )
+        if (
+            isinstance(measurement_supported, ast.Constant)
+            and measurement_supported.value is True
+        ):
+            measured_paths.append(str(node.args[0].value))
+    if measured_paths != ["universe_family_calibration"]:
+        failures.append(
+            "aletheia/learning/registry.py: expected exactly one measurement-supported "
+            f"path (universe_family_calibration), found {measured_paths}"
+        )
+
+    current_truth = {
+        Path("docs/design/contracts/learning_contract.md"):
+            "Only `universe_family_calibration` is currently `measurement_supported`.",
+        Path("docs/product/CAPABILITY_GROUND_TRUTH.md"):
+            "LN-08 | Learned guard generation and observation",
+        Path("docs/product/capability-integrity/CAPABILITY_INVENTORY.md"):
+            "LN-08 | Learned guard generation and observation",
+        Path("docs/product/capability-integrity/FACT_CARDS.md"):
+            "no learned block/penalty",
+        Path("docs/product/experiments/EXPERIMENT_MVP_GATE.md"):
+            "retired historical compatibility pointer",
+        Path("docs/product/experiments/EXPERIMENT_BACKLOG.md"):
+            "retired historical compatibility pointer",
+    }
+    for relative, required in current_truth.items():
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        if required not in text:
+            failures.append(f"{relative}: missing semantic truth marker: {required}")
+
+    legacy_script = (ROOT / "scripts/mvp_gate_check.py").read_text(encoding="utf-8")
+    if "LEGACY-ONLY" not in legacy_script:
+        failures.append(
+            "scripts/mvp_gate_check.py: historical Round 1 gate is not marked LEGACY-ONLY"
+        )
+
+    stale_phrases = {
+        "Learned guard generation and enforcement",
+        "the two supported paths",
+        "GitHub issue #489",
+        "[VISION.md](VISION.md)",
+    }
+    truth_files = [
+        ROOT / "docs/product/SCOPE.md",
+        ROOT / "docs/product/CAPABILITY_GROUND_TRUTH.md",
+        ROOT / "docs/product/gates/METRICS.md",
+        ROOT / "docs/product/gates/PHASE_GATES.md",
+        ROOT / "docs/product/experiments/EXPERIMENT_PROTOCOL.md",
+        ROOT / "docs/design/contracts/learning_contract.md",
+        ROOT / "docs/design/process/DOC_ATLAS_BY_DOMAIN.md",
+        ROOT / "docs/design/data/data_utilization.md",
+    ]
+    for path in truth_files:
+        text = path.read_text(encoding="utf-8")
+        for phrase in stale_phrases:
+            if phrase in text:
+                failures.append(
+                    f"{path.relative_to(ROOT)}: stale semantic authority: {phrase}"
+                )
+
+    retired_gate_phrases = {
+        "Phase 2A - 2B",
+        "direction_affinity=\"short\"",
+        "SELECT COUNT(*) FROM strategy_edits",
+    }
+    phase_gates = (ROOT / "docs/product/gates/PHASE_GATES.md").read_text(
+        encoding="utf-8"
+    )
+    for phrase in retired_gate_phrases:
+        if phrase in phase_gates:
+            failures.append(
+                "docs/product/gates/PHASE_GATES.md: retired strategy gate remains: "
+                + phrase
+            )
+
+    return failures
+
+
 def main() -> int:
     failures = []
     failures.extend(governance_failures())
     failures.extend(proposal_metadata_failures())
     failures.extend(broken_relative_links(current_authority_markdown_files()))
+    failures.extend(semantic_truth_failures())
     if failures:
         print("Documentation governance check failed:")
         for failure in failures:

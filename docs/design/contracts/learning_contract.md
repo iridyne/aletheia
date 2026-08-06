@@ -1,7 +1,7 @@
 # Learning Subsystem Contract
 
 > Contract level: L2. This file is normative for the Learning subsystem.
-> Last aligned: 2026-07-31 measured-path and owner-observability reconciliation.
+> Last aligned: 2026-08-06 product-gate, measured-path, and owner-observability reconciliation.
 > Reference intent: [Product Direction - evidence-to-learning loop](../../product/definition/DIRECTION.md#2-complete-the-evidence-to-learning-loop).
 > Future designs:
 > [`learning_evolution.md`](../proposals/learning_evolution.md) and
@@ -85,7 +85,7 @@ outcome adapter, can be measured, or can receive authority. Current measured mat
 
 | Path/capability | Consumer | Exposure + outcome | Measurement/authority | Current conclusion |
 | --- | --- | --- | --- | --- |
-| `universe_family_calibration` | wired | full-arm canonical outcomes plus mirror/fallback | supported; owner-gated paper lifecycle | code-level causal loop complete; production contribution is collecting, not proven |
+| `universe_family_calibration` | wired | full-arm canonical outcomes plus mirror/fallback | supported; owner-gated paper lifecycle | code-level causal loop complete; a qualified natural contribution verdict is empirical runtime evidence, not a contract guarantee |
 | `operator_learning_bundle` | wired | current Opportunity outcome is not causal to the later prompt treatment | unsupported | static no-Learning prompt baseline; no new formal exposure or authority |
 | `observer_advisory_bundle` | wired | unsupported | unsupported | static observer context; no experimental bundle or exposure |
 | `ranker_case_score`, `ranker_memo_score`, `ranker_factor_filter` | wired | unsupported | unsupported | static score/filter baseline |
@@ -110,8 +110,8 @@ loop contributes positively. Current behavior has these contract-relevant limita
   behaviorally static because they are measurement-unsupported; they create no formal exposure;
 - factor identity is standardized as `factor_key` through producer, ranker and Operator context,
   but its unsupported experiment hook emits no before/after exposure;
-- the only scheduled contribution evaluator measures the two supported paths through their
-  path-specific cohort adapters. The Universe adapter uses
+- the scheduled contribution evaluator measures the sole supported path through its
+  path-specific cohort adapter. The Universe adapter uses
   `filter_candidate_outcomes` as the canonical full-arm source and
   `universe_forward_outcomes` only as a selected-member legacy mirror/fallback; conflicting
   economic copies invalidate the observation instead of choosing one;
@@ -132,6 +132,11 @@ loop contributes positively. Current behavior has these contract-relevant limita
   breach. Determinate loss-rate harm is an absolute increase above `0.15` (15 percentage points),
   and MAE p95 worsening is an absolute percentage-point difference above `0.25pp`; MAE fields use
   the `_pp` suffix rather than the ambiguous `_pct` suffix;
+- the current `min_market_days=7` software gate measures only the elapsed span between the first
+  and last eligible exposure. It does not prove continuous intervening coverage. A window with an
+  unexplained runtime or exposure gap is not owner-qualified even if the code-level span gate
+  passes; continuity-aware enforcement is tracked by GitHub issue #692 and is a B-class semantic
+  change requiring a fresh window;
 - lifecycle, authority, and owner-facing progress consume only the exact current hypothesis, stage,
   policy epoch, horizon, outcome contract, metric version, and deterministic behavior-contract
   cohort. `code_commit` remains provenance and does not fragment behaviorally identical evidence.

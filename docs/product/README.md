@@ -7,7 +7,9 @@ success is evaluated. These questions have separate canonical owners:
 - [DIRECTION.md](definition/DIRECTION.md) alone defines the product and its
   long-term direction.
 - [SCOPE.md](SCOPE.md) records inclusions, deferrals, and exclusions.
-- `gates/` and `experiments/` define measurement and admission.
+- `gates/` defines metric meaning and current admission. The current
+  `experiments/EXPERIMENT_PROTOCOL.md` defines observation-window governance;
+  the other experiment files are explicit historical compatibility pointers.
 
 ## Subfolders
 
@@ -15,7 +17,7 @@ success is evaluated. These questions have separate canonical owners:
 |---|---|
 | `definition/` | The single canonical product direction definition |
 | `gates/` | Metrics and phase gate criteria |
-| `experiments/` | Experiment protocol, backlog, MVP gates |
+| `experiments/` | Current experiment protocol plus clearly retired Round 1 compatibility pointers |
 | `documentation/` | Frozen history of the previous documentation migration |
 | `capability-integrity/` | Evidence-first inventory, fact cards, and issue-ready product capability truth |
 

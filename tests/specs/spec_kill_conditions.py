@@ -5,7 +5,7 @@
 
 三条系统级 Kill 判决:
   K1: Demo 连续两轮 PF < 0.5  → terminate experiment
-  K2: 连续 3 天零开仓        → trading loop dead
+  K2: 连续 3 天无 position open → trading loop dead
   K3: live unlock 须 scorecard composite_score >= 70
 
 关联契约: docs/design/contracts/kill_conditions_contract.md
@@ -123,7 +123,7 @@ def test_loop_profit_stall_probe_exists():
         "kill_conditions_contract",
         "§K2 zero fill days detection",
         "L2a",
-        "analytics 模块中存在能检测连续 N 天无新 fills 的函数 "
+        "analytics 模块中存在能检测连续 N 天无新 position open 的函数 "
         "count_consecutive_zero_fill_days()，返回天数整数。",
         status="implemented",
     )
