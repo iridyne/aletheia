@@ -67,16 +67,12 @@ def test_safe_env_strips_all_credential_prefixes(monkeypatch):
     assert env.get("SAFE_VAR") == "keep"
 
 
-def test_capital_ensure_db_runs_migrations_once(monkeypatch):
-    """#88: capital handlers must not run migrations on every request."""
+def test_capital_route_does_not_own_database_migrations():
+    """Database migration is owned exclusively by backend startup."""
     import aletheia.server.routes.capital as cap
-    calls = {"n": 0}
-    monkeypatch.setattr(cap, "run_migrations", lambda: calls.__setitem__("n", calls["n"] + 1))
-    monkeypatch.setattr(cap, "_migrated", False)
-    cap._ensure_db()
-    cap._ensure_db()
-    cap._ensure_db()
-    assert calls["n"] == 1
+
+    assert not hasattr(cap, "run_migrations")
+    assert not hasattr(cap, "_ensure_db")
 
 
 def test_retention_prunes_wired_into_cleanup():
