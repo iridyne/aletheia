@@ -257,26 +257,12 @@ class OperatorAction:
     reason: str = ""
 
 
-# Level classification.
-#
-# #27 note (2026-07-08): a few names in this set do not execute the operation
-# their name suggests. Kept only for backwards-compat with existing operator
-# telemetry / expected-action rubrics:
-#   - retire_strategy / demote_strategy: Phase 4d shift writes a
-#     `pi_decisions` recommendation row instead of retiring the strategy
-#     directly. The LLM sees the action as available; the effect is a
-#     recommendation queued for review, not an immediate state change.
+# Level classification. Level-1 names must map to effects this loop actually
+# owns and can verify; historical compatibility aliases are not capabilities.
 _LEVEL_1_ACTIONS = {
-    "retire_strategy", "demote_strategy",  # advisory-only under Phase 4d — see note above
     "tighten_confidence", "loosen_confidence", "reduce_sizing", "increase_sizing", "tighten_stop_loss",
-    "adjust_scanner_weight", "request_backfill", "notify_operator",
+    "adjust_scanner_weight", "notify_operator",
     "trigger_strategy_research",
-    # Data-maintenance self-heal actions (operator_layer.md §自愈档位 L1).
-    # These require PI approval before execution (§不变式1).
-    # PI approval gate is tracked by OL-C08 (status="missing" / xfail tripwire).
-    "clean_stale_heartbeats",
-    "restart_collector",
-    "rebuild_sqlite_index",
 }
 
 _LEVEL_2_ACTIONS = {
@@ -677,11 +663,7 @@ def _execute_level1_action(action: OperatorAction) -> dict:
     """Execute a Level 1 (auto) action. Returns result dict."""
     result = {"action": action.action_type, "status": "skipped", "reason": ""}
 
-    if action.action_type == "retire_strategy":
-        result = _action_retire_strategy(action)
-    elif action.action_type == "demote_strategy":
-        result = _action_demote_strategy(action)
-    elif action.action_type == "tighten_confidence":
+    if action.action_type == "tighten_confidence":
         result = _action_tighten_confidence(action)
     elif action.action_type == "loosen_confidence":
         result = _action_loosen_confidence(action)
@@ -696,94 +678,16 @@ def _execute_level1_action(action: OperatorAction) -> dict:
     # can only restore a tightened value to neutral and never beyond it (OL-C07).
     elif action.action_type == "adjust_scanner_weight":
         result = _action_adjust_scanner_weight(action)
-    elif action.action_type == "request_backfill":
-        result = _action_request_backfill(action)
     elif action.action_type == "notify_operator":
         result = _action_notify(action)
     elif action.action_type == "trigger_strategy_research":
         result = _action_trigger_strategy_research(action)
     elif action.action_type.startswith("neutral_drift_"):
         result = _action_neutral_drift(action)
-    # ─── Data-maintenance self-heal actions (operator_layer.md §自愈档位 L1) ───
-    # OL-C08/SH-C02: PI approval gate — every L1 self-heal action must record
-    # an approval token in pi_decisions before executing. The gate is lightweight
-    # (writes one audit record) and does not block execution, matching the
-    # operator_layer.md §不变式1 requirement for a "prior PI approval record".
-    elif action.action_type == "clean_stale_heartbeats":
-        _request_pi_approval_for_selfheal(action)
-        result = _action_clean_stale_heartbeats(action)
-    elif action.action_type == "restart_collector":
-        _request_pi_approval_for_selfheal(action)
-        result = _action_restart_collector(action)
-    elif action.action_type == "rebuild_sqlite_index":
-        _request_pi_approval_for_selfheal(action)
-        result = _action_rebuild_sqlite_index(action)
     else:
         result["reason"] = f"unknown action type: {action.action_type}"
 
     return result
-
-
-def _action_retire_strategy(action: OperatorAction) -> dict:
-    """Phase 4d: Write recommendation to pi_decisions instead of direct retirement.
-    System Operator will see this in pending_signals and confirm the action."""
-    strategy_id = action.params.get("strategy_id", "")
-    if not strategy_id:
-        return {"action": "retire_strategy", "status": "skipped", "reason": "no strategy_id"}
-    try:
-        from aletheia.storage.models import PiDecision
-        from aletheia.storage.repositories import insert_pi_decision
-        pi_dec = PiDecision(
-            symbol=None,
-            direction=None,
-            action="recommend_retire",
-            conviction=0,
-            reasoning=f"Operator recommends retiring strategy {strategy_id[:8]}: {action.reason}",
-            proposal_id=strategy_id,
-            debate_ran=False,
-        )
-        insert_pi_decision(pi_dec)
-        try:
-            from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
-            notify_pi_daemon(source="operator_loop_retire")
-        except Exception:
-            pass
-        _record_action("retire_strategy", param=strategy_id, detail=f"recommendation queued: {action.reason}")
-        logger.info("operator: recommend retire strategy %s — %s", strategy_id, action.reason)
-        return {"action": "retire_strategy", "status": "recommended", "strategy_id": strategy_id}
-    except Exception as e:
-        return {"action": "retire_strategy", "status": "error", "reason": str(e)}
-
-
-def _action_demote_strategy(action: OperatorAction) -> dict:
-    """Phase 4d: Write recommendation to pi_decisions instead of direct demotion.
-    System Operator will see this in pending_signals and confirm the action."""
-    strategy_id = action.params.get("strategy_id", "")
-    if not strategy_id:
-        return {"action": "demote_strategy", "status": "skipped", "reason": "no strategy_id"}
-    try:
-        from aletheia.storage.models import PiDecision
-        from aletheia.storage.repositories import insert_pi_decision
-        pi_dec = PiDecision(
-            symbol=None,
-            direction=None,
-            action="recommend_demote",
-            conviction=0,
-            reasoning=f"Operator recommends demoting strategy {strategy_id[:8]}: {action.reason}",
-            proposal_id=strategy_id,
-            debate_ran=False,
-        )
-        insert_pi_decision(pi_dec)
-        try:
-            from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
-            notify_pi_daemon(source="operator_loop_demote")
-        except Exception:
-            pass
-        _record_action("demote_strategy", param=strategy_id, detail=f"recommendation queued: {action.reason}")
-        logger.info("operator: recommend demote strategy %s — %s", strategy_id, action.reason)
-        return {"action": "demote_strategy", "status": "recommended", "strategy_id": strategy_id}
-    except Exception as e:
-        return {"action": "demote_strategy", "status": "error", "reason": str(e)}
 
 
 _ICT_RESEARCH_BRIEF = (
@@ -1033,29 +937,43 @@ def _action_adjust_scanner_weight(action: OperatorAction) -> dict:
     delta = max(-0.2, min(0.2, delta))  # cap at ±0.2
     if not family or delta == 0:
         return {"action": "adjust_scanner_weight", "status": "skipped", "reason": "no family or zero delta"}
-    _record_action("adjust_scanner_weight", param=family, detail=f"delta={delta}")
-    # Persist the new weight to config so it survives restarts (CR-PI-01).
+    # A config write is the claimed effect. Do not consume the action budget or
+    # report success until the value can be read back from the durable config.
     try:
         from aletheia.config.loader import load_config, save_config
         cfg = load_config()
         weights = dict(cfg.universe.scanner_weights)
-        current = weights.get(family, 1.0)
-        weights[family] = round(max(0.1, min(3.0, current + delta)), 3)
+        current = float(weights.get(family, 1.0))
+        new_value = round(max(0.1, min(3.0, current + delta)), 3)
+        weights[family] = new_value
         cfg.universe.scanner_weights = weights
         save_config(cfg)
+
+        persisted = load_config()
+        persisted_value = float(persisted.universe.scanner_weights.get(family))
+        if abs(persisted_value - new_value) > 1e-9:
+            raise ValueError(
+                f"read-back mismatch: expected {new_value}, got {persisted_value}"
+            )
     except Exception as e:
         logger.warning("operator: scanner_weight persist failed: %s", e)
+        return {
+            "action": "adjust_scanner_weight",
+            "status": "failed",
+            "family": family,
+            "delta": delta,
+            "reason": "config_persistence_failed",
+            "error_type": type(e).__name__,
+        }
+
+    _record_action(
+        "adjust_scanner_weight",
+        param=family,
+        detail=f"{current}->{new_value}",
+    )
     logger.info("operator: adjusted scanner weight %s by %.2f — %s", family, delta, action.reason)
     return {"action": "adjust_scanner_weight", "status": "executed",
-            "family": family, "delta": delta}
-
-
-def _action_request_backfill(action: OperatorAction) -> dict:
-    if _count_actions_today("request_backfill") >= 1:
-        return {"action": "request_backfill", "status": "rate_limited", "reason": "already triggered today"}
-    _record_action("request_backfill")
-    logger.info("operator: requested OHLCV backfill — %s", action.reason)
-    return {"action": "request_backfill", "status": "executed"}
+            "family": family, "delta": delta, "old": current, "new": new_value}
 
 
 def _action_notify(action: OperatorAction) -> dict:
@@ -1067,163 +985,24 @@ def _action_notify(action: OperatorAction) -> dict:
     try:
         from aletheia.notifications import notify_operator as _notify
         _notify("PI Operator", message[:500], level="info")
-    except Exception:
-        pass
-    return {"action": "notify_operator", "status": "executed", "message": message[:200]}
-
-
-def _request_pi_approval_for_selfheal(action: OperatorAction) -> None:
-    """Record a PI-approval token in pi_decisions before a L1 self-heal action fires.
-
-    operator_layer.md §不变式1: L1 self-heal actions (clean_stale_heartbeats /
-    restart_collector / rebuild_sqlite_index) must not execute without a prior
-    PI approval record. This gate writes that record into pi_decisions, giving
-    the audit trail and the ops loop a visible token. Execution is not blocked
-    (the gate is synchronous, pre-action) — the record proves the operator has
-    evaluated the action and approved it before dispatch.
-    """
-    try:
-        from aletheia.storage.models import PiDecision
-        from aletheia.storage.repositories import insert_pi_decision
-        insert_pi_decision(PiDecision(
-            symbol=None,
-            direction=None,
-            action="recommend_l1_selfheal",
-            conviction=0,
-            reasoning=(
-                f"Operator recommends L1 self-heal action "
-                f"'{action.action_type}': {action.reason or 'routine maintenance'}"
-            ),
-            proposal_id=None,
-            debate_ran=False,
-        ))
     except Exception as e:
-        logger.debug("_request_pi_approval_for_selfheal: could not write approval record: %s", e)
-
-
-def _action_clean_stale_heartbeats(action: OperatorAction) -> dict:
-    """Delete heartbeat rows older than retention window.
-
-    operator_layer.md §自愈档位 L1. PI approval token written by caller
-    (_request_pi_approval_for_selfheal) before this function is invoked (OL-C08).
-    """
-    reason = action.reason or "heartbeat table maintenance"
-    rows_deleted = 0
-    before_state = "unknown"
-    after_state = "unknown"
-    try:
-        from aletheia.storage import repositories as _repo
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
-        existing = _repo._select_all(
-            "agent_shell_heartbeats",
-            where="last_seen < ?",
-            params=(cutoff,),
-            limit=10000,
-        )
-        before_state = str(len(existing)) + " stale rows"
-        if existing:
-            from aletheia.storage.sqlite import get_db
-            with _repo.transaction():
-                get_db().execute(
-                    "DELETE FROM agent_shell_heartbeats WHERE last_seen < ?",
-                    (cutoff,),
-                )
-            rows_deleted = len(existing)
-        after_state = f"{rows_deleted} rows deleted"
-    except Exception as e:
-        logger.debug("clean_stale_heartbeats: %s", e)
-        after_state = f"error: {e}"
-
-    try:
-        from aletheia.agent_shell.commands import _emit_self_heal_action
-        _emit_self_heal_action(
-            action="clean_stale_heartbeats",
-            reason=reason,
-            operation_type="data_cleanup",
-            trigger_reason=reason,
-            result=after_state,
-            before_state=before_state,
-            after_state=after_state,
-        )
-    except Exception:
-        pass
-
-    _record_action("self_heal", param="heartbeats", detail=after_state)
-    logger.info("operator: clean_stale_heartbeats — %s", after_state)
-    return {"action": "clean_stale_heartbeats", "status": "executed",
-            "rows_deleted": rows_deleted, "reason": reason}
-
-
-def _action_restart_collector(action: OperatorAction) -> dict:
-    """Restart a stuck data collector by notifying the scheduler.
-
-    operator_layer.md §自愈档位 L1. PI approval token written by caller
-    (_request_pi_approval_for_selfheal) before this function is invoked (OL-C08).
-    """
-    collector = action.params.get("collector", "unknown")
-    reason = action.reason or f"collector {collector} appears stuck"
-    result_msg = f"restart_requested:{collector}"
-
-    try:
-        # Notify via audit trail — actual restart requires scheduler integration
-        # (Phase 2 of the self-heal layer, per aletheia-self-heal-layer.md)
-        from aletheia.agent_shell.commands import _emit_self_heal_action
-        _emit_self_heal_action(
-            action="restart_collector",
-            reason=reason,
-            operation_type="process_restart",
-            trigger_reason=reason,
-            result=result_msg,
-            before_state=f"collector={collector} stuck",
-            after_state="restart_signal_sent",
-        )
-    except Exception:
-        pass
-
-    _record_action("self_heal", param=f"collector:{collector}", detail=result_msg)
-    logger.info("operator: restart_collector %s — %s", collector, reason)
-    return {"action": "restart_collector", "status": "executed",
-            "collector": collector, "reason": reason}
-
-
-def _action_rebuild_sqlite_index(action: OperatorAction) -> dict:
-    """Rebuild SQLite indexes for a named table.
-
-    operator_layer.md §自愈档位 L1. PI approval token written by caller
-    (_request_pi_approval_for_selfheal) before this function is invoked (OL-C08).
-    """
-    table = action.params.get("table", "unknown")
-    reason = action.reason or f"index rebuild for {table}"
-    result_msg = f"ANALYZE executed on {table}"
-
-    try:
-        from aletheia.storage import repositories as _repo
-        from aletheia.storage.sqlite import get_db
-        # ANALYZE updates index statistics; full REINDEX is deferred to avoid lock contention
-        get_db().execute("ANALYZE")
-        result_msg = "ANALYZE OK"
-    except Exception as e:
-        logger.debug("rebuild_sqlite_index ANALYZE: %s", e)
-        result_msg = f"ANALYZE skipped: {e}"
-
-    try:
-        from aletheia.agent_shell.commands import _emit_self_heal_action
-        _emit_self_heal_action(
-            action="rebuild_sqlite_index",
-            reason=reason,
-            operation_type="index_maintenance",
-            trigger_reason=reason,
-            result=result_msg,
-            before_state=f"table={table} indexes potentially stale",
-            after_state=result_msg,
-        )
-    except Exception:
-        pass
-
-    _record_action("self_heal", param=f"index:{table}", detail=result_msg)
-    logger.info("operator: rebuild_sqlite_index %s — %s", table, result_msg)
-    return {"action": "rebuild_sqlite_index", "status": "executed",
-            "table": table, "result": result_msg}
+        logger.warning("operator: notification dispatch failed: %s", e)
+        return {
+            "action": "notify_operator",
+            "status": "failed",
+            "reason": "notification_dispatch_failed",
+            "error_type": type(e).__name__,
+            "message": message[:200],
+        }
+    # notify_operator fans out on a best-effort basis and intentionally catches
+    # individual channel failures. Calling it proves only that the request was
+    # recorded and dispatched, not that a human received any channel.
+    return {
+        "action": "notify_operator",
+        "status": "requested",
+        "delivery": "best_effort",
+        "message": message[:200],
+    }
 
 
 def _create_proposal(action: OperatorAction) -> dict:
@@ -1272,14 +1051,10 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
         ))
 
     # Stage 2: Strategy Lifecycle — CONVERGED TO TS operator-shell (owner decision 2026-06-28).
-    # Strategy retire/demote is owned by the TS operator-shell, which evaluates strategy
-    # lifecycle and acts through the command registry. The Python loop used to emit
-    # retire_strategy/demote_strategy here, whose handlers wrote recommend_retire/demote
-    # PiDecisions — but NOTHING consumed them (trading_context's pending-signal queue reads
-    # only action='signal_pending'), so they were dead writes. Removed to eliminate the
-    # parallel operator mechanism: Python operator_loop keeps ONLY dynamic config tuning
-    # (which TS does not do). assessment.underperforming_strategies is still surfaced in the
-    # assessment for observability and for the TS shell's own evaluation.
+    # Strategy lifecycle is owned by the TS operator-shell command registry. The retired
+    # Python recommendation bus had no consumer and has been removed. This loop keeps only
+    # the dynamic config tuning the TS shell does not own. The assessment still surfaces
+    # underperforming strategies for observability and the TS shell's evaluation.
 
     # Stage 3: Aggregate signal quality is a diagnosis, never an automatic
     # confidence mutation.  A low aggregate forward-outcome WR can be caused by
@@ -1426,54 +1201,6 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
     return actions
 
 
-# ─── Stale recommendation escalation ─────────────────────────────────────────
-
-def _check_stale_recommendations() -> list[dict]:
-    """Escalate recommend_retire/recommend_demote pi_decisions that have been
-    pending for >24h without PI confirmation, notifying the operator.
-
-    Does NOT auto-execute the retirement — that would bypass the System Operator review
-    flow. It only notifies so the operator/owner can manually trigger PI or act.
-    One notification per stale decision, rate-limited by the standard daily cap.
-    """
-    from datetime import datetime, timezone, timedelta
-    from aletheia.storage.sqlite import get_db
-
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-    db = get_db()
-    rows = db.execute(
-        "SELECT id, action, proposal_id, reasoning, created_at FROM pi_decisions"
-        " WHERE action IN ('recommend_retire', 'recommend_demote')"
-        " AND created_at < ?"
-        " ORDER BY created_at ASC",
-        (cutoff,),
-    ).fetchall()
-    if not rows:
-        return []
-
-    notifications = []
-    for row in rows:
-        strat_id = (row["proposal_id"] or "?")[:8]
-        action_label = "retire" if row["action"] == "recommend_retire" else "demote"
-        hours_pending = max(0, round(
-            (datetime.now(timezone.utc) -
-             datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))).total_seconds() / 3600
-        ))
-        msg = (f"Strategy {strat_id}: {action_label} recommendation unconfirmed for "
-               f"{hours_pending}h — System Operator may not be running. Review and confirm manually.")
-        notify_action = OperatorAction(
-            action_type="notify_operator",
-            level=1,
-            params={"message": msg},
-            reason=f"stale_{action_label}_recommendation:{strat_id}",
-        )
-        result = _action_notify(notify_action)
-        result["stale_pi_decision_id"] = row["id"]
-        notifications.append(result)
-
-    return notifications
-
-
 # ─── Main Loop Entry Point ───────────────────────────────────────────────────
 
 def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
@@ -1517,11 +1244,7 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
             result = _execute_level1_action(action)
             results.append(result)
 
-    # Phase 3b: Escalate stale retire/demote recommendations (E5 fix)
-    stale_results = _check_stale_recommendations()
-    results.extend(stale_results)
-
-    # Phase 3c: Record a durable liveness-block token when the loop decided to
+    # Phase 3b: Record a durable liveness-block token when the loop decided to
     # loosen confidence but was blocked (cooldown, rate-limit, etc.). Required by
     # assert_confidence_liveness invariant: a decision to loosen that is prevented
     # by a transient guard must leave DB evidence so the invariant can distinguish

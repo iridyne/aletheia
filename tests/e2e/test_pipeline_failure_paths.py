@@ -197,11 +197,11 @@ def test_kill_switch_suppresses_config_patches_emits_notify(e2e_db, monkeypatch,
 
     The断点 being tested: operator loop is still scheduled and runs (it is NOT
     skipped entirely), but all control actions (tighten_confidence, reduce_sizing,
-    etc.) are suppressed. Only a notify_operator action should execute.
+    etc.) are suppressed. Only a notify_operator request should be dispatched.
 
     Verifies:
     - audit_events has zero config_patch rows (config was not changed)
-    - At least one notify_operator result is in executed or rate_limited state
+    - At least one notify_operator result is requested or rate_limited
     - The returned assessment correctly reflects kill_switch=True
     """
     import aletheia.config.loader as loader
@@ -253,6 +253,6 @@ def test_kill_switch_suppresses_config_patches_emits_notify(e2e_db, monkeypatch,
     )
     # Each notify must be in a terminal state — not silently swallowed
     for r in notify_results:
-        assert r.get("status") in {"executed", "rate_limited"}, (
+        assert r.get("status") in {"requested", "rate_limited"}, (
             f"notify_operator had unexpected status: {r}"
         )

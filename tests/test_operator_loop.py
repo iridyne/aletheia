@@ -179,7 +179,7 @@ class TestDecideActions:
 # ─── Stage 2: Action Execution ───────────────────────────────────────────────
 
 class TestActionExecution:
-    def test_level1_action_executes(self, tmp_path, monkeypatch):
+    def test_notify_action_reports_best_effort_request(self, tmp_path, monkeypatch):
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import (
@@ -191,19 +191,67 @@ class TestActionExecution:
             action_type="notify_operator", level=1,
             params={"message": "test notification"}, reason="test",
         )
-        monkeypatch.setattr(
-            "aletheia.agent_shell.operator_loop.send_notification",
-            lambda **kwargs: None,
-            raising=False,
-        )
         result = _execute_level1_action(action)
-        assert result["status"] == "executed"
+        assert result["status"] == "requested"
+        assert result["delivery"] == "best_effort"
+
+    def test_notify_dispatch_failure_is_not_executed(self, tmp_path, monkeypatch):
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import OperatorAction, _execute_level1_action
+        import aletheia.notifications as notifications
+
+        def fail_notify(*_args, **_kwargs):
+            raise RuntimeError("injected notification failure")
+
+        monkeypatch.setattr(notifications, "notify_operator", fail_notify)
+        result = _execute_level1_action(OperatorAction(
+            action_type="notify_operator",
+            level=1,
+            params={"message": "test notification"},
+            reason="test",
+        ))
+
+        assert result["status"] == "failed"
+        assert result["reason"] == "notification_dispatch_failed"
 
     def test_level_classification(self, tmp_path, monkeypatch):
         from aletheia.agent_shell.operator_loop import classify_action
-        assert classify_action("retire_strategy") == 1
         assert classify_action("deactivate_kill_switch") == 3
         assert classify_action("unknown_action") == 2
+
+        # These historical Python handlers either performed no operation, performed
+        # a differently named operation, or self-issued their own approval token.
+        # Until a real owner + external approval consumer exists they must fail over
+        # to the proposal path instead of remaining automatically executable.
+        for action_type in (
+            "retire_strategy",
+            "demote_strategy",
+            "request_backfill",
+            "clean_stale_heartbeats",
+            "restart_collector",
+            "rebuild_sqlite_index",
+        ):
+            assert classify_action(action_type) == 2
+
+    def test_unowned_selfheal_actions_are_not_directly_executable(self, tmp_path, monkeypatch):
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import OperatorAction, _execute_level1_action
+
+        for action_type in (
+            "retire_strategy",
+            "demote_strategy",
+            "request_backfill",
+            "clean_stale_heartbeats",
+            "restart_collector",
+            "rebuild_sqlite_index",
+        ):
+            result = _execute_level1_action(
+                OperatorAction(action_type=action_type, level=1, reason="test")
+            )
+            assert result["status"] == "skipped"
+            assert result["reason"] == f"unknown action type: {action_type}"
 
 
 # ─── Stage 3: Config Patch Rate Limiting ─────────────────────────────────────
@@ -334,6 +382,39 @@ class TestCapitalAllocation:
         assert result["status"] == "executed"
         assert result["family"] == "momentum"
         assert result["delta"] == 0.15
+
+        from aletheia.config.loader import load_config
+        assert load_config().universe.scanner_weights["momentum"] == 1.15
+
+    def test_scanner_weight_save_failure_is_not_recorded_as_success(
+        self, tmp_path, monkeypatch,
+    ):
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        import aletheia.agent_shell.operator_loop as operator_loop
+        import aletheia.config.loader as loader
+
+        recorded: list[tuple] = []
+        monkeypatch.setattr(
+            operator_loop,
+            "_record_action",
+            lambda *args, **kwargs: recorded.append((args, kwargs)),
+        )
+
+        def fail_save(_cfg):
+            raise OSError("injected save failure")
+
+        monkeypatch.setattr(loader, "save_config", fail_save)
+        result = operator_loop._execute_level1_action(operator_loop.OperatorAction(
+            action_type="adjust_scanner_weight",
+            level=1,
+            params={"family": "momentum", "delta": 0.15},
+            reason="test",
+        ))
+
+        assert result["status"] == "failed"
+        assert result["reason"] == "config_persistence_failed"
+        assert recorded == []
 
 
 # ─── Stage 4: Full Loop Integration ─────────────────────────────────────────

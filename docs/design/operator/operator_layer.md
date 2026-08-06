@@ -80,8 +80,16 @@
 | 档位 | 行为 | 触发方式 |
 |------|------|----------|
 | L0 通知 | 发现异常，通知人类 | 已实现（Level-1 notify_operator） |
-| L1 自动修数据 | 清理过期 heartbeat/日志、重启卡死 collector、重建 SQLite 索引 | PI 批准后执行 |
+| L1 自动修数据 | 清理过期 heartbeat/日志、重启卡死 collector、重建 SQLite 索引 | **当前暂停**：没有独立批准消费者与结果验证，不属于可执行产品能力 |
 | L2 人工确认 | 清除 signal_pending 队列、修改 prompt 片段/配置 | PI 评估 → 推送通知 → 等人确认 |
+
+> **2026-08-06 收敛说明**：历史 Python `operator_loop` 曾把
+> `clean_stale_heartbeats` / `restart_collector` / `rebuild_sqlite_index` 注册为
+> Level-1，并在执行前由同一个执行器写入一条“批准”记录。该记录不是独立批准，且
+> `restart_collector` 没有调度消费者、`rebuild_sqlite_index` 实际只运行全局
+> `ANALYZE`。这些动作已从 Level-1 清单和 dispatcher 撤下；未知动作按 Level-2
+> proposal fail closed。未来恢复任一动作时，必须同时落地独立批准来源、精确目标、
+> 真实副作用所有者、完成验证和失败状态，不得仅靠审计记录宣称执行成功。
 
 #### L2 动作类型说明（`_LEVEL_2_ACTIONS` 注册要求）
 
@@ -97,14 +105,14 @@ L2 自愈档位包含三个专属动作类型，必须注册到 `operator_loop._
 
 ### 不变式
 
-1. **PI 批准前置**：任何 L1/L2 自愈操作执行前，必须经 PI 读取诊断报告并输出"批准/拒绝 + 理由"。PI 不批准则不执行。
-   - 实现要求：`_execute_level1_action` 对 `clean_stale_heartbeats` / `restart_collector` / `rebuild_sqlite_index` 三个自愈动作，必须在 dispatch 前调用含 `pi_approval` 或 `approve_l1` 字样的门控函数。
-   - **可执行 spec 引用**：`tests/specs/spec_operator_loop.py::test_l1_selfheal_pi_approval_gate_in_execute` (SH-C02, L2c, xfail — 门控未实现时持续 RED；与 OL-C08 共享契约)
+1. **独立批准前置**：任何 L1/L2 自愈操作执行前，必须由执行器之外的权威来源输出“批准/拒绝 + 理由”。动作不能自行创建满足自身前置条件的批准记录。当前没有该消费者，因此 Python Level-1 dispatcher 不包含上述三个自愈动作。
+   - **可执行 spec 引用**：`tests/specs/spec_operator_loop.py::test_l1_selfheal_pi_approval_gate_in_execute`（SH-C02）与 `test_l1_selfheal_requires_pi_approval`（OL-C08）。
 2. **结构化日志强制**：每次自愈操作必须写结构化日志，字段包含：`operation_type` / `trigger_reason` / `result` / `before_state` / `after_state`。
 3. **交易时隔离例外**：自愈操作可在系统正在交易时执行，但 L2 操作（涉及 signal_pending 或 prompt/配置）即使 PI 批准也必须等人类确认。
    - 实现要求：`_create_proposal` 写入 `create_artifact` 的 content dict 必须含 `human_confirm_required` 键且值为 `True`，作为前端/通知路径的识别依据。
    - **可执行 spec 引用**：`tests/specs/spec_operator_loop.py::test_l2_proposal_artifact_carries_human_confirm_required` (SH-B03, L2b, xfail — 字段未实现时持续 RED)
-4. **system_action 审计**：L1/L2 操作完成后在 `knowledge_items (item_type=system_action)` 写入审计记录（已有 self-heal 路径，继续复用）。
+4. **system_action 审计**：未来获批并实际完成的 L1/L2 操作应在
+   `knowledge_items (item_type=system_action)` 写入结果审计；审计记录本身不是执行证据。
 
 ---
 
@@ -563,10 +571,9 @@ Forbidden Direct Commands
 
 ### retire_strategy / demote_strategy — 当前不可用
 
-历史 Python handler 会向 `pi_decisions` 写
-`recommend_retire` / `recommend_demote`，但没有生产消费者，因此这些记录不能代表
-策略已退出或降级。当前 `operator_loop.decide_actions` 已停止产生这两类动作；残留
-handler 只用于兼容与测试，不是可达产品能力。
+历史 Python handler 会向 `pi_decisions` 写生命周期建议，但没有生产消费者，因此这些
+记录不能代表策略已退出或降级。当前 `operator_loop` 已删除这组 handler 及其陈旧记录
+监控器；旧数据库记录只保留为历史审计，不再产生，也不会被解释为已执行结果。
 
 规则引擎和旧 Strategy Designer 已删除。若未来重新支持策略生命周期变更，应由
 TS operator-shell 经 Command Registry 发起，并具备明确审批、执行消费者、结果状态和
@@ -616,10 +623,9 @@ Auto:
 
 ## 11. Command Flow
 
-> ⚠️ **retire/demote 的实际流程**：对于 `retire_strategy` / `demote_strategy` 命令，
-> Operator 执行后不立即修改策略状态，而是向 `pi_decisions` 表写入推荐记录（Phase 4d 间接执行，
-> `operator_loop.py:553-578`）。System Operator 在下次轮询时消费该记录并完成实际生命周期变更。
-> 命令返回 `status: "recommended"`，不是 `status: "executed"`。
+> ⚠️ **策略生命周期命令的边界**：Python `operator_loop` 不提供退役或降级能力，也不再
+> 写入无人消费的 `pi_decisions` 推荐记录。策略生命周期变更只能由 TS operator-shell 的
+> Command Registry 发起，并必须有真实消费者、结果状态和审计证据。
 
 ```text
 User or scheduler asks:
