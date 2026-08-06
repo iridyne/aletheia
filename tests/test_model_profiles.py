@@ -65,12 +65,17 @@ async def test_clean_model_state_has_no_enabled_provider_or_routing_role(client)
 @pytest.mark.anyio
 async def test_failed_profile_verification_does_not_persist_config_or_secret(client, monkeypatch):
     from aletheia.model_provider.base import ModelHealth
+    import aletheia.model_provider.broker as broker
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 
     async def unavailable(provider):
         return ModelHealth(provider=provider.name, available=False, error="unauthorized")
 
+    async def failed_inference(*_args, **_kwargs):
+        raise RuntimeError("unauthorized")
+
     monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", unavailable)
+    monkeypatch.setattr(broker, "brokered_complete", failed_inference)
     response = await client[0].post(
         "/api/settings/model-profiles",
         json={
@@ -86,6 +91,40 @@ async def test_failed_profile_verification_does_not_persist_config_or_secret(cli
     assert response.status_code == 422
     assert "unverified-api" not in (await client[0].get("/api/model")).json()["providers"]
     assert get_secret("model.profile.unverified-api.api_key") is None
+
+
+@pytest.mark.anyio
+async def test_profile_creation_trusts_inference_when_catalogue_is_unavailable(
+    client, monkeypatch
+):
+    from aletheia.model_provider.base import ModelHealth
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+
+    async def unavailable_catalogue(provider):
+        return ModelHealth(
+            provider=provider.name,
+            available=False,
+            model=provider.model,
+            error="model catalogue unavailable",
+        )
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", unavailable_catalogue)
+    response = await client[0].post(
+        "/api/settings/model-profiles",
+        json={
+            "profile_id": "probe-verified-api",
+            "display_name": "Probe Verified API",
+            "type": "openai_compatible",
+            "base_url": "https://probe-verified.example/v1",
+            "model": "test-model",
+            "api_key": "verified-by-inference",
+        },
+    )
+
+    assert response.status_code == 201
+    providers = (await client[0].get("/api/model")).json()["providers"]
+    assert "probe-verified-api" in providers
+    assert providers["probe-verified-api"]["api_key"]["configured"] is True
 
 
 @pytest.mark.anyio
