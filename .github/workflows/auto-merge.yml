@@ -167,7 +167,7 @@ jobs:
                 const mergeResult = await github.rest.pulls.merge({
                   ...context.repo,
                   pull_number: pullRequestNumber,
-                  merge_method: 'merge',
+                  merge_method: 'squash',
                   sha: expectedHeadSha,
                 });
                 if (!mergeResult.data.merged) {
@@ -187,7 +187,7 @@ jobs:
                   `mutation($pullRequestId: ID!) {
                     enablePullRequestAutoMerge(input: {
                       pullRequestId: $pullRequestId,
-                      mergeMethod: MERGE
+                      mergeMethod: SQUASH
                     }) {
                       pullRequest { number }
                     }

@@ -134,7 +134,7 @@ For a PR created while changing that automation, or whenever the request must
 be guaranteed before the workflow is available, explicitly queue it:
 
 ```powershell
-gh pr merge <pr-number> --auto --merge
+gh pr merge <pr-number> --auto --squash
 gh pr view <pr-number> --json autoMergeRequest,statusCheckRollup,mergeStateStatus
 ```
 
@@ -156,6 +156,6 @@ worktree can then be removed without cancelling CI or auto-merge.
 | --- | --- | --- |
 | `git pull --ff-only` has no tracking information | New feature branch has not been pushed | Use `git pull --ff-only origin master` for the base check; use `git push -u` when publishing |
 | `uv` cannot persist its cache | Machine cache permissions are unsuitable | Set a task-specific `UV_CACHE_DIR` under `LOCALAPPDATA` |
-| PR is green but remains open | No per-PR auto-merge request exists | Inspect `autoMergeRequest`; run `gh pr merge --auto --merge` |
+| PR is green but remains open | No per-PR auto-merge request exists | Inspect `autoMergeRequest`; run `gh pr merge --auto --squash` |
 | Stacked PR has no CI after its base merged | Retargeting did not produce the expected workflow run | Verify the new base and workflow event; reopen only when a fresh PR event is deliberately required |
 | Worktree deletion would lose the only copy | Change is not durably published | Push, verify the remote SHA, create the PR, and verify its auto-merge request first |
