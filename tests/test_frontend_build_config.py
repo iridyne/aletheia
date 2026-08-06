@@ -37,8 +37,11 @@ def test_windows_dev_launcher_supports_bounded_parallel_preview_ports():
 
 
 def test_preview_docs_distinguish_stable_gateway_from_worktree_hmr():
+    # AGENTS.md is a router: it points at scope-matched guides rather than
+    # restating their contents. The gateway/HMR distinction now lives in the
+    # workflow guide it routes to, so that guide is what must carry both ports.
     docs = [
-        Path("AGENTS.md"),
+        Path("docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md"),
         Path("README.md"),
         Path("docs/operations/runbooks/RUNBOOK.md"),
         Path("docs/operations/development/QUALIFICATION_DEVELOPMENT_PROTOCOL.md"),

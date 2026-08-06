@@ -373,8 +373,9 @@ async def test_model_candidate(req: TestCandidateRequest):
 
     try:
         health = await provider.healthcheck()
-        # A known Databricks endpoint can be invokable without workspace-wide LIST access.
-        if not health.available and not (provider_type == "databricks" and req.probe):
+        # /models access is optional: gateways can permit inference while denying or
+        # intermittently failing catalogue listing. An explicit probe is the authority.
+        if not health.available and not req.probe:
             return {"available": False, "model": health.model, "error": health.error}
 
         if req.probe:
