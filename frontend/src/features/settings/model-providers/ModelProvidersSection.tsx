@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useMutation, useQuery, type QueryClient } from "@tanstack/react-query";
 import { api } from "../../../api/client";
 import { Switch } from "../../../components/ui";
@@ -169,6 +169,7 @@ function ApiProfileEditor({
 }) {
 	const [draft, setDraft] = useState(initial);
 	const [message, setMessage] = useState<string | null>(null);
+	const enabledToggleId = useId();
 	const [models, setModels] = useState<
 		Array<{ slug: string; display_name: string }>
 	>([]);
@@ -357,13 +358,17 @@ function ApiProfileEditor({
 						onChange={(event) => set("api_key", event.target.value)}
 					/>
 				</label>
-				<label className="model-editor-enabled">
+				<div className="model-editor-enabled">
+					{/* Switch renders its own <label> wrapper, so the visible text must be
+					    a sibling <label htmlFor> rather than nested inside another
+					    <label> — nested labels are invalid HTML. */}
 					<Switch
+						id={enabledToggleId}
 						checked={draft.enabled}
 						onCheckedChange={(value) => set("enabled", value)}
 					/>
-					<span>Enable after verification</span>
-				</label>
+					<label htmlFor={enabledToggleId}>Enable after verification</label>
+				</div>
 			</div>
 			<div className="model-editor-actions">
 				<button
@@ -489,6 +494,7 @@ function ApiProfiles({
 									<Status config={provider} health={profileHealth} />
 									<Switch
 										checked={provider.enabled}
+										aria-label={`Enable ${provider.display_name || providerId}`}
 										onCheckedChange={(enabled) =>
 											update.mutate({ providerId, enabled })
 										}
@@ -656,6 +662,7 @@ function IntegrationCard({
 					<Status config={config} health={health} />
 					<Switch
 						checked={config?.enabled === true}
+						aria-label={`Enable ${definition.label}`}
 						onCheckedChange={(enabled) => update.mutate({ enabled })}
 						disabled={update.isPending}
 					/>

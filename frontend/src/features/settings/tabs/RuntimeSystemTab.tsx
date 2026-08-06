@@ -381,7 +381,7 @@ function UpdateCard({ settings, qc }: any) {
 
       {/* Config */}
       <div className="flex items-center gap-2 mb-3">
-        <Toggle checked={enabled} onChange={v => { setEnabled(v); setCfgMsg(null) }} />
+        <Toggle checked={enabled} label="Auto-update enabled" onChange={v => { setEnabled(v); setCfgMsg(null) }} />
       </div>
       <div className="form-grid mb-3">
         <label>

@@ -215,6 +215,10 @@ button.danger {
 	align-items: center;
 	display: flex !important;
 	flex-direction: row;
+	/* Was inherited from `.model-editor-grid label` while this element was itself
+	   a <label>. It is now a <div> — Switch owns the only <label> here, because
+	   nesting one label inside another is invalid — so the gap is declared. */
+	gap: 0.25rem;
 }
 
 .model-editor-actions {
