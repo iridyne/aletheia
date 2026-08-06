@@ -242,10 +242,25 @@ def _shutdown_scheduler_after_test():
 
 
 @pytest.fixture
-def api_only_runtime(monkeypatch):
-    """Run the real ASGI app without schedulers or external startup probes."""
+def api_only_runtime(monkeypatch, tmp_path):
+    """Run the real ASGI app against an explicitly migrated file database.
+
+    TestClient executes lifespan in another thread, so the ordinary injected
+    ``:memory:`` connection is not visible there. Production lifespan is
+    verification-only; this fixture must own its schema setup explicitly.
+    """
+    import aletheia.config.loader as loader
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import reset_db
+
     monkeypatch.setenv("ALETHEIA_RUNTIME_MODE", "test")
     monkeypatch.setenv("ALETHEIA_RUNTIME_ID", "runtime-test-api-only")
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    reset_db()
+    run_migrations()
+    yield
+    reset_db()
 
 
 @pytest.fixture(autouse=True)
