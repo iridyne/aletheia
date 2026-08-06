@@ -19,6 +19,20 @@ from aletheia.gateway.network import local_frontdoor_host
 from aletheia.gateway.logs import tail_all_logs, log_path
 
 
+_GATEWAY_STARTUP_TIMEOUT_SEC = 15.0
+_GATEWAY_STARTUP_TIMEOUT_DEBUG_HINT = (
+    "Gateway readiness timed out. Collect the redacted startup logs with "
+    "`uv run aletheia gateway logs --lines 200`, review and upload that output "
+    "for startup-stage analysis/debugging; do not upload config, secrets, or "
+    "credential files."
+)
+
+
+def _bounded_gateway_startup_timeout(timeout: float) -> float:
+    """Keep every managed-start readiness wait within the operator deadline."""
+    return max(0.0, min(float(timeout), _GATEWAY_STARTUP_TIMEOUT_SEC))
+
+
 class GatewayResumeApiError(RuntimeError):
     """Raised when an in-process gateway resume request cannot complete."""
 
@@ -28,7 +42,7 @@ class GatewayResumeApiError(RuntimeError):
         self.payload = payload or {}
 
 
-def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
+def do_start(*, no_browser: bool = False, foreground: bool = False) -> bool | None:
     """Start the gateway (foreground or background)."""
     from aletheia.gateway import service_control
     if not foreground and service_control.is_machine_selected():
@@ -41,7 +55,7 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
             _echo_safe(message)
             raise typer.Exit(1)
         _echo_stdout_safe("Gateway machine service start requested; use `gateway status` to confirm readiness.")
-        return
+        return False
     cfg = bootstrap()
 
     # T7: If a circuit-break state file exists and 30 min of stability has elapsed,
@@ -117,7 +131,7 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
         # Registration is not success: require the managed gateway to serve both
         # its readiness endpoint and Web UI before reporting a successful start.
         try:
-            _verify_started(cfg)
+            ready = _verify_started(cfg)
         except typer.Exit:
             # A manager definition that failed readiness must not survive as a
             # misleading registered service. The regular failed-start cleanup
@@ -125,6 +139,7 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
             service_control.stop()
             raise
         _auto_start_tunnel(cfg)
+        return ready
 
 
 def _local_urlopen(request, *, timeout: float):
@@ -189,7 +204,12 @@ def _read_ready_beacon(cfg) -> bool:
         return False
 
 
-def _verify_started(cfg, *, timeout: float = 60.0, poll_interval: float = 0.3) -> None:
+def _verify_started(
+    cfg,
+    *,
+    timeout: float = _GATEWAY_STARTUP_TIMEOUT_SEC,
+    poll_interval: float = 0.3,
+) -> bool:
     """Block until the managed gateway is confirmed up, or handle timeout gracefully.
 
     Three outcomes:
@@ -206,13 +226,15 @@ def _verify_started(cfg, *, timeout: float = 60.0, poll_interval: float = 0.3) -
 
     Timeout budget: covers supervisor + uvicorn startup to port BIND. LLM probes
     now run as post-yield background tasks, so the port binds promptly on healthy
-    hosts. 60s is a generous margin for cold migrations / Windows Defender scan.
-    Do NOT couple this to the LLM probe budget — they are independent.
+    hosts. The operator-facing deadline is capped at 15s so a blocked startup
+    becomes actionable quickly. Do NOT couple this to the LLM probe budget — they
+    are independent.
 
     On genuine failure (no process, no port), surface errors.log and audit so the
     death is never silent.
     """
     import time
+    timeout = _bounded_gateway_startup_timeout(timeout)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         # T6 fast path: supervisor wrote a ready beacon the moment backend port
@@ -228,7 +250,7 @@ def _verify_started(cfg, *, timeout: float = 60.0, poll_interval: float = 0.3) -
             # still be appearing during a frontend build.
             try:
                 if _verify_webui_accessible(cfg):
-                    return  # Gateway confirmed fully operational
+                    return True  # Gateway confirmed fully operational
             except Exception:
                 pass
         time.sleep(poll_interval)
@@ -243,10 +265,14 @@ def _verify_started(cfg, *, timeout: float = 60.0, poll_interval: float = 0.3) -
             f"Gateway process started (readiness not confirmed within {timeout:.0f}s; "
             "still initializing — run `gateway status` to check)"
         )
-        return
+        _echo_safe(_GATEWAY_STARTUP_TIMEOUT_DEBUG_HINT)
+        return False
 
     # No process and no port: genuine failure.
-    _fail_spawn(f"gateway did not come up within {timeout:.0f}s (no pid file / port not listening)")
+    _fail_spawn(
+        f"gateway did not come up within {timeout:.0f}s (no pid file / port not listening)",
+        diagnostic_hint=_GATEWAY_STARTUP_TIMEOUT_DEBUG_HINT,
+    )
 
 
 def _audit_slow_start(timeout: float) -> None:
@@ -421,7 +447,7 @@ def _check_spawn_circuit_breaker() -> None:
         pass
 
 
-def _fail_spawn(reason: str) -> None:
+def _fail_spawn(reason: str, *, diagnostic_hint: str | None = None) -> None:
     """Capture errors.log tail, audit the failure, surface it, and Exit(1)."""
     from aletheia.gateway.logs import errors_log_path
     tail = ""
@@ -444,7 +470,7 @@ def _fail_spawn(reason: str) -> None:
 
     _notify_gateway_problem(
         "Aletheia Gateway failed to start",
-        reason,
+        f"{reason}. {diagnostic_hint}" if diagnostic_hint else reason,
         source="gateway_lifecycle",
         error_log=True,
         audit=False,
@@ -453,6 +479,8 @@ def _fail_spawn(reason: str) -> None:
     msg = f"Gateway failed to start: {reason}."
     if tail:
         msg += f"\n--- errors.log (tail) ---\n{tail}"
+    if diagnostic_hint:
+        msg += f"\n{diagnostic_hint}"
     _echo_safe(msg)
     _check_spawn_circuit_breaker()
     raise typer.Exit(1)

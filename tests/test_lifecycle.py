@@ -419,10 +419,23 @@ def test_verify_started_returns_when_gateway_comes_up(tmp_path, monkeypatch):
     monkeypatch.setattr(lifecycle, "_verify_api_ready_accessible", lambda cfg: True)
     monkeypatch.setattr(lifecycle, "_verify_webui_accessible", lambda cfg: True)
 
-    lifecycle._verify_started(cfg, timeout=1.0)
+    assert lifecycle._verify_started(cfg, timeout=1.0) is True
 
 
-def test_verify_started_leaves_process_alive_when_api_not_ready_at_timeout(tmp_path, monkeypatch):
+def test_verify_started_default_timeout_is_15_seconds():
+    import inspect
+
+    from aletheia.gateway import lifecycle
+
+    timeout = inspect.signature(lifecycle._verify_started).parameters["timeout"].default
+    assert timeout == 15.0
+    assert lifecycle._bounded_gateway_startup_timeout(60.0) == 15.0
+    assert lifecycle._bounded_gateway_startup_timeout(0.5) == 0.5
+
+
+def test_verify_started_leaves_process_alive_when_api_not_ready_at_timeout(
+    tmp_path, monkeypatch, capsys
+):
     """A slow-starting process (alive + port up but /api/ready not yet 200) must not be killed.
 
     Previously the verifier killed the process and exited nonzero, which destroyed a
@@ -441,9 +454,14 @@ def test_verify_started_leaves_process_alive_when_api_not_ready_at_timeout(tmp_p
     monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: killed.append(pid))
 
     # Must return without raising — slow start is not a failure.
-    lifecycle._verify_started(cfg, timeout=0.1, poll_interval=0.01)
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
+    assert lifecycle._verify_started(cfg, timeout=0.1, poll_interval=0.01) is False
 
     assert killed == [], "alive process must not be killed on readiness timeout"
+    output = capsys.readouterr()
+    assert "readiness timed out" in output.err.lower()
+    assert "uv run aletheia gateway logs --lines 200" in output.err
+    assert "upload" in output.err.lower()
     from aletheia.files.jsonl import read_jsonl
     assert any(e.get("event_type") == "gateway_slow_start" for e in read_jsonl("audit.jsonl"))
 
@@ -525,6 +543,8 @@ def test_verify_started_surfaces_errors_log_tail(tmp_path, monkeypatch, capsys):
         lifecycle._verify_started(lifecycle.load_config(), timeout=1.0)
     err = capsys.readouterr().err
     assert "ImportError boom" in err
+    assert "uv run aletheia gateway logs --lines 200" in err
+    assert "upload" in err.lower()
 
 
 def test_verify_started_fast_path_via_ready_beacon(tmp_path, monkeypatch):

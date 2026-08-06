@@ -315,7 +315,7 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
                     collector_holder[0] = _spawn_collector_process(cfg)
                 # One-shot: emit the ready beacon the first time the backend port
                 # is confirmed alive.  T6: lets _verify_started short-circuit its
-                # HTTP polling loop instead of waiting for the full 60s deadline.
+                # HTTP polling loop instead of waiting for the full 15s deadline.
                 if not ready_beacon_emitted:
                     ready_beacon_emitted = True
                     logger.info(
