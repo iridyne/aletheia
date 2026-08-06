@@ -769,6 +769,10 @@ class RetentionConfig(BaseModel):
     market_snapshots_days: int = 30
     portfolio_snapshots_days: int = 90
     jsonl_max_mb: float = 50.0
+    # Operational capacity budget, not a write-denial boundary. Trust-bearing
+    # writes always remain authoritative; crossing the budget raises diagnostics
+    # and asks the operator to inspect retention/compaction evidence.
+    app_db_capacity_mb: int = Field(default=2048, ge=512, le=65536)
     # Opportunities older than this that are still 'open' are marked 'expired'.
     # Prevents indefinite accumulation of stale signals (default: 48h).
     opportunity_ttl_hours: int = 48

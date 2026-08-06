@@ -159,7 +159,7 @@ def record_serenity_control_cohort(opportunity: dict, max_controls: int = 10) ->
             entry_spread_bps=None,
             funding_rate_at_entry=None,
             module_path="aletheia/agents/research_worker.py",
-            metadata={"control_source": "observable_ohlcv_pool"},
+            metadata={"control_source": "active_universe_registry"},
         ))
     return _insert_rows(rows)
 
@@ -349,7 +349,13 @@ def _observable_controls(*, exclude_symbol: str, entry_ts: str, equity_like: boo
         from aletheia.storage.sqlite import get_db
 
         db = get_db()
-        rows = db.execute("SELECT DISTINCT symbol FROM market_ohlcv").fetchall()
+        # The active registry is the contemporaneously observable control pool.
+        # Scanning every historical OHLCV row was both dataset-size-sensitive and
+        # semantically weaker because stale/delisted symbols could become controls.
+        rows = db.execute(
+            "SELECT DISTINCT symbol FROM universe_registry "
+            "WHERE status = 'active' AND COALESCE(is_blacklisted, 0) = 0"
+        ).fetchall()
         symbols = [r["symbol"] for r in rows if r["symbol"] and r["symbol"] != exclude_symbol]
         if equity_like:
             equity_symbols = [s for s in symbols if "/" not in s]
@@ -372,10 +378,21 @@ def _latest_ohlcv_price(symbol: str, entry_ts: str) -> float | None:
         if dt is None:
             return None
         ts = int(dt.timestamp() * 1000)
-        row = get_db().execute(
-            "SELECT close FROM market_ohlcv WHERE symbol = ? AND ts <= ? "
+        db = get_db()
+        instrument = db.execute(
+            "SELECT venue, market_type FROM universe_registry "
+            "WHERE symbol = ? AND status = 'active' "
+            "AND COALESCE(is_blacklisted, 0) = 0 "
+            "ORDER BY last_seen_at DESC LIMIT 1",
+            (symbol,),
+        ).fetchone()
+        if not instrument:
+            return None
+        row = db.execute(
+            "SELECT close FROM market_ohlcv "
+            "WHERE exchange = ? AND symbol = ? AND market_type = ? AND ts <= ? "
             "ORDER BY ts DESC LIMIT 1",
-            (symbol, ts),
+            (instrument["venue"], symbol, instrument["market_type"], ts),
         ).fetchone()
         return float(row["close"]) if row and row["close"] is not None else None
     except Exception:

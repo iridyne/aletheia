@@ -44,6 +44,62 @@ def _run_cleanup_with_test_config(monkeypatch):
     scheduler._run_cleanup()
 
 
+def test_cleanup_catchup_due_uses_last_successful_audit(tmp_path, monkeypatch):
+    conn = setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import scheduler
+
+    assert scheduler._cleanup_catchup_due() is True
+    conn.execute(
+        "INSERT INTO audit_events "
+        "(id, actor, source, event_type, entity_type, entity_id, timestamp) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (
+            "cleanup-recent", "system", "scheduler", "data_pruned", "telemetry", None,
+            "2026-08-05T19:17:00+00:00",
+        ),
+    )
+    conn.commit()
+    before_next_fire = datetime.fromisoformat("2026-08-06T18:00:00+00:00")
+    assert scheduler._cleanup_catchup_due(now=before_next_fire) is False
+    conn.execute(
+        "UPDATE audit_events SET timestamp=? WHERE id='cleanup-recent'",
+        ("2026-08-04T19:17:00+00:00",),
+    )
+    conn.commit()
+    assert scheduler._cleanup_catchup_due(now=before_next_fire) is True
+
+
+def test_cleanup_catchup_due_detects_just_missed_local_cron(tmp_path, monkeypatch):
+    conn = setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import scheduler
+
+    conn.execute(
+        "INSERT INTO audit_events "
+        "(id, actor, source, event_type, entity_type, entity_id, timestamp) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (
+            "cleanup-yesterday",
+            "system",
+            "scheduler",
+            "data_pruned",
+            "telemetry",
+            None,
+            "2026-08-05T19:17:00+00:00",
+        ),
+    )
+    conn.commit()
+
+    # 03:18 Shanghai: today's scheduled fire is one minute overdue even though
+    # the previous success is only 24h01m old.
+    assert scheduler._cleanup_catchup_due(
+        now=datetime.fromisoformat("2026-08-06T19:18:00+00:00")
+    ) is True
+    # 03:16 Shanghai: yesterday's 03:17 is still the most recent scheduled fire.
+    assert scheduler._cleanup_catchup_due(
+        now=datetime.fromisoformat("2026-08-06T19:16:00+00:00")
+    ) is False
+
+
 def test_prune_agent_runs_keeps_recent_deletes_old(tmp_path, monkeypatch):
     conn = setup_env(tmp_path, monkeypatch)
     conn.execute("INSERT INTO agent_runs (id, agent_name, permission_mode, started_at, status) VALUES (?,?,?,?,?)",

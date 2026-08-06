@@ -40,6 +40,7 @@ def setup_env(tmp_path, monkeypatch):
     # These lifecycle tests do not register a real OS service or tunnel.
     from aletheia.gateway import lifecycle
     monkeypatch.setattr(lifecycle, "_auto_start_tunnel", lambda cfg: None)
+    monkeypatch.setattr(lifecycle, "_apply_gateway_migrations", lambda: False)
     # Default: port-holder discovery returns empty — no real lsof/netstat (#233).
     # Tests that exercise the holder kill path override this in their own body.
     monkeypatch.setattr(lifecycle, "find_port_holders", lambda port: [])
@@ -258,6 +259,59 @@ def test_do_start_proceeds_when_port_free(tmp_path, monkeypatch):
     assert started == [{"no_browser": True}]
 
 
+def test_do_start_applies_pending_migrations_before_service_and_readiness(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, service_control
+
+    events: list[str] = []
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(
+        lifecycle,
+        "wait_port_free",
+        lambda port, host, timeout=10.0: True,
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_apply_gateway_migrations",
+        lambda: events.append("migrate") or True,
+    )
+    monkeypatch.setattr(
+        service_control,
+        "start",
+        lambda **_kwargs: events.append("service_start") or {"ok": True},
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_verify_started",
+        lambda _cfg: events.append("readiness") or True,
+    )
+
+    assert lifecycle.do_start(no_browser=True) is True
+    assert events == ["migrate", "service_start", "readiness"]
+
+
+def test_machine_service_start_has_one_migration_owner_before_service(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, service_control
+
+    events: list[str] = []
+    monkeypatch.setattr(service_control, "is_machine_selected", lambda: True)
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(
+        lifecycle,
+        "_apply_gateway_migrations",
+        lambda: events.append("migrate") or True,
+    )
+    monkeypatch.setattr(
+        service_control,
+        "start",
+        lambda **_kwargs: events.append("service_start") or {"ok": True},
+    )
+
+    assert lifecycle.do_start(no_browser=True) is False
+    assert events == ["migrate", "service_start"]
+
+
 def test_do_start_foreground_guard_refuses_when_port_taken(tmp_path, monkeypatch, capsys):
     """The port guard must also protect the foreground path (write_pid + _run_server)."""
     setup_env(tmp_path, monkeypatch)
@@ -419,10 +473,23 @@ def test_verify_started_returns_when_gateway_comes_up(tmp_path, monkeypatch):
     monkeypatch.setattr(lifecycle, "_verify_api_ready_accessible", lambda cfg: True)
     monkeypatch.setattr(lifecycle, "_verify_webui_accessible", lambda cfg: True)
 
-    lifecycle._verify_started(cfg, timeout=1.0)
+    assert lifecycle._verify_started(cfg, timeout=1.0) is True
 
 
-def test_verify_started_leaves_process_alive_when_api_not_ready_at_timeout(tmp_path, monkeypatch):
+def test_verify_started_default_timeout_is_15_seconds():
+    import inspect
+
+    from aletheia.gateway import lifecycle
+
+    timeout = inspect.signature(lifecycle._verify_started).parameters["timeout"].default
+    assert timeout == 15.0
+    assert lifecycle._bounded_gateway_startup_timeout(60.0) == 15.0
+    assert lifecycle._bounded_gateway_startup_timeout(0.5) == 0.5
+
+
+def test_verify_started_leaves_process_alive_when_api_not_ready_at_timeout(
+    tmp_path, monkeypatch, capsys
+):
     """A slow-starting process (alive + port up but /api/ready not yet 200) must not be killed.
 
     Previously the verifier killed the process and exited nonzero, which destroyed a
@@ -441,9 +508,14 @@ def test_verify_started_leaves_process_alive_when_api_not_ready_at_timeout(tmp_p
     monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: killed.append(pid))
 
     # Must return without raising — slow start is not a failure.
-    lifecycle._verify_started(cfg, timeout=0.1, poll_interval=0.01)
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
+    assert lifecycle._verify_started(cfg, timeout=0.1, poll_interval=0.01) is False
 
     assert killed == [], "alive process must not be killed on readiness timeout"
+    output = capsys.readouterr()
+    assert "readiness timed out" in output.err.lower()
+    assert "uv run aletheia gateway logs --lines 200" in output.err
+    assert "upload" in output.err.lower()
     from aletheia.files.jsonl import read_jsonl
     assert any(e.get("event_type") == "gateway_slow_start" for e in read_jsonl("audit.jsonl"))
 
@@ -525,6 +597,8 @@ def test_verify_started_surfaces_errors_log_tail(tmp_path, monkeypatch, capsys):
         lifecycle._verify_started(lifecycle.load_config(), timeout=1.0)
     err = capsys.readouterr().err
     assert "ImportError boom" in err
+    assert "uv run aletheia gateway logs --lines 200" in err
+    assert "upload" in err.lower()
 
 
 def test_verify_started_fast_path_via_ready_beacon(tmp_path, monkeypatch):

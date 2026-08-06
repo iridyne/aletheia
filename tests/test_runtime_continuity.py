@@ -5,6 +5,59 @@ from httpx import ASGITransport, AsyncClient
 from typer.testing import CliRunner
 
 
+def test_current_runtime_record_is_read_only_and_does_not_migrate(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.runtime_continuity import processes
+    from aletheia.storage import sqlite as sqlite_store
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    sqlite_store.reset_db()
+    database = tmp_path / "app.db"
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "CREATE TABLE runtime_registry ("
+            "runtime_id TEXT PRIMARY KEY, state TEXT NOT NULL, "
+            "promoted_at TEXT, created_at TEXT NOT NULL)"
+        )
+        db.execute(
+            "INSERT INTO runtime_registry(runtime_id, state, promoted_at, created_at) "
+            "VALUES ('runtime-current', 'current', '2026-08-06T00:00:00Z', '2026-08-06T00:00:00Z')"
+        )
+
+    real_connect = sqlite3.connect
+    observed = {}
+
+    def tracking_connect(database_uri, **kwargs):
+        observed["database_uri"] = database_uri
+        observed.update(kwargs)
+        return real_connect(database_uri, **kwargs)
+
+    monkeypatch.setattr(sqlite_store.sqlite3, "connect", tracking_connect)
+
+    assert processes.current_runtime_record()["runtime_id"] == "runtime-current"
+    assert observed["uri"] is True
+    assert observed["database_uri"].endswith("?mode=ro")
+    with sqlite3.connect(database) as db:
+        assert {
+            row[0]
+            for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        } == {"runtime_registry"}
+
+
+def test_current_runtime_record_tolerates_uninitialized_database(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.runtime_continuity.processes import current_runtime_record
+    from aletheia.storage import sqlite as sqlite_store
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    sqlite_store.reset_db()
+    assert current_runtime_record() is None
+
+    with sqlite3.connect(tmp_path / "app.db") as db:
+        db.execute("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)")
+    assert current_runtime_record() is None
+
+
 def setup_env(tmp_path, monkeypatch, *, runtime_continuity_enabled: bool = True):
     """Runtime-continuity test scaffold.
 

@@ -35,7 +35,53 @@ uv run aletheia gateway status
 
 # 查看日志（多日志尾部，已脱敏）
 uv run aletheia gateway logs
+
+# 显式查看并应用待执行数据库迁移（部署/恢复窗口）
+uv run aletheia data migrate
+
+# 只读查看容量、最大对象和最近 30 次夜间样本
+uv run aletheia data capacity --deep --history 30
 ```
+
+## 数据库迁移边界
+
+- 每个 Migration 使用稳定 ID、不可变 checksum，并在 `aletheia_schema_migrations` 中留下成功账本；同一 ID 不会因重启而重跑。
+- `gateway start/restart` 在创建 supervisor/frontdoor/backend **之前**执行一次 pending-migration 检查和必要升级；完成后才启动 15 秒 readiness 计时，因此大型首次升级不会伪装成 Gateway readiness 超时。
+- supervisor 的 Runtime 读取、frontdoor/backend 启动上下文、FastAPI lifespan、API 路由和 scheduler 都只有只读验证权限，不能触发升级。
+- 新空库或没有账本的旧库会执行一次冻结的 legacy baseline。checksum 漂移、数据库含当前代码未知的 migration ID、或升级异常都会 fail closed，并保留明确的 migrate/doctor/log 指针。
+- Schema v3 会在升级阶段一次性重建 `knowledge_fts` 并建立启动/遥测热路径索引；后续普通 Gateway 启动不会再全量 reindex。需要人工修复 FTS 时使用显式 `uv run aletheia knowledge reindex`。
+- pending migration 执行时 CLI 显示步骤进度、精确 elapsed 和宽范围 ETA。ETA 会标明估算依据；超过范围时只显示仍在执行，不伪造完成百分比。重定向输出仍保留最终步骤和实际耗时。
+- 受控 `update apply` 会在激活候选版本时执行同一 migration apply/SQLite validation；普通重启在账本已 current 时仅有毫秒级核对。
+
+## 数据库容量与空间回收
+
+- 默认容量预算为 2048 MiB，只用于 doctor/infra 告警，不会阻止审计或 Learning 写入。
+- 夜间 cleanup 后的精确物理/逻辑体积写入 `logs/database_capacity.jsonl`；先用至少
+  3 个且横跨至少 7 天的样本判断初步斜率，生产容量判断仍建议观察 30 天。
+  `data capacity` 使用抗单次 WAL/checkpoint 尖峰的 median pairwise slope，并明确标注
+  provisional/established，而不是用两个偶然文件点给出伪精确 ETA。
+- 每个应用 SQLite 连接都设置 64 MiB `journal_size_limit`。夜间 cleanup 运行一次
+  非阻塞 PASSIVE checkpoint，并把 log/checkpointed/remaining frame 数量写进同一历史；
+  连续 backlog 通常意味着长期 reader 或外部进程钉住了旧快照，应先诊断而不是阻塞运行时。
+- 普通 DELETE 只把页放入 freelist；`auto_vacuum=NONE` 的旧库不会因
+  `incremental_vacuum` 缩小文件。需要回收操作系统空间时执行：
+
+```powershell
+uv run aletheia data compact             # 只读计划
+uv run aletheia gateway stop
+uv run aletheia data compact --apply     # 校验、VACUUM、启用 incremental reclaim
+uv run aletheia gateway start --no-browser
+uv run aletheia doctor
+```
+
+`--apply` 会拒绝仍在运行的 Gateway 或不足的临时磁盘空间，并先创建、校验
+`backup_pre_compact_*.tar.gz`。它持有目标数据库的跨进程 writer permit，显示各阶段
+elapsed，校验 integrity/foreign keys，并在 VACUUM 前把符合预期 schema 的
+`market_ohlcv` 重建为 `WITHOUT ROWID`；它不删行、不缩短保留期。该物理重建不属于
+Migration，也不会在 Gateway 启动或首次部署时自动执行。
+
+日常 cleanup 在正常容量下每次最多回收 16 MiB freelist；达到 80% 容量水位后最多
+回收 64 MiB。操作持有跨进程 writer permit，只改变空闲页分配，不删除任何保留行。
 
 ---
 
@@ -98,9 +144,10 @@ uv run aletheia doctor --bundle data/diagnostics/doctor.json
 
 ## 启动顺序（首次 / 恢复）
 
-1. `uv run aletheia update apply --yes --restart`（拉取、按需安装依赖、构建前端、烟测并重启）
-2. `uv run aletheia doctor`（确认健康）
-3. 打开 `http://127.0.0.1:8787/`
+1. `uv run aletheia update apply --yes --restart`（拉取、按需安装依赖、构建前端、显式迁移/验证并重启）
+2. 手动部署或数据库恢复时先运行 `uv run aletheia data migrate`；重复执行在账本 current 时是 no-op
+3. `uv run aletheia doctor`（确认健康）
+4. 打开 `http://127.0.0.1:8787/`
 
 若必须手动维护，再使用 `git pull --ff-only`、前端 build 和 gateway restart 的分步流程。
 

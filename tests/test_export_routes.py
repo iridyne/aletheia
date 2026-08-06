@@ -287,3 +287,31 @@ def test_download_with_data_rows(client):
     text = files["orders.csv"].decode("utf-8")
     assert "ord_test_1" in text
     assert "BTC/USDT" in text
+
+
+def test_table_csv_writer_streams_cursor_without_fetchall():
+    from aletheia.server.routes.export import _write_table_csv
+
+    class Cursor:
+        description = (("id",), ("value",))
+
+        def __iter__(self):
+            return iter((("one", 1), ("two", 2)))
+
+        def fetchall(self):
+            raise AssertionError("streaming export must not materialize all rows")
+
+    class Database:
+        def execute(self, _sql):
+            return Cursor()
+
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as zf:
+        _write_table_csv("orders", Database(), zf, "orders.csv")
+
+    files = _unzip(archive.getvalue())
+    assert files["orders.csv"].decode("utf-8").splitlines() == [
+        "id,value",
+        "one,1",
+        "two,2",
+    ]

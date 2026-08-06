@@ -8,13 +8,16 @@ Two export presets:
 import csv
 import io
 import re
+import tempfile
 import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 router = APIRouter(prefix="/api/export", tags=["export"])
 
@@ -48,12 +51,16 @@ def _count_rows(table: str, db) -> int:
         return -1
 
 
-def _iter_table_csv(table: str, db) -> tuple[list[str], list[list]]:
-    """Return (columns, rows) for a table. Rows are plain Python lists."""
+def _write_table_csv(table: str, db, zf: zipfile.ZipFile, filename: str) -> None:
+    """Stream one table into a ZIP member without materializing all rows."""
     cursor = db.execute(f"SELECT * FROM {table}")  # noqa: S608
     cols = [desc[0] for desc in cursor.description]
-    rows = cursor.fetchall()
-    return cols, [list(r) for r in rows]
+    with zf.open(filename, mode="w") as raw:
+        with io.TextIOWrapper(raw, encoding="utf-8", newline="") as text:
+            writer = csv.writer(text)
+            writer.writerow(cols)
+            for row in cursor:
+                writer.writerow(row)
 
 
 def _redacted_config_yaml() -> str:
@@ -117,24 +124,29 @@ def _resolve_datasets(req: ExportRequest) -> list[str]:
     raise HTTPException(400, "Specify 'preset' (analysis|migration) or 'include_datasets'")
 
 
-def _build_zip(tables: list[str], include_config: bool) -> bytes:
+def _build_zip(tables: list[str], include_config: bool) -> Path:
+    """Build a disk-backed archive and return its temporary path."""
     from aletheia.storage.sqlite import get_db
     db = get_db()
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for table in tables:
-            filename = _DATASET_MAP[table][0]
-            cols, rows = _iter_table_csv(table, db)
-            csv_buf = io.StringIO()
-            writer = csv.writer(csv_buf)
-            writer.writerow(cols)
-            writer.writerows(rows)
-            zf.writestr(filename, csv_buf.getvalue())
+    temp = tempfile.NamedTemporaryFile(
+        prefix="aletheia_export_",
+        suffix=".zip",
+        delete=False,
+    )
+    path = Path(temp.name)
+    temp.close()
+    try:
+        with zipfile.ZipFile(path, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for table in tables:
+                filename = _DATASET_MAP[table][0]
+                _write_table_csv(table, db, zf, filename)
 
-        if include_config:
-            zf.writestr("config_backup.yaml", _redacted_config_yaml())
-
-    return buf.getvalue()
+            if include_config:
+                zf.writestr("config_backup.yaml", _redacted_config_yaml())
+        return path
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
 
 
 @router.post("/download")
@@ -147,14 +159,15 @@ async def download_export(req: ExportRequest):
     include_config = req.include_config or req.preset == "migration"
 
     from starlette.concurrency import run_in_threadpool
-    zip_bytes = await run_in_threadpool(_build_zip, tables, include_config)
+    zip_path = await run_in_threadpool(_build_zip, tables, include_config)
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     label = req.preset or "custom"
     filename = f"aletheia_{label}_{ts}.zip"
 
-    return StreamingResponse(
-        io.BytesIO(zip_bytes),
+    return FileResponse(
+        zip_path,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        filename=filename,
+        background=BackgroundTask(zip_path.unlink, missing_ok=True),
     )

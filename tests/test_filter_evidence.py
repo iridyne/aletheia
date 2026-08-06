@@ -833,6 +833,75 @@ def test_filter_decision_batch_is_complete_counted_and_idempotent():
     ).fetchone()[0] == 2
 
 
+def test_filter_decision_batch_cadence_bounds_unchanged_heavy_snapshots():
+    from aletheia.analytics.filter_evidence import record_filter_decision_batch
+    from aletheia.storage.sqlite import get_db
+
+    common = dict(
+        candidate_kind="universe_asset",
+        filter_name="ticker_availability",
+        stage="ticker_prefilter",
+        candidate_facts=[{"candidate_key": "asset:btc", "decision": "passed"}],
+        min_interval_sec=55 * 60,
+    )
+    first = record_filter_decision_batch(
+        run_id="bounded-1",
+        evaluated_at="2026-08-06T00:00:00+00:00",
+        parameters={"venue": "okx"},
+        **common,
+    )
+    suppressed = record_filter_decision_batch(
+        run_id="bounded-2",
+        evaluated_at="2026-08-06T00:10:00+00:00",
+        parameters={"venue": "okx"},
+        **common,
+    )
+    changed = record_filter_decision_batch(
+        run_id="bounded-3",
+        evaluated_at="2026-08-06T00:20:00+00:00",
+        parameters={"venue": "bitget"},
+        **common,
+    )
+    next_hour = record_filter_decision_batch(
+        run_id="bounded-4",
+        evaluated_at="2026-08-06T01:00:00+00:00",
+        parameters={"venue": "okx"},
+        **common,
+    )
+
+    assert suppressed == first
+    assert changed != first
+    assert next_hour != first
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM filter_decision_batches "
+        "WHERE filter_name='ticker_availability'"
+    ).fetchone()[0] == 3
+
+
+def test_candidate_outcomes_can_select_one_declared_learning_horizon():
+    from aletheia.analytics.filter_evidence import build_candidate_outcomes
+
+    common = dict(
+        outcome_candidate_key="universe:one-horizon",
+        venue="okx",
+        symbol="BTC/USDT",
+        market_type="perp",
+        direction="long",
+        scanner_family="momentum",
+        regime_tag=None,
+        entry_price_usd=100.0,
+        entry_spread_bps=1.0,
+        funding_rate_at_entry=0.0,
+        entry_ts="2026-08-06T00:00:00+00:00",
+    )
+
+    assert {row.horizon for row in build_candidate_outcomes(**common)} == {
+        "15m", "1h", "4h", "24h",
+    }
+    targeted = build_candidate_outcomes(**common, horizons=("4h",))
+    assert [row.horizon for row in targeted] == ["4h"]
+
+
 def test_filter_decision_batch_compacts_repeated_candidate_keys():
     from aletheia.analytics.filter_evidence import (
         decode_filter_decision_batch,
@@ -868,6 +937,70 @@ def test_filter_decision_batch_compacts_repeated_candidate_keys():
     assert decode_filter_decision_batch(row["candidate_facts"]) == facts
     assert len(row["candidate_facts"]) < len(naive) * 0.7
     assert row["candidate_facts"].startswith("zlib-base64:")
+
+
+def test_batch_controller_reads_only_referenced_outcome_keys():
+    from aletheia.analytics.filter_controller import (
+        _batch_scanner_weights_quota_stats,
+    )
+    from aletheia.analytics.filter_evidence import record_filter_decision_batch
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import FilterCandidateOutcome
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc)
+    relevant_key = "universe:controller-relevant"
+    record_filter_decision_batch(
+        run_id="controller-bounded-read",
+        candidate_kind="universe_asset",
+        filter_name="scanner_weights_quota",
+        stage="universe_allocation",
+        candidate_facts=[{
+            "candidate_key": "asset:relevant",
+            "outcome_candidate_key": relevant_key,
+            "decision": "passed",
+            "scanner_family": "momentum",
+            "direction": "long",
+            "market_type": "spot",
+        }],
+    )
+    outcomes = []
+    for key in (relevant_key, "universe:controller-unrelated"):
+        outcomes.append(FilterCandidateOutcome(
+            outcome_candidate_key=key,
+            venue="okx",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            scanner_family="momentum",
+            horizon="1h",
+            entry_price_usd=100.0,
+            entry_ts=now.isoformat(),
+            due_at=(now + timedelta(hours=1)).isoformat(),
+            status="settled",
+            net_return_pct=0.25,
+        ))
+    repo.insert_filter_candidate_outcomes_batch(outcomes)
+
+    statements: list[str] = []
+    db = get_db()
+    db.set_trace_callback(statements.append)
+    try:
+        rows = _batch_scanner_weights_quota_stats()
+    finally:
+        db.set_trace_callback(None)
+
+    outcome_selects = [
+        statement
+        for statement in statements
+        if "FROM filter_candidate_outcomes" in statement
+    ]
+    assert outcome_selects
+    assert all("WHERE outcome_candidate_key IN" in sql for sql in outcome_selects)
+    scoped = [row for row in rows if row["horizon"] == "1h"]
+    assert len(scoped) == 1
+    assert scoped[0]["n_total"] == 1
+    assert scoped[0]["n_net"] == 1
 
 
 def test_ranker_trace_stops_at_first_rejection(monkeypatch):

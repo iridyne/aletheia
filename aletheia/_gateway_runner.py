@@ -12,6 +12,7 @@ the runtime home's logs/errors.log instead of being discarded.
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import signal
@@ -28,6 +29,8 @@ from aletheia.gateway.pidfile import (
 )
 from aletheia.gateway.network import backend_bind_host, frontdoor_bind_hosts
 from aletheia.runtime_continuity.processes import current_gateway_launch_context, runtime_process_env
+
+logger = logging.getLogger("aletheia.gateway.supervisor")
 
 # Win32: forbid the OS from allocating a console for the inner uvicorn process.
 # Without this, Win11 hosts the console via Windows Terminal and a wt window pops
@@ -202,6 +205,7 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
     live process into it so run_supervised's finally can tear the backend down on
     a signal-triggered shutdown (SIGTERM), which would otherwise orphan it.
     """
+    spawn_started = time.monotonic()
     errors_log = get_data_dir() / "logs" / "errors.log"
     errors_log.parent.mkdir(parents=True, exist_ok=True)
     from aletheia.gateway.logs import rotate_if_needed
@@ -209,6 +213,10 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
     real_python, env_patch = _resolve_real_python()
     runtime_context = current_gateway_launch_context(cfg, port=port)
     runtime_context["host"] = backend_bind_host()
+    logger.info(
+        "gateway_supervisor_stage stage=backend_launch_context elapsed_ms=%.1f",
+        (time.monotonic() - spawn_started) * 1000.0,
+    )
 
     cmd = [
         real_python, "-m", "uvicorn", "aletheia.server.app:app",
@@ -239,6 +247,11 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
     with errors_log.open("a", encoding="utf-8") as ef:
         popen_kwargs["stderr"] = ef
         proc = subprocess.Popen(cmd, **popen_kwargs)
+        logger.info(
+            "gateway_supervisor_stage stage=backend_process_spawned elapsed_ms=%.1f pid=%s",
+            (time.monotonic() - spawn_started) * 1000.0,
+            getattr(proc, "pid", None),
+        )
         if backend_holder is not None:
             backend_holder[0] = proc
         _publish_frontdoor_route(
@@ -302,9 +315,14 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
                     collector_holder[0] = _spawn_collector_process(cfg)
                 # One-shot: emit the ready beacon the first time the backend port
                 # is confirmed alive.  T6: lets _verify_started short-circuit its
-                # HTTP polling loop instead of waiting for the full 60s deadline.
+                # HTTP polling loop instead of waiting for the full 15s deadline.
                 if not ready_beacon_emitted:
                     ready_beacon_emitted = True
+                    logger.info(
+                        "gateway_supervisor_stage stage=backend_port_ready elapsed_ms=%.1f pid=%s",
+                        (time.monotonic() - spawn_started) * 1000.0,
+                        getattr(proc, "pid", None),
+                    )
                     _write_ready_beacon(cfg)
             else:
                 if saw_listening_port:
@@ -487,6 +505,7 @@ def run_supervised(spawn_fn=None) -> dict:
     signal-shutdown event — then returns cleanly, instead of letting the default
     POSIX SIGTERM disposition kill the process and orphan its children.
     """
+    supervisor_started = time.monotonic()
     cfg = bootstrap()
     write_pid()  # supervisor owns the pid file (written exactly once)
     frontdoor_enabled = spawn_fn is None
@@ -534,6 +553,10 @@ def run_supervised(spawn_fn=None) -> dict:
                 _cleanup_backend_before_spawn(cfg, backend_port)
                 _publish_frontdoor_route(cfg, backend_port=backend_port, reason="supervisor_start")
                 frontdoor_holder[0] = _ensure_frontdoor_running(cfg, backend_port, frontdoor_holder[0])
+                logger.info(
+                    "gateway_supervisor_stage stage=frontdoor_ready elapsed_ms=%.1f",
+                    (time.monotonic() - supervisor_started) * 1000.0,
+                )
             while True:
                 code: int | None = None
                 try:

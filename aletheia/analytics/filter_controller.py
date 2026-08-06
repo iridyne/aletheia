@@ -138,9 +138,10 @@ def _batch_scanner_weights_quota_stats(
     except Exception:
         return []
 
-    # {(cohort_tuple, decision): {"outcome_keys": set(), "first_ts": str}}
+    # Keep only one first-exposure cohort pointer per candidate. The batch rows
+    # are ordered oldest-first, so later retries never duplicate a candidate.
     first_exposure: dict[str, str] = {}
-    facts_by_cohort: dict[tuple, list[dict[str, Any]]] = {}
+    cohort_by_outcome_key: dict[str, tuple] = {}
     for raw in rows:
         row = dict(raw)
         payload = row.get("candidate_facts") or "[]"
@@ -175,80 +176,89 @@ def _batch_scanner_weights_quota_stats(
                 fact.get("market_type") or "spot",
                 decision,
             )
-            facts_by_cohort.setdefault(cohort_key, []).append({
-                "outcome_candidate_key": key,
-                "decision": decision,
-            })
+            cohort_by_outcome_key[key] = cohort_key
 
-    if not facts_by_cohort:
+    if not cohort_by_outcome_key:
         return []
 
-    # Join with filter_candidate_outcomes to attach per-horizon net returns.
+    # Join only the candidate keys referenced by the selected batches. The old
+    # implementation fetched the entire outcome table (hundreds of MiB in a
+    # production-sized DB) every observe cycle, including unrelated filters.
+    # Chunking stays below SQLite's parameter ceiling and bounds transient rows.
+    aggregated_buckets: dict[tuple, dict[str, Any]] = {}
+    outcome_keys = list(cohort_by_outcome_key)
     try:
-        from aletheia.storage.sqlite import get_db
-
-        outcome_rows = get_db().execute(
-            "SELECT outcome_candidate_key, horizon, status, net_return_pct "
-            "FROM filter_candidate_outcomes"
-        ).fetchall()
-    except Exception:
-        outcome_rows = []
-    outcomes: dict[str, list[dict[str, Any]]] = {}
-    for raw in outcome_rows:
-        row = dict(raw)
-        key = str(row.get("outcome_candidate_key") or "")
-        if not key:
-            continue
-        outcomes.setdefault(key, []).append(row)
-
-    aggregated: list[dict[str, Any]] = []
-    priors: dict[tuple, tuple[int, float]] = {}
-    for cohort_key, facts in facts_by_cohort.items():
-        (filter_name, stage, version, param_snap, family, direction,
-         market_type, decision) = cohort_key
-        per_horizon: dict[str, dict[str, Any]] = {}
-        for fact in facts:
-            key = fact["outcome_candidate_key"]
-            for outcome in outcomes.get(key, []):
+        db = get_db()
+        for offset in range(0, len(outcome_keys), 500):
+            chunk = outcome_keys[offset : offset + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            cursor = db.execute(
+                "SELECT outcome_candidate_key, horizon, status, net_return_pct "
+                "FROM filter_candidate_outcomes "
+                f"WHERE outcome_candidate_key IN ({placeholders})",
+                tuple(chunk),
+            )
+            for raw in cursor:
+                outcome = dict(raw)
+                key = str(outcome.get("outcome_candidate_key") or "")
                 horizon = outcome.get("horizon")
-                if not horizon:
+                cohort_key = cohort_by_outcome_key.get(key)
+                if cohort_key is None or not horizon:
                     continue
-                bucket = per_horizon.setdefault(str(horizon), {
-                    "candidates": set(), "settled": [], "gains": 0.0, "losses": 0.0,
-                })
+                bucket = aggregated_buckets.setdefault(
+                    (*cohort_key, str(horizon)),
+                    {
+                        "candidates": set(),
+                        "settled": [],
+                        "gains": 0.0,
+                        "losses": 0.0,
+                    },
+                )
                 bucket["candidates"].add(key)
-                if outcome.get("status") == "settled" and outcome.get("net_return_pct") is not None:
+                if (
+                    outcome.get("status") == "settled"
+                    and outcome.get("net_return_pct") is not None
+                ):
                     net = float(outcome["net_return_pct"])
                     bucket["settled"].append(net)
                     if net > 0:
                         bucket["gains"] += net
                     elif net < 0:
                         bucket["losses"] += -net
-        for horizon, bucket in per_horizon.items():
-            n_total = len(bucket["candidates"])
-            settled = bucket["settled"]
-            n_net = len(settled)
-            avg_net = (sum(settled) / n_net) if n_net else 0.0
-            row_key = (filter_name, stage, version, param_snap, family, direction, market_type, horizon)
-            total, weighted = priors.get(row_key, (0, 0.0))
-            priors[row_key] = (total + n_net, weighted + n_net * avg_net)
-            aggregated.append({
-                "filter_name": filter_name,
-                "stage": stage,
-                "filter_version": version,
-                "parameter_snapshot": param_snap,
-                "decision": decision,
-                "scanner_family": family,
-                "direction": direction,
-                "market_type": market_type,
-                "horizon": horizon,
-                "n_total": n_total,
-                "n_net": n_net,
-                "n": n_net,
-                "avg_net": round(avg_net, 6),
-                "gains": bucket["gains"],
-                "losses": bucket["losses"],
-            })
+    except Exception:
+        aggregated_buckets = {}
+
+    aggregated: list[dict[str, Any]] = []
+    priors: dict[tuple, tuple[int, float]] = {}
+    for aggregate_key, bucket in aggregated_buckets.items():
+        cohort_key = aggregate_key[:-1]
+        horizon = aggregate_key[-1]
+        (filter_name, stage, version, param_snap, family, direction,
+         market_type, decision) = cohort_key
+        n_total = len(bucket["candidates"])
+        settled = bucket["settled"]
+        n_net = len(settled)
+        avg_net = (sum(settled) / n_net) if n_net else 0.0
+        row_key = (filter_name, stage, version, param_snap, family, direction, market_type, horizon)
+        total, weighted = priors.get(row_key, (0, 0.0))
+        priors[row_key] = (total + n_net, weighted + n_net * avg_net)
+        aggregated.append({
+            "filter_name": filter_name,
+            "stage": stage,
+            "filter_version": version,
+            "parameter_snapshot": param_snap,
+            "decision": decision,
+            "scanner_family": family,
+            "direction": direction,
+            "market_type": market_type,
+            "horizon": horizon,
+            "n_total": n_total,
+            "n_net": n_net,
+            "n": n_net,
+            "avg_net": round(avg_net, 6),
+            "gains": bucket["gains"],
+            "losses": bucket["losses"],
+        })
 
     output: list[dict[str, Any]] = []
     for row in aggregated:

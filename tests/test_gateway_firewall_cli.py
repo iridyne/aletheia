@@ -18,6 +18,24 @@ def test_gateway_restart_reports_stop_and_start_durations(monkeypatch):
     assert "Gateway restart completed in 10.0s (stop 2.5s; start/readiness 7.5s)." in result.output
 
 
+def test_gateway_restart_reports_pending_readiness_after_timeout(monkeypatch):
+    from typer.testing import CliRunner
+    from aletheia.cli import gateway as gateway_cli
+    from aletheia.gateway import lifecycle
+
+    monkeypatch.setattr(gateway_cli, "_maybe_configure_windows_lan_firewall", lambda **_kwargs: None)
+    monkeypatch.setattr(lifecycle, "do_stop", lambda: None)
+    monkeypatch.setattr(lifecycle, "do_start", lambda **_kwargs: False)
+    ticks = iter([10.0, 12.5, 27.5])
+    monkeypatch.setattr(gateway_cli.time, "monotonic", lambda: next(ticks))
+
+    result = CliRunner().invoke(gateway_cli.gateway_app, ["restart"])
+
+    assert result.exit_code == 0
+    assert "Gateway restart command returned in 17.5s" in result.output
+    assert "Readiness is still pending." in result.output
+
+
 def test_interactive_gateway_start_onboarding_requests_uac(monkeypatch):
     from aletheia.cli import gateway as gateway_cli
     from aletheia.config import loader

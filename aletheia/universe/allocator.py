@@ -264,6 +264,7 @@ def compute_total_score(
             if candidate_key:
                 feat["learning_candidate_key"] = candidate_key
                 feat["learning_exposure_id"] = influence.exposure_id
+                feat["learning_target_horizon"] = horizon
     # Operator-adjustable per-family weight. The PI Operator writes
     # cfg.scanner_weights via _action_adjust_scanner_weight (OL-C09) and the UI
     # shows it, but scoring never consumed it — the manual bias was inert. Empty

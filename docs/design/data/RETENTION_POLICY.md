@@ -3,7 +3,7 @@
 > Authoritative retention contract for the local SQLite (`~/.aletheia/app.db`),
 > secondary SQLite (`~/.aletheia/tasks.db`), and filesystem artefact trees under
 > `~/.aletheia/`.
-> Last updated: 2026-07-18 (A1 active-exposure retention anchor).
+> Last updated: 2026-08-06 (offline layout optimization and WAL backlog evidence).
 > Source: `/tmp/RETENTION_SPEC.md` + `/tmp/RETENTION_SYNTHESIS.json` (workflow output).
 
 Two hard rules govern every retention decision here:
@@ -34,9 +34,9 @@ Phase 3 codifies:
   `agent_shell/sessions/*.jsonl` and `agent_shell/tasks/*.md` birth time.
 - **VACUUM + incremental_vacuum strategy** so that pruned pages are
   reclaimed rather than only flagged free.
-- **Numeric targets** — Day-0 (Phase 4 execution) `app.db ≤ 550 MiB` and
-  `agent_shell/ ≤ 30 MiB`; Day-30 steady state `app.db ≤ 550 MiB` and
-  `agent_shell/ ≤ 45 MiB`.
+- **Operational capacity budget** — `app.db` default budget is 2048 MiB. This is
+  an observability and maintenance threshold, not a write-denial limit: evidence
+  writes never fail merely because the budget is crossed.
 
 Phase 4 is the one-shot backfill; the recurring pass in `scheduler._run_cleanup`
 keeps steady state after that.
@@ -120,7 +120,7 @@ Windows below are the Phase 3 defaults; each is wired through the new
 |-------|--------|--------------|----------|---------|----------|-----------|
 | `filter_candidate_outcomes` | 30d **+ clean_window_cutoff guard** | `entry_ts` | `prune_filter_candidate_outcomes` (existing, `:2996`; `min_experiment_started_at` compatibility argument now receives an exposure timestamp) | none | hard delete | Effective cutoff = `min(now-30d, earliest durable exposure of active open experiments)`. Unexposed `registered` rows are ignored because no observation window exists. |
 | `filter_decisions` | 45d **+ clean_window_cutoff guard** | `evaluated_at` | `prune_filter_decisions` (existing, `:2992`; same active-exposure guard) | none | hard delete | Preserves evidence back to the earliest durable exposure of an active open Learning experiment. Unexposed registrations do not hold telemetry indefinitely. Write-guardrail #6 remains the primary size lever. |
-| `filter_decision_batches` | 30d | `evaluated_at` | `prune_filter_decision_batches` (existing, `:2988`; window unchanged) | none | hard delete | Contract-mandated at 30d (`docs/design/contracts/filter_evidence_contract.md:259`). Write-guardrail #18 (content-hash dedup + 5-into-1 tradability coalesce) supplies savings. |
+| `filter_decision_batches` | 30d | `evaluated_at` | `prune_filter_decision_batches` (existing, `:2988`; window unchanged) | none | hard delete | Contract-mandated at 30d. Heavy ticker/tradability facts use a 55-minute minimum interval per unchanged filter/stage/version, preserving an hourly heartbeat and immediate parameter-version changes. |
 | `controller_recommendations` | 30d + skip insufficient×insufficient rows | `created_at` | `prune_controller_recommendations` (NEW) | none | hard delete | 91 % of rows are pure telemetry noise; write-guardrail #3 stops them at write. Aligns with sibling `filter_decision_batches`. |
 | `filter_shadow_experiments` | 90d (exempt `status='collecting'`) | `created_at` | `prune_filter_shadow_experiments` (NEW) | cascade `filter_shadow_evaluations` first (FK has no ON DELETE CASCADE) | archive metadata | Preventive; both existing rows invalidated 2026-07-14. |
 | `filter_shadow_evaluations` | cascade of parent (append-only kept per Q7) | via parent | `prune_filter_shadow_evaluations` (NEW) | none | hard delete | Append-only per user decision — no UPSERT-latest schema change. |
@@ -191,7 +191,10 @@ below are the Phase 3 target lines.
 | 15 | `alpha_control_observations` sample cadence | `aletheia/universe/service.py:432-441` | Sample control-cohort every 6th refresh (once/hour) instead of every 10-min `universe_refresh`. |
 | 16 | `agent_shell_messages` cap 1 context row per session | `aletheia/agent_shell/operator_store.py:380-405` (`append_message`) | On INSERT of `message_type='context'`, DELETE prior context rows for the same session. |
 | 17 | `universe_snapshots` + `universe_members` change-suppression | `aletheia/universe/service.py:359,397,432-441` | Skip INSERTs if member-set fingerprint (sorted `asset_id` + ranks + regime tag) matches previous. Heartbeat write every 6 refreshes (60 min). |
-| 18 | `filter_decision_batches` content-hash dedup + 5-into-1 tradability coalesce | `aletheia/analytics/filter_evidence.py:236-255` + `aletheia/universe/filters.py:124-132` | Content-hash dedup for tradability_* filters; heartbeat every 6th tick; coalesce five tradability_* batches into one matrix-encoded batch. Requires contract addendum. |
+| 18 | `filter_decision_batches` bounded heavy snapshots | `aletheia/analytics/filter_evidence.py` + `aletheia/universe/features.py` + `aletheia/universe/filters.py` | Lossless compressed facts, with at most one unchanged ticker/tradability batch per hour. A changed parameter version writes immediately. |
+| 22 | Experiment outcome horizon | `aletheia/universe/allocator.py` + `aletheia/universe/service.py` | General filter evidence retains four canonical horizons; a Learning exposure persists only its declared target horizon for both complete arms. |
+| 23 | Redundant SQLite indexes | migration `20260806_0003_capacity_guardrails_v4` | Drop two indexes covered by the outcome UNIQUE constraint and one covered by the OHLCV primary key; retain the same indexed query plans without duplicate write amplification. |
+| 24 | Pending outcome partial index | migration `20260806_0004_pending_outcome_partial_index_v5` | Replace the full `(status,due_at)` index with `(due_at,id) WHERE status='pending'`. Settlement queries are unchanged while settled/failed rows stop occupying this queue index. CASI read-only evidence on 2026-08-06: 707,160 settled + 16 failed + 0 pending rows; the old index occupied 38,649,856 bytes, so its current replacement is effectively empty. |
 | 19 | `market_regimes` skip-if-unchanged | `aletheia/storage/repositories.py:4672` (or wherever `INSERT INTO market_regimes` lives) | Skip INSERT if regime state is byte-identical to latest. Hourly floor. |
 | 20 | Learning behavior identity excludes `code_commit` | `aletheia/learning/policy_epochs.py` + `aletheia/learning/behavior_contracts.py` | Strip `code_commit` from policy hashing and use `behavior_contract_hash` for cohort/verdict identity. Exposure commits remain provenance and do not multiply behaviorally identical cohorts. |
 | 21 | `serenity_evidence` content_hash dedup | `aletheia/agents/research_worker.py:689` + `aletheia/agents/prediction_observer.py:434` + `aletheia/server/routes/data.py:390` | Use the existing `content_hash` column. Before INSERT, check `(theme_id, content_hash)`. Skip on match. |
@@ -200,20 +203,44 @@ below are the Phase 3 target lines.
 
 ## 6. VACUUM strategy
 
-Sequenced post-prune, in the Phase 4 backfill script and mirrored in the
-recurring cleanup pass:
+The explicit offline `aletheia data compact --apply` sequence is:
 
-1. `PRAGMA wal_checkpoint(TRUNCATE)` — flush WAL into main DB, truncate `-wal`.
-2. `PRAGMA integrity_check` — abort if not `ok`.
-3. `VACUUM` (one-shot full compact). Requires ≥ 2× current `app.db` size free.
-4. `PRAGMA auto_vacuum = INCREMENTAL` — persistent setting (takes effect
-   after the VACUUM above).
-5. `PRAGMA journal_size_limit = 67108864` — cap WAL at 64 MiB.
-6. `PRAGMA optimize` — refresh query planner stats.
+1. Hold the target database's process/cross-process writer permit, then create and
+   verify a WAL-consistent `pre_compact` backup.
+2. `PRAGMA wal_checkpoint(TRUNCATE)`, `integrity_check`, and `foreign_key_check`;
+   abort if another user blocks the checkpoint or either check fails.
+3. Temporarily use rollback-journal mode so the table rebuild does not create a
+   second database-sized WAL.
+4. If its logical schema and explicit indexes exactly match the owned contract,
+   rebuild `market_ohlcv` as `WITHOUT ROWID`; verify copied row count and every
+   value before atomically replacing the old table. Unexpected owner indexes fail closed.
+5. `PRAGMA auto_vacuum = INCREMENTAL`, then `VACUUM` (one-shot full compact).
+   This rebuilds the database in that mode and requires
+   ≥ 2× current `app.db` size plus 512 MiB free.
+6. Restore WAL when it was the original mode, set
+   `PRAGMA journal_size_limit = 67108864`, run `PRAGMA optimize`, and repeat
+   integrity and foreign-key verification.
 
 After (4), the recurring `_run_cleanup` pass reclaims freelist pages via
-`PRAGMA incremental_vacuum(1000)` at the tail — no more full VACUUM needed
-during runtime.
+bounded `PRAGMA incremental_vacuum(N)` at the tail: at most 16 MiB normally or
+64 MiB after reaching 80% of the configured capacity budget. The operation holds
+the process/cross-process writer permit. No more full VACUUM is needed during
+runtime unless page packing/fragmentation evidence justifies an offline window.
+
+New databases set incremental mode before their first schema object. Existing
+databases with `PRAGMA auto_vacuum=0` do not reclaim file bytes when
+`incremental_vacuum` is called; they require exactly one explicit offline
+`uv run aletheia data compact --apply`. The command defaults to a read-only plan,
+refuses a running Gateway, creates and verifies a WAL-consistent `pre_compact`
+backup, checks free disk, integrity and foreign keys before and after, and never
+deletes rows or changes retention windows.
+
+Normal runtime does not perform the table rebuild or full VACUUM. Every application
+connection sets the connection-local 64 MiB `journal_size_limit`. The nightly cleanup
+runs a non-blocking PASSIVE checkpoint and records `log_frames`,
+`checkpointed_frames`, and `remaining_frames` in `database_capacity.jsonl`; a backlog
+of at least 1000 remaining frames emits an operational warning. PASSIVE does not wait
+for readers or writers, so this observation cannot extend Gateway readiness.
 
 `~/.aletheia/tasks.db` (12 KiB): repeat steps (1)-(3) only. Trivial cost.
 
@@ -222,7 +249,15 @@ enforces gateway-stopped as a preflight check (`aletheia gateway status`).
 
 ---
 
-## 7. Trajectory (Day 0, 7, 30, 60)
+## 7. Trajectory and corrected capacity evidence
+
+The table below is the 2026-07-17 planning projection, not proof that Phase 4
+completed. On CASI at 2026-08-06, the measured `app.db` was 1781.84 MiB with
+88.11 MiB on the freelist and `auto_vacuum=NONE`; therefore the projected
+530–550 MiB state was never established. From the documented 1031 MiB point to
+the current measurement the historical net slope is about 37.6 MiB/day, but
+recent high-volume experiment writers stopped on 2026-08-03, so that slope must
+not be extrapolated as a precise forward forecast.
 
 | Day | `app.db` (MiB) | `agent_shell/` (MiB) | Notes |
 |-----|----------------|----------------------|-------|
@@ -231,6 +266,47 @@ enforces gateway-stopped as a preflight check (`aletheia gateway status`).
 | 7 | 520 | 30 | Steady state stabilises. Write-guardrails 1 / 3 / 14 / 18 / 15 / 5 deployed by Day 7 cut daily growth from ~25 MiB/day to ~5-8 MiB/day; nightly prune counterbalances. |
 | 30 | 540 | 40 | Full steady state; retention windows fully populated. `filter_candidate_outcomes` @ 30d ≈ 200 MiB dominates. Add write-guardrail #6 (batch scanner_weights_quota) early to keep `filter_decisions` 45d plateau near ~150 MiB rather than 200 MiB. |
 | 60 | 530 | 45 | Long-run steady state with all guardrails and clean_window_cutoff active. `filter_candidate_outcomes` holds at ~200 MiB (would blow past 500 MiB without retention). If future writers land in currently-empty `artifacts/` or `reports/` subdirs, per-subdir retention must be in place before those writers ship. |
+
+The runtime now appends one exact post-cleanup sample to
+`logs/database_capacity.jsonl`, including main DB, WAL, logical used bytes,
+freelist bytes, capacity ratio, reclaim mode, and the latest PASSIVE-checkpoint
+backlog. Use at least 30 samples before
+claiming a new steady-state curve. A first-order post-v4 estimate is roughly
+1.4–1.7 GiB after redundant-index removal and offline compaction, with a 2 GiB
+operational budget; this remains a model until the nightly history validates it.
+
+`aletheia data capacity --deep` uses SQLite `dbstat` aggregate mode and reports
+per-object packing ratio, so a VACUUM decision can distinguish freelist/poor page
+packing from legitimate retained payload. Capacity trend uses the median of
+pairwise physical-size slopes; fewer than 3 samples or less than 7 elapsed days is
+reported as provisional/insufficient rather than a reliable ETA.
+
+### 7.1 Explicit physical-layout optimization and remaining boundaries
+
+- `market_ohlcv` retention now deletes by the durable composite primary key rather
+  than hidden `rowid`. Explicit offline compact can therefore rebuild the table as
+  `WITHOUT ROWID`, eliminating the separate primary-key B-tree while preserving
+  the logical schema and indexed timeframe query. This is intentionally not a v6
+  migration: migrations remain additive-only, and no dataset-sized rebuild is an
+  implicit first-deploy or Gateway-start side effect.
+- A read-only CASI sample on 2026-08-06 copied 250,000 real retained rows into both
+  layouts. Rowid table + PK + timeframe index used 38,699,008 bytes; WITHOUT ROWID
+  table + timeframe index used 33,611,776 bytes, a 13.15% reduction. Point primary-key
+  lookup measured 0.021277 ms versus 0.021260 ms and the prune selector 0.024 ms versus
+  0.023 ms, so no regression was measurable at this sample size. Applied to the current
+  post-v4 OHLCV objects, the projected saving is about 36 MiB; this remains a projection
+  until an owner schedules and measures production compaction.
+- Permanent Learning/audit ledgers must not be TTL-pruned. If their growth becomes
+  material, use a separately specified content-addressed manifest or verified cold
+  archive with transparent replay; never silently delete or detach authority evidence.
+- Time retention is paired with per-instrument bar caps and capacity alerts. A hard
+  global row cap must not override active-experiment clean-window guards.
+
+SQLite authorities for these choices: [auto/incremental vacuum and optimize](https://www.sqlite.org/pragma.html),
+[WAL checkpoint behavior](https://www.sqlite.org/wal.html),
+[partial indexes](https://www.sqlite.org/partialindex.html),
+[dbstat aggregate mode](https://www.sqlite.org/dbstat.html), and
+[WITHOUT ROWID trade-offs](https://www.sqlite.org/withoutrowid.html).
 
 ---
 

@@ -153,9 +153,7 @@ class TelegramBot:
         return "Gateway resumed."
 
     def _cmd_latest(self) -> str:
-        from aletheia.storage.migrations import run_migrations
         from aletheia.storage.repositories import list_agent_runs
-        run_migrations()
         runs = list_agent_runs(limit=3)
         if not runs:
             return "No recent agent runs."

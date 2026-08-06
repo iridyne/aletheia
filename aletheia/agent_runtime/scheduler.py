@@ -1009,9 +1009,16 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=30, next_run_time=datetime.now() + timedelta(seconds=45),
         executor="io",
     )
+    cleanup_initial_run = None
+    if _cleanup_catchup_due():
+        # The cron job store is process-local and cannot remember a fire time
+        # missed while the Gateway was offline. Run the same guarded job after
+        # readiness, never inside Gateway cold start.
+        cleanup_initial_run = datetime.now() + timedelta(minutes=5)
     _scheduler.add_job(
         _guarded("cleanup", _run_cleanup), "cron", hour=3, minute=17, id="cleanup",
         misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
+        **({"next_run_time": cleanup_initial_run} if cleanup_initial_run else {}),
     )
     # Forward catch-up for shadow trades that the event-driven resolver missed
     # (parent positions with no opportunity_id). DB-only; cheap; bounded per run.
@@ -2455,6 +2462,31 @@ def _run_prediction_observer():
         _record_job_failure("prediction_observer", f"divergence_scanner: {e}")
 
 
+def _cleanup_catchup_due(*, now: datetime | None = None) -> bool:
+    """Whether the most recent scheduled Shanghai cleanup lacks a success audit."""
+
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        row = get_db().execute(
+            "SELECT timestamp FROM audit_events WHERE event_type='data_pruned' "
+            "ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+        if not row or not row[0]:
+            return True
+        last = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        current = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo("Asia/Shanghai"))
+        most_recent_fire = current.replace(hour=3, minute=17, second=0, microsecond=0)
+        if current < most_recent_fire:
+            most_recent_fire -= timedelta(days=1)
+        return last.astimezone(ZoneInfo("Asia/Shanghai")) < most_recent_fire
+    except Exception as exc:
+        logger.debug("cleanup catch-up probe unavailable: %s", exc)
+        return False
+
+
 def _run_cleanup():
     cfg = load_config()
     try:
@@ -2601,24 +2633,93 @@ def _run_cleanup():
             # Fill or open Position. Returns a summary dict, not a bare count.
             "stale_orders": cleanup_stale_orphan_orders(),
         }
-        # Reclaim freed pages from the prunes above without a full VACUUM.
-        # Requires PRAGMA auto_vacuum=INCREMENTAL to have been enabled at
-        # DB creation / by the Phase 4 backfill; the pragma is a silent
-        # no-op when auto_vacuum is NONE, so it is safe to call every cycle.
+        # Reclaim a bounded amount of freed space. Normal operation caps this
+        # maintenance write at 16 MiB; capacity pressure raises it to 64 MiB.
+        # This changes file allocation only, never retained rows.
         try:
-            get_db().execute("PRAGMA incremental_vacuum(1000)")
+            from aletheia.maintenance.database_capacity import (
+                reclaim_incremental_freelist,
+            )
+            from aletheia.storage.sqlite import db_path
+
+            database_file = db_path()
+            wal_file = database_file.with_name(database_file.name + "-wal")
+            physical_bytes = (
+                (database_file.stat().st_size if database_file.exists() else 0)
+                + (wal_file.stat().st_size if wal_file.exists() else 0)
+            )
+            budget_bytes = int(r.app_db_capacity_mb) * 1024 * 1024
+            reclaim_max_mb = (
+                64 if budget_bytes > 0 and physical_bytes >= 0.8 * budget_bytes else 16
+            )
+            counts["incremental_vacuum"] = reclaim_incremental_freelist(
+                get_db(),
+                max_mb=reclaim_max_mb,
+            )
         except Exception as vac_err:  # noqa: BLE001 — best-effort reclaim
             logger.debug("incremental_vacuum skipped: %s", vac_err)
-        # WAL checkpoint: copy written WAL frames back to the main DB file.
-        # wal_autocheckpoint fires passively at 1000 pages but will not
-        # truncate the WAL while any reader holds an older snapshot.  An
-        # explicit PASSIVE checkpoint here (after prunes release rows) gives
-        # the WAL file a daily opportunity to shrink, preventing multi-month
-        # unbounded growth on a long-running CASI instance.
+        # WAL checkpoint: copy eligible frames back and expose reader-pinned
+        # backlog without blocking runtime. Later WAL resets apply the
+        # per-connection 64 MiB retention limit.
+        wal_checkpoint = None
         try:
-            get_db().execute("PRAGMA wal_checkpoint(PASSIVE)")
+            from aletheia.maintenance.database_capacity import passive_wal_checkpoint
+
+            wal_checkpoint = passive_wal_checkpoint(get_db())
+            counts["wal_checkpoint"] = wal_checkpoint
         except Exception as chk_err:  # noqa: BLE001 — best-effort checkpoint
             logger.debug("wal_checkpoint skipped: %s", chk_err)
+        try:
+            from aletheia.maintenance.database_capacity import record_database_capacity
+
+            capacity = record_database_capacity(
+                capacity_mb=r.app_db_capacity_mb,
+                wal_checkpoint=wal_checkpoint,
+            )
+            if wal_checkpoint and wal_checkpoint.get("status") == "backlogged":
+                from aletheia.infra.events import emit_infra_event
+
+                remaining_mb = float(wal_checkpoint.get("remaining_bytes", 0)) / (1024 * 1024)
+                emit_infra_event(
+                    severity="warning",
+                    source="scheduler",
+                    code="sqlite_wal_checkpoint_backlog",
+                    message=(
+                        f"SQLite PASSIVE checkpoint left {remaining_mb:.1f} MiB "
+                        "in the WAL after nightly cleanup"
+                    ),
+                    action=(
+                        "Inspect `logs/database_capacity.jsonl` for repeated remaining_frames; "
+                        "a long-lived reader or external process may be pinning an old snapshot"
+                    ),
+                    dedupe_sec=86400,
+                )
+            if capacity.get("capacity_status") in {"warning", "over_budget"}:
+                from aletheia.infra.events import emit_infra_event
+
+                used_mb = float(capacity.get("physical_bytes", 0)) / (1024 * 1024)
+                emit_infra_event(
+                    severity=(
+                        "warning"
+                        if capacity.get("capacity_status") == "over_budget"
+                        else "info"
+                    ),
+                    source="scheduler",
+                    code="sqlite_capacity_budget",
+                    message=(
+                        f"app.db physical usage {used_mb:.1f} MiB is "
+                        f"{float(capacity.get('capacity_ratio', 0)):.0%} of the "
+                        f"{r.app_db_capacity_mb} MiB capacity budget"
+                    ),
+                    action=(
+                        "Run `uv run aletheia data capacity --deep`; stop the Gateway "
+                        "and use `uv run aletheia data compact --apply` only when "
+                        "reclaimable space is material"
+                    ),
+                    dedupe_sec=86400,
+                )
+        except Exception as capacity_err:  # noqa: BLE001 — observation only
+            logger.debug("database capacity snapshot skipped: %s", capacity_err)
         write_audit({
             "actor": "system", "source": "scheduler",
             "event_type": "data_pruned", "entity_type": "telemetry",

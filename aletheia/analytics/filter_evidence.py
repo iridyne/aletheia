@@ -32,6 +32,7 @@ _HORIZONS = {
 _VALID_DIRECTIONS = {"long", "short"}
 _VALID_DECISIONS = {"passed", "passed_with_penalty", "rejected", "not_applicable", "error"}
 _DROP_SNAPSHOT_VALUE = object()
+HEAVY_BATCH_MIN_INTERVAL_SEC = 55 * 60
 _SENSITIVE_KEY_PARTS = {
     "api_key", "authorization", "credential", "password", "prompt",
     "raw_context", "secret", "token",
@@ -216,15 +217,43 @@ def record_filter_decision_batch(
     candidate_facts: list[dict[str, Any]],
     parameters: dict[str, Any] | None = None,
     evaluated_at: str | None = None,
+    min_interval_sec: float | None = None,
     raise_on_error: bool = False,
 ) -> str:
     """Persist every high-volume directionless fact in one immutable run batch."""
     if not run_id or not filter_name:
         raise ValueError("run_id and filter_name are required")
-    facts = [_sanitize_snapshot(item) for item in candidate_facts]
     params = _sanitize_snapshot(parameters or {})
     parameter_json = _canonical_json(params)
     filter_version = _filter_version(filter_name, parameter_json)
+    effective_evaluated_at = evaluated_at or _utcnow()
+    if min_interval_sec is not None and min_interval_sec > 0:
+        try:
+            from aletheia.storage.sqlite import get_db
+
+            previous = get_db().execute(
+                "SELECT id, evaluated_at FROM filter_decision_batches "
+                "WHERE candidate_kind=? AND filter_name=? AND stage=? AND filter_version=? "
+                "ORDER BY evaluated_at DESC LIMIT 1",
+                (candidate_kind, filter_name, stage, filter_version),
+            ).fetchone()
+            previous_at = (
+                _parse_dt(previous["evaluated_at"] if hasattr(previous, "keys") else previous[1])
+                if previous
+                else None
+            )
+            current_at = _parse_dt(effective_evaluated_at)
+            if (
+                previous_at is not None
+                and current_at is not None
+                and 0 <= (current_at - previous_at).total_seconds() < min_interval_sec
+            ):
+                return str(previous["id"] if hasattr(previous, "keys") else previous[0])
+        except Exception:
+            # Evidence capture is fail-open: an unavailable cadence lookup must
+            # not suppress the current immutable observation.
+            pass
+    facts = [_sanitize_snapshot(item) for item in candidate_facts]
     dedup_key = hashlib.sha256(
         f"{run_id}|{candidate_kind}|{filter_name}|{stage}|{filter_version}".encode("utf-8")
     ).hexdigest()
@@ -248,7 +277,7 @@ def record_filter_decision_batch(
         parameter_snapshot=parameter_json,
         filter_version=filter_version,
         code_commit=_boot_commit(),
-        evaluated_at=evaluated_at or _utcnow(),
+        evaluated_at=effective_evaluated_at,
     )
     try:
         inserted = repo.insert_filter_decision_batch(batch)
@@ -1079,14 +1108,24 @@ def build_candidate_outcomes(
     funding_rate_at_entry: float | None,
     entry_ts: str,
     allocation_selected: bool | None = None,
+    horizons: tuple[str, ...] | None = None,
 ) -> list[FilterCandidateOutcome]:
-    """Build a fixed-horizon outcome matrix without touching SQLite."""
+    """Build the requested fixed-horizon outcome rows without touching SQLite.
+
+    General filter evidence keeps the canonical four-horizon matrix. A measured
+    Learning exposure supplies its declared target horizon so unrelated horizons
+    do not multiply the immutable experiment ledger.
+    """
 
     entry_dt = _parse_dt(entry_ts)
     if entry_dt is None:
         return []
     outcomes: list[FilterCandidateOutcome] = []
-    for horizon, delta in _HORIZONS.items():
+    requested = tuple(_HORIZONS) if horizons is None else tuple(dict.fromkeys(horizons))
+    for horizon in requested:
+        delta = _HORIZONS.get(horizon)
+        if delta is None:
+            continue
         material = f"{outcome_candidate_key}|{horizon}"
         outcomes.append(FilterCandidateOutcome(
             id=hashlib.sha256(material.encode("utf-8")).hexdigest()[:12],

@@ -10,15 +10,172 @@ import typer
 data_app = typer.Typer(no_args_is_help=True)
 
 
+@data_app.command("migrate")
+def migrate_database():
+    """Explicitly apply pending versioned database migrations."""
+    import time
+
+    from aletheia.storage.migrations import apply_migrations, migration_status
+
+    before = migration_status()
+    if before["current"]:
+        typer.echo(
+            f"Database schema is current ({before['schema_version']}); no migrations applied."
+        )
+        return
+    typer.echo("Applying pending migration(s): " + ", ".join(before["pending"]))
+    started = time.perf_counter()
+    from aletheia.cli.migration_progress import MigrationProgressDisplay
+
+    with MigrationProgressDisplay() as progress:
+        apply_migrations(progress=progress)
+    after = migration_status()
+    typer.echo(
+        f"Database migrations completed in {time.perf_counter() - started:.1f}s; "
+        f"schema={after['schema_version']}."
+    )
+
+
+@data_app.command("capacity")
+def database_capacity(
+    deep: bool = typer.Option(
+        False,
+        "--deep",
+        help="Attribute current bytes to the largest SQLite objects (slower).",
+    ),
+    history: int = typer.Option(
+        0,
+        "--history",
+        min=0,
+        max=3650,
+        help="Include this many exact nightly capacity samples.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+):
+    """Inspect app.db capacity without migrating or mutating it."""
+    from aletheia.config.loader import load_config
+    from aletheia.maintenance.database_capacity import (
+        database_capacity_history,
+        database_capacity_snapshot,
+        database_capacity_trend,
+    )
+
+    budget = load_config(persist_migrations=False).retention.app_db_capacity_mb
+    snapshot = database_capacity_snapshot(capacity_mb=budget, deep=deep)
+    trend_history = database_capacity_history(limit=max(90, history))
+    trend = database_capacity_trend(
+        [*trend_history, snapshot],
+        capacity_bytes=snapshot.get("capacity_bytes"),
+    )
+    payload = {"current": snapshot, "trend": trend}
+    latest_checkpoint = next(
+        (
+            sample["wal_checkpoint"]
+            for sample in reversed(trend_history)
+            if isinstance(sample.get("wal_checkpoint"), dict)
+        ),
+        None,
+    )
+    if latest_checkpoint is not None:
+        payload["latest_wal_checkpoint"] = latest_checkpoint
+    if history:
+        payload["history"] = trend_history[-history:]
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+        return
+    if not snapshot.get("available"):
+        typer.echo(f"Database not available: {snapshot.get('path')}")
+        raise typer.Exit(1)
+    typer.echo(
+        "app.db: "
+        f"{snapshot['physical_bytes'] / (1024 * 1024):.1f} MiB physical, "
+        f"{snapshot['logical_used_bytes'] / (1024 * 1024):.1f} MiB used, "
+        f"{snapshot['reclaimable_bytes'] / (1024 * 1024):.1f} MiB reusable"
+    )
+    typer.echo(
+        f"Capacity: {snapshot.get('capacity_status')} "
+        f"({float(snapshot.get('capacity_ratio', 0)):.1%} of {budget} MiB); "
+        f"incremental_vacuum={'enabled' if snapshot['incremental_vacuum_enabled'] else 'disabled'}"
+    )
+    typer.echo(
+        f"WAL: {snapshot['wal_bytes'] / (1024 * 1024):.1f} MiB "
+        f"({snapshot['wal_status']}, retained limit 64 MiB)"
+    )
+    if latest_checkpoint is not None:
+        typer.echo(
+            "Latest checkpoint: "
+            f"{latest_checkpoint.get('status')} with "
+            f"{int(latest_checkpoint.get('remaining_frames', 0))} frame(s) remaining"
+        )
+    for row in snapshot.get("top_objects", []):
+        packing = row.get("packing_ratio")
+        packing_text = f", {float(packing):.1%} packed" if packing is not None else ""
+        typer.echo(
+            f"  {row['name']}: {row['bytes'] / (1024 * 1024):.1f} MiB{packing_text}"
+        )
+    if trend["status"] == "insufficient_history":
+        typer.echo(
+            "Trend: insufficient exact history; need at least 3 samples across 7 days."
+        )
+    else:
+        typer.echo(
+            f"Trend ({trend['status']}): {trend['slope_mib_per_day']:+.2f} MiB/day "
+            f"across {trend['span_days']:.1f} days"
+        )
+        if trend.get("capacity_eta_days") is not None:
+            typer.echo(
+                f"Capacity ETA: {trend['capacity_eta_days']:.1f} days "
+                f"({trend['capacity_eta_at']})"
+            )
+    if history:
+        typer.echo(f"History samples: {len(payload.get('history', []))}")
+
+
+@data_app.command("compact")
+def compact_database_command(
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Run offline compaction. Default is a read-only plan.",
+    ),
+):
+    """Reclaim pages and optimize eligible physical table layouts offline."""
+    import time
+
+    from aletheia.maintenance.database_capacity import compact_database
+
+    started = time.perf_counter()
+
+    def progress(stage: str, message: str) -> None:
+        typer.echo(f"[{time.perf_counter() - started:6.1f}s] {stage}: {message}")
+
+    if apply:
+        typer.echo(
+            "Offline compaction started. Duration depends on retained data and disk speed; "
+            "keep the Gateway stopped."
+        )
+    try:
+        result = compact_database(apply=apply, progress=progress if apply else None)
+    except RuntimeError as exc:
+        typer.echo(f"Compaction refused: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
+    if not apply:
+        typer.echo(
+            "Dry-run only. Stop the Gateway and repeat with "
+            "`uv run aletheia data compact --apply`."
+        )
+
+
 @data_app.command("ingest-perp-structure")
 def ingest_perp_structure(
     path: Path = typer.Argument(..., exists=True, readable=True, dir_okay=False),
 ):
     """Import an owner-authorized aggregate Position X export (observation-only)."""
     from aletheia.data.collectors.vergex_structure import ingest_owner_aggregate
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
 
-    run_migrations()
+    assert_migrations_current()
     payload = json.loads(path.read_text(encoding="utf-8"))
     typer.echo(json.dumps(
         ingest_owner_aggregate(payload), indent=2, ensure_ascii=False, sort_keys=True,
@@ -37,10 +194,10 @@ def reconcile_local_paper_accounting(
     This command never writes an exchange, Risk decision, Position economics, or
     paper cash event.  It reports unavailable evidence instead of estimating it.
     """
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
     from aletheia.maintenance.historical_accounting import reconcile_historical_local_paper_accounting
 
-    run_migrations()
+    assert_migrations_current()
     typer.echo(json.dumps(
         reconcile_historical_local_paper_accounting(dry_run=not apply),
         indent=2, ensure_ascii=False, sort_keys=True,
@@ -65,9 +222,9 @@ def requeue_unobserved_settlements(
     from aletheia.maintenance.settlement_requeue import (
         requeue_unobserved_failed_outcomes,
     )
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
 
-    run_migrations()
+    assert_migrations_current()
     typer.echo(json.dumps(
         requeue_unobserved_failed_outcomes(dry_run=not apply),
         indent=2, ensure_ascii=False, sort_keys=True,
@@ -83,9 +240,9 @@ def archive_unmeasurable_learning_experiments(
 ):
     """Soft-terminalize historical experiments that cannot produce verdicts."""
     from aletheia.learning.maintenance import archive_unmeasurable_experiments
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
 
-    run_migrations()
+    assert_migrations_current()
     typer.echo(json.dumps(
         archive_unmeasurable_experiments(dry_run=not apply),
         indent=2, ensure_ascii=False, sort_keys=True,
@@ -116,9 +273,9 @@ def reconcile_paper_funding(
 
     try:
         if apply:
-            from aletheia.storage.migrations import run_migrations
+            from aletheia.storage.migrations import assert_migrations_current
 
-            run_migrations()
+            assert_migrations_current()
             result = apply_paper_funding_reconciliation(
                 position_ids=position_ids,
                 expected_fingerprint=expected_fingerprint,

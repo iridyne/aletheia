@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import sqlite3
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -210,7 +211,7 @@ class ExportService:
         self._write_rows(db_dir / f"{table}.jsonl", [dict(r) for r in rows])
 
     @staticmethod
-    def _write_rows(path: Path, rows: list[dict]) -> None:
+    def _write_rows(path: Path, rows) -> None:
         with open(path, "w", encoding="utf-8") as f:
             for row in rows:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -225,11 +226,18 @@ class ExportService:
     def _export_full(self, bundle_dir: Path) -> None:
         """Export everything except secrets."""
         self._export_config(bundle_dir)
-        # Copy entire DB
+        # Use SQLite's online backup API so a live WAL database is exported as
+        # one consistent snapshot instead of copying only app.db mid-write.
         db_path = self._data_dir / "app.db"
         if db_path.exists():
             (bundle_dir / "db").mkdir(exist_ok=True)
-            shutil.copy2(db_path, bundle_dir / "db" / "app.db")
+            source = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)
+            destination = sqlite3.connect(bundle_dir / "db" / "app.db")
+            try:
+                source.backup(destination)
+            finally:
+                destination.close()
+                source.close()
         # Copy events
         events_dir = self._data_dir / "events"
         if events_dir.exists():
@@ -250,13 +258,15 @@ class ExportService:
                 sql += " WHERE created_at > ?"
                 params.append(since)
             try:
-                rows = db.execute(sql, params).fetchall()
+                cursor = db.execute(sql, params)
+                first = cursor.fetchone()
             except Exception:
                 continue
-            if not rows:
+            if first is None:
                 continue
             with open(db_dir / f"{table}.jsonl", "w", encoding="utf-8") as f:
-                for row in rows:
+                f.write(json.dumps(dict(first), ensure_ascii=False) + "\n")
+                for row in cursor:
                     f.write(json.dumps(dict(row), ensure_ascii=False) + "\n")
 
     def _copy_artifacts(self, bundle_dir: Path, categories: list[str] | None) -> None:

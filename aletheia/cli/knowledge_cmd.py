@@ -18,10 +18,10 @@ def remediate_outcomes(
     Paper-cash compensation is always report-only and still requires a separate owner
     decision. This command cannot apply it.
     """
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
     from aletheia.maintenance.outcome_integrity import remediate_outcome_history
 
-    run_migrations()
+    assert_migrations_current()
     result = remediate_outcome_history(dry_run=not apply)
     typer.echo(json.dumps(result, indent=2, ensure_ascii=False))
 
@@ -33,10 +33,10 @@ def reindex():
     Use this once after enabling the experience loop so prior lessons become
     retrievable. Idempotent and safe to re-run.
     """
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
     from aletheia.knowledge.retrieval import reindex_all
 
-    run_migrations()
+    assert_migrations_current()
     count = reindex_all()
     typer.echo(f"Reindexed {count} knowledge item(s) into the search index.")
 
@@ -44,10 +44,10 @@ def reindex():
 @knowledge_app.command()
 def search(query: str = typer.Argument(...), k: int = typer.Option(5, help="Max results")):
     """Search prior lessons (high-confidence + active only) — preview what agents would retrieve."""
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
     from aletheia.knowledge.retrieval import retrieve_lessons
 
-    run_migrations()
+    assert_migrations_current()
     lessons = retrieve_lessons(query, k=k)
     if not lessons:
         typer.echo("No matching lessons (index empty, or none high-confidence/active).")
@@ -67,10 +67,10 @@ def archive_synthetic_case_studies(
     retrieval. It targets case studies with synthetic close reasons such as
     reconciled_gone and demo_validation_cleanup.
     """
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
     from aletheia.knowledge.maintenance import archive_synthetic_trade_case_studies
 
-    run_migrations()
+    assert_migrations_current()
     summary = archive_synthetic_trade_case_studies(dry_run=dry_run)
     typer.echo(summary)
 
@@ -80,10 +80,10 @@ def downgrade_unindexable_high_confidence(
     dry_run: bool = typer.Option(False, "--dry-run", help="Only count matching items."),
 ):
     """Downgrade high-confidence knowledge rows that cannot be rebuilt into FTS."""
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
     from aletheia.knowledge.maintenance import downgrade_unindexable_high_confidence_items
 
-    run_migrations()
+    assert_migrations_current()
     summary = downgrade_unindexable_high_confidence_items(dry_run=dry_run)
     typer.echo(summary)
 
@@ -98,10 +98,10 @@ def backfill_content(
     DB content is empty and whose file_path resolves to a readable Markdown
     file (via the Windows/POSIX legacy-path migration).
     """
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
     from aletheia.knowledge.maintenance import backfill_content_from_disk
 
-    run_migrations()
+    assert_migrations_current()
     summary = backfill_content_from_disk(dry_run=dry_run)
     typer.echo(json.dumps(summary, indent=2, ensure_ascii=False, default=str))
 
@@ -128,10 +128,10 @@ def scan_recovery_sources(
     so recoverable items are not downgraded prematurely.
     """
     from pathlib import Path
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
     from aletheia.knowledge.recovery import scan_orphan_bodies
 
-    run_migrations()
+    assert_migrations_current()
     roots = [Path(r).expanduser() for r in extra_root]
     summary = scan_orphan_bodies(
         extra_roots=roots or None,
@@ -150,9 +150,9 @@ def downgrade_unattributed_case_studies(
     dry_run: bool = typer.Option(False, "--dry-run", help="Only count matching items."),
 ):
     """Downgrade high-confidence trade cases with no real scanner_family."""
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import assert_migrations_current
     from aletheia.knowledge.maintenance import downgrade_unattributed_trade_case_studies
 
-    run_migrations()
+    assert_migrations_current()
     summary = downgrade_unattributed_trade_case_studies(dry_run=dry_run)
     typer.echo(summary)

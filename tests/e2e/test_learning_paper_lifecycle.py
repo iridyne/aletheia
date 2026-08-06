@@ -285,13 +285,13 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
             cluster_counts[batch_assignment] += 1
 
             # Register the complete scored arm while selecting only half the batch.
-            # Both selected and dropped candidates retain all canonical horizons.
+            # Both selected and dropped candidates retain the exposure's declared horizon.
             assert _register_experiment_candidate_outcomes(
                 batch,
                 cfg,
                 entry_ts=entry_at.isoformat(),
                 allocated=batch[:1],
-            ) == len(batch) * 4
+            ) == len(batch)
             clock[0] += timedelta(hours=4)
             if cluster_counts["treatment"] >= 50 and cluster_counts["control"] >= 50:
                 break
@@ -306,7 +306,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
         assert await settle_due_filter_outcomes(
             max_rows=10_000,
             time_budget_sec=30.0,
-        ) == exposure_count * 4
+        ) == exposure_count
         rows = [dict(row) for row in get_db().execute(
             "SELECT f.* FROM filter_candidate_outcomes f "
             "JOIN learning_exposures e "
@@ -314,16 +314,11 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
             "WHERE e.experiment_id=? ORDER BY f.entry_ts,f.horizon",
             (experiment_id,),
         ).fetchall()]
-        assert len(rows) == exposure_count * 4
-        assert Counter(row["horizon"] for row in rows) == {
-            "15m": exposure_count,
-            "1h": exposure_count,
-            "4h": exposure_count,
-            "24h": exposure_count,
-        }
+        assert len(rows) == exposure_count
+        assert Counter(row["horizon"] for row in rows) == {"4h": exposure_count}
         assert Counter(row["allocation_selected"] for row in rows) == {
-            0: exposure_count * 2,
-            1: exposure_count * 2,
+            0: exposure_count // 2,
+            1: exposure_count // 2,
         }
         assert all(row["status"] == "settled" for row in rows)
         assert all(row["settlement_price_source"] == "phase4_e2e_horizon" for row in rows)

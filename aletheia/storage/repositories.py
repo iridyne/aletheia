@@ -3823,6 +3823,40 @@ def _delete_by_rowid_batches(
     return total
 
 
+def _delete_market_ohlcv_batches(
+    where: str,
+    params: tuple = (),
+    *,
+    batch_size: int = 5_000,
+) -> int:
+    """Delete bounded OHLCV telemetry batches by its durable composite key.
+
+    ``market_ohlcv`` may use SQLite's WITHOUT ROWID layout after explicit
+    offline compaction, so its retention path must never depend on the hidden
+    rowid implementation detail.
+    """
+
+    total = 0
+    size = max(1, int(batch_size))
+    key_columns = "exchange,symbol,market_type,timeframe,ts"
+    while True:
+        started = time.monotonic()
+        with transaction():
+            cur = execute_write(
+                "DELETE FROM market_ohlcv WHERE "
+                f"({key_columns}) IN (SELECT {key_columns} FROM market_ohlcv "
+                f"WHERE {where} ORDER BY timeframe,ts,exchange,symbol,market_type LIMIT ?)",
+                (*params, size),
+            )
+        deleted = max(0, cur.rowcount or 0)
+        duration_ms = (time.monotonic() - started) * 1000
+        _record_retention_batch("market_ohlcv", deleted, duration_ms)
+        total += deleted
+        if deleted < size:
+            break
+    return total
+
+
 def prune_agent_runs(days: int = 30) -> int:
     # agent_run_steps and agent_tool_calls have FK → agent_runs with no ON DELETE CASCADE.
     # Delete children first in the same transaction to avoid IntegrityError.
@@ -6949,13 +6983,11 @@ def prune_market_ohlcv(
     total = 0
     for timeframe, days in ttl.items():
         cutoff_ms = int((now - timedelta(days=days)).timestamp() * 1000)
-        total += _delete_by_rowid_batches(
-            "market_ohlcv",
+        total += _delete_market_ohlcv_batches(
             "timeframe = ? AND ts < ?",
             (timeframe, cutoff_ms),
         )
-    total += _delete_by_rowid_batches(
-        "market_ohlcv",
+    total += _delete_market_ohlcv_batches(
         "exchange = ?",
         ("legacy_unknown",),
     )

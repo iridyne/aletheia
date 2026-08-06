@@ -1,6 +1,7 @@
 """SQLite connection management and process-local write serialization."""
 
 from concurrent.futures import Future
+from contextlib import contextmanager
 from dataclasses import dataclass
 import logging
 import os
@@ -60,6 +61,7 @@ _write_lock_state = threading.local()
 
 _WRITE_QUEUE_CAPACITY = 256
 _WRITE_QUEUE_STOP = object()
+_JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
 _MUTATING_SQL = {
     "ALTER",
     "ANALYZE",
@@ -77,7 +79,11 @@ _TRANSACTION_END_SQL = {"COMMIT", "END", "RELEASE", "ROLLBACK"}
 _WITH_WRITE_RE = re.compile(r"\b(?:INSERT|UPDATE|DELETE|REPLACE)\b", re.IGNORECASE)
 
 
-def acquire_write_lock(*, timeout: float = _WRITE_LOCK_TIMEOUT_S) -> float:
+def acquire_write_lock(
+    *,
+    timeout: float = _WRITE_LOCK_TIMEOUT_S,
+    path: Path | None = None,
+) -> float:
     """Acquire process and cross-process writer permits; return wait time in ms."""
 
     depth = getattr(_write_lock_state, "depth", 0)
@@ -90,7 +96,7 @@ def acquire_write_lock(*, timeout: float = _WRITE_LOCK_TIMEOUT_S) -> float:
         _logger.warning("sqlite_write_lock_timeout wait_ms=%.1f", waited_ms)
         raise sqlite3.OperationalError("write_lock_timeout: a write transaction was held open too long")
     try:
-        _acquire_file_write_lock(started=started, timeout=timeout)
+        _acquire_file_write_lock(started=started, timeout=timeout, path=path)
     except BaseException:
         _WRITE_LOCK.release()
         raise
@@ -126,10 +132,15 @@ def write_lock_held_by_current_thread() -> bool:
     return bool(getattr(_write_lock_state, "depth", 0))
 
 
-def _acquire_file_write_lock(*, started: float, timeout: float) -> None:
+def _acquire_file_write_lock(
+    *,
+    started: float,
+    timeout: float,
+    path: Path | None = None,
+) -> None:
     if (fcntl is None and msvcrt is None) or (_injected_db_active and _injected_db_path is None):
         return
-    lock_path = Path(_injected_db_path or db_path()).with_suffix(".write.lock")
+    lock_path = Path(path or _injected_db_path or db_path()).with_suffix(".write.lock")
     try:
         file_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     except OSError as exc:
@@ -263,6 +274,7 @@ class _SerializedConnection(sqlite3.Connection):
 
 
 def _open_connection(path: Path) -> sqlite3.Connection:
+    initialize_incremental_vacuum = not path.exists() or path.stat().st_size == 0
     conn = sqlite3.connect(
         str(path),
         check_same_thread=True,
@@ -271,11 +283,19 @@ def _open_connection(path: Path) -> sqlite3.Connection:
         factory=_SerializedConnection,
     )
     conn.row_factory = sqlite3.Row
+    # SQLite can enable auto_vacuum without rewriting pages only before the
+    # first schema object exists. Existing databases require the explicit,
+    # offline `aletheia data compact --apply` maintenance boundary.
+    if initialize_incremental_vacuum:
+        conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA busy_timeout=30000")  # 30 s — last-resort SQLite fallback
     conn.execute("PRAGMA wal_autocheckpoint=1000")
+    # journal_size_limit is connection-local. Set it on every connection so a
+    # successfully reset WAL cannot retain an old multi-GiB allocation forever.
+    conn.execute(f"PRAGMA journal_size_limit={_JOURNAL_SIZE_LIMIT_BYTES}")
     return conn
 
 
@@ -584,6 +604,34 @@ def shutdown_writer() -> None:
 
 def db_path() -> Path:
     return get_data_dir() / "app.db"
+
+
+@contextmanager
+def readonly_db():
+    """Open the effective database without creation or write-oriented PRAGMAs.
+
+    File-backed test injection follows the injected path. In-memory injection has
+    no second connection to open, so it yields the existing test connection and
+    deliberately leaves its lifecycle with the fixture.
+    """
+
+    if _injected_db_active and _injected_db_path is None:
+        yield get_db()
+        return
+
+    path = Path(_injected_db_path or db_path())
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    connection = sqlite3.connect(
+        f"{path.resolve().as_uri()}?mode=ro",
+        uri=True,
+        timeout=1.0,
+    )
+    connection.row_factory = sqlite3.Row
+    try:
+        yield connection
+    finally:
+        connection.close()
 
 
 def get_db() -> sqlite3.Connection:

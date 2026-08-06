@@ -1,21 +1,21 @@
 # Data Model Reference
 
 > Complete index of Aletheia Trading OS data layer.
-> ~95 SQLite table declarations, 59 Pydantic models, WAL mode, additive-only migrations.
+> ~96 SQLite table declarations, 59 Pydantic models, WAL mode, versioned additive migrations.
 > Source of truth: `aletheia/storage/migrations.py` (DDL) + `models.py` (types).
-> Last updated: 2026-07-20
+> Last updated: 2026-08-06
 
 ---
 
 ## 1. Architecture Overview
 
-- **Engine**: SQLite 3, WAL mode, `busy_timeout=30000ms` (30s, fallback only), `synchronous=NORMAL`, `wal_autocheckpoint=1000`, `isolation_level=None` (true autocommit, no implicit BEGIN)
+- **Engine**: SQLite 3, WAL mode, `busy_timeout=30000ms` (30s, fallback only), `synchronous=NORMAL`, `wal_autocheckpoint=1000`, per-connection `journal_size_limit=67108864`, `isolation_level=None` (true autocommit, no implicit BEGIN)
 - **Concurrency**: one read/legacy connection per thread via `threading.local`; scheduler capped at `max_workers=3`
 - **Write serialization**: transaction-external repository DML enters a bounded 256-item writer lane backed by one dedicated connection. Accepted jobs synchronously return an exact commit/rollback result; queue admission may time out before acceptance, but an accepted authoritative write never returns an ambiguous timeout. Existing multi-statement `transaction()` closures stay on their caller connection and share the same writer permit.
 - **Cross-process safety**: the process `_WRITE_LOCK` is paired with an advisory `app.write.lock` file permit, automatically released by the OS on process death. Gateway, collector, and supervisor writers therefore contend before SQLite's writer slot; `busy_timeout` remains the last-resort fallback.
 - **Legacy guard**: production connections subclass `sqlite3.Connection` and serialize direct autocommit DML that has not yet migrated to `execute_write()`; migrated modules have a static no-direct-DML regression test.
 - **Transaction safety**: migrated writes use `run_write()`/`execute_write()`; legacy write paths still capture `was_in_tx = db.in_transaction` before writing and commit only when it was false.
-- **Migrations**: additive-only (new tables, new columns with defaults); never DROP/RENAME in production
+- **Migrations**: stable migration ID + immutable checksum ledger; additive-only (new tables, new columns with defaults); never DROP/RENAME in production
 - **ID format**: 12-char hex string — `uuid4().hex[:12]` (48-bit), via `new_id()` in `storage/models.py:8`. NOT a full 36-char UUID4. Collision risk is negligible at this scale (P≈2e-7 at 10⁴ rows, ≈1e-3 at 10⁶); the short form keeps IDs readable in logs/audit. (CR-DM-01: doc corrected to match code 2026-06-23 — code is the convention, full-UUID4 migration deemed unjustified.)
 - **Timestamps**: ISO 8601 UTC strings (`2026-06-21T12:00:00+00:00`)
 - **JSON columns**: TEXT with `json()` validation where applicable
@@ -98,7 +98,7 @@ from the Operator working set unless a `submitting` claim requires crash recover
 |-------|---------|-------------|
 | `knowledge_items` | Research notes, reviews, lessons | item_type, content (TEXT), tags, confidence |
 | `news_items` | External news signals | source, headline, sentiment, symbols (JSON) |
-| `market_ohlcv` | Historical candlestick data; rows are isolated by full instrument identity | exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume |
+| `market_ohlcv` | Historical candlestick data; rows are isolated by full instrument identity. Explicit offline compact may cluster the composite PK as `WITHOUT ROWID`; the logical schema is unchanged. | exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume |
 
 ### C-bis. Measured Learning Ledger (7 tables)
 
@@ -168,7 +168,7 @@ verdicts; it does not rewrite or delete older verdict history.
 | `coingecko_top_snapshots` (Round 2 Step 3) | Top-N coins by market cap pulled every Phase B tick | coin_id, symbol, price_usd, market_cap_usd, market_cap_rank, volume_24h_usd, price_change_1h_pct, price_change_24h_pct, price_change_7d_pct, observed_at |
 | `onchain_snapshots` (datasrc overhaul) | DefiLlama on-chain regime (zero-key); folded into the LLM macro block | source, metric_type (`stablecoin_mcap` / `chain_tvl` / `dex_volume`), total_usd, change_24h_pct, top_entries (JSON), raw_summary (JSON), observed_at |
 
-### E. Agent Runtime (15 tables)
+### E. Agent Runtime and schema control (16 tables)
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
@@ -187,6 +187,7 @@ verdicts; it does not rewrite or delete older verdict history.
 | `runtime_exclusive_lock` | Distributed lock (single-writer) | lock_name, holder, acquired_at, expires_at |
 | `runtime_ownership` | Task ownership tracking | task_id, owner, claimed_at |
 | `runtime_sessions` | One row per Gateway PROCESS lifecycle (session_id under a runtime_id). Core trading facts reference `session_id` via `runtime_session_id` | session_id, runtime_id, boot_commit, config_hash, behavior_fingerprint, schema_version, active_scope_id, execution_mode, started_at, ended_at, shutdown_clean |
+| `aletheia_schema_migrations` | Immutable per-database proof that one named migration implementation completed successfully | migration_id, checksum, schema_version, applied_at, duration_ms |
 
 **Runtime Session provenance (expand-only, nullable).** The seven core trading-fact
 tables (`opportunities`, `pi_decisions`, `trade_proposals`, `risk_decisions`,
@@ -407,11 +408,19 @@ All models in `aletheia/storage/models.py`. Key mapping:
 
 ## 6. Migration Strategy
 
-1. Fresh DB: full DDL from `SCHEMA_SQL` + domain-specific DDL blocks
-2. Existing DB: `_ADDITIVE_COLUMNS` list applies `ALTER TABLE ADD COLUMN` idempotently
-3. Never: DROP TABLE, DROP COLUMN, RENAME (breaks existing data)
-4. Pattern: check `pragma_table_info` before ALTER to avoid "duplicate column" errors
-5. Test: `run_migrations()` is called in every test setup; full schema always available
+1. Every production migration has a stable `migration_id`, immutable SHA-256 checksum, schema version, and one apply function. Applied evidence is append-only in `aletheia_schema_migrations`; an existing ID is never replayed or overwritten.
+2. `uv run aletheia data migrate` is the explicit operator/deployment command. `gateway start/restart` invokes the same owner-controlled apply phase before creating the managed service and before starting its readiness timer.
+3. Supervisor Runtime lookup, frontdoor/backend launch-context reads, API routes, schedulers, Telegram, and FastAPI lifespan never apply migrations. Backend lifespan performs only a read-only ledger verification and fails with the explicit migrate command when pending.
+4. A checksum mismatch or a ledger row unknown to the running code fails closed. Code rollback must restore a compatible database backup or use code that knows every applied migration; it must not silently downgrade the schema.
+5. The imported legacy schema is one frozen baseline migration. On a fresh database or a pre-ledger database it runs once, records its duration and checksum only after successful completion, and remains retryable without a success row after interruption.
+6. Existing DB upgrades remain additive through `_ADDITIVE_COLUMNS` and versioned backfills. Future changes add a new migration step; they do not edit/replay the frozen baseline.
+7. Production apply holds the process and cross-process SQLite writer permit across ledger recheck, migration execution, and success recording. This is an upgrade-only critical section; the Gateway must not be serving normal writers during it.
+8. Pytest retains the in-memory blueprint optimization and records the same ledger rows in the cloned schema; test fixtures may continue to call the compatibility `run_migrations()` helper.
+9. Dataset-size-sensitive repair is never an implicit read/startup side effect. Schema v3 rebuilds `knowledge_fts` once as migration `20260806_0002_startup_dataset_boundary_v3` and installs indexes for startup reconciliation and windowed telemetry reads. Normal knowledge writes maintain FTS incrementally; later full rebuilds require the explicit `knowledge reindex` maintenance command or a new versioned migration.
+10. Physical packing is outside the migration ledger. In particular, `market_ohlcv` rowid-to-`WITHOUT ROWID` conversion runs only inside explicit offline `data compact --apply`, after a verified backup and with the Gateway stopped; fresh deploy and normal Gateway startup never perform it.
+11. Schema v6 adds the content-free `inference_call_id` linkage columns through migration `20260806_0005_llm_inference_linkage_v6`. The LLM inference harness does not edit the frozen legacy baseline; databases that already received the columns from pre-ledger code are accepted idempotently.
+
+Automatic readers must use indexed, bounded keys or a declared retained evidence window. User-requested export/backup may traverse a complete dataset, but it must stream through a cursor/disk-backed archive rather than materialize a table or archive in process memory.
 
 ---
 
@@ -506,10 +515,23 @@ Runtime artefact trees under `~/.aletheia/`. Full details in `RETENTION_POLICY.m
 
 ### 7.5 VACUUM strategy (Phase 3)
 
-`PRAGMA auto_vacuum = INCREMENTAL` (set during the Phase 4 one-shot backfill, persistent).
-The recurring `_run_cleanup` pass reclaims freelist pages via `PRAGMA incremental_vacuum(1000)`
-at the tail. Full `VACUUM` runs only in the one-shot backfill with the gateway stopped. See
-`RETENTION_POLICY.md` §6 for the full sequenced pragma steps.
+New databases set `PRAGMA auto_vacuum = INCREMENTAL` before creating schema objects.
+An existing `auto_vacuum=NONE` database must set the pragma **before** a one-time
+offline `VACUUM`; calling `incremental_vacuum` alone on it is a no-op.
+The recurring `_run_cleanup` pass reclaims freelist pages via bounded `PRAGMA incremental_vacuum(N)`
+at the tail with a bounded 16 MiB normal / 64 MiB capacity-pressure budget and records
+the physical/logical size plus a non-blocking PASSIVE-checkpoint backlog to
+`logs/database_capacity.jsonl`.
+Full `VACUUM` runs only through explicit `aletheia data compact --apply` with the Gateway
+stopped. The default 2048 MiB capacity budget is an alert threshold, not a reason to drop
+authoritative writes. Compact can also rebuild an eligible `market_ohlcv` as
+`WITHOUT ROWID`, after full equality verification, without changing retention or
+market-data semantics. See `RETENTION_POLICY.md` §6 for the full sequence.
+
+The due-settlement queue uses a partial index over pending rows only:
+`(due_at,id) WHERE status='pending'`. Deep capacity inspection uses `dbstat` aggregate
+mode and reports packing efficiency; historical ETA requires multiple exact nightly
+samples and is labelled provisional until it spans at least seven days.
 
 ---
 

@@ -34,7 +34,7 @@ class ControlLoopHarness:
         import aletheia.config.loader as loader
         from aletheia.config.schema import AletheiaConfig
         from aletheia.storage import sqlite as sqlite_store
-        from aletheia.storage.migrations import run_migrations
+        from aletheia.storage.migrations import apply_migrations
         from aletheia.storage.sqlite import get_db
 
         self.root = Path(root)
@@ -97,7 +97,7 @@ class ControlLoopHarness:
         # an in-memory sandbox that must be restored when this harness closes;
         # the harness still opens and owns a separate file-backed connection.
         sqlite_store._db_conn = None
-        run_migrations()
+        apply_migrations()
 
         cfg = AletheiaConfig()
         cfg.runtime.paused = False

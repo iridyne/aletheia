@@ -838,10 +838,10 @@ def validate_current_data() -> dict[str, Any]:
     """Run candidate migration/config/SQLite/audit checks for preflight or activation."""
 
     from aletheia.files.jsonl import verify_audit_chain
-    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.migrations import apply_migrations
     import sqlite3
 
-    run_migrations()
+    apply_migrations()
     load_config()
     db_path = get_data_dir() / "app.db"
     if db_path.exists():

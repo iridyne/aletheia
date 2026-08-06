@@ -302,11 +302,13 @@ def _register_experiment_candidate_outcomes(
 
     Register an exposure-aligned fixed-horizon candidate outcome for EVERY exposed
     candidate (treatment or control, selected or dropped), keyed by the exposure's
-    ``candidate_key``. Persist the final allocator-selection fact on each horizon so
+    ``candidate_key``. Persist the final allocator-selection fact on the target horizon so
     contribution evaluates intent-to-treat allocation utility without discarding the
-    dropped denominator. ``linked_settled_exposure_counts`` joins the filter outcome
-    branch as ``outcome_candidate_key || ':' || horizon``, which equals the exposure's
-    ``outcome_candidate_key`` (``candidate_key:horizon``).
+    dropped denominator. Each exposure declares exactly one ``target_horizon``;
+    persisting the other three canonical horizons created unconsumed rows. General
+    filter evidence still keeps its four-horizon matrix. ``linked_settled_exposure_counts``
+    joins the experiment row as ``outcome_candidate_key || ':' || horizon``, which
+    equals the exposure's ``outcome_candidate_key`` (``candidate_key:horizon``).
     """
     from aletheia.analytics.filter_evidence import build_candidate_outcomes
 
@@ -325,9 +327,10 @@ def _register_experiment_candidate_outcomes(
             direction = item.get("scanner_direction") or item.get("direction")
             venue = item.get("venue") or default_venue
             entry_price = item.get("last_price")
+            target_horizon = item.get("learning_target_horizon")
             if direction not in {"long", "short"} or not venue or not item.get("symbol"):
                 continue
-            if float(entry_price or 0) <= 0:
+            if float(entry_price or 0) <= 0 or not target_horizon:
                 continue
             outcomes.extend(
                 build_candidate_outcomes(
@@ -343,6 +346,7 @@ def _register_experiment_candidate_outcomes(
                     funding_rate_at_entry=item.get("funding_rate"),
                     entry_ts=entry_ts,
                     allocation_selected=str(key) in selected_keys,
+                    horizons=(str(target_horizon),),
                 )
             )
         except Exception:

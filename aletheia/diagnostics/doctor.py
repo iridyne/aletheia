@@ -3642,7 +3642,13 @@ def _probe_volume_ranking(report: Report) -> None:
 
 
 def _classify_db_capacity(
-    *, db_mb: float, free_mb: float, reclaimable_mb: float,
+    *,
+    db_mb: float,
+    free_mb: float,
+    reclaimable_mb: float,
+    capacity_mb: float | None = None,
+    auto_vacuum: int | None = None,
+    wal_mb: float = 0.0,
 ) -> tuple[str, str, str | None]:
     """Classify storage pressure separately from normal retained database growth."""
     minimum_free_mb = max(500.0, db_mb * 1.2)
@@ -3651,6 +3657,28 @@ def _classify_db_capacity(
             "warn",
             "low disk space",
             "free disk space before SQLite writes fail; database compaction also needs temporary free space",
+        )
+
+    if wal_mb > 64.0:
+        return (
+            "warn",
+            "WAL above retained limit",
+            "inspect `logs/database_capacity.jsonl` for repeated checkpoint backlog; "
+            "a long-lived reader or external process may be pinning an old snapshot",
+        )
+
+    if capacity_mb and capacity_mb > 0 and db_mb >= capacity_mb:
+        return (
+            "warn",
+            "capacity budget exceeded",
+            "run `uv run aletheia data capacity --deep`; compact offline only when reusable space is material",
+        )
+
+    if auto_vacuum == 0 and reclaimable_mb >= 20:
+        return (
+            "info",
+            "incremental reclaim disabled",
+            "new databases enable incremental vacuum automatically; for this database plan `uv run aletheia data compact --apply` with the Gateway stopped",
         )
 
     reclaim_ratio = reclaimable_mb / db_mb if db_mb > 0 else 0.0
@@ -3673,13 +3701,23 @@ def _probe_infra_db_size(report: Report) -> None:
         import shutil
         from aletheia.storage.sqlite import db_path, get_db
         path = db_path()
-        db_mb = path.stat().st_size / (1024 * 1024) if path.exists() else 0
+        database_bytes = path.stat().st_size if path.exists() else 0
+        wal_path = path.with_name(path.name + "-wal")
+        wal_bytes = wal_path.stat().st_size if wal_path.exists() else 0
+        db_mb = (database_bytes + wal_bytes) / (1024 * 1024)
         du = shutil.disk_usage(str(path.parent))
         free_mb = du.free / (1024 * 1024)
         db = get_db()
         page_size = int(db.execute("PRAGMA page_size").fetchone()[0])
         freelist_count = int(db.execute("PRAGMA freelist_count").fetchone()[0])
+        auto_vacuum = int(db.execute("PRAGMA auto_vacuum").fetchone()[0])
         reclaimable_mb = page_size * freelist_count / (1024 * 1024)
+        wal_mb = wal_bytes / (1024 * 1024)
+        from aletheia.config.loader import load_config
+
+        capacity_mb = float(
+            load_config(persist_migrations=False).retention.app_db_capacity_mb
+        )
     except Exception as e:
         report.add("infra.db_size", "info", f"probe error: {e}")
         return
@@ -3687,9 +3725,12 @@ def _probe_infra_db_size(report: Report) -> None:
         db_mb=db_mb,
         free_mb=free_mb,
         reclaimable_mb=reclaimable_mb,
+        capacity_mb=capacity_mb,
+        auto_vacuum=auto_vacuum,
+        wal_mb=wal_mb,
     )
     detail = (
-        f"{label}: app.db {db_mb:.0f} MB, reusable {reclaimable_mb:.1f} MB, "
+        f"{label}: app.db + WAL {db_mb:.0f} MB, reusable {reclaimable_mb:.1f} MB, "
         f"disk free {free_mb:.0f} MB"
     )
     report.add("infra.db_size", severity, detail, hint)

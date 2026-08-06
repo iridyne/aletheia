@@ -565,10 +565,12 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
     now = datetime.now(timezone.utc).isoformat()
     scored = [
         {"learning_candidate_key": ck_t, "symbol": "SOL/USDT", "venue": "okx",
+         "learning_target_horizon": "4h",
          "market_type": "perp", "scanner_family": "momentum",
          "scanner_direction": "long", "last_price": 100.0,
          "allocation_status": "selected"},
         {"learning_candidate_key": ck_c, "symbol": "SOL/USDT", "venue": "okx",
+         "learning_target_horizon": "4h",
          "market_type": "perp", "scanner_family": "momentum",
          "scanner_direction": "long", "last_price": 100.0,
          "allocation_status": "dropped"},
@@ -592,9 +594,9 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
         "FROM filter_candidate_outcomes "
         "ORDER BY outcome_candidate_key, horizon"
     ).fetchall()
-    assert len(registered) == 8
+    assert len(registered) == 2
     assert {row[0] for row in registered} == {ck_t, ck_c}
-    assert {row[1] for row in registered} == {"15m", "1h", "4h", "24h"}
+    assert {row[1] for row in registered} == {"4h"}
     assert {
         row[0]: bool(row[2]) for row in registered if row[1] == "4h"
     } == {ck_t: True, ck_c: False}
