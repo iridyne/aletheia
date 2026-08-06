@@ -213,7 +213,7 @@ class TestMarketAwareExitIntegration:
         from aletheia.agent_runtime.wake_events import ADVERSE_SIGNAL
         assert any(getattr(w, "kind", None) == ADVERSE_SIGNAL for w in wakes)
 
-        async def choose_hold(_system, user, *, schema):
+        async def choose_hold(_system, user, *, schema, **_kwargs):
             assert pos.id in user
             assert ADVERSE_SIGNAL in user
             return ({
