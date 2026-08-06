@@ -146,7 +146,9 @@ stage, horizon, outcome-contract and code-build verdicts remain append-only hist
 classified as non-current by the read model.
 
 The current metric version is
-`universe_family_calibration_cluster_allocation_utility_v3`. A metric-version change appends new
+`universe_family_calibration_cluster_allocation_utility_v4`. Its existing `harm_metrics_json`
+evaluation envelope also carries bounded `market_day_coverage` facts for the latest consecutive
+eligible UTC exposure-day window and its per-arm sample counts. A metric-version change appends new
 verdicts; it does not rewrite or delete older verdict history.
 
 ### D. Market Data Collection (11 tables)

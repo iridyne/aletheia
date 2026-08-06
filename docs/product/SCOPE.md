@@ -69,10 +69,11 @@ health, PnL alone, or retrospective matches. All declared paths except
 static fallback. Learned guards are observe-only; seed/manual guards are a
 separate static safety class.
 
-The exact current software gate is 50 complete assignment units per arm and a
-seven-day first-to-last exposure span. That span is not continuous-coverage proof;
-owner qualification must reject unexplained gaps until continuity-aware enforcement
-lands under GitHub issue #692.
+The exact current software gate is 50 complete assignment units per arm inside
+the latest run of seven consecutive UTC exposure dates. Every counted day must
+contain at least one complete eligible unit from either arm, while the current
+run must independently reach 50 treatment and 50 control units. A missing day
+resets the run and pre-gap samples cannot bridge the new qualification window.
 
 ## Deferred or separately authorized
 

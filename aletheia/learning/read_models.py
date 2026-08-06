@@ -493,6 +493,9 @@ def _project_experiment(
             "window_end": (
                 (current_verdict or {}).get("window_end") if current else None
             ),
+            "coverage": _coverage_projection(
+                metrics.get("market_day_coverage")
+            ),
         },
         "samples": {
             "raw_exposures": _safe_int(metrics.get("raw_exposure_n")),
@@ -597,6 +600,9 @@ def _project_experiment(
             "evaluated_at": row.get("verdict_created_at"),
             "window_start": row.get("window_start"),
             "window_end": row.get("window_end"),
+            "coverage": _coverage_projection(
+                verdict_metrics.get("market_day_coverage")
+            ),
             "treatment_assignment_units": _safe_int(row.get("unique_treatment_n")),
             "control_assignment_units": _safe_int(row.get("unique_control_n")),
             "complete_assignment_units": _safe_int(
@@ -753,6 +759,49 @@ def _safe_object(value: Any) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _coverage_projection(value: Any) -> dict[str, Any]:
+    coverage = _safe_object(value)
+    string_fields = (
+        "basis",
+        "status",
+        "outage_waiver",
+        "first_observed_day",
+        "last_observed_day",
+        "current_window_start",
+        "current_window_end",
+    )
+    integer_fields = (
+        "required_consecutive_days",
+        "max_allowed_missing_days",
+        "current_consecutive_market_days",
+        "longest_consecutive_market_days",
+        "observed_treatment_day_n",
+        "observed_control_day_n",
+        "qualified_treatment_n",
+        "qualified_control_n",
+        "invalid_exposure_time_n",
+        "missing_treatment_day_n",
+        "missing_control_day_n",
+        "missing_market_day_n",
+    )
+    projected: dict[str, Any] = {
+        key: (str(coverage[key]) if coverage.get(key) is not None else None)
+        for key in string_fields
+    }
+    projected.update({key: _safe_int(coverage.get(key)) for key in integer_fields})
+    for key in ("missing_treatment_days", "missing_control_days", "missing_market_days"):
+        values = coverage.get(key)
+        projected[key] = [
+            str(item)
+            for item in values[:31]
+            if isinstance(item, str)
+        ] if isinstance(values, list) else []
+    projected["missing_days_truncated"] = bool(
+        coverage.get("missing_days_truncated")
+    )
+    return projected
 
 
 def _safe_int_dict(value: Any) -> dict[str, int]:

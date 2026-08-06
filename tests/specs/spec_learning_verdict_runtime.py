@@ -26,17 +26,31 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
         "causal positive or negative verdict.",
         status="implemented",
     ),
+    SpecClaim(
+        "LE-B30", "learning_evolution", "§7 market-day continuity", "L2b",
+        "A measurement-supported cohort qualifies time only through consecutive UTC days that "
+        "each contain a complete eligible exposure unit; a missing day fails "
+        "closed with owner-visible coverage evidence and cannot be bridged by a later exposure.",
+        status="implemented",
+    ),
 )
 def test_read_only_verdict_runtime_surface_exists():
     from dataclasses import fields
 
     from aletheia.learning.cohorts import CohortSample
     from aletheia.learning.contribution_runner import evaluate_experiment, inspect_experiment
+    from aletheia.learning.registry import get_learning_path
+    from aletheia.learning.verdicts import METRIC_VERSION
 
     assert callable(evaluate_experiment)
     assert callable(inspect_experiment)
     assert "authority_applied" in {field.name for field in fields(CohortSample)}
     assert "assignment_unit_key" in {field.name for field in fields(CohortSample)}
+    assert METRIC_VERSION == "universe_family_calibration_cluster_allocation_utility_v4"
+    assert (
+        get_learning_path("universe_family_calibration").behavior_contract_version
+        == "universe-family-calibration/v5"
+    )
 
 
 # ---------------------------------------------------------------------------

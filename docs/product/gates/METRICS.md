@@ -21,7 +21,7 @@ The current measured path is `universe_family_calibration`. Its software evidenc
 unit is one complete assignment cluster. Selected members contribute fixed-horizon
 net return; dropped members contribute zero under intent-to-treat allocation
 utility. The current metric version is
-`universe_family_calibration_cluster_allocation_utility_v3`.
+`universe_family_calibration_cluster_allocation_utility_v4`.
 
 ## 2. Learning qualification metrics
 
@@ -29,7 +29,7 @@ utility. The current metric version is
 |---|---|---|
 | Treatment/control assignment units | Complete, unique prospective clusters per arm | Learning cohort builder and `lco-v1` projection |
 | Minimum samples | 50 complete assignment units in each arm | `LearningExperiment.min_samples_per_arm` |
-| Minimum market span | At least 7 elapsed days between first and last eligible exposure | `LearningExperiment.min_market_days` and `verdicts._insufficient()` |
+| Continuous market days | At least 7 consecutive UTC dates with a complete eligible exposure unit from either arm; 50-per-arm sufficiency is independent and scoped to that run | `LearningExperiment.min_market_days` and verdict `market_day_coverage` |
 | Actual intervention | Treatment manifest proves `authority_applied=true` | Exposure manifest and cohort sample |
 | Contribution delta | Cost-aware treatment mean minus control mean | `learning/verdicts.py` |
 | Confidence interval | Deterministic bootstrap interval for the contribution delta | `learning/verdicts.py` |
@@ -37,10 +37,11 @@ utility. The current metric version is
 | Measurement identity | Exact hypothesis, stage, epoch, horizon, outcome contract, metric version, and behavior-contract hash | Learning ledger/authority resolver |
 | Operational health | Evaluator/lifecycle freshness, failures, watermark, and catch-up state | `learning_job_health` and `lco-v1` |
 
-`min_market_days` currently measures elapsed span, not uninterrupted coverage.
-A qualification claim additionally requires owner verification that the window has
-no unexplained material gap. Automated continuity enforcement is tracked by #692;
-changing it is B-class and starts a fresh window.
+`min_market_days` is a consecutive coverage gate, not elapsed wall-clock span. A
+missing UTC day in either arm resets the current window; samples before that gap do
+not satisfy counts, economics, confidence, or harm gates afterward. Planned and
+partial outages have no implicit waiver and fail closed. Metric v4 and UFC behavior
+contract v5 therefore start a from-zero cohort while v3/v4 evidence remains history.
 
 ### Verdict meaning
 
