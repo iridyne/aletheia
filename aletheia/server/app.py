@@ -51,6 +51,17 @@ from aletheia.server.routes.ws import router as ws_router
 logger = logging.getLogger("aletheia")
 
 
+def _log_startup_stage(stage: str, stage_started: float, startup_started: float) -> float:
+    finished = time.perf_counter()
+    logger.info(
+        "gateway_startup_stage stage=%s duration_ms=%.1f elapsed_ms=%.1f",
+        stage,
+        (finished - stage_started) * 1000.0,
+        (finished - startup_started) * 1000.0,
+    )
+    return finished
+
+
 def _mount_static_dashboard() -> None:
     """Mount static dashboard files at root path.
 
@@ -311,6 +322,8 @@ async def _run_startup_sync(sync_fn) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    startup_started = time.perf_counter()
+    stage_started = startup_started
     # Bump aletheia logger to DEBUG level. The default Python logging level
     # (WARNING) silently drops all info/debug output from our modules.
     # Uvicorn already configures root logging handlers, so we just set level.
@@ -323,6 +336,7 @@ async def lifespan(app: FastAPI):
     _aletheia_logger = logging.getLogger("aletheia")
     if _aletheia_logger.level == logging.NOTSET:
         _aletheia_logger.setLevel(logging.DEBUG)
+    stage_started = _log_startup_stage("logging", stage_started, startup_started)
 
     cfg = bootstrap()
     event_loop_lag_task = None
@@ -360,6 +374,7 @@ async def lifespan(app: FastAPI):
                 logger.info("git-hook: %s", action)
         except Exception as e:
             logger.warning("git-hook cleanup skipped (non-fatal): %s", e)
+    stage_started = _log_startup_stage("runtime_context", stage_started, startup_started)
     logger.info("Aletheia Trading OS v%s starting", __version__)
     logger.info("Dashboard: http://%s:%d", cfg.app.bind_host, runtime_context["port"] or cfg.app.dashboard_port)
     # Migrate keyring secrets to the encrypted file store so that CLI / service
@@ -373,12 +388,16 @@ async def lifespan(app: FastAPI):
             logger.info("Migrated %d secret(s) from keyring to file store", n)
     except Exception as _e:
         logger.debug("Keyring-to-file migration skipped: %s", _e)
+    stage_started = _log_startup_stage("secret_migration", stage_started, startup_started)
     # Ensure DB schema + register agents/tools, then start the scheduler.
     from aletheia.storage.migrations import run_migrations
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     from aletheia.agent_runtime.scheduler import init_scheduler, stop_scheduler
 
-    run_migrations()
+    stage_started = _log_startup_stage("startup_dependency_imports", stage_started, startup_started)
+    migrations_applied = run_migrations()
+    stage_started = _log_startup_stage("database_migrations", stage_started, startup_started)
+    logger.info("gateway_startup_migrations full_run=%s", migrations_applied)
     # Backfill FTS5 index so the experience loop has full coverage on every boot.
     try:
         from aletheia.knowledge.retrieval import reindex_all
@@ -388,6 +407,7 @@ async def lifespan(app: FastAPI):
             logger.info("FTS reindex: %d knowledge items indexed", fts_count)
     except Exception as e:
         logger.warning("FTS reindex failed (non-fatal): %s", e)
+    stage_started = _log_startup_stage("knowledge_fts_reindex", stage_started, startup_started)
     if background_services_enabled:
         try:
             from aletheia.agent_runtime.run_logger import mark_stale_running_runs
@@ -409,6 +429,7 @@ async def lifespan(app: FastAPI):
             start_runtime_session(cfg, runtime_context)
         except Exception as e:
             logger.warning("Runtime session start failed (non-fatal): %s", e)
+    stage_started = _log_startup_stage("runtime_reconciliation", stage_started, startup_started)
     init_tool_registry()
     from aletheia.agent_runtime.job_queue import get_agent_job_manager
 
@@ -422,6 +443,7 @@ async def lifespan(app: FastAPI):
             logger.warning("Scheduler failed to start: %s", e)
     else:
         logger.info("Runtime mode %s: background services disabled", runtime_context["runtime_mode"])
+    stage_started = _log_startup_stage("scheduler_initialization", stage_started, startup_started)
     # Fail-loud LLM gate, run as a BACKGROUND task (not awaited here): if no
     # provider can actually do inference it pauses the scheduler and persists
     # runtime.paused. Deferring it until AFTER init_scheduler + yield means the
@@ -534,6 +556,7 @@ async def lifespan(app: FastAPI):
         event_loop_lag_monitor.run(),
         name="event_loop_lag_monitor",
     )
+    _log_startup_stage("pre_yield_services", stage_started, startup_started)
     try:
         yield
     finally:

@@ -1,6 +1,7 @@
 """SQLite connection management and process-local write serialization."""
 
 from concurrent.futures import Future
+from contextlib import contextmanager
 from dataclasses import dataclass
 import logging
 import os
@@ -584,6 +585,34 @@ def shutdown_writer() -> None:
 
 def db_path() -> Path:
     return get_data_dir() / "app.db"
+
+
+@contextmanager
+def readonly_db():
+    """Open the effective database without creation or write-oriented PRAGMAs.
+
+    File-backed test injection follows the injected path. In-memory injection has
+    no second connection to open, so it yields the existing test connection and
+    deliberately leaves its lifecycle with the fixture.
+    """
+
+    if _injected_db_active and _injected_db_path is None:
+        yield get_db()
+        return
+
+    path = Path(_injected_db_path or db_path())
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    connection = sqlite3.connect(
+        f"{path.resolve().as_uri()}?mode=ro",
+        uri=True,
+        timeout=1.0,
+    )
+    connection.row_factory = sqlite3.Row
+    try:
+        yield connection
+    finally:
+        connection.close()
 
 
 def get_db() -> sqlite3.Connection:

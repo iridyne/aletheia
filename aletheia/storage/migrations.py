@@ -1,13 +1,32 @@
 """Idempotent SQLite schema migrations."""
 
+import hashlib
 import sqlite3
+import threading
+from pathlib import Path
 
 from aletheia.storage.sqlite import get_db
 
 # Declared DB schema version recorded on each Runtime Session so a session can be
 # tied to the schema it booted on. There is no per-migration numbering; bump this
 # string when the schema shape changes in a way worth attributing to.
-SCHEMA_VERSION = "aletheia-sqlite-v1"
+SCHEMA_VERSION = "aletheia-sqlite-v2"
+
+_MIGRATION_STATE_DDL = """
+CREATE TABLE IF NOT EXISTS aletheia_schema_migration_state (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    source_fingerprint TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+# The durable marker avoids replaying the complete idempotent migration suite on
+# every production process start. The source digest deliberately covers DDL and
+# repair/backfill code together: changing either invalidates the marker without
+# relying on a developer to remember a manual migration number bump.
+_fingerprint_cache: str | None = None
+_verified_migration = threading.local()
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS settings (
@@ -3281,6 +3300,7 @@ def _run_all_ddl(db) -> None:
     _ensure_knowledge_fts_outcome_column(db)
     _ensure_knowledge_fts(db)
     db.executescript(_CORE_INDEXES_SQL)
+    db.executescript(_MIGRATION_STATE_DDL)
     _clear_learning_verdict_runner_zombie(db)
     _backfill_fco_allocation_selected(db)
     db.commit()
@@ -3296,20 +3316,78 @@ def _is_pytest() -> bool:
     return "PYTEST_CURRENT_TEST" in os.environ
 
 
-def run_migrations() -> None:
+def _migration_source_fingerprint() -> str:
+    global _fingerprint_cache
+    if _fingerprint_cache is None:
+        try:
+            source = Path(__file__).read_bytes()
+        except OSError:
+            # Aletheia normally runs from a checkout. Keep packaged/frozen builds
+            # functional while still requiring an explicit schema-version bump.
+            source = SCHEMA_VERSION.encode("utf-8")
+        _fingerprint_cache = hashlib.sha256(source).hexdigest()
+    return _fingerprint_cache
+
+
+def _migration_marker_matches(db, fingerprint: str) -> bool:
+    try:
+        row = db.execute(
+            "SELECT source_fingerprint, schema_version "
+            "FROM aletheia_schema_migration_state WHERE singleton = 1"
+        ).fetchone()
+    except sqlite3.OperationalError as exc:
+        if "no such table: aletheia_schema_migration_state" in str(exc).lower():
+            return False
+        raise
+    return bool(
+        row
+        and row["source_fingerprint"] == fingerprint
+        and row["schema_version"] == SCHEMA_VERSION
+    )
+
+
+def _record_migration_marker(db, fingerprint: str) -> None:
+    db.execute(
+        "INSERT INTO aletheia_schema_migration_state "
+        "(singleton, source_fingerprint, schema_version, applied_at) "
+        "VALUES (1, ?, ?, datetime('now')) "
+        "ON CONFLICT(singleton) DO UPDATE SET "
+        "source_fingerprint=excluded.source_fingerprint, "
+        "schema_version=excluded.schema_version, "
+        "applied_at=excluded.applied_at",
+        (fingerprint, SCHEMA_VERSION),
+    )
+    db.commit()
+
+
+def run_migrations() -> bool:
     """Run all idempotent schema creation statements.
 
     In pytest: builds a shared in-memory blueprint on first call, then clones it into
     the current test connection via backup() — skipping 80+ CREATE TABLE statements on
-    every subsequent call. Production paths (no PYTEST_CURRENT_TEST) always run DDL.
-    """
-    import sqlite3
+    every subsequent call. Production paths persist a digest of this module after a
+    successful full pass and return immediately while that digest still matches.
 
+    Returns True when the full migration suite ran, otherwise False.
+    """
     db = get_db()
 
     if not _is_pytest():
+        fingerprint = _migration_source_fingerprint()
+        if (
+            getattr(_verified_migration, "connection", None) is db
+            and getattr(_verified_migration, "fingerprint", None) == fingerprint
+        ):
+            return False
+        if _migration_marker_matches(db, fingerprint):
+            _verified_migration.connection = db
+            _verified_migration.fingerprint = fingerprint
+            return False
         _run_all_ddl(db)
-        return
+        _record_migration_marker(db, fingerprint)
+        _verified_migration.connection = db
+        _verified_migration.fingerprint = fingerprint
+        return True
 
     global _blueprint
     if _blueprint is None:
@@ -3327,8 +3405,9 @@ def run_migrations() -> None:
         try:
             _blueprint.backup(db)
             db.commit()
-            return
+            return True
         except sqlite3.OperationalError:
             pass  # destination busy — fall through to normal DDL
 
     _run_all_ddl(db)
+    return True

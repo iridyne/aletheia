@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import subprocess
 import time
 from pathlib import Path
@@ -11,8 +12,7 @@ import urllib.request
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
 from aletheia.gateway.network import backend_bind_host
 from aletheia.gateway.pidfile import _no_window_kwargs, _resolve_real_python
-from aletheia.storage.migrations import run_migrations
-from aletheia.storage.sqlite import get_db
+from aletheia.storage.sqlite import readonly_db
 
 
 def shadow_port_for(cfg) -> int:
@@ -57,12 +57,27 @@ def runtime_process_env(
 
 
 def current_runtime_record() -> dict | None:
-    run_migrations()
-    row = get_db().execute(
-        "SELECT * FROM runtime_registry WHERE state = 'current' "
-        "ORDER BY COALESCE(promoted_at, created_at) DESC, rowid DESC LIMIT 1"
-    ).fetchone()
-    return dict(row) if row else None
+    """Read the current Runtime without mutating or migrating the database.
+
+    Gateway supervision consults this before either frontdoor or backend exists.
+    Schema creation belongs to backend lifespan startup; making this lookup run the
+    full migration suite serialized process creation behind every DDL/backfill on
+    large production databases.
+    """
+
+    try:
+        with readonly_db() as connection:
+            row = connection.execute(
+                "SELECT * FROM runtime_registry WHERE state = 'current' "
+                "ORDER BY COALESCE(promoted_at, created_at) DESC, rowid DESC LIMIT 1"
+            ).fetchone()
+        return dict(row) if row else None
+    except FileNotFoundError:
+        return None
+    except sqlite3.OperationalError as exc:
+        if "no such table: runtime_registry" in str(exc).lower():
+            return None
+        raise
 
 
 def current_gateway_launch_context(cfg, *, port: int | None = None) -> dict:
