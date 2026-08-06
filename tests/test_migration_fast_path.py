@@ -76,6 +76,24 @@ def test_production_migrations_persist_stable_ledger_and_apply_once(tmp_path, mo
     reopened.close()
 
 
+def test_production_migrations_emit_storage_owned_progress(tmp_path, monkeypatch):
+    import aletheia.storage.migrations as migrations
+
+    connection = _connection(tmp_path / "app.db")
+    _production_migration_env(monkeypatch, migrations, connection)
+    events: list[migrations.MigrationProgressEvent] = []
+
+    assert migrations.apply_migrations(progress=events.append) is True
+
+    assert [event.phase for event in events] == ["started", "completed"]
+    assert events[0].step_index == 1
+    assert events[0].step_count == 1
+    assert events[0].estimated_remaining_sec is not None
+    assert "CASI" in str(events[0].estimate_basis)
+    assert events[1].duration_sec is not None
+    connection.close()
+
+
 def test_migration_checksum_drift_fails_closed_without_replaying(tmp_path, monkeypatch):
     import aletheia.storage.migrations as migrations
 
@@ -241,9 +259,10 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert migrations._MIGRATIONS[0].schema_version == "aletheia-sqlite-v2"
-    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v3"
+    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v3"
+    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v4"
     assert migrations._MIGRATIONS[-1].schema_version == migrations.SCHEMA_VERSION
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v4"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v5"
     connection.close()
 
 
@@ -303,6 +322,80 @@ def test_capacity_guardrail_migration_drops_only_redundant_indexes():
     assert "sqlite_autoindex_filter_candidate_outcomes_2" in outcome_plan
     assert "sqlite_autoindex_market_ohlcv_1" in ohlcv_plan
     connection.close()
+
+
+def test_pending_outcome_partial_index_covers_due_queue_only():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE filter_candidate_outcomes "
+        "(id TEXT PRIMARY KEY, status TEXT NOT NULL, due_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE INDEX idx_filter_outcomes_status_due "
+        "ON filter_candidate_outcomes(status,due_at)"
+    )
+
+    migrations._apply_pending_outcome_partial_index_v5(connection)
+
+    indexes = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'"
+        )
+    }
+    assert "idx_filter_outcomes_status_due" not in indexes
+    assert "idx_filter_outcomes_pending_due" in indexes
+    pending_plan = connection.execute(
+        "EXPLAIN QUERY PLAN SELECT id FROM filter_candidate_outcomes "
+        "WHERE status='pending' AND due_at <= ? ORDER BY due_at,id LIMIT 10",
+        ("2026-08-06T00:00:00+00:00",),
+    ).fetchone()[3]
+    settled_plan = connection.execute(
+        "EXPLAIN QUERY PLAN SELECT id FROM filter_candidate_outcomes "
+        "WHERE status='settled' AND due_at <= ?",
+        ("2026-08-06T00:00:00+00:00",),
+    ).fetchone()[3]
+    assert "idx_filter_outcomes_pending_due" in pending_plan
+    assert "idx_filter_outcomes_pending_due" not in settled_plan
+    connection.close()
+
+
+def test_migration_progress_display_explains_eta_as_a_range():
+    from io import StringIO
+
+    from rich.console import Console
+
+    from aletheia.cli.migration_progress import MigrationProgressDisplay
+    from aletheia.storage.migrations import MigrationProgressEvent
+
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=160)
+    with MigrationProgressDisplay(console=console) as progress:
+        progress(MigrationProgressEvent(
+            phase="started",
+            migration_id="migration-a",
+            description="large compatibility migration",
+            step_index=1,
+            step_count=1,
+            estimated_remaining_sec=(20.0, 50.0),
+            estimate_basis="broad local calibration",
+        ))
+        progress(MigrationProgressEvent(
+            phase="completed",
+            migration_id="migration-a",
+            description="large compatibility migration",
+            step_index=1,
+            step_count=1,
+            duration_sec=31.0,
+            estimated_remaining_sec=(0.0, 0.0),
+        ))
+
+    rendered = output.getvalue()
+    assert "Completed 1/1" in rendered
+    assert "31s" in rendered
+    assert "complete" in rendered
 
 
 def test_production_code_has_no_legacy_implicit_run_migrations_callers():

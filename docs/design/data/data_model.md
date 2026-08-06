@@ -510,11 +510,17 @@ Runtime artefact trees under `~/.aletheia/`. Full details in `RETENTION_POLICY.m
 New databases set `PRAGMA auto_vacuum = INCREMENTAL` before creating schema objects.
 An existing `auto_vacuum=NONE` database must set the pragma **before** a one-time
 offline `VACUUM`; calling `incremental_vacuum` alone on it is a no-op.
-The recurring `_run_cleanup` pass reclaims freelist pages via `PRAGMA incremental_vacuum(1000)`
-at the tail and records the physical/logical size to `logs/database_capacity.jsonl`.
+The recurring `_run_cleanup` pass reclaims freelist pages via bounded `PRAGMA incremental_vacuum(N)`
+at the tail with a bounded 16 MiB normal / 64 MiB capacity-pressure budget and records
+the physical/logical size to `logs/database_capacity.jsonl`.
 Full `VACUUM` runs only through explicit `aletheia data compact --apply` with the Gateway
 stopped. The default 2048 MiB capacity budget is an alert threshold, not a reason to drop
 authoritative writes. See `RETENTION_POLICY.md` §6 for the full sequence.
+
+The due-settlement queue uses a partial index over pending rows only:
+`(due_at,id) WHERE status='pending'`. Deep capacity inspection uses `dbstat` aggregate
+mode and reports packing efficiency; historical ETA requires multiple exact nightly
+samples and is labelled provisional until it spans at least seven days.
 
 ---
 

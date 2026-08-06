@@ -33,6 +33,9 @@ def test_capacity_snapshot_is_read_only_and_attributes_objects(tmp_path):
     assert snapshot["logical_used_bytes"] > 0
     assert snapshot["capacity_status"] == "over_budget"
     assert any(row["name"] == "samples" for row in snapshot["top_objects"])
+    sample_object = next(row for row in snapshot["top_objects"] if row["name"] == "samples")
+    assert 0 <= sample_object["packing_ratio"] <= 1
+    assert sample_object["unused_bytes"] >= 0
     assert path.stat().st_mtime_ns == before_mtime
 
 
@@ -55,6 +58,59 @@ def test_capacity_budget_has_schema_bounds():
         RetentionConfig(app_db_capacity_mb=511)
     with pytest.raises(ValidationError):
         RetentionConfig(app_db_capacity_mb=65537)
+
+
+def test_capacity_trend_requires_history_then_reports_robust_eta():
+    from aletheia.maintenance.database_capacity import database_capacity_trend
+
+    assert database_capacity_trend([])["status"] == "insufficient_history"
+    samples = [
+        {
+            "captured_at": f"2026-08-{day:02d}T00:00:00+00:00",
+            "physical_bytes": (100 + (day - 1) * 10) * 1024 * 1024,
+        }
+        for day in (1, 8, 15)
+    ]
+
+    trend = database_capacity_trend(
+        samples,
+        capacity_bytes=300 * 1024 * 1024,
+    )
+
+    assert trend["status"] == "established"
+    assert trend["slope_mib_per_day"] == pytest.approx(10.0)
+    assert trend["capacity_eta_days"] == pytest.approx(6.0)
+    assert trend["capacity_eta_at"].startswith("2026-08-21")
+
+
+def test_incremental_reclaim_is_bounded_and_writer_serialized(tmp_path, monkeypatch):
+    from aletheia.maintenance.database_capacity import reclaim_incremental_freelist
+    from aletheia.storage.sqlite import _open_connection
+
+    db = _open_connection(tmp_path / "app.db")
+    db.execute("CREATE TABLE churn (id INTEGER PRIMARY KEY, payload BLOB)")
+    db.executemany(
+        "INSERT INTO churn(payload) VALUES (?)",
+        [(b"x" * 8192,) for _ in range(100)],
+    )
+    db.execute("DELETE FROM churn WHERE id > 1")
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "aletheia.storage.sqlite.acquire_write_lock",
+        lambda: calls.append("acquire") or 0.0,
+    )
+    monkeypatch.setattr(
+        "aletheia.storage.sqlite.release_write_lock",
+        lambda: calls.append("release"),
+    )
+
+    result = reclaim_incremental_freelist(db, max_mb=1)
+
+    assert result["enabled"] is True
+    assert result["requested_pages"] <= 256
+    assert result["remaining_pages"] >= 0
+    assert calls == ["acquire", "release"]
+    db.close()
 
 
 def test_compaction_defaults_to_read_only_plan(tmp_path):

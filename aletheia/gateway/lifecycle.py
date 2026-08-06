@@ -60,7 +60,10 @@ def _apply_gateway_migrations() -> bool:
         pending = ", ".join(status["pending"])
         _echo_stdout_safe(f"Applying pending database migration(s): {pending} ...")
         started = time.perf_counter()
-        applied = apply_migrations()
+        from aletheia.cli.migration_progress import MigrationProgressDisplay
+
+        with MigrationProgressDisplay() as progress:
+            applied = apply_migrations(progress=progress)
         elapsed = time.perf_counter() - started
         _echo_stdout_safe(f"Database migration completed in {elapsed:.1f}s.")
         return applied

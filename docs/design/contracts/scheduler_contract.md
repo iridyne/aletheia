@@ -101,6 +101,10 @@ guarded cleanup。每次成功清理同时将数据库容量
 快照写到 app.db 之外的 `logs/database_capacity.jsonl`。这些动作不得进入 Gateway
 pre-yield 冷启动路径。
 
+cleanup 的 incremental reclaim 是有界 maintenance write：正常最多 16 MiB；物理体积
+达到配置预算 80% 后最多 64 MiB。它必须持有 SQLite process/cross-process writer permit，
+只能回收 freelist，不得改变 retention window 或删除额外业务行。
+
 **注**：`ohlcv_nightly_backfill`（#27）仅当 `cfg.historical_data.nightly_backfill_enabled` 为真时注册（`scheduler.py:456`）。无论该开关状态，总 `add_job` 调用数为 30，其中条件分支使实际运行时 job 数为 29 或 30，均满足 AC-S08 ≥28 的下限。
 
 ### 3.1 Learning contribution scheduling (A1 alignment)

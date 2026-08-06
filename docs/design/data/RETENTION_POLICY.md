@@ -194,6 +194,7 @@ below are the Phase 3 target lines.
 | 18 | `filter_decision_batches` bounded heavy snapshots | `aletheia/analytics/filter_evidence.py` + `aletheia/universe/features.py` + `aletheia/universe/filters.py` | Lossless compressed facts, with at most one unchanged ticker/tradability batch per hour. A changed parameter version writes immediately. |
 | 22 | Experiment outcome horizon | `aletheia/universe/allocator.py` + `aletheia/universe/service.py` | General filter evidence retains four canonical horizons; a Learning exposure persists only its declared target horizon for both complete arms. |
 | 23 | Redundant SQLite indexes | migration `20260806_0003_capacity_guardrails_v4` | Drop two indexes covered by the outcome UNIQUE constraint and one covered by the OHLCV primary key; retain the same indexed query plans without duplicate write amplification. |
+| 24 | Pending outcome partial index | migration `20260806_0004_pending_outcome_partial_index_v5` | Replace the full `(status,due_at)` index with `(due_at,id) WHERE status='pending'`. Settlement queries are unchanged while settled/failed rows stop occupying this queue index. CASI read-only evidence on 2026-08-06: 707,160 settled + 16 failed + 0 pending rows; the old index occupied 38,649,856 bytes, so its current replacement is effectively empty. |
 | 19 | `market_regimes` skip-if-unchanged | `aletheia/storage/repositories.py:4672` (or wherever `INSERT INTO market_regimes` lives) | Skip INSERT if regime state is byte-identical to latest. Hourly floor. |
 | 20 | Learning behavior identity excludes `code_commit` | `aletheia/learning/policy_epochs.py` + `aletheia/learning/behavior_contracts.py` | Strip `code_commit` from policy hashing and use `behavior_contract_hash` for cohort/verdict identity. Exposure commits remain provenance and do not multiply behaviorally identical cohorts. |
 | 21 | `serenity_evidence` content_hash dedup | `aletheia/agents/research_worker.py:689` + `aletheia/agents/prediction_observer.py:434` + `aletheia/server/routes/data.py:390` | Use the existing `content_hash` column. Before INSERT, check `(theme_id, content_hash)`. Skip on match. |
@@ -214,8 +215,10 @@ recurring cleanup pass:
 6. `PRAGMA optimize` — refresh query planner stats.
 
 After (4), the recurring `_run_cleanup` pass reclaims freelist pages via
-`PRAGMA incremental_vacuum(1000)` at the tail — no more full VACUUM needed
-during runtime.
+bounded `PRAGMA incremental_vacuum(N)` at the tail: at most 16 MiB normally or
+64 MiB after reaching 80% of the configured capacity budget. The operation holds
+the process/cross-process writer permit. No more full VACUUM is needed during
+runtime unless page packing/fragmentation evidence justifies an offline window.
 
 New databases set incremental mode before their first schema object. Existing
 databases with `PRAGMA auto_vacuum=0` do not reclaim file bytes when
@@ -256,6 +259,30 @@ freelist bytes, capacity ratio, and reclaim mode. Use at least 30 samples before
 claiming a new steady-state curve. A first-order post-v4 estimate is roughly
 1.4–1.7 GiB after redundant-index removal and offline compaction, with a 2 GiB
 operational budget; this remains a model until the nightly history validates it.
+
+`aletheia data capacity --deep` uses SQLite `dbstat` aggregate mode and reports
+per-object packing ratio, so a VACUUM decision can distinguish freelist/poor page
+packing from legitimate retained payload. Capacity trend uses the median of
+pairwise physical-size slopes; fewer than 3 samples or less than 7 elapsed days is
+reported as provisional/insufficient rather than a reliable ETA.
+
+### 7.1 Further structural opportunities, not automatic maintenance
+
+- `market_ohlcv` is a composite-primary-key rowid table. SQLite `WITHOUT ROWID`
+  could remove its separate primary-key B-tree, but the current generic retention
+  helper deletes by `rowid`; conversion therefore requires an isolated v6 table
+  rebuild, PK-based prune implementation, query-plan benchmark, and rollback test.
+- Permanent Learning/audit ledgers must not be TTL-pruned. If their growth becomes
+  material, use a separately specified content-addressed manifest or verified cold
+  archive with transparent replay; never silently delete or detach authority evidence.
+- Time retention is paired with per-instrument bar caps and capacity alerts. A hard
+  global row cap must not override active-experiment clean-window guards.
+
+SQLite authorities for these choices: [auto/incremental vacuum and optimize](https://www.sqlite.org/pragma.html),
+[WAL checkpoint behavior](https://www.sqlite.org/wal.html),
+[partial indexes](https://www.sqlite.org/partialindex.html),
+[dbstat aggregate mode](https://www.sqlite.org/dbstat.html), and
+[WITHOUT ROWID trade-offs](https://www.sqlite.org/withoutrowid.html).
 
 ---
 

@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v4"
+SCHEMA_VERSION = "aletheia-sqlite-v5"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3344,6 +3344,7 @@ _STARTUP_DATASET_BOUNDARY_CHECKSUM = hashlib.sha256(
         _STARTUP_HOT_PATH_INDEXES_SQL
         + "\n".join(sql for _, sql in _OPTIONAL_HOT_PATH_INDEXES)
         + "\nknowledge_fts_active_high_confidence_reindex_v1"
+        + "\nPRAGMA optimize"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -3355,7 +3356,16 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_type_timestamp
 ON audit_events(event_type, timestamp DESC);
 """
 _CAPACITY_GUARDRAIL_CHECKSUM = hashlib.sha256(
-    _CAPACITY_GUARDRAIL_INDEX_SQL.encode("utf-8")
+    (_CAPACITY_GUARDRAIL_INDEX_SQL + "\nPRAGMA optimize").encode("utf-8")
+).hexdigest()
+
+_PENDING_OUTCOME_PARTIAL_INDEX_SQL = """
+DROP INDEX IF EXISTS idx_filter_outcomes_status_due;
+CREATE INDEX IF NOT EXISTS idx_filter_outcomes_pending_due
+ON filter_candidate_outcomes(due_at, id) WHERE status='pending';
+"""
+_PENDING_OUTCOME_PARTIAL_INDEX_CHECKSUM = hashlib.sha256(
+    (_PENDING_OUTCOME_PARTIAL_INDEX_SQL + "\nPRAGMA optimize").encode("utf-8")
 ).hexdigest()
 
 
@@ -3383,6 +3393,76 @@ class MigrationStep:
     apply: Callable[[sqlite3.Connection], None]
 
 
+@dataclass(frozen=True)
+class MigrationProgressEvent:
+    """Storage-owned progress fact; presentation remains a CLI concern."""
+
+    phase: str
+    migration_id: str
+    description: str
+    step_index: int
+    step_count: int
+    duration_sec: float | None = None
+    estimated_remaining_sec: tuple[float, float] | None = None
+    estimate_basis: str | None = None
+
+
+MigrationProgressCallback = Callable[[MigrationProgressEvent], None]
+
+
+_MIGRATION_DESCRIPTIONS = {
+    _LEGACY_BASELINE_ID: "legacy schema, indexes, and idempotent backfills",
+    "20260806_0002_startup_dataset_boundary_v3": "startup indexes and one-time FTS rebuild",
+    "20260806_0003_capacity_guardrails_v4": "capacity indexes and cleanup lookup",
+    "20260806_0004_pending_outcome_partial_index_v5": "pending-outcome partial index",
+}
+
+
+def _migration_duration_estimate(
+    migration_id: str,
+    *,
+    database_bytes: int,
+) -> tuple[tuple[float, float], str] | None:
+    """Return a deliberately broad local calibration range, never a deadline."""
+
+    size_gib = max(0.0, int(database_bytes)) / (1024**3)
+    if migration_id == _LEGACY_BASELINE_ID:
+        # CASI measured 29-47 seconds at 1.78 GiB. Keep a wider model to
+        # acknowledge disk/antivirus variance rather than showing fake precision.
+        return (
+            (max(5.0, 5.0 + 12.0 * size_gib), max(15.0, 10.0 + 25.0 * size_gib)),
+            "broad range calibrated from a 1.78 GiB CASI migration",
+        )
+    if migration_id == "20260806_0002_startup_dataset_boundary_v3":
+        return (
+            (1.0, max(5.0, 5.0 + 2.0 * size_gib)),
+            "dataset-scaled index/FTS estimate",
+        )
+    if migration_id == "20260806_0003_capacity_guardrails_v4":
+        return (
+            (1.0, max(5.0, 3.0 + 5.0 * size_gib)),
+            "dataset-scaled index maintenance estimate",
+        )
+    if migration_id == "20260806_0004_pending_outcome_partial_index_v5":
+        return (
+            (1.0, max(5.0, 3.0 + 4.0 * size_gib)),
+            "dataset-scaled partial-index estimate",
+        )
+    return None
+
+
+def _emit_migration_progress(
+    callback: MigrationProgressCallback | None,
+    event: MigrationProgressEvent,
+) -> None:
+    if callback is None:
+        return
+    try:
+        callback(event)
+    except Exception as exc:  # presentation must never decide schema safety
+        logger.debug("migration progress callback failed: %s", exc)
+
+
 def _apply_startup_dataset_boundary_v3(db: sqlite3.Connection) -> None:
     """Install startup indexes and rebuild FTS once, never on every boot."""
 
@@ -3397,12 +3477,21 @@ def _apply_startup_dataset_boundary_v3(db: sqlite3.Connection) -> None:
     from aletheia.knowledge.retrieval import reindex_all
 
     reindex_all(db=db, strict=True)
+    db.execute("PRAGMA optimize")
 
 
 def _apply_capacity_guardrails_v4(db: sqlite3.Connection) -> None:
     """Remove indexes already covered by a UNIQUE constraint or primary key."""
 
     db.executescript(_CAPACITY_GUARDRAIL_INDEX_SQL)
+    db.execute("PRAGMA optimize")
+
+
+def _apply_pending_outcome_partial_index_v5(db: sqlite3.Connection) -> None:
+    """Index only unsettled outcomes consumed by the due-settlement queue."""
+
+    db.executescript(_PENDING_OUTCOME_PARTIAL_INDEX_SQL)
+    db.execute("PRAGMA optimize")
 
 
 _MIGRATIONS = (
@@ -3421,8 +3510,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260806_0003_capacity_guardrails_v4",
         checksum=_CAPACITY_GUARDRAIL_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v4",
         apply=_apply_capacity_guardrails_v4,
+    ),
+    MigrationStep(
+        migration_id="20260806_0004_pending_outcome_partial_index_v5",
+        checksum=_PENDING_OUTCOME_PARTIAL_INDEX_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_pending_outcome_partial_index_v5,
     ),
 )
 
@@ -3589,18 +3684,85 @@ def _record_migration_applied(
     db.commit()
 
 
-def _apply_production_migrations() -> bool:
+def _apply_production_migrations(
+    progress: MigrationProgressCallback | None = None,
+) -> bool:
     _validate_migration_registry()
     db = get_db()
     acquire_write_lock(timeout=_MIGRATION_LOCK_TIMEOUT_SEC)
     try:
         _ensure_migration_ledger(db)
         pending = _validate_applied_migrations(_read_applied_migrations(db))
-        for migration in pending:
+        page_size = int(db.execute("PRAGMA page_size").fetchone()[0])
+        page_count = int(db.execute("PRAGMA page_count").fetchone()[0])
+        database_bytes = page_size * page_count
+        estimates = {
+            migration.migration_id: _migration_duration_estimate(
+                migration.migration_id,
+                database_bytes=database_bytes,
+            )
+            for migration in pending
+        }
+        for index, migration in enumerate(pending, start=1):
+            remaining_estimates = [
+                estimates[item.migration_id]
+                for item in pending[index - 1 :]
+                if estimates[item.migration_id] is not None
+            ]
+            estimated_remaining = (
+                (
+                    sum(item[0][0] for item in remaining_estimates),
+                    sum(item[0][1] for item in remaining_estimates),
+                )
+                if len(remaining_estimates) == len(pending[index - 1 :])
+                else None
+            )
+            current_estimate = estimates[migration.migration_id]
+            _emit_migration_progress(
+                progress,
+                MigrationProgressEvent(
+                    phase="started",
+                    migration_id=migration.migration_id,
+                    description=_MIGRATION_DESCRIPTIONS.get(
+                        migration.migration_id, "versioned database upgrade"
+                    ),
+                    step_index=index,
+                    step_count=len(pending),
+                    estimated_remaining_sec=estimated_remaining,
+                    estimate_basis=current_estimate[1] if current_estimate else None,
+                ),
+            )
             started = time.perf_counter()
             migration.apply(db)
             duration_ms = (time.perf_counter() - started) * 1000.0
             _record_migration_applied(db, migration, duration_ms=duration_ms)
+            future_estimates = [
+                estimates[item.migration_id]
+                for item in pending[index:]
+                if estimates[item.migration_id] is not None
+            ]
+            future_remaining = (
+                (
+                    sum(item[0][0] for item in future_estimates),
+                    sum(item[0][1] for item in future_estimates),
+                )
+                if len(future_estimates) == len(pending[index:])
+                else None
+            )
+            _emit_migration_progress(
+                progress,
+                MigrationProgressEvent(
+                    phase="completed",
+                    migration_id=migration.migration_id,
+                    description=_MIGRATION_DESCRIPTIONS.get(
+                        migration.migration_id, "versioned database upgrade"
+                    ),
+                    step_index=index,
+                    step_count=len(pending),
+                    duration_sec=duration_ms / 1000.0,
+                    estimated_remaining_sec=future_remaining,
+                ),
+            )
             logger.info(
                 "database_migration_applied id=%s checksum=%s duration_ms=%.1f",
                 migration.migration_id,
@@ -3665,12 +3827,14 @@ def _apply_pytest_migrations() -> bool:
     return True
 
 
-def apply_migrations() -> bool:
+def apply_migrations(
+    progress: MigrationProgressCallback | None = None,
+) -> bool:
     """Apply pending migrations under one process/cross-process writer permit."""
 
     if _is_pytest():
         return _apply_pytest_migrations()
-    return _apply_production_migrations()
+    return _apply_production_migrations(progress=progress)
 
 
 def run_migrations() -> bool:

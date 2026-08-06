@@ -25,7 +25,10 @@ def migrate_database():
         return
     typer.echo("Applying pending migration(s): " + ", ".join(before["pending"]))
     started = time.perf_counter()
-    apply_migrations()
+    from aletheia.cli.migration_progress import MigrationProgressDisplay
+
+    with MigrationProgressDisplay() as progress:
+        apply_migrations(progress=progress)
     after = migration_status()
     typer.echo(
         f"Database migrations completed in {time.perf_counter() - started:.1f}s; "
@@ -54,13 +57,19 @@ def database_capacity(
     from aletheia.maintenance.database_capacity import (
         database_capacity_history,
         database_capacity_snapshot,
+        database_capacity_trend,
     )
 
     budget = load_config(persist_migrations=False).retention.app_db_capacity_mb
     snapshot = database_capacity_snapshot(capacity_mb=budget, deep=deep)
-    payload = {"current": snapshot}
+    trend_history = database_capacity_history(limit=max(90, history))
+    trend = database_capacity_trend(
+        [*trend_history, snapshot],
+        capacity_bytes=snapshot.get("capacity_bytes"),
+    )
+    payload = {"current": snapshot, "trend": trend}
     if history:
-        payload["history"] = database_capacity_history(limit=history)
+        payload["history"] = trend_history[-history:]
     if json_output:
         typer.echo(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
         return
@@ -79,7 +88,25 @@ def database_capacity(
         f"incremental_vacuum={'enabled' if snapshot['incremental_vacuum_enabled'] else 'disabled'}"
     )
     for row in snapshot.get("top_objects", []):
-        typer.echo(f"  {row['name']}: {row['bytes'] / (1024 * 1024):.1f} MiB")
+        packing = row.get("packing_ratio")
+        packing_text = f", {float(packing):.1%} packed" if packing is not None else ""
+        typer.echo(
+            f"  {row['name']}: {row['bytes'] / (1024 * 1024):.1f} MiB{packing_text}"
+        )
+    if trend["status"] == "insufficient_history":
+        typer.echo(
+            "Trend: insufficient exact history; need at least 3 samples across 7 days."
+        )
+    else:
+        typer.echo(
+            f"Trend ({trend['status']}): {trend['slope_mib_per_day']:+.2f} MiB/day "
+            f"across {trend['span_days']:.1f} days"
+        )
+        if trend.get("capacity_eta_days") is not None:
+            typer.echo(
+                f"Capacity ETA: {trend['capacity_eta_days']:.1f} days "
+                f"({trend['capacity_eta_at']})"
+            )
     if history:
         typer.echo(f"History samples: {len(payload.get('history', []))}")
 
