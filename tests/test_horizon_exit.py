@@ -88,7 +88,12 @@ def test_wake_emitted_once_then_guarded(monkeypatch):
     )
 
     captured = []
-    monkeypatch.setattr(pd, "notify_pi_daemon", lambda source="unknown", event=None: captured.append(event))
+
+    def _accept_wake(source="unknown", event=None):
+        captured.append(event)
+        return True
+
+    monkeypatch.setattr(pd, "notify_pi_daemon", _accept_wake)
 
     # first call: horizon (10h) passed at 12h age, not yet woken → emit + stamp
     assert pm._maybe_wake_on_horizon(_select_one("positions", "h1")) is True
@@ -100,6 +105,35 @@ def test_wake_emitted_once_then_guarded(monkeypatch):
     # second call: already woke → no-op
     assert pm._maybe_wake_on_horizon(_select_one("positions", "h1")) is False
     assert len(captured) == 1
+
+
+def test_failed_wake_is_not_stamped_and_can_retry(monkeypatch):
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.repositories import _select_one
+    import aletheia.agent_runtime.pi_daemon as pd
+
+    opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
+    get_db().execute(
+        "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
+        "execution_mode,status,expected_horizon_hours,opened_at) VALUES "
+        "('h2','ETH/USDT','usdt_futures','long',1.0,100.0,'paper_internal','open',10.0,?)",
+        (opened,),
+    )
+
+    attempted = []
+
+    def _reject_wake(source="unknown", event=None):
+        attempted.append(event)
+        return False
+
+    monkeypatch.setattr(pd, "notify_pi_daemon", _reject_wake)
+
+    assert pm._maybe_wake_on_horizon(_select_one("positions", "h2")) is False
+    assert _select_one("positions", "h2")["horizon_wake_sent_at"] is None
+
+    # A later position-manager tick must be allowed to try delivery again.
+    assert pm._maybe_wake_on_horizon(_select_one("positions", "h2")) is False
+    assert len(attempted) == 2
 
 
 def test_wake_guards():

@@ -809,7 +809,7 @@ def _maybe_wake_on_horizon(position: dict) -> bool:
         import time
         from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
         from aletheia.agent_runtime.wake_events import HORIZON_DUE, WakeEvent
-        notify_pi_daemon(
+        delivered = notify_pi_daemon(
             source="horizon_due",
             event=WakeEvent(
                 position_id=position["id"],
@@ -822,8 +822,14 @@ def _maybe_wake_on_horizon(position: dict) -> bool:
                 },
             ),
         )
+        if not delivered:
+            logger.warning(
+                "horizon wake emit unavailable pos=%s", position.get("id")
+            )
+            return False
     except Exception as e:
         logger.warning("horizon wake emit failed %s: %s", position.get("id"), e)
+        return False
 
     from aletheia.storage.repositories import update_position
     update_position(position["id"], horizon_wake_sent_at=datetime.now(timezone.utc).isoformat())
