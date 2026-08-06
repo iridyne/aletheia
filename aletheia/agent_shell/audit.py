@@ -8,16 +8,18 @@ from aletheia.storage.sqlite import get_db
 
 
 def record_command(session_id: str, command: str, parameters: dict,
-                   permitted: bool, result_summary: str) -> None:
+                   permitted: bool, result_summary: str,
+                   inference_call_id: str | None = None) -> None:
     """Write audit record to SQLite + JSONL."""
     cmd_id = str(uuid.uuid4())
 
     db = get_db()
     db.execute(
         "INSERT INTO agent_shell_commands (id, session_id, command, parameters, "
-        "permitted, result_summary, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+        "permitted, result_summary, inference_call_id, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))",
         (cmd_id, session_id, command, json.dumps(parameters), int(permitted),
-         result_summary[:2000]),
+         result_summary[:2000], inference_call_id),
     )
     db.commit()
     append_session_log(
@@ -29,6 +31,7 @@ def record_command(session_id: str, command: str, parameters: dict,
             "parameters": parameters,
             "permitted": permitted,
             "result_summary": result_summary[:2000],
+            "inference_call_id": inference_call_id,
         },
     )
 
@@ -41,6 +44,7 @@ def record_command(session_id: str, command: str, parameters: dict,
             "entity_type": "command",
             "entity_id": cmd_id,
             "message": f"{'ALLOWED' if permitted else 'DENIED'}: {command}",
+            "inference_call_id": inference_call_id,
         })
     except Exception:
         pass

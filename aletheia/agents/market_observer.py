@@ -538,9 +538,8 @@ def _news_rendered_source(row: dict) -> dict:
 
 def _record_observer_context_artifacts(
     *, run_id, symbol, context, learning_text, learning_manifest, rendered_sources,
-) -> None:
-    from aletheia.economics.context_artifacts import record_context_artifacts
-
+) -> list[dict]:
+    """Build prompt-free metadata; the helper links it to the exact LLM call."""
     news = rendered_sources.get("news") or []
     artifacts = [{
         "kind": "environment", "stable_id": f"market_context:{symbol}",
@@ -567,9 +566,7 @@ def _record_observer_context_artifacts(
             "trust_class": "learned_advisory", "freshness_status": "unknown",
             "rendered_chars": len(learning_text),
         })
-    record_context_artifacts(
-        run_id=run_id, caller="market_observer", symbol=symbol, artifacts=artifacts,
-    )
+    return artifacts
 
 
 def _bounded_rendered_sources(sources: dict[str, list[dict]]) -> dict[str, list[dict]]:
@@ -1400,7 +1397,7 @@ async def _analyze_symbol(
         else ""
     )
 
-    _record_observer_context_artifacts(
+    context_artifacts = _record_observer_context_artifacts(
         run_id=run_id,
         symbol=symbol,
         context=context,
@@ -1437,6 +1434,9 @@ async def _analyze_symbol(
         schema=MarketRead,
         max_tokens=2048,
         provider=get_provider_for_tier("deep"),
+        caller="market_observer.market_read",
+        context_artifacts=context_artifacts,
+        context_symbol=symbol,
         deadline=llm_deadline,
     )
     _llm_duration = _time.monotonic() - _t0

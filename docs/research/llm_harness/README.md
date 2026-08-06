@@ -5,6 +5,9 @@ harness. It is deliberately separate from the narrower tokenomics record:
 pricing and budgets are optional consumers of inference telemetry, not the
 purpose of the harness.
 
+Current approved behavior is owned by the
+[LLM Inference Harness Contract](../../design/contracts/llm_inference_harness_contract.md).
+
 ## Product thesis
 
 An Aletheia agent is not only a model prompt. It is a model operating through a
@@ -31,6 +34,7 @@ snapshot. Missing price must not make token telemetry unavailable.
 4. [Context adapters and header experiments](context_adapters_and_header_experiments.md)
 5. [Provider usage coverage](provider_usage_coverage.md)
 6. [Default token observation policy](token_observation_policy.md)
+7. [News and Learning context assessment](news_learning_context_assessment.md)
 
 ## Evidence standard
 

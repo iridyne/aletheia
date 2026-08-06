@@ -100,6 +100,9 @@ def _cost_metadata(
         metadata.update(attribution)
         metadata["identity_source"] = "explicit_economic_context"
     if request is not None:
+        inference = getattr(request, "inference", None)
+        if inference is not None:
+            metadata.update(inference.attempt_metadata())
         observations = getattr(request, "_aletheia_would_block_observations", None)
         if observations:
             metadata["would_block"] = list(observations)
@@ -115,6 +118,8 @@ class ModelRequest:
     system: str | None = None
     temperature: float = 0.7
     max_tokens: int = 4096
+    inference: Any | None = None
+    allow_model_fallback: bool = True
 
 
 @dataclass
@@ -123,6 +128,7 @@ class StructuredModelRequest:
     system: str | None = None
     temperature: float = 0.3
     max_tokens: int = 4096
+    inference: Any | None = None
 
 
 @dataclass
@@ -174,18 +180,25 @@ class ModelProvider:
                     or _ACTIVE_STREAM_REQUEST.get()
                 )
                 cost_request = grouped_request or request
-                call_id = getattr(cost_request, "_aletheia_cost_call_id", None)
+                inference = getattr(cost_request, "inference", None)
+                call_id = (
+                    getattr(inference, "logical_call_id", None)
+                    or getattr(cost_request, "_aletheia_cost_call_id", None)
+                )
                 if not call_id:
                     call_id = "llm_" + uuid4().hex[:16]
                     setattr(cost_request, "_aletheia_cost_call_id", call_id)
-                attempt_index = int(
-                    getattr(cost_request, "_aletheia_cost_attempt_index", 0)
-                )
-                setattr(
-                    cost_request,
-                    "_aletheia_cost_attempt_index",
-                    attempt_index + 1,
-                )
+                if inference is not None:
+                    attempt_index = inference.claim_attempt_index()
+                else:
+                    attempt_index = int(
+                        getattr(cost_request, "_aletheia_cost_attempt_index", 0)
+                    )
+                    setattr(
+                        cost_request,
+                        "_aletheia_cost_attempt_index",
+                        attempt_index + 1,
+                    )
                 model = str(getattr(self, "model", "") or "unknown")
                 requested_model = getattr(
                     cost_request, "_aletheia_requested_model", None

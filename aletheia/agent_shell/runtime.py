@@ -357,7 +357,12 @@ class AgentShellRuntime:
                 "If you don't have enough data to answer, say so."
             )
             user_prompt = f"System context: {summary}\n\nUser question: \"{text}\""
-            content, error = await llm_complete(system, user_prompt, max_tokens=400)
+            content, error = await llm_complete(
+                system,
+                user_prompt,
+                max_tokens=400,
+                caller="agent_shell.general_query",
+            )
             if content and not error:
                 return content
         except Exception:

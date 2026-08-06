@@ -47,6 +47,7 @@ async def run_risk_critic(permission_mode: str = "Observe", run_id: str | None =
         user=f"{ctx}\n\nWrite a risk lesson note.",
         max_tokens=600,
         provider=get_provider_for_tier("deep"),
+        caller="risk_critic.review",
     )
     log_tool(run_id, "llm_complete", "observe", True)
     if err:

@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS agent_tool_calls (
     input_data TEXT,
     output_data TEXT,
     permitted INTEGER NOT NULL DEFAULT 1,
+    inference_call_id TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -690,6 +691,7 @@ CREATE TABLE IF NOT EXISTS agent_shell_commands (
     parameters TEXT DEFAULT '{}',
     permitted INTEGER NOT NULL DEFAULT 1,
     result_summary TEXT,
+    inference_call_id TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -1857,6 +1859,8 @@ _ADDITIVE_COLUMNS = [
     ("title", "agent_shell_sessions", "TEXT"),
     ("runtime_id", "agent_shell_sessions", "TEXT DEFAULT 'runtime-local-current'"),
     ("runtime_id", "agent_shell_commands", "TEXT DEFAULT 'runtime-local-current'"),
+    ("inference_call_id", "agent_shell_commands", "TEXT"),
+    ("inference_call_id", "agent_tool_calls", "TEXT"),
     ("runtime_id", "agent_shell_messages", "TEXT DEFAULT 'runtime-local-current'"),
     ("runtime_id", "agent_shell_tasks", "TEXT DEFAULT 'runtime-local-current'"),
     ("runtime_id", "agent_shell_artifacts", "TEXT DEFAULT 'runtime-local-current'"),

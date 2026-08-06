@@ -299,6 +299,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
         ),
         schema=PredictionMarketRead,
         max_tokens=500,
+        caller="prediction_observer.market_read",
         deadline=observer_llm_deadline(),
     )
     log_tool(run_id, "llm_structured", "observe", True)
