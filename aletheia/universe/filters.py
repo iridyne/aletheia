@@ -151,7 +151,10 @@ def _record_tradability_batches(
     if not scanner_run_id:
         return
 
-    from aletheia.analytics.filter_evidence import record_filter_decision_batch
+    from aletheia.analytics.filter_evidence import (
+        HEAVY_BATCH_MIN_INTERVAL_SEC,
+        record_filter_decision_batch,
+    )
 
     blacklist = sorted(str(symbol) for symbol in cfg.blacklist)
     blacklist_hash = hashlib.sha256("\n".join(blacklist).encode("utf-8")).hexdigest()[:16]
@@ -173,6 +176,7 @@ def _record_tradability_batches(
             stage="tradability_filter",
             candidate_facts=facts_by_filter[filter_name],
             parameters=parameters[filter_name],
+            min_interval_sec=HEAVY_BATCH_MIN_INTERVAL_SEC,
         )
 
 

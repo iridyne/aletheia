@@ -38,6 +38,9 @@ uv run aletheia gateway logs
 
 # 显式查看并应用待执行数据库迁移（部署/恢复窗口）
 uv run aletheia data migrate
+
+# 只读查看容量、最大对象和最近 30 次夜间样本
+uv run aletheia data capacity --deep --history 30
 ```
 
 ## 数据库迁移边界
@@ -48,6 +51,25 @@ uv run aletheia data migrate
 - 新空库或没有账本的旧库会执行一次冻结的 legacy baseline。checksum 漂移、数据库含当前代码未知的 migration ID、或升级异常都会 fail closed，并保留明确的 migrate/doctor/log 指针。
 - Schema v3 会在升级阶段一次性重建 `knowledge_fts` 并建立启动/遥测热路径索引；后续普通 Gateway 启动不会再全量 reindex。需要人工修复 FTS 时使用显式 `uv run aletheia knowledge reindex`。
 - 受控 `update apply` 会在激活候选版本时执行同一 migration apply/SQLite validation；普通重启在账本已 current 时仅有毫秒级核对。
+
+## 数据库容量与空间回收
+
+- 默认容量预算为 2048 MiB，只用于 doctor/infra 告警，不会阻止审计或 Learning 写入。
+- 夜间 cleanup 后的精确物理/逻辑体积写入 `logs/database_capacity.jsonl`；先用至少
+  30 个样本判断长期斜率，不用单次文件大小猜增长率。
+- 普通 DELETE 只把页放入 freelist；`auto_vacuum=NONE` 的旧库不会因
+  `incremental_vacuum` 缩小文件。需要回收操作系统空间时执行：
+
+```powershell
+uv run aletheia data compact             # 只读计划
+uv run aletheia gateway stop
+uv run aletheia data compact --apply     # 校验、VACUUM、启用 incremental reclaim
+uv run aletheia gateway start --no-browser
+uv run aletheia doctor
+```
+
+`--apply` 会拒绝仍在运行的 Gateway 或不足的临时磁盘空间，并先创建、校验
+`backup_pre_compact_*.tar.gz`；它不删行、不缩短保留期。
 
 ---
 

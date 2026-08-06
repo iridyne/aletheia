@@ -833,6 +833,75 @@ def test_filter_decision_batch_is_complete_counted_and_idempotent():
     ).fetchone()[0] == 2
 
 
+def test_filter_decision_batch_cadence_bounds_unchanged_heavy_snapshots():
+    from aletheia.analytics.filter_evidence import record_filter_decision_batch
+    from aletheia.storage.sqlite import get_db
+
+    common = dict(
+        candidate_kind="universe_asset",
+        filter_name="ticker_availability",
+        stage="ticker_prefilter",
+        candidate_facts=[{"candidate_key": "asset:btc", "decision": "passed"}],
+        min_interval_sec=55 * 60,
+    )
+    first = record_filter_decision_batch(
+        run_id="bounded-1",
+        evaluated_at="2026-08-06T00:00:00+00:00",
+        parameters={"venue": "okx"},
+        **common,
+    )
+    suppressed = record_filter_decision_batch(
+        run_id="bounded-2",
+        evaluated_at="2026-08-06T00:10:00+00:00",
+        parameters={"venue": "okx"},
+        **common,
+    )
+    changed = record_filter_decision_batch(
+        run_id="bounded-3",
+        evaluated_at="2026-08-06T00:20:00+00:00",
+        parameters={"venue": "bitget"},
+        **common,
+    )
+    next_hour = record_filter_decision_batch(
+        run_id="bounded-4",
+        evaluated_at="2026-08-06T01:00:00+00:00",
+        parameters={"venue": "okx"},
+        **common,
+    )
+
+    assert suppressed == first
+    assert changed != first
+    assert next_hour != first
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM filter_decision_batches "
+        "WHERE filter_name='ticker_availability'"
+    ).fetchone()[0] == 3
+
+
+def test_candidate_outcomes_can_select_one_declared_learning_horizon():
+    from aletheia.analytics.filter_evidence import build_candidate_outcomes
+
+    common = dict(
+        outcome_candidate_key="universe:one-horizon",
+        venue="okx",
+        symbol="BTC/USDT",
+        market_type="perp",
+        direction="long",
+        scanner_family="momentum",
+        regime_tag=None,
+        entry_price_usd=100.0,
+        entry_spread_bps=1.0,
+        funding_rate_at_entry=0.0,
+        entry_ts="2026-08-06T00:00:00+00:00",
+    )
+
+    assert {row.horizon for row in build_candidate_outcomes(**common)} == {
+        "15m", "1h", "4h", "24h",
+    }
+    targeted = build_candidate_outcomes(**common, horizons=("4h",))
+    assert [row.horizon for row in targeted] == ["4h"]
+
+
 def test_filter_decision_batch_compacts_repeated_candidate_keys():
     from aletheia.analytics.filter_evidence import (
         decode_filter_decision_batch,

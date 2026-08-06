@@ -33,6 +33,81 @@ def migrate_database():
     )
 
 
+@data_app.command("capacity")
+def database_capacity(
+    deep: bool = typer.Option(
+        False,
+        "--deep",
+        help="Attribute current bytes to the largest SQLite objects (slower).",
+    ),
+    history: int = typer.Option(
+        0,
+        "--history",
+        min=0,
+        max=3650,
+        help="Include this many exact nightly capacity samples.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+):
+    """Inspect app.db capacity without migrating or mutating it."""
+    from aletheia.config.loader import load_config
+    from aletheia.maintenance.database_capacity import (
+        database_capacity_history,
+        database_capacity_snapshot,
+    )
+
+    budget = load_config(persist_migrations=False).retention.app_db_capacity_mb
+    snapshot = database_capacity_snapshot(capacity_mb=budget, deep=deep)
+    payload = {"current": snapshot}
+    if history:
+        payload["history"] = database_capacity_history(limit=history)
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+        return
+    if not snapshot.get("available"):
+        typer.echo(f"Database not available: {snapshot.get('path')}")
+        raise typer.Exit(1)
+    typer.echo(
+        "app.db: "
+        f"{snapshot['physical_bytes'] / (1024 * 1024):.1f} MiB physical, "
+        f"{snapshot['logical_used_bytes'] / (1024 * 1024):.1f} MiB used, "
+        f"{snapshot['reclaimable_bytes'] / (1024 * 1024):.1f} MiB reusable"
+    )
+    typer.echo(
+        f"Capacity: {snapshot.get('capacity_status')} "
+        f"({float(snapshot.get('capacity_ratio', 0)):.1%} of {budget} MiB); "
+        f"incremental_vacuum={'enabled' if snapshot['incremental_vacuum_enabled'] else 'disabled'}"
+    )
+    for row in snapshot.get("top_objects", []):
+        typer.echo(f"  {row['name']}: {row['bytes'] / (1024 * 1024):.1f} MiB")
+    if history:
+        typer.echo(f"History samples: {len(payload.get('history', []))}")
+
+
+@data_app.command("compact")
+def compact_database_command(
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Run offline compaction. Default is a read-only plan.",
+    ),
+):
+    """Reclaim reusable pages and enable future incremental vacuuming."""
+    from aletheia.maintenance.database_capacity import compact_database
+
+    try:
+        result = compact_database(apply=apply)
+    except RuntimeError as exc:
+        typer.echo(f"Compaction refused: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
+    if not apply:
+        typer.echo(
+            "Dry-run only. Stop the Gateway and repeat with "
+            "`uv run aletheia data compact --apply`."
+        )
+
+
 @data_app.command("ingest-perp-structure")
 def ingest_perp_structure(
     path: Path = typer.Argument(..., exists=True, readable=True, dir_okay=False),

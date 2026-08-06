@@ -371,7 +371,10 @@ def _record_ticker_prefilter_batches(
     if not scanner_run_id:
         return
 
-    from aletheia.analytics.filter_evidence import record_filter_decision_batch
+    from aletheia.analytics.filter_evidence import (
+        HEAVY_BATCH_MIN_INTERVAL_SEC,
+        record_filter_decision_batch,
+    )
 
     record_filter_decision_batch(
         run_id=scanner_run_id,
@@ -383,6 +386,7 @@ def _record_ticker_prefilter_batches(
             "primary_venue": cfg.market_data.ccxt_exchange,
             "fallback_venue": cfg.market_data.ccxt_fallback or cfg.market_data.ccxt_exchange,
         },
+        min_interval_sec=HEAVY_BATCH_MIN_INTERVAL_SEC,
     )
     record_filter_decision_batch(
         run_id=scanner_run_id,
@@ -393,6 +397,7 @@ def _record_ticker_prefilter_batches(
         parameters={
             "minimum_quote_volume_24h_usdt": cfg.universe.min_volume_24h_usdt,
         },
+        min_interval_sec=HEAVY_BATCH_MIN_INTERVAL_SEC,
     )
 
 

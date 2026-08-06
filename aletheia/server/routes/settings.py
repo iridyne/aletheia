@@ -1125,6 +1125,7 @@ class RetentionConfigUpdate(SettingsRequest):
     portfolio_snapshots_days: Optional[int] = None
     opportunity_ttl_hours: Optional[int] = None
     jsonl_max_mb: Optional[float] = None
+    app_db_capacity_mb: Optional[int] = None
 
 
 _RETENTION_BOUNDS: dict[str, tuple[float, float]] = {
@@ -1135,6 +1136,7 @@ _RETENTION_BOUNDS: dict[str, tuple[float, float]] = {
     "portfolio_snapshots_days": (1, 1825),
     "opportunity_ttl_hours": (1, 720),
     "jsonl_max_mb": (10.0, 10000.0),
+    "app_db_capacity_mb": (512, 65536),
 }
 
 

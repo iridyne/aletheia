@@ -194,7 +194,12 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 
 ## 4. 过滤候选的固定时点结果
 
-`filter_candidate_outcomes` 以 `outcome_candidate_key + horizon` 唯一，固定周期为 `15m / 1h / 4h / 24h`。经济公式、时点行情质量和现货/合约隔离完全复用 `opportunity_outcome_contract.md`。
+`filter_candidate_outcomes` 以 `outcome_candidate_key + horizon` 唯一。一般过滤证据的
+固定周期矩阵为 `15m / 1h / 4h / 24h`。Measured Learning exposure 已经在
+`target_horizon` 声明唯一授权周期；该 experiment 专用写入只保存这一周期，不能再为
+同一 exposure 生成三个无人消费的结果。selected 与 dropped 两个 arm 都必须保存目标
+周期，经济公式、时点行情质量和现货/合约隔离完全复用
+`opportunity_outcome_contract.md`。
 
 只要 `venue + symbol + market_type` 完整且入场价为决策时点可见的正数，就创建
 固定周期观察结果。结果分两级：
@@ -349,8 +354,11 @@ Ranker 的 `limit=50` 只限制进入打分/入队选择的执行短名单，不
 - `doctor` 同时校验批次里的候选总数是否等于 pass/reject/not-applicable/error 之和。
 - Trade Funnel 优先从 `filter_decisions` 读取窗口内 ranker 历史候选，不在审计时重跑 ranker；
   `proposal_submission` 拒绝原因必须单列，不能统称为未知的 decision-to-proposal 丢失。
-- `filter_decision_batches` 保留 30 天；`filter_decisions` 和
-  `filter_candidate_outcomes` 保留 90 天。它们是分析证据，不是交易因果原件。
+- `filter_decision_batches` 保留 30 天；体积较大的 ticker/tradability 全量事实在
+  filter name、stage、parameter version 不变时至多每小时写一份。参数版本变化必须立即
+  写入，节流查找失败时 fail open 写入，不能把证据缺失伪装成重复。
+- `filter_decisions` 保留 45 天，`filter_candidate_outcomes` 保留 30 天；active exposure
+  clean-window guard 可以延长有效窗口。它们是分析证据，不是交易因果原件。
 
 ## 9. Stage E 实施状态
 

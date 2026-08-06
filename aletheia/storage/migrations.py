@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v3"
+SCHEMA_VERSION = "aletheia-sqlite-v4"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3347,6 +3347,17 @@ _STARTUP_DATASET_BOUNDARY_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+_CAPACITY_GUARDRAIL_INDEX_SQL = """
+DROP INDEX IF EXISTS idx_filter_outcomes_candidate;
+DROP INDEX IF EXISTS idx_filter_candidate_outcomes_key;
+DROP INDEX IF EXISTS idx_market_ohlcv_instrument_tf_ts;
+CREATE INDEX IF NOT EXISTS idx_audit_events_type_timestamp
+ON audit_events(event_type, timestamp DESC);
+"""
+_CAPACITY_GUARDRAIL_CHECKSUM = hashlib.sha256(
+    _CAPACITY_GUARDRAIL_INDEX_SQL.encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -3388,6 +3399,12 @@ def _apply_startup_dataset_boundary_v3(db: sqlite3.Connection) -> None:
     reindex_all(db=db, strict=True)
 
 
+def _apply_capacity_guardrails_v4(db: sqlite3.Connection) -> None:
+    """Remove indexes already covered by a UNIQUE constraint or primary key."""
+
+    db.executescript(_CAPACITY_GUARDRAIL_INDEX_SQL)
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -3398,8 +3415,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260806_0002_startup_dataset_boundary_v3",
         checksum=_STARTUP_DATASET_BOUNDARY_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v3",
         apply=_apply_startup_dataset_boundary_v3,
+    ),
+    MigrationStep(
+        migration_id="20260806_0003_capacity_guardrails_v4",
+        checksum=_CAPACITY_GUARDRAIL_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_capacity_guardrails_v4,
     ),
 )
 

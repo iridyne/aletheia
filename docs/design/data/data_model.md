@@ -507,10 +507,14 @@ Runtime artefact trees under `~/.aletheia/`. Full details in `RETENTION_POLICY.m
 
 ### 7.5 VACUUM strategy (Phase 3)
 
-`PRAGMA auto_vacuum = INCREMENTAL` (set during the Phase 4 one-shot backfill, persistent).
+New databases set `PRAGMA auto_vacuum = INCREMENTAL` before creating schema objects.
+An existing `auto_vacuum=NONE` database must set the pragma **before** a one-time
+offline `VACUUM`; calling `incremental_vacuum` alone on it is a no-op.
 The recurring `_run_cleanup` pass reclaims freelist pages via `PRAGMA incremental_vacuum(1000)`
-at the tail. Full `VACUUM` runs only in the one-shot backfill with the gateway stopped. See
-`RETENTION_POLICY.md` §6 for the full sequenced pragma steps.
+at the tail and records the physical/logical size to `logs/database_capacity.jsonl`.
+Full `VACUUM` runs only through explicit `aletheia data compact --apply` with the Gateway
+stopped. The default 2048 MiB capacity budget is an alert threshold, not a reason to drop
+authoritative writes. See `RETENTION_POLICY.md` §6 for the full sequence.
 
 ---
 

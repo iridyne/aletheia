@@ -241,8 +241,67 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert migrations._MIGRATIONS[0].schema_version == "aletheia-sqlite-v2"
+    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v3"
     assert migrations._MIGRATIONS[-1].schema_version == migrations.SCHEMA_VERSION
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v3"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v4"
+    connection.close()
+
+
+def test_capacity_guardrail_migration_drops_only_redundant_indexes():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        """
+        CREATE TABLE filter_candidate_outcomes (
+            id TEXT PRIMARY KEY,
+            outcome_candidate_key TEXT NOT NULL,
+            horizon TEXT NOT NULL,
+            UNIQUE(outcome_candidate_key, horizon)
+        );
+        CREATE INDEX idx_filter_outcomes_candidate
+        ON filter_candidate_outcomes(outcome_candidate_key, horizon);
+        CREATE INDEX idx_filter_candidate_outcomes_key
+        ON filter_candidate_outcomes(outcome_candidate_key);
+        CREATE TABLE market_ohlcv (
+            exchange TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            market_type TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            PRIMARY KEY(exchange, symbol, market_type, timeframe, ts)
+        );
+        CREATE INDEX idx_market_ohlcv_instrument_tf_ts
+        ON market_ohlcv(exchange, symbol, market_type, timeframe, ts);
+        CREATE TABLE audit_events (id TEXT PRIMARY KEY, event_type TEXT, timestamp TEXT);
+        """
+    )
+
+    migrations._apply_capacity_guardrails_v4(connection)
+
+    indexes = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'"
+        )
+    }
+    assert "idx_filter_outcomes_candidate" not in indexes
+    assert "idx_filter_candidate_outcomes_key" not in indexes
+    assert "idx_market_ohlcv_instrument_tf_ts" not in indexes
+    assert "idx_audit_events_type_timestamp" in indexes
+    outcome_plan = connection.execute(
+        "EXPLAIN QUERY PLAN SELECT * FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key=? AND horizon=?",
+        ("candidate", "4h"),
+    ).fetchone()[3]
+    ohlcv_plan = connection.execute(
+        "EXPLAIN QUERY PLAN SELECT ts FROM market_ohlcv "
+        "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=? "
+        "ORDER BY ts DESC LIMIT 1",
+        ("okx", "BTC/USDT", "spot", "1m"),
+    ).fetchone()[3]
+    assert "sqlite_autoindex_filter_candidate_outcomes_2" in outcome_plan
+    assert "sqlite_autoindex_market_ohlcv_1" in ohlcv_plan
     connection.close()
 
 

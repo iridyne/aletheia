@@ -456,10 +456,12 @@ If any table's prune count grows > 2× its expected steady state, a
 writer regression is likely. Investigate before shortening retention.
 
 The recurring `PRAGMA incremental_vacuum(1000)` at the end of
-`_run_cleanup` should keep `PRAGMA freelist_count` near zero. If
-`freelist_count` grows above ~5,000 pages (~20 MB), the incremental
-vacuum step is not keeping up and a full `VACUUM` maintenance window
-should be scheduled.
+`_run_cleanup` keeps `PRAGMA freelist_count` near zero only when
+`PRAGMA auto_vacuum=INCREMENTAL`. CASI showed that older databases can remain
+at `NONE`, making that call a no-op. Check `aletheia data capacity`; if disabled,
+use the explicit offline `aletheia data compact --apply` boundary once. If enabled
+and `freelist_count` still grows above ~5,000 pages (~20 MB), investigate cleanup
+cadence and page churn before scheduling another maintenance window.
 
 ---
 

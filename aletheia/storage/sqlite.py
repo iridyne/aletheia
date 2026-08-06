@@ -264,6 +264,7 @@ class _SerializedConnection(sqlite3.Connection):
 
 
 def _open_connection(path: Path) -> sqlite3.Connection:
+    initialize_incremental_vacuum = not path.exists() or path.stat().st_size == 0
     conn = sqlite3.connect(
         str(path),
         check_same_thread=True,
@@ -272,6 +273,11 @@ def _open_connection(path: Path) -> sqlite3.Connection:
         factory=_SerializedConnection,
     )
     conn.row_factory = sqlite3.Row
+    # SQLite can enable auto_vacuum without rewriting pages only before the
+    # first schema object exists. Existing databases require the explicit,
+    # offline `aletheia data compact --apply` maintenance boundary.
+    if initialize_incremental_vacuum:
+        conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA synchronous=NORMAL")

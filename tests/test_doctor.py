@@ -226,6 +226,34 @@ def test_db_capacity_reports_material_reclaimable_space():
     assert "25%" in hint
 
 
+def test_db_capacity_reports_operational_budget_before_size_label():
+    severity, label, hint = dx._classify_db_capacity(
+        db_mb=2100,
+        free_mb=20_000,
+        reclaimable_mb=10,
+        capacity_mb=2048,
+        auto_vacuum=2,
+    )
+
+    assert severity == "warn"
+    assert label == "capacity budget exceeded"
+    assert "capacity --deep" in hint
+
+
+def test_db_capacity_explains_existing_database_reclaim_boundary():
+    severity, label, hint = dx._classify_db_capacity(
+        db_mb=900,
+        free_mb=20_000,
+        reclaimable_mb=25,
+        capacity_mb=2048,
+        auto_vacuum=0,
+    )
+
+    assert severity == "info"
+    assert label == "incremental reclaim disabled"
+    assert "Gateway stopped" in hint
+
+
 def test_doctor_reports_unconfigured_coinalyze_as_info(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     monkeypatch.setattr("aletheia.config.secrets.get_secret", lambda _key: None)

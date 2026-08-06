@@ -1009,9 +1009,16 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=30, next_run_time=datetime.now() + timedelta(seconds=45),
         executor="io",
     )
+    cleanup_initial_run = None
+    if _cleanup_catchup_due():
+        # The cron job store is process-local and cannot remember a fire time
+        # missed while the Gateway was offline. Run the same guarded job after
+        # readiness, never inside Gateway cold start.
+        cleanup_initial_run = datetime.now() + timedelta(minutes=5)
     _scheduler.add_job(
         _guarded("cleanup", _run_cleanup), "cron", hour=3, minute=17, id="cleanup",
         misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
+        **({"next_run_time": cleanup_initial_run} if cleanup_initial_run else {}),
     )
     # Forward catch-up for shadow trades that the event-driven resolver missed
     # (parent positions with no opportunity_id). DB-only; cheap; bounded per run.
@@ -2455,6 +2462,31 @@ def _run_prediction_observer():
         _record_job_failure("prediction_observer", f"divergence_scanner: {e}")
 
 
+def _cleanup_catchup_due(*, now: datetime | None = None) -> bool:
+    """Whether the most recent scheduled Shanghai cleanup lacks a success audit."""
+
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        row = get_db().execute(
+            "SELECT timestamp FROM audit_events WHERE event_type='data_pruned' "
+            "ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+        if not row or not row[0]:
+            return True
+        last = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        current = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo("Asia/Shanghai"))
+        most_recent_fire = current.replace(hour=3, minute=17, second=0, microsecond=0)
+        if current < most_recent_fire:
+            most_recent_fire -= timedelta(days=1)
+        return last.astimezone(ZoneInfo("Asia/Shanghai")) < most_recent_fire
+    except Exception as exc:
+        logger.debug("cleanup catch-up probe unavailable: %s", exc)
+        return False
+
+
 def _run_cleanup():
     cfg = load_config()
     try:
@@ -2619,6 +2651,36 @@ def _run_cleanup():
             get_db().execute("PRAGMA wal_checkpoint(PASSIVE)")
         except Exception as chk_err:  # noqa: BLE001 — best-effort checkpoint
             logger.debug("wal_checkpoint skipped: %s", chk_err)
+        try:
+            from aletheia.maintenance.database_capacity import record_database_capacity
+
+            capacity = record_database_capacity(capacity_mb=r.app_db_capacity_mb)
+            if capacity.get("capacity_status") in {"warning", "over_budget"}:
+                from aletheia.infra.events import emit_infra_event
+
+                used_mb = float(capacity.get("physical_bytes", 0)) / (1024 * 1024)
+                emit_infra_event(
+                    severity=(
+                        "warning"
+                        if capacity.get("capacity_status") == "over_budget"
+                        else "info"
+                    ),
+                    source="scheduler",
+                    code="sqlite_capacity_budget",
+                    message=(
+                        f"app.db physical usage {used_mb:.1f} MiB is "
+                        f"{float(capacity.get('capacity_ratio', 0)):.0%} of the "
+                        f"{r.app_db_capacity_mb} MiB capacity budget"
+                    ),
+                    action=(
+                        "Run `uv run aletheia data capacity --deep`; stop the Gateway "
+                        "and use `uv run aletheia data compact --apply` only when "
+                        "reclaimable space is material"
+                    ),
+                    dedupe_sec=86400,
+                )
+        except Exception as capacity_err:  # noqa: BLE001 — observation only
+            logger.debug("database capacity snapshot skipped: %s", capacity_err)
         write_audit({
             "actor": "system", "source": "scheduler",
             "event_type": "data_pruned", "entity_type": "telemetry",
