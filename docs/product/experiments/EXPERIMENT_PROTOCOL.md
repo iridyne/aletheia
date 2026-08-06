@@ -113,10 +113,12 @@ The registry is the executable path inventory. Only
 - because no treatment is applied in shadow, a mature shadow cohort is expected
   to produce `insufficient_data/no_actual_intervention`, not positive/negative.
 
-An unexplained, planned, or partial exposure gap resets the current qualification
-run because there is no outage-waiver contract. Pre-gap samples remain auditable
-history but do not count toward the new run's sample, economic, confidence, or
-harm gates. The verdict exposes bounded `market_day_coverage` reasons.
+An unexplained, planned, or partial outage resets the current qualification run
+when it leaves a full UTC date with no complete eligible exposure in either arm;
+there is no outage-waiver contract. Daily arm imbalance remains visible and is
+handled by the independent per-arm gate. Pre-gap samples remain auditable history
+but do not count toward the new run's sample, economic, confidence, or harm gates.
+The verdict exposes bounded `market_day_coverage` reasons.
 
 ### Owner trial and progression
 

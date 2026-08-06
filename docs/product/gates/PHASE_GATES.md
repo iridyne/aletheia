@@ -55,10 +55,12 @@ A current shadow measurement additionally requires:
 | Harm semantics | Underpowered is `indeterminate`; determinate breach blocks authority |
 | Actual intervention | Shadow normally has none and therefore yields `insufficient_data/no_actual_intervention` after ordinary sample/time gates |
 
-Any missing UTC day in either arm resets the current qualification run. Planned
-or partial outages have no implicit waiver; pre-gap samples remain history and
-cannot satisfy post-gap sample or outcome gates. The persisted coverage reason
-must be `qualified` before owner admission.
+A UTC date with no complete eligible unit in either arm resets the current
+qualification run. Daily arm imbalance remains visible and is handled by the
+independent per-arm sample gate. Planned or partial outages have no implicit waiver
+when they leave a full day uncovered; pre-gap samples remain history and cannot
+satisfy post-gap sample or outcome gates. The persisted coverage reason must be
+`qualified` before owner admission.
 
 ## Gate C - Explicit shadow-to-paper trial admission
 
