@@ -60,24 +60,24 @@ def main() -> None:
     print(f"  rows   : {report['n_total']}  (treated={report['n_treated']}, control={report['n_control']})")
     print(f"  rate   : {report['treatment_rate']:.1%}  selected")
     print(f"  AUC    : {report['auc']:.4f}  (OOS cross-fit)")
-    print(f"\n  propensity distribution (clipped):")
+    print("\n  propensity distribution (clipped):")
     print(_fmt_stats(report["propensity_stats"]))
 
-    print(f"\n  per-family breakdown:")
+    print("\n  per-family breakdown:")
     for fam, stats in sorted(report["by_family"].items()):
         rate = f"{stats['actual_selection_rate']:.1%}" if stats["actual_selection_rate"] is not None else "n/a"
         prop = f"{stats['mean_propensity']:.4f}" if stats["mean_propensity"] is not None else "n/a"
         print(f"    {fam:<18} n={stats['n']:>5}  actual={rate}  propensity={prop}")
 
     if report["warnings"]:
-        print(f"\n  warnings:")
+        print("\n  warnings:")
         for w in report["warnings"]:
             print(f"    ⚠  {w}")
 
     print(f"\n  features: {report['feature_names']}")
     coef_pairs = list(zip(report["feature_names"], report["coefficients"][:-1]))
     bias = report["coefficients"][-1] if report["coefficients"] else None
-    print(f"  coefficients:")
+    print("  coefficients:")
     for fname, coef in coef_pairs:
         print(f"    {fname:<22} {coef:+.4f}")
     if bias is not None:
