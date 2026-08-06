@@ -3,7 +3,7 @@
 > Complete index of Aletheia Trading OS data layer.
 > ~96 SQLite table declarations, 59 Pydantic models, WAL mode, versioned additive migrations.
 > Source of truth: `aletheia/storage/migrations.py` (DDL) + `models.py` (types).
-> Last updated: 2026-08-06
+> Last updated: 2026-08-07
 
 ---
 
@@ -52,7 +52,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `approvals` | Human approval records | proposal_id, decision, decided_by | frontend |
 | `orders` | Execution orders; native exchange entry `pending` is an unresolved Risk reservation, not zero exposure | symbol, side, quantity, order_type, status | execution gateway |
 | `fills` | Order fill confirmations | order_id, fill_price, fill_quantity, fee | broker adapter |
-| `positions` | Open/closed positions; a closed future may keep net economics unavailable. Delayed local funding materialization stores its versioned evidence fingerprint in reconciliation evidence. | symbol, direction, entry_price, quantity, status, nullable realized_pnl, funding_cost, funding_source, **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence), **exit_limit_source** ('human'|'system_operator'; author of a resting limit exit — selects human_limit_exit vs operator_limit_exit in close_reason for attribution honesty) | position_manager / outcome closure / paper funding settler |
+| `positions` | Open/closed positions; a closed future may keep net economics unavailable. Delayed local funding materialization stores its versioned evidence fingerprint in reconciliation evidence. Market-aware evaluation remains advisory: its structured evidence records the exact venue/symbol/physical-market identity and source rows used for an Operator wake. | symbol, direction, entry_price, quantity, status, nullable realized_pnl, funding_cost, funding_source, **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence), **exit_limit_source** ('human'|'system_operator'; author of a resting limit exit — selects human_limit_exit vs operator_limit_exit in close_reason for attribution honesty), **last_market_signal_evidence** (versioned JSON; exact position/signal identities, Opportunity/member/asset/Feature provenance, evaluation and delivery result) | position_manager / outcome closure / paper funding settler |
 | `position_close_events` | **Per-close economic ledger** (exit-intent R1) — one row per close EVENT (full close = 1 row; partial reduce = 1 row per reduction) so realized PnL sums from close events, unifying full + partial closes. Delayed funding finalization atomically converges the unique full-close projection with Position and paper cash. The daily-loss breaker adds partial-close realized via this ledger (`is_partial=1`) on top of the verified full-close read | position_id, close_reason, exit_price, closed_qty, realized_pnl, entry_fee, exit_fee, is_partial, closed_at | `pnl.close_position` / `pnl.reduce_position` / paper account service |
 | `outcome_hook_jobs` | Durable eligible-close feedback outbox; one row per Position and hook, with leased replay after failure | position_id, hook_type, status, attempts, next_attempt_at, claim_token, last_error | outcome close transaction / outcome_hook_replay |
 | `position_disappearance_candidates` | Durable account-scoped position-disappearance confirmation state; never authorizes close by itself | position_id, identity_key, broker_id, account_environment, non-secret account_fingerprint, instrument identity, confirmation_count, direct_query_state, semantics_version | position reconciler (OI-B01 target) |
@@ -82,6 +82,15 @@ immutable `universe_snapshot_superseded` filter fact. Old `signal_pending` rows 
 transient carriers, but cleanup may remove them only after their source is terminal
 and no `submitting` recovery claim exists. Until cleanup, an expired source is excluded
 from the Operator working set unless a `submitting` claim requires crash recovery.
+
+Market-aware Position evidence is fail-closed. An Opportunity can trigger an
+advisory wake only when `opportunities.universe_member_id` resolves through
+`universe_members.asset_id` to a `universe_registry` row matching the Position's
+venue, canonical symbol, and physical market type (`usdt_futures` normalizes to
+`perp`). The Opportunity must still be fresh and explicitly unexpired; Feature
+data is read only from that same `asset_id`. Legacy symbol-only, cross-venue, or
+spot/perpetual-ambiguous rows produce no wake. This evidence never authorizes an
+automatic close or stop change.
 
 ### B. Strategy Management (4 tables)
 

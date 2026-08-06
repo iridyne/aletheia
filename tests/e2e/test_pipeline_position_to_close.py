@@ -159,10 +159,26 @@ class TestMarketAwareExitIntegration:
 
         # Insert a counter-signal opportunity
         from aletheia.storage.models import Opportunity
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        e2e_db.execute(
+            "INSERT INTO universe_registry "
+            "(id, venue, market_type, symbol, status) "
+            "VALUES ('asset-sol-perp', ?, 'perp', 'SOL/USDT', 'active')",
+            (cfg.market_data.ccxt_exchange,),
+        )
+        e2e_db.execute(
+            "INSERT INTO universe_members (id, snapshot_id, asset_id, symbol, rank, total_score, "
+            "ttl_sec, expires_at, market_type) "
+            "VALUES ('member-sol-perp', 'snap_id', 'asset-sol-perp', 'SOL/USDT', "
+            "1, 80, 3600, ?, 'perp')",
+            (expires_at,),
+        )
         opp = Opportunity(
-            symbol="SOL/USDT", market="spot",
+            symbol="SOL/USDT", market="usdt_futures",
             direction_bias="short", confidence="medium", confidence_score=65,
             source_agent="market_observer",
+            universe_member_id="member-sol-perp",
+            valid_until=expires_at,
         )
         repo.insert_opportunity(opp)
 
@@ -170,14 +186,8 @@ class TestMarketAwareExitIntegration:
         now_iso = datetime.now(timezone.utc).isoformat()
         e2e_db.execute(
             "INSERT INTO universe_feature_snapshots (id, asset_id, ts, atr_pct, rsi_14, return_1h, return_4h) "
-            "VALUES ('snap1', 'member1', ?, 2.0, 35.0, -1.5, -3.0)",
+            "VALUES ('snap1', 'asset-sol-perp', ?, 2.0, 35.0, -1.5, -3.0)",
             (now_iso,),
-        )
-        e2e_db.execute(
-            "INSERT INTO universe_members (id, snapshot_id, asset_id, symbol, rank, total_score, "
-            "ttl_sec, expires_at, market_type) "
-            "VALUES ('member_row', 'snap_id', 'member1', 'SOL/USDT', 1, 80, 3600, ?, 'crypto')",
-            ((datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),),
         )
 
         # Price at 99.0: only -1% loss, within stop (default 2% = stop at 98.0)

@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v6"
+SCHEMA_VERSION = "aletheia-sqlite-v7"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3376,6 +3376,13 @@ _LLM_INFERENCE_LINKAGE_CHECKSUM = hashlib.sha256(
     (repr(_LLM_INFERENCE_LINKAGE_COLUMNS) + "\nadditive_columns_v1").encode("utf-8")
 ).hexdigest()
 
+_MARKET_SIGNAL_IDENTITY_COLUMNS = (
+    ("last_market_signal_evidence", "positions", "TEXT"),
+)
+_MARKET_SIGNAL_IDENTITY_CHECKSUM = hashlib.sha256(
+    (repr(_MARKET_SIGNAL_IDENTITY_COLUMNS) + "\nadditive_columns_v1").encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -3424,6 +3431,7 @@ _MIGRATION_DESCRIPTIONS = {
     "20260806_0003_capacity_guardrails_v4": "capacity indexes and cleanup lookup",
     "20260806_0004_pending_outcome_partial_index_v5": "pending-outcome partial index",
     "20260806_0005_llm_inference_linkage_v6": "LLM inference audit linkage columns",
+    "20260807_0006_market_signal_identity_v7": "exact market-signal evidence column",
 }
 
 
@@ -3514,6 +3522,17 @@ def _apply_llm_inference_linkage_v6(db: sqlite3.Connection) -> None:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
+def _apply_market_signal_identity_v7(db: sqlite3.Connection) -> None:
+    """Add structured evidence without changing legacy wake-summary fields."""
+
+    for column, table, column_type in _MARKET_SIGNAL_IDENTITY_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -3542,8 +3561,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260806_0005_llm_inference_linkage_v6",
         checksum=_LLM_INFERENCE_LINKAGE_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v6",
         apply=_apply_llm_inference_linkage_v6,
+    ),
+    MigrationStep(
+        migration_id="20260807_0006_market_signal_identity_v7",
+        checksum=_MARKET_SIGNAL_IDENTITY_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_market_signal_identity_v7,
     ),
 )
 

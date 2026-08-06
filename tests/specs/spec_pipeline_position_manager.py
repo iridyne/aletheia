@@ -239,9 +239,24 @@ def test_market_aware_evaluation_exception_is_returned_per_position(
     cfg = AletheiaConfig()
     cfg.trading.market_aware_exits.enabled = True
     monkeypatch.setattr(position_manager, "load_config", lambda: cfg)
+
+    from aletheia.portfolio.market_signal_reader import MarketSignalContext
+
+    def exact_signal(requests, **_kwargs):
+        request = requests[0]
+        instrument = request.instrument
+        return {
+            request: MarketSignalContext(
+                symbol=instrument.symbol,
+                market_type=instrument.market_type,
+                venue=instrument.exchange,
+                direction_bias="short",
+            )
+        }
+
     monkeypatch.setattr(
         "aletheia.portfolio.market_signal_reader.get_market_signals_for_positions",
-        lambda *_args, **_kwargs: {"ADA/USDT": {"signal": "risk_off"}},
+        exact_signal,
     )
 
     def fail_evaluation(*_args, **_kwargs):

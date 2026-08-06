@@ -259,11 +259,12 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert migrations._MIGRATIONS[0].schema_version == "aletheia-sqlite-v2"
-    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v3"
-    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v4"
-    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v5"
+    assert migrations._MIGRATIONS[-5].schema_version == "aletheia-sqlite-v3"
+    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v4"
+    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v5"
+    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v6"
     assert migrations._MIGRATIONS[-1].schema_version == migrations.SCHEMA_VERSION
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v6"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v7"
     connection.close()
 
 
@@ -383,6 +384,26 @@ def test_llm_inference_linkage_migration_is_additive_and_idempotent():
     for table in ("agent_shell_commands", "agent_tool_calls"):
         columns = [row[1] for row in connection.execute(f"PRAGMA table_info({table})")]
         assert columns.count("inference_call_id") == 1
+    connection.close()
+
+
+def test_market_signal_identity_migration_is_additive_and_idempotent():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE positions ("
+        "id TEXT PRIMARY KEY, last_market_signal_action TEXT)"
+    )
+
+    migrations._apply_market_signal_identity_v7(connection)
+    migrations._apply_market_signal_identity_v7(connection)
+
+    columns = [
+        row[1] for row in connection.execute("PRAGMA table_info(positions)")
+    ]
+    assert columns.count("last_market_signal_evidence") == 1
+    assert columns.count("last_market_signal_action") == 1
     connection.close()
 
 

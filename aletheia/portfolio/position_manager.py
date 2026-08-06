@@ -13,6 +13,7 @@ Governance:
 - The scheduler job that calls this still honors runtime.paused.
 """
 
+import json
 import logging
 import math
 from datetime import datetime, timezone
@@ -759,6 +760,56 @@ def _emit_wake(
         return False
 
 
+def _market_signal_evidence(
+    position: dict,
+    request,
+    signal,
+    *,
+    action: str,
+    reason: str,
+    delivery: str,
+    evaluated_at: str,
+) -> dict:
+    """Build the structured evidence persisted beside the legacy wake summary."""
+    signal_identity = f"{signal.venue}:{signal.symbol}:{signal.market_type}"
+    return {
+        "version": "market_signal_identity_v1",
+        "identity_status": "exact_match",
+        "evaluated_at": evaluated_at,
+        "position": {
+            "position_id": position["id"],
+            "identity": str(request.instrument),
+            "venue": request.instrument.exchange,
+            "symbol": request.instrument.symbol,
+            "market_type": request.instrument.market_type,
+            "execution_mode": position.get("execution_mode"),
+            "opportunity_id": position.get("opportunity_id"),
+        },
+        "signal": {
+            "identity": signal_identity,
+            "venue": signal.venue,
+            "symbol": signal.symbol,
+            "market_type": signal.market_type,
+            "opportunity_id": signal.source_opportunity_id,
+            "source_agent": signal.source_agent,
+            "created_at": signal.source_created_at,
+            "valid_until": signal.source_valid_until,
+            "universe_member_id": signal.universe_member_id,
+            "asset_id": signal.asset_id,
+            "evidence_status": signal.evidence_status,
+            "feature_snapshot_id": signal.feature_snapshot_id,
+            "feature_asset_id": signal.feature_asset_id,
+            "feature_timestamp": signal.feature_timestamp,
+        },
+        "evaluation": {
+            "suggested_action": action,
+            "reason": reason,
+            "confidence_score": signal.confidence_score,
+        },
+        "delivery": delivery,
+    }
+
+
 def _maybe_wake_on_thesis(position: dict, cfg) -> bool:
     """D5 review path: when thesis_auto_close is OFF, wake the Operator on thesis
     invalidation instead of auto-closing. Rate-limited by the daemon token bucket."""
@@ -871,21 +922,47 @@ def evaluate_open_positions() -> dict:
     # The former ruleset exit-scan path had zero live effect (0/208 closes) but
     # was a wired-but-dormant bypass. Locked by spec PL-PM-08.
 
-    # Build market signal index once per cycle (batch query, not per-position)
+    all_open = list_all_open_positions()
+
+    # Build market signal index once per cycle (batch query, not per-position).
+    # Requests are keyed by the full physical instrument identity; a missing or
+    # ambiguous identity means no advisory wake, never a symbol fallback.
     market_signal_index: dict = {}
+    market_signal_requests: dict[str, object] = {}
     if cfg.trading.market_aware_exits.enabled:
         try:
-            from aletheia.portfolio.market_signal_reader import get_market_signals_for_positions
-            all_open = list_all_open_positions()
-            syms = list({p["symbol"] for p in all_open if p.get("execution_mode") in _PAPER_MODES})
-            if syms:
+            from aletheia.portfolio.market_signal_reader import (
+                MarketSignalRequest,
+                get_market_signals_for_positions,
+            )
+
+            for position in all_open:
+                if position.get("execution_mode") not in _PAPER_MODES:
+                    continue
+                try:
+                    venue = protective_price_venue(
+                        position.get("execution_mode"),
+                        configured_data_venue=cfg.market_data.ccxt_exchange,
+                    )
+                    request = MarketSignalRequest.from_parts(
+                        venue or "",
+                        position["symbol"],
+                        position.get("market_type") or "spot",
+                        position_opportunity_id=position.get("opportunity_id"),
+                    )
+                except (TypeError, ValueError) as exc:
+                    record_error(position, "market_signal_identity_unavailable", exc)
+                    continue
+                market_signal_requests[position["id"]] = request
+            if market_signal_requests:
                 market_signal_index = get_market_signals_for_positions(
-                    syms, max_signal_age_min=cfg.trading.market_aware_exits.max_signal_age_min,
+                    list(market_signal_requests.values()),
+                    max_signal_age_min=cfg.trading.market_aware_exits.max_signal_age_min,
                 )
         except Exception as e:
             logger.warning("market_signal_index build failed: %s", e)
 
-    for p in list_all_open_positions():
+    for p in all_open:
         if p.get("execution_mode") not in _PAPER_MODES:
             continue
         checked += 1
@@ -954,40 +1031,92 @@ def evaluate_open_positions() -> dict:
         # adjust / hold) instead of auto-closing or auto-tightening the stop. The daemon
         # token bucket rate-limits per position. Off by default (enabled flag).
         if decision is None and cfg.trading.market_aware_exits.enabled:
-            signal = market_signal_index.get(p["symbol"])
+            request = market_signal_requests.get(p["id"])
+            signal = market_signal_index.get(request) if request is not None else None
             if signal is not None:
+                try:
+                    exact_identity = signal.matches(request)
+                except Exception as exc:
+                    record_error(p, "market_signal_identity_invalid", exc)
+                    continue
+                if not exact_identity:
+                    logger.warning(
+                        "market signal identity mismatch pos=%s position=%s signal=%s:%s:%s",
+                        p["id"], request.instrument, signal.venue,
+                        signal.symbol, signal.market_type,
+                    )
+                    record_error(p, "market_signal_identity_mismatch")
+                    continue
                 try:
                     from aletheia.portfolio.exit_rules import evaluate_market_exit_rules
                     from aletheia.agent_runtime.wake_events import ADVERSE_SIGNAL, adverse_signal_priority
                     action = evaluate_market_exit_rules(p, float(price), signal, cfg)
                     if action.action in ("urgent_exit", "tighten_stop"):
                         score = getattr(signal, "confidence_score", None)
+                        evaluated_at = datetime.now(timezone.utc).isoformat()
+                        signal_identity = (
+                            f"{signal.venue}:{signal.symbol}:{signal.market_type}"
+                        )
                         delivered = _emit_wake(
                             p, ADVERSE_SIGNAL,
-                            {"reason": action.reason, "score": score,
-                             "suggested": action.action, "symbol": p.get("symbol")},
+                            {
+                                "reason": action.reason,
+                                "score": score,
+                                "suggested": action.action,
+                                "symbol": p.get("symbol"),
+                                "position_identity": str(request.instrument),
+                                "signal_identity": signal_identity,
+                                "source_opportunity_id": signal.source_opportunity_id,
+                                "source_created_at": signal.source_created_at,
+                                "source_valid_until": signal.source_valid_until,
+                                "universe_member_id": signal.universe_member_id,
+                                "asset_id": signal.asset_id,
+                                "evidence_status": signal.evidence_status,
+                                "feature_snapshot_id": signal.feature_snapshot_id,
+                                "feature_timestamp": signal.feature_timestamp,
+                            },
                             source="market_adverse_signal",
                             priority=adverse_signal_priority(score),
                         )
                         from aletheia.storage.repositories import update_position
                         if delivered:
                             market_signal_wakes += 1
+                            evidence = _market_signal_evidence(
+                                p, request, signal,
+                                action=action.action,
+                                reason=action.reason,
+                                delivery="scheduled",
+                                evaluated_at=evaluated_at,
+                            )
                             update_position(
                                 p["id"],
                                 last_market_signal_action=f"wake:{action.action}",
                                 last_market_signal_reason=action.reason[:200],
-                                last_market_signal_at=datetime.now(timezone.utc).isoformat(),
+                                last_market_signal_at=evaluated_at,
+                                last_market_signal_evidence=json.dumps(
+                                    evidence, sort_keys=True, separators=(",", ":")
+                                ),
                             )
                             logger.info(
                                 "market_adverse_wake: %s action=%s reason=%s",
                                 p["symbol"], action.action, action.reason,
                             )
                         else:
+                            evidence = _market_signal_evidence(
+                                p, request, signal,
+                                action=action.action,
+                                reason=action.reason,
+                                delivery="operator_daemon_unavailable",
+                                evaluated_at=evaluated_at,
+                            )
                             update_position(
                                 p["id"],
                                 last_market_signal_action=f"wake_failed:{action.action}",
                                 last_market_signal_reason="operator_daemon_unavailable",
-                                last_market_signal_at=datetime.now(timezone.utc).isoformat(),
+                                last_market_signal_at=evaluated_at,
+                                last_market_signal_evidence=json.dumps(
+                                    evidence, sort_keys=True, separators=(",", ":")
+                                ),
                             )
                             record_error(p, "operator_wake_unavailable")
                 except Exception as e:
