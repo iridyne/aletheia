@@ -147,7 +147,7 @@ async def test_market_observer_creates_opportunity(tmp_path, monkeypatch):
 async def test_research_agent_creates_note(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     # Mock LLM to return substantive content (≥80 chars to pass quality gate).
-    async def _fake_llm(system, user, max_tokens=800):
+    async def _fake_llm(system, user, max_tokens=800, **_kwargs):
         return ("BTC 4h shows momentum divergence with RSI overbought while price consolidates. "
                 "ETH funding rates suggest crowded longs. Recommend reducing spot exposure into strength.", None)
     monkeypatch.setattr("aletheia.agents.research_agent.llm_complete", _fake_llm)

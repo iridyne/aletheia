@@ -35,8 +35,39 @@ _POSITION_X = _ROOT / "aletheia" / "data" / "position_x.py"
 _MARKET_DATA = _ROOT / "aletheia" / "trading" / "market_data.py"
 _DATA_UTILIZATION_DOC = _ROOT / "docs" / "design" / "data" / "data_utilization.md"
 _API_REFERENCE_DOC = _ROOT / "docs" / "design" / "api" / "api_reference.md"
+_INFERENCE_SCHEMA = _ROOT / "aletheia" / "economics" / "schema.py"
+_INFERENCE_CONTRACT = (
+    _ROOT / "docs" / "design" / "contracts" / "llm_inference_harness_contract.md"
+)
 
 _CONTRACT = "data_utilization_contract"
+
+
+@spec_claim(
+    SpecClaim(
+        "DU-S25",
+        _CONTRACT,
+        "§3 LLM inference observation",
+        "L2a",
+        "Logical inference, physical attempt, and selected-context metadata are "
+        "registered as observation-only consumers without raw prompt or response storage.",
+        status="implemented",
+    ),
+)
+def test_llm_inference_observation_is_registered_without_raw_content():
+    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
+    schema = _INFERENCE_SCHEMA.read_text(encoding="utf-8")
+    contract = _INFERENCE_CONTRACT.read_text(encoding="utf-8")
+
+    assert "DU-S25" in doc
+    for table in ("llm_inference_calls", "runtime_cost_events", "llm_context_artifacts"):
+        assert table in doc and table in schema
+    assert "No stored prompt, response, source body" in contract
+    logical_ddl = schema.split("CREATE TABLE IF NOT EXISTS llm_inference_calls", 1)[1]
+    logical_ddl = logical_ddl.split(");", 1)[0]
+    assert "prompt_static_sha256" in logical_ddl
+    assert "rendered_prompt_sha256" in logical_ddl
+    assert "prompt_text" not in logical_ddl and "response_text" not in logical_ddl
 
 
 @spec_claim(

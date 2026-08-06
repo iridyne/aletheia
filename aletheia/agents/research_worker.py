@@ -677,6 +677,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
             user=f"Research context:\n{research_context}\n\nCollect relevant evidence.",
             max_tokens=8192,
             provider=_fast,
+            caller="research_worker.methodology",
         )
         if err:
             if "429" in err or "rate" in err.lower():
@@ -695,6 +696,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
                 user=f"Research context:\n{research_context}\n\nCollect relevant evidence from your {lens_name} perspective.",
                 max_tokens=8192,
                 provider=_fast,
+                caller="research_worker.lens",
             )
             if lens_err:
                 if "429" in lens_err or "rate" in lens_err.lower():
@@ -759,6 +761,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         user=f"Evidence:\n{evidence_summary}\n\nExtract structured claims.",
         max_tokens=8192,
         provider=_fast,
+        caller="research_worker.claims",
     )
     if err:
         if "429" in err or "rate" in err.lower():
@@ -803,6 +806,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         user=f"Claims:\n{claims_for_prompt}\n\nCluster into investment research themes.",
         max_tokens=8192,
         provider=_fast,
+        caller="research_worker.themes",
     )
     if err:
         if "429" in err or "rate" in err.lower():
@@ -861,6 +865,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
             user=f"Research themes:\n{themes_for_prompt}\n\nIdentify potential opportunities.",
             max_tokens=8192,
             provider=_fast,
+            caller="research_worker.opportunities",
         )
         if not err:
             opp_items = _parse_json_array(opps_text, "opportunities")

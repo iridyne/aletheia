@@ -136,6 +136,11 @@ async def ping_model():
     import time
     from aletheia.model_provider.router import get_provider_async
     from aletheia.model_provider.base import ModelRequest
+    from aletheia.model_provider.inference_contract import build_inference_call
+    from aletheia.economics.inference_calls import (
+        record_inference_finished,
+        record_inference_started,
+    )
     from aletheia.model_provider.broker import (
         InferencePriority,
         brokered_complete,
@@ -143,20 +148,36 @@ async def ping_model():
     from aletheia.config.loader import load_config
 
     t0 = time.monotonic()
+    inference_call = None
     try:
         cfg = load_config()
         provider_name = cfg.models.default_provider
         provider = await get_provider_async(provider_name)
+        messages = [{"role": "user", "content": "Say OK"}]
+        inference_call = build_inference_call(
+            caller="provider_settings.ping",
+            system=None,
+            messages=messages,
+            context_adapter_id="none",
+            requested_provider=provider_name,
+            temperature=0,
+            max_tokens=10,
+            allow_model_fallback=False,
+        )
+        record_inference_started(inference_call)
         resp = await brokered_complete(
             provider_name,
             provider,
             ModelRequest(
-                messages=[{"role": "user", "content": "Say OK"}],
+                messages=messages,
                 max_tokens=10,
                 temperature=0,
+                inference=inference_call,
+                allow_model_fallback=False,
             ),
             priority=InferencePriority.INTERACTIVE,
         )
+        record_inference_finished(inference_call, status="success", response=resp)
         latency_ms = int((time.monotonic() - t0) * 1000)
         content = (resp.content or "").strip()
         if not content:
@@ -175,6 +196,10 @@ async def ping_model():
             "error": None,
         }
     except Exception as e:
+        if inference_call is not None:
+            record_inference_finished(
+                inference_call, status="error", error_type=type(e).__name__
+            )
         latency_ms = int((time.monotonic() - t0) * 1000)
         return {"ok": False, "latency_ms": latency_ms, "model": "unknown", "response": "", "error": str(e)[:200]}
 
@@ -355,21 +380,48 @@ async def test_model_candidate(req: TestCandidateRequest):
         if req.probe:
             from aletheia.model_provider.base import ModelRequest
             from aletheia.model_provider.broker import InferencePriority, brokered_complete
+            from aletheia.model_provider.inference_contract import build_inference_call
+            from aletheia.economics.inference_calls import (
+                record_inference_finished,
+                record_inference_started,
+            )
 
+            inference_call = None
             try:
-                await brokered_complete(
+                messages = [{"role": "user", "content": "Say OK"}]
+                inference_call = build_inference_call(
+                    caller="provider_settings.candidate_probe",
+                    system=None,
+                    messages=messages,
+                    context_adapter_id="none",
+                    requested_provider=req.provider,
+                    temperature=0,
+                    max_tokens=200,
+                    allow_model_fallback=False,
+                )
+                record_inference_started(inference_call)
+                response = await brokered_complete(
                     req.provider,
                     provider,
                     ModelRequest(
-                        messages=[{"role": "user", "content": "Say OK"}],
+                        messages=messages,
                         max_tokens=200,
                         temperature=0,
+                        inference=inference_call,
+                        allow_model_fallback=False,
                     ),
                     priority=InferencePriority.INTERACTIVE,
+                )
+                record_inference_finished(
+                    inference_call, status="success", response=response
                 )
                 # Thinking-mode models may exhaust budget on reasoning without text;
                 # a successful HTTP round-trip is sufficient proof of connectivity.
             except Exception as e:
+                if inference_call is not None:
+                    record_inference_finished(
+                        inference_call, status="error", error_type=type(e).__name__
+                    )
                 return {"available": False, "model": health.model, "error": f"inference failed: {e}"}
 
         return {"available": True, "model": health.model, "error": None, "models": health.models}

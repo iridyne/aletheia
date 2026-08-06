@@ -342,6 +342,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         user=f"Recent trade case studies:\n{summaries}\n\nExtract lessons with evidence.",
         max_tokens=600,
         provider=get_provider_for_tier("deep"),
+        caller="dreaming.lesson_extraction",
     )
     log_tool(run_id, "llm_complete_lessons", "observe", True)
     if err:
@@ -484,6 +485,7 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
         user=f"Recent agent activity:\n{activity}{post_mortem_ctx}{trading_block}\n\nWrite the dreaming log.",
         max_tokens=700,
         provider=get_provider_for_tier("deep"),
+        caller="dreaming.nightly_consolidation",
     )
     log_tool(run_id, "llm_complete", "observe", True)
     item = None

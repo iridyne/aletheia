@@ -51,6 +51,7 @@ async def execute_typed_command(
     permission_scope: str = "worker",
     session_id: str,
     user_input: str | None = None,
+    inference_call_id: str | None = None,
 ) -> TypedCommandExecutionResult:
     from aletheia.agent_shell.audit import record_command
     from aletheia.agent_shell.commands import HANDLERS
@@ -78,7 +79,9 @@ async def execute_typed_command(
     cmd_def = COMMANDS.get(command_name)
     if not cmd_def:
         response = f"Unknown command: {command_name}"
-        record_command(session_id, command_name, params, False, response)
+        record_command(
+            session_id, command_name, params, False, response, inference_call_id
+        )
         close_session(
             session_id,
             intent=command_name,
@@ -115,7 +118,9 @@ async def execute_typed_command(
 
     if not allowed:
         response = denial or "Permission denied."
-        record_command(session_id, command_name, params, False, response)
+        record_command(
+            session_id, command_name, params, False, response, inference_call_id
+        )
         close_session(
             session_id,
             intent=command_name,
@@ -144,7 +149,9 @@ async def execute_typed_command(
             f"'{command_name}' requires confirmation. Re-send the command with "
             f"parameter confirm=true to execute."
         )
-        record_command(session_id, command_name, params, False, response)
+        record_command(
+            session_id, command_name, params, False, response, inference_call_id
+        )
         close_session(
             session_id,
             intent=command_name,
@@ -165,7 +172,9 @@ async def execute_typed_command(
     handler = HANDLERS.get(command_name)
     if not handler:
         response = f"Command '{command_name}' has no handler implemented."
-        record_command(session_id, command_name, params, False, response)
+        record_command(
+            session_id, command_name, params, False, response, inference_call_id
+        )
         close_session(
             session_id,
             intent=command_name,
@@ -185,7 +194,9 @@ async def execute_typed_command(
 
     result = await handler(params)
     response = _format_fallback(result)
-    record_command(session_id, command_name, params, True, response)
+    record_command(
+        session_id, command_name, params, True, response, inference_call_id
+    )
     close_session(
         session_id,
         intent=command_name,

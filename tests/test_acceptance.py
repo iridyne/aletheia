@@ -154,7 +154,7 @@ async def test_ac06_model_providers(client):
 async def test_ac07_agent_creates_artifacts(client, monkeypatch):
     c, _ = client
     # Mock LLM to return substantive content so quality gate passes.
-    async def _fake_llm(system, user, max_tokens=800):
+    async def _fake_llm(system, user, max_tokens=800, **_kwargs):
         return ("BTC 4h shows momentum divergence with RSI overbought while price consolidates. "
                 "ETH funding rates suggest crowded longs. Recommend reducing spot exposure.", None)
     monkeypatch.setattr("aletheia.agents.research_agent.llm_complete", _fake_llm)

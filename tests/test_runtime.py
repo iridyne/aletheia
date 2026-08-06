@@ -256,7 +256,7 @@ async def test_research_agent_degrades_without_llm(tmp_path, monkeypatch):
 async def test_agent_calls_llm_when_available(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
-    async def fake_complete(system, user, max_tokens=800):
+    async def fake_complete(system, user, max_tokens=800, **_kwargs):
         return ("LLM-generated research content: BTC consolidating near 200MA with declining volume; "
                 "ETH funding rate turning negative signals positioning squeeze. Medium-confidence.", None)
 

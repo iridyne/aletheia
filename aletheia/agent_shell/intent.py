@@ -182,7 +182,11 @@ async def classify_intent(user_input: str, context_summary: str) -> CommandInten
             f"Classify this into a command."
         )
         result, error = await llm_structured(
-            INTENT_SYSTEM_PROMPT, user_prompt, schema=CommandIntent, max_tokens=200
+            INTENT_SYSTEM_PROMPT,
+            user_prompt,
+            schema=CommandIntent,
+            max_tokens=200,
+            caller="agent_shell.intent_classification",
         )
         if result and not error:
             intent = CommandIntent(**result)

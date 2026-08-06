@@ -168,13 +168,17 @@ verdicts; it does not rewrite or delete older verdict history.
 | `coingecko_top_snapshots` (Round 2 Step 3) | Top-N coins by market cap pulled every Phase B tick | coin_id, symbol, price_usd, market_cap_usd, market_cap_rank, volume_24h_usd, price_change_1h_pct, price_change_24h_pct, price_change_7d_pct, observed_at |
 | `onchain_snapshots` (datasrc overhaul) | DefiLlama on-chain regime (zero-key); folded into the LLM macro block | source, metric_type (`stablecoin_mcap` / `chain_tvl` / `dex_volume`), total_usd, change_24h_pct, top_entries (JSON), raw_summary (JSON), observed_at |
 
-### E. Agent Runtime (10 tables)
+### E. Agent Runtime (15 tables)
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `agent_runs` | Agent execution records | agent_name, trigger_type, status, outputs (JSON) |
 | `agent_run_steps` | Step-by-step agent traces | run_id, step_number, action, result |
-| `agent_tool_calls` | Tool invocation log | run_id, tool_name, arguments (JSON), result |
+| `agent_tool_calls` | Tool invocation log | run_id, inference_call_id, tool_name, arguments (JSON), result |
+| `llm_inference_calls` | Content-free logical inference envelope | logical_call_id, caller, prompt/context/tool/schema identities and hashes, validation outcome, retry/fallback summary |
+| `runtime_cost_events` | Physical LLM/tool/data cost attempts | call_id, attempt_index, provider/model/tool, usage, price snapshot, cost status |
+| `llm_context_artifacts` | Content-free selected-context manifest | logical_call_id, caller, evaluation pair/arm/fixture, kind, stable_id, freshness, rendered_chars |
+| `llm_context_pair_reviews` | Aggregate-only blinded Learning B review | pair/fixture IDs, control/treatment call IDs, quality/grounded-use/harm scores, verdict |
 | `audit_events` | System-wide audit trail | actor, source, event_type, entity_id, before/after (JSON) |
 | `settings` | Runtime configuration store | key, value |
 | `runtime_registry` | Service/process registry | service_name, pid, started_at, health |
@@ -199,7 +203,7 @@ and spec `AR-S08`.
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `agent_shell_sessions` | User interaction sessions | session_id, mode, started_at |
-| `agent_shell_commands` | All commands issued | session_id, command, response, latency_ms |
+| `agent_shell_commands` | All commands issued | session_id, inference_call_id, command, response, latency_ms |
 | `agent_shell_messages` | Chat-style messages | session_id, role, content |
 | `agent_shell_tasks` | Background tasks | session_id, task_type, status, result |
 | `agent_shell_artifacts` | Generated artifacts | task_id, artifact_type, content |

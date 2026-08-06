@@ -2928,7 +2928,12 @@ Return JSON: {_json.dumps(schema)}"""
         def model_json_schema() -> dict:
             return schema
 
-    review, err = await llm_structured(system, user, schema=_Schema())
+    review, err = await llm_structured(
+        system,
+        user,
+        schema=_Schema(),
+        caller="agent_shell.portfolio_review",
+    )
     if err or review is None:
         from aletheia.storage.models import PiDecision
         from aletheia.storage.repositories import insert_pi_decision

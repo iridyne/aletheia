@@ -89,6 +89,68 @@ CREATE INDEX IF NOT EXISTS idx_runtime_cost_events_window
 CREATE INDEX IF NOT EXISTS idx_runtime_cost_events_entity
     ON runtime_cost_events(opportunity_id, decision_id, proposal_id);
 
+-- One content-free row per logical inference. Physical provider attempts keep
+-- their existing append-only rows in runtime_cost_events and share this ID.
+CREATE TABLE IF NOT EXISTS llm_inference_calls (
+    logical_call_id TEXT PRIMARY KEY,
+    schema_version TEXT NOT NULL,
+    run_id TEXT,
+    runtime_session_id TEXT,
+    caller TEXT NOT NULL,
+    prompt_template_id TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    prompt_static_sha256 TEXT NOT NULL,
+    rendered_prompt_sha256 TEXT NOT NULL,
+    context_adapter_id TEXT NOT NULL,
+    tool_policy_id TEXT NOT NULL,
+    allowed_tools_sha256 TEXT NOT NULL,
+    output_schema_id TEXT,
+    output_schema_sha256 TEXT,
+    requested_provider TEXT,
+    temperature REAL NOT NULL,
+    max_tokens INTEGER NOT NULL CHECK(max_tokens > 0),
+    allow_model_fallback INTEGER NOT NULL CHECK(allow_model_fallback IN (0,1)),
+    status TEXT NOT NULL CHECK(status IN ('running','success','error')),
+    parse_valid INTEGER CHECK(parse_valid IN (0,1)),
+    schema_valid INTEGER CHECK(schema_valid IN (0,1)),
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    retry_count INTEGER NOT NULL DEFAULT 0 CHECK(retry_count >= 0),
+    fallback_used INTEGER CHECK(fallback_used IN (0,1)),
+    final_provider TEXT,
+    final_model TEXT,
+    error_type TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_llm_inference_calls_run
+    ON llm_inference_calls(run_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_llm_inference_calls_caller
+    ON llm_inference_calls(caller, started_at DESC);
+
+-- Aggregate-only blinded owner review. Raw model responses remain in an
+-- explicitly chosen ephemeral review packet outside the repository/ledger.
+CREATE TABLE IF NOT EXISTS llm_context_pair_reviews (
+    evaluation_pair_id TEXT PRIMARY KEY,
+    fixture_id TEXT NOT NULL,
+    rubric_version TEXT NOT NULL,
+    reviewer TEXT NOT NULL,
+    control_call_id TEXT NOT NULL,
+    treatment_call_id TEXT NOT NULL,
+    control_quality_score INTEGER NOT NULL CHECK(control_quality_score BETWEEN 1 AND 5),
+    treatment_quality_score INTEGER NOT NULL CHECK(treatment_quality_score BETWEEN 1 AND 5),
+    control_grounded_use TEXT NOT NULL CHECK(control_grounded_use IN ('yes','no','not_applicable')),
+    treatment_grounded_use TEXT NOT NULL CHECK(treatment_grounded_use IN ('yes','no','not_applicable')),
+    control_context_harm INTEGER NOT NULL CHECK(control_context_harm IN (0,1)),
+    treatment_context_harm INTEGER NOT NULL CHECK(treatment_context_harm IN (0,1)),
+    verdict TEXT NOT NULL CHECK(verdict IN ('treatment_better','control_better','tie')),
+    reviewed_at TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_llm_context_pair_reviews_fixture
+    ON llm_context_pair_reviews(fixture_id, reviewed_at DESC);
+
 CREATE TABLE IF NOT EXISTS viability_reports (
     id TEXT PRIMARY KEY,
     dedup_key TEXT NOT NULL UNIQUE,
@@ -142,6 +204,7 @@ CREATE INDEX IF NOT EXISTS idx_economics_budgets_scope
 -- or source bodies, and is isolated from trading state.
 CREATE TABLE IF NOT EXISTS llm_context_artifacts (
     id TEXT PRIMARY KEY, schema_version TEXT NOT NULL, run_id TEXT, caller TEXT NOT NULL,
+    logical_call_id TEXT, evaluation_pair_id TEXT, evaluation_arm TEXT, fixture_id TEXT,
     symbol TEXT, kind TEXT NOT NULL CHECK(kind IN ('environment','news','learning')),
     stable_id TEXT NOT NULL, source TEXT, selected_reason TEXT, trust_class TEXT,
     freshness_status TEXT NOT NULL CHECK(freshness_status IN ('fresh','stale','unknown')),
@@ -150,6 +213,7 @@ CREATE TABLE IF NOT EXISTS llm_context_artifacts (
 );
 CREATE INDEX IF NOT EXISTS idx_llm_context_artifacts_run ON llm_context_artifacts(run_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_llm_context_artifacts_window ON llm_context_artifacts(created_at DESC, kind);
+CREATE INDEX IF NOT EXISTS idx_llm_context_artifacts_call ON llm_context_artifacts(logical_call_id, created_at);
 """
 
 _TOOL_COST_SELECT = """
@@ -198,6 +262,7 @@ SELECT
     json_object(
         'tool_class',calls.tool_class,
         'permitted',calls.permitted,
+        'inference_call_id',calls.inference_call_id,
         'legacy_backfill',1
     ),
     calls.created_at
@@ -231,6 +296,7 @@ def _backfill_existing_tool_calls(db: sqlite3.Connection) -> None:
 def _install_tool_trigger(db: sqlite3.Connection) -> None:
     db.executescript(
         """
+        DROP TRIGGER IF EXISTS trg_agent_tool_call_cost_event;
         CREATE TRIGGER IF NOT EXISTS trg_agent_tool_call_cost_event
         AFTER INSERT ON agent_tool_calls
         WHEN COALESCE((SELECT value FROM economics_settings WHERE key='cost_tracing_enabled'),'1')='1'
@@ -276,6 +342,7 @@ def _install_tool_trigger(db: sqlite3.Connection) -> None:
                 json_object(
                     'tool_class',NEW.tool_class,
                     'permitted',NEW.permitted,
+                    'inference_call_id',NEW.inference_call_id,
                     'legacy_backfill',0
                 ),
                 NEW.created_at
@@ -297,34 +364,79 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
         from aletheia.storage.sqlite import get_db
 
         db = get_db()
-    table_ready = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runtime_cost_events'"
+    required_tables = {
+        "runtime_cost_events",
+        "economics_budgets",
+        "llm_inference_calls",
+        "llm_context_pair_reviews",
+    }
+    existing_tables = {
+        str(row[0])
+        for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    trigger_row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='trigger' "
+        "AND name='trg_agent_tool_call_cost_event'"
     ).fetchone()
-    budgets_table_ready = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='economics_budgets'"
-    ).fetchone()
-    trigger_ready = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='trg_agent_tool_call_cost_event'"
-    ).fetchone()
+    trigger_ready = bool(
+        trigger_row and "inference_call_id" in str(trigger_row[0] or "")
+    )
     tool_table = db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_tool_calls'"
     ).fetchone()
+    tool_columns = (
+        {
+            str(row[1])
+            for row in db.execute("PRAGMA table_info(agent_tool_calls)").fetchall()
+        }
+        if tool_table
+        else set()
+    )
+    tool_inference_link_ready = "inference_call_id" in tool_columns
 
-    if not table_ready or not budgets_table_ready:
+    if not required_tables.issubset(existing_tables):
         if db.in_transaction:
             raise RuntimeError(
                 "economics schema initialization refused inside an active transaction"
             )
         db.executescript(ECONOMICS_DDL)
 
-    if tool_table and not trigger_ready:
+    context_columns = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(llm_context_artifacts)")
+    }
+    missing_context_columns = [
+        ("logical_call_id", "TEXT"),
+        ("evaluation_pair_id", "TEXT"),
+        ("evaluation_arm", "TEXT"),
+        ("fixture_id", "TEXT"),
+    ]
+    missing_context_columns = [
+        item for item in missing_context_columns if item[0] not in context_columns
+    ]
+    if missing_context_columns:
+        if db.in_transaction:
+            raise RuntimeError(
+                "economics context schema upgrade refused inside an active transaction"
+            )
+        for column, column_type in missing_context_columns:
+            db.execute(
+                f"ALTER TABLE llm_context_artifacts ADD COLUMN {column} {column_type}"
+            )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_llm_context_artifacts_call "
+            "ON llm_context_artifacts(logical_call_id, created_at)"
+        )
+
+    if tool_table and tool_inference_link_ready and not trigger_ready:
         if db.in_transaction:
             raise RuntimeError(
                 "economics trigger initialization refused inside an active transaction"
             )
         _install_tool_trigger(db)
 
-    if tool_table:
+    if tool_table and tool_inference_link_ready:
         marker = db.execute(
             "SELECT 1 FROM economics_settings WHERE key=?",
             (_TOOL_BACKFILL_KEY,),

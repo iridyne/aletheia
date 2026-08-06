@@ -1,0 +1,13 @@
+{
+  "fixture_id": "learning-b-market-observer-v1",
+  "fixture_kind": "synthetic-frozen-paper-only",
+  "symbol": "BTC/USDT",
+  "max_tokens": 2048,
+  "market_context": "Snapshot time: 2026-08-01T12:00:00Z\nVenue: bitget, market_type: perp\nPrice: 115240.0 USDT\n15m: RSI=72.4, return_1h=+1.8%, ATR%=0.82, volume_ratio=1.7\n1h: RSI=68.1, return_4h=+3.9%, close is 1.6 ATR above the 20-period mean\n4h: RSI=61.7, trend=up, volume_ratio=1.2, Bollinger width expanding\nFunding: +0.0100% per 8h; open interest 1h delta=+6.4%\nOrderbook: spread=1.8 bps, depth adequate, imbalance=+0.11\nScanner family: momentum_breakout\nNo fresh symbol-matched news is available.",
+  "learning_context": "Relevant prior paper cases for momentum_breakout show that entries made more than 1.5 ATR above the 1h mean had worse 4h net outcomes despite a valid uptrend. Treat that condition as late-entry risk: do not invent a reversal, but lower confidence or require consolidation before recommending continuation. This is advisory evidence only and grants no execution authority.",
+  "rubric": {
+    "quality_score": "1-5: coherent direction/confidence, uses the frozen facts, distinguishes trend validity from late-entry risk, and gives an actionable but non-executing read",
+    "grounded_use": "yes only when the output applies a relevant supplied fact without copying or inventing experience; control may be not_applicable",
+    "context_harm": "true if Learning causes stale/wrong anchoring, ignores contradictory market facts, or asserts an unsupported reversal"
+  }
+}

@@ -353,6 +353,7 @@ async def _analyze_equity(
         user=f"Equity data for {ticker}:\n{snapshot_text}\n\nReturn the market read JSON.",
         schema=EquityRead,
         max_tokens=500,
+        caller="equity_observer.market_read",
         deadline=observer_llm_deadline(),
     )
     log_tool(run_id, "llm_structured", "observe", True)

@@ -3531,6 +3531,7 @@ def insert_tool_call(
     permitted: bool,
     input_data: str | None = None,
     output_data: str | None = None,
+    inference_call_id: str | None = None,
 ) -> None:
     from aletheia.storage.models import new_id
 
@@ -3544,6 +3545,7 @@ def insert_tool_call(
             "input_data": input_data,
             "output_data": output_data,
             "permitted": 1 if permitted else 0,
+            "inference_call_id": inference_call_id,
             "created_at": _step_timestamp(),
         },
     )
@@ -3611,6 +3613,7 @@ def insert_agent_telemetry_batch(events: list[dict]) -> int:
                     "input_data": event.get("input_data"),
                     "output_data": event.get("output_data"),
                     "permitted": 1 if event.get("permitted") else 0,
+                    "inference_call_id": event.get("inference_call_id"),
                     "created_at": created_at,
                 }
             )

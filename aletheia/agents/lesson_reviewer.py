@@ -235,6 +235,7 @@ async def _judge(lesson, evidence: dict, run_id: str | None) -> tuple[str, str]:
         ),
         max_tokens=200,
         provider=get_provider_for_tier("deep"),
+        caller="lesson_reviewer.judge",
     )
     log_tool(run_id, "llm_judge_lesson", "observe", err is None)
     if err:

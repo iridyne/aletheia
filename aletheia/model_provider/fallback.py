@@ -450,6 +450,8 @@ async def complete_with_fallback(
     _observe_would_block(cfg, request, provider, resolved_provider_name)
     _observe_prompt_guardrail(cfg, request)
     _enforce_budget_if_configured(cfg, request)
+    if not request.allow_model_fallback:
+        return await brokered_complete(resolved_provider_name, provider, request)
     models = await _candidate_models(resolved_provider_name, provider)
     if not models:
         try:

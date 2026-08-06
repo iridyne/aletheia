@@ -1475,7 +1475,7 @@ async def operator_llm_session(payload: LlmSessionRequest):
     Runs a goal-directed loop: build context → LLM → tool_call → execute → repeat.
     Returns when the LLM produces a final answer or max_turns is reached.
     """
-    from aletheia.agents.helpers import llm_complete
+    from aletheia.agents.helpers import current_inference_call_id, llm_complete
     from aletheia.agent_shell.executor import execute_typed_command
     from aletheia.agent_shell.registry import COMMANDS
     from aletheia.agent_shell.permissions import check_permission
@@ -1527,7 +1527,14 @@ async def operator_llm_session(payload: LlmSessionRequest):
 
     for _ in range(max_turns):
         turns_used += 1
-        content, error = await llm_complete(system_prompt, _messages_to_prompt(messages), max_tokens=800)
+        content, error = await llm_complete(
+            system_prompt,
+            _messages_to_prompt(messages),
+            max_tokens=800,
+            caller="operator.llm_session.turn",
+            allowed_tool_ids=sorted(allowed),
+        )
+        turn_inference_call_id = current_inference_call_id()
         if error:
             return {
                 "status": "llm_unavailable",
@@ -1577,6 +1584,7 @@ async def operator_llm_session(payload: LlmSessionRequest):
                 permission_scope="operator",
                 session_id=session_id,
                 user_input=cmd_name,
+                inference_call_id=turn_inference_call_id,
             )
             commands_executed.append({
                 "command": cmd_name,
