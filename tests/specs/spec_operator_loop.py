@@ -396,21 +396,17 @@ def test_content_health_response_is_level1_notify_only():
 @spec_claim(
     SpecClaim(
         "OL-S12", "operator_layer", "§问题2 pi_decisions action namespace", "L2c",
-        "Supervision loop (operator_loop) writes ONLY recommend_* actions into the shared "
-        "pi_decisions bus — never trading-env actions (signal_pending/trade/close/reduce). "
-        "The two control loops are disambiguated by the action namespace, NOT signal_source "
-        "(INV-OPS-1). Structural root-fix for the 'three components, don't conflate' problem.",
+        "The converged Python operator_loop writes no PiDecision rows. Strategy lifecycle "
+        "belongs to the TS operator-shell command registry; trading decisions belong to "
+        "the PI trading daemon.",
         status="implemented",
     ),
 )
 def test_operator_loop_writes_only_recommend_actions():
-    """AST-scan operator_loop.py for PiDecision(action="...") literals. The supervision
-    loop must only emit recommend_* (e.g. recommend_retire/recommend_demote); writing a
-    trading-env action here would re-entangle the two control loops."""
+    """The retired recommendation bus must not reappear in the Python loop."""
     src = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
     tree = ast.parse(src)
 
-    trading_actions = {"signal_pending", "trade", "close", "reduce", "scale_in", "flip", "skip"}
     written: set[str] = set()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
@@ -420,16 +416,8 @@ def test_operator_loop_writes_only_recommend_actions():
             if kw.arg == "action" and isinstance(kw.value, ast.Constant):
                 written.add(kw.value.value)
 
-    assert written, "No PiDecision(action=...) literal found in operator_loop.py"
-    leaked = written & trading_actions
-    assert not leaked, (
-        f"operator_loop (supervision loop) writes trading-env action(s) {leaked} into "
-        "pi_decisions — it must only write recommend_* (INV-OPS-1). Trading actions belong "
-        "to the trading loop (paper_trader / PI), never the supervision loop."
-    )
-    assert all(a.startswith("recommend_") for a in written), (
-        "operator_loop wrote non-recommend action(s): "
-        f"{ {a for a in written if not a.startswith('recommend_')} }"
+    assert not written, (
+        f"Converged Python operator_loop still writes PiDecision actions: {written}"
     )
 
 
@@ -533,47 +521,35 @@ def test_observers_do_not_insert_pi_decisions():
 @spec_claim(
     SpecClaim(
         "OL-C08", "operator_layer", "§selfheal pi_approval_gate invariant", "L2c",
-        "Self-heal L1 actions (clean_stale_heartbeats / restart_collector / "
-        "rebuild_sqlite_index) must not execute without a prior PI approval record "
-        "— operator_layer.md §不变式1.",
-        status="partial",
+        "Python operator_loop must not self-issue a PI approval token and then execute "
+        "data-maintenance actions. Until an external approval consumer exists, historical "
+        "self-heal names are absent from the Level-1 executor.",
+        status="implemented",
     ),
 )
 def test_l1_selfheal_requires_pi_approval():
-    """RED tripwire: fires while the PI-approval gate is absent.
-
-    Goes GREEN once _execute_level1_action (or the self-heal stubs) checks
-    pi_decisions for an 'approve_l1_action' token before executing
-    clean_stale_heartbeats / restart_collector / rebuild_sqlite_index.
-    """
+    """An action cannot satisfy its own approval precondition."""
     import ast as _ast
+    import aletheia.agent_shell.operator_loop as _ol
 
     src = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
     tree = _ast.parse(src)
-
-    # Gate function must exist
-    assert "_request_pi_approval" in src or "approve_l1" in src, (
-        "No PI-approval gate found in operator_loop.py — "
-        "_request_pi_approval_for_selfheal() or equivalent must exist "
-        "before this tripwire can be satisfied."
-    )
-
-    # The gate must be called inside _execute_level1_action or the self-heal handlers
     execute_fn = next(
         (n for n in _ast.walk(tree)
          if isinstance(n, _ast.FunctionDef) and n.name == "_execute_level1_action"),
         None,
     )
     assert execute_fn is not None, "_execute_level1_action not found"
-    gate_calls = [
-        n for n in _ast.walk(execute_fn)
-        if isinstance(n, _ast.Call)
-        and isinstance(n.func, _ast.Name)
-        and "pi_approval" in n.func.id
-    ]
-    assert gate_calls, (
-        "_execute_level1_action does not call a PI-approval gate before "
-        "dispatching self-heal actions."
+    retired = {
+        "clean_stale_heartbeats",
+        "restart_collector",
+        "rebuild_sqlite_index",
+    }
+    assert not (retired & _ol._LEVEL_1_ACTIONS)
+    assert "_request_pi_approval_for_selfheal" not in src
+    assert not any(
+        isinstance(node, _ast.Constant) and node.value in retired
+        for node in _ast.walk(execute_fn)
     )
 
 
@@ -605,23 +581,24 @@ def test_l2_proposal_requires_human_confirmation():
 
 @spec_claim(
     SpecClaim(
-        "OL-S13", "operator_layer", "§selfheal l1_action_types exist", "L2a",
-        "_LEVEL_1_ACTIONS must include data-maintenance self-heal types: "
-        "clean_stale_heartbeats, restart_collector, rebuild_sqlite_index "
-        "(operator_layer.md §自愈档位 L1行).",
-        status="partial",
+        "OL-S13", "operator_layer", "§selfheal l1_action_types suspended", "L2a",
+        "Unowned or falsely named maintenance actions must not appear in "
+        "_LEVEL_1_ACTIONS. Unknown action names fail over to a human proposal.",
+        status="implemented",
     ),
 )
-def test_l1_selfheal_action_types_exist():
-    """The three L1 data-maintenance self-heal action types must be registered."""
+def test_l1_selfheal_action_types_suspended():
+    """Historical self-heal names stay out of the automatic action taxonomy."""
     import aletheia.agent_shell.operator_loop as _ol
 
-    required = {"clean_stale_heartbeats", "restart_collector", "rebuild_sqlite_index"}
-    missing = required - _ol._LEVEL_1_ACTIONS
-    assert not missing, (
-        f"Self-heal action types missing from _LEVEL_1_ACTIONS: {missing}. "
-        "Add them to align with operator_layer.md §自愈档位 L1."
-    )
+    suspended = {
+        "request_backfill",
+        "clean_stale_heartbeats",
+        "restart_collector",
+        "rebuild_sqlite_index",
+    }
+    assert not (suspended & _ol._LEVEL_1_ACTIONS)
+    assert all(_ol.classify_action(action_type) == 2 for action_type in suspended)
 
 
 @spec_claim(
@@ -750,14 +727,10 @@ def test_knowledge_item_is_structured_selfheal_store():
     log but not for structured query). The KnowledgeItem path is the contract-mandated
     structured store.
 
-    Verifies:
-    1. KnowledgeItem model has a content field (can store JSON).
-    2. The self-heal stubs call _emit_self_heal_action (not only _persist_action).
+    This store remains available to a future externally approved maintenance owner;
+    the Python operator loop no longer claims to be that owner.
     """
-    import ast as _ast
-
     # 1. KnowledgeItem has content field
-    import dataclasses
     from aletheia.storage.models import KnowledgeItem
 
     # Pydantic model — check field names
@@ -766,30 +739,8 @@ def test_knowledge_item_is_structured_selfheal_store():
         "KnowledgeItem model missing 'content' field — cannot store structured JSON audit."
     )
 
-    # 2. Self-heal handler stubs reference _emit_self_heal_action
-    src = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
-    for action_name in ("_action_clean_stale_heartbeats",
-                        "_action_restart_collector",
-                        "_action_rebuild_sqlite_index"):
-        tree = _ast.parse(src)
-        fn = next(
-            (n for n in _ast.walk(tree)
-             if isinstance(n, _ast.FunctionDef) and n.name == action_name),
-            None,
-        )
-        assert fn is not None, f"{action_name} not found in operator_loop.py"
-        calls = [
-            n for n in _ast.walk(fn)
-            if isinstance(n, _ast.Call)
-            and (
-                (isinstance(n.func, _ast.Attribute) and n.func.attr == "_emit_self_heal_action")
-                or (isinstance(n.func, _ast.Name) and n.func.id == "_emit_self_heal_action")
-            )
-        ]
-        assert calls, (
-            f"{action_name} does not call _emit_self_heal_action — "
-            "the structured KnowledgeItem audit write is required by §不变式2."
-        )
+    from aletheia.agent_shell import commands as _commands
+    assert callable(_commands._emit_self_heal_action)
 
 
 # ---------------------------------------------------------------------------
@@ -837,22 +788,15 @@ def test_l2_selfheal_action_types_registered():
 @spec_claim(
     SpecClaim(
         "SH-C02", "operator_layer",
-        "§selfheal pi_approval_gate in _execute_level1_action",
+        "§selfheal absent_without_external_approval",
         "L2c",
-        "PI 批准前置不变式（实现层）——_execute_level1_action 对 "
-        "clean_stale_heartbeats / restart_collector / rebuild_sqlite_index 三个自愈动作，"
-        "必须在 dispatch 前调用含 'pi_approval' 或 'approve_l1' 字样的门控函数。"
-        "无批准记录则不执行（operator_layer.md §不变式1）。",
-        status="partial",
+        "没有独立批准消费者时，_execute_level1_action 不得分发 "
+        "clean_stale_heartbeats / restart_collector / rebuild_sqlite_index。",
+        status="implemented",
     ),
 )
 def test_l1_selfheal_pi_approval_gate_in_execute():
-    """RED tripwire: _execute_level1_action must call a PI-approval gate before
-    dispatching clean_stale_heartbeats / restart_collector / rebuild_sqlite_index.
-
-    Goes GREEN once _execute_level1_action (or the self-heal handler stubs)
-    contains a call to a function whose name contains 'pi_approval' or 'approve_l1'.
-    """
+    """The Level-1 dispatcher contains no bypassable self-heal branch."""
     import ast as _ast
 
     src = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
@@ -865,22 +809,17 @@ def test_l1_selfheal_pi_approval_gate_in_execute():
     )
     assert execute_fn is not None, "_execute_level1_action not found"
 
-    # Gate: any call whose function name contains 'pi_approval' or 'approve_l1'
-    gate_calls = [
-        n for n in _ast.walk(execute_fn)
-        if isinstance(n, _ast.Call)
-        and (
-            (isinstance(n.func, _ast.Name)
-             and ("pi_approval" in n.func.id or "approve_l1" in n.func.id))
-            or (isinstance(n.func, _ast.Attribute)
-                and ("pi_approval" in n.func.attr or "approve_l1" in n.func.attr))
-        )
-    ]
-    assert gate_calls, (
-        "SH-C02 NOT IMPLEMENTED: _execute_level1_action does not call a PI-approval gate "
-        "('pi_approval' or 'approve_l1') before dispatching self-heal actions. "
-        "Implement the gate per operator_layer.md §不变式1."
-    )
+    suspended = {
+        "clean_stale_heartbeats",
+        "restart_collector",
+        "rebuild_sqlite_index",
+    }
+    leaked = {
+        node.value
+        for node in _ast.walk(execute_fn)
+        if isinstance(node, _ast.Constant) and node.value in suspended
+    }
+    assert not leaked, f"Unapproved self-heal actions remain directly executable: {leaked}"
 
 
 @spec_claim(
@@ -1089,38 +1028,23 @@ def test_scanner_weight_persistence():
 
 @spec_claim(
     SpecClaim(
-        "OL-C12", "operator_layer", "§stale_recommendation_escalation", "L2a",
-        "_check_stale_recommendations must exist and escalate recommend_retire/demote "
-        "pi_decisions pending >24h into notify_operator calls (E5 fix).",
+        "OL-C12", "operator_layer", "§retired recommendation path", "L2a",
+        "The Python retire/demote recommendation path and its stale-row escalation are "
+        "removed after ownership converged to the TS operator-shell.",
         status="implemented",
     ),
 )
 def test_stale_recommendation_escalation_exists():
-    """Verify _check_stale_recommendations function exists and has correct behavior."""
+    """No dead recommendation writer or monitor remains in operator_loop."""
     import ast
     src = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
     tree = ast.parse(src)
 
-    fn_found = False
-    fn_src = ""
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "_check_stale_recommendations":
-            fn_found = True
-            fn_src = ast.unparse(node)
-            break
-    assert fn_found, "_check_stale_recommendations not found in operator_loop.py (E5 fix missing)"
-    assert "recommend_retire" in fn_src or "recommend_demote" in fn_src, (
-        "_check_stale_recommendations does not handle recommend_retire/recommend_demote"
-    )
-    assert "notify_operator" in fn_src or "_action_notify" in fn_src, (
-        "_check_stale_recommendations does not escalate to notify_operator"
-    )
-    # Must be called from run_operator_loop
-    loop_fn_src = ""
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "run_operator_loop":
-            loop_fn_src = ast.unparse(node)
-            break
-    assert "_check_stale_recommendations" in loop_fn_src, (
-        "_check_stale_recommendations is defined but never called from run_operator_loop"
-    )
+    function_names = {
+        node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+    }
+    assert "_action_retire_strategy" not in function_names
+    assert "_action_demote_strategy" not in function_names
+    assert "_check_stale_recommendations" not in function_names
+    assert "recommend_retire" not in src
+    assert "recommend_demote" not in src
