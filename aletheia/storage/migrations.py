@@ -3369,8 +3369,8 @@ _PENDING_OUTCOME_PARTIAL_INDEX_CHECKSUM = hashlib.sha256(
 ).hexdigest()
 
 _LLM_INFERENCE_LINKAGE_COLUMNS = (
-    ("agent_shell_commands", "inference_call_id", "TEXT"),
-    ("agent_tool_calls", "inference_call_id", "TEXT"),
+    ("inference_call_id", "agent_shell_commands", "TEXT"),
+    ("inference_call_id", "agent_tool_calls", "TEXT"),
 )
 _LLM_INFERENCE_LINKAGE_CHECKSUM = hashlib.sha256(
     (repr(_LLM_INFERENCE_LINKAGE_COLUMNS) + "\nadditive_columns_v1").encode("utf-8")
@@ -3506,7 +3506,7 @@ def _apply_pending_outcome_partial_index_v5(db: sqlite3.Connection) -> None:
 def _apply_llm_inference_linkage_v6(db: sqlite3.Connection) -> None:
     """Add content-free inference linkage without rewriting the frozen baseline."""
 
-    for table, column, column_type in _LLM_INFERENCE_LINKAGE_COLUMNS:
+    for column, table, column_type in _LLM_INFERENCE_LINKAGE_COLUMNS:
         existing = {
             str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
         }
