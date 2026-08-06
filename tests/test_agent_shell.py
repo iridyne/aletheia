@@ -807,6 +807,12 @@ async def test_trading_decision_brakes_one_sided_recent_proposals(tmp_path, monk
     # from a genuine LLM-initiated operator_skip (#330).
     assert decision.action == "portfolio_guard_skip"
     assert "directional proposal brake" in decision.reasoning
+    brake_trace = next(
+        item for item in decision.filter_trace
+        if item["filter_name"] == "direction_bias_brake"
+    )
+    assert brake_trace["decision"] == "rejected"
+    assert brake_trace["reason_code"] == "proposal_direction_concentration"
     debate.assert_not_awaited()
 
 
