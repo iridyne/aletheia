@@ -472,6 +472,12 @@ class Position(_Provenanced):
     closed_runtime_session_id: str | None = None
     closed_producer_commit: str | None = None
     closed_behavior_fingerprint: str | None = None
+    # Market-aware evaluation is advisory only.  Keep the legacy summary fields
+    # and store exact venue/symbol/market + source provenance separately as JSON.
+    last_market_signal_action: str | None = None
+    last_market_signal_reason: str | None = None
+    last_market_signal_at: str | None = None
+    last_market_signal_evidence: str | None = None
 
 
 class PositionDisappearanceCandidate(BaseModel):

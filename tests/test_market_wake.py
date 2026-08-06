@@ -4,6 +4,7 @@
 - Thesis invalidation auto-closes by default (D5); with thesis_auto_close=False it wakes.
 """
 
+import json
 from types import SimpleNamespace
 
 import aletheia.portfolio.position_manager as pm
@@ -96,8 +97,27 @@ def test_market_aware_wakes_not_closes(monkeypatch):
     monkeypatch.setattr(pm, "load_config", lambda: cfg)
     monkeypatch.setattr(pm, "get_fresh_price_for_protective_close", lambda s, market_type, *, venue="": 100.0)
 
-    signal = SimpleNamespace(confidence_score=85, direction_bias="short")
-    monkeypatch.setattr(msr, "get_market_signals_for_positions", lambda syms, **kw: {"BTC/USDT": signal})
+    signal = msr.MarketSignalContext(
+        symbol="BTC/USDT",
+        market_type="perp",
+        venue="binance",
+        confidence_score=85,
+        direction_bias="short",
+        source_opportunity_id="signal-opportunity",
+        source_agent="market_observer",
+        source_created_at="2026-08-07T08:00:00+00:00",
+        source_valid_until="2026-08-07T09:00:00+00:00",
+        universe_member_id="signal-member",
+        asset_id="signal-asset",
+        evidence_status="exact_signal_features_unavailable",
+    )
+    captured_requests = []
+
+    def _signals(requests, **kwargs):
+        captured_requests.extend(requests)
+        return {requests[0]: signal}
+
+    monkeypatch.setattr(msr, "get_market_signals_for_positions", _signals)
     monkeypatch.setattr(
         exit_rules, "evaluate_market_exit_rules",
         lambda pos, price, sig, c: exit_rules.MarketExitAction(
@@ -118,9 +138,22 @@ def test_market_aware_wakes_not_closes(monkeypatch):
 
     assert result["market_signal_wakes"] == 1
     assert closes == []                                   # NOT auto-closed
+    assert len(captured_requests) == 1
+    assert str(captured_requests[0].instrument) == "binance:BTC/USDT:perp"
     adverse = [w for w in wakes if getattr(w, "kind", None) == ADVERSE_SIGNAL]
     assert adverse and adverse[0].position_id == "mw1"
     assert adverse[0].priority == 1                        # score 85 → P1 (urgent)
+    assert adverse[0].payload["position_identity"] == "binance:BTC/USDT:perp"
+    assert adverse[0].payload["signal_identity"] == "binance:BTC/USDT:perp"
+    assert adverse[0].payload["source_opportunity_id"] == "signal-opportunity"
+
+    from aletheia.storage.repositories import _select_one
+
+    persisted = _select_one("positions", "mw1")
+    evidence = json.loads(persisted["last_market_signal_evidence"])
+    assert evidence["identity_status"] == "exact_match"
+    assert evidence["delivery"] == "scheduled"
+    assert evidence["signal"]["asset_id"] == "signal-asset"
 
 
 def test_market_aware_reports_operator_wake_unavailable(monkeypatch):
@@ -145,11 +178,21 @@ def test_market_aware_reports_operator_wake_unavailable(monkeypatch):
         "get_fresh_price_for_protective_close",
         lambda symbol, market_type, *, venue="": 100.0,
     )
-    signal = SimpleNamespace(confidence_score=85, direction_bias="short")
+    signal = msr.MarketSignalContext(
+        symbol="BTC/USDT",
+        market_type="perp",
+        venue="binance",
+        confidence_score=85,
+        direction_bias="short",
+        source_opportunity_id="signal-opportunity",
+        universe_member_id="signal-member",
+        asset_id="signal-asset",
+        evidence_status="exact_signal_features_unavailable",
+    )
     monkeypatch.setattr(
         msr,
         "get_market_signals_for_positions",
-        lambda symbols, **kwargs: {"BTC/USDT": signal},
+        lambda requests, **kwargs: {requests[0]: signal},
     )
     monkeypatch.setattr(
         exit_rules,
@@ -169,3 +212,68 @@ def test_market_aware_reports_operator_wake_unavailable(monkeypatch):
     position = _select_one("positions", "mw-failed")
     assert position["last_market_signal_action"] == "wake_failed:urgent_exit"
     assert position["last_market_signal_reason"] == "operator_daemon_unavailable"
+    evidence = json.loads(position["last_market_signal_evidence"])
+    assert evidence["identity_status"] == "exact_match"
+    assert evidence["delivery"] == "operator_daemon_unavailable"
+
+
+def test_market_aware_identity_mismatch_never_wakes(monkeypatch):
+    from aletheia.config.loader import load_config
+    from aletheia.storage.sqlite import get_db
+    import aletheia.agent_runtime.pi_daemon as pd
+    import aletheia.portfolio.exit_rules as exit_rules
+    import aletheia.portfolio.market_signal_reader as msr
+
+    get_db().execute(
+        "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
+        "execution_mode,status) VALUES "
+        "('mw-mismatch','BTC/USDT','usdt_futures','long',1.0,100.0,"
+        "'paper_internal','open')"
+    )
+    cfg = load_config()
+    cfg.trading.market_aware_exits.enabled = True
+    monkeypatch.setattr(pm, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        pm,
+        "get_fresh_price_for_protective_close",
+        lambda symbol, market_type, *, venue="": 100.0,
+    )
+    wrong_market = msr.MarketSignalContext(
+        symbol="BTC/USDT",
+        market_type="spot",
+        venue="binance",
+        confidence_score=95,
+        direction_bias="short",
+        source_opportunity_id="wrong-market-opportunity",
+        universe_member_id="wrong-market-member",
+        asset_id="wrong-market-asset",
+        evidence_status="exact_signal_features_unavailable",
+    )
+    monkeypatch.setattr(
+        msr,
+        "get_market_signals_for_positions",
+        lambda requests, **kwargs: {requests[0]: wrong_market},
+    )
+    evaluated = []
+    monkeypatch.setattr(
+        exit_rules,
+        "evaluate_market_exit_rules",
+        lambda *args: evaluated.append(args) or None,
+    )
+    wakes = []
+    monkeypatch.setattr(
+        pd,
+        "notify_pi_daemon",
+        lambda source="unknown", event=None: wakes.append(event) or True,
+    )
+
+    result = pm.evaluate_open_positions()
+
+    assert result["market_signal_wakes"] == 0
+    assert evaluated == []
+    assert wakes == []
+    assert any(
+        item["position_id"] == "mw-mismatch"
+        and item["code"] == "market_signal_identity_mismatch"
+        for item in result["errors"]
+    )
