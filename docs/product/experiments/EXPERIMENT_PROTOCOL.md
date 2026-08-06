@@ -104,17 +104,19 @@ The registry is the executable path inventory. Only
 - assignment is stable at the complete candidate cluster;
 - treatment and control both run the static baseline while stage=`shadow`;
 - 50 complete assignment units per arm are required;
-- the software gate requires a seven-day first-to-last exposure span;
+- the software gate requires seven consecutive UTC dates with at least one
+  complete eligible exposure unit from either arm; 50-per-arm sufficiency is
+  checked independently inside that continuous run;
 - canonical/fallback outcome disagreement invalidates evidence;
 - all measurement identities must match the current cohort;
 - underpowered harm is `indeterminate` and cannot authorize;
 - because no treatment is applied in shadow, a mature shadow cohort is expected
   to produce `insufficient_data/no_actual_intervention`, not positive/negative.
 
-The current seven-day implementation does not enforce continuous coverage. Until
-#692 lands, an unexplained pause/gap invalidates owner qualification even if the
-elapsed-span check passes. The qualification record must show scheduler, exposure,
-outcome, and evaluator continuity.
+An unexplained, planned, or partial exposure gap resets the current qualification
+run because there is no outage-waiver contract. Pre-gap samples remain auditable
+history but do not count toward the new run's sample, economic, confidence, or
+harm gates. The verdict exposes bounded `market_day_coverage` reasons.
 
 ### Owner trial and progression
 

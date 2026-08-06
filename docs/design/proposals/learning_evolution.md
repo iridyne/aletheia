@@ -290,7 +290,7 @@ hypothesis target horizon. Secondary harm metrics include:
 
 An artifact can promote only when:
 
-1. unique treatment/control samples and minimum time span are satisfied;
+1. unique treatment/control samples and the consecutive market-day window are satisfied;
 2. treatment-control net-return delta exceeds the configured practical threshold;
 3. deterministic bootstrap confidence does not include a material negative effect;
 4. no harm budget is breached;
@@ -316,10 +316,22 @@ deterministic confidence, harm, source provenance, and exclusion details. Its `p
 signal, so it cannot enable a treatment or alter a multiplier.
 
 The evaluator uses metric version
-`universe_family_calibration_cluster_allocation_utility_v3`. Existing verdicts under older metric
+`universe_family_calibration_cluster_allocation_utility_v4`. Existing verdicts under older metric
 versions remain append-only history and cannot satisfy a current metric-identity gate. Verdict
 `created_at` records evaluation time; `window_start` and `window_end` continue to bound the
 observations used.
+
+For current UFC qualification, one market day is one UTC date containing at least one complete
+eligible assignment unit from either randomized arm. The independent sample gate still requires
+50 treatment and 50 control units inside the current continuous run; daily arm imbalance is
+reported but does not impersonate a runtime outage. The latest
+uninterrupted run must contain `min_market_days` dates. A missing day in either arm resets that run,
+and all pre-gap samples are excluded from the post-gap sample, economic, confidence and harm gates.
+Continuity is derived from durable exposure timestamps; transient scheduler health alone cannot
+reconstruct historical coverage. Planned and partial outages have no waiver representation in v5
+and therefore fail closed. Bounded `market_day_coverage` metadata gives the owner the current run,
+missing-day counts and dates. Metric v4 and behavior contract v5 create a from-zero cohort; older
+experiments and verdicts remain immutable, non-authorizing history.
 
 The current harm contract uses the experiment's 50 assignment units per arm as the minimum
 determinate sample. A smaller cohort persists `harm_state=indeterminate`, blocks authority, and
@@ -611,6 +623,7 @@ paths remain static and create no formal experiment, exposure, verdict, or autho
 | LE-B26 | L2b | full-arm universe outcomes persist exact-key allocator selection and complete persisted assignment clusters, not selected survivors, are the statistical samples | implemented |
 | LE-B27 | L2b | policy epoch ignores code-only rebuilds, rotates on effective behavior change, and exposures retain running-build identity | implemented |
 | LE-B28 | L2b | conflicting settled values for one outcome identity invalidate/refreeze rather than selecting one copy | implemented |
+| LE-B30 | L2b | qualification uses consecutive UTC eligible-exposure days; a missing day resets the window and pre-gap samples cannot bridge the new run | implemented |
 | LE-V01 | L2b | the Universe runtime verdict adapter reads canonical full-arm filter outcomes by exact key, calculates cluster intent-to-treat allocation utility, uses selected-member Universe rows only as mirror/fallback, and fails closed on disagreement | implemented — measurement-only evaluator; the non-causal Operator Opportunity 4h adapter is disabled; no empirical positive-contribution claim |
 | LE-V02 | L2c | deterministic verdict storage cannot alter Learning authority or experiment lifecycle | implemented — evaluator writes only its idempotent measurement record |
 | LE-V03 | L2c | shadow assignments with no actually applied treatment cannot produce a causal positive/negative verdict | implemented — exposure manifests feed cohort samples and return `insufficient_data/no_actual_intervention` |

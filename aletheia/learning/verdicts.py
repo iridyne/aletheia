@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import json
 import math
 import random
@@ -14,7 +14,7 @@ from typing import Any
 from aletheia.learning.cohorts import ContributionCohort, CohortSample
 
 
-METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v3"
+METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v4"
 BOOTSTRAP_SEED = 20260712
 BOOTSTRAP_RESAMPLES = 2000
 _PRACTICAL_NEUTRAL_DELTA_PCT = 0.10
@@ -31,12 +31,19 @@ class VerdictEvaluation:
     harm_metrics: dict[str, Any]
     verdict: str
     reason: str
+    unique_treatment_n: int
+    unique_control_n: int
 
 
 def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
     """Classify one already-isolated cohort without changing any authority state."""
-    treatment = cohort.treatment_samples
-    control = cohort.control_samples
+    raw_treatment = cohort.treatment_samples
+    raw_control = cohort.control_samples
+    coverage, treatment, control = _market_day_coverage(
+        cohort,
+        raw_treatment,
+        raw_control,
+    )
     treatment_values = [sample.net_return_pct for sample in treatment]
     control_values = [sample.net_return_pct for sample in control]
     observed = fmean(treatment_values) if treatment_values else None
@@ -44,59 +51,188 @@ def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
     delta = observed - baseline if observed is not None and baseline is not None else None
     confidence_low, confidence_high = _bootstrap_interval(treatment_values, control_values)
     harm_metrics = _harm_metrics(cohort, treatment, control, delta)
+    harm_metrics["market_day_coverage"] = coverage
+
+    def result(verdict: str, reason: str) -> VerdictEvaluation:
+        return VerdictEvaluation(
+            baseline,
+            observed,
+            delta,
+            confidence_low,
+            confidence_high,
+            harm_metrics,
+            verdict,
+            reason,
+            len(treatment),
+            len(control),
+        )
 
     if cohort.invalid_reasons:
-        return VerdictEvaluation(
-            baseline, observed, delta, confidence_low, confidence_high, harm_metrics,
-            "invalid", _reason("invalid evidence", cohort.invalid_reasons),
+        return result("invalid", _reason("invalid evidence", cohort.invalid_reasons))
+    required = max(1, int(cohort.experiment.min_samples_per_arm))
+    if len(raw_treatment) < required or len(raw_control) < required:
+        return result(
+            "insufficient_data",
+            "insufficient unique prospective treatment/control samples",
         )
-    if _insufficient(cohort, treatment, control):
-        return VerdictEvaluation(
-            baseline, observed, delta, confidence_low, confidence_high, harm_metrics,
-            "insufficient_data", "insufficient unique prospective treatment/control samples or time span",
+    if coverage["status"] not in {"qualified", "not_required"}:
+        return result("insufficient_data", "market_day_coverage_gap")
+    if len(treatment) < required or len(control) < required:
+        return result(
+            "insufficient_data",
+            "insufficient unique prospective treatment/control samples in continuous window",
         )
     if not any(sample.authority_applied for sample in treatment):
-        return VerdictEvaluation(
-            baseline, observed, delta, confidence_low, confidence_high, harm_metrics,
-            "insufficient_data", "no_actual_intervention",
-        )
+        return result("insufficient_data", "no_actual_intervention")
     assert delta is not None
     if harm_metrics["breached"]:
-        return VerdictEvaluation(
-            baseline, observed, delta, confidence_low, confidence_high, harm_metrics,
-            "negative", _reason("harm gate breached", harm_metrics["breach_reasons"]),
-        )
+        return result("negative", _reason("harm gate breached", harm_metrics["breach_reasons"]))
     if delta < 0:
-        return VerdictEvaluation(
-            baseline, observed, delta, confidence_low, confidence_high, harm_metrics,
-            "negative", "treatment cost-aware mean trails control",
-        )
+        return result("negative", "treatment cost-aware mean trails control")
     threshold = max(_PRACTICAL_NEUTRAL_DELTA_PCT, float(cohort.hypothesis.effect_threshold or 0.0))
     if delta < threshold or confidence_low is None or confidence_low <= 0:
-        return VerdictEvaluation(
-            baseline, observed, delta, confidence_low, confidence_high, harm_metrics,
-            "neutral", "effect is within the practical-neutral band or confidence is inconclusive",
+        return result(
+            "neutral",
+            "effect is within the practical-neutral band or confidence is inconclusive",
         )
-    return VerdictEvaluation(
-        baseline, observed, delta, confidence_low, confidence_high, harm_metrics,
-        "positive", "cost-aware treatment mean exceeds control with deterministic confidence and no harm breach",
+    return result(
+        "positive",
+        "cost-aware treatment mean exceeds control with deterministic confidence and no harm breach",
     )
 
 
-def _insufficient(
+def _market_day_coverage(
     cohort: ContributionCohort,
     treatment: list[CohortSample],
     control: list[CohortSample],
-) -> bool:
-    required = max(1, int(cohort.experiment.min_samples_per_arm))
-    if len(treatment) < required or len(control) < required:
-        return True
-    entries = [_parse_time(sample.entry_ts) for sample in cohort.samples]
-    times = [entry for entry in entries if entry is not None]
-    if len(times) != len(cohort.samples):
-        return True
-    span_days = (max(times) - min(times)).total_seconds() / 86_400 if times else 0.0
-    return span_days < max(0, int(cohort.experiment.min_market_days))
+) -> tuple[dict[str, Any], list[CohortSample], list[CohortSample]]:
+    """Select the latest uninterrupted UTC exposure-day window.
+
+    One qualified market day contains at least one complete eligible assignment
+    unit from either randomized arm. Per-arm sufficiency remains the independent
+    50-unit gate, so random daily allocation imbalance is visible but does not
+    impersonate a runtime outage. A day with no eligible unit resets the current
+    run; pre-gap samples do not contribute afterward. Planned outages have no
+    implicit waiver because no durable waiver contract exists yet.
+    """
+    required_days = max(0, int(cohort.experiment.min_market_days))
+    parsed_treatment = [(_parse_time(sample.exposed_at), sample) for sample in treatment]
+    parsed_control = [(_parse_time(sample.exposed_at), sample) for sample in control]
+    invalid_time_n = sum(
+        parsed is None
+        for parsed, _sample in (*parsed_treatment, *parsed_control)
+    )
+    treatment_days = {parsed.date() for parsed, _sample in parsed_treatment if parsed is not None}
+    control_days = {parsed.date() for parsed, _sample in parsed_control if parsed is not None}
+    observed_days = treatment_days | control_days
+    common_days = sorted(treatment_days & control_days)
+    runs = _consecutive_day_runs(sorted(observed_days))
+    current_run = runs[-1] if runs else []
+    current_days = set(current_run)
+    selected_treatment = [
+        sample
+        for parsed, sample in parsed_treatment
+        if parsed is not None and parsed.date() in current_days
+    ]
+    selected_control = [
+        sample
+        for parsed, sample in parsed_control
+        if parsed is not None and parsed.date() in current_days
+    ]
+
+    if required_days == 0:
+        status = "not_required"
+        selected_treatment = treatment
+        selected_control = control
+    elif invalid_time_n:
+        status = "invalid_time"
+    elif len(current_run) >= required_days:
+        status = "qualified"
+    else:
+        status = "gap"
+
+    missing_limit = 31
+    if observed_days:
+        first_observed = min(observed_days)
+        last_observed = max(observed_days)
+        missing_treatment_n, missing_treatment = _missing_days(
+            first_observed, last_observed, treatment_days, missing_limit
+        )
+        missing_control_n, missing_control = _missing_days(
+            first_observed, last_observed, control_days, missing_limit
+        )
+        missing_market_n, missing_market = _missing_days(
+            first_observed, last_observed, observed_days, missing_limit
+        )
+    else:
+        missing_treatment_n = missing_control_n = missing_market_n = 0
+        missing_treatment = missing_control = missing_market = []
+    coverage = {
+        "basis": "eligible_assignment_unit_exposure_utc_day_either_arm",
+        "status": status,
+        "required_consecutive_days": required_days,
+        "max_allowed_missing_days": 0,
+        "outage_waiver": "unsupported_fail_closed",
+        "first_observed_day": min(observed_days).isoformat() if observed_days else None,
+        "last_observed_day": max(observed_days).isoformat() if observed_days else None,
+        "first_common_day": common_days[0].isoformat() if common_days else None,
+        "last_common_day": common_days[-1].isoformat() if common_days else None,
+        "current_window_start": current_run[0].isoformat() if current_run else None,
+        "current_window_end": current_run[-1].isoformat() if current_run else None,
+        "current_consecutive_market_days": len(current_run),
+        "longest_consecutive_market_days": max((len(run) for run in runs), default=0),
+        "observed_treatment_day_n": len(treatment_days),
+        "observed_control_day_n": len(control_days),
+        "qualified_treatment_n": len(selected_treatment),
+        "qualified_control_n": len(selected_control),
+        "invalid_exposure_time_n": invalid_time_n,
+        "missing_treatment_day_n": missing_treatment_n,
+        "missing_control_day_n": missing_control_n,
+        "missing_market_day_n": missing_market_n,
+        "missing_treatment_days": [day.isoformat() for day in missing_treatment],
+        "missing_control_days": [day.isoformat() for day in missing_control],
+        "missing_market_days": [day.isoformat() for day in missing_market],
+        "missing_days_truncated": (
+            missing_treatment_n > missing_limit
+            or missing_control_n > missing_limit
+            or missing_market_n > missing_limit
+        ),
+    }
+    return coverage, selected_treatment, selected_control
+
+
+def _consecutive_day_runs(days: list[date]) -> list[list[date]]:
+    runs: list[list[date]] = []
+    for day in days:
+        if not runs or day != runs[-1][-1] + timedelta(days=1):
+            runs.append([day])
+        else:
+            runs[-1].append(day)
+    return runs
+
+
+def _missing_days(
+    first: date,
+    last: date,
+    present: set[date],
+    limit: int,
+) -> tuple[int, list[date]]:
+    """Return an exact count plus a bounded prefix without spanning every date."""
+    total = (last - first).days + 1
+    missing_n = max(0, total - len(present))
+    missing: list[date] = []
+    cursor = first
+    for day in sorted(present):
+        while cursor < day and len(missing) < limit:
+            missing.append(cursor)
+            cursor += timedelta(days=1)
+        if len(missing) >= limit:
+            break
+        cursor = day + timedelta(days=1)
+    while cursor <= last and len(missing) < limit:
+        missing.append(cursor)
+        cursor += timedelta(days=1)
+    return missing_n, missing
 
 
 def _bootstrap_interval(treatment: list[float], control: list[float]) -> tuple[float | None, float | None]:

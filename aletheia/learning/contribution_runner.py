@@ -106,7 +106,7 @@ def _build_verdict(
     metrics = dict(evaluation.harm_metrics)
     metrics["cohort_input_fingerprint"] = _cohort_fingerprint(cohort, evaluation)
     verdict_id = f"contribution-{metrics['cohort_input_fingerprint'][:24]}"
-    window_start, window_end = _window(cohort)
+    window_start, window_end = _window(cohort, evaluation)
     return LearningContributionVerdict(
         verdict_id=verdict_id,
         experiment_id=cohort.key.experiment_id,
@@ -114,8 +114,8 @@ def _build_verdict(
         stage=cohort.experiment.stage,
         window_start=window_start,
         window_end=window_end,
-        unique_treatment_n=len(cohort.treatment_samples),
-        unique_control_n=len(cohort.control_samples),
+        unique_treatment_n=evaluation.unique_treatment_n,
+        unique_control_n=evaluation.unique_control_n,
         baseline=evaluation.baseline,
         observed=evaluation.observed,
         delta=evaluation.delta,
@@ -192,9 +192,31 @@ def _cohort_fingerprint(cohort: ContributionCohort, evaluation: VerdictEvaluatio
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _window(cohort: ContributionCohort) -> tuple[str, str]:
-    timestamps = [sample.entry_ts for sample in cohort.samples]
-    timestamps.extend(sample.exposed_at for sample in cohort.samples)
+def _window(
+    cohort: ContributionCohort,
+    evaluation: VerdictEvaluation,
+) -> tuple[str, str]:
+    samples = cohort.samples
+    coverage = evaluation.harm_metrics.get("market_day_coverage")
+    if isinstance(coverage, dict) and coverage.get("status") != "not_required":
+        start = coverage.get("current_window_start")
+        end = coverage.get("current_window_end")
+        try:
+            start_day = datetime.fromisoformat(str(start)).date()
+            end_day = datetime.fromisoformat(str(end)).date()
+        except (TypeError, ValueError):
+            samples = []
+        else:
+            samples = [
+                sample
+                for sample in cohort.samples
+                if (
+                    (exposed := _parse_window_time(sample.exposed_at)) is not None
+                    and start_day <= exposed.date() <= end_day
+                )
+            ]
+    timestamps = [sample.entry_ts for sample in samples]
+    timestamps.extend(sample.exposed_at for sample in samples)
     if not timestamps:
         # A fully excluded cohort must still be durable and deterministic.
         return "1970-01-01T00:00:00+00:00", "1970-01-01T00:00:00+00:00"
@@ -210,3 +232,13 @@ def _window(cohort: ContributionCohort) -> tuple[str, str]:
     if not parsed:
         return "1970-01-01T00:00:00+00:00", "1970-01-01T00:00:00+00:00"
     return min(parsed).isoformat(), max(parsed).isoformat()
+
+
+def _parse_window_time(value: str) -> datetime | None:
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return None
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return timestamp.astimezone(timezone.utc)

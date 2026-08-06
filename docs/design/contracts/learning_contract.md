@@ -124,7 +124,7 @@ loop contributes positively. Current behavior has these contract-relevant limita
   scanner-run plus feature-snapshot identity so change-suppressed features cannot merge distinct
   entry-price windows;
 - contribution metric version
-  `universe_family_calibration_cluster_allocation_utility_v3` applies only to new verdicts. Earlier
+  `universe_family_calibration_cluster_allocation_utility_v4` applies only to new verdicts. Earlier
   metric verdict rows remain immutable history. A verdict's `created_at` is evaluation time, while
   `window_start` and `window_end` remain observation bounds;
 - harm is determinate only after both arms reach the experiment's 50-assignment-unit gate. Before
@@ -132,11 +132,13 @@ loop contributes positively. Current behavior has these contract-relevant limita
   breach. Determinate loss-rate harm is an absolute increase above `0.15` (15 percentage points),
   and MAE p95 worsening is an absolute percentage-point difference above `0.25pp`; MAE fields use
   the `_pp` suffix rather than the ambiguous `_pct` suffix;
-- the current `min_market_days=7` software gate measures only the elapsed span between the first
-  and last eligible exposure. It does not prove continuous intervening coverage. A window with an
-  unexplained runtime or exposure gap is not owner-qualified even if the code-level span gate
-  passes; continuity-aware enforcement is tracked by GitHub issue #692 and is a B-class semantic
-  change requiring a fresh window;
+- the current `min_market_days=7` gate means seven consecutive UTC dates, each containing at least
+  one complete eligible assignment unit from either randomized arm. The 50-unit treatment and
+  control gates are independently required inside that continuous run; daily random arm imbalance
+  stays visible but is not treated as a runtime outage. It uses durable exposure timestamps, not
+  current scheduler health. Any fully missing day resets the run; pre-gap samples are excluded from
+  post-gap counts, economics, confidence and harm. Planned outages have no waiver contract and
+  therefore fail closed with bounded `market_day_coverage` evidence;
 - lifecycle, authority, and owner-facing progress consume only the exact current hypothesis, stage,
   policy epoch, horizon, outcome contract, metric version, and deterministic behavior-contract
   cohort. `code_commit` remains provenance and does not fragment behaviorally identical evidence.
@@ -182,9 +184,10 @@ loop contributes positively. Current behavior has these contract-relevant limita
 - hypothesis identity includes the path behavior-contract version. A refreeze remains durable for
   repeated calls under that version, while a version change creates a distinct shadow hypothesis
   and experiment; it never reopens or mutates the refrozen predecessor.
-- the current UFC source-lineage contract is behavior version v4. It carries a bounded,
-  deterministic aggregate fingerprint of the exact eligible calibration query into every
-  prospective exposure manifest; the v2 harm and v3 settlement-source semantics are historical.
+- the current UFC continuity contract is behavior version v5. It preserves the v4 bounded,
+  deterministic source-lineage fingerprint and adds consecutive eligible UTC exposure-day
+  qualification; the v2 harm, v3 settlement-source and v4 source-lineage-only semantics are
+  historical.
   Every path-version change rotates the policy epoch and starts a fresh from-zero window.
 - canonical/mirror disagreement remains whole-cohort `invalid`; no conflicting sample is silently
   excluded. Verdict metadata preserves every conflict fingerprint and up to 20 exact provenance

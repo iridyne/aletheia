@@ -97,7 +97,7 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
   保存交付顺序和当时的运行 checkpoint；当前语义只由上述 contracts/proposals
   决定。`self_evolution_plan` 和更早修复计划同样只是历史证据。
 - **Issue**：Learning 的唯一路线图权威是 GitHub master issue #470；资格化窗口由 #447，
-  连续覆盖语义由 #692，完整 owner workbench 由 #614 跟踪。已关闭的 #488-#491 只作
+  #692 保存连续覆盖语义的实施记录，完整 owner workbench 由 #614 跟踪。已关闭的 #488-#491 只作
   历史交付证据；旧 `LEARNING_LOOP_AUDIT` 仅是历史证据。
 - **Current state**：A1 has permanent ledger, full-arm exact-key complete-cluster measurement,
   append-only metric history, lifecycle recommendation, evaluator + catch-up and durable failure

@@ -50,15 +50,15 @@ A current shadow measurement additionally requires:
 | Prospective cohort | Stable assignment at the persisted assignment-unit cluster |
 | Complete outcomes | Canonical full-arm outcome or valid selected-member mirror/fallback; conflicts fail closed |
 | Minimum sample | 50 complete assignment units in treatment and 50 in control |
-| Minimum time | Seven-day span between first and last eligible exposure |
+| Minimum time | Seven consecutive UTC dates, each with at least one complete eligible exposure unit from either arm; both 50-unit arm gates must be met inside that run |
 | Exact identity | Current hypothesis, stage, epoch, horizon, outcome contract, metric version, and behavior-contract hash |
 | Harm semantics | Underpowered is `indeterminate`; determinate breach blocks authority |
 | Actual intervention | Shadow normally has none and therefore yields `insufficient_data/no_actual_intervention` after ordinary sample/time gates |
 
-The seven-day code rule is a span check, not continuous-coverage enforcement.
-Until #692 is implemented, the owner qualification gate must also verify no
-unexplained material runtime/exposure gap. A bridged pause is not qualification
-evidence even if the code-level span passes.
+Any missing UTC day in either arm resets the current qualification run. Planned
+or partial outages have no implicit waiver; pre-gap samples remain history and
+cannot satisfy post-gap sample or outcome gates. The persisted coverage reason
+must be `qualified` before owner admission.
 
 ## Gate C - Explicit shadow-to-paper trial admission
 

@@ -79,7 +79,7 @@ surface look shipped.
 | --- | --- | --- |
 | Measured ledger | Seven permanent Learning tables exist | Read-only typed projection |
 | Measurable path | `universe_family_calibration` has a current causal cohort adapter; Operator remains consumer-wired but measurement-unsupported | Explicit `measurement_supported` per path |
-| Current metric | `universe_family_calibration_cluster_allocation_utility_v3` | Current identity plus append-only metric history |
+| Current metric | `universe_family_calibration_cluster_allocation_utility_v4` | Current identity plus append-only metric history |
 | Cohort inspection | Internal aggregate inspection exists | Bounded aggregate plus selected cluster detail |
 | Lifecycle inspection | Internal read function returns progress, recommendation and job health | Public sanitized projection |
 | Job health | Current and durable last-failure fields exist | Current, recovery and catch-up states remain separate |
@@ -306,7 +306,7 @@ Each item contains:
     "policy_epoch": "...",
     "target_horizon": "4h",
     "outcome_contract_version": "...",
-    "metric_version": "universe_family_calibration_cluster_allocation_utility_v3",
+    "metric_version": "universe_family_calibration_cluster_allocation_utility_v4",
     "behavior_contract_hash": "...",
     "code_commit": "...",
     "matches_running_cohort": true,
@@ -322,7 +322,16 @@ Each item contains:
     "confidence_high": null,
     "evaluated_at": "...",
     "window_start": "...",
-    "window_end": "..."
+    "window_end": "...",
+    "coverage": {
+      "basis": "eligible_assignment_unit_exposure_utc_day_either_arm",
+      "status": "gap",
+      "required_consecutive_days": 7,
+      "current_consecutive_market_days": 3,
+      "missing_market_day_n": 1,
+      "missing_market_days": ["2026-08-03"],
+      "outage_waiver": "unsupported_fail_closed"
+    }
   },
   "samples": {
     "raw_exposures": 0,
