@@ -133,18 +133,23 @@ to trade paper autonomously:
    ```
    then `uv run aletheia gateway restart`.
 
-Once on, the closed loop runs on a schedule with no dashboard clicks:
+Once on, the active paper trading pipeline runs on a schedule with no dashboard clicks:
 
 ```
-market data (5m) → market_observer (15m, structured direction+confidence)
-  → opportunity (always recorded)
-  → paper_trader (15m): trades only a clear direction at ≥ min_confidence_to_trade,
-    sets a protective stop; neutral / low-confidence signals are kept as "reviewed"
-  → Risk Engine (every order) → paper broker → fill → position
-  → position_manager (5m): closes on stop-loss / take-profit / max-hold
-  → realized PnL booked → daily-loss breaker has data → promotion gates progress
-  → dreaming (nightly), post-trade reviews, portfolio snapshots
+market data → market_observer / universe scanners → durable opportunity
+  → paper ranker → signal_pending queue carrier
+  → System Operator: trade or evidenced skip
+  → immutable Proposal → Risk Engine → Execution Gateway
+  → paper Order + Fill + Position (one causal chain)
+  → position_manager: protective close or Operator horizon review
+  → close Order + Fill + net PnL + paper cash ledger + eligible Outcome
+  → post-trade review / cases / Learning measurement
 ```
+
+This proves lifecycle continuity, not profitability. Behavioural Learning influence
+is disabled by default; only a registry-declared, measurement-supported path may
+affect a later paper decision after prospective treatment/control evidence and the
+authority gate. Missing, harmful, or invalid evidence falls back to static behavior.
 
 Watch it on the **Agent Runs**, **Opportunities**, **Proposals**, **Positions**,
 and **Charts** dashboard pages.
