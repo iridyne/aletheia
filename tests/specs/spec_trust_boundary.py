@@ -11,6 +11,9 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).resolve().parents[2]
 _POLICY = _ROOT / "docs/governance/policies/trust_boundaries.yaml"
+_SAFETY_GUIDE = Path(
+    "docs/operations/development/agent-guides/SAFETY_AND_TRUST.md"
+)
 _CONTRACT = "trust_boundary_policy"
 
 
@@ -26,16 +29,22 @@ def _policy_paths() -> set[str]:
     }
 
 
-def _agents_md_paths() -> set[str]:
-    text = (_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+def _safety_guide_paths() -> set[str]:
+    agents_text = (_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    guide_link = f"[@SAFETY_AND_TRUST.md]({_SAFETY_GUIDE.as_posix()})"
+    assert guide_link in agents_text, "AGENTS.md safety-guide route not found"
+
+    text = (_ROOT / _SAFETY_GUIDE).read_text(encoding="utf-8")
     match = re.search(
-        r"- Trust boundaries[^\n]*\n((?:  [^\n]+\n){0,4})",
+        r"## Controlled paths.*?```text\n(.*?)```",
         text,
+        re.DOTALL,
     )
-    assert match, "AGENTS.md Trust boundaries bullet not found"
+    assert match, "SAFETY_AND_TRUST.md Controlled paths block not found"
     return {
-        token.strip("/").strip()
-        for token in re.findall(r"`([^`]+)`", match.group(1))
+        line.strip().rstrip("/")
+        for line in match.group(1).splitlines()
+        if line.strip()
     }
 
 
@@ -120,11 +129,11 @@ def test_policy_paths_and_tests_resolve_on_disk():
         _CONTRACT,
         "§drift",
         "L2a",
-        "AGENTS.md and machine-readable policy carry the same controlled paths.",
+        "AGENTS.md routes to a safety guide carrying the policy-controlled paths.",
     )
 )
 def test_agents_md_matches_policy():
-    assert _agents_md_paths() == _policy_paths()
+    assert _safety_guide_paths() == _policy_paths()
 
 
 @spec_claim(

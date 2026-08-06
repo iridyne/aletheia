@@ -20,11 +20,18 @@ audit work. The canonical policy is
 
 Touch only when the task explicitly requires it:
 
-`aletheia/risk/`, `aletheia/execution/`,
-`aletheia/exchanges/bitget/{auth,client}.py`, `aletheia/config/secrets.py`,
-`aletheia/agent_runtime/{permissions,tool_registry}.py`,
-`aletheia/agent_shell/registry.py`, `aletheia/files/jsonl.py`, and
-`aletheia/server/routes/live.py`.
+```text
+aletheia/risk
+aletheia/execution
+aletheia/exchanges/bitget/auth.py
+aletheia/exchanges/bitget/client.py
+aletheia/config/secrets.py
+aletheia/agent_runtime/permissions.py
+aletheia/agent_runtime/tool_registry.py
+aletheia/agent_shell/registry.py
+aletheia/files/jsonl.py
+aletheia/server/routes/live.py
+```
 
 Before changing one, read the canonical policy and affected `tests/specs/`.
 Every behavior change needs focused regression coverage and Git/PR/CI evidence.

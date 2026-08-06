@@ -1,6 +1,6 @@
 schema_version: 1
-# Machine-readable projection of AGENTS.md and
-# docs/governance/policies/trust_and_change_control.md §6.1.
+# Machine-readable projection of the safety guide routed by AGENTS.md and
+# docs/governance/policies/trust_and_change_control.md section 6.1.
 #
 # This file is a safety/documentation contract only. It does not create a
 # repository task system, grant authority, track workers, or store evidence.
