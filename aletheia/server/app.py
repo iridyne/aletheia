@@ -399,16 +399,6 @@ async def lifespan(app: FastAPI):
     assert_migrations_current()
     stage_started = _log_startup_stage("database_migration_verification", stage_started, startup_started)
     logger.info("gateway_startup_migrations verified=true pending=0")
-    # Backfill FTS5 index so the experience loop has full coverage on every boot.
-    try:
-        from aletheia.knowledge.retrieval import reindex_all
-
-        fts_count = reindex_all()
-        if fts_count:
-            logger.info("FTS reindex: %d knowledge items indexed", fts_count)
-    except Exception as e:
-        logger.warning("FTS reindex failed (non-fatal): %s", e)
-    stage_started = _log_startup_stage("knowledge_fts_reindex", stage_started, startup_started)
     if background_services_enabled:
         try:
             from aletheia.agent_runtime.run_logger import mark_stale_running_runs

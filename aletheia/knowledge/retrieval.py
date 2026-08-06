@@ -77,27 +77,38 @@ def _clean_body(text: str) -> str:
     return "\n".join(out).strip()
 
 
-def index_knowledge_item(item, body: str, outcome: str = "") -> bool:
-    """Add/refresh an item's searchable text in the FTS index. Best-effort.
+def index_knowledge_item(
+    item,
+    body: str,
+    outcome: str = "",
+    *,
+    db=None,
+    strict: bool = False,
+) -> bool:
+    """Add or refresh an item's searchable text in the FTS index.
 
-    Returns True if indexed, False if skipped (FTS absent / error). Never raises.
+    Returns ``False`` for an absent FTS table or best-effort failure. Migration
+    callers pass ``strict=True`` so a failed one-time rebuild fails closed.
     """
     try:
-        db = get_db()
-        if not _fts_table_exists(db):
+        connection = db or get_db()
+        if not _fts_table_exists(connection):
             return False
+        already_in_tx = connection.in_transaction
         # Replace any prior row for this item (idempotent re-index).
-        db.execute("DELETE FROM knowledge_fts WHERE item_id = ?", (item.id,))
-        db.execute(
+        connection.execute("DELETE FROM knowledge_fts WHERE item_id = ?", (item.id,))
+        connection.execute(
             "INSERT INTO knowledge_fts (title, body, item_type, item_id, confidence, created_at, outcome) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (item.title or "", _clean_body(body or ""), item.item_type, item.id,
              item.confidence, getattr(item, "created_at", "") or "", outcome or ""),
         )
-        if not db.in_transaction:
-            db.commit()
+        if not already_in_tx:
+            connection.commit()
         return True
     except Exception as e:
+        if strict:
+            raise
         logger.warning("index_knowledge_item failed for %s: %s", getattr(item, "id", "?"), e)
         return False
 
@@ -115,25 +126,30 @@ def remove_from_index(item_id: str) -> None:
         logger.warning("remove_from_index failed for %s: %s", item_id, e)
 
 
-def reindex_all() -> int:
+def reindex_all(*, db=None, strict: bool = False) -> int:
     """Backfill the index from existing high_confidence + active knowledge items.
 
-    Reads each item's Markdown body from disk. Returns the count indexed. Never raises.
+    Reads each item's Markdown body from disk and returns the indexed count.
+    Normal maintenance is best-effort; migrations pass ``strict=True``.
     """
     try:
-        db = get_db()
-        if not _fts_table_exists(db):
+        connection = db or get_db()
+        if not _fts_table_exists(connection):
             return 0
-        from aletheia.storage.repositories import list_knowledge_items
         from aletheia.storage.models import KnowledgeItem
-        already_in_tx = db.in_transaction
+        already_in_tx = connection.in_transaction
         if not already_in_tx:
-            db.execute("BEGIN")
+            connection.execute("BEGIN")
         try:
-            db.execute("DELETE FROM knowledge_fts")
+            connection.execute("DELETE FROM knowledge_fts")
             count = 0
             skipped_empty = 0
-            for row in list_knowledge_items(limit=100000, status="active"):
+            rows = connection.execute(
+                "SELECT * FROM knowledge_items "
+                "WHERE status = 'active' OR status IS NULL LIMIT 100000"
+            )
+            for raw in rows:
+                row = dict(raw)
                 if row.get("confidence") not in _ALLOWED_CONFIDENCE:
                     continue
                 # DB content is authoritative when populated — Phase E1 writers
@@ -157,7 +173,13 @@ def reindex_all() -> int:
                     outcome = (meta.get("outcome") or "") if meta else ""
                 except Exception:
                     pass
-                if index_knowledge_item(item, body, outcome=outcome):
+                if index_knowledge_item(
+                    item,
+                    body,
+                    outcome=outcome,
+                    db=connection,
+                    strict=strict,
+                ):
                     count += 1
             if skipped_empty:
                 logger.warning(
@@ -166,13 +188,15 @@ def reindex_all() -> int:
                     skipped_empty,
                 )
             if not already_in_tx:
-                db.commit()
+                connection.commit()
         except Exception:
             if not already_in_tx:
-                db.rollback()
+                connection.rollback()
             raise
         return count
     except Exception as e:
+        if strict:
+            raise
         logger.warning("reindex_all failed: %s", e)
         return 0
 

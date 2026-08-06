@@ -198,6 +198,52 @@ def test_gateway_startup_has_one_explicit_migration_owner_and_read_only_children
     assert "assert_migrations_current" in lifespan_source
     assert "run_migrations" not in lifespan_source
     assert "apply_migrations" not in lifespan_source
+    assert "reindex_all" not in lifespan_source
+
+
+def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch):
+    import aletheia.knowledge.retrieval as retrieval
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE agent_runs (id TEXT PRIMARY KEY, status TEXT, started_at TEXT)"
+    )
+    connection.execute(
+        "CREATE TABLE universe_scanner_runs "
+        "(id TEXT PRIMARY KEY, status TEXT, started_at TEXT)"
+    )
+    connection.execute(
+        "CREATE TABLE runtime_cost_events (id TEXT PRIMARY KEY, started_at TEXT)"
+    )
+    connection.execute(
+        "CREATE TABLE alpha_control_observations "
+        "(id TEXT PRIMARY KEY, layer TEXT, created_at TEXT)"
+    )
+    reindexed: list[tuple[sqlite3.Connection, bool]] = []
+    monkeypatch.setattr(
+        retrieval,
+        "reindex_all",
+        lambda *, db, strict: reindexed.append((db, strict)) or 0,
+    )
+
+    migrations._apply_startup_dataset_boundary_v3(connection)
+
+    indexes = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'"
+        )
+    }
+    assert "idx_agent_runs_status_started" in indexes
+    assert "idx_universe_scanner_runs_status_started" in indexes
+    assert "idx_runtime_cost_events_normalized_started" in indexes
+    assert "idx_alpha_control_layer_created" in indexes
+    assert reindexed == [(connection, True)]
+    assert migrations._MIGRATIONS[0].schema_version == "aletheia-sqlite-v2"
+    assert migrations._MIGRATIONS[-1].schema_version == migrations.SCHEMA_VERSION
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v3"
+    connection.close()
 
 
 def test_production_code_has_no_legacy_implicit_run_migrations_callers():

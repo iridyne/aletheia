@@ -134,6 +134,62 @@ def test_proposal_pack_rejects_unknown_proposal(tmp_path, monkeypatch):
         )
 
 
+def test_table_export_streams_jsonl_without_fetchall(tmp_path, monkeypatch):
+    import aletheia.sync.exporter as exporter
+
+    class Cursor:
+        def __init__(self):
+            self._rows = iter(({"id": "one"}, {"id": "two"}))
+
+        def fetchone(self):
+            return next(self._rows, None)
+
+        def __iter__(self):
+            return self._rows
+
+        def fetchall(self):
+            raise AssertionError("streaming export must not materialize all rows")
+
+    class Database:
+        def execute(self, _sql, _params):
+            return Cursor()
+
+    monkeypatch.setattr(exporter, "get_db", lambda: Database())
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    exporter.ExportService(data_dir=tmp_path)._export_db_tables(
+        bundle,
+        ["agent_runs"],
+    )
+
+    rows = [
+        json.loads(line)
+        for line in (bundle / "db" / "agent_runs.jsonl").read_text().splitlines()
+    ]
+    assert rows == [{"id": "one"}, {"id": "two"}]
+
+
+def test_full_backup_uses_the_service_database_path(tmp_path):
+    from aletheia.sync.exporter import ExportService
+
+    source = sqlite3.connect(tmp_path / "app.db")
+    source.execute("CREATE TABLE exact_source (value TEXT)")
+    source.execute("INSERT INTO exact_source VALUES ('expected')")
+    source.commit()
+    source.close()
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    ExportService(data_dir=tmp_path)._export_full(bundle)
+
+    copied = sqlite3.connect(bundle / "db" / "app.db")
+    try:
+        value = copied.execute("SELECT value FROM exact_source").fetchone()[0]
+    finally:
+        copied.close()
+    assert value == "expected"
+
+
 # ---------------------------------------------------------------------------
 # #63 — import: missing manifest files now recorded as errors
 # ---------------------------------------------------------------------------

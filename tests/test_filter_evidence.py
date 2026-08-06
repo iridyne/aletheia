@@ -870,6 +870,70 @@ def test_filter_decision_batch_compacts_repeated_candidate_keys():
     assert row["candidate_facts"].startswith("zlib-base64:")
 
 
+def test_batch_controller_reads_only_referenced_outcome_keys():
+    from aletheia.analytics.filter_controller import (
+        _batch_scanner_weights_quota_stats,
+    )
+    from aletheia.analytics.filter_evidence import record_filter_decision_batch
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import FilterCandidateOutcome
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc)
+    relevant_key = "universe:controller-relevant"
+    record_filter_decision_batch(
+        run_id="controller-bounded-read",
+        candidate_kind="universe_asset",
+        filter_name="scanner_weights_quota",
+        stage="universe_allocation",
+        candidate_facts=[{
+            "candidate_key": "asset:relevant",
+            "outcome_candidate_key": relevant_key,
+            "decision": "passed",
+            "scanner_family": "momentum",
+            "direction": "long",
+            "market_type": "spot",
+        }],
+    )
+    outcomes = []
+    for key in (relevant_key, "universe:controller-unrelated"):
+        outcomes.append(FilterCandidateOutcome(
+            outcome_candidate_key=key,
+            venue="okx",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            scanner_family="momentum",
+            horizon="1h",
+            entry_price_usd=100.0,
+            entry_ts=now.isoformat(),
+            due_at=(now + timedelta(hours=1)).isoformat(),
+            status="settled",
+            net_return_pct=0.25,
+        ))
+    repo.insert_filter_candidate_outcomes_batch(outcomes)
+
+    statements: list[str] = []
+    db = get_db()
+    db.set_trace_callback(statements.append)
+    try:
+        rows = _batch_scanner_weights_quota_stats()
+    finally:
+        db.set_trace_callback(None)
+
+    outcome_selects = [
+        statement
+        for statement in statements
+        if "FROM filter_candidate_outcomes" in statement
+    ]
+    assert outcome_selects
+    assert all("WHERE outcome_candidate_key IN" in sql for sql in outcome_selects)
+    scoped = [row for row in rows if row["horizon"] == "1h"]
+    assert len(scoped) == 1
+    assert scoped[0]["n_total"] == 1
+    assert scoped[0]["n_net"] == 1
+
+
 def test_ranker_trace_stops_at_first_rejection(monkeypatch):
     from aletheia.agents.paper_trader_ranker import _evaluate_candidate
     from aletheia.config.loader import load_config

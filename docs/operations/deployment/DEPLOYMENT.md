@@ -46,6 +46,7 @@ uv run aletheia data migrate
 - `gateway start/restart` 在创建 supervisor/frontdoor/backend **之前**执行一次 pending-migration 检查和必要升级；完成后才启动 15 秒 readiness 计时，因此大型首次升级不会伪装成 Gateway readiness 超时。
 - supervisor 的 Runtime 读取、frontdoor/backend 启动上下文、FastAPI lifespan、API 路由和 scheduler 都只有只读验证权限，不能触发升级。
 - 新空库或没有账本的旧库会执行一次冻结的 legacy baseline。checksum 漂移、数据库含当前代码未知的 migration ID、或升级异常都会 fail closed，并保留明确的 migrate/doctor/log 指针。
+- Schema v3 会在升级阶段一次性重建 `knowledge_fts` 并建立启动/遥测热路径索引；后续普通 Gateway 启动不会再全量 reindex。需要人工修复 FTS 时使用显式 `uv run aletheia knowledge reindex`。
 - 受控 `update apply` 会在激活候选版本时执行同一 migration apply/SQLite validation；普通重启在账本已 current 时仅有毫秒级核对。
 
 ---

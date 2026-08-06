@@ -86,6 +86,8 @@ CREATE INDEX IF NOT EXISTS idx_runtime_cost_events_run
     ON runtime_cost_events(run_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_runtime_cost_events_window
     ON runtime_cost_events(event_type, started_at);
+CREATE INDEX IF NOT EXISTS idx_runtime_cost_events_normalized_started
+    ON runtime_cost_events(replace(started_at,' ','T'));
 CREATE INDEX IF NOT EXISTS idx_runtime_cost_events_entity
     ON runtime_cost_events(opportunity_id, decision_id, proposal_id);
 

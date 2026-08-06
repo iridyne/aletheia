@@ -410,6 +410,9 @@ All models in `aletheia/storage/models.py`. Key mapping:
 6. Existing DB upgrades remain additive through `_ADDITIVE_COLUMNS` and versioned backfills. Future changes add a new migration step; they do not edit/replay the frozen baseline.
 7. Production apply holds the process and cross-process SQLite writer permit across ledger recheck, migration execution, and success recording. This is an upgrade-only critical section; the Gateway must not be serving normal writers during it.
 8. Pytest retains the in-memory blueprint optimization and records the same ledger rows in the cloned schema; test fixtures may continue to call the compatibility `run_migrations()` helper.
+9. Dataset-size-sensitive repair is never an implicit read/startup side effect. Schema v3 rebuilds `knowledge_fts` once as migration `20260806_0002_startup_dataset_boundary_v3` and installs indexes for startup reconciliation and windowed telemetry reads. Normal knowledge writes maintain FTS incrementally; later full rebuilds require the explicit `knowledge reindex` maintenance command or a new versioned migration.
+
+Automatic readers must use indexed, bounded keys or a declared retained evidence window. User-requested export/backup may traverse a complete dataset, but it must stream through a cursor/disk-backed archive rather than materialize a table or archive in process memory.
 
 ---
 

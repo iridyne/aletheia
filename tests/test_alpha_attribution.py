@@ -257,6 +257,12 @@ def test_serenity_insert_records_prospective_alpha_controls():
     entry = _iso(days_ago=1)
     _insert_ohlcv(db, "AAPL", "1d", entry, 100.0, {24: 101.0})
     _insert_ohlcv(db, "MSFT", "1d", entry, 100.0, {24: 100.0})
+    db.executemany(
+        "INSERT INTO universe_registry "
+        "(id, venue, market_type, symbol, status, is_blacklisted) "
+        "VALUES (?, 'legacy_unknown', 'spot', ?, 'active', 0)",
+        (("aapl-active", "AAPL"), ("msft-active", "MSFT")),
+    )
     db.commit()
 
     opp = SerenityOpportunity(

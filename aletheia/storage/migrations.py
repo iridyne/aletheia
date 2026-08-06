@@ -3301,7 +3301,8 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v2"
+SCHEMA_VERSION = "aletheia-sqlite-v3"
+_LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
 CREATE TABLE IF NOT EXISTS aletheia_schema_migrations (
@@ -3319,6 +3320,32 @@ _LEGACY_BASELINE_ID = "20260806_0001_legacy_schema_v2"
 # it. Add a new MigrationStep for every future schema or data upgrade.
 _LEGACY_BASELINE_CHECKSUM = "b210b180fa4392a542a5275941ca15d1a443374b3e951055d8a4bbc12d32f8ee"
 _MIGRATION_LOCK_TIMEOUT_SEC = 120.0
+
+_STARTUP_HOT_PATH_INDEXES_SQL = """
+CREATE INDEX IF NOT EXISTS idx_agent_runs_status_started
+ON agent_runs(status, started_at);
+CREATE INDEX IF NOT EXISTS idx_universe_scanner_runs_status_started
+ON universe_scanner_runs(status, started_at);
+"""
+_OPTIONAL_HOT_PATH_INDEXES = (
+    (
+        "runtime_cost_events",
+        "CREATE INDEX IF NOT EXISTS idx_runtime_cost_events_normalized_started "
+        "ON runtime_cost_events(replace(started_at,' ','T'))",
+    ),
+    (
+        "alpha_control_observations",
+        "CREATE INDEX IF NOT EXISTS idx_alpha_control_layer_created "
+        "ON alpha_control_observations(layer, created_at DESC)",
+    ),
+)
+_STARTUP_DATASET_BOUNDARY_CHECKSUM = hashlib.sha256(
+    (
+        _STARTUP_HOT_PATH_INDEXES_SQL
+        + "\n".join(sql for _, sql in _OPTIONAL_HOT_PATH_INDEXES)
+        + "\nknowledge_fts_active_high_confidence_reindex_v1"
+    ).encode("utf-8")
+).hexdigest()
 
 
 class MigrationStateError(RuntimeError):
@@ -3345,12 +3372,34 @@ class MigrationStep:
     apply: Callable[[sqlite3.Connection], None]
 
 
+def _apply_startup_dataset_boundary_v3(db: sqlite3.Connection) -> None:
+    """Install startup indexes and rebuild FTS once, never on every boot."""
+
+    db.executescript(_STARTUP_HOT_PATH_INDEXES_SQL)
+    for table, sql in _OPTIONAL_HOT_PATH_INDEXES:
+        exists = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone()
+        if exists:
+            db.execute(sql)
+    from aletheia.knowledge.retrieval import reindex_all
+
+    reindex_all(db=db, strict=True)
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
         checksum=_LEGACY_BASELINE_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version=_LEGACY_BASELINE_SCHEMA_VERSION,
         apply=_run_all_ddl,
+    ),
+    MigrationStep(
+        migration_id="20260806_0002_startup_dataset_boundary_v3",
+        checksum=_STARTUP_DATASET_BOUNDARY_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_startup_dataset_boundary_v3,
     ),
 )
 
@@ -3558,7 +3607,13 @@ def _apply_pytest_migrations() -> bool:
         _blueprint.row_factory = sqlite3.Row
         _run_all_ddl(_blueprint)
         _ensure_migration_ledger(_blueprint)
-        for migration in _MIGRATIONS:
+        _record_migration_applied(
+            _blueprint,
+            _MIGRATIONS[0],
+            duration_ms=0.0,
+        )
+        for migration in _MIGRATIONS[1:]:
+            migration.apply(_blueprint)
             _record_migration_applied(_blueprint, migration, duration_ms=0.0)
 
     # Only use backup when the destination is empty (no tables yet).
@@ -3577,14 +3632,13 @@ def _apply_pytest_migrations() -> bool:
 
     _run_all_ddl(db)
     _ensure_migration_ledger(db)
-    for migration in _MIGRATIONS:
-        db.execute(
-            "INSERT OR IGNORE INTO aletheia_schema_migrations "
-            "(migration_id, checksum, schema_version, applied_at, duration_ms) "
-            "VALUES (?, ?, ?, datetime('now'), 0)",
-            (migration.migration_id, migration.checksum, migration.schema_version),
-        )
-    db.commit()
+    applied = _read_applied_migrations(db)
+    if _LEGACY_BASELINE_ID not in applied:
+        _record_migration_applied(db, _MIGRATIONS[0], duration_ms=0.0)
+        applied = _read_applied_migrations(db)
+    for migration in _validate_applied_migrations(applied):
+        migration.apply(db)
+        _record_migration_applied(db, migration, duration_ms=0.0)
     return True
 
 

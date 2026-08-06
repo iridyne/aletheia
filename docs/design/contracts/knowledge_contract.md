@@ -118,6 +118,8 @@ sort descending → return top-k Lesson dataclass
 
 ### 3.2 `index_knowledge_item()` (`retrieval.py:78`)
 
+知识写入、归档和维护路径逐项更新 `knowledge_fts`。全量 `reindex_all()` 属于显式维护操作：schema v3 migration 在采用新账本时执行一次完整重建，此后 Gateway lifespan 不再按启动次数重建。运营侧需要主动修复覆盖率时使用 `uv run aletheia knowledge reindex`；未来需要强制重建的 schema 变更必须新增 versioned migration，不能把重建重新放回普通读取或启动路径。
+
 写入路径上的索引操作:
 - 仅 `_index()` (`manager.py:48`) 中被调用——`confidence == "high_confidence"` 时才触发
 - 幂等:先 DELETE 再 INSERT，允许重建索引 (`retrieval.py:88-89`)
