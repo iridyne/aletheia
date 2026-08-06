@@ -1,165 +1,145 @@
-# Phase Gate Criteria
+# Current Admission And Promotion Gates
 
-> Current gate authority, originally extracted from the archived
-> These are evaluation and admission gates, not a roadmap. The historical
-> phase roadmap is archived as provenance and does not authorize current work.
-> Each gate is a measurable checklist. A phase is "passed" when ALL items are checked.
-> Phases may run in parallel except Phase 6 (Live) which requires explicit user authorization.
-> Last updated: 2026-06-21
+> **Role:** Product Truth for current admission decisions. These gates express
+> durable prerequisites; they are not a roadmap, mutable checklist, or statement
+> that any Runtime currently passes.
+>
+> Runtime facts come from Doctor, provenance, logs, and the selected data root.
+> Current ownership and progress live in GitHub. Historical strategy-phase gates
+> were retired when the RuleSet/DSL/backtest decision path was removed.
+>
+> Last aligned with code and contracts: 2026-08-06.
 
----
+## Gate A - Active paper mainline eligibility
 
-## Phase 0 - 1: Stabilize - Learning Quality
+Evidence may count toward the current MVP only when all of the following are true:
 
-| # | Criterion | How to check |
-|---|-----------|--------------|
-| 1 | Gateway runs across multi-day timeframes (healthy/degraded, not dead) | `aletheia doctor` gateway_status |
-| 2 | market_observer produces opportunities every ~15min (>70% non-error) | `SELECT COUNT(*) FROM opportunities WHERE created_at > datetime('now','-1 day')` |
-| 3 | paper_trader accumulates fills (>=5 fills as sample-size guidance) | `SELECT COUNT(*) FROM fills` |
-| 4 | position_manager closes at least 2 positions | `SELECT COUNT(*) FROM positions WHERE status='closed'` |
-| 5 | post_trade_reviewer + risk_critic produce output | `SELECT COUNT(*) FROM knowledge_items WHERE item_type IN ('post_trade_review','risk_lesson')` |
-| 6 | Demo orders visible on exchange (exchange_sync reflects positions) | Dashboard - Portfolio - exchange sync status |
+1. execution mode and decision path match
+   [Active Runtime Scope](../ACTIVE_RUNTIME_SCOPE.md);
+2. the running code, instance/data root, runtime session, policy epoch, and
+   relevant behavior/outcome contracts are identifiable;
+3. Startup -> Scheduler -> Opportunity -> Decision -> Risk -> Execution ->
+   Outcome is operational without an unresolved integrity incident;
+4. Live remains disabled and every order path still crosses Risk approval and the
+   Execution Gateway;
+5. paper accounting is cost-complete and the two-table paper-ledger invariant is
+   healthy;
+6. unavailable, stale, synthetic, administrative, or unresolved facts are
+   excluded or displayed honestly rather than converted to success/zero.
 
-**NOT a gate**: code_drift self-heal restarts are expected behavior, not failures.
+Passing a test suite does not pass this gate for a Runtime. Use
+`uv run aletheia doctor` and current runtime evidence.
 
----
+## Gate B - Learning shadow measurement readiness
 
-## Phase 1 - 2A: Learning Quality - Structured Signals
+Only a registry path with all three capabilities may create current formal
+measurement evidence:
 
-| # | Criterion | How to check |
-|---|-----------|--------------|
-| 1 | 14 days continuous run without manual restart | `aletheia doctor` uptime counter |
-| 2 | `lessons_consulted` > 0 (FTS5 retrieval firing) | `SELECT COUNT(*) FROM agent_runs WHERE outputs LIKE '%lessons_consulted%'` |
-| 3 | Opportunity audit: >=60% have substantive key_observations | Manual sample of 10 recent opportunities |
-| 4 | Review audit: >=50% point to specific actionable improvements | Manual sample of 5 post_trade_reviews |
-| 5 | Paper trading: >=20 completed trades | `SELECT COUNT(*) FROM positions WHERE status='closed'` |
+- `consumer_wired=true`;
+- `settings_supported=true`;
+- `measurement_supported=true`.
 
----
+The current set contains exactly one path: `universe_family_calibration`. Every
+other declared treatment hook returns its static fallback and must not create a
+new hypothesis, experiment, exposure, policy epoch, or authority claim.
 
-## Phase 2A - 2B: Structured Signals - Agent Coordination
+A current shadow measurement additionally requires:
 
-| # | Criterion | How to check |
-|---|-----------|--------------|
-| 1 | paper_trader decision logs show `entry_conditions` evaluation | Agent run logs contain "entry_conditions" |
-| 2 | At least 3 strategies have machine-readable `entry_conditions` | `SELECT COUNT(*) FROM strategies WHERE parameters LIKE '%entry_conditions%'` |
-| 3 | Promotion gate distinguishes "strategy rule validated" vs "signal luck" | Code: `check_promotion_gates()` requires evaluation evidence |
+| Requirement | Current software rule |
+|---|---|
+| Prospective cohort | Stable assignment at the persisted assignment-unit cluster |
+| Complete outcomes | Canonical full-arm outcome or valid selected-member mirror/fallback; conflicts fail closed |
+| Minimum sample | 50 complete assignment units in treatment and 50 in control |
+| Minimum time | Seven-day span between first and last eligible exposure |
+| Exact identity | Current hypothesis, stage, epoch, horizon, outcome contract, metric version, and behavior-contract hash |
+| Harm semantics | Underpowered is `indeterminate`; determinate breach blocks authority |
+| Actual intervention | Shadow normally has none and therefore yields `insufficient_data/no_actual_intervention` after ordinary sample/time gates |
 
----
+The seven-day code rule is a span check, not continuous-coverage enforcement.
+Until #692 is implemented, the owner qualification gate must also verify no
+unexplained material runtime/exposure gap. A bridged pause is not qualification
+evidence even if the code-level span passes.
 
-## Phase 2A+: Strategy Pool and Signal Directionality
+## Gate C - Explicit shadow-to-paper trial admission
 
-| # | Criterion | How to check |
-|---|-----------|--------------|
-| 1 | Bear regime produces short opportunities | `SELECT COUNT(*) FROM opportunities WHERE direction='short'` |
-| 2 | At least 1 strategy with direction_affinity="short" in paper_running | `SELECT * FROM strategies WHERE direction_affinity='short' AND status='paper_running'` |
-| 3 | Short opportunity - paper_trader - position_manager exit flow works | Closed short position exists |
-| 4 | Bull regime correctly filters short signals | Ranker logs show regime filtering |
-| 5 | RegimeConfig controllable via Dashboard Settings | Settings UI has regime panel |
+Shadow evidence never self-authorizes. The scheduled lifecycle controller may
+recommend `admit_trial`, but only the protected authenticated owner route may
+cross from `shadow` to `paper_10`.
 
----
+Admission requires all of the following at the moment of mutation:
 
-## Phase 2B - 3A: Agent Coordination - Experience Loop
+1. exact current shadow verdict is `insufficient_data` with reason
+   `no_actual_intervention`;
+2. verdict, experiment, hypothesis, stage, policy epoch, horizon, metric, outcome
+   contract, and behavior-contract identities all match;
+3. harm state is `clear`;
+4. the experiment is active and the path remains measurement-supported;
+5. autonomous Learning, contribution evaluation, lifecycle automation, paper
+   influence, and the exact path allowlist are enabled;
+6. Runtime is not paused and no global reconciliation refreeze is active;
+7. owner supplies the expected epoch and reason through the protected route;
+8. one transactional lifecycle event closes shadow and creates a fresh
+   `paper_10` successor with a new assignment salt.
 
-| # | Criterion | How to check |
-|---|-----------|--------------|
-| 1 | risk_critic-flagged opportunities skipped by paper_trader | Agent logs show "risk_flagged - skipped" |
-| 2 | Workflow chain (observer-critic-trader) fires end-to-end | Event timeline shows sequential triggers |
-| 3 | NoActionDecision records explain blocked opportunities | `SELECT COUNT(*) FROM no_action_decisions` or equivalent |
-| 4 | System still trades when event chain delayed (cron fallback works) | Disable event trigger - cron still produces trades |
+Missing, stale, malformed, or changed evidence fails closed. Read-only owner
+surfaces do not expose an admission mutation.
 
----
+## Gate D - Bounded paper progression
 
-## Phase 3A - 3B: Experience Loop - Walk-Forward Evolution
+The supported progression is:
 
-| # | Criterion | How to check |
-|---|-----------|--------------|
-| 1 | `lessons_consulted` steadily > Phase 1 baseline | Trending upward in analytics |
-| 2 | `activation_ratio` > 30% (strategies not all stuck in draft) | `SELECT COUNT(*) FROM strategies WHERE status IN ('paper_running','paper_passed') / total` |
-| 3 | `review_coverage` > 50% | Traded strategies with post-trade reviews / total traded |
-| 4 | paper_trader logs show "skipped/adjusted due to lesson X" | Agent run outputs |
-| 5 | Strategies annotated with positive/negative expectancy | `strategy_evaluations` table has expectancy data |
+```text
+shadow --explicit owner admission--> paper_10 -> paper_25 -> paper_50 -> paper_active
+```
 
----
+After owner admission, automated progression is allowed only one stage at a time
+when the current stage has a positive, identity-matched, harm-safe measurement and
+all promotion gates remain enabled. Allocation is bounded to 10%, 25%, 50%, then
+the configured `paper_active_allocation_pct` (default 80%, maximum 90%) so a control
+holdout remains.
 
-## Phase 3B - 4: Walk-Forward - Adversarial Hardening
+| Current evidence | Required lifecycle result |
+|---|---|
+| `positive` and all gates current | Promote one stage |
+| `neutral` or ordinary insufficient data | Hold |
+| `negative` or determinate harm breach | Refreeze/fail to static baseline |
+| `invalid` | Invalidate/fail to static baseline |
+| stale epoch/horizon/contract identity | Cannot grant authority; safety withdrawal remains reachable |
+| missing or malformed evidence | Hold/fail closed |
 
-| # | Criterion | How to check |
-|---|-----------|--------------|
-| 1 | At least 3 StrategyEdit proposals generated | `SELECT COUNT(*) FROM strategy_edits` or equivalent |
-| 2 | At least 1 passes walk-forward validation and is applied | Edit with status='applied' exists |
-| 3 | Applied edit does not worsen performance over 14-day observation | Compare pre/post edit metrics |
-| 4 | No strategy modified without walk-forward validation | Audit trail shows validation for every edit |
+Any change to decision input, treatment, allocation semantics, statistical unit,
+outcome economics, harm gate, or continuity rule is B-class: close the old cohort,
+rotate identity/epoch as required, and collect a new window from zero.
 
----
+## Gate E - Live readiness
 
-## Phase 4 - 5: Adversarial Hardening - Intelligence Expansion
+Live is outside the active MVP proof and remains disabled by default. No score,
+test, document, or merged PR enables it.
 
-| # | Criterion | How to check |
-|---|-----------|--------------|
-| 1 | At least 2 strategies experience full lifecycle (create-run-revise-retire/promote) | Strategy lifecycle events span full cycle |
-| 2 | Retirement reasons are traceable | `strategy_evaluations` or lifecycle events have reason field |
-| 3 | risk_critic successfully blocked at least 1 edit that would have lost money | Audit shows blocked edit + subsequent negative outcome avoided |
-| 4 | System runs 4+ weeks unattended | `aletheia doctor` uptime |
+Before any owner-authorized live transition, all of the following must hold:
 
----
+- the current [Go-Live Scorecard](METRICS.md#5-go-live-scorecard) satisfies the
+  exact threshold and blocker rules enforced by the live contract;
+- eligible net realized PnL is positive and outcome integrity is current;
+- reconciliation, credentials, connectivity, Risk, kill switch, position caps,
+  and confirmation requirements pass;
+- the owner explicitly authorizes the exact live mode and bounded capital/risk
+  profile;
+- the implementation and verification record for any trust-boundary change is in
+  Git/PR/CI.
 
-## Phase 5 - 6: Intelligence Expansion - Live Readiness
+See `docs/design/contracts/live_unlock_contract.md` for the executable contract.
 
-| # | Criterion | How to check |
-|---|-----------|--------------|
-| 1 | News events produce structured signals that influence opportunities | news_events - opportunities correlation |
-| 2 | Synthesizer deduplicates and prevents signal flooding | Opportunity rate stable despite more scanners |
-| 3 | Regime signal observable and correlated with real market behavior | Dashboard regime indicator matches market |
-| 4 | No news scanner directly creates orders (sensing only) | Code audit: scanners have no execution path |
+## Retired gates
 
----
+The following are not current admission criteria:
 
-## Phase 6: Live Readiness (REQUIRES EXPLICIT USER AUTHORIZATION)
+- counts of legacy strategies or strategy lifecycle transitions;
+- RuleSet/DSL/backtest promotion;
+- a top-level `knowledge_items.item_type='risk_lesson'` query;
+- exchange-demo visibility as a requirement for the active `paper_internal` proof;
+- lesson/artifact counts as evidence of positive Learning contribution;
+- the June 2026 Round 1 calendar, tags, or MVP script.
 
-### Prerequisites (before starting Phase 6 work)
-
-- [ ] Phase 4 observation gate fully passed
-- [ ] 12+ weeks of paper trading with positive expectancy
-- [ ] Human explicitly authorizes beginning of Phase 6 work
-
-### Go-Live Scorecard (10 criteria, composite >=70 required)
-
-| # | Criterion | Weight | Target | Source |
-|---|-----------|--------|--------|--------|
-| 1 | Trade Volume | 0.135 | >=50 closed positions | `positions WHERE status='closed'` |
-| 2 | Profit Factor | 0.135 | >1.0 (gross profit / gross loss) | `positions.realized_pnl` |
-| 3 | Win Rate | 0.09 | >=45% | closed positions with pnl > 0 |
-| 4 | Max Drawdown | 0.135 | <15% of peak equity | `portfolio_snapshots` series |
-| 5 | Exchange Connectivity | 0.09 | API responds within timeout | `api.testBitget()` |
-| 6 | Risk Violations | 0.09 | 0 recent violations | `risk_decisions WHERE approved=false` (7d) |
-| 7 | Data Coverage | 0.09 | All observed symbols have recent snapshots | `market_snapshots` freshness |
-| 8 | Model Health | 0.09 | Default LLM provider available | `/api/model/health` |
-| 9 | Reconciliation | 0.09 | Local vs exchange state match | `exchange_sync` drift check |
-| 10 | Calibration | 0.10 | ECE < 0.15 (confidence calibration) | `confidence_calibration.compute_calibration()` |
-
-### Safety Gates
-
-- [ ] Live remains off unless explicitly unlocked by human
-- [ ] First live_limited action requires confirmed human interaction
-- [ ] Live uses strict capital/risk boundaries (cannot exceed configured caps)
-- [ ] Position mismatch detection works and triggers kill switch
-- [ ] Kill switch - all activity stops until human releases
-
----
-
-## Phase 7+: Advanced (Each item requires separate authorization)
-
-No gate criteria -- each item is independently authorized and scoped. See ROADMAP.md for the full list of advanced directions.
-
----
-
-## Track B Stage 1: Operator Layer (orthogonal to Phase axis)
-
-| # | Criterion | How to check |
-|---|-----------|--------------|
-| 1 | User asks "what is the system doing?" - gets real-time data answer | Command Center query test |
-| 2 | User asks "why did this proposal fail?" - gets risk_decision citation | Command Center with proposal ID |
-| 3 | pause/resume blocked by permission layer (default Read Only) | Attempt pause in Read Only mode - blocked |
-| 4 | Every query/command has audit record | `SELECT COUNT(*) FROM agent_shell_commands` |
-| 5 | Shell degrades gracefully (LLM unavailable - keyword fallback, no crash) | Kill LLM - system still responds |
-| 6 | No live trading / no credential access (security test passes) | Code audit: no execution path from shell |
+Historical Round 1 material remains provenance only. It cannot authorize current
+work or qualify a current Runtime.

@@ -3,29 +3,31 @@
 > **角色**：定义 demo 阶段三条系统级 Kill 判决——防止系统在已证明无效或危险状态下持续运行。
 > 每条 Kill 条件均有对应的可执行 spec claim 锁死，防止代码漂移。
 > **不变式来源**：[Product Direction 的永久边界](../../product/definition/DIRECTION.md#enduring-product-boundaries)；[EXPERIMENT_PROTOCOL.md](../../product/experiments/EXPERIMENT_PROTOCOL.md)。
-> Last updated: 2026-06-30 · 维护者: Aletheia Dev
+> Last aligned with code: 2026-08-06 · 维护者: Aletheia Dev
 
 ---
 
 ## K1：Demo 连续两轮 PF < 0.5 → Terminate Experiment
 
-**判决标准**：go_live_scorecard 中 profit_factor criterion 连续两个完整评估轮次低于 0.5，
+**判决标准**：go_live_scorecard 中 profit_factor criterion 连续两个有合格 outcome 的
+14 日 trailing windows 低于 0.5，
 触发实验终止——该方向已证明无法盈利，继续运行只消耗验证窗口和资金。
 
 **Kill 阈值**：`PF < 0.5`
 
-> **历史背景**：[EXPERIMENT_PROTOCOL.md](../../product/experiments/EXPERIMENT_PROTOCOL.md) 原始 K1 阈值为 0.85
-> （基于三轮验证框架设计，面向更严格的盈利证明要求）。本契约统一为 **0.5**，与产品定义
-> （2026-06-30）对齐——0.5 以下意味着亏损金额超过盈利金额，是客观的"亏损策略"判断线。
-> 两文档在此数值上存在历史不一致；以本契约 0.5 为准，EXPERIMENT_PROTOCOL.md 的 0.85 是
-> 更严格的早期参考值，不矛盾但不作为当前机器执行阈值。
+> **历史背景**：终止于 2026-06-27 的 Round 1 协议曾使用 0.85。当前
+> [EXPERIMENT_PROTOCOL](../../product/experiments/EXPERIMENT_PROTOCOL.md) 不复制这个
+> 历史数值；机器执行阈值以本契约和 `go_live_scorecard.py` 的 0.5 为准。
 
-**结构前提**（实现后才能触发 K1）：
+**结构与行为前提**：
 - `_check_profit_factor()` 返回的 criterion `weight > 0`（D8-S01 锁死，已实现）
 - 极低 PF（< kill 阈值）评为 `status='fail'` 且 `score=0`（D8-B01 锁死，已实现）
 
-**待实现的机器保护**：
-- `consecutive_kill_rounds` / `check_kill_condition` 函数（D8-S02，missing_tripwire）
+**当前机器保护**：
+- `check_kill_condition_consecutive_rounds()` 按 14 日窗口计算连续低于 0.5 的轮次；
+- 当前函数遇到空窗口即停止，未另设每窗最小样本量；调用方不得把它描述成样本充分的
+  盈利性判决；
+- `_check_profit_factor()` 对 PF < 0.5 返回 `status='fail'`、`score=0`。
 
 **对应 Spec Claims**：D8-S01 · D8-S02 · D8-B01
 
@@ -33,16 +35,16 @@
 
 ## K2：连续 3 天零开仓 → Trading Loop Dead
 
-**判决标准**：系统在连续 72 小时内没有产生任何新的 fills（已成交仓位），
+**判决标准**：系统连续 3 个自然日没有新的 position open，
 意味着决策链已经僵死——数据在流动，但系统无法将机会转化为行动。
 
 **监测结构**（已实现）：
 - `_probe_profit_loop()` 在 `aletheia/diagnostics/doctor.py` 中检测 opportunities
   流动而 proposals 为零的解耦状态，报告键 `loop.profit`（D8-S03 锁死，已实现）
 
-**待实现的机器保护**：
-- `days_without_fill()` / `consecutive_empty_days()` 函数，返回连续零填充天数整数
-  （D8-S04，missing_tripwire）
+**当前机器保护**：
+- `count_consecutive_zero_fill_days()` 读取 `positions.opened_at` 并返回连续无新开仓天数；
+- 函数名保留历史 `zero_fill` 用语，但当前统计单元是 position open，不是 `fills` 表行。
 
 **对应 Spec Claims**：D8-S03 · D8-S04
 
@@ -56,8 +58,9 @@
 **不变式（D8-C01）**：`POST /api/settings/live-unlock` 在迁移至 `live_limited` 前
 **必须**调用 `compute_scorecard()` 且 `composite_score >= 70`，任何绕过路径均违约。
 
-**当前状态**：`server/routes/live.py` 尚未调用 `compute_scorecard()`，
-D8-B02 和 D8-C01 均为 `missing_tripwire`（xfail，待实现）。
+**当前状态**：`server/routes/live.py` 在状态迁移前调用 `compute_scorecard()`；
+低于 70、非 green、存在 blocker，或合格交易净已实现收益不为正都会阻断。
+D8-B02/D8-C01 与负净收益、loss-first drawdown 回归锁定当前门禁。
 
 **对应 Spec Claims**：D8-B02 · D8-C01
 

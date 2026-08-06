@@ -84,7 +84,7 @@ The complete governed loop therefore includes:
 | Decision consumers | reflection, memo, reasoning feedback, calibration feedback, structured lessons | exact prompt manifest and bundle/component experiments |
 | Proposal consumers | persona/sizing policy and existing risk-lesson checks | baseline/treatment persistence; immutable risk envelope |
 | Operations | scheduler, catch-up, enable switch, doctor, learning funnel, alpha/guard/memo reports, API/UI | durable health, honest contribution status and refreeze |
-| Concurrent controls | operator-loop risk/confidence/stop tightening, strategy lifecycle, debate and other non-Learning policy versions | record as safety/control changes and experiment confounders; never withhold or credit to Learning |
+| Concurrent controls | operator-loop risk/confidence/stop tightening, legacy strategy-record changes, debate and other non-Learning policy versions | record as safety/control changes and experiment confounders; never withhold or credit to Learning |
 
 Modules that only propose diagnostics remain inside the inventory so a later consumer cannot
 silently turn them into authority. In particular, `exit_policy_advisor` remains proposal-only;

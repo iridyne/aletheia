@@ -1,8 +1,10 @@
-"""MVP Gate Check — Round 1 就绪验证脚本.
+"""LEGACY-ONLY Round 1 MVP gate reproduction script.
 
 运行: uv run python scripts/mvp_gate_check.py
 
-6 个领域全部 PASS → 系统就绪,可以开始 Round 1。
+This script preserves the terminated June 2026 okx_demo checklist. It is not a
+current admission gate and cannot qualify the paper_internal Active Runtime Scope.
+See docs/product/experiments/EXPERIMENT_MVP_GATE.md.
 """
 
 from __future__ import annotations

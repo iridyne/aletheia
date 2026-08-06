@@ -1,6 +1,6 @@
 """Go-Live Scorecard — quantitative readiness assessment for demo→live transition.
 
-Aggregates 9 criteria into a composite score (0-100) with traffic light status.
+Aggregates 10 criteria into a composite score (0-100) with traffic light status.
 """
 from __future__ import annotations
 

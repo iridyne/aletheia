@@ -1,124 +1,124 @@
 # Product Evaluation Metrics
 
-> Single source of truth for what we measure and why.
-> Each metric is tied to a concrete code path or DB query.
-> Last updated: 2026-06-21
+> **Role:** Product Truth for metric meaning and source. This document defines
+> what a metric can prove; it does not record current values, progress, or an
+> observation-window checkpoint.
+>
+> Last aligned with code: 2026-08-06.
 
----
+## 1. Primary outcome
 
-## 1. Primary Outcome Metric
+The primary product outcome is **attributable, cost-aware improvement under
+bounded authority**.
 
-**Closed-Loop Learning Velocity** -- how fast the system discovers, validates, and discards trading hypotheses.
+Activity is not improvement. Opportunities, reviews, lessons, exposures,
+experiments, evaluator cycles, and PnL are inputs or observations. A Learning
+contribution claim requires a prospective, identity-matched treatment/control
+cohort whose actual intervention, outcomes, costs, harm state, and policy epoch
+are all known.
 
-Decomposed into 4 sub-dimensions:
+The current measured path is `universe_family_calibration`. Its software evidence
+unit is one complete assignment cluster. Selected members contribute fixed-horizon
+net return; dropped members contribute zero under intent-to-treat allocation
+utility. The current metric version is
+`universe_family_calibration_cluster_allocation_utility_v3`.
 
-| Dimension | Metric | Code path |
-|-----------|--------|-----------|
-| Observation yield | Opportunities with substantive key_observations / total | `agents/market_observer.py` output quality |
-| Knowledge consumption | `lessons_consulted > 0` rate across PI decisions | `dreaming_agent.py:115-118` FTS5 lookup |
-| Strategy improvement | Strategies that pass walk-forward / total proposed | `strategy_lifecycle.py` promotion gates |
-| Profitability proof | Paper profit factor > 1.0 over rolling 30d | `analytics/trade_insights.py` |
+## 2. Learning qualification metrics
 
-### Guardrail Metrics (never sacrifice for velocity)
+| Metric | Meaning | Current source |
+|---|---|---|
+| Treatment/control assignment units | Complete, unique prospective clusters per arm | Learning cohort builder and `lco-v1` projection |
+| Minimum samples | 50 complete assignment units in each arm | `LearningExperiment.min_samples_per_arm` |
+| Minimum market span | At least 7 elapsed days between first and last eligible exposure | `LearningExperiment.min_market_days` and `verdicts._insufficient()` |
+| Actual intervention | Treatment manifest proves `authority_applied=true` | Exposure manifest and cohort sample |
+| Contribution delta | Cost-aware treatment mean minus control mean | `learning/verdicts.py` |
+| Confidence interval | Deterministic bootstrap interval for the contribution delta | `learning/verdicts.py` |
+| Harm state | `indeterminate`, `clear`, or `breached`; underpowered evidence never claims safety | contribution verdict harm metrics |
+| Measurement identity | Exact hypothesis, stage, epoch, horizon, outcome contract, metric version, and behavior-contract hash | Learning ledger/authority resolver |
+| Operational health | Evaluator/lifecycle freshness, failures, watermark, and catch-up state | `learning_job_health` and `lco-v1` |
 
-| Guardrail | Threshold | Source |
-|-----------|-----------|--------|
-| System Uptime | >99% (7d rolling) | `compute_health()` in `health.py` |
-| Max Drawdown | <15% of peak equity | `_check_max_drawdown()` in `go_live_scorecard.py` |
-| Confidence Calibration | ECE < 0.15 | `confidence_calibration.compute_calibration_score()` |
+`min_market_days` currently measures elapsed span, not uninterrupted coverage.
+A qualification claim additionally requires owner verification that the window has
+no unexplained material gap. Automated continuity enforcement is tracked by #692;
+changing it is B-class and starts a fresh window.
 
----
+### Verdict meaning
 
-## 2. Phase 0 KPIs (Stabilize)
+| Verdict | Meaning |
+|---|---|
+| `insufficient_data` | Sample/time requirement is unmet, or the shadow cohort had no actual intervention |
+| `invalid` | Identity, provenance, or economic evidence cannot support comparison |
+| `negative` | Treatment trails control or breaches a determinate harm gate |
+| `neutral` | Effect is practically small or confidence remains inconclusive |
+| `positive` | Cost-aware treatment improvement clears the practical/confidence threshold with no harm breach |
 
-| KPI | Target | How to measure |
-|-----|--------|----------------|
-| Gateway Uptime | >95% (no multi-hour outages) | `aletheia doctor` gateway_status history |
-| Doctor Zero-Critical | 0 critical issues for 3 consecutive days | `doctor` output parsing |
-| Signal Coverage | >=3 symbols producing snapshots | `SELECT DISTINCT symbol FROM market_snapshots WHERE created_at > datetime('now','-1 hour')` |
-| Agent Error Rate | <5% of agent runs | `SELECT COUNT(*) FROM agent_runs WHERE status='error' / total` |
+A healthy evaluator or a large cohort count cannot substitute for one of these
+measurement states.
 
----
+## 3. Evidence-integrity guardrails
 
-## 3. Phase 1 KPIs (Learning Quality)
+These are prerequisites, not weighted offsets for weak economics:
 
-| KPI | Target | How to measure |
-|-----|--------|----------------|
-| Lessons Consulted Rate | >50% of PI decisions reference a lesson | Agent run outputs containing `lessons_consulted:N` where N>0 |
-| Confidence Calibration | ECE < 0.15 | `analytics/confidence_calibration.py` -- formula: `max(0, 100 - ECE*200)` |
-| Memory Produce Rate | >0 new knowledge_items/day | `SELECT COUNT(*) FROM knowledge_items WHERE created_at > datetime('now','-1 day')` |
-| Post-Trade Review Coverage | >80% of closed positions have a review | `knowledge_items.item_type='post_trade_review'` / closed positions |
+| Guardrail | Required interpretation |
+|---|---|
+| Causal identity | Opportunity, decision, proposal, RiskDecision, order, fill, position, and outcome links remain attributable |
+| Outcome integrity | Administrative, synthetic, unresolved, or economically incomplete closes do not enter strategy/Learning performance |
+| Exact venue/provider | Prices and funding preserve their actual source identity; cross-venue substitution is not evidence |
+| Cohort isolation | Old policy epochs, behavior contracts, stages, horizons, and conflicting sources cannot authorize current behavior |
+| Control holdout | Paper authority allocation never exceeds its configured ceiling and retains a control arm |
+| Safety withdrawal | Negative, invalid, stale, or harmful current evidence restores/fails to the static baseline |
+| Runtime continuity | Qualification provenance and scheduler/outcome/evaluator continuity are verified from current runtime facts |
 
----
+## 4. Trading and decision quality
 
-## 4. Phase 2 KPIs (Strategy Execution)
+The following metrics describe eligible genuine outcomes only. They may evaluate
+paper behavior or contribute to readiness, but do not by themselves prove Learning
+causality:
 
-| KPI | Target | How to measure |
-|-----|--------|----------------|
-| Paper Win Rate | >=45% | Closed positions with realized_pnl > 0 / total closed |
-| Average R (reward/risk) | >1.5 | `realized_pnl / abs(entry_price - stop_price) * qty` per trade |
-| Sharpe Ratio | >0.5 (annualized from daily returns) | `portfolio_snapshots` time series |
-| Profit Factor | >=1.2 | sum(winning trades) / abs(sum(losing trades)) |
-| Strategy Turnover | >=1 new strategy/month reaching paper_running | `strategies` table status transitions |
+- net realized PnL and cost completeness;
+- profit factor and win rate;
+- max drawdown;
+- trade volume and opportunity-to-outcome funnel conversion;
+- conviction calibration/ECE;
+- family, factor, thesis, and decision attribution;
+- Risk rejection/violation and reconciliation integrity.
 
----
+Analytics must expose exclusions, window identity, and unavailable states. A zero
+must never stand in for a failed read or missing evidence.
 
-## 5. Phase 3+ KPIs (Self-Evolution)
+## 5. Go-Live Scorecard
 
-| KPI | Target | How to measure |
-|-----|--------|----------------|
-| Parameter Feedback Loop Active | lessons influence next decisions | `reasoning_feedback.py` -- rejection_rate/win_rate by bucket |
-| Strategy Iteration Cycle | <7d from proposal to walk-forward result | `strategy_edits` timestamp delta |
-| Guard Candidate Auto-Generation | >0/week | `outcome_recorder.py:249` -- 7-day dedup window |
-| Activation Ratio | >30% | `paper_running + paper_passed / total strategies` |
+`aletheia.analytics.go_live_scorecard.compute_scorecard()` currently evaluates ten
+criteria and a separate positive-net-PnL gate:
 
----
+| Criterion | Weight | Code target |
+|---|---:|---|
+| Eligible trade volume | 0.135 | 50 closed genuine outcomes |
+| Profit factor | 0.18 | 1.2; PF below 0.5 scores zero |
+| Win rate | 0.135 | 45% |
+| Max drawdown | 0.135 | below 10% |
+| Exchange connectivity | 0.09 | cached state younger than 300 seconds |
+| Risk violations | 0.09 | zero violation events in 24 hours |
+| Data coverage | 0.045 | complete current OHLCV coverage |
+| Model health | 0.045 | at least one provider available |
+| Reconciliation | 0.045 | zero reconciliation errors in 7 days |
+| Conviction calibration | 0.10 | current report, target ECE below 0.10 |
 
-## 6. Phase 6 Go-Live KPIs (Composite Score)
+The composite is red below 50, yellow from 50 through 75, and green above 75.
+Live eligibility is stricter than color: the protected live contract also requires
+the configured score threshold, zero blockers, positive eligible net realized PnL,
+the remaining live safety gates, and explicit human authorization. The scorecard
+is readiness evidence, not permission to trade.
 
-The Go-Live Scorecard produces a composite score (0-100). Target: >=70.
+## 6. Canonical projections
 
-| # | Criterion | Weight | Threshold | Score formula |
-|---|-----------|--------|-----------|---------------|
-| 1 | Trade Volume | 0.135 | >=50 closed | linear 0-100 scaled to target |
-| 2 | Profit Factor | 0.18 | >1.0 | highest-weighted; 0 if <=1.0 |
-| 3 | Win Rate | 0.09 | >=45% | linear scale |
-| 4 | Max Drawdown | 0.135 | <15% | inverse: lower is better |
-| 5 | Exchange Connectivity | 0.09 | API responds | binary 0/100 |
-| 6 | Risk Violations | 0.09 | 0 in 7d | binary 0/100 |
-| 7 | Data Coverage | 0.09 | All symbols fresh | percentage of symbols with recent data |
-| 8 | Model Health | 0.09 | Provider available | binary 0/100 |
-| 9 | Reconciliation | 0.09 | No drift | binary 0/100 |
-| 10 | Calibration | 0.10 | ECE < 0.15 | `max(0, 100 - ECE*200)` |
+| Question | Canonical projection |
+|---|---|
+| Is measured Learning effective? | `GET /api/analytics/learning-contribution` (`lco-v1`) |
+| Are current outcomes eligible? | Outcome Integrity assessment and eligible-outcome consumers |
+| How is paper trading performing? | Trade insights/performance summary with explicit window metadata |
+| Is live readiness satisfied? | Go-Live Scorecard plus the live-unlock contract |
+| Is this Runtime healthy now? | `uv run aletheia doctor`, runtime provenance, logs, and current data |
 
-Traffic light: <50 = RED, 50-75 = YELLOW, >75 = GREEN.
-
-Active Blockers = 0 required before any live action.
-
----
-
-## 7. Metric Collection Architecture
-
-```
-Scheduler (30 jobs)
-  |
-  +-- market_data (5min) --> market_snapshots table
-  +-- portfolio_snapshot (15min) --> portfolio_snapshots table
-  +-- confidence_calibration (6h) --> calibration scores
-  +-- insight_synthesizer (daily) --> reasoning_feedback piggyback
-  +-- health_check (2min) --> doctor probes
-  |
-  v
-Analytics layer (on-demand + cron):
-  - go_live_scorecard.py: composite from 10 checks
-  - trade_insights.py: win_rate, profit_factor, sharpe
-  - confidence_calibration.py: ECE per conviction bucket
-  - reasoning_feedback.py: per-bucket rejection/win rates
-  |
-  v
-API endpoints:
-  - GET /api/analytics/go-live-scorecard
-  - GET /api/analytics/confidence-calibration
-  - GET /api/analytics/reasoning-feedback
-  - GET /api/analytics/trade-insights
-```
+Runtime values and observation progress belong in runtime evidence and GitHub,
+not in this file.

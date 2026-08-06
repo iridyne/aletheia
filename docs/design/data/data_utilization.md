@@ -89,7 +89,8 @@
   不是 collected-but-unused 外部数据源。A1 evaluator/lifecycle 已消费这些表；有界、只读、诚实的
   `lco-v1` summary、多路径 dashboard contribution selector、当前路由性能/cache 与当前 surface 无障碍已实现。
   明细/分页、完整 workbench 及其对应无障碍证据仍未实现。不得为填页面新增采集、复制表或把 activity counts 当 contribution。
-  对应剩余缺口由 `LCO-*` claims 与 GitHub issue #489 管理，不新增 DU acquisition claim。
+  对应剩余 owner-workbench 缺口由 `LCO-*` claims 与 GitHub issue #614 管理；Learning
+  路线图统一由 #470 管理，不新增 DU acquisition claim。
 
 ---
 

@@ -157,7 +157,7 @@ Outside these canonical tables, use the full capability name.
 | LN-05 | Knowledge retrieval | E1+E2 | Supported | Advisory injection and empty fallback tested | No |
 | LN-06 | Lesson review lifecycle | E1+E2 | Supported | Review state gates consumption | No |
 | LN-07 | Skill drafting and review | E1 | Experimental | Draft/review only; activation intentionally absent | No |
-| LN-08 | Learned guard generation and enforcement | E1+E2 | Supported | Optional paper influence; disabled by default | No |
+| LN-08 | Learned guard generation and observation | E1+E2 | Supported | Learned guards are observe-only; seed/manual guards are a separate static safety class | No |
 | LN-09 | Confidence calibration | E1+E2 | Supported | Measurement/reporting only | No |
 | LN-10 | Shadow trades and counterfactual resolution | E1+E2 | Experimental | Observe-only by design | No |
 | LN-11 | Filter controller observation | E1+E2 | Experimental | Consumer mutation intentionally absent | No |

@@ -21,7 +21,9 @@ supersedes: []
 > Historical sequencing alias: "Learning A2 Observability". Current normative
 > documents must use the canonical name above because `A2` has unrelated meanings
 > elsewhere in the repository.
-> Last aligned with code: 2026-07-31, after the measured-path and owner-surface reconciliation.
+> Last aligned with code: 2026-08-06. The executable registry contains implemented
+> and partial claims; it has no strict-xfail placeholders. Full workbench delivery is
+> tracked by GitHub issue #614 under the #470 Learning umbrella.
 
 This proposal defines the intended owner-facing, read-only projection of the measured
 Learning loop. Current behavior remains defined by
@@ -752,9 +754,10 @@ states. This is adjacent UI honesty work, not contribution authority.
 | LCO-C05 | L2c | desktop/mobile layouts and native keyboard/label semantics preserve access to the current measured-path selector and Contribution summary | partial — component Vitest proof exists, but the Python executable claim still checks source/proof presence rather than running the UI behavior |
 | LCO-C06 | L2c | the current summary uses a monotonic TTL cache and emits explainable cold/cache-hit `Server-Timing` | implemented for the current summary route; immutable publication/order have adjacent tests, while future endpoint and stable-runtime latency slices retain separate obligations |
 
-Unimplemented claims remain strict xfail. A claim changes to `implemented` only
-after its placeholder is replaced by a behavioral test. Source-string presence
-alone cannot make a behavioral claim GREEN.
+Partial claims stay partial until their executable proof runs the claimed behavior.
+This proposal currently has no strict-xfail placeholder for future workbench slices;
+their delivery state belongs to GitHub issue #614. Source-string presence alone
+cannot make a behavioral claim GREEN.
 
 ## 12. Acceptance Matrix
 
