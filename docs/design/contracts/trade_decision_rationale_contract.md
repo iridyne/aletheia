@@ -6,7 +6,7 @@
 ## 1. 不变量
 
 1. System Operator 唯一可执行的入场意图 `trade` 必须带有入场价、止损、止盈、名义价值和杠杆五项理由；少任何一项都不得创建 proposal，也不得把 pending 终结成 skip，而是返回稳定的可重试不可用原因。`scale_in` / `flip` 不属于当前活跃能力。
-2. 最终数字由后端在取价、默认值和上限处理后写入；每项都要标出其实际来源。AI 不得因系统默认、市场快照或杠杆上限而获得虚假的“决定者”身份。
+2. 入场价由后端的新鲜精确 mark 决定，名义价值与杠杆仍由后端 sizing/上限约束；新 LLM `trade` 的止损/止盈则必须保留模型显式给出的绝对价格。相对推理前 mark 的反向几何先走一次有界修复；提交时刷新 mark 若过期/不可用或穿越保护位则 typed defer。缺失或错误的模型保护价不得用配置默认值改写。每项都要标出实际来源，AI 不得因市场快照、系统 sizing 或杠杆上限而获得虚假的“决定者”身份。
 3. 开仓理由保存在 `trade_proposals.agent_rationale` 的 `entry_parameters` 元数据中，属于 proposal 的不可变内容并受既有 hash chain 保护。
 4. 平仓理由只在关闭事实成功写入后保存到 `positions.exit_reasoning`。自动保护、人工、对账和 AI 复核必须使用真实 actor/source；没有 AI 原话时 `is_ai_judgment=false`。
 5. 历史或外部记录缺少理由时，API/UI 只能显示 `not recorded`，不得从最终价格、PnL 或 close_reason 倒推故事。
@@ -18,12 +18,12 @@
 | key | 最终事实 | `value_source` 示例 |
 |---|---|---|
 | `entry_price` | `final_value` | `market_snapshot` |
-| `stop_loss` | `final_value`、距离 | `ai_requested` / `default_config` |
-| `take_profit` | `final_value`、距离 | `ai_requested` / `default_config` |
+| `stop_loss` | `final_value`、距离 | 新 LLM `trade` 为 `ai_requested`；`default_config` 仅兼容 programmatic/历史对象 |
+| `take_profit` | `final_value`、距离 | 新 LLM `trade` 为 `ai_requested`；`default_config` 仅兼容 programmatic/历史对象 |
 | `notional_usdt` | requested/actual 名义价值、按止损估计损失 | `ai_requested` / `default_config` |
 | `leverage` | requested/final、最大允许值、估计保证金 | `ai_requested` / `risk_cap_clamped` / `default_1x` / `not_applicable_spot` |
 
-每项带 `reason`。原因为空代表 AI 没有给出，不能由服务端生成主观补充。`estimated_loss_at_stop_usdt` 是数量与入场/止损价的算术结果，不能称为风险引擎的批准额度。
+每项带 `reason`。新 LLM `trade` 任一理由为空即为可重试的不完整输出；programmatic/历史对象中的空理由只能原样表示“未记录”，不能由服务端生成主观补充。`estimated_loss_at_stop_usdt` 是数量与入场/止损价的算术结果，不能称为风险引擎的批准额度。
 
 ## 3. 平仓记录
 

@@ -942,6 +942,43 @@ def _insert_recent_proposal(conn, i: int, direction: str) -> None:
     conn.commit()
 
 
+def _operator_trade_payload(**updates):
+    payload = {
+        "action": "trade",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "market_type": "spot",
+        "conviction": 70,
+        "reasoning": "momentum continuation",
+        "bear_case": "momentum can reverse before follow-through",
+        "stop_price": 98.0,
+        "take_profit": 104.0,
+        "parameter_rationale": {
+            key: f"reason for {key}"
+            for key in (
+                "entry_price", "stop_loss", "take_profit", "notional_usdt", "leverage"
+            )
+        },
+    }
+    payload.update(updates)
+    return payload
+
+
+def _operator_entry_context():
+    return {
+        "layer1": {"opportunities": []},
+        "layer2": {
+            "entry_mark": {
+                "status": "available",
+                "symbol": "BTC/USDT",
+                "market_type": "spot",
+                "price": 100.0,
+                "authority": "fresh_exact_market_mark",
+            },
+        },
+    }
+
+
 @pytest.mark.asyncio
 async def test_trading_decision_brakes_one_sided_recent_proposals(tmp_path, monkeypatch):
     conn = _init_agent_shell_db(tmp_path, monkeypatch)
@@ -950,17 +987,15 @@ async def test_trading_decision_brakes_one_sided_recent_proposals(tmp_path, monk
 
     from aletheia.agent_shell import trading_decision as td
 
-    monkeypatch.setattr(td, "_assess_opportunity", AsyncMock(return_value={
-        "action": "trade",
-        "symbol": "BTC/USDT",
-        "direction": "long",
-        "conviction": 70,
-        "reasoning": "momentum continuation",
-    }))
+    monkeypatch.setattr(
+        td,
+        "_assess_opportunity",
+        AsyncMock(return_value=_operator_trade_payload()),
+    )
     debate = AsyncMock()
     monkeypatch.setattr(td, "_run_debate", debate)
 
-    decision = await td.evaluate_trading_opportunity({"layer1": {"opportunities": []}})
+    decision = await td.evaluate_trading_opportunity(_operator_entry_context())
 
     # Brake rejection uses a distinct action so the decisions API can tell it apart
     # from a genuine LLM-initiated operator_skip (#330).
@@ -983,15 +1018,16 @@ async def test_trading_decision_bias_brake_allows_high_conviction(tmp_path, monk
 
     from aletheia.agent_shell import trading_decision as td
 
-    monkeypatch.setattr(td, "_assess_opportunity", AsyncMock(return_value={
-        "action": "trade",
-        "symbol": "BTC/USDT",
-        "direction": "long",
-        "conviction": 90,
-        "reasoning": "exceptionally clean setup",
-    }))
+    monkeypatch.setattr(
+        td,
+        "_assess_opportunity",
+        AsyncMock(return_value=_operator_trade_payload(
+            conviction=90,
+            reasoning="exceptionally clean setup",
+        )),
+    )
 
-    decision = await td.evaluate_trading_opportunity({"layer1": {"opportunities": []}})
+    decision = await td.evaluate_trading_opportunity(_operator_entry_context())
 
     assert decision.action == "trade"
     assert decision.position_size_usdt is not None
@@ -1003,13 +1039,14 @@ async def test_trading_decision_records_debate_trace(tmp_path, monkeypatch):
 
     from aletheia.agent_shell import trading_decision as td
 
-    monkeypatch.setattr(td, "_assess_opportunity", AsyncMock(return_value={
-        "action": "trade",
-        "symbol": "BTC/USDT",
-        "direction": "long",
-        "conviction": 60,
-        "reasoning": "uncertain breakout",
-    }))
+    monkeypatch.setattr(
+        td,
+        "_assess_opportunity",
+        AsyncMock(return_value=_operator_trade_payload(
+            conviction=60,
+            reasoning="uncertain breakout",
+        )),
+    )
     monkeypatch.setattr(
         td,
         "_run_debate",
@@ -1026,7 +1063,7 @@ async def test_trading_decision_records_debate_trace(tmp_path, monkeypatch):
     from aletheia.agent_shell.trading_decision import DecisionUnavailable
 
     with pytest.raises(DecisionUnavailable, match="debate_not_confirmed") as exc_info:
-        await td.evaluate_trading_opportunity({"layer1": {"opportunities": []}})
+        await td.evaluate_trading_opportunity(_operator_entry_context())
 
     exc = exc_info.value
     assert exc.reason == "debate_not_confirmed"

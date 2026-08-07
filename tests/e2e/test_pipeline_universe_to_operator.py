@@ -193,6 +193,15 @@ async def test_real_universe_refresh_reaches_one_operator_defer(
             "conviction": 10,
             "reasoning": "The fixture deliberately waits for stronger confirmation.",
             "bear_case": "Relative strength can fade.",
+            "stop_price": 1.0,
+            "take_profit": 1_000.0,
+            "parameter_rationale": {
+                "entry_price": "use the exact fresh fixture mark",
+                "stop_loss": "fixture-only invalidation below the market",
+                "take_profit": "fixture-only target above the market",
+                "notional_usdt": "defer to deterministic paper sizing",
+                "leverage": "spot uses no leverage",
+            },
             "key_assumptions": ["the public fixture remains fresh"],
         }, None)
 

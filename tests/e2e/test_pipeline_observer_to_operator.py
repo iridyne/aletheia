@@ -48,6 +48,8 @@ async def test_observer_ranker_pending_operator_defer_keeps_one_causal_identity(
     cfg.market_data.observed_xstocks = []
     cfg.market_data.observed_stock_tokens = []
     cfg.market_data.prediction_enabled = False
+    cfg.market_data.ccxt_exchange = "fixture"
+    cfg.market_data.ccxt_fallback = "fixture"
     cfg.universe.enabled = False
     save_config(cfg)
 
@@ -242,6 +244,15 @@ async def test_observer_ranker_pending_operator_defer_keeps_one_causal_identity(
                 "conviction": 35,
                 "reasoning": "The queued setup is valid but entry timing is not attractive.",
                 "bear_case": "Waiting may miss the breakout continuation.",
+                "stop_price": 59_000.0,
+                "take_profit": 62_000.0,
+                "parameter_rationale": {
+                    "entry_price": "use the exact fresh fixture mark",
+                    "stop_loss": "invalidate below the fixture breakout",
+                    "take_profit": "target the next fixture resistance",
+                    "notional_usdt": "defer to deterministic paper sizing",
+                    "leverage": "spot uses no leverage",
+                },
                 "risk_factors": ["late entry"],
                 "supporting_signals": ["breakout momentum"],
                 "opposing_signals": ["entry is extended"],

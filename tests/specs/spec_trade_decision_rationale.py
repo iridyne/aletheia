@@ -261,19 +261,20 @@ def test_administrative_close_persists_non_ai_exit_reasoning(tmp_path, monkeypat
         status="implemented",
     ),
 )
-def test_llm_trade_without_five_parameter_reasons_does_not_open(monkeypatch):
-    import asyncio
-
+def test_llm_trade_without_five_parameter_reasons_does_not_open():
     import aletheia.agent_shell.trading_decision as td
 
-    decision = td._parse_decision({
-        "action": "trade",
-        "symbol": "BTC/USDT",
-        "direction": "long",
-        "conviction": 80,
-        "reasoning": "A trade with incomplete explanations.",
-        "bear_case": "The breakout can fail.",
-    })
-    with pytest.raises(td.DecisionUnavailable, match="missing_parameter_rationale"):
-        asyncio.run(td.submit_decision_as_proposal(decision, "paper_internal"))
-    assert decision.filter_trace[-1]["filter_name"] == "parameter_rationale_gate"
+    with pytest.raises(
+        td.DecisionUnavailable,
+        match="incomplete_operator_entry_plan:.*parameter_rationale",
+    ):
+        td._parse_decision({
+            "action": "trade",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "conviction": 80,
+            "reasoning": "A trade with incomplete explanations.",
+            "bear_case": "The breakout can fail.",
+            "stop_price": 98.0,
+            "take_profit": 104.0,
+        })

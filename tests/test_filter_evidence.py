@@ -1337,7 +1337,7 @@ def test_missing_proposal_price_returns_structured_rejection_trace(monkeypatch):
         asyncio.run(submit_decision_as_proposal(decision, "paper_internal"))
 
     assert exc_info.value.reason == "market_price_unavailable"
-    assert exc_info.value.stage == "proposal_preflight"
+    assert exc_info.value.stage == "operator_entry_plan"
     assert decision.filter_trace[-1]["filter_name"] == "proposal_price_availability"
     assert decision.filter_trace[-1]["decision"] == "rejected"
     assert decision.filter_trace[-1]["reason_code"] == "market_price_unavailable"
