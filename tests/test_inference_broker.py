@@ -13,6 +13,7 @@ from aletheia.model_provider.broker import (
     brokered_stream,
     inference_priority,
     InferenceBroker,
+    InferenceBrokerClosed,
     InferencePriority,
     InferenceQueueFull,
     InferenceRateLimitExceeded,
@@ -308,6 +309,117 @@ async def test_broker_can_restart_after_orderly_close():
     await broker.aclose()
     assert await broker.submit("provider-a", lambda: _immediate("second")) == "second"
     await broker.aclose()
+
+
+@pytest.mark.anyio
+async def test_policy_reload_waits_for_admitted_work_without_rejecting_new_submit():
+    current_policy = _policy(max_concurrency=1)
+    broker = InferenceBroker(policy_loader=lambda _name: current_policy)
+    started = threading.Event()
+    release = threading.Event()
+
+    async def blocker():
+        started.set()
+        await asyncio.to_thread(release.wait)
+        return "old-policy"
+
+    first = asyncio.create_task(broker.submit("provider-a", blocker))
+    second = None
+    third = None
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+
+        current_policy = _policy(max_concurrency=2)
+        await broker.invalidate_provider("provider-a")
+        snapshot = await broker.snapshot()
+        assert snapshot["providers"]["provider-a"]["status"] == "reloading"
+
+        second = asyncio.create_task(
+            broker.submit("provider-a", lambda: _immediate("new-policy"))
+        )
+        third = asyncio.create_task(
+            broker.submit("provider-a", lambda: _immediate("same-generation"))
+        )
+        await asyncio.sleep(0.01)
+        assert not second.done(), "new work must wait while the old policy drains"
+        assert not third.done(), "concurrent work must wait for the same reload"
+
+        release.set()
+        assert await asyncio.gather(first, second, third) == [
+            "old-policy",
+            "new-policy",
+            "same-generation",
+        ]
+        snapshot = await broker.snapshot()
+        assert snapshot["providers"]["provider-a"]["status"] == "running"
+        assert snapshot["providers"]["provider-a"]["policy"]["max_concurrency"] == 2
+        assert snapshot["providers"]["provider-a"]["metrics"]["completed"] == 2
+    finally:
+        release.set()
+        await asyncio.gather(
+            *(task for task in (first, second, third) if task is not None),
+            return_exceptions=True,
+        )
+        await broker.aclose()
+
+
+@pytest.mark.anyio
+async def test_policy_reload_wait_is_bounded_by_submission_deadline():
+    current_policy = _policy(max_concurrency=1)
+    broker = InferenceBroker(policy_loader=lambda _name: current_policy)
+    started = threading.Event()
+    release = threading.Event()
+
+    async def blocker():
+        started.set()
+        await asyncio.to_thread(release.wait)
+        return "old-policy"
+
+    first = asyncio.create_task(broker.submit("provider-a", blocker))
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        current_policy = _policy(max_concurrency=2)
+        await broker.invalidate_provider("provider-a")
+
+        with pytest.raises(InferenceTimeout, match="policy reload exceeded"):
+            await broker.submit(
+                "provider-a",
+                lambda: _immediate("must-not-run"),
+                timeout_sec=0.01,
+            )
+
+        snapshot = await broker.snapshot()
+        assert snapshot["providers"]["provider-a"]["status"] == "reloading"
+        assert snapshot["providers"]["provider-a"]["metrics"]["submitted"] == 1
+    finally:
+        release.set()
+        await asyncio.gather(first, return_exceptions=True)
+        await broker.aclose()
+
+
+@pytest.mark.anyio
+async def test_broker_shutdown_wakes_policy_reload_waiters():
+    current_policy = _policy(max_concurrency=1)
+    broker = InferenceBroker(policy_loader=lambda _name: current_policy)
+    started = threading.Event()
+
+    async def blocker():
+        started.set()
+        await asyncio.Event().wait()
+
+    first = asyncio.create_task(broker.submit("provider-a", blocker))
+    assert await asyncio.to_thread(started.wait, 1)
+    current_policy = _policy(max_concurrency=2)
+    await broker.invalidate_provider("provider-a")
+    waiting = asyncio.create_task(
+        broker.submit("provider-a", lambda: _immediate("must-not-run"))
+    )
+    await asyncio.sleep(0.01)
+    assert not waiting.done()
+
+    await broker.aclose()
+    results = await asyncio.gather(first, waiting, return_exceptions=True)
+    assert all(isinstance(result, InferenceBrokerClosed) for result in results)
 
 
 @pytest.mark.anyio
