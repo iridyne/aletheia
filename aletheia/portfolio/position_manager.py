@@ -13,6 +13,7 @@ Governance:
 - The scheduler job that calls this still honors runtime.paused.
 """
 
+import hashlib
 import json
 import logging
 import math
@@ -45,31 +46,36 @@ def _pending_close_age_hours(requested_at: str | None) -> float | None:
 
 
 def _escalate_stale_pending_close(position: dict, age_hours: float) -> None:
-    """Durably surface a stale close claim without releasing or retrying it."""
+    """Durably surface each stale close claim once without releasing or retrying it."""
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import AuditEvent
 
-    with repo.transaction(immediate=True):
-        existing = repo.get_db().execute(
-            "SELECT 1 FROM audit_events WHERE source='position_manager' "
-            "AND event_type='pending_close_reconciliation_required' "
-            "AND entity_id=? LIMIT 1",
-            (position["id"],),
-        ).fetchone()
-        if existing is not None:
-            return
-        repo.insert_audit_event(AuditEvent(
-            actor="system",
-            source="position_manager",
-            event_type="pending_close_reconciliation_required",
-            entity_type="position",
-            entity_id=position["id"],
-            message=(
-                f"Pending close {position.get('pending_close_order_id')} has remained "
-                f"{position.get('pending_close_status')} for {age_hours:.1f}h; "
-                "retain the claim and reconcile before any further close action."
-            ),
-        ))
+    order_id = position.get("pending_close_order_id")
+    claim_identity = (
+        f"order:{order_id}"
+        if order_id
+        else (
+            "unidentified:"
+            f"{position.get('pending_close_requested_at') or 'missing'}:"
+            f"{position.get('pending_close_status') or 'missing'}"
+        )
+    )
+    incident_digest = hashlib.sha256(
+        f"{position['id']}\0{claim_identity}".encode()
+    ).hexdigest()
+    repo.insert_audit_event_once(AuditEvent(
+        id=f"pending-close-reconciliation-{incident_digest}",
+        actor="system",
+        source="position_manager",
+        event_type="pending_close_reconciliation_required",
+        entity_type="position",
+        entity_id=position["id"],
+        message=(
+            f"Pending close {order_id} has remained "
+            f"{position.get('pending_close_status')} for {age_hours:.1f}h; "
+            "retain the claim and reconcile before any further close action."
+        ),
+    ))
 
 
 class LocalPaperClosePreflightError(RuntimeError):
