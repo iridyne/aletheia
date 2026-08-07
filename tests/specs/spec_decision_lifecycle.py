@@ -1104,15 +1104,38 @@ def test_proposal_preflight_unavailable_does_not_claim_pending_source(
     SpecClaim(
         "DL-S68",
         "decision_lifecycle_contract",
-        "§2.3 refreshed entry geometry",
+        "§2.3 refreshed entry-plan plausibility",
         "L2b",
-        "If the fresh submission mark crosses an authored protection level after "
-        "inference, Proposal preparation creates a typed entry-plan defer and leaves "
-        "the pending carrier unconsumed.",
+        "If the fresh submission mark crosses an authored protection level or pushes "
+        "reward:risk outside 1.00-10.00 after inference, Proposal preparation creates "
+        "a typed entry-plan defer and leaves the pending carrier unconsumed.",
         status="implemented",
     ),
 )
-def test_refreshed_mark_crossing_stop_is_typed_defer(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("refreshed_mark", "expected_reason", "expected_risk_reward"),
+    [
+        (
+            97.0,
+            "invalid_operator_entry_plan_geometry:stop_price",
+            None,
+        ),
+        (
+            (104.0 + 98.0 * 10.01) / (1.0 + 10.01),
+            "invalid_operator_entry_plan_risk_reward:outside_envelope",
+            10.01,
+        ),
+        (
+            (104.0 + 98.0 * 555.09) / (1.0 + 555.09),
+            "invalid_operator_entry_plan_risk_reward:outside_envelope",
+            555.09,
+        ),
+    ],
+    ids=["crossed-stop", "risk-reward-10.01", "risk-reward-555.09"],
+)
+def test_refreshed_mark_invalidating_plan_is_typed_defer(
+    tmp_path, monkeypatch, refreshed_mark, expected_reason, expected_risk_reward
+):
     import asyncio
 
     from tests.test_entry_logic import setup_env
@@ -1123,6 +1146,12 @@ def test_refreshed_mark_crossing_stop_is_typed_defer(tmp_path, monkeypatch):
     from aletheia.storage.models import Opportunity, PiDecision
     from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
     from aletheia.storage.sqlite import get_db
+    from aletheia.trading.entry_plan import calculate_entry_plan_risk_reward
+
+    if expected_risk_reward is not None:
+        assert calculate_entry_plan_risk_reward(
+            refreshed_mark, 98.0, 104.0
+        ) == expected_risk_reward
 
     opportunity = Opportunity(
         id="opp-refresh-crossed-stop",
@@ -1198,7 +1227,7 @@ def test_refreshed_mark_crossing_stop_is_typed_defer(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "aletheia.data.price_feed.get_fresh_price_for_protective_close",
-        lambda *_args, **_kwargs: 97.0,
+        lambda *_args, **_kwargs: refreshed_mark,
     )
     monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda _ctx: [])
     monkeypatch.setattr(
@@ -1214,9 +1243,7 @@ def test_refreshed_mark_crossing_stop_is_typed_defer(tmp_path, monkeypatch):
     assert result["action"] == "evaluation_deferred"
     assert result["observation_status"] == "operator_entry_plan_unavailable"
     assert result["defer_stage"] == "operator_entry_plan"
-    assert result["defer_reason"] == (
-        "invalid_operator_entry_plan_geometry:stop_price"
-    )
+    assert result["defer_reason"] == expected_reason
     db = get_db()
     assert db.execute(
         "SELECT COUNT(*) FROM pi_decisions WHERE action!='signal_pending' "
@@ -1240,8 +1267,144 @@ def test_refreshed_mark_crossing_stop_is_typed_defer(tmp_path, monkeypatch):
     ).fetchall()
     assert [tuple(row) for row in trace] == [
         ("passed", "operator_entry_plan_geometry_valid"),
-        ("rejected", "invalid_operator_entry_plan_geometry:stop_price")
+        ("rejected", expected_reason),
     ]
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S71",
+        "decision_lifecycle_contract",
+        "§2.3 bounded reward:risk repair",
+        "L2b",
+        "An initial Operator entry plan outside the 1.00-10.00 reward:risk envelope "
+        "gets one bounded repair; a second invalid plan is a typed defer with no final "
+        "PiDecision or Proposal and leaves the pending Opportunity queued.",
+        status="implemented",
+    ),
+)
+def test_unrepaired_reward_risk_envelope_does_not_claim_pending_source(
+    tmp_path, monkeypatch
+):
+    import asyncio
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    _bypass_candidate_technical_preflight(monkeypatch)
+    from aletheia.agent_shell import commands, trading_decision
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+    from aletheia.storage.sqlite import get_db
+
+    opportunity = Opportunity(
+        id="opp-unrepaired-reward-risk",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        status="queued",
+    )
+    insert_opportunity(opportunity)
+    pending = PiDecision(
+        symbol=opportunity.symbol,
+        direction="long",
+        market_type="spot",
+        action="signal_pending",
+        opportunity_id=opportunity.id,
+        signal_source="market_observer",
+    )
+    insert_pi_decision(pending)
+    invalid_trade = {
+        "action": "trade",
+        "symbol": opportunity.symbol,
+        "direction": "long",
+        "market_type": "spot",
+        "conviction": 90,
+        "reasoning": "target has an implausible unit scale",
+        "bear_case": "the target may be unreachable",
+        "stop_price": 99.0,
+        "take_profit": 655.09,
+        "parameter_rationale": {
+            key: f"reason for {key}"
+            for key in trading_decision._ENTRY_PARAMETER_KEYS
+        },
+    }
+
+    async def assess(_context):
+        return invalid_trade
+
+    async def unrepaired(_context, _prior, validation_reason):
+        assert validation_reason == (
+            "invalid_operator_entry_plan_risk_reward:outside_envelope"
+        )
+        return invalid_trade
+
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", assess)
+    monkeypatch.setattr(trading_decision, "_reassess_direct_skip", unrepaired)
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_context.build_enriched_trading_context",
+        lambda **_kwargs: {
+            "layer1": {"data_health": {"signal_status": "healthy", "ohlcv_ready": True}},
+            "layer2": {
+                "pending_signals": [{
+                    "symbol": opportunity.symbol,
+                    "direction": "long",
+                    "market_type": "spot",
+                    "opportunity_id": opportunity.id,
+                    "signal_source": "market_observer",
+                    "at": pending.created_at,
+                }],
+                "pending_queue": {"unresolved_total": 1},
+            },
+            "layer3": {},
+        },
+    )
+    monkeypatch.setattr(
+        commands, "_configured_paper_execution_mode", lambda: "paper_internal"
+    )
+
+    def attach_planning_mark(context, _execution_mode):
+        context.setdefault("layer2", {})["entry_mark"] = {
+            "status": "available",
+            "symbol": opportunity.symbol,
+            "market_type": "spot",
+            "price": 100.0,
+            "venue": "test",
+            "authority": "fresh_exact_market_mark",
+        }
+        return None
+
+    monkeypatch.setattr(
+        trading_decision, "attach_candidate_entry_mark", attach_planning_mark
+    )
+
+    result = asyncio.run(commands.evaluate_trading_opportunity({}))
+
+    assert result["action"] == "evaluation_deferred"
+    assert result["defer_stage"] == "operator_entry_plan"
+    assert result["defer_reason"] == (
+        "operator_output_not_repaired:"
+        "invalid_operator_entry_plan_risk_reward:outside_envelope"
+    )
+    db = get_db()
+    assert db.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action!='signal_pending' "
+        "AND opportunity_id=?",
+        (opportunity.id,),
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action='signal_pending' "
+        "AND opportunity_id=?",
+        (opportunity.id,),
+    ).fetchone()[0] == 1
+    assert db.execute(
+        "SELECT COUNT(*) FROM trade_proposals WHERE opportunity_id=?",
+        (opportunity.id,),
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT status FROM opportunities WHERE id=?",
+        (opportunity.id,),
+    ).fetchone()[0] == "queued"
 
 
 @spec_claim(

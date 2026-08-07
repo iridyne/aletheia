@@ -768,6 +768,63 @@ def test_local_paper_market_entry_requires_complete_consistent_plan(
 
 @spec_claim(
     SpecClaim(
+        "PL-RG-14",
+        "pipeline_risk_gate",
+        "§4 native entry-plan reward:risk envelope",
+        "L2c",
+        "Every native Proposal that requires a complete entry plan independently "
+        "rejects a mathematically consistent rounded reward:risk below 1.00 or above "
+        "10.00; both inclusive boundaries remain admissible.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize(
+    ("risk_reward", "expect_violation"),
+    [
+        (1.0, False),
+        (10.0, False),
+        (0.99, True),
+        (10.01, True),
+        (555.09, True),
+    ],
+)
+def test_native_entry_plan_risk_reward_has_fail_closed_envelope(
+    tmp_path, monkeypatch, risk_reward, expect_violation
+):
+    _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.01,
+        price=100.0,
+        order_type="limit",
+        source="native",
+        leverage=1,
+        stop_price=99.0,
+        take_profit=100.0 + risk_reward,
+        risk_reward=risk_reward,
+    )
+    repo.insert_trade_proposal(proposal)
+
+    result = evaluate_proposal(proposal)
+    violations = result.violations
+    assert (
+        "entry_plan_risk_reward_outside_envelope" in violations
+    ) is expect_violation
+    assert "entry_plan_risk_reward_mismatch" not in violations
+    if expect_violation:
+        assert not result.approved
+
+
+@spec_claim(
+    SpecClaim(
         "PL-RG-13", "pipeline_risk_gate", "§4 entry-plan scope", "L2c",
         "The complete local market plan gate applies only to native paper entries. Native "
         "exchange market rows and reconciler-adopted rows retain their existing plan semantics "

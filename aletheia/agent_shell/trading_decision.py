@@ -23,6 +23,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from aletheia.trading.entry_plan import (
+    ENTRY_PLAN_MAX_RISK_REWARD,
+    ENTRY_PLAN_MIN_RISK_REWARD,
+    OPERATOR_RISK_REWARD_OUTSIDE_ENVELOPE,
+    calculate_entry_plan_risk_reward,
+    entry_plan_risk_reward_is_plausible,
+)
+
 logger = logging.getLogger("aletheia.agent_shell.trading_decision")
 
 
@@ -489,23 +497,39 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
             "invalid_operator_entry_plan_geometry:" + "+".join(invalid_fields)
             if invalid_fields else "operator_entry_plan_geometry_valid"
         )
+        risk_reward = None
+        risk_reward_reason = None
+        if not invalid_fields:
+            risk_reward = calculate_entry_plan_risk_reward(
+                entry_price,
+                current.stop_price,
+                current.take_profit,
+            )
+            if not entry_plan_risk_reward_is_plausible(risk_reward):
+                risk_reward_reason = OPERATOR_RISK_REWARD_OUTSIDE_ENVELOPE
+        entry_plan_reason = risk_reward_reason or geometry_reason
         current.filter_trace.append({
             "filter_name": "operator_entry_plan",
             "stage": "system_operator",
-            "decision": "rejected" if invalid_fields else "passed",
-            "reason_code": geometry_reason,
+            "decision": (
+                "rejected" if invalid_fields or risk_reward_reason else "passed"
+            ),
+            "reason_code": entry_plan_reason,
             "inputs": {
                 "direction": current.direction,
                 "entry_price": entry_price,
                 "stop_price": current.stop_price,
                 "take_profit": current.take_profit,
+                "risk_reward": risk_reward,
             },
             "parameters": {
                 "long_geometry": "stop < entry < take_profit",
                 "short_geometry": "take_profit < entry < stop",
+                "min_risk_reward": ENTRY_PLAN_MIN_RISK_REWARD,
+                "max_risk_reward": ENTRY_PLAN_MAX_RISK_REWARD,
             },
         })
-        return geometry_reason if invalid_fields else None
+        return entry_plan_reason if invalid_fields or risk_reward_reason else None
 
     while decision.action == "trade":
         entry_plan_reason = _entry_plan_preflight(decision)
@@ -1159,20 +1183,30 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
     # agnostic — only position_manager branches on it.
     trade_school = "serenity" if getattr(decision, "signal_source", None) == "serenity" else "short_term"
 
-    def _reject_operator_entry_plan(reason: str, fields: list[str]) -> None:
+    def _reject_operator_entry_plan(
+        reason: str,
+        fields: list[str],
+        *,
+        diagnostics: dict[str, Any] | None = None,
+    ) -> None:
+        inputs = {
+            "action": decision.action,
+            "direction": decision.direction,
+            "market_type": market_type,
+        }
+        if diagnostics:
+            inputs.update(diagnostics)
         decision.filter_trace.append({
             "filter_name": "operator_entry_plan",
             "stage": "proposal_submission",
             "decision": "rejected",
             "reason_code": reason,
-            "inputs": {
-                "action": decision.action,
-                "direction": decision.direction,
-                "market_type": market_type,
-            },
+            "inputs": inputs,
             "parameters": {
                 "required_source": "system_operator",
                 "fresh_entry_mark": price,
+                "min_risk_reward": ENTRY_PLAN_MIN_RISK_REWARD,
+                "max_risk_reward": ENTRY_PLAN_MAX_RISK_REWARD,
             },
             "missing_or_invalid": fields,
         })
@@ -1245,9 +1279,25 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
             take_profit = round(price * (1 + tp_pct / 100.0), 8)
         else:
             take_profit = round(price * (1 - tp_pct / 100.0), 8)
-    _risk_per_unit = abs(price - stop_price)
-    _reward_per_unit = abs(take_profit - price)
-    risk_reward = round(_reward_per_unit / _risk_per_unit, 2) if _risk_per_unit > 0 else None
+    risk_reward = calculate_entry_plan_risk_reward(
+        price,
+        stop_price,
+        take_profit,
+    )
+    if (
+        decision.parameter_rationale_required
+        and not entry_plan_risk_reward_is_plausible(risk_reward)
+    ):
+        _reject_operator_entry_plan(
+            OPERATOR_RISK_REWARD_OUTSIDE_ENVELOPE,
+            ["risk_reward"],
+            diagnostics={
+                "entry_price": price,
+                "stop_price": stop_price,
+                "take_profit": take_profit,
+                "risk_reward": risk_reward,
+            },
+        )
 
     # Leverage only applies to futures. Clamp the PI's request to the per-asset-tier
     # cap (the risk engine enforces the same cap as a hard reject — clamping here keeps
@@ -2435,7 +2485,10 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "absolute prices authored from the exact candidate facts above. For a long use "
         "stop_price < current candidate price < take_profit; for a short use "
         "take_profit < current candidate price < stop_price. Never return 0/null/sentinel "
-        "values and never invent levels when the shown facts do not support them; choose "
+        "values. The rounded reward:risk ratio "
+        "round(abs(take_profit-entry)/abs(entry-stop_price), 2) must stay within "
+        f"{ENTRY_PLAN_MIN_RISK_REWARD:.2f}-{ENTRY_PLAN_MAX_RISK_REWARD:.2f} inclusive. "
+        "Never invent levels when the shown facts do not support them; choose "
         "skip with insufficient_evidence instead. Also return parameter_rationale with five "
         "short, setup-specific reasons: entry_price, stop_loss, take_profit, notional_usdt, "
         "and leverage. Explain why each exact choice fits this trade now. These are shown to "

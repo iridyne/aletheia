@@ -34,6 +34,11 @@ from aletheia.storage.repositories import (
     transaction,
     update_trade_proposal,
 )
+from aletheia.trading.entry_plan import (
+    RISK_REWARD_OUTSIDE_ENVELOPE,
+    calculate_entry_plan_risk_reward,
+    entry_plan_risk_reward_is_plausible,
+)
 
 logger = logging.getLogger("aletheia.risk.engine")
 
@@ -861,12 +866,12 @@ def _evaluate_proposal_locked(
                 violations.append("entry_plan_geometry:expected_stop<entry<tp_for_long")
             elif proposal.direction == "short" and not (proposal.take_profit < entry < proposal.stop_price):
                 violations.append("entry_plan_geometry:expected_tp<entry<stop_for_short")
-            risk_per_unit = abs(entry - proposal.stop_price)
-            if risk_per_unit > 0:
-                expected_risk_reward = round(
-                    abs(proposal.take_profit - entry) / risk_per_unit,
-                    2,
-                )
+            expected_risk_reward = calculate_entry_plan_risk_reward(
+                entry,
+                proposal.stop_price,
+                proposal.take_profit,
+            )
+            if expected_risk_reward is not None:
                 if not math.isclose(
                     proposal.risk_reward,
                     expected_risk_reward,
@@ -874,6 +879,8 @@ def _evaluate_proposal_locked(
                     abs_tol=1e-9,
                 ):
                     violations.append("entry_plan_risk_reward_mismatch")
+                if not entry_plan_risk_reward_is_plausible(expected_risk_reward):
+                    violations.append(RISK_REWARD_OUTSIDE_ENVELOPE)
 
     # 3. Live state — fail CLOSED. A *_live_limited order is permitted ONLY when the
     #    live state is the explicit unlocked value ("live_limited", set by human
