@@ -328,7 +328,7 @@ On 2026-08-07 the curve anchors and four fail-closed safeguards were accepted
 for staged, non-authoritative implementation. The durable future design is
 [Universe continuous scoring safety](../../proposals/universe_continuous_scoring_safety.md);
 the exact anchors remain in the dated
-[continuous curve specification](07_universe_continuous_curve_contract_proposal_2026-08-07.md).
+[continuous curve specification](02_continuous_curve_specification_2026-08-07.md).
 
 This resolution does not claim that the scorer, twin wiring, factor treatment,
 Fedora deployment, Paper authority, or positive contribution exists. The frozen

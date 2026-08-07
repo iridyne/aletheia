@@ -25,7 +25,7 @@ can permanently starve a weak cohort, and repeated evaluation can turn noise
 into a self-reinforcing policy.
 
 This proposal adopts the curve specification in the dated
-[continuous-curve evidence](../research/counterfactual/07_universe_continuous_curve_contract_proposal_2026-08-07.md)
+[continuous-curve evidence](../research/universe-scoring/02_continuous_curve_specification_2026-08-07.md)
 and adds four fail-closed safeguards:
 
 1. aggregate and constrain influence by raw evidence source, not function name;
@@ -413,4 +413,4 @@ authorizes the next pure-curve task only; it does not claim implementation,
 Fedora deployment, Paper influence, positive contribution, or profitability.
 The four safeguards are mandatory prerequisites, not optional follow-up work.
 The dated implementer/adversarial evidence is recorded in the
-[task 2 review](../research/counterfactual/08_universe_continuous_scoring_adversarial_review_2026-08-07.md).
+[task 2 review](../research/universe-scoring/03_adversarial_review_2026-08-07.md).
