@@ -557,6 +557,58 @@ def test_pipeline_funnel_tracks_one_opportunity_cohort_and_entry_fills_only(
     assert result["integrity"]["retained_signal_pending_rows"] == 5
 
 
+def test_pipeline_funnel_does_not_report_source_terminal_signals_as_unresolved(
+    tmp_path, monkeypatch,
+):
+    """Reviewed/expired Opportunities are terminal even after carriers are pruned."""
+    from datetime import datetime, timezone
+
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.server.routes.analytics import get_pipeline_funnel
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    for opportunity_id, status in (
+        ("opp-reviewed", "reviewed"),
+        ("opp-expired", "expired"),
+        ("opp-queued", "queued"),
+    ):
+        db.execute(
+            "INSERT INTO opportunities "
+            "(id, symbol, market, direction_bias, confidence, created_at, status) "
+            "VALUES (?, 'BTC/USDT', 'spot', 'long', 'medium_confidence', ?, ?)",
+            (opportunity_id, now, status),
+        )
+        _insert_signal_enqueue_evidence(
+            db,
+            row_id=f"enqueue-{opportunity_id}",
+            opportunity_id=opportunity_id,
+            evaluated_at=now,
+        )
+
+    db.execute(
+        "INSERT INTO pi_decisions "
+        "(id, symbol, direction, market_type, action, conviction, reasoning, "
+        "opportunity_id, signal_source, created_at) "
+        "VALUES ('queued-pending', 'BTC/USDT', 'long', 'spot', "
+        "'signal_pending', 0, 'still queued', 'opp-queued', "
+        "'market_observer', ?)",
+        (now,),
+    )
+    db.commit()
+
+    result = get_pipeline_funnel(hours=24)
+
+    assert result["signal_pending"] == 3
+    assert result["integrity"]["signal_without_terminal"] == 1
+    assert result["integrity"]["source_terminal_without_pi_terminal"] == 2
+    assert result["integrity"]["source_terminal_breakdown"] == {
+        "expired": 1,
+        "reviewed": 1,
+    }
+
+
 # ---------------------------------------------------------------------------
 # #322 — learning-contribution verdict column fix
 # ---------------------------------------------------------------------------
