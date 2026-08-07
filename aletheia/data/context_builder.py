@@ -27,6 +27,16 @@ from aletheia.data.freshness import fresh_row
 
 logger = logging.getLogger("aletheia.data.context_builder")
 
+
+def _physical_market_type(market_type: str | None) -> str:
+    """Map proposal/exchange vocabulary onto collector storage identity."""
+    normalized = str(market_type or "").strip().lower()
+    if normalized in {"usdt_futures", "swap"}:
+        return "perp"
+    if normalized in {"spot", "perp", "futures"}:
+        return normalized
+    return ""
+
 def build_market_context_snapshot(
     symbols: list[str],
     tradability: dict[str, TradabilityScore],
@@ -314,17 +324,25 @@ def build_market_context_from_db(
     from aletheia.storage import repositories as repo
 
     now = now or datetime.now(timezone.utc)
+    exact_exchange = str(exchange or "").strip().lower()
+    physical_market_type = _physical_market_type(market_type)
     tradability: dict[str, TradabilityScore] = {}
     leverage_states: dict[str, LeverageState] = {}
 
     for sym in symbols:
         # Orderbook → TradabilityScore
         ob = repo.latest_orderbook(
-            sym, exchange=exchange, market_type=market_type
+            sym,
+            exchange=exact_exchange,
+            market_type=physical_market_type,
         )
         ob = fresh_row(ob, "orderbook", now=now)
         if ob:
-            vol = _get_volume(sym)
+            vol = _get_volume(
+                sym,
+                exchange=exact_exchange,
+                market_type=physical_market_type,
+            )
             tradability[sym] = compute_tradability(
                 symbol=sym,
                 exchange=ob.get("exchange", ""),
@@ -337,7 +355,7 @@ def build_market_context_from_db(
         # consume perp funding, OI, liquidation, or positioning evidence.
         normalized_market_type = str(market_type or "").lower()
         if normalized_market_type in {"perp", "swap", "futures", "usdt_futures"}:
-            deriv_exchange = exchange or None
+            deriv_exchange = exact_exchange or None
             fr = fresh_row(
                 repo.latest_funding_rate(sym, exchange=deriv_exchange),
                 "funding",
@@ -389,9 +407,19 @@ def build_market_context_from_db(
     return build_market_context_snapshot(symbols, tradability, leverage_states, macro)
 
 
-def _get_volume(symbol: str) -> float:
+def _get_volume(
+    symbol: str,
+    *,
+    exchange: str = "",
+    market_type: str = "",
+) -> float:
     from aletheia.storage import repositories as repo
-    snaps = repo.list_market_snapshots(symbol=symbol, limit=1)
+    snaps = repo.list_market_snapshots(
+        symbol=symbol,
+        exchange=exchange,
+        market_type=market_type or None,
+        limit=1,
+    )
     if snaps:
         return float(snaps[0].get("volume_24h") or 0)
     return 0.0

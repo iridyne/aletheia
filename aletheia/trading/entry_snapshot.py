@@ -41,8 +41,24 @@ def _current_regime() -> str:
     return "unknown"
 
 
-def capture_attribution_snapshot(symbol: str) -> dict[str, Any]:
+def _physical_market_type(market_type: str | None) -> str:
+    normalized = str(market_type or "").strip().lower()
+    if normalized in {"usdt_futures", "swap"}:
+        return "perp"
+    if normalized in {"spot", "perp", "futures"}:
+        return normalized
+    return ""
+
+
+def capture_attribution_snapshot(
+    symbol: str,
+    *,
+    exchange: str = "",
+    market_type: str = "",
+) -> dict[str, Any]:
     """Capture best-effort read-only context before Proposal hashing."""
+    exact_exchange = str(exchange or "").strip().lower()
+    physical_market_type = _physical_market_type(market_type)
     snapshot: dict[str, Any] = {
         "btc_entry_price": _btc_price_now(),
         "regime_tag": _current_regime(),
@@ -50,8 +66,17 @@ def capture_attribution_snapshot(symbol: str) -> dict[str, Any]:
     try:
         from aletheia.data.context_builder import build_market_context_from_db
 
-        context = build_market_context_from_db([symbol])
+        context = build_market_context_from_db(
+            [symbol],
+            exchange=exact_exchange,
+            market_type=physical_market_type,
+        )
         snapshot["market_context"] = {
+            "instrument": {
+                "symbol": symbol,
+                "exchange": exact_exchange,
+                "market_type": physical_market_type,
+            },
             "data_completeness": context.data_completeness,
             "tradability": context.tradability.get(symbol, {}),
             "leverage": context.leverage.get(symbol, {}),
@@ -61,8 +86,20 @@ def capture_attribution_snapshot(symbol: str) -> dict[str, Any]:
     return snapshot
 
 
-def capture_attribution_snapshot_json(symbol: str) -> str | None:
+def capture_attribution_snapshot_json(
+    symbol: str,
+    *,
+    exchange: str = "",
+    market_type: str = "",
+) -> str | None:
     try:
-        return json.dumps(capture_attribution_snapshot(symbol), default=str)
+        return json.dumps(
+            capture_attribution_snapshot(
+                symbol,
+                exchange=exchange,
+                market_type=market_type,
+            ),
+            default=str,
+        )
     except Exception:
         return None

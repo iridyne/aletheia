@@ -92,6 +92,16 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 | `stop_price` / `take_profit` | `float \| None` | `trade` 的 LLM schema 与解析边界要求两者都是显式有限正数；缺失/0/NaN/Infinity 触发有界修复，不能由配置替模型补值。跳6 用新鲜精确 mark 校验多空几何及 `1.00 <= round(abs(tp-entry)/abs(entry-stop), 2) <= 10.00`；初稿越界走一次有界修复，二次仍错或提交时 mark 刷新导致越界则 `DecisionUnavailable(operator_entry_plan)`，不改写模型计划。`skip` 不要求这些字段。 |
 | `parameter_rationale` | `dict[str,str]` | 新开仓的五项 AI 理由：`entry_price` / `stop_loss` / `take_profit` / `notional_usdt` / `leverage`。仅 `trade` 的 LLM schema/解析路径要求全部为非空字符串；缺项触发同一有界输出修复，最终仍不完整则不创建 final PiDecision/Proposal。最终入场价同时保存实际 `market_snapshot_id / market_type / snapshot_at`，不是只写“来自快照”；详见 `trade_decision_rationale_contract.md`。 |
 
+跳6 在精确报价通过后，还必须用相同 `symbol + exchange + physical market_type`
+读取新鲜订单簿和 24h volume，形成 `market_tradability_gate`。`usdt_futures/swap`
+在采集存储层映射为 `perp`；订单簿和 volume 不得跨 venue 或 spot/perp 混用。
+缺失、过期、身份不完整的上下文返回
+`DecisionUnavailable(reason='market_tradability_unavailable', stage='operator_entry_plan')`；
+只有明确 `is_tradable=false` 才返回 `market_not_tradable`。两者均为非终态 defer，
+不创建 Proposal、不消费 pending。阈值仍由既有 `compute_tradability` 负责，本关卡
+只消费其明确结论，不改变评分公式。通过时，完整 instrument identity 与 tradability
+输入写入 hash-covered `TradeProposal.attribution_snapshot`，供事后复盘和 Learning 使用。
+
 ### 2.2a PiDecision（耐久 Operator 事实）
 
 `PiDecision` 对 pending 和最终 action 都保存 `symbol / direction / market_type /
@@ -301,6 +311,8 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 | `DL-S69` | L2b | 新 Operator `spot+short` 先走一次有界修复、仍不合法则 typed defer；不得创建 futures Proposal、不得消费原 spot carrier；历史 coercion 仅作恢复兼容 |
 | `DL-S70` | L2b | `_DECISION_SCHEMA.skip_kind` 仅接受既有两个字符串或 JSON `null`；`trade+null` schema-valid，未登记的非空值仍是 `outside_enum`，`skip+null` 仍由 direct-skip validation typed defer 且不消费 carrier |
 | `DL-S71` | L2b | Operator 入场 RR 越界初稿只允许一次有界修复；二次仍越界时稳定返回 `operator_output_not_repaired:invalid_operator_entry_plan_risk_reward:outside_envelope`，零 final PiDecision/Proposal 且 Opportunity 保持 queued；当前边界只在 trace parameters 与契约中表达 |
+| `DL-S72` | L2b | 新 Operator trade 的精确品种 tradability 缺失/身份不完整时以 `market_tradability_unavailable` defer，明确 `is_tradable=false` 时以 `market_not_tradable` defer；两者均发生在 Proposal 创建前 |
+| `DL-S73` | L2b | 精确品种 tradability 明确通过时创建 Proposal，并把相同 venue + physical market identity 和连续评分输入写入不可变 attribution snapshot |
 | `DL-C01` | L2c | `_MIN_CONVICTION_TO_TRADE == 55`(改阈值即爆红,强制同步本契约) |
 | `DL-C02` | L2c | Proposal 前置不可用返回稳定 typed reason；确定性方向拒绝仍是明确 skip |
 
