@@ -158,7 +158,10 @@ def test_refresh_creates_durable_agent_run(tmp_path, monkeypatch):
 
     row = repo.get_agent_run(run.id)
     assert row is not None
-    assert row["status"] == "queued"
+    # The worker may claim the durable row before this read.  Queued, running,
+    # and completed are all legal monotonic states; terminal failure states are
+    # deliberately excluded.
+    assert row["status"] in {"queued", "running", "completed"}
     assert row["trigger_type"] == "manual"
 
     assert completed.wait(timeout=5)
