@@ -251,6 +251,19 @@ def insert_audit_event(event: AuditEvent) -> None:
     _insert("audit_events", event.model_dump())
 
 
+def insert_audit_event_once(event: AuditEvent) -> bool:
+    """Insert a caller-identified audit fact once; return False on identity retry."""
+    data = event.model_dump()
+    columns = ", ".join(data)
+    placeholders = ", ".join("?" for _ in data)
+    cursor = execute_write(
+        f"INSERT INTO audit_events ({columns}) VALUES ({placeholders}) "
+        "ON CONFLICT(id) DO NOTHING",
+        tuple(data.values()),
+    )
+    return cursor.rowcount == 1
+
+
 def list_audit_events(limit: int = 50) -> list[dict]:
     return _select_all("audit_events", limit=limit)
 

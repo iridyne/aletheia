@@ -199,7 +199,7 @@ def test_exact_filled_gap_recovers_without_scanning_all_terminal_orders(
     rows = [_private_fill(order.exchange_order_id)]
     calls = []
     _patch_bitget_client(monkeypatch, rows, calls)
-    monkeypatch.setattr(reconciliation, "write_audit", lambda event: None)
+    monkeypatch.setattr(reconciliation, "write_audit", lambda event, **_kwargs: None)
 
     result = reconciliation.reconcile()
 
@@ -273,7 +273,11 @@ def test_filled_gap_rejects_missing_authority_or_compatible_open_position(
         monkeypatch, [_private_fill(order.exchange_order_id)], calls
     )
     events = []
-    monkeypatch.setattr(reconciliation, "write_audit", events.append)
+    monkeypatch.setattr(
+        reconciliation,
+        "write_audit",
+        lambda event, **_kwargs: events.append(event),
+    )
 
     result = reconciliation.reconcile()
 
@@ -322,7 +326,7 @@ def test_filled_gap_rejects_incomplete_exact_private_evidence(
     rows = [_private_fill(order.exchange_order_id, **changes)]
     calls = []
     _patch_bitget_client(monkeypatch, rows, calls)
-    monkeypatch.setattr(reconciliation, "write_audit", lambda event: None)
+    monkeypatch.setattr(reconciliation, "write_audit", lambda event, **_kwargs: None)
 
     result = reconciliation.reconcile()
 
@@ -335,6 +339,131 @@ def test_filled_gap_rejects_incomplete_exact_private_evidence(
     assert db.execute(
         "SELECT COUNT(*) FROM positions WHERE order_id=?", (order.id,)
     ).fetchone()[0] == 0
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-HCR-07",
+        "pipeline_historical_chain_recovery",
+        "§7 stable inconclusive audit identity",
+        "L2c",
+        "Repeating the same historical filled-gap outcome converges to one SQLite "
+        "audit row and one JSONL record, while a materially different reason remains "
+        "a distinct observation.",
+        status="implemented",
+    )
+)
+def test_filled_gap_audit_deduplicates_same_outcome_across_both_sinks(
+    tmp_path, monkeypatch
+):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import reconciliation
+
+    order = {"id": "order-historical-audit-dedup", "status": "filled"}
+    for _ in range(2):
+        reconciliation._write_filled_gap_event(
+            order,
+            recovered=False,
+            reason="filled_gap_private_evidence_incomplete",
+        )
+
+    rows = db.execute(
+        "SELECT * FROM audit_events "
+        "WHERE entity_id=? AND event_type='order_reconciliation_inconclusive'",
+        (order["id"],),
+    ).fetchall()
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "logs" / "audit.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+
+    assert len(rows) == 1
+    assert len(records) == 1
+    assert rows[0]["id"] == records[0]["id"]
+    assert records[0]["reason"] == "filled_gap_private_evidence_incomplete"
+
+    reconciliation._write_filled_gap_event(
+        order,
+        recovered=False,
+        reason="filled_gap_exact_history_unavailable",
+    )
+    assert db.execute(
+        "SELECT COUNT(*) FROM audit_events WHERE entity_id=?",
+        (order["id"],),
+    ).fetchone()[0] == 2
+    assert len(
+        [
+            line
+            for line in (tmp_path / "logs" / "audit.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
+    ) == 2
+
+
+@pytest.mark.parametrize("failed_sink", ("sqlite", "jsonl"))
+def test_filled_gap_audit_converges_after_single_sink_outage(
+    tmp_path, monkeypatch, failed_sink
+):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import reconciliation
+
+    order = {"id": f"order-historical-{failed_sink}-retry", "status": "filled"}
+    if failed_sink == "sqlite":
+        original_insert = reconciliation.repo.insert_audit_event_once
+        calls = 0
+
+        def _flaky_insert(event):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("injected SQLite audit outage")
+            return original_insert(event)
+
+        monkeypatch.setattr(
+            reconciliation.repo,
+            "insert_audit_event_once",
+            _flaky_insert,
+        )
+    else:
+        original_write = reconciliation.write_audit
+        calls = 0
+
+        def _flaky_write(event, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("injected JSONL audit outage")
+            return original_write(event, **kwargs)
+
+        monkeypatch.setattr(reconciliation, "write_audit", _flaky_write)
+
+    for _ in range(2):
+        reconciliation._write_filled_gap_event(
+            order,
+            recovered=False,
+            reason="filled_gap_private_evidence_incomplete",
+        )
+
+    rows = db.execute(
+        "SELECT id FROM audit_events WHERE entity_id=?",
+        (order["id"],),
+    ).fetchall()
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "logs" / "audit.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+
+    assert len(rows) == 1
+    assert len(records) == 1
+    assert rows[0]["id"] == records[0]["id"]
 
 
 def test_filled_gap_recovery_rolls_back_fill_when_position_write_fails(
@@ -351,7 +480,7 @@ def test_filled_gap_recovery_rolls_back_fill_when_position_write_fails(
         [_private_fill(order.exchange_order_id, fill_id="REMOTE-ROLLBACK")],
         calls,
     )
-    monkeypatch.setattr(reconciliation, "write_audit", lambda event: None)
+    monkeypatch.setattr(reconciliation, "write_audit", lambda event, **_kwargs: None)
 
     def _fail_position_write(position):
         raise RuntimeError("injected Position write failure")
@@ -535,7 +664,7 @@ def test_entry_gap_selector_excludes_durable_close_identity(
             raise AssertionError("a historical close must not enter entry recovery")
 
     monkeypatch.setattr(bitget_client, "BitgetClient", _NoVenueClient)
-    monkeypatch.setattr(reconciliation, "write_audit", lambda event: None)
+    monkeypatch.setattr(reconciliation, "write_audit", lambda event, **_kwargs: None)
 
     result = reconciliation.reconcile()
 
@@ -571,7 +700,7 @@ def test_verified_closed_position_clears_stale_pending_locally(
             raise AssertionError("local pending cleanup must not construct a venue client")
 
     monkeypatch.setattr(bitget_client, "BitgetClient", _NoVenueClient)
-    monkeypatch.setattr(reconciliation, "write_audit", lambda event: None)
+    monkeypatch.setattr(reconciliation, "write_audit", lambda event, **_kwargs: None)
 
     first = reconciliation.reconcile()
     stored = repo._select_one("positions", position.id)
@@ -617,7 +746,9 @@ def test_closed_pending_cleanup_survives_jsonl_audit_outage(
     monkeypatch.setattr(
         reconciliation,
         "write_audit",
-        lambda event: (_ for _ in ()).throw(OSError("audit sink unavailable")),
+        lambda event, **_kwargs: (_ for _ in ()).throw(
+            OSError("audit sink unavailable")
+        ),
     )
 
     result = reconciliation.reconcile()
@@ -685,7 +816,7 @@ def test_closed_pending_cleanup_rejects_incomplete_local_chain(
             raise AssertionError("rejected local cleanup must not access the venue")
 
     monkeypatch.setattr(bitget_client, "BitgetClient", _NoVenueClient)
-    monkeypatch.setattr(reconciliation, "write_audit", lambda event: None)
+    monkeypatch.setattr(reconciliation, "write_audit", lambda event, **_kwargs: None)
 
     result = reconciliation.reconcile()
     stored = repo._select_one("positions", position.id)
@@ -725,7 +856,7 @@ def test_same_partial_private_evidence_replays_through_materializer_twice(
     )]
     calls = []
     _patch_bitget_client(monkeypatch, rows, calls)
-    monkeypatch.setattr(reconciliation, "write_audit", lambda event: None)
+    monkeypatch.setattr(reconciliation, "write_audit", lambda event, **_kwargs: None)
 
     first = reconciliation.reconcile()
     first_position = repo._select_one(

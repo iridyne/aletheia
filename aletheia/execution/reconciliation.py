@@ -11,6 +11,7 @@ bookkeeping when the exchange provides direct evidence.
 
 import asyncio
 from datetime import datetime, timezone
+import hashlib
 import json
 import logging
 import math
@@ -734,32 +735,80 @@ def _write_filled_gap_event(
     recovered: bool,
     reason: str,
 ) -> None:
-    """Keep an old filled status honest when its chain cannot be recovered."""
-    write_audit({
-        "actor": "system",
-        "source": "reconciliation",
-        "event_type": (
-            "order_reconciled"
-            if recovered
-            else "order_reconciliation_inconclusive"
-        ),
-        "entity_type": "order",
-        "entity_id": order["id"],
-        "reason": reason,
-        "before": {"status": order.get("status")},
-        "after": {
-            "status": order.get("status"),
-            "chain_recovered": recovered,
+    """Persist one stable fact for each materially distinct filled-gap outcome."""
+    event_type = (
+        "order_reconciled"
+        if recovered
+        else "order_reconciliation_inconclusive"
+    )
+    identity = json.dumps(
+        {
+            "entity_id": order["id"],
+            "event_type": event_type,
             "reason": reason,
         },
-        "message": (
-            "Recovered the historical filled Order's durable Fill/Position chain "
-            "from exact complete private evidence."
-            if recovered
-            else "Historical filled Order chain recovery remained inconclusive; "
-            "the existing Order status and local exposure were left unchanged."
-        ),
-    })
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    audit_id = f"filled-gap:{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]}"
+    before = {"status": order.get("status")}
+    after = {
+        "status": order.get("status"),
+        "chain_recovered": recovered,
+        "reason": reason,
+    }
+    message = (
+        "Recovered the historical filled Order's durable Fill/Position chain "
+        "from exact complete private evidence."
+        if recovered
+        else "Historical filled Order chain recovery remained inconclusive; "
+        "the existing Order status and local exposure were left unchanged."
+    )
+    event = AuditEvent(
+        id=audit_id,
+        actor="system",
+        source="reconciliation",
+        event_type=event_type,
+        entity_type="order",
+        entity_id=order["id"],
+        before_state=json.dumps(before, sort_keys=True),
+        after_state=json.dumps(after, sort_keys=True),
+        message=message,
+    )
+    try:
+        repo.insert_audit_event_once(event)
+    except Exception:
+        logger.warning(
+            "filled-gap SQLite audit persistence failed for %s (%s)",
+            order["id"],
+            event_type,
+            exc_info=True,
+        )
+    try:
+        write_audit(
+            {
+                "id": event.id,
+                "timestamp": event.timestamp,
+                "actor": event.actor,
+                "source": event.source,
+                "event_type": event.event_type,
+                "entity_type": event.entity_type,
+                "entity_id": event.entity_id,
+                "reason": reason,
+                "before": before,
+                "after": after,
+                "message": message,
+            },
+            mirror_db=False,
+            dedup_id=audit_id,
+        )
+    except Exception:
+        logger.warning(
+            "filled-gap JSONL audit persistence failed for %s (%s)",
+            order["id"],
+            event_type,
+            exc_info=True,
+        )
 
 
 def _fetch_multibroker_evidence(order: dict):
