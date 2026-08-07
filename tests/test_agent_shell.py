@@ -513,7 +513,10 @@ async def test_wake_driven_portfolio_review_persists_unavailable_result(
         },
     )
 
-    async def unavailable(_system, _user, *, schema, **_kwargs):
+    structured_kwargs = {}
+
+    async def unavailable(_system, _user, *, schema, **kwargs):
+        structured_kwargs.update(kwargs)
         return None, "provider_timeout"
 
     monkeypatch.setattr("aletheia.agents.helpers.llm_structured", unavailable)
@@ -532,12 +535,14 @@ async def test_wake_driven_portfolio_review_persists_unavailable_result(
     ).fetchone()
     assert result["action"] == "review_unavailable"
     assert result["reason"] == "operator_review_unavailable"
+    assert result["review_error_code"] == "provider_timeout"
+    assert structured_kwargs["reasoning_effort"] == "none"
     assert row["action"] == "review_unavailable"
     assert row["proposal_status"] == "failed"
     assert row["proposal_reason"] == "operator_review_unavailable"
-    assert json.loads(row["evidence_manifest_json"])["position_review"]["effect"] == {
-        "status": "unavailable"
-    }
+    evidence = json.loads(row["evidence_manifest_json"])["position_review"]
+    assert evidence["effect"] == {"status": "unavailable"}
+    assert evidence["error_code"] == "provider_timeout"
     assert result["review_completed"] is False
 
 
