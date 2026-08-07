@@ -24,6 +24,41 @@ def _bypass_candidate_technical_preflight(monkeypatch) -> None:
     )
 
 
+def _stub_tradable_exact_instrument(monkeypatch) -> None:
+    """Keep seam tests focused after the independent tradability preflight."""
+    def capture(symbol, *, exchange, market_type):
+        physical_market = (
+            "perp" if market_type in {"usdt_futures", "swap"} else market_type
+        )
+        return {
+            "btc_entry_price": 90_000.0,
+            "regime_tag": "neutral",
+            "market_context": {
+                "instrument": {
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "market_type": physical_market,
+                },
+                "data_completeness": 1.0,
+                "tradability": {
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "score": 82.0,
+                    "spread_bps": 2.0,
+                    "depth_10bps_usd": 100_000.0,
+                    "volume_24h_usd": 50_000_000.0,
+                    "is_tradable": True,
+                },
+                "leverage": {},
+            },
+        }
+
+    monkeypatch.setattr(
+        "aletheia.trading.entry_snapshot.capture_attribution_snapshot",
+        capture,
+    )
+
+
 # ---------------------------------------------------------------------------
 # L2a — Structural claims (carriers + their fields)
 # ---------------------------------------------------------------------------
@@ -3534,6 +3569,7 @@ def test_submitting_claim_without_proposal_resumes_submission(tmp_path, monkeypa
             "reason": "test_blocks_execution_after_persistence",
         }
 
+    _stub_tradable_exact_instrument(monkeypatch)
     monkeypatch.setattr(trading_decision, "_assess_opportunity", repeat_same_intent)
     monkeypatch.setattr(gateway, "_execute_proposal", store_without_executing)
     monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json")
@@ -3903,6 +3939,7 @@ def test_claim_rechecks_source_after_early_authority_check(
             "reason": "test_blocks_execution_after_persistence",
         }
 
+    _stub_tradable_exact_instrument(monkeypatch)
     monkeypatch.setattr(
         trading_decision, "_assess_opportunity", choose_still_fresh_source
     )
@@ -4277,6 +4314,7 @@ def test_single_candidate_scope_requires_explicit_market_for_selected_carrier(
         )
         return {**prior, "stop_price": 98.0}
 
+    _stub_tradable_exact_instrument(monkeypatch)
     monkeypatch.setattr(trading_decision, "_assess_opportunity", choose_spot_market)
     monkeypatch.setattr(
         trading_decision, "_reassess_direct_skip", repair_spot_plan
@@ -5311,6 +5349,7 @@ def test_claim_rejects_pending_conflict_inserted_after_context(
             "reason": "test blocks execution after persistence",
         }
 
+    _stub_tradable_exact_instrument(monkeypatch)
     monkeypatch.setattr(trading_decision, "_assess_opportunity", choose_exact_pending)
     monkeypatch.setattr(
         reflection, "claim_decision", insert_conflict_immediately_before_claim
