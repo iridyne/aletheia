@@ -69,6 +69,10 @@ def _config():
 
 
 def _patch_config(monkeypatch):
+    # Import every module-level consumer before replacing loader.load_config.
+    # Otherwise a consumer first imported while the fake is installed captures
+    # that fake permanently, after monkeypatch restores only the loader module.
+    from aletheia.agent_shell import context as agent_context
     import aletheia.config.loader as loader
     from aletheia.portfolio import position_manager
 
@@ -78,6 +82,7 @@ def _patch_config(monkeypatch):
         return cfg
 
     monkeypatch.setattr(loader, "load_config", fake_load_config)
+    monkeypatch.setattr(agent_context, "load_config", fake_load_config)
     monkeypatch.setattr(position_manager, "load_config", fake_load_config)
     return cfg
 
