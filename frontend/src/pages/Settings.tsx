@@ -279,16 +279,16 @@ export default function Settings() {
     return () => window.clearTimeout(timer)
   }, [searchParams, tab, settings])
 
-  // Every section's save calls invalidateQueries(['settings']), so a refetch of
-  // `settings` is the shell-visible signal that a save landed. Without this the
-  // operator would be warned about edits they already saved, which teaches them
-  // to dismiss the prompt — the same failure mode as not warning at all.
-  // Skipped on first load: refs start clean, so there is nothing to reset.
+  // A settings refetch acknowledges the delegated shell fallback because it is
+  // the only save signal available to sections without precise dirty reporting.
+  // Precise section dirtiness must survive: a sibling card can cause this same
+  // refetch while that section still has an unsaved draft.
   const lastSettledRef = useRef(settingsUpdatedAt)
   useEffect(() => {
     if (settingsUpdatedAt === lastSettledRef.current) return
     lastSettledRef.current = settingsUpdatedAt
-    clearDirty()
+    touchedRef.current = false
+    setIsTouched(false)
   }, [settingsUpdatedAt])
 
   // Warn before a hard reload / tab close / cross-origin navigation. react-router's
