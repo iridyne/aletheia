@@ -278,6 +278,98 @@ async def test_openai_complete_mock():
 
 
 @pytest.mark.anyio
+async def test_openai_complete_sends_explicit_reasoning_effort_only_when_requested():
+    provider = OpenAICompatibleProvider(base_url="http://localhost:8000/v1", model="test")
+    mock_response = {
+        "choices": [{"message": {"content": '{"ok": true}'}}],
+        "model": "test",
+        "usage": {"completion_tokens": 6},
+    }
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return mock_response
+
+    post = AsyncMock(return_value=FakeResponse())
+    with patch("httpx.AsyncClient.post", post):
+        await provider.complete(
+            ModelRequest(
+                messages=[{"role": "user", "content": "return json"}],
+                reasoning_effort="none",
+            )
+        )
+        await provider.complete(
+            ModelRequest(messages=[{"role": "user", "content": "hello"}])
+        )
+
+    first_payload = post.await_args_list[0].kwargs["json"]
+    second_payload = post.await_args_list[1].kwargs["json"]
+    assert first_payload["reasoning_effort"] == "none"
+    assert "reasoning_effort" not in second_payload
+
+
+@pytest.mark.anyio
+async def test_openai_complete_retries_once_without_unsupported_reasoning_effort():
+    import httpx
+
+    provider = OpenAICompatibleProvider(base_url="http://localhost:8000/v1", model="test")
+    unsupported = httpx.Response(
+        400,
+        request=httpx.Request("POST", "http://localhost:8000/v1/chat/completions"),
+        json={"error": {"message": 'json: unknown field "reasoning_effort"'}},
+    )
+    success = httpx.Response(
+        200,
+        request=httpx.Request("POST", "http://localhost:8000/v1/chat/completions"),
+        json={
+            "choices": [{"message": {"content": '{"ok": true}'}}],
+            "model": "test",
+            "usage": {"completion_tokens": 6},
+        },
+    )
+    post = AsyncMock(side_effect=[unsupported, success])
+
+    with patch("httpx.AsyncClient.post", post):
+        response = await provider.complete(
+            ModelRequest(
+                messages=[{"role": "user", "content": "return json"}],
+                reasoning_effort="none",
+            )
+        )
+
+    assert response.content == '{"ok": true}'
+    assert post.await_count == 2
+    assert post.await_args_list[0].kwargs["json"]["reasoning_effort"] == "none"
+    assert "reasoning_effort" not in post.await_args_list[1].kwargs["json"]
+
+
+@pytest.mark.anyio
+async def test_openai_complete_does_not_retry_unrelated_bad_request():
+    import httpx
+
+    provider = OpenAICompatibleProvider(base_url="http://localhost:8000/v1", model="test")
+    bad_request = httpx.Response(
+        400,
+        request=httpx.Request("POST", "http://localhost:8000/v1/chat/completions"),
+        json={"error": {"message": "invalid model"}},
+    )
+    post = AsyncMock(return_value=bad_request)
+
+    with patch("httpx.AsyncClient.post", post):
+        with pytest.raises(httpx.HTTPStatusError):
+            await provider.complete(
+                ModelRequest(
+                    messages=[{"role": "user", "content": "return json"}],
+                    reasoning_effort="none",
+                )
+            )
+
+    assert post.await_count == 1
+
+
+@pytest.mark.anyio
 async def test_anthropic_complete_mock():
     provider = AnthropicCompatibleProvider(base_url="http://localhost:8001", model="test")
     mock_response = {

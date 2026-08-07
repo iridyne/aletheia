@@ -36,6 +36,46 @@ def _extract_text_content(raw) -> str:
     return str(raw) if raw else ""
 
 
+def _reasoning_effort_is_unsupported(response: httpx.Response) -> bool:
+    """Recognize only explicit request-field incompatibility responses.
+
+    Some OpenAI-compatible endpoints do not implement ``reasoning_effort``.
+    Retrying a read-only completion without that optional field is safe, but a
+    generic 400/422 must retain its original failure semantics.
+    """
+    if response.status_code not in {400, 422}:
+        return False
+    try:
+        data = response.json()
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    error = data.get("error")
+    if not isinstance(error, dict):
+        error = data
+    parameter = str(error.get("param") or "").strip().lower()
+    if parameter == "reasoning_effort":
+        return True
+    detail = " ".join(
+        str(error.get(key) or "")
+        for key in ("code", "type", "message", "detail")
+    ).lower()
+    if "reasoning_effort" not in detail:
+        return False
+    return any(
+        marker in detail
+        for marker in (
+            "unknown field",
+            "unknown parameter",
+            "unsupported",
+            "not support",
+            "unrecognized",
+            "extra fields not permitted",
+        )
+    )
+
+
 class OpenAICompatibleProvider(ModelProvider):
     name = "openai_compatible"
 
@@ -66,8 +106,18 @@ class OpenAICompatibleProvider(ModelProvider):
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
         }
+        if request.reasoning_effort is not None:
+            payload["reasoning_effort"] = request.reasoning_effort
         client = self._get_http_client(httpx_client)
         resp = await client.post(f"{self.base_url}/chat/completions", json=payload, headers=self._headers())
+        if request.reasoning_effort is not None and _reasoning_effort_is_unsupported(resp):
+            compatible_payload = dict(payload)
+            compatible_payload.pop("reasoning_effort", None)
+            resp = await client.post(
+                f"{self.base_url}/chat/completions",
+                json=compatible_payload,
+                headers=self._headers(),
+            )
         _raise_without_secrets(resp)
         data = resp.json()
         choice = data["choices"][0]

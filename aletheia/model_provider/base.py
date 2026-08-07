@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 import asyncio
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 _ACTIVE_STRUCTURED_REQUEST: ContextVar[Any | None] = ContextVar(
     "aletheia_active_structured_cost_request", default=None
@@ -120,6 +120,7 @@ class ModelRequest:
     max_tokens: int = 4096
     inference: Any | None = None
     allow_model_fallback: bool = True
+    reasoning_effort: Literal["none", "low", "medium", "high"] | None = None
 
 
 @dataclass

@@ -116,6 +116,44 @@ async def test_llm_structured_threads_provider_name_to_complete_with_fallback():
 
 
 @pytest.mark.asyncio
+async def test_llm_structured_threads_explicit_reasoning_effort_to_every_attempt():
+    from aletheia.agents import helpers
+    from aletheia.model_provider.base import ModelResponse
+
+    class ObjectSchema:
+        @staticmethod
+        def model_json_schema():
+            return {"type": "object", "properties": {"value": {"type": "integer"}}}
+
+    captured = []
+    responses = iter(
+        [
+            ModelResponse(content="not json", raw={"usage": {"completion_tokens": 2}}),
+            ModelResponse(content='{"value": 42}', raw={"usage": {"completion_tokens": 5}}),
+        ]
+    )
+
+    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None):
+        captured.append(request)
+        return next(responses)
+
+    with patch.object(helpers, "complete_with_fallback", fake_complete_with_fallback):
+        with patch.object(helpers, "get_provider", lambda _name: object()):
+            data, err = await helpers.llm_structured(
+                "sys",
+                "user",
+                schema=ObjectSchema,
+                reasoning_effort="none",
+            )
+
+    assert err is None
+    assert data == {"value": 42}
+    assert len(captured) == 2
+    assert all(request.reasoning_effort == "none" for request in captured)
+    assert captured[0].inference is captured[1].inference
+
+
+@pytest.mark.asyncio
 async def test_llm_structured_opt_in_defaults_survive_provider_failure():
     """Opt-in non-critical callers receive marked defaults even on provider failure."""
     from aletheia.agents import helpers

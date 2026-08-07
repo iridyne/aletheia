@@ -105,6 +105,17 @@ Schema-invalid objects enter the existing bounded repair loop and never become
 a successful logical outcome. Non-critical default fallback remains explicit
 and the logical call remains an error.
 
+Reasoning control is caller-owned and default-off. `llm_structured()` preserves
+the existing provider request shape unless a caller explicitly selects a
+`reasoning_effort`. Market Observer selects `none` because its bounded market
+read requires immediate schema output and does not have budget for a separate
+reasoning phase. OpenAI-compatible adapters send that field only when selected.
+If an endpoint returns a 400/422 that explicitly identifies
+`reasoning_effort` as unknown or unsupported, the adapter retries that read-only
+completion exactly once without the optional field; unrelated client errors
+remain failures. Soft prompt text such as `/no_think` is not treated as proof
+that provider-side reasoning was disabled.
+
 ## Durable state and consumers
 
 | State | Purpose | Consumer |
