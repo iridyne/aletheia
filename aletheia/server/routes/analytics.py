@@ -558,80 +558,201 @@ def get_round1_progress():
 
 @router.get("/pipeline-funnel")
 def get_pipeline_funnel(hours: int = 24):
-    """24h profit-loop funnel: opportunities → signals → PI → risk → fills.
+    """Profit-loop funnel for one linked Opportunity cohort.
 
-    Answers \"why didn't we open positions in the last N hours?\" by quantifying
-    the conversion rate at each stage. None of the data here affects PI decisions.
+    The cohort is anchored by Opportunities created inside the rolling window;
+    every downstream stage is counted by distinct linked ``opportunity_id`` as
+    observed at response time. Event totals from unrelated generations or old
+    Opportunities must never be divided into this cohort, and close fills are
+    not entry conversions. None of these read-only facts affect PI decisions.
     """
     from aletheia.storage.sqlite import get_db
+
     db = get_db()
     hours_i, cutoff = _rolling_cutoff(hours)
 
-    def _count(sql: str) -> int:
-        try:
-            return int(db.execute(sql, (cutoff,)).fetchone()[0])
-        except Exception:
-            return 0
-
-    opps = _count("SELECT COUNT(*) FROM opportunities WHERE julianday(created_at) >= julianday(?)")
-    sig_pending = _count(
-        "SELECT COUNT(*) FROM pi_decisions WHERE action='signal_pending' "
-        "AND julianday(created_at) >= julianday(?)"
-    )
-    pi_trade = _count(
-        "SELECT COUNT(*) FROM pi_decisions WHERE action IN ('trade','scale_in','flip') "
-        "AND julianday(created_at) >= julianday(?)"
-    )
-    pi_skip = _count(
-        "SELECT COUNT(*) FROM pi_decisions WHERE action IN ('skip','portfolio_guard_skip') "
-        "AND COALESCE(signal_source, 'market_observer') != 'system_cascade' "
-        "AND julianday(created_at) >= julianday(?)"
-    )
-
-    # Risk decisions: count approved/rejected + top rejection violations.
-    try:
-        rd_rows = list(db.execute(
-            "SELECT approved, COUNT(*) n FROM risk_decisions "
-            "WHERE julianday(created_at) >= julianday(?) GROUP BY approved",
+    opportunity_rows = list(
+        db.execute(
+            "SELECT id, created_at FROM opportunities "
+            "WHERE julianday(created_at) >= julianday(?)",
             (cutoff,),
-        ))
-        risk_approved = next((int(r["n"]) for r in rd_rows if r["approved"] == 1), 0)
-        risk_rejected = next((int(r["n"]) for r in rd_rows if r["approved"] == 0), 0)
-    except Exception:
-        risk_approved = risk_rejected = 0
+        )
+    )
+    opportunity_ids = {str(row["id"]) for row in opportunity_rows}
+    opps = len(opportunity_ids)
 
-    rejection_top: list[dict] = []
-    try:
-        for r in db.execute(
-            "SELECT message, COUNT(*) n FROM risk_decisions "
-            "WHERE approved=0 AND julianday(created_at) >= julianday(?) "
-            "GROUP BY message ORDER BY n DESC LIMIT 5",
+    # ``signal_pending`` is a recoverable queue carrier and is intentionally
+    # pruned after a settled final decision. Historical funnel evidence therefore
+    # comes from the append-only enqueue filter fact written atomically with the
+    # carrier, not from whichever transient carrier rows still happen to exist.
+    signal_rows = list(
+        db.execute(
+            "SELECT fd.opportunity_id, fd.dedup_key FROM filter_decisions fd "
+            "JOIN opportunities o ON o.id=fd.opportunity_id "
+            "WHERE julianday(o.created_at) >= julianday(?) "
+            "AND fd.filter_name='signal_enqueue' "
+            "AND fd.stage='paper_trader_enqueue' "
+            "AND fd.decision='passed' "
+            "AND fd.reason_code='signal_enqueued'",
             (cutoff,),
+        )
+    )
+    signal_ids = {str(row["opportunity_id"]) for row in signal_rows}
+    carrier_generations = len(signal_rows)
+
+    # Parsed time plus rowid keeps final-decision diagnostics deterministic for
+    # mixed SQLite/ISO timestamps and same-instant retries.
+    decision_rows = list(
+        db.execute(
+            "SELECT p.rowid AS _rowid, p.* FROM pi_decisions p "
+            "JOIN opportunities o ON o.id=p.opportunity_id "
+            "WHERE julianday(o.created_at) >= julianday(?) "
+            "AND COALESCE(p.signal_source, 'market_observer')='market_observer' "
+            "ORDER BY p.opportunity_id, "
+            "COALESCE(p.signal_source, 'market_observer'), "
+            "julianday(p.created_at), p.rowid",
+            (cutoff,),
+        )
+    )
+
+    all_trade_ids: set[str] = set()
+    skip_candidates: set[str] = set()
+    retained_pending_rows = 0
+    for row in decision_rows:
+        opportunity_id = str(row["opportunity_id"] or "")
+        action = str(row["action"] or "")
+        if action == "signal_pending":
+            retained_pending_rows += 1
+        elif action in {"trade", "scale_in", "flip"}:
+            all_trade_ids.add(opportunity_id)
+        elif action in {"skip", "portfolio_guard_skip"}:
+            skip_candidates.add(opportunity_id)
+
+    # Only signalled members can advance through this conversion funnel. A
+    # direct trade remains an integrity fact instead of inflating the rate.
+    trade_ids = all_trade_ids & signal_ids
+    trade_without_signal = all_trade_ids - signal_ids
+    skip_ids = (skip_candidates & signal_ids) - trade_ids
+
+    proposal_to_opportunity: dict[str, str] = {}
+    for row in decision_rows:
+        opportunity_id = str(row["opportunity_id"] or "")
+        proposal_id = str(row["proposal_id"] or "")
+        if (
+            opportunity_id in trade_ids
+            and str(row["action"] or "") in {"trade", "scale_in", "flip"}
+            and proposal_id
         ):
-            rejection_top.append({"message": (r["message"] or "")[:200], "count": int(r["n"])})
-    except Exception:
-        pass
+            proposal_to_opportunity[proposal_id] = opportunity_id
+    proposal_ids = set(proposal_to_opportunity)
 
-    fills = 0
-    try:
-        # fills has filled_at not created_at
-        fills = int(db.execute(
-            "SELECT COUNT(*) FROM fills WHERE julianday(filled_at) >= julianday(?)",
-            (cutoff,),
-        ).fetchone()[0])
-    except Exception:
-        fills = 0
+    # Resolve at most one authority decision per proposal. Preflight decisions
+    # are advisory; an authoritative row supersedes a legacy compatibility row.
+    risk_by_proposal: dict[str, dict] = {}
+    if proposal_ids:
+        placeholders = ",".join("?" for _ in proposal_ids)
+        rows = db.execute(
+            "SELECT rowid AS _rowid, * FROM risk_decisions "
+            f"WHERE proposal_id IN ({placeholders}) "
+            "AND COALESCE(decision_role, 'legacy')!='preflight' "
+            "ORDER BY julianday(created_at), rowid",
+            tuple(sorted(proposal_ids)),
+        )
+        for raw in rows:
+            row = dict(raw)
+            proposal_id = str(row.get("proposal_id") or "")
+            existing = risk_by_proposal.get(proposal_id)
+            role = str(row.get("decision_role") or "legacy")
+            existing_role = str((existing or {}).get("decision_role") or "legacy")
+            if (
+                existing is None
+                or role == "authoritative"
+                or existing_role != "authoritative"
+            ):
+                risk_by_proposal[proposal_id] = row
+
+    approved_opportunities = {
+        proposal_to_opportunity[proposal_id]
+        for proposal_id, row in risk_by_proposal.items()
+        if int(row.get("approved") or 0) == 1
+    }
+    rejected_candidates = {
+        proposal_to_opportunity[proposal_id]
+        for proposal_id, row in risk_by_proposal.items()
+        if int(row.get("approved") or 0) == 0
+    }
+    rejected_opportunities = rejected_candidates - approved_opportunities
+    risk_approved = len(approved_opportunities)
+    risk_rejected = len(rejected_opportunities)
+
+    rejection_messages: dict[str, set[str]] = {}
+    for proposal_id, row in risk_by_proposal.items():
+        opportunity_id = proposal_to_opportunity[proposal_id]
+        if (
+            opportunity_id not in rejected_opportunities
+            or int(row.get("approved") or 0) == 1
+        ):
+            continue
+        message = str(row.get("message") or "")[:200]
+        rejection_messages.setdefault(message, set()).add(opportunity_id)
+    rejection_top = [
+        {"message": message, "count": len(ids)}
+        for message, ids in sorted(
+            rejection_messages.items(),
+            key=lambda item: (-len(item[1]), item[0]),
+        )[:5]
+    ]
+
+    entry_fill_opportunities: set[str] = set()
+    close_fills_excluded = 0
+    if proposal_ids:
+        placeholders = ",".join("?" for _ in proposal_ids)
+        rows = db.execute(
+            "SELECT o.proposal_id, o.close_reason, f.id AS fill_id "
+            "FROM orders o JOIN fills f ON f.order_id=o.id "
+            f"WHERE o.proposal_id IN ({placeholders})",
+            tuple(sorted(proposal_ids)),
+        )
+        for row in rows:
+            opportunity_id = proposal_to_opportunity[str(row["proposal_id"])]
+            if row["close_reason"] is not None:
+                close_fills_excluded += 1
+            else:
+                entry_fill_opportunities.add(opportunity_id)
+
+    approved_entry_fills = entry_fill_opportunities & approved_opportunities
+    entry_fill_without_approved_risk = (
+        entry_fill_opportunities - approved_opportunities
+    )
+    fills = len(approved_entry_fills)
 
     risk_total = risk_approved + risk_rejected
     risk_approve_rate = round(risk_approved / risk_total * 100.0, 2) if risk_total else None
 
+    signal_count = len(signal_ids)
+    trade_count = len(trade_ids)
+    signal_without_terminal = signal_ids - trade_ids - skip_ids
+
+    def _rate(numerator: int, denominator: int) -> float | None:
+        return round(numerator / denominator * 100.0, 2) if denominator else None
+
     return {
         "window_hours": hours_i,
+        "cohort": {
+            "unit": "opportunity_id_created_in_window",
+            "signal_stage_evidence": (
+                "filter_decisions:signal_enqueue/passed/signal_enqueued"
+            ),
+            "window_start": cutoff,
+            "downstream_observed_through": datetime.now(timezone.utc).isoformat(),
+            "right_censored": True,
+        },
         "opportunities": opps,
-        "signal_pending": sig_pending,
+        "signal_pending": signal_count,
+        "signal_carrier_generations": carrier_generations,
         "pi_decisions": {
-            "trade": pi_trade,
-            "skip": pi_skip,
+            "trade": trade_count,
+            "skip": len(skip_ids),
         },
         "risk_decisions": {
             "approved": risk_approved,
@@ -641,9 +762,23 @@ def get_pipeline_funnel(hours: int = 24):
         },
         "fills": fills,
         "conversion": {
-            "opp_to_signal_pct": round(sig_pending / opps * 100.0, 2) if opps else None,
-            "signal_to_pi_trade_pct": round(pi_trade / sig_pending * 100.0, 2) if sig_pending else None,
-            "pi_trade_to_fill_pct": round(fills / pi_trade * 100.0, 2) if pi_trade else None,
+            "opp_to_signal_pct": _rate(signal_count, opps),
+            "signal_to_pi_trade_pct": _rate(trade_count, signal_count),
+            "pi_trade_to_risk_pct": _rate(risk_total, trade_count),
+            "risk_approved_to_fill_pct": _rate(fills, risk_approved),
+            "pi_trade_to_fill_pct": _rate(fills, trade_count),
+        },
+        "integrity": {
+            "trade_without_signal_evidence": len(trade_without_signal),
+            "trade_without_proposal": len(
+                trade_ids - set(proposal_to_opportunity.values())
+            ),
+            "entry_fill_without_approved_risk": len(
+                entry_fill_without_approved_risk
+            ),
+            "signal_without_terminal": len(signal_without_terminal),
+            "close_fills_excluded": close_fills_excluded,
+            "retained_signal_pending_rows": retained_pending_rows,
         },
     }
 

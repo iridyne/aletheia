@@ -221,13 +221,46 @@ def _overview_window_fixture_times() -> tuple[int, str, str]:
 def _insert_overview_decision(
     db, *, row_id: str, action: str, created_at: str,
     signal_source: str = "market_observer",
+    opportunity_id: str | None = None,
 ) -> None:
     db.execute(
         "INSERT INTO pi_decisions "
         "(id, symbol, direction, market_type, action, conviction, reasoning, "
         "opportunity_id, signal_source, created_at) "
         "VALUES (?, 'BTC/USDT', 'long', 'spot', ?, 0, 'window test', ?, ?, ?)",
-        (row_id, action, f"opp-{row_id}", signal_source, created_at),
+        (
+            row_id,
+            action,
+            opportunity_id or f"opp-{row_id}",
+            signal_source,
+            created_at,
+        ),
+    )
+
+
+def _insert_signal_enqueue_evidence(
+    db,
+    *,
+    row_id: str,
+    opportunity_id: str,
+    evaluated_at: str,
+) -> None:
+    db.execute(
+        "INSERT INTO filter_decisions "
+        "(id, dedup_key, candidate_key, candidate_kind, opportunity_id, "
+        "symbol, market_type, direction, filter_name, stage, sequence_no, "
+        "decision, reason_code, input_snapshot, parameter_snapshot, "
+        "filter_version, evaluated_at) "
+        "VALUES (?, ?, ?, 'opportunity', ?, 'BTC/USDT', 'spot', 'long', "
+        "'signal_enqueue', 'paper_trader_enqueue', 0, 'passed', "
+        "'signal_enqueued', '{}', '{}', 'test-enqueue-v1', ?)",
+        (
+            row_id,
+            f"dedup-{row_id}",
+            f"opportunity:{opportunity_id}",
+            opportunity_id,
+            evaluated_at,
+        ),
     )
 
 
@@ -279,10 +312,24 @@ def test_overview_funnels_share_the_same_parsed_iso_window(tmp_path, monkeypatch
             (f"opp-{suffix}", created_at),
         )
         _insert_overview_decision(
-            db, row_id=f"pending-{suffix}", action="signal_pending", created_at=created_at,
+            db,
+            row_id=f"pending-{suffix}",
+            action="signal_pending",
+            created_at=created_at,
+            opportunity_id=f"opp-{suffix}",
+        )
+        _insert_signal_enqueue_evidence(
+            db,
+            row_id=f"enqueue-{suffix}",
+            opportunity_id=f"opp-{suffix}",
+            evaluated_at=created_at,
         )
         _insert_overview_decision(
-            db, row_id=f"skip-{suffix}", action="skip", created_at=created_at,
+            db,
+            row_id=f"skip-{suffix}",
+            action="skip",
+            created_at=created_at,
+            opportunity_id=f"opp-{suffix}",
         )
         db.execute(
             "INSERT INTO trade_proposals "
@@ -306,6 +353,208 @@ def test_overview_funnels_share_the_same_parsed_iso_window(tmp_path, monkeypatch
     assert opportunity["emitted_count"] == 1
     assert opportunity["reviewed_count"] == 1
     assert opportunity["proposed_count"] == 1
+
+
+def test_pipeline_funnel_tracks_one_opportunity_cohort_and_entry_fills_only(
+    tmp_path, monkeypatch,
+):
+    """Conversions must follow linked cohort facts instead of dividing event totals.
+
+    One recent Opportunity is evicted and requeued before trading, one is skipped,
+    and one bypasses the signal carrier entirely.  An old Opportunity also emits
+    recent downstream events.  Only the two signalled members of the recent
+    Opportunity cohort may contribute to conversion rates; duplicate carriers,
+    the old cohort, a direct trade, and a close fill stay visible as diagnostics.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.server.routes.analytics import get_pipeline_funnel
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    recent = (now - timedelta(minutes=10)).isoformat()
+    later = (now - timedelta(minutes=9)).isoformat()
+    old = (now - timedelta(hours=30)).isoformat()
+
+    for opportunity_id, created_at in (
+        ("opp-filled", recent),
+        ("opp-skipped", recent),
+        ("opp-rejected", recent),
+        ("opp-direct", recent),
+        ("opp-old", old),
+    ):
+        db.execute(
+            "INSERT INTO opportunities "
+            "(id, symbol, market, direction_bias, confidence, created_at, status) "
+            "VALUES (?, 'BTC/USDT', 'spot', 'long', 'medium_confidence', ?, 'reviewed')",
+            (opportunity_id, created_at),
+        )
+
+    def decision(
+        row_id: str,
+        opportunity_id: str,
+        action: str,
+        created_at: str,
+        proposal_id: str | None = None,
+    ) -> None:
+        db.execute(
+            "INSERT INTO pi_decisions "
+            "(id, symbol, direction, market_type, action, conviction, reasoning, "
+            "opportunity_id, proposal_id, signal_source, created_at) "
+            "VALUES (?, 'BTC/USDT', 'long', 'spot', ?, 0, 'funnel cohort test', ?, ?, "
+            "'market_observer', ?)",
+            (row_id, action, opportunity_id, proposal_id, created_at),
+        )
+
+    # Two duplicate pending rows are one generation; eviction and requeue start
+    # the second generation that eventually reaches a trade.
+    decision("filled-pending-1", "opp-filled", "signal_pending", recent)
+    decision("filled-pending-duplicate", "opp-filled", "signal_pending", recent)
+    decision("filled-evicted", "opp-filled", "signal_queue_evicted", recent)
+    decision("filled-pending-2", "opp-filled", "signal_pending", later)
+    decision("filled-trade", "opp-filled", "trade", later, "proposal-filled")
+    _insert_signal_enqueue_evidence(
+        db,
+        row_id="filled-enqueue-1",
+        opportunity_id="opp-filled",
+        evaluated_at=recent,
+    )
+    _insert_signal_enqueue_evidence(
+        db,
+        row_id="filled-enqueue-2",
+        opportunity_id="opp-filled",
+        evaluated_at=later,
+    )
+    decision("skipped-pending", "opp-skipped", "signal_pending", recent)
+    decision("skipped-final", "opp-skipped", "skip", later)
+    _insert_signal_enqueue_evidence(
+        db,
+        row_id="skipped-enqueue",
+        opportunity_id="opp-skipped",
+        evaluated_at=recent,
+    )
+    decision("rejected-pending", "opp-rejected", "signal_pending", recent)
+    decision(
+        "rejected-trade", "opp-rejected", "trade", later, "proposal-rejected"
+    )
+    _insert_signal_enqueue_evidence(
+        db,
+        row_id="rejected-enqueue",
+        opportunity_id="opp-rejected",
+        evaluated_at=recent,
+    )
+
+    # This is an integrity violation, not a legitimate signal conversion.
+    decision("direct-trade", "opp-direct", "trade", later, "proposal-direct")
+
+    # A recent downstream event cannot pull an old Opportunity into the cohort.
+    decision("old-pending", "opp-old", "signal_pending", recent)
+    decision("old-trade", "opp-old", "trade", later, "proposal-old")
+    _insert_signal_enqueue_evidence(
+        db,
+        row_id="old-enqueue",
+        opportunity_id="opp-old",
+        evaluated_at=recent,
+    )
+
+    for proposal_id, opportunity_id in (
+        ("proposal-filled", "opp-filled"),
+        ("proposal-direct", "opp-direct"),
+        ("proposal-old", "opp-old"),
+    ):
+        db.execute(
+            "INSERT INTO trade_proposals "
+            "(id, opportunity_id, symbol, market_type, direction, order_type, "
+            "execution_mode, status, created_at) "
+            "VALUES (?, ?, 'BTC/USDT', 'spot', 'long', 'market', "
+            "'paper_internal', 'executed', ?)",
+            (proposal_id, opportunity_id, later),
+        )
+        db.execute(
+            "INSERT INTO risk_decisions "
+            "(id, proposal_id, approved, decision_role, message, created_at) "
+            "VALUES (?, ?, 1, 'authoritative', 'Approved', ?)",
+            (f"risk-{proposal_id}", proposal_id, later),
+        )
+        db.execute(
+            "INSERT INTO orders "
+            "(id, proposal_id, symbol, market_type, direction, order_type, quantity, "
+            "execution_mode, status, created_at, filled_at) "
+            "VALUES (?, ?, 'BTC/USDT', 'spot', 'long', 'market', 1, "
+            "'paper_internal', 'filled', ?, ?)",
+            (f"entry-{proposal_id}", proposal_id, later, later),
+        )
+        db.execute(
+            "INSERT INTO fills "
+            "(id, order_id, fill_price, fill_quantity, filled_at) "
+            "VALUES (?, ?, 100, 1, ?)",
+            (f"fill-{proposal_id}", f"entry-{proposal_id}", later),
+        )
+
+    db.execute(
+        "INSERT INTO trade_proposals "
+        "(id, opportunity_id, symbol, market_type, direction, order_type, "
+        "execution_mode, status, created_at) "
+        "VALUES ('proposal-rejected', 'opp-rejected', 'BTC/USDT', 'spot', 'long', "
+        "'market', 'paper_internal', 'rejected', ?)",
+        (later,),
+    )
+    db.execute(
+        "INSERT INTO risk_decisions "
+        "(id, proposal_id, approved, decision_role, message, created_at) "
+        "VALUES ('risk-rejected-preflight', 'proposal-rejected', 1, 'preflight', "
+        "'Advisory approval', ?)",
+        (recent,),
+    )
+    db.execute(
+        "INSERT INTO risk_decisions "
+        "(id, proposal_id, approved, decision_role, message, created_at) "
+        "VALUES ('risk-rejected-authority', 'proposal-rejected', 0, "
+        "'authoritative', 'Rejected: daily loss', ?)",
+        (later,),
+    )
+
+    # A close fill for the valid cohort member must not inflate entry conversion.
+    db.execute(
+        "INSERT INTO orders "
+        "(id, proposal_id, symbol, market_type, direction, order_type, quantity, "
+        "execution_mode, status, close_reason, created_at, filled_at) "
+        "VALUES ('close-filled', 'proposal-filled', 'BTC/USDT', 'spot', 'long', "
+        "'market', 1, 'paper_internal', 'filled', 'take_profit', ?, ?)",
+        (later, later),
+    )
+    db.execute(
+        "INSERT INTO fills "
+        "(id, order_id, fill_price, fill_quantity, filled_at) "
+        "VALUES ('fill-close', 'close-filled', 101, 1, ?)",
+        (later,),
+    )
+    db.commit()
+
+    result = get_pipeline_funnel(hours=24)
+
+    assert result["cohort"]["unit"] == "opportunity_id_created_in_window"
+    assert result["opportunities"] == 4
+    assert result["signal_pending"] == 3
+    assert result["signal_carrier_generations"] == 4
+    assert result["pi_decisions"] == {"trade": 2, "skip": 1}
+    assert result["risk_decisions"]["approved"] == 1
+    assert result["risk_decisions"]["rejected"] == 1
+    assert result["risk_decisions"]["approve_rate_pct"] == pytest.approx(50.0)
+    assert result["risk_decisions"]["top_rejection_reasons"] == [
+        {"message": "Rejected: daily loss", "count": 1}
+    ]
+    assert result["fills"] == 1
+    assert result["conversion"]["opp_to_signal_pct"] == pytest.approx(75.0)
+    assert result["conversion"]["signal_to_pi_trade_pct"] == pytest.approx(66.67)
+    assert result["conversion"]["pi_trade_to_risk_pct"] == pytest.approx(100.0)
+    assert result["conversion"]["risk_approved_to_fill_pct"] == pytest.approx(100.0)
+    assert result["conversion"]["pi_trade_to_fill_pct"] == pytest.approx(50.0)
+    assert result["integrity"]["trade_without_signal_evidence"] == 1
+    assert result["integrity"]["close_fills_excluded"] == 1
+    assert result["integrity"]["retained_signal_pending_rows"] == 5
 
 
 # ---------------------------------------------------------------------------
