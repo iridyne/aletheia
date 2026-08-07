@@ -344,6 +344,9 @@ reconciliation 路径收敛，复核重试不得创建替代 Close Order。
   Outcome，超过 pending-close 时限仍走一次性 reconciliation-required escalation。当前 Bitget adapter
   已将 hedge-close 错误码 `22002`/`25227` 作上述分类；OKX/Binance adapter 尚无经权威 fixture 锁定的
   无仓位错误码，因此普通字符串拒单仍保持 `error`，不得靠文本猜测升级。可执行检查：`PL-RX-22`。
+  `PL-RX-24` 进一步锁定组合链路：原 typed rejection 经两次独立完整账户视图和只读 verified-exit
+  查询收敛为 administrative close 时，原 Close Order 保持唯一且被拒绝的事实，不新增 Fill、PnL、
+  Outcome hook 或 Learning 样本，也不再次触达交易所下单入口。
 - **启动准入必须读取权威 Position 主账**：Startup Behavior Gate 的 `pending_closes` 检查不能只读取
   遗留 `ps_positions.status=unknown` 投影；它还必须读取 open `positions.pending_close_status`。
   `submission_unknown`、`materialization_missing`、`position_absence_unverified`、`overfilled` 立即阻挡新的
