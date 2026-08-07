@@ -114,10 +114,13 @@ not otherwise re-audited here.
 
 - `learning_contribution_evaluator` is the sole recurring contribution evaluator. It runs at
   `learning.evaluation_interval_minutes` (minimum 15, default 60), with `max_instances=1`,
-  `coalesce=True`, the `io` executor, and a 60-second timeout.
-- `learning_measurement_startup_catchup` is a one-shot at boot plus two minutes. The first regular
-  evaluator run is delayed by a full evaluation interval, so catch-up checks and, only when due,
-  invokes the same evaluator before regular cadence begins.
+  `coalesce=True`, the `io` executor, and a 60-second timeout. Gateway restart preserves an earlier
+  future durable `next_due_at` instead of resetting the first run to boot plus a full interval; an
+  already-overdue deadline receives one bounded run after 60 seconds.
+- `learning_measurement_startup_catchup` remains a one-shot at boot plus two minutes. It checks and,
+  only when due, invokes the same evaluator; after an overdue direct recovery succeeds, its updated
+  watermark makes the one-shot a no-op, while a failed recovery leaves it available as a retry.
+  Executable continuity claim: `LE-B31`.
 - `learning_verdict_runner` is not registered and has no timeout entry. Existing
   `learning_job_health` rows with that historical id are retained as history, not deleted or
   interpreted as an active schedule.

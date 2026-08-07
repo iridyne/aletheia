@@ -368,7 +368,9 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 #### learning_contribution_evaluator
 
 - **Trigger**: one recurring interval at `learning.evaluation_interval_minutes` (default 60);
-  startup catch-up is a one-shot caller of this same evaluator before the first interval
+  restart preserves a nearer durable future deadline, and an overdue deadline retries after 60s;
+  startup catch-up remains a one-shot caller of this same evaluator and retries only while the
+  current measurement watermark is still missing
 - **Inputs**: prospective `universe_family_calibration` exposures plus exact-key settled outcomes
 - **Statistical unit**: persisted `assignment_unit_key` cluster; complete-cluster allocation utility
   averages selected-member net return with zero utility for dropped members, and uses worst selected

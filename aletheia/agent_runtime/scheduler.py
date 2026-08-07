@@ -61,6 +61,11 @@ _ESSENTIAL_JOBS: set[str] = {
 # changes here.
 MARKET_DATA_INTERVAL_MINUTES = 5
 
+# A persisted overdue Learning measurement should recover after the gateway is
+# ready, but before the legacy two-minute startup catch-up.  The latter remains
+# as a retry if this direct evaluator run fails before recording its watermark.
+_LEARNING_EVALUATOR_RESTART_DELAY_SEC = 60
+
 # Track which jobs were selectively paused (for targeted resume).
 _selectively_paused_jobs: set[str] = set()
 
@@ -876,6 +881,53 @@ def _operator_assessment_due(
         return True
 
 
+def _initial_learning_evaluator_run_time(
+    interval_minutes: int,
+    *,
+    now: datetime | None = None,
+) -> datetime:
+    """Preserve the durable measurement deadline across gateway restarts.
+
+    APScheduler's in-memory interval trigger otherwise restarts its cadence from
+    process boot. A restart just before ``next_due_at`` could postpone the sole
+    contribution evaluator by almost a full interval while its durable health
+    row correctly reports overdue. A past deadline gets one bounded post-boot
+    recovery attempt; the existing two-minute startup catch-up remains a retry.
+    """
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    else:
+        current = current.astimezone(timezone.utc)
+    default_run = current + timedelta(minutes=max(15, int(interval_minutes)))
+    try:
+        from aletheia.learning.control import get_learning_job_health
+
+        raw_due = get_learning_job_health(
+            "learning_contribution_evaluator"
+        ).next_due_at
+        if not raw_due:
+            return default_run
+        durable_due = datetime.fromisoformat(
+            str(raw_due).replace("Z", "+00:00")
+        )
+        if durable_due.tzinfo is None:
+            durable_due = durable_due.replace(tzinfo=timezone.utc)
+        else:
+            durable_due = durable_due.astimezone(timezone.utc)
+    except (AttributeError, TypeError, ValueError):
+        return default_run
+    except Exception:
+        logger.warning(
+            "Learning evaluator deadline unavailable during scheduler startup"
+        )
+        return default_run
+
+    if durable_due <= current:
+        return current + timedelta(seconds=_LEARNING_EVALUATOR_RESTART_DELAY_SEC)
+    return min(durable_due, default_run)
+
+
 def init_scheduler() -> BackgroundScheduler | None:
     """Initialize and start the background scheduler.
 
@@ -1130,11 +1182,14 @@ def init_scheduler() -> BackgroundScheduler | None:
     # Learning is disabled or layered pause is active.  Lifecycle control is a
     # separate autonomous job and is stopped by the shared Learning gate.
     _learning_interval = max(15, int(cfg.learning.evaluation_interval_minutes))
+    _learning_evaluator_initial_run = _initial_learning_evaluator_run_time(
+        _learning_interval,
+    )
     _scheduler.add_job(
         _guarded("learning_contribution_evaluator", _run_learning_contribution_evaluator),
         "interval", minutes=_learning_interval, id="learning_contribution_evaluator",
         misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
-        next_run_time=datetime.now() + timedelta(minutes=_learning_interval),
+        next_run_time=_learning_evaluator_initial_run,
     )
     _scheduler.add_job(
         _guarded("learning_measurement_startup_catchup", _run_measurement_startup_catchup),
