@@ -391,10 +391,10 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 - **Trigger**: cron every 4 hours at `:15` CST plus a startup attempt after 2 minutes
 - **Deduplication**: scheduled runs require the latest persisted `operator_assessment` to be at least 3h45m old; missing/malformed history fails open because action permission and daily rate limits remain authoritative
 - **Inputs**: Portfolio state, strategy performance, market regime, system health
-- **LLM**: No direct model call; deterministic assessment may enqueue a separate Serenity research run
+- **LLM**: No direct model call; methodology research is not scheduled by this loop
 - **Outputs**: `operator_assessment`, bounded config actions/proposals and notifications
 - **Side effects**: 
-  - Level 1: bounded tightening/self-heal/notification actions and strategy research trigger under existing daily limits
+  - Level 1: bounded tightening/recovery and notification actions
   - Level 2: loosening and unknown actions become proposals; no direct execution
   - Level 3: live, credentials, permissions and hard-risk changes are forbidden, not confirmable by this loop
 - **Key invariant**: Level 1 cannot expand risk; Level 2 requires a proposal path; Level 3 never executes

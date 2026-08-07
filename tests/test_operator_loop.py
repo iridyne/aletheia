@@ -175,6 +175,29 @@ class TestDecideActions:
         # Python loop must NOT emit request_backfill anymore (converged to TS Auto Repair).
         assert [a for a in actions if a.action_type == "request_backfill"] == []
 
+    def test_strategy_research_is_not_an_automatic_operator_action(self, tmp_path, monkeypatch):
+        """Methodology research is manual while the product is converged on the money loop."""
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import (
+            SystemAssessment,
+            classify_action,
+            decide_actions,
+        )
+
+        assessment = SystemAssessment(
+            timestamp="2026-01-01T00:00:00Z",
+            ohlcv_ready=True,
+            signal_status="healthy",
+            uncovered_symbols=["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"],
+            strategies_paper_running=0,
+            strategies_retired_24h=5,
+        )
+
+        actions = decide_actions(assessment)
+        assert [a for a in actions if a.action_type == "trigger_strategy_research"] == []
+        assert classify_action("trigger_strategy_research") == 2
+
 
 # ─── Stage 2: Action Execution ───────────────────────────────────────────────
 
