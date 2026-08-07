@@ -388,7 +388,7 @@ export function RiskTab({ settings, qc, onDirty }: any) {
       </SettingsFeatureSection>
 
       <SettingsFeatureSection descriptor={RISK_LIMITS_SECTION}>
-        <RiskCard settings={settings} qc={qc} />
+        <RiskCard settings={settings} qc={qc} onDirty={onDirty} />
       </SettingsFeatureSection>
     </div>
   )
@@ -520,10 +520,19 @@ function writePolicyPath(value: any, path: string, next: any): any {
   return clone
 }
 
-function RiskPolicyEditor({ mode, initial, qc }: { mode: 'demo' | 'live'; initial: any; qc: any }) {
+export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' | 'live'; initial: any; qc: any; onDirty?: (id: string, isDirty: boolean) => void }) {
   const [policy, setPolicy] = useState<any>(initial)
+  const [isDirty, setIsDirty] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-  useEffect(() => setPolicy(initial), [initial])
+  useEffect(() => {
+    if (isDirty) return
+    if (Number(initial.revision) > Number(policy.revision)) setPolicy(initial)
+  }, [initial, isDirty, policy.revision])
+  useEffect(() => {
+    const id = `risk-policy-${mode}`
+    onDirty?.(id, isDirty)
+    return () => onDirty?.(id, false)
+  }, [isDirty, mode, onDirty])
   const numFields = mode === 'live' ? [...RISK_POLICY_NUM_FIELDS, ...RISK_POLICY_LIVE_FIELDS] : RISK_POLICY_NUM_FIELDS
   const vals = Object.fromEntries(
     [...numFields, ...RISK_POLICY_BOOLS].map(field => [field.key, readPolicyPath(policy, field.key)])
@@ -532,10 +541,12 @@ function RiskPolicyEditor({ mode, initial, qc }: { mode: 'demo' | 'live'; initia
     mutationFn: () => api.replaceRiskPolicy(
       mode,
       policy,
-      initial.revision,
+      policy.revision,
       `${mode} policy edited in Settings`,
     ),
-    onSuccess: () => {
+    onSuccess: (risk) => {
+      setPolicy(risk[mode])
+      setIsDirty(false)
       setMsg({ ok: true, text: '✓ policy saved with a new revision' })
       qc.invalidateQueries({ queryKey: ['settings'] })
       qc.invalidateQueries({ queryKey: ['risk-boundaries'] })
@@ -545,10 +556,12 @@ function RiskPolicyEditor({ mode, initial, qc }: { mode: 'demo' | 'live'; initia
   const reset = useMutation({
     mutationFn: () => api.resetRiskPolicy(
       mode,
-      initial.revision,
+      policy.revision,
       `${mode} policy reset to shipped defaults in Settings`,
     ),
-    onSuccess: () => {
+    onSuccess: (risk) => {
+      setPolicy(risk[mode])
+      setIsDirty(false)
       setMsg({ ok: true, text: '✓ policy reset with a new revision' })
       qc.invalidateQueries({ queryKey: ['settings'] })
       qc.invalidateQueries({ queryKey: ['risk-boundaries'] })
@@ -557,6 +570,7 @@ function RiskPolicyEditor({ mode, initial, qc }: { mode: 'demo' | 'live'; initia
   })
   const set = (path: string, value: any) => {
     setPolicy((current: any) => writePolicyPath(current, path, value))
+    setIsDirty(true)
     setMsg(null)
   }
   const threshold = Number(policy.capital.base_usdt || 0) * Number(policy.loss.max_daily_loss_pct || 0) / 100
@@ -592,7 +606,7 @@ function RiskPolicyEditor({ mode, initial, qc }: { mode: 'demo' | 'live'; initia
   )
 }
 
-function RiskPolicyProfiles({ risk, qc }: { risk: any; qc: any }) {
+function RiskPolicyProfiles({ risk, qc, onDirty }: { risk: any; qc: any; onDirty?: (id: string, isDirty: boolean) => void }) {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const copy = useMutation({
     mutationFn: ({ source, target }: { source: 'demo' | 'live'; target: 'demo' | 'live' }) =>
@@ -628,14 +642,14 @@ function RiskPolicyProfiles({ risk, qc }: { risk: any; qc: any }) {
       </div>
       <SaveMsg msg={msg} />
       <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-        <RiskPolicyEditor mode="demo" initial={risk.demo} qc={qc} />
-        <RiskPolicyEditor mode="live" initial={risk.live} qc={qc} />
+        <RiskPolicyEditor mode="demo" initial={risk.demo} qc={qc} onDirty={onDirty} />
+        <RiskPolicyEditor mode="live" initial={risk.live} qc={qc} onDirty={onDirty} />
       </div>
     </div>
   )
 }
 
-function RiskCard({ settings, qc }: any) {
+function RiskCard({ settings, qc, onDirty }: any) {
   const risk = settings?.risk as any
   const [vals, setVals] = useState<Record<string, any>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -683,7 +697,7 @@ function RiskCard({ settings, qc }: any) {
   })
 
   if (!risk) return null
-  if (risk.demo && risk.live) return <RiskPolicyProfiles risk={risk} qc={qc} />
+  if (risk.demo && risk.live) return <RiskPolicyProfiles risk={risk} qc={qc} onDirty={onDirty} />
 
   return (
     <div className="card mb-0">
