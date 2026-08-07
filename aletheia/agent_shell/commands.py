@@ -2918,6 +2918,9 @@ async def review_portfolio_state(params: dict) -> dict:
             "reason": (
                 "wake_positions_not_open" if wake_position_ids else "no_open_positions"
             ),
+            # A stale wake whose exact Position is already closed is terminal;
+            # retrying it can neither review nor safely mutate that Position.
+            "review_completed": bool(wake_position_ids),
         }
 
     schema = {
@@ -3016,6 +3019,7 @@ Return JSON: {_json.dumps(schema)}"""
         return {
             "action": "review_unavailable",
             "reason": "operator_review_unavailable",
+            "review_completed": False,
             "position_review_decision_id": unavailable.id,
             "wake_fingerprint": wake_fingerprint,
         }
@@ -3130,8 +3134,8 @@ Return JSON: {_json.dumps(schema)}"""
             reason=reasoning,
         )
 
+    closed_count = 0
     if action == "close_one" and matching:
-        closed_count = 0
         for pos in matching[:1]:
             try:
                 from aletheia.portfolio.position_manager import close_position_routed
@@ -3150,6 +3154,50 @@ Return JSON: {_json.dumps(schema)}"""
             except Exception as exc:
                 result["close_error"] = str(exc)[:100]
         result["positions_closed"] = closed_count
+
+    # A wake is complete only when the requested effect has an authoritative
+    # terminal fact.  In particular, a close exception/error is not daemon success.
+    # Exchange-demo close acknowledgement is terminal for this review because its
+    # durable pending-close claim is subsequently owned by reconciliation; retrying
+    # the review must never submit a replacement order.
+    if action == "hold":
+        review_completed = supported_action
+    elif action == "adjust_position":
+        adjustment = result.get("adjust")
+        review_completed = bool(
+            isinstance(adjustment, dict) and adjustment.get("updated") is True
+        )
+    elif action == "close_one":
+        from aletheia.portfolio.position_manager import _OPEN_CLOSE_STATES
+        from aletheia.storage.repositories import get_position
+
+        close_state = get_position(matching[0]["id"]) if matching else None
+        durable_close_claim = bool(
+            close_state
+            and close_state.get("pending_close_order_id")
+            and close_state.get("pending_close_status") in _OPEN_CLOSE_STATES
+        )
+        review_completed = bool(closed_count == 1 or durable_close_claim)
+    else:
+        review_completed = False
+    result["review_completed"] = review_completed
+
+    if review_completed and wake_batches:
+        from aletheia.agent_runtime.wake_events import HORIZON_DUE
+        from aletheia.portfolio.position_manager import acknowledge_horizon_review
+
+        horizon_position_ids = [
+            str(batch["position_id"])
+            for batch in wake_batches
+            if any(
+                isinstance(event, dict) and event.get("kind") == HORIZON_DUE
+                for event in (batch.get("events") or [])
+            )
+        ]
+        if horizon_position_ids:
+            result["horizon_reviews_acknowledged"] = acknowledge_horizon_review(
+                horizon_position_ids
+            )
 
     update_pi_decision(
         persisted.id,

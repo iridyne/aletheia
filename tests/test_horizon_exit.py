@@ -74,7 +74,7 @@ def test_serenity_backstop_uses_days_school_max():
 
 # ── _maybe_wake_on_horizon (side-effecting, once per horizon) ────────────────
 
-def test_wake_emitted_once_then_guarded(monkeypatch):
+def test_completed_horizon_review_is_acknowledged_then_guarded(monkeypatch):
     from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import _select_one
     import aletheia.agent_runtime.pi_daemon as pd
@@ -95,14 +95,18 @@ def test_wake_emitted_once_then_guarded(monkeypatch):
 
     monkeypatch.setattr(pd, "notify_pi_daemon", _accept_wake)
 
-    # first call: horizon (10h) passed at 12h age, not yet woken → emit + stamp
+    # Scheduling alone is not completion and therefore must not stamp the row.
     assert pm._maybe_wake_on_horizon(_select_one("positions", "h1")) is True
     assert len(captured) == 1
     assert captured[0].kind == HORIZON_DUE
     assert captured[0].position_id == "h1"
+    assert _select_one("positions", "h1")["horizon_wake_sent_at"] is None
+
+    # A completed review owns the durable acknowledgement.
+    assert pm.acknowledge_horizon_review(["h1"]) == ["h1"]
     assert _select_one("positions", "h1")["horizon_wake_sent_at"] is not None
 
-    # second call: already woke → no-op
+    # Acknowledged horizon → no duplicate review.
     assert pm._maybe_wake_on_horizon(_select_one("positions", "h1")) is False
     assert len(captured) == 1
 
@@ -134,6 +138,41 @@ def test_failed_wake_is_not_stamped_and_can_retry(monkeypatch):
     # A later position-manager tick must be allowed to try delivery again.
     assert pm._maybe_wake_on_horizon(_select_one("positions", "h2")) is False
     assert len(attempted) == 2
+
+
+def test_scheduled_wake_is_not_acknowledged_before_review_and_survives_restart(
+    monkeypatch,
+):
+    """Scheduling is not completion; a lost in-memory event must be recoverable."""
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.repositories import _select_one
+    import aletheia.agent_runtime.pi_daemon as pd
+
+    opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
+    get_db().execute(
+        "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
+        "execution_mode,status,expected_horizon_hours,opened_at) VALUES "
+        "('h-restart','SOL/USDT','spot','long',1.0,100.0,'paper_internal','open',10.0,?)",
+        (opened,),
+    )
+    delivered = []
+    monkeypatch.setattr(
+        pd,
+        "notify_pi_daemon",
+        lambda source="unknown", event=None: delivered.append(event) or True,
+    )
+
+    assert pm._maybe_wake_on_horizon(
+        _select_one("positions", "h-restart")
+    ) is True
+    assert _select_one("positions", "h-restart")["horizon_wake_sent_at"] is None
+
+    # A process restart loses the accepted in-memory event.  The next durable
+    # position-manager scan must therefore be able to deliver it again.
+    assert pm._maybe_wake_on_horizon(
+        _select_one("positions", "h-restart")
+    ) is True
+    assert len(delivered) == 2
 
 
 def test_wake_guards():

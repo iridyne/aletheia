@@ -15,6 +15,7 @@ from aletheia.agent_runtime.pi_daemon import (
 )
 from aletheia.agent_runtime.wake_events import (
     CATASTROPHIC,
+    HORIZON_DUE,
     STOP_LOSS_NEAR,
     TAKE_PROFIT_NEAR,
     WakeEvent,
@@ -30,6 +31,7 @@ def reset_daemon_state():
     pd._uvicorn_loop = None
     pd._coalescer = None
     pd._pending_events.clear()
+    pd._retry_wake_batches.clear()
     pd._generic_wake_pending = False
     pd._task_generation = 0
     pd._started_at = None
@@ -44,6 +46,7 @@ def reset_daemon_state():
     pd._uvicorn_loop = None
     pd._coalescer = None
     pd._pending_events.clear()
+    pd._retry_wake_batches.clear()
     pd._generic_wake_pending = False
     pd._task_generation = 0
     pd._started_at = None
@@ -192,6 +195,96 @@ async def test_failed_evaluation_rearms_daemon_signal():
     assert eval_count == 2
 
 
+async def _run_horizon_review_retry(first_result):
+    """Return the exact portfolio-review contexts observed across one retry."""
+    captured: list[dict] = []
+    entry_evaluations: list[dict] = []
+
+    async def fake_review(params):
+        captured.append(params)
+        if len(captured) == 1:
+            if isinstance(first_result, BaseException):
+                raise first_result
+            return first_result
+        return {"action": "hold", "review_completed": True}
+
+    async def fake_entry_evaluation(params):
+        entry_evaluations.append(params)
+        return {"action": "skip", "pending_queue_remaining": 0}
+
+    with patch(
+        "aletheia.agent_shell.commands.review_portfolio_state",
+        new=fake_review,
+    ), patch(
+        "aletheia.agent_shell.commands.evaluate_trading_opportunity",
+        new=fake_entry_evaluation,
+    ), patch.object(pd, "_has_pending_signal_work", return_value=False), patch(
+        "aletheia.config.loader.load_config"
+    ) as mock_cfg:
+        mock_cfg.return_value.runtime.paused = False
+        mock_cfg.return_value.agent.permission_mode = "Paper"
+
+        task = start_pi_daemon(
+            loop=asyncio.get_running_loop(),
+            debounce_sec=0.0,
+            cooldown_sec=0.01,
+            heartbeat_sec=999.0,
+            coalesce_window_sec=0.0,
+        )
+        await asyncio.sleep(0.02)
+        notify_pi_daemon(
+            source=HORIZON_DUE,
+            event=WakeEvent(
+                position_id="horizon-retry-position",
+                kind=HORIZON_DUE,
+                ts=0.0,
+            ),
+        )
+        await asyncio.sleep(0.25)
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    return captured, entry_evaluations
+
+
+async def test_review_unavailable_retries_the_same_horizon_wake_batch():
+    captured, entry_evaluations = await _run_horizon_review_retry({
+        "action": "review_unavailable",
+        "reason": "operator_review_unavailable",
+        "review_completed": False,
+    })
+
+    assert len(captured) == 2
+    assert captured[1]["wake_batches"] == captured[0]["wake_batches"]
+    assert entry_evaluations == []
+
+
+async def test_review_timeout_retries_the_same_horizon_wake_batch():
+    captured, entry_evaluations = await _run_horizon_review_retry(
+        asyncio.TimeoutError()
+    )
+
+    assert len(captured) == 2
+    assert captured[1]["wake_batches"] == captured[0]["wake_batches"]
+    assert entry_evaluations == []
+
+
+async def test_failed_close_review_retries_instead_of_reporting_daemon_success():
+    captured, entry_evaluations = await _run_horizon_review_retry({
+        "action": "close_one",
+        "positions_closed": 0,
+        "close_error": "protective_mark_unavailable",
+        "review_completed": False,
+    })
+
+    assert len(captured) == 2
+    assert captured[1]["wake_batches"] == captured[0]["wake_batches"]
+    assert entry_evaluations == []
+
+
 async def test_heartbeat_triggers_evaluation():
     """When no signals arrive, the heartbeat timeout must trigger evaluation."""
     eval_count = 0
@@ -288,7 +381,10 @@ async def _run_daemon_with_event(event, *, wake_capacity=15):
 
     async def fake_evaluate(params):
         captured.append(params)
-        return {"action": "skip"}
+        # Wake-event tests exercise the portfolio-review route.  Return a valid
+        # terminal portfolio result so the daemon does not correctly treat this
+        # test double as an incomplete review and keep retrying after the test.
+        return {"action": "hold", "review_completed": True}
 
     with patch("aletheia.agent_shell.commands.review_portfolio_state", new=fake_evaluate), \
          patch("aletheia.config.loader.load_config") as mock_cfg:

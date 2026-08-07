@@ -328,7 +328,7 @@ async def test_portfolio_review_persists_intent_before_close_submission(
     conn = _init_agent_shell_db(tmp_path, monkeypatch)
     from aletheia.agent_shell.commands import review_portfolio_state
     from aletheia.storage.models import Position
-    from aletheia.storage.repositories import _select_one, insert_position
+    from aletheia.storage.repositories import _select_one, insert_position, update_position
 
     target = Position(
         id="review-close-intent-target",
@@ -366,6 +366,11 @@ async def test_portfolio_review_persists_intent_before_close_submission(
         assert json.loads(row["evidence_manifest_json"])["position_review"][
             "effect"
         ] == {"status": "pending"}
+        update_position(
+            position_id,
+            pending_close_order_id="pending-close-order",
+            pending_close_status="submitted",
+        )
         return {
             "closed": False,
             "status": "submitted",
@@ -381,6 +386,7 @@ async def test_portfolio_review_persists_intent_before_close_submission(
 
     assert result["positions_closed"] == 0
     assert result["close"]["status"] == "submitted"
+    assert result["review_completed"] is True
     persisted = conn.execute(
         "SELECT evidence_manifest_json FROM pi_decisions WHERE id=?",
         (result["position_review_decision_id"],),
@@ -532,6 +538,80 @@ async def test_wake_driven_portfolio_review_persists_unavailable_result(
     assert json.loads(row["evidence_manifest_json"])["position_review"]["effect"] == {
         "status": "unavailable"
     }
+    assert result["review_completed"] is False
+
+
+@pytest.mark.asyncio
+async def test_successful_horizon_review_acknowledges_the_durable_wake(
+    tmp_path, monkeypatch
+):
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import _select_one, insert_position
+
+    target = Position(
+        id="horizon-review-ack-target",
+        symbol="SOL/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="paper_internal",
+        expected_horizon_hours=10.0,
+    )
+    insert_position(target)
+    monkeypatch.setattr(
+        "aletheia.agent_shell.context.build_app_context",
+        lambda sections=None: {
+            "risk": {"max_open_positions_demo": 3, "kill_switch": False},
+        },
+    )
+
+    async def choose_hold(_system, _user, *, schema, **_kwargs):
+        return ({"action": "hold", "reasoning": "thesis remains valid"}, None)
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_hold)
+    result = await review_portfolio_state({
+        "trigger": "horizon_due",
+        "wake_batches": [{
+            "position_id": target.id,
+            "max_priority": 1,
+            "events": [{"kind": "horizon_due", "priority": 1, "payload": {}}],
+        }],
+    })
+
+    assert result["action"] == "hold"
+    assert result["review_completed"] is True
+    assert _select_one("positions", target.id)["horizon_wake_sent_at"] is not None
+    row = conn.execute(
+        "SELECT evidence_manifest_json FROM pi_decisions WHERE id=?",
+        (result["position_review_decision_id"],),
+    ).fetchone()
+    assert json.loads(row["evidence_manifest_json"])["position_review"]["effect"] == {}
+
+
+@pytest.mark.asyncio
+async def test_wake_for_already_closed_position_is_terminal_not_retried(
+    tmp_path, monkeypatch
+):
+    _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+
+    result = await review_portfolio_state({
+        "trigger": "horizon_due",
+        "wake_batches": [{
+            "position_id": "already-closed-position",
+            "max_priority": 1,
+            "events": [{"kind": "horizon_due", "priority": 1, "payload": {}}],
+        }],
+    })
+
+    assert result == {
+        "action": "none",
+        "reason": "wake_positions_not_open",
+        "review_completed": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -588,6 +668,7 @@ async def test_portfolio_review_stale_mark_leaves_position_and_close_facts_untou
 
     assert result["positions_closed"] == 0
     assert "protective_mark_unavailable" in result["close_error"]
+    assert result["review_completed"] is False
     assert _select_one("positions", target.id)["status"] == "open"
     assert conn.execute(
         "SELECT COUNT(*) FROM orders WHERE position_id=? AND close_reason IS NOT NULL",

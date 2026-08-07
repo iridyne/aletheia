@@ -842,8 +842,10 @@ def _maybe_wake_on_horizon(position: dict) -> bool:
     """When a position passes its Operator-authored expected_horizon, wake the Operator
     ONCE for a must-answer decision (close / extend) instead of auto-closing (D3).
 
-    Side-effecting (emits a WakeEvent + stamps horizon_wake_sent_at), so it lives in
-    the loop rather than the pure _decide_exit. Returns True if a wake was emitted.
+    Scheduling an in-memory WakeEvent is not durable completion.  The sent marker is
+    therefore written only by :func:`acknowledge_horizon_review` after the Operator
+    returns a completed hold/adjust/close result.  Until then every position-manager
+    scan may re-deliver the idempotently coalesced event, including after restart.
     The far backstop in _decide_exit still auto-closes if the Operator never responds.
     """
     horizon = position.get("expected_horizon_hours")
@@ -888,13 +890,28 @@ def _maybe_wake_on_horizon(position: dict) -> bool:
         logger.warning("horizon wake emit failed %s: %s", position.get("id"), e)
         return False
 
-    from aletheia.storage.repositories import update_position
-    update_position(position["id"], horizon_wake_sent_at=datetime.now(timezone.utc).isoformat())
     logger.info(
-        "horizon_due: %s age=%.1fh horizon=%.1fh — woke Operator (must-answer)",
+        "horizon_due: %s age=%.1fh horizon=%.1fh — scheduled Operator review",
         position.get("symbol"), age_hours, horizon,
     )
     return True
+
+
+def acknowledge_horizon_review(position_ids: list[str]) -> list[str]:
+    """Durably mark horizon wakes only after their portfolio review completed.
+
+    This marker is an acknowledgement, not a delivery receipt.  The caller filters
+    the supplied ids to HORIZON_DUE batches and invokes this only after a valid
+    hold/adjust result or a confirmed/durably claimed close.
+    """
+    from aletheia.storage.repositories import update_position
+
+    acknowledged: list[str] = []
+    acknowledged_at = datetime.now(timezone.utc).isoformat()
+    for position_id in dict.fromkeys(str(pid) for pid in position_ids if pid):
+        update_position(position_id, horizon_wake_sent_at=acknowledged_at)
+        acknowledged.append(position_id)
+    return acknowledged
 
 def evaluate_open_positions() -> dict:
     """Evaluate all open paper positions and manage triggered lifecycle rules.
