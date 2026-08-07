@@ -34,6 +34,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "connectivity_monitor",
     "portfolio_snapshot",
     "price_feed",
+    "position_manager",
     "ohlcv_nightly_backfill",
     "ohlcv_active_backfill",
     "exchange_sync",
