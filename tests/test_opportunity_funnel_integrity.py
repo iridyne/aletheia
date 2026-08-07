@@ -69,6 +69,29 @@ def _insert_pending(conn, decision_id: str, opportunity_id: str, created_at: str
     )
 
 
+def _insert_queue_eviction(
+    conn,
+    decision_id: str,
+    opportunity_id: str,
+    created_at: str,
+) -> None:
+    conn.execute(
+        "INSERT INTO pi_decisions "
+        "(id,created_at,symbol,direction,market_type,action,opportunity_id,signal_source) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            decision_id,
+            created_at,
+            "BTC/USDT",
+            "long",
+            "spot",
+            "signal_queue_evicted",
+            opportunity_id,
+            "market_observer",
+        ),
+    )
+
+
 def test_superseded_cascade_expires_only_unclaimed_generations_with_atomic_evidence(
     tmp_path, monkeypatch
 ):
@@ -304,6 +327,225 @@ def test_queued_market_carrier_without_valid_until_keeps_30_minute_legacy_fallba
     assert json.loads(fact["parameter_snapshot"])["expiry_basis"] == (
         "pending_created_at_legacy_fallback"
     )
+
+
+def test_requeued_generation_remains_visible_after_older_queue_eviction(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    _insert_opportunity(
+        conn,
+        "requeued-active",
+        status="queued",
+        valid_until=(now + timedelta(hours=1)).isoformat(),
+    )
+    conn.execute(
+        "UPDATE opportunities SET symbol='BTC/USDT' WHERE id='requeued-active'"
+    )
+    _insert_pending(
+        conn,
+        "pending-generation-1",
+        "requeued-active",
+        (now - timedelta(minutes=20)).isoformat(),
+    )
+    requeue_at = (now - timedelta(minutes=5)).isoformat()
+    _insert_queue_eviction(
+        conn,
+        "evicted-generation-1",
+        "requeued-active",
+        requeue_at,
+    )
+    _insert_pending(
+        conn,
+        "pending-generation-2",
+        "requeued-active",
+        requeue_at,
+    )
+    conn.commit()
+
+    from aletheia.storage import repositories as repo
+
+    assert repo.count_unresolved_signal_pending(max_age_minutes=30) == 1
+    assert repo.list_pending_signal_queue(max_age_minutes=30) == [
+        {
+            "opportunity_id": "requeued-active",
+            "symbol": "BTC/USDT",
+            "conviction": 0,
+        }
+    ]
+    current_carriers = repo.list_pending_pi_decisions_for_opportunity(
+        "requeued-active", "market_observer"
+    )
+    assert [row["id"] for row in current_carriers] == ["pending-generation-2"]
+    assert repo.find_pending_pi_decision_for_opportunity(
+        "requeued-active", "market_observer"
+    )["id"] == "pending-generation-2"
+    assert repo.find_final_pi_decision_for_opportunity(
+        "requeued-active", "market_observer"
+    ) is None
+    assert repo.classify_final_pi_decision_for_opportunity(
+        "requeued-active",
+        "market_observer",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+    )["status"] == "none"
+
+    from aletheia.agent_shell.trading_context import _build_pending_signal_queue
+
+    visible, queue = _build_pending_signal_queue(max_age_minutes=30)
+    assert [row["opportunity_id"] for row in visible] == ["requeued-active"]
+    assert queue["unresolved_total"] == 1
+
+    from types import SimpleNamespace
+
+    from aletheia.agent_shell.commands import _pending_carrier_authority_failure
+    from aletheia.agent_shell.reflection import _pending_claim_authority_failure
+
+    decision = SimpleNamespace(
+        opportunity_id="requeued-active",
+        signal_source="market_observer",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        filter_trace=[],
+    )
+    assert _pending_carrier_authority_failure(decision) is None
+    assert _pending_claim_authority_failure(decision) is None
+
+    from aletheia.agents.paper_trader import _active_signal_setups
+
+    assert ("BTC/USDT", "long", "momentum") in _active_signal_setups()
+
+
+def test_priority_eviction_sees_latest_requeued_generation(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    _insert_opportunity(
+        conn,
+        "requeued-weak",
+        status="queued",
+        valid_until=(now + timedelta(hours=1)).isoformat(),
+    )
+    conn.execute(
+        "UPDATE opportunities SET confidence_score=25 WHERE id='requeued-weak'"
+    )
+    _insert_pending(
+        conn,
+        "weak-generation-1",
+        "requeued-weak",
+        (now - timedelta(minutes=20)).isoformat(),
+    )
+    _insert_queue_eviction(
+        conn,
+        "evicted-weak-generation-1",
+        "requeued-weak",
+        (now - timedelta(minutes=10)).isoformat(),
+    )
+    _insert_pending(
+        conn,
+        "weak-generation-2",
+        "requeued-weak",
+        (now - timedelta(minutes=5)).isoformat(),
+    )
+    conn.commit()
+
+    from aletheia.agents.paper_trader import _evict_weakest_queue_occupants
+
+    assert _evict_weakest_queue_occupants(
+        [{"opportunity_id": "waiting-strong", "confidence_score": 80}],
+        max_age_minutes=30,
+    ) == 1
+    assert conn.execute(
+        "SELECT status FROM opportunities WHERE id='requeued-weak'"
+    ).fetchone()[0] == "reviewed"
+
+
+def test_expired_requeued_generation_ignores_older_queue_eviction(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    valid_until = (now - timedelta(seconds=1)).isoformat()
+    _insert_opportunity(
+        conn,
+        "requeued-expired",
+        status="queued",
+        valid_until=valid_until,
+    )
+    _insert_pending(
+        conn,
+        "expired-generation-1",
+        "requeued-expired",
+        (now - timedelta(minutes=20)).isoformat(),
+    )
+    _insert_queue_eviction(
+        conn,
+        "evicted-expired-generation-1",
+        "requeued-expired",
+        (now - timedelta(minutes=10)).isoformat(),
+    )
+    _insert_pending(
+        conn,
+        "expired-generation-2",
+        "requeued-expired",
+        (now - timedelta(minutes=5)).isoformat(),
+    )
+    conn.commit()
+
+    from aletheia.storage import repositories as repo
+
+    assert repo.expire_stale_queued_opportunities(max_age_minutes=30) == 1
+    assert conn.execute(
+        "SELECT status FROM opportunities WHERE id='requeued-expired'"
+    ).fetchone()[0] == "expired"
+    parameters = json.loads(
+        conn.execute(
+            "SELECT parameter_snapshot FROM filter_decisions "
+            "WHERE opportunity_id='requeued-expired' "
+            "AND filter_name='opportunity_ttl'"
+        ).fetchone()[0]
+    )
+    assert parameters["expiry_basis"] == "valid_until"
+    assert parameters["valid_until"] == valid_until
+
+
+def test_requeued_legacy_generation_uses_latest_pending_age(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    _insert_opportunity(conn, "requeued-legacy", status="queued")
+    _insert_pending(
+        conn,
+        "legacy-generation-1",
+        "requeued-legacy",
+        (now - timedelta(minutes=40)).isoformat(),
+    )
+    _insert_queue_eviction(
+        conn,
+        "evicted-legacy-generation-1",
+        "requeued-legacy",
+        (now - timedelta(minutes=20)).isoformat(),
+    )
+    _insert_pending(
+        conn,
+        "legacy-generation-2",
+        "requeued-legacy",
+        (now - timedelta(minutes=5)).isoformat(),
+    )
+    conn.commit()
+
+    from aletheia.storage import repositories as repo
+
+    assert repo.count_unresolved_signal_pending(max_age_minutes=30) == 1
+    assert repo.expire_stale_queued_opportunities(max_age_minutes=30) == 0
+    assert conn.execute(
+        "SELECT status FROM opportunities WHERE id='requeued-legacy'"
+    ).fetchone()[0] == "queued"
 
 
 def test_active_queued_setup_blocks_duplicate_signal_after_cooldown_window(

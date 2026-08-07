@@ -164,10 +164,28 @@ def _diagnose(
              AND julianday(pending.created_at) >= julianday(?)
              AND julianday(pending.created_at) <= julianday(?)
              AND source.status='queued'
+             AND pending.rowid=(
+                 SELECT newer.rowid FROM pi_decisions newer
+                 WHERE newer.opportunity_id=pending.opportunity_id
+                   AND COALESCE(newer.signal_source, 'market_observer')=
+                       COALESCE(pending.signal_source, 'market_observer')
+                   AND newer.action='signal_pending'
+                 ORDER BY julianday(newer.created_at) DESC, newer.rowid DESC
+                 LIMIT 1
+             )
              AND NOT EXISTS (
                  SELECT 1 FROM pi_decisions final
                  WHERE final.opportunity_id=pending.opportunity_id
                    AND final.action IN ('skip', 'watch', 'trade')
+                   AND COALESCE(final.signal_source, 'market_observer')=
+                       COALESCE(pending.signal_source, 'market_observer')
+                   AND (
+                       julianday(final.created_at)>julianday(pending.created_at)
+                       OR (
+                           julianday(final.created_at)=julianday(pending.created_at)
+                           AND final.rowid>pending.rowid
+                       )
+                   )
              )""",
         (recent_start_iso, observed_end_iso),
     ).fetchone()[0] or 0)

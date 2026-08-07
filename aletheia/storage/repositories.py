@@ -709,23 +709,49 @@ def find_final_pi_decision_for_opportunity(
 
     ``action`` narrows idempotency to a position-management intent.  An entry
     decision and a later close/reduce legitimately share one Opportunity, so
-    the historical entry must not swallow the management claim.
+    the historical entry must not swallow the management claim. Without an
+    explicit action, only terminal entry actions in the current carrier
+    generation qualify; an older eviction or final cannot consume a requeue.
     """
     if not opportunity_id:
         return None
-    action_clause = "AND action=?" if action else "AND action != 'signal_pending'"
-    params: tuple[str, ...] = (
-        (opportunity_id, signal_source or "market_observer", action)
-        if action
-        else (opportunity_id, signal_source or "market_observer")
-    )
+    if action:
+        action_clause = "AND final.action=?"
+        generation_clause = ""
+        params: tuple[str, ...] = (
+            opportunity_id,
+            signal_source or "market_observer",
+            action,
+        )
+    else:
+        action_clause = (
+            "AND final.action NOT IN ("
+            "'signal_pending', 'signal_queue_evicted', 'close', 'reduce')"
+        )
+        generation_clause = (
+            "AND NOT EXISTS ("
+            " SELECT 1 FROM pi_decisions pending "
+            " WHERE pending.opportunity_id=final.opportunity_id "
+            " AND COALESCE(pending.signal_source, 'market_observer')="
+            "     COALESCE(final.signal_source, 'market_observer') "
+            " AND pending.action='signal_pending' "
+            " AND (julianday(pending.created_at)>julianday(final.created_at) "
+            "      OR (julianday(pending.created_at)=julianday(final.created_at) "
+            "          AND pending.rowid>final.rowid))"
+            ") "
+        )
+        params = (
+            opportunity_id,
+            signal_source or "market_observer",
+        )
     row = (
         get_db()
         .execute(
-            "SELECT * FROM pi_decisions WHERE opportunity_id=? "
-            "AND COALESCE(signal_source, 'market_observer')=? "
+            "SELECT final.* FROM pi_decisions final WHERE final.opportunity_id=? "
+            "AND COALESCE(final.signal_source, 'market_observer')=? "
             f"{action_clause} "
-            "ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 1",
+            f"{generation_clause}"
+            "ORDER BY julianday(final.created_at) ASC, final.rowid ASC LIMIT 1",
             params,
         )
         .fetchone()
@@ -742,21 +768,42 @@ def classify_final_pi_decision_for_opportunity(
     market_type: str,
     action: str | None = None,
 ) -> dict:
-    """Classify one source's final rows without letting ambiguity consume it."""
+    """Classify current-generation final rows without letting ambiguity consume it."""
     if not opportunity_id:
         return {"status": "none", "decision": None}
     if action:
-        action_clause = "AND action=?"
+        action_clause = "AND final.action=?"
+        generation_clause = ""
         params = (opportunity_id, signal_source or "market_observer", action)
     else:
-        action_clause = "AND action NOT IN ('signal_pending', 'close', 'reduce')"
-        params = (opportunity_id, signal_source or "market_observer")
+        action_clause = (
+            "AND final.action NOT IN ("
+            "'signal_pending', 'signal_queue_evicted', 'close', 'reduce')"
+        )
+        generation_clause = (
+            "AND NOT EXISTS ("
+            " SELECT 1 FROM pi_decisions pending "
+            " WHERE pending.opportunity_id=final.opportunity_id "
+            " AND COALESCE(pending.signal_source, 'market_observer')="
+            "     COALESCE(final.signal_source, 'market_observer') "
+            " AND pending.action='signal_pending' "
+            " AND (julianday(pending.created_at)>julianday(final.created_at) "
+            "      OR (julianday(pending.created_at)=julianday(final.created_at) "
+            "          AND pending.rowid>final.rowid))"
+            ") "
+        )
+        params = (
+            opportunity_id,
+            signal_source or "market_observer",
+        )
     rows = (
         get_db()
         .execute(
-            "SELECT * FROM pi_decisions WHERE opportunity_id=? "
-            "AND COALESCE(signal_source, 'market_observer')=? "
-            f"{action_clause} ORDER BY datetime(created_at) ASC, rowid ASC",
+            "SELECT final.* FROM pi_decisions final WHERE final.opportunity_id=? "
+            "AND COALESCE(final.signal_source, 'market_observer')=? "
+            f"{action_clause} "
+            f"{generation_clause}"
+            "ORDER BY julianday(final.created_at) ASC, final.rowid ASC",
             params,
         )
         .fetchall()
@@ -804,16 +851,33 @@ def list_pending_pi_decisions_for_opportunity(
     opportunity_id: str,
     signal_source: str = "market_observer",
 ) -> list[dict]:
-    """Return every pending carrier for one exact source identity, oldest first."""
+    """Return pending carriers in the current source generation, oldest first.
+
+    A queue eviction closes only carriers ordered before it. A later
+    ``signal_pending`` starts a new generation, while duplicate carriers inside
+    that generation remain visible so execution can fail closed on ambiguity.
+    Entry finals stay visible to integrity/recovery checks; their validity is
+    classified separately and must never erase a malformed or ambiguous claim.
+    """
     if not opportunity_id:
         return []
     rows = (
         get_db()
         .execute(
-            "SELECT * FROM pi_decisions WHERE opportunity_id=? "
-            "AND action='signal_pending' "
-            "AND COALESCE(signal_source, 'market_observer')=? "
-            "ORDER BY datetime(created_at) ASC, rowid ASC",
+            "SELECT pending.* FROM pi_decisions pending "
+            "WHERE pending.opportunity_id=? "
+            "AND pending.action='signal_pending' "
+            "AND COALESCE(pending.signal_source, 'market_observer')=? "
+            "AND NOT EXISTS ("
+            " SELECT 1 FROM pi_decisions boundary "
+            " WHERE boundary.opportunity_id=pending.opportunity_id "
+            " AND COALESCE(boundary.signal_source, 'market_observer')="
+            "     COALESCE(pending.signal_source, 'market_observer') "
+            " AND boundary.action='signal_queue_evicted' "
+            " AND (julianday(boundary.created_at)>julianday(pending.created_at) "
+            "      OR (julianday(boundary.created_at)=julianday(pending.created_at) "
+            "          AND boundary.rowid>pending.rowid))"
+            ") ORDER BY julianday(pending.created_at) ASC, pending.rowid ASC",
             (opportunity_id, signal_source or "market_observer"),
         )
         .fetchall()
@@ -848,13 +912,24 @@ def count_unresolved_signal_pending(max_age_minutes: int = 30) -> int:
             "      AND datetime(source.valid_until)>datetime('now')) "
             " OR (datetime(source.valid_until) IS NULL "
             "      AND datetime(pending.created_at)>=datetime(?))) "
+            "AND pending.rowid=("
+            " SELECT newer.rowid FROM pi_decisions newer "
+            " WHERE newer.opportunity_id=pending.opportunity_id "
+            " AND COALESCE(newer.signal_source, 'market_observer')="
+            "     COALESCE(pending.signal_source, 'market_observer') "
+            " AND newer.action='signal_pending' "
+            " ORDER BY julianday(newer.created_at) DESC, newer.rowid DESC LIMIT 1"
+            ") "
             "AND NOT EXISTS ("
             " SELECT 1 FROM pi_decisions final "
             " WHERE final.opportunity_id=pending.opportunity_id "
             " AND COALESCE(final.signal_source, 'market_observer')="
             "     COALESCE(pending.signal_source, 'market_observer') "
             " AND final.action!='signal_pending' "
-            " AND COALESCE(final.proposal_status, '')!='submitting'"
+            " AND COALESCE(final.proposal_status, '')!='submitting' "
+            " AND (julianday(final.created_at)>julianday(pending.created_at) "
+            "      OR (julianday(final.created_at)=julianday(pending.created_at) "
+            "          AND final.rowid>pending.rowid))"
             ") "
             "AND NOT EXISTS ("
             " SELECT 1 FROM operator_evaluation_events e "
@@ -892,13 +967,24 @@ def list_pending_signal_queue(max_age_minutes: int = 30) -> list[dict]:
             "      AND datetime(source.valid_until)>datetime('now')) "
             " OR (datetime(source.valid_until) IS NULL "
             "      AND datetime(pending.created_at)>=datetime(?))) "
+            "AND pending.rowid=("
+            " SELECT newer.rowid FROM pi_decisions newer "
+            " WHERE newer.opportunity_id=pending.opportunity_id "
+            " AND COALESCE(newer.signal_source, 'market_observer')="
+            "     COALESCE(pending.signal_source, 'market_observer') "
+            " AND newer.action='signal_pending' "
+            " ORDER BY julianday(newer.created_at) DESC, newer.rowid DESC LIMIT 1"
+            ") "
             "AND NOT EXISTS ("
             " SELECT 1 FROM pi_decisions final "
             " WHERE final.opportunity_id=pending.opportunity_id "
             " AND COALESCE(final.signal_source, 'market_observer')="
             "     COALESCE(pending.signal_source, 'market_observer') "
             " AND final.action!='signal_pending' "
-            " AND COALESCE(final.proposal_status, '')!='submitting'"
+            " AND COALESCE(final.proposal_status, '')!='submitting' "
+            " AND (julianday(final.created_at)>julianday(pending.created_at) "
+            "      OR (julianday(final.created_at)=julianday(pending.created_at) "
+            "          AND final.rowid>pending.rowid))"
             ") "
             "AND NOT EXISTS ("
             " SELECT 1 FROM operator_evaluation_events e "
@@ -1197,33 +1283,31 @@ def expire_stale_queued_opportunities(max_age_minutes: int = 30) -> int:
         rows = (
             get_db()
             .execute(
-                "SELECT opportunities.*, ("
-                "  SELECT MIN(p.created_at) FROM pi_decisions p "
-                "  WHERE p.action='signal_pending' "
-                "    AND p.opportunity_id=opportunities.id "
-                "    AND COALESCE(p.signal_source, 'market_observer')='market_observer'"
-                ") AS pending_created_at FROM opportunities WHERE status='queued' "
-                "AND EXISTS ("
-                "  SELECT 1 FROM pi_decisions p "
-                "  WHERE p.action='signal_pending' "
-                "    AND p.opportunity_id=opportunities.id "
-                "    AND COALESCE(p.signal_source, 'market_observer')='market_observer' "
+                "SELECT opportunities.*, pending.created_at AS pending_created_at "
+                "FROM opportunities JOIN pi_decisions pending "
+                "ON pending.opportunity_id=opportunities.id "
+                "AND pending.action='signal_pending' "
+                "AND COALESCE(pending.signal_source, 'market_observer')='market_observer' "
+                "WHERE opportunities.status='queued' "
+                "AND pending.rowid=("
+                "  SELECT newer.rowid FROM pi_decisions newer "
+                "  WHERE newer.action='signal_pending' "
+                "    AND newer.opportunity_id=opportunities.id "
+                "    AND COALESCE(newer.signal_source, 'market_observer')='market_observer' "
+                "  ORDER BY julianday(newer.created_at) DESC, newer.rowid DESC LIMIT 1"
                 ") AND NOT EXISTS ("
                 "  SELECT 1 FROM pi_decisions f "
                 "  WHERE f.action!='signal_pending' "
                 "    AND f.opportunity_id=opportunities.id "
-                "    AND COALESCE(f.signal_source, 'market_observer')='market_observer'"
+                "    AND COALESCE(f.signal_source, 'market_observer')='market_observer' "
+                "    AND (julianday(f.created_at)>julianday(pending.created_at) "
+                "         OR (julianday(f.created_at)=julianday(pending.created_at) "
+                "             AND f.rowid>pending.rowid))"
                 ") AND ("
-                "  (datetime(valid_until) IS NOT NULL "
-                "   AND datetime(valid_until)<=datetime(?)) "
-                "  OR (datetime(valid_until) IS NULL AND EXISTS ("
-                "    SELECT 1 FROM pi_decisions legacy "
-                "    WHERE legacy.action='signal_pending' "
-                "      AND legacy.opportunity_id=opportunities.id "
-                "      AND COALESCE(legacy.signal_source, 'market_observer')="
-                "          'market_observer' "
-                "      AND datetime(legacy.created_at)<datetime(?)"
-                "  ))"
+                "  (datetime(opportunities.valid_until) IS NOT NULL "
+                "   AND datetime(opportunities.valid_until)<=datetime(?)) "
+                "  OR (datetime(opportunities.valid_until) IS NULL "
+                "      AND datetime(pending.created_at)<datetime(?))"
                 ")",
                 (now.isoformat(), cutoff),
             )

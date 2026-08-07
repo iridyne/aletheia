@@ -137,6 +137,45 @@ def test_pending_count_only_includes_queued_unresolved_work(tmp_path, monkeypatc
     assert report.finding == "not_applicable"
 
 
+def test_pending_count_uses_only_latest_requeued_generation(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+
+    now = datetime.now(timezone.utc)
+    opportunity = Opportunity(
+        id="requeued-pending",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        status="queued",
+    )
+    insert_opportunity(opportunity)
+    for decision_id, action, created_at in (
+        ("pending-generation-1", "signal_pending", now - timedelta(minutes=20)),
+        ("evicted-generation-1", "signal_queue_evicted", now - timedelta(minutes=10)),
+        ("pending-generation-2", "signal_pending", now - timedelta(minutes=5)),
+    ):
+        insert_pi_decision(
+            PiDecision(
+                id=decision_id,
+                action=action,
+                symbol=opportunity.symbol,
+                direction="long",
+                market_type="spot",
+                opportunity_id=opportunity.id,
+                signal_source="market_observer",
+                created_at=created_at.isoformat(),
+            )
+        )
+
+    report = diagnose_skip_halt(now=now)
+
+    assert report.counts["pending_signals"] == 1
+    assert report.finding == "not_applicable"
+
+
 def test_missing_trace_or_four_horizon_seed_is_recording_incident(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
