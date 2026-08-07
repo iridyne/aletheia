@@ -6,7 +6,7 @@
 >
 > **权威实现**: `aletheia/files/jsonl.py`（文件链）、`aletheia/storage/repositories.py:_compute_proposal_hash`（行链）
 >
-> **最后更新**: 2026-07-31
+> **最后更新**: 2026-08-07
 
 ---
 
@@ -215,6 +215,7 @@ Durable lifecycle retry 遇到无终止换行的尾部时也遵守该约束：�
 | Agent Shell 命令执行（含拒绝） | `agent_shell_command` | `agent_shell/audit.py:37-44` |
 | 外部持仓认领（reconciler） | `position_adopted` | `portfolio/position_reconciler.py:361-382`；`after_state` 含 `commit_hash` + `parent_hash`（链入 §6.4 提案 hash chain，TaG P1-2） |
 | Learning lifecycle transition | `learning_lifecycle_transition` | `learning/lifecycle.py`；SQLite lifecycle event/state 先原子提交，JSONL mirror 使用 stable event id 幂等补写 |
+| 历史 filled Order 链恢复结果 | `order_reconciled` / `order_reconciliation_inconclusive` | `execution/reconciliation.py:_write_filled_gap_event`；同一 Order、结果类型和 reason 使用 stable event id，SQLite 与 JSONL 各自幂等收敛（§6.3b） |
 
 `FORBIDDEN_INTENTS` 集合中的意图（`agent_shell/registry.py:415-426`）在 `agent_shell/commands.py:167` 被拦截；被拦截时同路径写 `agent_shell_command` 审计记录，`message` 前缀为 `"DENIED"`。
 
@@ -231,6 +232,20 @@ JSONL 使用 `learning-lifecycle:<event_id>` 作为 stable `id`。`write_audit(.
 `audit_failure_reason=jsonl_append_failed`，并把 `learning_lifecycle_audit_reconciler` health 标为
 `degraded`。essential reconciler 每 5 分钟有界重试最多 100 条，不重放 transition。全部清空后
 当前 health 可恢复为 `healthy`，但 durable last-failure identity 保留。
+
+### §6.3b Historical filled-gap reconciliation audit identity
+
+历史 `filled` Order 的 Fill/Position 链恢复会被 scheduler 周期性重试。该重试只允许对同一
+观察事实留下一个结构化事件和一个文件事件，不能把轮询次数伪装成新的业务事实。
+
+`_write_filled_gap_event()` 以 canonical JSON 中的 `entity_id`、`event_type` 和 `reason`
+计算 stable `id`：`filled-gap:<sha256-prefix>`。SQLite 使用该主键执行
+`ON CONFLICT(id) DO NOTHING`；JSONL mirror 使用相同 `id` 调用
+`write_audit(..., mirror_db=False, dedup_id=...)`，在文件锁内跨活跃文件和轮转文件去重。
+
+两个 sink 独立 best-effort 收敛：任一 sink 暂时失败时，下一轮可补齐缺失记录，已经成功的
+sink 不会产生重复记录。Order、结果类型或 reason 改变代表不同观察事实，必须生成新 id；
+该规则不改变 Order 状态机、交易所查询、Risk approval 或 Execution Gateway 行为。
 
 ### §6.4 提案级 hash chain（TaG P0-1，2026-06-29）
 
