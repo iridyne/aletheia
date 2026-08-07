@@ -37,9 +37,16 @@ def _status_payload() -> dict:
 
 
 def _set_paused(paused: bool) -> None:
-    cfg = load_config()
-    cfg.runtime.paused = paused
-    save_config(cfg)
+    if not paused:
+        return
+    from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, acquire_pause
+
+    acquire_pause(
+        MANUAL_OWNER,
+        reason="operator_cli_pause",
+        actor="human",
+        source="cli",
+    )
 
 
 def _resume_or_exit(cause: str) -> None:

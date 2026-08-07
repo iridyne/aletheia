@@ -355,6 +355,10 @@ async def test_pause_resume(client, monkeypatch):
 
     resp = await client.get("/api/status")
     assert resp.json()["paused"] is True
+    owners = resp.json()["pause_owners"]
+    assert [owner["owner"] for owner in owners] == ["manual"]
+    assert owners[0]["generation"]
+    assert owners[0]["acquired_at"]
 
     resp = await client.post("/api/gateway/resume")
     assert resp.status_code == 200

@@ -254,6 +254,8 @@ def stability():
 @router.get("/status")
 def status():
     cfg = load_config()
+    from aletheia.agent_runtime.pause_ownership import active_pause_owners
+
     paper_execution_mode = cfg.exchange.paper_execution_mode
     uses_external_exchange = paper_execution_mode != "paper_internal"
     from aletheia.config.exchange_alignment import exchange_alignment
@@ -303,6 +305,7 @@ def status():
     return {
         "gateway_running": True,  # if we can respond, we are running
         "paused": cfg.runtime.paused,
+        "pause_owners": active_pause_owners(cfg),
         "exchange": cfg.exchange.name,
         "exchange_mode": cfg.exchange.mode,
         "paper_execution_mode": paper_execution_mode,
@@ -334,14 +337,14 @@ def status():
 
 @router.post("/gateway/pause")
 def pause():
-    cfg = load_config()
-    cfg.runtime.paused = True
-    save_config(cfg)
-    try:
-        from aletheia.agent_runtime.scheduler import pause_scheduler
-        pause_scheduler()
-    except Exception:
-        pass
+    from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, acquire_pause
+
+    acquire_pause(
+        MANUAL_OWNER,
+        reason="dashboard_pause",
+        actor="human",
+        source="dashboard",
+    )
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "gateway_paused",
                  "message": "Gateway paused"})

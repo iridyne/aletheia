@@ -873,6 +873,33 @@ def test_kill_switch_active_is_a_blocker(monkeypatch):
     assert ks and ks[0].severity == "blocker"
 
 
+def test_paused_config_reports_each_active_owner(monkeypatch):
+    """Doctor explains why recovery remains blocked instead of a bare boolean."""
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+
+    cfg = AletheiaConfig()
+    cfg.runtime.acquire_pause(
+        "exchange_connectivity",
+        reason="exchange_unreachable",
+        generation="outage-1",
+    )
+    cfg.runtime.acquire_pause(
+        "startup_behavior_gate",
+        reason="startup_behavior_checks_blocked",
+        generation="startup-1",
+    )
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+
+    report = dx.Report(generated_at="t")
+    dx._probe_config_gates(report)
+
+    paused = next(c for c in report.checks if c.name == "config.paused")
+    assert paused.severity == "warn"
+    assert "exchange_connectivity (exchange_unreachable)" in paused.detail
+    assert "startup_behavior_gate (startup_behavior_checks_blocked)" in paused.detail
+
+
 def test_zero_demo_notional_cap_is_a_blocker(monkeypatch):
     """A zero cap rejects every paper/demo proposal and must not look healthy."""
     import aletheia.config.loader as loader

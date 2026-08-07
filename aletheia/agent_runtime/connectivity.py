@@ -348,7 +348,7 @@ async def run_connectivity_check() -> dict:
     )
 
     threshold = cfg.health.exchange_probe_failure_threshold
-    if _consecutive_failures >= threshold and not cfg.runtime.paused:
+    if _consecutive_failures >= threshold and not cfg.runtime.paused_by_connectivity:
         await _pause_for_network(cfg, result)
         return {**result, "action": "paused"}
 
@@ -359,8 +359,10 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
     """Pause the trading loop due to exchange unreachable. Start auto-resume."""
     global _active_resume_task
 
-    from aletheia.agent_runtime.scheduler import pause_scheduler
-    from aletheia.config.loader import save_config
+    from aletheia.agent_runtime.pause_ownership import (
+        CONNECTIVITY_OWNER,
+        acquire_pause,
+    )
     from aletheia.infra.events import emit_infra_event
     from aletheia.files.jsonl import write_audit
 
@@ -371,12 +373,15 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
 
     pause_generation = uuid4().hex
     pause_acquired_at = datetime.now(timezone.utc).isoformat()
-    pause_scheduler()
-    cfg.runtime.paused = True
-    cfg.runtime.paused_by_connectivity = True
-    cfg.runtime.connectivity_pause_generation = pause_generation
-    cfg.runtime.connectivity_pause_acquired_at = pause_acquired_at
-    save_config(cfg)
+    lease = acquire_pause(
+        CONNECTIVITY_OWNER,
+        reason=f"{cfg.exchange.name}_unreachable",
+        generation=pause_generation,
+        acquired_at=pause_acquired_at,
+        source="connectivity_monitor",
+    )
+    pause_generation = lease.generation
+    pause_acquired_at = lease.acquired_at
 
     emit_infra_event(
         severity="critical",
@@ -578,8 +583,10 @@ async def _resume_from_network(
         logger.warning("exchange reachable again but required LLM probe failed — staying paused")
         return True
 
-    from aletheia.agent_runtime.scheduler import resume_scheduler
-    from aletheia.config.loader import save_config
+    from aletheia.agent_runtime.pause_ownership import (
+        CONNECTIVITY_OWNER,
+        release_pause,
+    )
     from aletheia.infra.events import emit_infra_event
     from aletheia.files.jsonl import write_audit
 
@@ -595,12 +602,59 @@ async def _resume_from_network(
     if _exchange_failure_generation != recovery_failure_generation:
         logger.info("exchange_auto_resume: newer exchange failure observed — staying paused")
         return False
-    cfg.runtime.paused = False
-    cfg.runtime.paused_by_connectivity = False
-    cfg.runtime.connectivity_pause_generation = None
-    cfg.runtime.connectivity_pause_acquired_at = None
-    save_config(cfg)
-    resume_scheduler()
+    release = release_pause(
+        CONNECTIVITY_OWNER,
+        generation=pause_generation,
+        resume_when_clear=True,
+        source="connectivity_monitor",
+    )
+    if not release.released:
+        if release.resume_failed:
+            logger.warning(
+                "exchange_auto_resume: scheduler resume failed — retaining owner and retrying"
+            )
+            return False
+        logger.info("exchange_auto_resume: connectivity owner changed before release")
+        return True
+
+    if release.remaining_owners:
+        remaining = ", ".join(release.remaining_owners)
+        emit_infra_event(
+            severity="info",
+            source="connectivity_monitor",
+            code="exchange_connectivity_restored_paused",
+            message=(
+                f"Exchange {cfg.exchange.name} reachable again — trading remains paused "
+                f"by {remaining}"
+            ),
+            entity_id=cfg.exchange.name,
+        )
+        write_audit(
+            {
+                "actor": "system",
+                "source": "connectivity_monitor",
+                "event_type": "exchange_connectivity_restored_paused",
+                "entity_type": "gateway",
+                "entity_id": "gateway",
+                "message": (
+                    f"Connectivity restored; trading remains paused by {remaining}"
+                ),
+                "before": {
+                    "paused": True,
+                    "pause_owner": CONNECTIVITY_OWNER,
+                    "pause_generation": pause_generation,
+                },
+                "after": {
+                    "paused": True,
+                    "remaining_pause_owners": list(release.remaining_owners),
+                },
+            }
+        )
+        logger.info(
+            "exchange_auto_resume: connectivity restored — trading remains paused by %s",
+            remaining,
+        )
+        return True
 
     emit_infra_event(
         severity="info",
@@ -619,7 +673,7 @@ async def _resume_from_network(
             "message": f"Resumed: {cfg.exchange.name} connectivity restored",
             "before": {
                 "paused": True,
-                "pause_owner": "connectivity",
+                "pause_owner": CONNECTIVITY_OWNER,
                 "pause_generation": pause_generation,
             },
             "after": {

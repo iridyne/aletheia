@@ -703,7 +703,14 @@ def _probe_config_gates(report: Report) -> None:
         report.add("config.kill_switch", "ok", "kill_switch inactive")
 
     if cfg.runtime.paused:
-        report.add("config.paused", "warn", "runtime.paused=True — autonomous jobs suspended",
+        from aletheia.agent_runtime.pause_ownership import active_pause_owners
+
+        owners = active_pause_owners(cfg)
+        owner_text = ", ".join(
+            f"{row['owner']} ({row['reason']})" for row in owners
+        ) or "unknown"
+        report.add("config.paused", "warn",
+                   f"runtime.paused=True — owners: {owner_text}; autonomous jobs suspended",
                    "`aletheia gateway resume`")
 
 
