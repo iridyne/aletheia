@@ -388,6 +388,57 @@ def test_shared_async_timeout_worker_allows_news_and_rss_coroutines_to_progress(
         worker.close()
 
 
+@pytest.mark.asyncio
+async def test_news_fetch_reopens_connection_after_network_await(tmp_path, monkeypatch):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.data import news_collector
+    from aletheia.learning import opportunity_information_policy
+    from aletheia.storage.sqlite import close_db, get_db
+
+    feed_started = threading.Event()
+    release_feed = threading.Event()
+
+    def delayed_feed(_url):
+        feed_started.set()
+        assert release_feed.wait(timeout=2)
+        return [
+            {
+                "id": "one",
+                "title": "Bitcoin update",
+                "link": "https://example.test/one",
+            }
+        ]
+
+    feed = SimpleNamespace(
+        enabled=True,
+        url="https://example.test/rss",
+        name="test",
+        source="test",
+    )
+    cfg = SimpleNamespace(news=SimpleNamespace(enabled=True, feeds=[feed]))
+    monkeypatch.setattr(news_collector, "load_config", lambda: cfg)
+    monkeypatch.setattr(news_collector, "_fetch_feed_sync", delayed_feed)
+    monkeypatch.setattr(
+        opportunity_information_policy,
+        "ensure_opportunity_information_policy_epoch",
+        lambda: None,
+    )
+
+    async def close_shared_thread_connection():
+        while not feed_started.is_set():
+            await asyncio.sleep(0)
+        get_db()
+        close_db()
+        release_feed.set()
+
+    result, _ = await asyncio.gather(
+        news_collector.fetch_news_feeds(),
+        close_shared_thread_connection(),
+    )
+
+    assert result == {"fetched": 1, "new": 1}
+
+
 def test_sync_blocked_analyzer_does_not_block_rss_timeout_lane(monkeypatch):
     from aletheia.agent_runtime import scheduler
 
