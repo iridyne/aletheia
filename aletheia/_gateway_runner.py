@@ -16,6 +16,7 @@ import logging
 import os
 import platform
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -779,15 +780,26 @@ def _emit_sd_notify() -> None:
 
     No-op when:
     - NOTIFY_SOCKET is not set (not under systemd supervision)
-    - sdnotify package is not installed (optional dependency)
     - Any other error (always best-effort)
+
+    The systemd datagram protocol is small enough to implement directly.  Keeping
+    this on the Python standard library is important: the generated Linux unit is
+    unconditionally ``Type=notify``, so making readiness depend on an undeclared
+    optional package leaves a healthy Gateway stuck in ``activating`` until
+    systemd kills it at ``TimeoutStartSec``.
     """
-    if not os.environ.get("NOTIFY_SOCKET"):
+    address = os.environ.get("NOTIFY_SOCKET")
+    if not address:
         return
+    # systemd represents Linux abstract-namespace sockets with a leading ``@``;
+    # Python's AF_UNIX API expects the leading NUL byte instead.
+    if address.startswith("@"):
+        address = "\0" + address[1:]
     try:
-        import sdnotify  # optional dependency: sdnotify>=0.3.2
-        sdnotify.SystemdNotifier().notify("READY=1")
-    except Exception:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notifier:
+            notifier.connect(address)
+            notifier.sendall(b"READY=1")
+    except (OSError, ValueError):
         pass
 
 

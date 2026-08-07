@@ -13,6 +13,24 @@ from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 
 
+class _FakeNotifySocket:
+    def __init__(self):
+        self.address = None
+        self.payload = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def connect(self, address):
+        self.address = address
+
+    def sendall(self, payload):
+        self.payload = payload
+
+
 def setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
@@ -25,6 +43,42 @@ def setup_env(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
+
+
+def test_sd_notify_uses_standard_library_for_abstract_systemd_socket(monkeypatch):
+    from aletheia import _gateway_runner as runner
+
+    notifier = _FakeNotifySocket()
+    socket_args = {}
+
+    def fake_socket(family, kind):
+        socket_args.update(family=family, kind=kind)
+        return notifier
+
+    monkeypatch.setenv("NOTIFY_SOCKET", "@aletheia-ready")
+    monkeypatch.setattr(runner.socket, "socket", fake_socket)
+
+    runner._emit_sd_notify()
+
+    assert socket_args == {
+        "family": runner.socket.AF_UNIX,
+        "kind": runner.socket.SOCK_DGRAM,
+    }
+    assert notifier.address == "\0aletheia-ready"
+    assert notifier.payload == b"READY=1"
+
+
+def test_sd_notify_without_systemd_environment_is_a_noop(monkeypatch):
+    from aletheia import _gateway_runner as runner
+
+    monkeypatch.delenv("NOTIFY_SOCKET", raising=False)
+    monkeypatch.setattr(
+        runner.socket,
+        "socket",
+        lambda *_args: pytest.fail("socket must not be opened without NOTIFY_SOCKET"),
+    )
+
+    runner._emit_sd_notify()
 
 
 def test_supervisor_respawns_on_crash_then_gives_up(tmp_path, monkeypatch):
