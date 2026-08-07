@@ -1446,6 +1446,7 @@ async def _analyze_symbol(
         context_artifacts=context_artifacts,
         context_symbol=symbol,
         deadline=llm_deadline,
+        reasoning_effort="none",
     )
     _llm_duration = _time.monotonic() - _t0
     _step_times["llm_structured"] = _llm_duration

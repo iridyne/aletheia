@@ -72,7 +72,10 @@ async def test_observer_writes_structured_direction(tmp_path, monkeypatch):
     save_config(cfg)
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
 
+    structured_kwargs = {}
+
     async def fake_structured(system, user, *, schema, max_tokens=400, **kw):
+        structured_kwargs.update(kw)
         return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
 
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
@@ -83,6 +86,7 @@ async def test_observer_writes_structured_direction(tmp_path, monkeypatch):
     assert opps[0]["direction_bias"] == "long"
     assert opps[0]["confidence"] == "high"
     assert opps[0]["symbol"] == "BTC/USDT"  # stored in canonical format
+    assert structured_kwargs["reasoning_effort"] == "none"
 
 
 async def test_observer_skips_opportunity_on_llm_failure(tmp_path, monkeypatch):

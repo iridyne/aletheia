@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 import threading
 from contextvars import ContextVar
+from typing import Literal
 
 from aletheia.model_provider.base import ModelRequest, StreamChunk
 from aletheia.model_provider.base import model_json_schema_payload
@@ -573,6 +574,7 @@ async def llm_structured(
     context_symbol: str | None = None,
     evaluation: dict[str, object] | None = None,
     deadline: float | None = None,
+    reasoning_effort: Literal["none", "low", "medium", "high"] | None = None,
 ) -> tuple[dict | None, str | None]:
     """Call the provider's structured() and return (parsed_dict, error).
 
@@ -588,6 +590,8 @@ async def llm_structured(
         global _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC ceiling so that callers
         can enforce a tighter per-symbol or per-task budget without changing
         the global default.
+    reasoning_effort: optional OpenAI-compatible request control.  Defaults to
+        None so existing providers and callers keep their exact request shape.
     """
     # #161 fix (mirrors llm_complete): thread the tier's provider name into
     # complete_with_fallback so its fallback/health/cooldown keying matches the
@@ -729,6 +733,7 @@ async def llm_structured(
                             system=structured_system,
                             temperature=0.3 if attempt == 0 else 0.0,
                             max_tokens=attempt_max_tokens,
+                            reasoning_effort=reasoning_effort,
                             inference=inference_call,
                             allow_model_fallback=allow_model_fallback,
                         ),
