@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from unittest.mock import patch
@@ -108,6 +109,46 @@ async def test_schema_invalid_object_never_becomes_success():
         "attempt_count": 3,
         "error_type": "structured_schema_invalid",
     }
+
+
+@pytest.mark.asyncio
+async def test_external_cancellation_finalizes_structured_logical_call_and_propagates():
+    from aletheia.agents import helpers
+
+    entered_provider = asyncio.Event()
+
+    async def hanging_complete(*_args, **_kwargs):
+        entered_provider.set()
+        await asyncio.Future()
+
+    with (
+        patch.object(helpers, "get_provider", lambda _name: object()),
+        patch.object(helpers, "complete_with_fallback", hanging_complete),
+    ):
+        task = asyncio.create_task(
+            helpers.llm_structured(
+                "system",
+                "user",
+                schema=_ValueSchema,
+                caller="news_analyzer.analysis",
+                fallback_to_defaults=True,
+            )
+        )
+        await entered_provider.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    logical = get_db().execute(
+        "SELECT status,finished_at,parse_valid,schema_valid,error_type "
+        "FROM llm_inference_calls WHERE caller='news_analyzer.analysis'"
+    ).fetchone()
+    assert logical is not None
+    assert logical["status"] == "error"
+    assert logical["finished_at"] is not None
+    assert logical["parse_valid"] is None
+    assert logical["schema_valid"] is None
+    assert logical["error_type"] == "cancelled"
 
 
 @pytest.mark.asyncio

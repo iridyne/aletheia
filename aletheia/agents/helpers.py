@@ -578,8 +578,9 @@ async def llm_structured(
 ) -> tuple[dict | None, str | None]:
     """Call the provider's structured() and return (parsed_dict, error).
 
-    Never raises — absorbs provider errors AND the JSON-parse failure in the
-    provider impl, returning (None, error) so the caller can fall back cleanly.
+    Absorbs ordinary provider, parse, and schema errors, returning (None, error)
+    so the caller can fall back cleanly. External ``asyncio.CancelledError`` is
+    finalized in logical-call telemetry and then propagated unchanged.
     `schema` is a Pydantic model class (uses model_json_schema()).
     provider: explicit provider name (or None → use default_provider).
     fallback_to_defaults: if True and all retries fail, return a dict filled
@@ -851,6 +852,26 @@ async def llm_structured(
 
         logger.warning("LLM structured call: no valid JSON after %d attempts", max_attempts)
         return _failure(last_err)
+    except asyncio.CancelledError:
+        # An outer task timeout or shutdown cancellation must not strand the
+        # content-free logical inference in ``running``. Finalize telemetry, but
+        # never turn cancellation into a fallback value or availability tuple.
+        try:
+            if inference_call is not None and not inference_finished:
+                _record_call_finished(
+                    inference_call,
+                    status="error",
+                    parse_valid=None,
+                    schema_valid=None,
+                    error_type="cancelled",
+                )
+                inference_finished = True
+        except Exception:
+            logger.warning(
+                "LLM structured cancellation telemetry finalization failed",
+                exc_info=True,
+            )
+        raise
     except json.JSONDecodeError as e:
         # Bad JSON but the LLM did respond — not an outage, don't trip health counter
         logger.warning("LLM structured call: JSON parse failed: %s", e)

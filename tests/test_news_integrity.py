@@ -174,6 +174,37 @@ async def test_analyzer_timeout_records_first_retry_attempt(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_news_analyzer_disables_provider_reasoning(tmp_path, monkeypatch):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.data import news_analyzer
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO news_items (id, title, source, summary, published_at, status) "
+        "VALUES ('news-reasoning', 'Bitcoin update', 'fixture', '', "
+        "'2026-07-19T00:00:00Z', 'new')"
+    )
+    db.commit()
+    captured = {}
+
+    async def analyze(**kwargs):
+        captured.update(kwargs)
+        return {
+            "sentiment": "neutral",
+            "symbols": [],
+            "relevance": 0.7,
+            "impact": "No immediate market impact.",
+        }, None
+
+    monkeypatch.setattr(news_analyzer, "llm_structured", analyze)
+
+    assert await news_analyzer.analyze_pending_news(batch_size=1) == 1
+    assert captured["caller"] == "news_analyzer.analysis"
+    assert captured["reasoning_effort"] == "none"
+
+
+@pytest.mark.asyncio
 async def test_analyzer_retry_waits_thirty_minutes(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
     from aletheia.data import news_analyzer
