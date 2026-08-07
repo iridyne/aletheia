@@ -1429,7 +1429,7 @@ async def _analyze_symbol(
         len(context),
         len(sym_memory),
     )
-    logger.warning(
+    logger.debug(
         "[MO DIAG] %s (%s): LLM call start — ctx_len=%d, scanner=%s",
         symbol,
         market_type,
@@ -1466,7 +1466,7 @@ async def _analyze_symbol(
         logger.warning(
             "[MO] %s (%s): LLM call FAILED after %.1fs — error=%s", symbol, market_type, _llm_duration, llm_error
         )
-        logger.warning(
+        logger.debug(
             "[MO DIAG] %s (%s): LLM FAILED — dur=%.1fs, err=%s", symbol, market_type, _llm_duration, llm_error
         )
         return None, f"{market_type}:{symbol}:llm_unavailable: {llm_error}"
@@ -1480,7 +1480,7 @@ async def _analyze_symbol(
         read.get("confidence"),
         read.get("confidence_score"),
     )
-    logger.warning(
+    logger.debug(
         "[MO DIAG] %s (%s): LLM OK — dur=%.1fs, dir=%s, conf=%s, score=%s",
         symbol,
         market_type,
@@ -1947,7 +1947,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
         logger.warning("market_observer prefetch batch failed: %s", exc)
         return {"outputs": outputs, "errors": errors, "warnings": warnings}
     _prefetch_wall = _time.monotonic() - _t_prefetch_start
-    logger.warning("[MO DIAG] parallel prefetch done: %.1fs for %d symbols", _prefetch_wall, len(instruments))
+    logger.debug("[MO DIAG] parallel prefetch done: %.1fs for %d symbols", _prefetch_wall, len(instruments))
 
     _prefetch_map: dict[str, _SymbolPrefetch] = {}
     _empty_pf: dict = {
@@ -1987,7 +1987,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             score=lambda _i: _prefetch_map[instrument_key(_i)].signal_score,
             key=instrument_key,
         )
-    logger.warning(
+    logger.debug(
         "[MO DIAG] run start: %d instruments, force_full=%s, budget=%.0fs",
         len(instruments),
         _force_full,
