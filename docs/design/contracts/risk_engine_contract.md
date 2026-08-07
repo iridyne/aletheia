@@ -64,7 +64,7 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 | 9b | Account Mode Match | live↔mode=live / demo↔mode=demo | `exchange.mode` | `account_mode_mismatch:...` | :170 |
 | 10 | Max Leverage | 期货杠杆上限；demo 默认 125x，仍受设置 API 的可执行上界约束 | `risk.max_futures_leverage_{live/demo}` | `exceeds_max_leverage:{l}>{cap}` | :181 |
 | 11 | Data Freshness | live<120s / demo<1800s | `_MAX_DATA_AGE_SECONDS=120` | `stale_market_data:age={a}` (live path); `stale_market_data_demo:age={a}` (demo path for bitget_demo/okx_demo only, engine.py:238-241) | :188 |
-| 12 | Total Live Exposure | 敞口+新单<上限 | `risk.max_total_live_exposure_pct` | `max_total_live_exposure_exceeded:{p}>{cap}` | :194 |
+| 12 | Total Account Exposure | 同一账户池的 open Position、未决 entry Order、pre-Order Risk reservation 与新单名义敞口之和不得超过该模式资本基数的配置比例；`paper_internal` 独立、每个 exchange demo mode 独立，live 保持合并池 | `risk.{demo/live}.capital.max_total_exposure_pct` | `max_total_live_exposure_exceeded:{p}>{cap}` / `max_total_demo_exposure_exceeded:{p}>{cap}` | engine.py check #12 |
 | 13 | Single Trade Risk | 止损距离×数量<上限；demo 默认 20%，设置 API 只保留正数下限 | `risk.max_{/demo_}single_trade_risk_pct` | `max_single_trade_risk_missing_stop_price` (live, no stop_price, engine.py:207); `exceeds_single_trade_risk:{r}>{max}` (live, over cap); `exceeds_demo_single_trade_risk:{r}>{max}` (demo) | :202 |
 | 14 | Scanner-Family Evidence | live 需该单 `scanner_family`(经 opportunity 解析)在干净窗有 ≥N 已结算证据且方向胜率≥门槛(取代已删的策略 FSM 准入,Position C 2026-07-02;fail-closed:无 family/无证据/样本不足/胜率不足均拒) | `risk.live_family_min_samples`(30)/`risk.live_family_min_win_rate_pct`(50.0) + `repo.family_direction_edge` | `family_not_live_eligible:{unknown/family:no_evidence/family:samples=n<N/family:wr=w<T}` | :211 |
 | 15 | Lesson Constraints | 已接受且未过期的 manual/owner/human block 规则保持静态硬约束；自动来源默认 advisory，只有 exact `risk_lesson_constraint` prospective treatment 可阻断该 Proposal，control/default/error 不得阻断 | `LessonStore.recommendation_json` + Learning path authority | `lesson_block_{symbol/...}:{id}:{v}` / `lesson_check_error:internal_failure` | engine.py `_check_lesson_constraints` |
@@ -95,7 +95,8 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 > 此时交易所是否已经接受仍未知，不能把它当成零敞口。`pending` 与其他未决状态一样，在对应
 > live/demo 池中继续占用持仓槽位、保留同符号互斥，并把尚未由 open Position 表示的数量计入
 > 名义敞口。若未决 Order 已有部分数量投影为 Position，只补计剩余数量，且不重复占一个槽位；
-> 平仓 Order 不占新增入场容量。spec: `PL-UEE-01~09`。
+> 平仓 Order 不占新增入场容量。Demo 总敞口使用与资本基数相同的精确账户池，不把
+> `paper_internal` 和 exchange demo 账户混算。spec: `PL-UEE-01~11`。
 
 > **关卡 #8 的权威损失源**：Risk 不再读取 `today_realized_pnl` 或任何策略表现聚合。
 > `paper_internal` 的 verified close 必须与 append-only `paper_account_events` 一一对应且金额一致；

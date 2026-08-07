@@ -1164,6 +1164,29 @@ def _evaluate_proposal_locked(
             if demo_age is None or demo_age > _MAX_DEMO_DATA_AGE_SECONDS:
                 violations.append(f"stale_market_data_demo:age={demo_age}")
 
+        # 12. Total Demo exposure uses the same mode policy as every other Demo
+        # percentage limit, but only exposure drawing on this proposal's account
+        # equity denominator. Existing Positions and both reservation layers must
+        # be counted before the proposed notional; otherwise sequential entries can
+        # each pass alone and exceed the configured portfolio boundary together.
+        if proposal.price and proposal.quantity:
+            current_exposure = _current_account_exposure(
+                proposal.execution_mode,
+                unresolved_entries,
+                pre_order_entries,
+            )
+            projected = current_exposure + (proposal.price * proposal.quantity)
+            demo_exposure_cap = (
+                resolved_policy.policy.capital.max_total_exposure_pct
+                / 100.0
+                * capital_base
+            )
+            if demo_exposure_cap > 0 and projected > demo_exposure_cap:
+                violations.append(
+                    "max_total_demo_exposure_exceeded:"
+                    f"{projected}>{demo_exposure_cap}"
+                )
+
     # 15. Lesson-based constraints — accepted lessons with actionable recommendations
     #     can impose symbol/direction blocks learned from past failures.
     lesson_violations = _check_lesson_constraints(proposal)
@@ -1638,14 +1661,18 @@ def _portfolio_drawdown_scale(execution_mode: str) -> float:
         return 1.0
 
 
-def _current_live_exposure(
+def _current_account_exposure(
+    execution_mode: str,
     unresolved_entries: list[_UnresolvedEntryReservation] | None = None,
     pre_order_entries: list[_PreOrderEntryReservation] | None = None,
 ) -> float:
-    """Sum live Positions plus every not-yet-represented entry allowance."""
+    """Sum notional exposure using one account-equity denominator."""
     total = 0.0
     for row in list_all_open_positions():
-        if not _is_live(row.get("execution_mode", "")):
+        if not _account_pool_matches(
+            str(row.get("execution_mode") or ""),
+            execution_mode,
+        ):
             continue
         try:
             quantity = float(row.get("quantity") or 0.0)
@@ -1656,7 +1683,7 @@ def _current_live_exposure(
     if unresolved_entries is None:
         unresolved_entries = _unresolved_entry_reservations()
     for entry in unresolved_entries:
-        if not _is_live(entry.execution_mode):
+        if not _account_pool_matches(entry.execution_mode, execution_mode):
             continue
         if entry.price is None or entry.reserved_quantity is None:
             # Evaluation already emits the stable invalid-data violation.  Never
@@ -1666,12 +1693,24 @@ def _current_live_exposure(
     if pre_order_entries is None:
         pre_order_entries = _pre_order_entry_reservations()
     for entry in pre_order_entries:
-        if not _is_live(entry.execution_mode):
+        if not _account_pool_matches(entry.execution_mode, execution_mode):
             continue
         if entry.price is None or entry.reserved_quantity is None:
             continue
         total += abs(entry.reserved_quantity * entry.price)
     return total
+
+
+def _current_live_exposure(
+    unresolved_entries: list[_UnresolvedEntryReservation] | None = None,
+    pre_order_entries: list[_PreOrderEntryReservation] | None = None,
+) -> float:
+    """Backward-compatible live-pool exposure projection."""
+    return _current_account_exposure(
+        "bitget_live_limited",
+        unresolved_entries,
+        pre_order_entries,
+    )
 
 
 def _check_correlation_exposure(
