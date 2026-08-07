@@ -3,6 +3,7 @@
 import json
 import hashlib
 import logging
+import math
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -2938,7 +2939,30 @@ async def review_portfolio_state(params: dict) -> dict:
     # This is execution authority, not a display context. build_app_context()
     # intentionally truncates and projects positions for UI/LLM summaries, so it
     # omits the exact id and market_type required for safe position selection.
-    open_positions = list_all_open_positions()
+    all_open_positions = list_all_open_positions()
+    total_unrealized_pnl = 0.0
+    unrealized_pnl_available = True
+    for position in all_open_positions:
+        try:
+            unrealized_pnl = float(position.get("unrealized_pnl"))
+        except (TypeError, ValueError):
+            unrealized_pnl_available = False
+            break
+        if not math.isfinite(unrealized_pnl):
+            unrealized_pnl_available = False
+            break
+        total_unrealized_pnl += unrealized_pnl
+    portfolio_context = {
+        "total_open_positions": len(all_open_positions),
+        "review_scope_positions": 0,
+        "unrealized_pnl_available": unrealized_pnl_available,
+        "total_unrealized_pnl_usdt": (
+            round(total_unrealized_pnl, 8)
+            if unrealized_pnl_available
+            else None
+        ),
+    }
+    open_positions = all_open_positions
     if wake_position_ids:
         wake_ids = set(wake_position_ids)
         open_positions = [
@@ -2946,6 +2970,7 @@ async def review_portfolio_state(params: dict) -> dict:
             for position in open_positions
             if str(position.get("id") or "") in wake_ids
         ]
+    portfolio_context["review_scope_positions"] = len(open_positions)
     risk = ctx.get("risk", {})
 
     if not open_positions:
@@ -2987,6 +3012,11 @@ async def review_portfolio_state(params: dict) -> dict:
         f"upnl={p.get('unrealized_pnl', '?')}"
         for p in open_positions
     )
+    total_unrealized_text = (
+        f"{total_unrealized_pnl:.2f} USDT"
+        if unrealized_pnl_available
+        else "not available"
+    )
     wake_section = (
         "\nWake evidence requiring this review:\n"
         + _json.dumps(wake_batches, sort_keys=True, default=str)[:6000]
@@ -2994,7 +3024,11 @@ async def review_portfolio_state(params: dict) -> dict:
         else ""
     )
     system = "You are a portfolio risk reviewer for an autonomous paper trading system."
-    user = f"""Current open positions:
+    user = f"""Global portfolio context:
+  Total open positions: {len(all_open_positions)}
+  Global unrealized PnL: {total_unrealized_text}
+
+Positions in this review scope ({len(open_positions)} of {len(all_open_positions)} total open positions):
 {pos_summary}
 {wake_section}
 
@@ -3007,8 +3041,9 @@ Review the portfolio and decide:
 - "adjust_position": revise its stop, target, or horizon
 - "close_one": close one exact position
 
-Be conservative. For adjust_position or close_one, target_position_id must identify
-one listed position. Never act on a position outside the supplied wake evidence.
+Be conservative. Global portfolio context is read-only. For adjust_position or
+close_one, target_position_id must identify one listed review-scope position. Never
+act on a position outside the supplied wake evidence.
 
 Return JSON: {_json.dumps(schema)}"""
 
@@ -3052,6 +3087,7 @@ Return JSON: {_json.dumps(schema)}"""
                     "wake_fingerprint": wake_fingerprint,
                     "wake_batches": wake_batches,
                     "target_position_id": target.get("id") if target else None,
+                    "portfolio_context": portfolio_context,
                     "error_code": review_error_code,
                     "effect": {"status": "unavailable"},
                 }
@@ -3133,6 +3169,7 @@ Return JSON: {_json.dumps(schema)}"""
                 "wake_fingerprint": wake_fingerprint,
                 "wake_batches": wake_batches,
                 "target_position_id": target.get("id") if target else None,
+                "portfolio_context": portfolio_context,
                 "effect": _effect(pending=pending),
             }
         }

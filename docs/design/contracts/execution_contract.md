@@ -309,7 +309,11 @@ exchange 调用必须留在 helper 外并保持原失败语义。close 的审计
 
 **System Operator 退出路径独立**:`review_portfolio_state()`(LLM 决策)暴露
 `hold / adjust_position / close_one`。Position wake 直接进入该命令，而不是复用
-entry-opportunity schema；提示只包含 wake 指向的完整 Position 和 adverse evidence。
+entry-opportunity schema；可操作列表只包含 wake 指向的完整 Position 和 adverse
+evidence，但必须同时给出全局 open-position 数量和完整可用时的全局 unrealized PnL，
+并明确区分全局只读上下文与本次 review scope。任何一个 Position 缺失合法 PnL 时，
+全局 PnL 必须显示 `not available`，不得把缺失值当零；其他 Position 的身份和参数不进入
+prompt，也不能成为本次动作目标。这些决策时事实同时写入 `pi_decisions` manifest。
 `adjust_position` 复用 `apply_operator_adjustment()`，`close_one` 按明确 Position
 经**同一** `close_position_routed()` 入口平仓，且不传调用方 fallback price；
 manager 必须重新取得精确新鲜 mark。最终结果和 wake fingerprint 写入
