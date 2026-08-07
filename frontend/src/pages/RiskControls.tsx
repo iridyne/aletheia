@@ -41,8 +41,7 @@ export default function RiskControls() {
   // positions query settles. That violates the immutable owner rule (CLAUDE.md 2026-06-26).
   const { data: positions = [], isLoading: positionsLoading } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
   // 24h pipeline counts — surfaces "the system IS guarding" in the healthy state.
-  // Refetches every 60s; the backend follows one indexed Opportunity cohort through
-  // linked carrier, Risk, and entry-fill facts instead of mixing raw event totals.
+  // Refetches every 60s; the underlying SQL is a single COUNT GROUP BY so it's cheap.
   const { data: funnel } = useQuery({ queryKey: ['pipeline-funnel-24h'], queryFn: () => api.getPipelineFunnel(24), refetchInterval: 60_000 })
   const exposureLoading = portfolioLoading || positionsLoading
 

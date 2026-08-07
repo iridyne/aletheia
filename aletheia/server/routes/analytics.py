@@ -581,8 +581,27 @@ def get_pipeline_funnel(hours: int = 24):
     opportunity_ids = {str(row["id"]) for row in opportunity_rows}
     opps = len(opportunity_ids)
 
-    # Parsed time plus rowid preserves carrier-generation semantics for mixed
-    # SQLite/ISO timestamps and deterministic same-instant retries.
+    # ``signal_pending`` is a recoverable queue carrier and is intentionally
+    # pruned after a settled final decision. Historical funnel evidence therefore
+    # comes from the append-only enqueue filter fact written atomically with the
+    # carrier, not from whichever transient carrier rows still happen to exist.
+    signal_rows = list(
+        db.execute(
+            "SELECT fd.opportunity_id, fd.dedup_key FROM filter_decisions fd "
+            "JOIN opportunities o ON o.id=fd.opportunity_id "
+            "WHERE julianday(o.created_at) >= julianday(?) "
+            "AND fd.filter_name='signal_enqueue' "
+            "AND fd.stage='paper_trader_enqueue' "
+            "AND fd.decision='passed' "
+            "AND fd.reason_code='signal_enqueued'",
+            (cutoff,),
+        )
+    )
+    signal_ids = {str(row["opportunity_id"]) for row in signal_rows}
+    carrier_generations = len(signal_rows)
+
+    # Parsed time plus rowid keeps final-decision diagnostics deterministic for
+    # mixed SQLite/ISO timestamps and same-instant retries.
     decision_rows = list(
         db.execute(
             "SELECT p.rowid AS _rowid, p.* FROM pi_decisions p "
@@ -596,29 +615,18 @@ def get_pipeline_funnel(hours: int = 24):
         )
     )
 
-    signal_ids: set[str] = set()
     all_trade_ids: set[str] = set()
     skip_candidates: set[str] = set()
-    carrier_generations = 0
-    previous_key: tuple[str, str] | None = None
-    previous_action: str | None = None
+    retained_pending_rows = 0
     for row in decision_rows:
         opportunity_id = str(row["opportunity_id"] or "")
-        source = str(row["signal_source"] or "market_observer")
         action = str(row["action"] or "")
-        key = (opportunity_id, source)
-        if key != previous_key:
-            previous_action = None
         if action == "signal_pending":
-            signal_ids.add(opportunity_id)
-            if previous_action != "signal_pending":
-                carrier_generations += 1
+            retained_pending_rows += 1
         elif action in {"trade", "scale_in", "flip"}:
             all_trade_ids.add(opportunity_id)
         elif action in {"skip", "portfolio_guard_skip"}:
             skip_candidates.add(opportunity_id)
-        previous_key = key
-        previous_action = action
 
     # Only signalled members can advance through this conversion funnel. A
     # direct trade remains an integrity fact instead of inflating the rate.
@@ -732,6 +740,9 @@ def get_pipeline_funnel(hours: int = 24):
         "window_hours": hours_i,
         "cohort": {
             "unit": "opportunity_id_created_in_window",
+            "signal_stage_evidence": (
+                "filter_decisions:signal_enqueue/passed/signal_enqueued"
+            ),
             "window_start": cutoff,
             "downstream_observed_through": datetime.now(timezone.utc).isoformat(),
             "right_censored": True,
@@ -758,7 +769,7 @@ def get_pipeline_funnel(hours: int = 24):
             "pi_trade_to_fill_pct": _rate(fills, trade_count),
         },
         "integrity": {
-            "trade_without_signal": len(trade_without_signal),
+            "trade_without_signal_evidence": len(trade_without_signal),
             "trade_without_proposal": len(
                 trade_ids - set(proposal_to_opportunity.values())
             ),
@@ -767,6 +778,7 @@ def get_pipeline_funnel(hours: int = 24):
             ),
             "signal_without_terminal": len(signal_without_terminal),
             "close_fills_excluded": close_fills_excluded,
+            "retained_signal_pending_rows": retained_pending_rows,
         },
     }
 

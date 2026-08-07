@@ -238,6 +238,32 @@ def _insert_overview_decision(
     )
 
 
+def _insert_signal_enqueue_evidence(
+    db,
+    *,
+    row_id: str,
+    opportunity_id: str,
+    evaluated_at: str,
+) -> None:
+    db.execute(
+        "INSERT INTO filter_decisions "
+        "(id, dedup_key, candidate_key, candidate_kind, opportunity_id, "
+        "symbol, market_type, direction, filter_name, stage, sequence_no, "
+        "decision, reason_code, input_snapshot, parameter_snapshot, "
+        "filter_version, evaluated_at) "
+        "VALUES (?, ?, ?, 'opportunity', ?, 'BTC/USDT', 'spot', 'long', "
+        "'signal_enqueue', 'paper_trader_enqueue', 0, 'passed', "
+        "'signal_enqueued', '{}', '{}', 'test-enqueue-v1', ?)",
+        (
+            row_id,
+            f"dedup-{row_id}",
+            f"opportunity:{opportunity_id}",
+            opportunity_id,
+            evaluated_at,
+        ),
+    )
+
+
 def test_overview_operator_decisions_excludes_old_iso_row_on_cutoff_date(
     tmp_path, monkeypatch,
 ):
@@ -291,6 +317,12 @@ def test_overview_funnels_share_the_same_parsed_iso_window(tmp_path, monkeypatch
             action="signal_pending",
             created_at=created_at,
             opportunity_id=f"opp-{suffix}",
+        )
+        _insert_signal_enqueue_evidence(
+            db,
+            row_id=f"enqueue-{suffix}",
+            opportunity_id=f"opp-{suffix}",
+            evaluated_at=created_at,
         )
         _insert_overview_decision(
             db,
@@ -383,11 +415,35 @@ def test_pipeline_funnel_tracks_one_opportunity_cohort_and_entry_fills_only(
     decision("filled-evicted", "opp-filled", "signal_queue_evicted", recent)
     decision("filled-pending-2", "opp-filled", "signal_pending", later)
     decision("filled-trade", "opp-filled", "trade", later, "proposal-filled")
+    _insert_signal_enqueue_evidence(
+        db,
+        row_id="filled-enqueue-1",
+        opportunity_id="opp-filled",
+        evaluated_at=recent,
+    )
+    _insert_signal_enqueue_evidence(
+        db,
+        row_id="filled-enqueue-2",
+        opportunity_id="opp-filled",
+        evaluated_at=later,
+    )
     decision("skipped-pending", "opp-skipped", "signal_pending", recent)
     decision("skipped-final", "opp-skipped", "skip", later)
+    _insert_signal_enqueue_evidence(
+        db,
+        row_id="skipped-enqueue",
+        opportunity_id="opp-skipped",
+        evaluated_at=recent,
+    )
     decision("rejected-pending", "opp-rejected", "signal_pending", recent)
     decision(
         "rejected-trade", "opp-rejected", "trade", later, "proposal-rejected"
+    )
+    _insert_signal_enqueue_evidence(
+        db,
+        row_id="rejected-enqueue",
+        opportunity_id="opp-rejected",
+        evaluated_at=recent,
     )
 
     # This is an integrity violation, not a legitimate signal conversion.
@@ -396,6 +452,12 @@ def test_pipeline_funnel_tracks_one_opportunity_cohort_and_entry_fills_only(
     # A recent downstream event cannot pull an old Opportunity into the cohort.
     decision("old-pending", "opp-old", "signal_pending", recent)
     decision("old-trade", "opp-old", "trade", later, "proposal-old")
+    _insert_signal_enqueue_evidence(
+        db,
+        row_id="old-enqueue",
+        opportunity_id="opp-old",
+        evaluated_at=recent,
+    )
 
     for proposal_id, opportunity_id in (
         ("proposal-filled", "opp-filled"),
@@ -490,8 +552,9 @@ def test_pipeline_funnel_tracks_one_opportunity_cohort_and_entry_fills_only(
     assert result["conversion"]["pi_trade_to_risk_pct"] == pytest.approx(100.0)
     assert result["conversion"]["risk_approved_to_fill_pct"] == pytest.approx(100.0)
     assert result["conversion"]["pi_trade_to_fill_pct"] == pytest.approx(50.0)
-    assert result["integrity"]["trade_without_signal"] == 1
+    assert result["integrity"]["trade_without_signal_evidence"] == 1
     assert result["integrity"]["close_fills_excluded"] == 1
+    assert result["integrity"]["retained_signal_pending_rows"] == 5
 
 
 # ---------------------------------------------------------------------------
