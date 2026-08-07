@@ -2,7 +2,7 @@
 
 > Date: 2026-08-07
 >
-> Verdict: PASS for task 4 code wiring only
+> Verdict: PASS after 2026-08-08 adversarial corrections, for task 4 code wiring only
 >
 > Authority scorer: `universe-step-v1`
 >
@@ -95,10 +95,11 @@ zero, and is a promotion blocker.
 ## 5. Failure and performance behavior
 
 Per-candidate continuous exceptions are converted into a content-free invalid
-reason containing only the exception type. The entire batch is also wrapped by
-a non-fatal service boundary with a 10-second diagnostic timeout. Dynamic tests
-force the background batch to raise and to outlive the timeout, then verify the
-authority refresh receives an empty diagnostic result in both cases.
+reason containing only the exception type. Policy construction, the entire
+batch, authority-selection annotation, and summary construction are wrapped by
+non-fatal boundaries. The batch has a 10-second diagnostic timeout. Dynamic
+tests force each boundary to fail and verify the authority refresh receives an
+empty diagnostic result instead of failing.
 
 `asyncio` cancellation cannot forcibly terminate a Python worker thread. A
 timed-out pure batch may finish in the background, but its result is discarded.
@@ -144,8 +145,8 @@ Final local verification evidence:
 
 | Check | Result |
 | --- | --- |
-| Task-4 Twin plus pure continuous scorer suites | `80 passed` |
-| Focused Universe pipeline, route, and frozen step-score regression set | `294 passed` |
+| Task-4 Twin plus pure continuous scorer suites | `84 passed` |
+| Focused Universe pipeline, route, and frozen step-score regression set | `298 passed` |
 | Ruff correctness/style and new-module complexity checks | passed |
 | Semgrep Python rules on changed Universe modules | passed, zero findings |
 | Python bytecode compilation | passed |
@@ -154,6 +155,30 @@ Final local verification evidence:
 
 These are focused macOS checks, not a full local pytest run and not Fedora
 runtime evidence.
+
+### 2026-08-08 adversarial correction
+
+The first implementation review overstated failure isolation. It protected the
+background batch, but policy construction and post-batch annotation/summary
+could still raise inside the authoritative refresh. Those paths now fail
+non-fatally and have direct failure-injection tests.
+
+The first review also reported only summed per-feature local sensitivity at the
+evidence-group level. The pure scorer now records an explicit group object with
+the jointly neutralized group delta and validity state. The global interaction
+residual compares the all-group joint-neutral delta with those group-level
+deltas; an invalid joint comparison remains unavailable rather than zero.
+
+The diagnostic `20`, `45`, and `60` thresholds remain locally declared to avoid
+an authority-module dependency, but a regression test locks them to the current
+allocator and emitter constants so later authority drift cannot silently make
+the Twin comparison stale.
+
+The accepted Proposal's continuous-arm selected/dropped comparison is not part
+of task 4. Leaving its fields as `None` is semantically honest but does not
+satisfy that later full-record requirement. Task 5 must compute and persist the
+isolated continuous allocation replay before the record can be described as
+complete.
 
 ## 7. Residual gate
 

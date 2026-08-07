@@ -88,6 +88,15 @@ class FeatureSensitivity:
 
 
 @dataclass(frozen=True)
+class EvidenceGroupSensitivity:
+    evidence_group_id: str
+    raw_feature_ids: tuple[str, ...]
+    aggregate_abs_local_score_sensitivity: float
+    score_delta_to_joint_neutral: float | None
+    neutral_comparison_valid: bool
+
+
+@dataclass(frozen=True)
 class CandidateScore:
     behavior_version: str
     point_family: str | None
@@ -102,6 +111,7 @@ class CandidateScore:
     pessimistic_evidence: tuple[FactorEvidence, ...]
     sensitivities: tuple[FeatureSensitivity, ...] = ()
     group_sensitivities: tuple[tuple[str, float], ...] = ()
+    group_evidence: tuple[EvidenceGroupSensitivity, ...] = ()
     observed_signal_group_count: int = 0
     concentration_share: float | None = None
     flags: tuple[str, ...] = ()
@@ -1500,14 +1510,55 @@ def _summarize_sensitivities(
     )
 
 
+def _group_evidence(
+    feat: Mapping[str, object],
+    policy: ContinuousScoringPolicy,
+    base: CandidateScore,
+    sensitivities: Sequence[FeatureSensitivity],
+) -> tuple[EvidenceGroupSensitivity, ...]:
+    groups: dict[str, list[FeatureSensitivity]] = {}
+    for sensitivity in sensitivities:
+        groups.setdefault(sensitivity.evidence_group_id, []).append(sensitivity)
+
+    results: list[EvidenceGroupSensitivity] = []
+    for group_id, members in sorted(groups.items()):
+        raw_feature_ids = tuple(sorted(item.raw_feature_id for item in members))
+        local_total = sum(abs(item.local_score_sensitivity) for item in members)
+        comparison_valid = all(item.neutral_comparison_valid for item in members)
+        group_delta: float | None = None
+        if comparison_valid:
+            neutral_feat = dict(feat)
+            for item in members:
+                neutral_feat[item.raw_feature_id] = _neutral_value(item.raw_feature_id, policy)
+            neutral = _candidate_core(neutral_feat, policy)
+            comparison_valid = neutral.valid
+            if comparison_valid:
+                group_delta = abs(base.point_score - neutral.point_score)
+        results.append(
+            EvidenceGroupSensitivity(
+                evidence_group_id=group_id,
+                raw_feature_ids=raw_feature_ids,
+                aggregate_abs_local_score_sensitivity=local_total,
+                score_delta_to_joint_neutral=group_delta,
+                neutral_comparison_valid=comparison_valid,
+            )
+        )
+    return tuple(results)
+
+
 def _joint_neutral_diagnostics(
     feat: Mapping[str, object],
     policy: ContinuousScoringPolicy,
     base: CandidateScore,
     sensitivities: Sequence[FeatureSensitivity],
+    group_evidence: Sequence[EvidenceGroupSensitivity],
 ) -> tuple[float | None, float | None]:
     if not sensitivities:
         return 0.0, 0.0
+    if any(not sensitivity.neutral_comparison_valid for sensitivity in sensitivities):
+        return None, None
+    if any(not group.neutral_comparison_valid for group in group_evidence):
+        return None, None
     comparable = [
         sensitivity
         for sensitivity in sensitivities
@@ -1522,8 +1573,8 @@ def _joint_neutral_diagnostics(
     if not joint_neutral.valid:
         return None, None
     joint_delta = abs(base.point_score - joint_neutral.point_score)
-    individual_delta_sum = sum(sensitivity.score_delta_to_neutral or 0.0 for sensitivity in comparable)
-    return joint_delta, joint_delta - individual_delta_sum
+    group_delta_sum = sum(group.score_delta_to_joint_neutral or 0.0 for group in group_evidence)
+    return joint_delta, joint_delta - group_delta_sum
 
 
 def evaluate_continuous_candidate(
@@ -1547,11 +1598,15 @@ def evaluate_continuous_candidate(
     except InvalidFeature as exc:
         return replace(base, valid=False, invalid_reason=str(exc))
     group_values, observed_group_count, concentration, flags = _summarize_sensitivities(sensitivities)
+    group_evidence = _group_evidence(feat, policy, base, sensitivities)
+    if any(not group.neutral_comparison_valid for group in group_evidence):
+        flags = tuple(sorted({*flags, "group_neutral_comparison_unavailable"}))
     joint_neutral_delta, interaction_residual = _joint_neutral_diagnostics(
         feat,
         policy,
         base,
         sensitivities,
+        group_evidence,
     )
     if interaction_residual is None:
         flags = tuple(sorted({*flags, "interaction_residual_unavailable"}))
@@ -1559,6 +1614,7 @@ def evaluate_continuous_candidate(
         base,
         sensitivities=sensitivities,
         group_sensitivities=group_values,
+        group_evidence=group_evidence,
         observed_signal_group_count=observed_group_count,
         concentration_share=concentration,
         flags=flags,
@@ -1572,6 +1628,7 @@ __all__ = [
     "CandidateScore",
     "ComponentScore",
     "ContinuousScoringPolicy",
+    "EvidenceGroupSensitivity",
     "FactorEvidence",
     "FeatureSensitivity",
     "InvalidFeature",

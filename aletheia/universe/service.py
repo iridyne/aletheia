@@ -86,12 +86,18 @@ async def _compute_twin_shadow_nonfatal(
     inputs: tuple,
     *,
     scanner_run_id: str,
-    base_policy,
+    base_policy=None,
+    policy_factory=None,
+    policy_kwargs: dict | None = None,
 ) -> tuple:
     """Run diagnostic scoring off-thread without failing step-v1 refresh."""
     if not inputs:
         return ()
     try:
+        if base_policy is None:
+            if policy_factory is None:
+                raise ValueError("twin_shadow_policy_not_available")
+            base_policy = policy_factory(**(policy_kwargs or {}))
         return await asyncio.wait_for(
             asyncio.to_thread(
                 builder,
@@ -107,6 +113,32 @@ async def _compute_twin_shadow_nonfatal(
             type(shadow_exc).__name__,
         )
         return ()
+
+
+def _finalize_twin_shadow_nonfatal(
+    records: tuple,
+    *,
+    annotator,
+    summarizer,
+    fine_filtered: list[dict],
+    allocated: list[dict],
+) -> tuple[tuple, object | None]:
+    """Attach authority facts and summarize without becoming a failure path."""
+    if not records:
+        return (), None
+    try:
+        annotated = annotator(
+            records,
+            fine_filtered=fine_filtered,
+            allocated=allocated,
+        )
+        return annotated, summarizer(annotated)
+    except Exception as shadow_exc:
+        logger.warning(
+            "Universe twin Shadow finalization failed without authority impact: %s",
+            type(shadow_exc).__name__,
+        )
+        return (), None
 
 
 @contextmanager
@@ -608,10 +640,11 @@ class UniverseService:
                 build_twin_shadow_batch,
                 tuple(twin_shadow_inputs),
                 scanner_run_id=run.id,
-                base_policy=ContinuousScoringPolicy(
-                    min_volume_24h_usdt=cfg.universe.min_volume_24h_usdt,
-                    min_depth_10bps_usd=cfg.universe.min_depth_10bps_usd,
-                ),
+                policy_factory=ContinuousScoringPolicy,
+                policy_kwargs={
+                    "min_volume_24h_usdt": cfg.universe.min_volume_24h_usdt,
+                    "min_depth_10bps_usd": cfg.universe.min_depth_10bps_usd,
+                },
             )
 
             # Pass 2: fine spread filter with per-family tolerance. Records rejections
@@ -633,13 +666,14 @@ class UniverseService:
                 regime_state=current_regime.state if current_regime else None,
             )
 
-            if twin_shadow_records:
-                twin_shadow_records = annotate_authority_selection(
-                    twin_shadow_records,
-                    fine_filtered=scored,
-                    allocated=allocated,
-                )
-                shadow_summary = summarize_twin_shadow_records(twin_shadow_records)
+            twin_shadow_records, shadow_summary = _finalize_twin_shadow_nonfatal(
+                twin_shadow_records,
+                annotator=annotate_authority_selection,
+                summarizer=summarize_twin_shadow_records,
+                fine_filtered=scored,
+                allocated=allocated,
+            )
+            if shadow_summary is not None:
                 logger.info(
                     "Universe twin Shadow diagnostic only: version=%s candidates=%d "
                     "valid=%d invalid=%d family_changes=%d direction_changes=%d "

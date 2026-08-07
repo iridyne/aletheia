@@ -321,6 +321,16 @@ def test_threshold_crossings_and_summary_are_diagnostic_only() -> None:
     assert summary.interaction_residual_unavailable_count == 1
 
 
+def test_shadow_threshold_contract_is_locked_to_current_authority() -> None:
+    from aletheia.universe import allocator, signal_emitter
+
+    assert twin_scoring._SCORE_THRESHOLDS == (
+        ("explore_admission", allocator._EXPLORE_MIN_SCORE),
+        ("opportunity_emission", signal_emitter._MIN_SCORE),
+        ("high_label", signal_emitter._HIGH_CONF_THRESHOLD),
+    )
+
+
 def test_no_chase_authority_gate_remains_an_explicit_blocker() -> None:
     record = build_twin_shadow_record(
         _twin_input(
@@ -441,6 +451,47 @@ def test_shadow_batch_timeout_cannot_stall_authority_refresh(
         )
     )
     assert result == ()
+
+
+def test_shadow_policy_failure_cannot_fail_authority_refresh() -> None:
+    from aletheia.universe import service
+
+    def fail_policy(**_kwargs: object) -> object:
+        raise ValueError("invalid diagnostic policy")
+
+    result = asyncio.run(
+        service._compute_twin_shadow_nonfatal(
+            object(),
+            (_twin_input(),),
+            scanner_run_id="run-1",
+            policy_factory=fail_policy,
+            policy_kwargs={"unused": True},
+        )
+    )
+    assert result == ()
+
+
+@pytest.mark.parametrize("failing_stage", ["annotator", "summarizer"])
+def test_shadow_finalization_failure_cannot_fail_authority_refresh(
+    failing_stage: str,
+) -> None:
+    from aletheia.universe import service
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("diagnostic finalization failed")
+
+    records = (build_twin_shadow_record(_twin_input(), scanner_run_id="run-1", base_policy=_policy()),)
+    annotator = fail if failing_stage == "annotator" else annotate_authority_selection
+    summarizer = fail if failing_stage == "summarizer" else summarize_twin_shadow_records
+    finalized, summary = service._finalize_twin_shadow_nonfatal(
+        records,
+        annotator=annotator,
+        summarizer=summarizer,
+        fine_filtered=[_feature()],
+        allocated=[_feature()],
+    )
+    assert finalized == ()
+    assert summary is None
 
 
 def test_external_multiplier_policy_is_bounded_and_observable() -> None:

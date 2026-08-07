@@ -457,6 +457,15 @@ def test_candidate_sensitivity_perturbs_whole_raw_feature_once() -> None:
     assert result.joint_neutral_score_delta is None
     assert result.interaction_residual is None
     assert "interaction_residual_unavailable" in result.flags
+    group_values = dict(result.group_sensitivities)
+    assert {item.evidence_group_id for item in result.group_evidence} == set(group_values)
+    assert all(
+        item.aggregate_abs_local_score_sensitivity == pytest.approx(group_values[item.evidence_group_id])
+        for item in result.group_evidence
+    )
+    grouped_raw_ids = {raw_feature_id for item in result.group_evidence for raw_feature_id in item.raw_feature_ids}
+    assert grouped_raw_ids == {item.raw_feature_id for item in result.sensitivities}
+    assert all(item.neutral_comparison_valid for item in result.group_evidence)
 
 
 def test_factor_evidence_carries_units_neutral_and_budget() -> None:
