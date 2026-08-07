@@ -278,6 +278,7 @@ class _ProviderState:
     workers: list[asyncio.Task[None]] = field(default_factory=list)
     retiring: bool = False
     pending_policy: ProviderPolicy | None = None
+    drained: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class InferenceBroker:
@@ -343,20 +344,42 @@ class InferenceBroker:
             loop.close()
             self._loop = None
 
-    async def _state(self, provider_name: str, policy: ProviderPolicy) -> _ProviderState:
-        state = self._states.get(provider_name)
-        if state is not None:
+    async def _state(
+        self,
+        provider_name: str,
+        policy: ProviderPolicy,
+        *,
+        deadline: float,
+    ) -> _ProviderState:
+        while (state := self._states.get(provider_name)) is not None:
+            if self._closing:
+                raise InferenceBrokerClosed("inference broker is shutting down")
             if not state.retiring:
                 return state
             if state.metrics.outstanding:
-                raise InferenceBrokerClosed(
-                    f"provider {provider_name} is draining before policy reload"
-                )
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise InferenceTimeout(
+                        f"provider {provider_name} policy reload exceeded total deadline"
+                    )
+                try:
+                    await asyncio.wait_for(state.drained.wait(), timeout=remaining)
+                except TimeoutError as exc:
+                    raise InferenceTimeout(
+                        f"provider {provider_name} policy reload exceeded total deadline"
+                    ) from exc
+                continue
             for worker in state.workers:
                 worker.cancel()
             await asyncio.gather(*state.workers, return_exceptions=True)
+            # Several submissions can await the same drain event. Only the first
+            # one may retire this exact generation; later waiters must reuse the
+            # replacement state instead of removing it.
+            if self._states.get(provider_name) is not state:
+                continue
             self._states.pop(provider_name, None)
             policy = state.pending_policy or policy
+            break
         normalized = policy.normalized()
         state = _ProviderState(
             name=provider_name,
@@ -364,6 +387,7 @@ class InferenceBroker:
             queue=asyncio.PriorityQueue(maxsize=normalized.queue_capacity),
             limiter=_SlidingWindowLimiter(normalized),
         )
+        state.drained.set()
         self._states[provider_name] = state
         state.workers = [
             asyncio.create_task(
@@ -437,7 +461,12 @@ class InferenceBroker:
     ) -> T:
         if self._closing:
             raise InferenceBrokerClosed("inference broker is shutting down")
-        state = await self._state(provider_name, policy)
+        submitted_at = time.monotonic()
+        state = await self._state(
+            provider_name,
+            policy,
+            deadline=submitted_at + timeout_sec,
+        )
         metrics = state.metrics
         if not self._has_capacity(state, priority):
             metrics.rejected_queue_full += 1
@@ -446,14 +475,13 @@ class InferenceBroker:
                 f"({metrics.outstanding}/{state.policy.queue_capacity})"
             )
 
-        now = time.monotonic()
         result: asyncio.Future[T] = asyncio.get_running_loop().create_future()
         item = _Item(
             provider_name=provider_name,
             priority=priority,
             sequence=next(self._sequence),
-            submitted_at=now,
-            deadline=now + timeout_sec,
+            submitted_at=submitted_at,
+            deadline=submitted_at + timeout_sec,
             reserved_tokens=reserved_tokens,
             operation_factory=operation_factory,
             result=result,
@@ -461,12 +489,13 @@ class InferenceBroker:
         metrics.submitted += 1
         metrics.queued += 1
         metrics.outstanding += 1
+        state.drained.clear()
         metrics.reserved_tokens += reserved_tokens
         metrics.peak_outstanding = max(metrics.peak_outstanding, metrics.outstanding)
         state.queue.put_nowait((int(priority), item.sequence, item))
 
         try:
-            async with asyncio.timeout(timeout_sec):
+            async with asyncio.timeout_at(item.deadline):
                 return await result
         except TimeoutError as exc:
             metrics.timed_out += 1
@@ -490,6 +519,8 @@ class InferenceBroker:
             metrics.queued = max(0, metrics.queued - 1)
             if item.result.cancelled():
                 metrics.outstanding = max(0, metrics.outstanding - 1)
+                if not metrics.outstanding:
+                    state.drained.set()
                 state.queue.task_done()
                 continue
 
@@ -560,6 +591,8 @@ class InferenceBroker:
                 )
                 metrics.active = max(0, metrics.active - 1)
                 metrics.outstanding = max(0, metrics.outstanding - 1)
+                if not metrics.outstanding:
+                    state.drained.set()
                 item.execution_task = None
                 state.queue.task_done()
 
@@ -599,6 +632,7 @@ class InferenceBroker:
         providers = {}
         for name, state in sorted(self._states.items()):
             providers[name] = {
+                "status": "reloading" if state.retiring else "running",
                 "policy": asdict(state.policy),
                 "metrics": state.metrics.snapshot(),
             }
@@ -627,11 +661,12 @@ class InferenceBroker:
         state = self._states.get(provider_name)
         if state is None:
             return
+        state.retiring = True
+        state.pending_policy = pending_policy
         if state.metrics.outstanding:
-            # Preserve admitted work and reject new work briefly so the old
-            # queue can drain. The next submission atomically installs policy.
-            state.retiring = True
-            state.pending_policy = pending_policy
+            # Preserve admitted work while the old queue drains. New submissions
+            # wait outside that queue, and the first waiter atomically installs
+            # the pending policy.
             logger.info(
                 "draining inference policy for %s: %d outstanding",
                 provider_name,
@@ -641,7 +676,8 @@ class InferenceBroker:
         for worker in state.workers:
             worker.cancel()
         await asyncio.gather(*state.workers, return_exceptions=True)
-        self._states.pop(provider_name, None)
+        if self._states.get(provider_name) is state:
+            self._states.pop(provider_name, None)
 
     async def aclose(self) -> None:
         if not self.running:
@@ -663,6 +699,7 @@ class InferenceBroker:
 
     async def _shutdown_in_loop(self) -> None:
         for state in self._states.values():
+            state.drained.set()
             while not state.queue.empty():
                 try:
                     _priority, _sequence, item = state.queue.get_nowait()
