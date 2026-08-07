@@ -191,3 +191,8 @@ residual is unavailable.
 Until that gate passes, the local summary is operational visibility only. It
 cannot be pooled as an experiment, shown as calibrated confidence, or used to
 change allocation, Opportunity emission, Paper, Risk, Execution, or Learning.
+
+Task 5 subsequently passed its separate diagnostic persistence/replay review on
+2026-08-08. See
+[`07_task5_persistence_replay_review_2026-08-08.md`](07_task5_persistence_replay_review_2026-08-08.md).
+That later result does not retroactively change what Task 4 alone proved.

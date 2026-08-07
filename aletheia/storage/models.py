@@ -1252,6 +1252,64 @@ class UniversePolicy(BaseModel):
     previous_policy_id: str | None = None
 
 
+class UniverseTwinShadowBatch(BaseModel):
+    scanner_run_id: str
+    authority_snapshot_id: str | None = None
+    record_version: str
+    authority_behavior_version: str
+    shadow_behavior_version: str
+    allocation_replay_contract: str
+    policy_epoch_id: str | None = None
+    feature_source_fingerprint: str
+    availability_profile_id: str | None = None
+    outcome_contract_version: str
+    cost_model_version: str
+    metric_version: str
+    allocator_random_state_json: str
+    policy_json: str
+    allocation_context_json: str
+    candidate_count: int
+    promotion_eligible: bool = False
+    blocking_reasons_json: str = "[]"
+    batch_hash: str
+    captured_at: str = Field(default_factory=_utcnow)
+
+
+class UniverseTwinShadowEvidence(BaseModel):
+    id: str = Field(default_factory=new_id)
+    scanner_run_id: str
+    candidate_key: str
+    candidate_index: int
+    feature_snapshot_id: str | None = None
+    asset_id: str | None = None
+    symbol: str
+    market_type: str
+    assignment_unit_id: str
+    assignment_arm: str | None = None
+    propensity: float | None = None
+    treatment_coefficient: float | None = None
+    authority_outcome_candidate_key: str | None = None
+    shadow_point_outcome_candidate_key: str | None = None
+    shadow_pessimistic_outcome_candidate_key: str | None = None
+    authority_total_score: float
+    shadow_point_score: float | None = None
+    shadow_pessimistic_score: float | None = None
+    authority_rank: int | None = None
+    shadow_point_rank: int | None = None
+    shadow_pessimistic_rank: int | None = None
+    fine_filter_passed: bool | None = None
+    authority_selected: bool | None = None
+    shadow_point_selected: bool | None = None
+    shadow_pessimistic_selected: bool | None = None
+    shadow_authority_applied: bool = False
+    promotion_eligible: bool = False
+    shadow_valid: bool = False
+    record_json: str
+    input_json: str
+    record_hash: str
+    captured_at: str = Field(default_factory=_utcnow)
+
+
 class PiDecision(_Provenanced):
     id: str = Field(default_factory=new_id)
     created_at: str = Field(default_factory=_utcnow)

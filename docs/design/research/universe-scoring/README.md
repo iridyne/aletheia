@@ -25,12 +25,14 @@ second source of behavioral authority.
 | [04_references_and_practical_notes.md](04_references_and_practical_notes.md) | Annotated primary references, public industry evidence boundaries, and reusable engineering lessons |
 | [05_task3_pure_implementation_review_2026-08-07.md](05_task3_pure_implementation_review_2026-08-07.md) | Pure scorer boundary, safeguard coverage, adversarial self-review, verification evidence, and task-3 verdict |
 | [06_task4_twin_wiring_review_2026-08-07.md](06_task4_twin_wiring_review_2026-08-07.md) | Step-authoritative in-memory Twin wiring, isolation proof, unavailable fields, performance baseline, and task-4 verdict |
+| [07_task5_persistence_replay_review_2026-08-08.md](07_task5_persistence_replay_review_2026-08-08.md) | Durable full-candidate Twin evidence, allocation replay, identities, retention, adversarial corrections, and task-5 verdict |
 
 Read the Proposal first for the accepted direction, then file 02 when
 implementing exact curves. Files 01 and 03 explain why the constraints exist;
 file 04 is a reusable research and experience index. File 05 records what the
 task-3 implementation proves and, equally importantly, what remains unavailable.
-File 06 records the non-persistent task-4 wiring and authority-isolation proof.
+File 06 records the original task-4 wiring and authority-isolation proof. File
+07 records the separately reviewed diagnostic persistence and replay layer.
 
 ## Maintenance rule
 

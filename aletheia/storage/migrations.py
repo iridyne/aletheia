@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v7"
+SCHEMA_VERSION = "aletheia-sqlite-v8"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3383,6 +3383,76 @@ _MARKET_SIGNAL_IDENTITY_CHECKSUM = hashlib.sha256(
     (repr(_MARKET_SIGNAL_IDENTITY_COLUMNS) + "\nadditive_columns_v1").encode("utf-8")
 ).hexdigest()
 
+_UNIVERSE_TWIN_SHADOW_EVIDENCE_SQL = """
+CREATE TABLE IF NOT EXISTS universe_twin_shadow_batches (
+    scanner_run_id TEXT PRIMARY KEY,
+    authority_snapshot_id TEXT,
+    record_version TEXT NOT NULL,
+    authority_behavior_version TEXT NOT NULL,
+    shadow_behavior_version TEXT NOT NULL,
+    allocation_replay_contract TEXT NOT NULL,
+    policy_epoch_id TEXT,
+    feature_source_fingerprint TEXT NOT NULL,
+    availability_profile_id TEXT,
+    outcome_contract_version TEXT NOT NULL,
+    cost_model_version TEXT NOT NULL,
+    metric_version TEXT NOT NULL,
+    allocator_random_state_json TEXT NOT NULL,
+    policy_json TEXT NOT NULL,
+    allocation_context_json TEXT NOT NULL,
+    candidate_count INTEGER NOT NULL CHECK (candidate_count >= 0),
+    promotion_eligible INTEGER NOT NULL DEFAULT 0 CHECK (promotion_eligible IN (0, 1)),
+    blocking_reasons_json TEXT NOT NULL DEFAULT '[]',
+    batch_hash TEXT NOT NULL,
+    captured_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS universe_twin_shadow_records (
+    id TEXT PRIMARY KEY,
+    scanner_run_id TEXT NOT NULL,
+    candidate_key TEXT NOT NULL,
+    candidate_index INTEGER NOT NULL CHECK (candidate_index >= 0),
+    feature_snapshot_id TEXT,
+    asset_id TEXT,
+    symbol TEXT NOT NULL,
+    market_type TEXT NOT NULL,
+    assignment_unit_id TEXT NOT NULL,
+    assignment_arm TEXT,
+    propensity REAL,
+    treatment_coefficient REAL,
+    authority_outcome_candidate_key TEXT,
+    shadow_point_outcome_candidate_key TEXT,
+    shadow_pessimistic_outcome_candidate_key TEXT,
+    authority_total_score REAL NOT NULL,
+    shadow_point_score REAL,
+    shadow_pessimistic_score REAL,
+    authority_rank INTEGER,
+    shadow_point_rank INTEGER,
+    shadow_pessimistic_rank INTEGER,
+    fine_filter_passed INTEGER CHECK (fine_filter_passed IN (0, 1)),
+    authority_selected INTEGER CHECK (authority_selected IN (0, 1)),
+    shadow_point_selected INTEGER CHECK (shadow_point_selected IN (0, 1)),
+    shadow_pessimistic_selected INTEGER CHECK (shadow_pessimistic_selected IN (0, 1)),
+    shadow_authority_applied INTEGER NOT NULL DEFAULT 0 CHECK (shadow_authority_applied IN (0, 1)),
+    promotion_eligible INTEGER NOT NULL DEFAULT 0 CHECK (promotion_eligible IN (0, 1)),
+    shadow_valid INTEGER NOT NULL DEFAULT 0 CHECK (shadow_valid IN (0, 1)),
+    record_json TEXT NOT NULL,
+    input_json TEXT NOT NULL,
+    record_hash TEXT NOT NULL,
+    captured_at TEXT NOT NULL,
+    UNIQUE(scanner_run_id, candidate_key),
+    UNIQUE(scanner_run_id, candidate_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_universe_twin_shadow_batches_captured
+ON universe_twin_shadow_batches(captured_at);
+CREATE INDEX IF NOT EXISTS idx_universe_twin_shadow_records_run
+ON universe_twin_shadow_records(scanner_run_id);
+"""
+_UNIVERSE_TWIN_SHADOW_EVIDENCE_CHECKSUM = hashlib.sha256(
+    (_UNIVERSE_TWIN_SHADOW_EVIDENCE_SQL + "\nPRAGMA optimize").encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -3432,6 +3502,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260806_0004_pending_outcome_partial_index_v5": "pending-outcome partial index",
     "20260806_0005_llm_inference_linkage_v6": "LLM inference audit linkage columns",
     "20260807_0006_market_signal_identity_v7": "exact market-signal evidence column",
+    "20260808_0007_universe_twin_shadow_evidence_v8": (
+        "non-authoritative Universe twin Shadow evidence tables"
+    ),
 }
 
 
@@ -3533,6 +3606,13 @@ def _apply_market_signal_identity_v7(db: sqlite3.Connection) -> None:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
+def _apply_universe_twin_shadow_evidence_v8(db: sqlite3.Connection) -> None:
+    """Add replayable diagnostic evidence without granting it authority."""
+
+    db.executescript(_UNIVERSE_TWIN_SHADOW_EVIDENCE_SQL)
+    db.execute("PRAGMA optimize")
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -3567,8 +3647,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260807_0006_market_signal_identity_v7",
         checksum=_MARKET_SIGNAL_IDENTITY_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v7",
         apply=_apply_market_signal_identity_v7,
+    ),
+    MigrationStep(
+        migration_id="20260808_0007_universe_twin_shadow_evidence_v8",
+        checksum=_UNIVERSE_TWIN_SHADOW_EVIDENCE_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_universe_twin_shadow_evidence_v8,
     ),
 )
 

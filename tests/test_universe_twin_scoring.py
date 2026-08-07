@@ -8,6 +8,7 @@ import copy
 from dataclasses import replace
 import inspect
 from pathlib import Path
+import random
 import textwrap
 
 import pytest
@@ -30,6 +31,7 @@ from aletheia.universe.twin_scoring import (
     rank_twin_shadow_records,
     summarize_twin_shadow_records,
 )
+from aletheia.universe.twin_allocation import replay_twin_shadow_allocations
 
 
 def _feature(**overrides: object) -> dict[str, object]:
@@ -300,6 +302,44 @@ def test_batch_selection_annotation_contains_only_authority_facts() -> None:
     assert all(record.shadow_pessimistic_selected is None for record in annotated)
 
 
+def test_shadow_allocation_replays_both_arms_without_authority_mutation() -> None:
+    first_input = _twin_input()
+    second_input = _twin_input(
+        feature=_feature(
+            feature_snapshot_id="feature-2",
+            asset_id="asset-2",
+            symbol="ETH/USDT",
+        )
+    )
+    records = build_twin_shadow_batch(
+        (first_input, second_input),
+        scanner_run_id="run-1",
+        base_policy=_policy(),
+    )
+    records = (
+        replace(records[0], shadow=replace(records[0].shadow, point_score=30.0, pessimistic_score=80.0)),
+        replace(records[1], shadow=replace(records[1].shadow, point_score=80.0, pessimistic_score=30.0)),
+    )
+    universe_config = UniverseConfig(max_candidates=1, explore_ratio=0.0)
+    replayed = replay_twin_shadow_allocations(
+        records,
+        (first_input, second_input),
+        scanner_run_id="run-1",
+        universe_config=universe_config,
+        app_config=object(),
+        family_tolerances={},
+        regime_state=None,
+        allocator_random_state=random.getstate(),
+        dedupe=lambda values, _cfg: values,
+    )
+    assert replayed[0].shadow_point_selected is False
+    assert replayed[0].shadow_pessimistic_selected is True
+    assert replayed[1].shadow_point_selected is True
+    assert replayed[1].shadow_pessimistic_selected is False
+    assert all(record.shadow_authority_applied is False for record in replayed)
+    assert first_input.feature["symbol"] == "BTC/USDT"
+
+
 def test_threshold_crossings_and_summary_are_diagnostic_only() -> None:
     record = build_twin_shadow_record(_twin_input(total=50.0), scanner_run_id="run-1", base_policy=_policy())
     record = replace(record, authority_selected=True)
@@ -451,6 +491,27 @@ def test_shadow_batch_timeout_cannot_stall_authority_refresh(
         )
     )
     assert result == ()
+
+
+def test_shadow_allocation_failure_preserves_records_as_blocked() -> None:
+    from aletheia.universe import service
+
+    record = build_twin_shadow_record(_twin_input(), scanner_run_id="run-1", base_policy=_policy())
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("allocation replay failed")
+
+    marked = asyncio.run(
+        service._compute_twin_shadow_allocation_nonfatal(
+            fail,
+            twin_scoring.mark_shadow_allocation_unavailable,
+            (record,),
+            (_twin_input(),),
+        )
+    )
+    assert len(marked) == 1
+    assert "shadow_allocation_replay_failed:RuntimeError" in marked[0].blocking_reasons
+    assert marked[0].shadow_point_selected is None
 
 
 def test_shadow_policy_failure_cannot_fail_authority_refresh() -> None:
