@@ -409,11 +409,23 @@ def allocate_universe(
             < family_limits.get(r.get("scanner_family", "momentum"), default_limit)
         ]
         if viable:
-            sample_size = min(explore_count, len(viable))
-            explore_selected = random.sample(viable, sample_size)
-            for r in explore_selected:
+            # Randomize the eligible remainder, then admit candidates one by one.
+            # Sampling ``explore_count`` items in one shot is not capacity-safe:
+            # when a family has one slot left, the sample can contain several
+            # members from that family because every item was checked against the
+            # same pre-sample count. Re-checking after each admission keeps the
+            # documented quota invariant across exploit *and* explore.
+            randomized = random.sample(viable, len(viable))
+            for r in randomized:
+                if len(explore_selected) >= explore_count:
+                    break
                 fam = r.get("scanner_family", "momentum")
-                family_counts[fam] = family_counts.get(fam, 0) + 1
+                limit = family_limits.get(fam, default_limit)
+                current = family_counts.get(fam, 0)
+                if current >= limit:
+                    continue
+                explore_selected.append(r)
+                family_counts[fam] = current + 1
 
     # Combine and assign TTL + rank metadata
     final = exploit_selected + explore_selected
