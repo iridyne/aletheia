@@ -357,6 +357,9 @@ def test_raw_evidence_is_grouped_by_source_not_indicator_name() -> None:
         assert declarations[key].evidence_group_id == "price_path"
     assert declarations["vol_ratio"].evidence_group_id == ("market_activity_liquidity")
     assert declarations["funding_rate"].evidence_group_id == "positioning_flow"
+    assert declarations["return_4h"].unit == "percent"
+    assert declarations["spread_bps"].unit == "basis_points"
+    assert declarations["quote_volume_24h"].unit == "usd"
 
 
 def test_duplicate_consumers_are_declared_once_on_raw_feature() -> None:
@@ -451,6 +454,18 @@ def test_candidate_sensitivity_perturbs_whole_raw_feature_once() -> None:
     assert by_key["funding_rate"].evidence_group_id == "positioning_flow"
     assert result.observed_signal_group_count >= 2
     assert all(not item.budget_exceeded for item in result.sensitivities)
+    assert result.joint_neutral_score_delta is None
+    assert result.interaction_residual is None
+    assert "interaction_residual_unavailable" in result.flags
+
+
+def test_factor_evidence_carries_units_neutral_and_budget() -> None:
+    result = evaluate_continuous_candidate(_complete_candidate())
+    evidence = next(item for item in result.point_evidence if item.raw_feature_id == "return_4h")
+    declaration = raw_feature_declarations()["return_4h"]
+    assert evidence.unit == declaration.unit
+    assert evidence.neutral_value == declaration.neutral_value
+    assert evidence.influence_budget == declaration.influence_budget
 
 
 def test_candidate_sensitivity_uses_one_sided_endpoint_perturbation() -> None:

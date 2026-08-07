@@ -7,6 +7,7 @@ Falls back to static BTC/ETH/SOL when disabled or on any failure.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from contextlib import contextmanager
 import json
@@ -23,6 +24,8 @@ from aletheia.storage.models import (
 )
 
 logger = logging.getLogger("aletheia.universe")
+
+_TWIN_SHADOW_TIMEOUT_SEC = 10.0
 
 # Phase 3 retention (2026-07-17): universe_snapshots + universe_members
 # change-suppression. Universe refresh runs every ~10 min but the allocation
@@ -76,6 +79,34 @@ def _notify_operator_feature_refresh(source: str) -> bool:
     except Exception as exc:
         logger.debug("PI feature-refresh nudge skipped (non-fatal): %s", exc)
         return False
+
+
+async def _compute_twin_shadow_nonfatal(
+    builder,
+    inputs: tuple,
+    *,
+    scanner_run_id: str,
+    base_policy,
+) -> tuple:
+    """Run diagnostic scoring off-thread without failing step-v1 refresh."""
+    if not inputs:
+        return ()
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                builder,
+                inputs,
+                scanner_run_id=scanner_run_id,
+                base_policy=base_policy,
+            ),
+            timeout=_TWIN_SHADOW_TIMEOUT_SEC,
+        )
+    except Exception as shadow_exc:
+        logger.warning(
+            "Universe twin Shadow batch failed without authority impact: %s",
+            type(shadow_exc).__name__,
+        )
+        return ()
 
 
 @contextmanager
@@ -430,6 +461,13 @@ class UniverseService:
             allocate_universe, compute_total_score, get_family_multipliers,
         )
         from aletheia.universe.outcome_recorder import build_pending, settle_due
+        from aletheia.universe.continuous_scoring import ContinuousScoringPolicy
+        from aletheia.universe.twin_scoring import (
+            TwinShadowInput,
+            annotate_authority_selection,
+            build_twin_shadow_batch,
+            summarize_twin_shadow_records,
+        )
         from aletheia.universe.signal_emitter import (
             emit_deterministic_opportunities,
             _infer_direction,
@@ -546,14 +584,35 @@ class UniverseService:
 
             # Scan all coarsely-filtered candidates to get family + direction assignments.
             pre_scored = []
+            twin_shadow_inputs: list[TwinShadowInput] = []
             for feat in coarse_filtered:
                 scanner_result = run_all_scanners(feat)
+                authority_score_audit: dict[str, object] = {}
                 total = compute_total_score(
                     feat, scanner_result, cfg.universe, calibration=calibration or None,
                     calibration_evidence=calibration_evidence or None,
                     scoring_cohort_key=run.id,
+                    scoring_audit_out=authority_score_audit,
                 )
                 pre_scored.append({**feat, **scanner_result, "total_score": total})
+                twin_shadow_inputs.append(TwinShadowInput(
+                    feature=dict(feat),
+                    authority_scanner_result=dict(scanner_result),
+                    authority_total_score=total,
+                    authority_score_audit=dict(authority_score_audit),
+                ))
+
+            # Task 4: compute every coarse-filter survivor's twin score outside
+            # the async event loop and outside every authority collection.
+            twin_shadow_records = await _compute_twin_shadow_nonfatal(
+                build_twin_shadow_batch,
+                tuple(twin_shadow_inputs),
+                scanner_run_id=run.id,
+                base_policy=ContinuousScoringPolicy(
+                    min_volume_24h_usdt=cfg.universe.min_volume_24h_usdt,
+                    min_depth_10bps_usd=cfg.universe.min_depth_10bps_usd,
+                ),
+            )
 
             # Pass 2: fine spread filter with per-family tolerance. Records rejections
             # via record_filter_decision with scanner_family → filter_candidate_outcomes
@@ -573,6 +632,36 @@ class UniverseService:
                 unique_scored, cfg.universe,
                 regime_state=current_regime.state if current_regime else None,
             )
+
+            if twin_shadow_records:
+                twin_shadow_records = annotate_authority_selection(
+                    twin_shadow_records,
+                    fine_filtered=scored,
+                    allocated=allocated,
+                )
+                shadow_summary = summarize_twin_shadow_records(twin_shadow_records)
+                logger.info(
+                    "Universe twin Shadow diagnostic only: version=%s candidates=%d "
+                    "valid=%d invalid=%d family_changes=%d direction_changes=%d "
+                    "point_threshold_crossings=%d pessimistic_threshold_crossings=%d "
+                    "budget_exceeded=%d concentrated=%d single_source=%d "
+                    "missingness=%d residual_unavailable=%d "
+                    "authority_selected=%d shadow_authority_applied=false",
+                    shadow_summary.record_version,
+                    shadow_summary.candidate_count,
+                    shadow_summary.valid_shadow_count,
+                    shadow_summary.invalid_shadow_count,
+                    shadow_summary.family_change_count,
+                    shadow_summary.direction_change_count,
+                    shadow_summary.point_threshold_crossing_count,
+                    shadow_summary.pessimistic_threshold_crossing_count,
+                    shadow_summary.budget_exceeded_count,
+                    shadow_summary.concentrated_evidence_count,
+                    shadow_summary.single_source_evidence_count,
+                    shadow_summary.missingness_count,
+                    shadow_summary.interaction_residual_unavailable_count,
+                    shadow_summary.authority_selected_count,
+                )
 
             now = datetime.now(timezone.utc)
             entry_ts = now.isoformat()

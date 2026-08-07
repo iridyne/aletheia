@@ -162,6 +162,23 @@ def _last_candle_range_atr(
     return (highs[-1] - lows[-1]) / atr_val
 
 
+def _relative_squeeze_state(
+    current_width: float | None,
+    historical_widths: list[float],
+) -> tuple[float | None, bool]:
+    """Expose the degree behind the existing Bollinger squeeze Boolean.
+
+    The Boolean behavior is unchanged. The ratio is transient task-4 Shadow
+    input only; persistence and authority remain separate later gates.
+    """
+    if current_width is None or not historical_widths:
+        return None, False
+    average_width = sum(historical_widths) / len(historical_widths)
+    is_squeeze = current_width < average_width * 0.6
+    ratio = current_width / average_width if average_width > 0 else None
+    return ratio, is_squeeze
+
+
 def _compute_beta(asset_closes: list[float], btc_closes: list[float]) -> float | None:
     """Compute beta of asset vs BTC using hourly returns. Returns None if insufficient data."""
     n = min(len(asset_closes), len(btc_closes))
@@ -509,6 +526,7 @@ async def _fetch_single_feature(
 
     bb = bollinger(closes_1h, 20, 2.0) if len(closes_1h) >= 20 else None
     bb_width_pct = None
+    bb_squeeze_ratio = None
     bb_squeeze = False
     if bb:
         lower, mid, upper = bb
@@ -526,8 +544,9 @@ async def _fetch_single_feature(
                     if h_bb and h_bb[1] > 0:
                         historical_widths.append((h_bb[2] - h_bb[0]) / h_bb[1] * 100)
                 if historical_widths:
-                    avg_width = sum(historical_widths) / len(historical_widths)
-                    bb_squeeze = bb_width_pct < avg_width * 0.6
+                    bb_squeeze_ratio, bb_squeeze = _relative_squeeze_state(
+                        bb_width_pct, historical_widths,
+                    )
 
     relative_strength_24h = None
     relative_strength_4h = None
@@ -660,6 +679,7 @@ async def _fetch_single_feature(
         "last_price": last_price,
         "vol_ratio": vol_ratio,
         "bb_width_pct": bb_width_pct,
+        "bb_squeeze_ratio": bb_squeeze_ratio,
         "bb_squeeze": bb_squeeze,
         "relative_strength_24h": relative_strength_24h,
         "relative_strength_4h": relative_strength_4h,
