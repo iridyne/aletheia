@@ -573,12 +573,15 @@ def get_pipeline_funnel(hours: int = 24):
 
     opportunity_rows = list(
         db.execute(
-            "SELECT id, created_at FROM opportunities "
+            "SELECT id, status, created_at FROM opportunities "
             "WHERE julianday(created_at) >= julianday(?)",
             (cutoff,),
         )
     )
     opportunity_ids = {str(row["id"]) for row in opportunity_rows}
+    opportunity_statuses = {
+        str(row["id"]): str(row["status"] or "") for row in opportunity_rows
+    }
     opps = len(opportunity_ids)
 
     # ``signal_pending`` is a recoverable queue carrier and is intentionally
@@ -731,7 +734,24 @@ def get_pipeline_funnel(hours: int = 24):
 
     signal_count = len(signal_ids)
     trade_count = len(trade_ids)
-    signal_without_terminal = signal_ids - trade_ids - skip_ids
+    source_terminal_without_pi_terminal = {
+        opportunity_id
+        for opportunity_id in signal_ids - trade_ids - skip_ids
+        if opportunity_statuses.get(opportunity_id) in {"reviewed", "expired"}
+    }
+    source_terminal_breakdown = {
+        status: sum(
+            opportunity_statuses.get(opportunity_id) == status
+            for opportunity_id in source_terminal_without_pi_terminal
+        )
+        for status in ("expired", "reviewed")
+    }
+    signal_without_terminal = (
+        signal_ids
+        - trade_ids
+        - skip_ids
+        - source_terminal_without_pi_terminal
+    )
 
     def _rate(numerator: int, denominator: int) -> float | None:
         return round(numerator / denominator * 100.0, 2) if denominator else None
@@ -777,6 +797,10 @@ def get_pipeline_funnel(hours: int = 24):
                 entry_fill_without_approved_risk
             ),
             "signal_without_terminal": len(signal_without_terminal),
+            "source_terminal_without_pi_terminal": len(
+                source_terminal_without_pi_terminal
+            ),
+            "source_terminal_breakdown": source_terminal_breakdown,
             "close_fills_excluded": close_fills_excluded,
             "retained_signal_pending_rows": retained_pending_rows,
         },
