@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import json
+import re
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -26,6 +27,12 @@ _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC = 180.0
 _LAST_INFERENCE_CALL_ID: ContextVar[str | None] = ContextVar(
     "aletheia_last_inference_call_id", default=None
 )
+
+_PYDANTIC_SCHEMA_ERROR_CODES = {
+    "missing": "missing_required",
+    "literal_error": "outside_enum",
+    "enum": "outside_enum",
+}
 
 
 def _exception_detail(exc: BaseException) -> str:
@@ -180,6 +187,7 @@ def _record_call_finished(
     parse_valid: bool | None = None,
     schema_valid: bool | None = None,
     error_type: str | None = None,
+    failure_diagnostics: dict[str, str] | None = None,
 ) -> None:
     from aletheia.economics.inference_calls import record_inference_finished
 
@@ -190,6 +198,7 @@ def _record_call_finished(
         parse_valid=parse_valid,
         schema_valid=schema_valid,
         error_type=error_type,
+        failure_diagnostics=failure_diagnostics,
     )
 
 
@@ -286,8 +295,6 @@ def _extract_json_object(text: str):
     Handles: raw JSON, markdown code fences (```json ... ```), prose before/after
     the JSON block, and nested braces. Returns the parsed object or None.
     """
-    import re
-
     # Strategy 1: try direct parse (fastest path for well-behaved models)
     text = text.strip()
     if text.startswith("{"):
@@ -336,6 +343,94 @@ def _extract_json_object(text: str):
                 except (json.JSONDecodeError, TypeError):
                     return None
     return None
+
+
+def _known_provider_envelope(value: dict) -> str | None:
+    """Classify only fixed public protocol envelopes; never retain their values."""
+    if value.get("object") == "chat.completion" and isinstance(
+        value.get("choices"), list
+    ):
+        return "openai_chat_envelope"
+    if value.get("object") == "response" and (
+        isinstance(value.get("output"), list)
+        or isinstance(value.get("output_text"), str)
+    ):
+        return "openai_responses_envelope"
+    if (
+        value.get("type") == "message"
+        and value.get("role") == "assistant"
+        and isinstance(value.get("content"), list)
+    ):
+        return "anthropic_message_envelope"
+    return None
+
+
+def _classify_structured_response(text: str, parsed: object) -> str:
+    """Return a bounded content-free response-shape enum.
+
+    The classifier deliberately records no body, value, arbitrary root key,
+    length, or hash.  Known envelopes are recognized only by fixed public
+    protocol discriminators.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return "empty"
+    try:
+        root = json.loads(stripped)
+    except (json.JSONDecodeError, TypeError):
+        if isinstance(parsed, dict):
+            if re.search(r"```(?:json)?\s*\n?.*?```", stripped, re.DOTALL):
+                return "markdown_json_object"
+            return "embedded_json_object"
+        return "non_json_text"
+    if isinstance(root, dict):
+        return _known_provider_envelope(root) or "json_object"
+    if isinstance(root, list):
+        return "json_array"
+    if isinstance(root, str):
+        return "json_string"
+    if root is None:
+        return "json_null"
+    return "json_scalar"
+
+
+def _classify_schema_validation_error(exc: BaseException) -> str:
+    """Map validation failures to bounded codes without retaining values/keys."""
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        try:
+            items = errors(include_input=False, include_url=False)
+        except TypeError:
+            try:
+                items = errors()
+            except Exception:  # noqa: BLE001 - classification must stay best effort
+                items = []
+        except Exception:  # noqa: BLE001 - classification must stay best effort
+            items = []
+        if isinstance(items, list) and items and isinstance(items[0], dict):
+            item = items[0]
+            raw_type = str(item.get("type") or "")
+            code = _PYDANTIC_SCHEMA_ERROR_CODES.get(raw_type)
+            if code is None:
+                code = (
+                    "wrong_type"
+                    if raw_type.endswith(("_type", "_parsing"))
+                    else "constraint_violation"
+                    if raw_type
+                    else "validation_failed"
+                )
+            return code
+
+    message = str(exc).lower()
+    mappings = (
+        ("missing required field", "missing_required"),
+        ("outside enum", "outside_enum"),
+        ("expected ", "wrong_type"),
+    )
+    return next(
+        (mapped for marker, mapped in mappings if marker in message),
+        "constraint_violation" if message else "validation_failed",
+    )
 
 
 def _validate_json_schema_value(
@@ -502,10 +597,21 @@ async def llm_structured(
     inference_call: InferenceCall | None = None
     inference_finished = False
     last_response = None
+    last_response_shape: str | None = None
+    last_schema_error_code: str | None = None
 
     def _failure(error: str) -> tuple[dict | None, str]:
         nonlocal inference_finished
         if inference_call is not None and not inference_finished:
+            failure_diagnostics: dict[str, str] = {}
+            if error.startswith(
+                ("structured_parse_error", "structured_schema_invalid")
+            ):
+                if last_response_shape:
+                    failure_diagnostics["response_shape"] = last_response_shape
+                if error.startswith("structured_schema_invalid"):
+                    if last_schema_error_code:
+                        failure_diagnostics["schema_error_code"] = last_schema_error_code
             _record_call_finished(
                 inference_call,
                 status="error",
@@ -513,6 +619,7 @@ async def llm_structured(
                 parse_valid=not error.startswith("structured_parse_error"),
                 schema_valid=False if error.startswith("structured_schema_invalid") else None,
                 error_type=error.split(":", 1)[0],
+                failure_diagnostics=failure_diagnostics or None,
             )
             inference_finished = True
         if fallback_to_defaults:
@@ -641,8 +748,10 @@ async def llm_structured(
             usage = (resp.raw or {}).get("usage", {}) if resp is not None else {}
             output_tokens = usage.get("completion_tokens", usage.get("output_tokens", 0))
             last_bad_output = content
+            last_schema_error_code = None
 
             if not content:
+                last_response_shape = "empty"
                 if output_tokens > 0:
                     # Reasoning model exhausted budget on thinking phase → retry with more
                     if attempt < max_attempts - 1:
@@ -675,11 +784,13 @@ async def llm_structured(
                 return _failure("llm_unavailable: empty_response")
 
             data = _extract_json_object(content)
+            last_response_shape = _classify_structured_response(content, data)
             if isinstance(data, dict):
                 try:
                     _validate_structured_payload(data, schema, schema_dict)
                 except (TypeError, ValueError) as exc:
-                    last_err = f"structured_schema_invalid: {_exception_detail(exc)}"
+                    last_schema_error_code = _classify_schema_validation_error(exc)
+                    last_err = f"structured_schema_invalid: {last_schema_error_code}"
                     if attempt < max_attempts - 1:
                         logger.warning(
                             "LLM structured call: schema validation failed (attempt %d/%d) — retrying",

@@ -36,11 +36,12 @@ across structured repair retries and model fallback attempts.
 | Tools | model tool-interface type, exact allowed IDs when an interface exists, allowlist SHA-256 |
 | Environment | permission mode, paper execution mode, live state, logical agent/run identities |
 | Request | requested provider, temperature, max tokens, fallback policy |
-| Output | output mode, schema identity/SHA-256, parse-valid and schema-valid outcomes |
+| Output | output mode, schema identity/SHA-256, parse-valid and schema-valid outcomes; on terminal structured failure only, a fixed response-shape enum plus bounded schema error class |
 | Evaluation | bounded pair, arm, and fixture IDs when the call belongs to an offline evaluation |
 
 Prompt text, response text, source bodies, credentials, and secrets are not
-stored in this envelope.
+stored in this envelope. Structured-failure diagnostics never store model
+content, values, arbitrary root keys, field names, lengths, or content hashes.
 
 ## Prompt control
 
@@ -111,6 +112,10 @@ logical unit queryable.
 - Measurement writes are best-effort and never authorize or block a trade.
 - Provider/budget/timeout/parse/schema failure finalizes the logical row as
   `error`; it is never relabelled as success because a default object exists.
+- Terminal parse/schema failures may add only allowlisted, content-free enums to
+  `metadata_json.structured_failure`: response shape and schema error class.
+  These facts diagnose a future replay without normalizing
+  or accepting the failed response.
 - A caller may disable model fallback. Paired model evaluations do so to keep
   provider/model identity frozen.
 - Existing database upgrades are additive. Schema creation or upgrade refuses
