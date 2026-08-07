@@ -127,6 +127,49 @@ def test_context_builder_spot_never_reads_derivatives(monkeypatch):
     assert snapshot.leverage == {}
 
 
+def test_context_builder_scopes_tradability_to_exact_instrument(monkeypatch):
+    """Perp tradability must not combine a perp book with spot/other-venue volume."""
+    from aletheia.data.context_builder import build_market_context_from_db
+    from aletheia.storage import repositories as repo
+
+    orderbook_calls: list[tuple[str, str, str]] = []
+    volume_calls: list[dict] = []
+
+    def latest_orderbook(symbol, exchange="", market_type=""):
+        orderbook_calls.append((symbol, exchange, market_type))
+        return _row(
+            timedelta(minutes=2),
+            exchange=exchange,
+            market_type=market_type,
+            spread_bps=2.0,
+            total_depth_10bps_usd=100_000,
+        )
+
+    def list_market_snapshots(**kwargs):
+        volume_calls.append(kwargs)
+        return [{"volume_24h": 50_000_000}]
+
+    monkeypatch.setattr(repo, "latest_orderbook", latest_orderbook)
+    monkeypatch.setattr(repo, "list_market_snapshots", list_market_snapshots)
+    monkeypatch.setattr(repo, "latest_funding_rate", lambda *args, **kwargs: None)
+    monkeypatch.setattr(repo, "latest_open_interest", lambda *args, **kwargs: None)
+    monkeypatch.setattr(repo, "recent_liquidations", lambda *args, **kwargs: [])
+    monkeypatch.setattr(repo, "latest_macro_snapshot", lambda: None)
+
+    snapshot = build_market_context_from_db(
+        ["BTC/USDT"], exchange="OKX", market_type="usdt_futures", now=NOW,
+    )
+
+    assert orderbook_calls == [("BTC/USDT", "okx", "perp")]
+    assert volume_calls == [{
+        "symbol": "BTC/USDT",
+        "exchange": "okx",
+        "market_type": "perp",
+        "limit": 1,
+    }]
+    assert snapshot.tradability["BTC/USDT"]["volume_24h_usd"] == 50_000_000
+
+
 @pytest.mark.parametrize("market_type", ["", "unknown", None])
 def test_context_builder_unknown_market_type_fails_closed_without_derivatives(
     monkeypatch, market_type,

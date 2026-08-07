@@ -20,6 +20,7 @@ Owner 决策（2026-07-14）：Golden Path 冻结在当前形态，不继续扩�
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 
 import pytest
 
@@ -73,6 +74,21 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
         snapshot_at=datetime.now(timezone.utc).isoformat(),
     )
     repo.insert_market_snapshot(snapshot)
+    # The deterministic public-data boundary includes the exact spot book used
+    # by proposal-time tradability. The same exact market snapshot above owns
+    # the 24h volume input; neither input may fall back across venue or market.
+    repo.insert_orderbook_snapshot({
+        "symbol": "BTC/USDT",
+        "exchange": cfg.market_data.ccxt_exchange,
+        "market_type": "spot",
+        "bid_price": 59_999.0,
+        "ask_price": 60_001.0,
+        "spread_bps": 0.33,
+        "bid_depth_10bps_usd": 500_000.0,
+        "ask_depth_10bps_usd": 500_000.0,
+        "total_depth_10bps_usd": 1_000_000.0,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+    })
 
     # The public market/LLM boundaries are deterministic, but the production
     # Observer must create the Opportunity.  This prevents the Golden Path from
@@ -246,6 +262,13 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     assert position["proposal_id"] == proposal["id"]
     assert position["order_id"] == order["id"]
     assert position["opportunity_id"] == opportunity.id
+    attribution = json.loads(proposal["attribution_snapshot"])
+    assert attribution["market_context"]["instrument"] == {
+        "symbol": "BTC/USDT",
+        "exchange": cfg.market_data.ccxt_exchange,
+        "market_type": "spot",
+    }
+    assert attribution["market_context"]["tradability"]["is_tradable"] is True
 
     # --- Provenance: every new entity in the chain carries Session A's identity,
     # the producer commit equals the boot commit, and the config fingerprint is

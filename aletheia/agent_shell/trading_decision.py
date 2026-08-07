@@ -1299,6 +1299,73 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
             },
         )
 
+    # Capture the same exact venue + physical market that supplied the entry
+    # mark. Parsed System Operator trades fail closed when that instrument has
+    # no fresh microstructure evidence or is explicitly non-tradable. This runs
+    # after entry-plan validation so existing typed plan errors keep precedence,
+    # but still before immutable Proposal construction. Legacy programmatic
+    # callers retain compatibility while receiving exact attribution.
+    from aletheia.trading.entry_snapshot import capture_attribution_snapshot
+
+    attribution_snapshot = capture_attribution_snapshot(
+        decision.symbol,
+        exchange=str((snap or {}).get("exchange") or ""),
+        market_type=market_type,
+    )
+    if decision.parameter_rationale_required:
+        market_context = attribution_snapshot.get("market_context")
+        if not isinstance(market_context, dict):
+            market_context = {}
+        instrument = market_context.get("instrument")
+        if not isinstance(instrument, dict):
+            instrument = {}
+        tradability = market_context.get("tradability")
+        if not isinstance(tradability, dict):
+            tradability = {}
+        expected_market = (
+            "perp" if market_type in {"usdt_futures", "swap"} else market_type
+        )
+        expected_exchange = str((snap or {}).get("exchange") or "").lower()
+        identity_matches = (
+            bool(expected_exchange)
+            and instrument.get("symbol") == decision.symbol
+            and str(instrument.get("exchange") or "").lower() == expected_exchange
+            and instrument.get("market_type") == expected_market
+            and str(tradability.get("exchange") or "").lower() == expected_exchange
+        )
+        if not identity_matches or "is_tradable" not in tradability:
+            tradability_reason = "market_tradability_unavailable"
+        elif tradability.get("is_tradable") is not True:
+            tradability_reason = "market_not_tradable"
+        else:
+            tradability_reason = None
+        decision.filter_trace.append({
+            "filter_name": "market_tradability_gate",
+            "stage": "proposal_submission",
+            "decision": "rejected" if tradability_reason else "passed",
+            "reason_code": tradability_reason or "market_tradable",
+            "inputs": {
+                "symbol": decision.symbol,
+                "exchange": expected_exchange or None,
+                "market_type": expected_market,
+                "score": tradability.get("score"),
+                "spread_bps": tradability.get("spread_bps"),
+                "depth_10bps_usd": tradability.get("depth_10bps_usd"),
+                "volume_24h_usd": tradability.get("volume_24h_usd"),
+                "is_tradable": tradability.get("is_tradable"),
+            },
+            "parameters": {
+                "exact_instrument_required": True,
+                "missing_context_policy": "defer",
+            },
+        })
+        if tradability_reason:
+            raise DecisionUnavailable(
+                tradability_reason,
+                stage="operator_entry_plan",
+                filter_trace=list(decision.filter_trace),
+            )
+
     # Leverage only applies to futures. Clamp the PI's request to the per-asset-tier
     # cap (the risk engine enforces the same cap as a hard reject — clamping here keeps
     # the proposal inside the gate so a sane futures trade is not silently rejected for
@@ -1358,7 +1425,6 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
     rationale = f"{thesis}\n---\n{json.dumps(decision_meta)}"
 
     from aletheia.storage.models import TradeProposal
-    from aletheia.trading.entry_snapshot import capture_attribution_snapshot_json
 
     proposal = TradeProposal(
         symbol=decision.symbol,
@@ -1375,7 +1441,7 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         strategy_id=decision.strategy_id,
         opportunity_id=decision.opportunity_id,
         agent_rationale=rationale,
-        attribution_snapshot=capture_attribution_snapshot_json(decision.symbol),
+        attribution_snapshot=json.dumps(attribution_snapshot, default=str),
         trade_school=trade_school,
         # Exit-intent plan M2: carry the Operator's holding horizon and stop
         # provenance to the position at open. stop_source='operator' iff the AI
