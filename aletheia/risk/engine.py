@@ -1032,15 +1032,16 @@ def _evaluate_proposal_locked(
     #    Respects kill_switch_enabled_live / kill_switch_enabled_demo toggles:
     #    the daily-loss violation is always recorded, but the kill switch only
     #    auto-trips when the matching toggle is enabled.
-    # Capital base is mode-specific (CR-RE-03): demo daily-loss must scale off the
-    # DEMO base (starting_capital_usdt), not the much smaller live cap. Using the
-    # live cap ($100) for a demo account meant a ~$1 daily-loss limit, so any small
-    # demo loss spuriously tripped the brake and rejected every subsequent demo
-    # trade for the rest of the UTC day. Mirrors check #13's demo/live base split.
-    if _is_live(proposal.execution_mode):
-        capital_base = risk.max_live_limited_cap_usdt or 0.0
-    else:
-        capital_base = risk.starting_capital_usdt or 0.0
+    # Capital base is mode/account-specific (CR-RE-03). The default follows the
+    # matching account equity; Custom uses only that mode's explicitly stored base.
+    capital_base, capital_base_reason = _resolve_capital_base(
+        proposal.execution_mode,
+        resolved_policy.policy,
+        cfg,
+    )
+    if capital_base is None:
+        violations.append(f"capital_base_unavailable:{capital_base_reason}")
+        capital_base = 0.0
     daily_loss_limit = capital_base * (risk.max_daily_loss_pct / 100.0)
     account_loss = authoritative_account_realized_loss(proposal.execution_mode)
     realized = account_loss.realized_pnl_usdt
@@ -1099,7 +1100,7 @@ def _evaluate_proposal_locked(
                 pre_order_entries,
             )
             projected = current_exposure + (proposal.price * proposal.quantity)
-            live_exposure_cap = risk.max_total_live_exposure_pct / 100.0 * risk.max_live_limited_cap_usdt
+            live_exposure_cap = risk.max_total_live_exposure_pct / 100.0 * capital_base
             if live_exposure_cap > 0 and projected > live_exposure_cap:
                 violations.append(f"max_total_live_exposure_exceeded:{projected}>{live_exposure_cap}")
 
@@ -1146,8 +1147,7 @@ def _evaluate_proposal_locked(
         # Distinct token keeps this out of the live-critical-violation count.
         if proposal.stop_price and proposal.price and proposal.quantity:
             demo_risk_amount = abs(proposal.price - proposal.stop_price) * proposal.quantity
-            demo_capital = risk.starting_capital_usdt or 0.0
-            demo_max_risk = demo_capital * (risk.max_demo_single_trade_risk_pct / 100.0)
+            demo_max_risk = capital_base * (risk.max_demo_single_trade_risk_pct / 100.0)
             if demo_max_risk > 0 and demo_risk_amount > demo_max_risk:
                 violations.append(f"exceeds_demo_single_trade_risk:{demo_risk_amount}>{demo_max_risk}")
 
@@ -2226,6 +2226,28 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
     except Exception:
         pass
     return None
+
+
+def _resolve_capital_base(execution_mode: str, policy, cfg) -> tuple[float | None, str | None]:
+    """Resolve the one authoritative denominator for percentage risk limits.
+
+    Account equity is the shipped and migrated default.  It is deliberately
+    fail-closed: stale or unavailable account state never falls back to the
+    stored custom amount without an explicit operator policy change.
+    """
+    source = getattr(policy.capital, "base_source", "account_equity")
+    if source == "custom":
+        try:
+            value = float(policy.capital.base_usdt)
+        except (TypeError, ValueError):
+            return None, "invalid_custom_value"
+        if math.isfinite(value) and value > 0:
+            return value, None
+        return None, "invalid_custom_value"
+    equity = _account_equity(execution_mode, cfg)
+    if equity is None:
+        return None, f"account_equity_unavailable:{execution_mode}"
+    return equity, None
 
 
 def _config_active_execution_mode(cfg) -> str:

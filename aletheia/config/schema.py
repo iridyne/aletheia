@@ -295,6 +295,9 @@ class StrictRiskPolicyModel(BaseModel):
 
 
 class RiskCapitalPolicy(StrictRiskPolicyModel):
+    # Existing v1/v2 policies intentionally migrate to account equity because
+    # this default is merged underneath every persisted override.
+    base_source: Literal["account_equity", "custom"] = "account_equity"
     base_usdt: float = 100.0
     max_position_notional_usdt: float = 50.0
     max_per_symbol_notional_usdt: float = 400.0
@@ -471,7 +474,7 @@ def _merge_policy(base: dict, override: dict) -> dict:
 
 
 class RiskConfig(BaseModel):
-    schema_version: int = 2
+    schema_version: int = 3
     demo: ModeRiskPolicy
     live: ModeRiskPolicy
 
@@ -487,7 +490,7 @@ class RiskConfig(BaseModel):
                 if isinstance(override, dict)
                 else base
             )
-        data["schema_version"] = 2
+        data["schema_version"] = 3
         return data
 
     def __setattr__(self, name: str, value) -> None:

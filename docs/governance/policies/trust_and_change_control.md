@@ -525,8 +525,12 @@ MVP computation:
 
 - Use closed strategy-linked positions ordered by `closed_at`.
 - Build an equity curve from cumulative `realized_pnl`.
-- Use a conservative capital base from config risk settings:
-  `risk.max_live_limited_cap_usdt`.
+- Resolve the Demo risk policy capital base through its configured source.
+  The shipped and migrated default follows the matching paper/demo account
+  equity; `custom` uses the explicitly stored `capital.base_usdt`.
+- If account-equity mode has no fresh, positive authoritative snapshot, treat
+  the capital base as unavailable and fail the dependent gate closed. Never
+  silently fall back to the stored custom amount.
 - Compute drawdown as peak-to-trough cumulative PnL decline divided by capital
   base.
 - Pass if drawdown percentage is less than or equal to 5.0.
@@ -534,8 +538,7 @@ MVP computation:
 - Fail with `insufficient_closed_positions_for_pnl_checks` if closed positions
   are absent.
 
-If a richer portfolio equity table is added later, this gate may migrate to that
-source, but the migration must include tests.
+The resolved base and source must remain auditable and covered by tests.
 
 ### 5.6 Max Consecutive Losses
 

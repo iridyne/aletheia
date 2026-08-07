@@ -529,7 +529,7 @@ reconciled.
 |--------|------|-------------|
 | GET | `/risk/boundaries` | 硬性风控限额（只读，`aletheia/server/routes/risk.py:17`） |
 | GET | `/risk/status` | Current risk state (ok/warning/blocked) + violations (`risk.py:28`) |
-| GET | `/risk/summary` | Operator-facing summary of recent risk rejections and pending boundary proposals (`risk.py:74`) |
+| GET | `/risk/summary` | Operator-facing summary of recent risk rejections and pending boundary proposals. Boundary candidates are scoped to the exact Demo/Live policy identity (`policy_id`, revision, and hash); legacy or stale-policy decisions remain visible as history but cannot produce or suppress a current proposal (`risk.py:74`). |
 | GET | `/risk/account-leverage` | Account leverage summary |
 
 ### Kill Switch

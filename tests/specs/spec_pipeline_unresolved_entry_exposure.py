@@ -364,8 +364,9 @@ def test_unresolved_entry_is_consumed_by_existing_live_exposure_gate(
 ):
     _setup_db(tmp_path, monkeypatch)
     cfg = _risk_config(monkeypatch)
-    cfg.risk.max_live_limited_cap_usdt = 1_000.0
-    cfg.risk.max_total_live_exposure_pct = 10.0  # unchanged formula -> 100 USDT
+    cfg.risk.live.capital.base_source = "custom"
+    cfg.risk.live.capital.base_usdt = 1_000.0
+    cfg.risk.live.capital.max_total_exposure_pct = 10.0  # 100 USDT
     _seed_entry_order(
         suffix="live-cap",
         execution_mode="bitget_live_limited",
@@ -437,8 +438,9 @@ def test_pending_native_exchange_entry_reserves_risk_capacity(
         )
         assert "symbol_already_open:ETH/USDT" in result.violations
     else:
-        cfg.risk.max_live_limited_cap_usdt = 1_000.0
-        cfg.risk.max_total_live_exposure_pct = 10.0
+        cfg.risk.live.capital.base_source = "custom"
+        cfg.risk.live.capital.base_usdt = 1_000.0
+        cfg.risk.live.capital.max_total_exposure_pct = 10.0
         _seed_entry_order(
             suffix="pending-notional",
             execution_mode="bitget_live_limited",

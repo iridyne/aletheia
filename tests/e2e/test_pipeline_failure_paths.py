@@ -149,8 +149,9 @@ def test_risk_rejects_when_daily_loss_limit_exceeded_proposal_archived(e2e_db, m
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
     cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.risk.starting_capital_usdt = 1000.0
-    cfg.risk.max_daily_loss_pct = 2.0   # daily limit = $20
+    cfg.risk.demo.capital.base_source = "custom"
+    cfg.risk.demo.capital.base_usdt = 1000.0
+    cfg.risk.demo.loss.max_daily_loss_pct = 2.0   # daily limit = $20
     cfg.risk.symbol_filter_mode = "off"
     save_config(cfg)
 

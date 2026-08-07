@@ -1557,6 +1557,10 @@ test('recommendation engine surfaces risk boundary change proposals from backend
         {
           boundary_key: 'max_demo_position_notional_usdt',
           violation_kind: 'exceeds_demo_position_notional',
+          risk_mode: 'demo',
+          policy_id: 'demo-policy',
+          policy_revision: 2,
+          policy_hash: 'demo-policy-hash',
           rejection_count: 2,
           current_value: 200,
           suggested_value: 300,
@@ -1575,7 +1579,15 @@ test('recommendation engine surfaces risk boundary change proposals from backend
   const riskProposal = recommendations.find(item => item.kind === 'risk_boundary_change_proposal_due')
   assert.ok(riskProposal)
   assert.equal(riskProposal?.taskType, 'create_repair_proposal')
+  assert.equal(
+    riskProposal?.id,
+    'risk-boundary-proposal:demo:demo-policy-hash:max_demo_position_notional_usdt',
+  )
   assert.equal(riskProposal?.metadata?.proposal_command, 'propose_risk_boundary_change')
+  assert.equal(riskProposal?.metadata?.risk_mode, 'demo')
+  assert.equal(riskProposal?.metadata?.policy_id, 'demo-policy')
+  assert.equal(riskProposal?.metadata?.policy_revision, 2)
+  assert.equal(riskProposal?.metadata?.policy_hash, 'demo-policy-hash')
   assert.deepEqual(riskProposal?.metadata?.changes, {
     max_demo_position_notional_usdt: 300,
   })
@@ -5994,6 +6006,10 @@ test('operator loop materializes proposal-only risk boundary decisions through t
       {
         boundary_key: 'max_demo_position_notional_usdt',
         violation_kind: 'exceeds_demo_position_notional',
+        risk_mode: 'demo',
+        policy_id: 'demo-policy',
+        policy_revision: 2,
+        policy_hash: 'demo-policy-hash',
         rejection_count: 2,
         current_value: 200,
         suggested_value: 300,
@@ -6058,6 +6074,10 @@ test('operator loop materializes proposal-only risk boundary decisions through t
   assert.equal(calls.createdArtifacts[0].artifact_type, 'repair_decision')
   assert.equal(calls.executedCommands.length, 1)
   assert.equal(calls.executedCommands[0].commandName, 'propose_risk_boundary_change')
+  assert.equal(calls.executedCommands[0].payload.parameters?.risk_mode, 'demo')
+  assert.equal(calls.executedCommands[0].payload.parameters?.policy_id, 'demo-policy')
+  assert.equal(calls.executedCommands[0].payload.parameters?.policy_revision, 2)
+  assert.equal(calls.executedCommands[0].payload.parameters?.policy_hash, 'demo-policy-hash')
   assert.ok(calls.updatedTasks.some(item => item.payload.status === 'completed'))
   const eventTypes = calls.createdEvents.map(item => item.event_type)
   assert.ok(eventTypes.includes('repair_attempted'))

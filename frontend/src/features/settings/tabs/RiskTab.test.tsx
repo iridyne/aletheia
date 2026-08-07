@@ -12,7 +12,7 @@ import SRC from './RiskTab.tsx?raw'
 const DEMO_POLICY = {
   policy_id: 'demo-policy',
   revision: 1,
-  capital: { base_usdt: 100 },
+  capital: { base_source: 'account_equity', base_usdt: 100 },
   loss: { max_daily_loss_pct: 1 },
 }
 
@@ -62,7 +62,7 @@ describe('RiskTab', () => {
   it('preserves a dirty risk draft across a sibling settings refresh', async () => {
     const client = new QueryClient()
     const onDirty = vi.fn()
-    const savedPolicy = { ...DEMO_POLICY, revision: 2, capital: { base_usdt: 275 } }
+    const savedPolicy = { ...DEMO_POLICY, revision: 2, capital: { base_source: 'custom', base_usdt: 275 } }
     const replacePolicy = vi.spyOn(api, 'replaceRiskPolicy').mockResolvedValue({
       demo: savedPolicy,
       live: {},
@@ -78,9 +78,16 @@ describe('RiskTab', () => {
     )
 
     await act(async () => root.render(renderEditor()))
-    const input = container.querySelector<HTMLInputElement>('input[type="number"]')
-    expect(input).not.toBeNull()
+    const source = container.querySelector<HTMLSelectElement>('select')
 
+    await act(async () => {
+      if (source) {
+        source.value = 'custom'
+        source.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+    })
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="Custom capital base"]')
+    expect(input).not.toBeNull()
     await act(async () => {
       changeNumber(input as HTMLInputElement, '250')
       root.render(renderEditor({ ...DEMO_POLICY, capital: { ...DEMO_POLICY.capital } }))
@@ -99,7 +106,10 @@ describe('RiskTab', () => {
 
     expect(replacePolicy).toHaveBeenCalledWith(
       'demo',
-      expect.objectContaining({ revision: 1, capital: { base_usdt: 250 } }),
+      expect.objectContaining({
+        revision: 1,
+        capital: expect.objectContaining({ base_source: 'custom', base_usdt: 250 }),
+      }),
       1,
       'demo policy edited in Settings',
     )
@@ -108,5 +118,34 @@ describe('RiskTab', () => {
     await act(async () => root.unmount())
     container.remove()
     replacePolicy.mockRestore()
+  })
+
+  it('defaults to account equity and enables the amount only for Custom', async () => {
+    const client = new QueryClient()
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+    await act(async () => root.render(
+      <QueryClientProvider client={client}>
+        <RiskPolicyEditor mode="demo" initial={DEMO_POLICY} qc={client} />
+      </QueryClientProvider>,
+    ))
+
+    const source = container.querySelector<HTMLSelectElement>('select')
+    expect(source?.value).toBe('account_equity')
+    expect(container.querySelector('input[aria-label="Custom capital base"]')).toBeNull()
+
+    await act(async () => {
+      if (source) {
+        source.value = 'custom'
+        source.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+    })
+    expect(container.querySelector('input[aria-label="Custom capital base"]')).not.toBeNull()
+
+    await act(async () => root.unmount())
+    container.remove()
   })
 })

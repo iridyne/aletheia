@@ -464,7 +464,7 @@ const LIMIT_GROUPS: LimitGroup[] = [
     title: 'Exposure & capital',
     rows: [
       { label: 'Total exposure', pair: ['live.capital.max_total_exposure_pct', 'demo.capital.max_total_exposure_pct'] },
-      { label: 'Policy capital base', pair: ['live.capital.base_usdt', 'demo.capital.base_usdt'] },
+      { label: 'Capital base source', pair: ['live.capital.base_source', 'demo.capital.base_source'] },
       { label: 'Sector concentration', pair: ['live.correlation.max_sector_concentration_pct', 'demo.correlation.max_sector_concentration_pct'] },
       { label: 'Max portfolio beta', pair: ['live.correlation.max_portfolio_beta', 'demo.correlation.max_portfolio_beta'] },
     ],

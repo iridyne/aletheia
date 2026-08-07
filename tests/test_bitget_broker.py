@@ -183,6 +183,11 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
     cfg.agent.permission_mode = "Full"
     cfg.live.state = "live_limited"
     cfg.exchange.mode = "live"
+    # This gateway-routing test does not own an account-equity adapter. Give
+    # Risk an explicit test denominator so approval proves the routing path
+    # instead of being skipped behind a missing capital authority.
+    cfg.risk.live.capital.base_source = "custom"
+    cfg.risk.live.capital.base_usdt = 100.0
     save_config(cfg)
 
     # fresh market data so the data-freshness check passes
