@@ -34,7 +34,7 @@ across structured repair retries and model fallback attempts.
 | Prompt | template ID/version, static-system SHA-256, rendered request SHA-256, character counts |
 | Context | selected adapter ID and bounded model-visible context manifest |
 | Tools | model tool-interface type, exact allowed IDs when an interface exists, allowlist SHA-256 |
-| Environment | permission mode, paper execution mode, live state, logical agent/run identities |
+| Environment | permission mode, paper execution mode, live state, logical agent/run identities, and explicitly bound evaluation/opportunity/decision/proposal IDs when already known |
 | Request | requested provider, temperature, max tokens, fallback policy |
 | Output | output mode, schema identity/SHA-256, parse-valid and schema-valid outcomes; on terminal structured failure only, a fixed response-shape enum plus bounded schema error class |
 | Evaluation | bounded pair, arm, and fixture IDs when the call belongs to an offline evaluation |
@@ -42,6 +42,8 @@ across structured repair retries and model fallback attempts.
 Prompt text, response text, source bodies, credentials, and secrets are not
 stored in this envelope. Structured-failure diagnostics never store model
 content, values, arbitrary root keys, field names, lengths, or content hashes.
+Economic attribution accepts only the fixed identity keys documented here;
+unregistered keys are discarded before provider or ledger code can observe them.
 
 ## Prompt control
 
@@ -77,6 +79,18 @@ model-visible by a context adapter. This distinction is load-bearing:
 `environment` means what the runtime knew, while `context_manifest` means what
 the adapter declared visible to the model. Missing facts remain absent.
 
+For a System Operator entry evaluation, the daemon binds a fresh
+`evaluation_id`, then the command adds the exact selected Opportunity and its
+durable `signal_pending` PiDecision before model inference only when that exact
+Opportunity/source identity resolves to one row. Zero or multiple carriers keep
+the decision ID absent; row order is never used to choose an identity. A failed
+attribution lookup also leaves the decision ID absent and cannot block the model
+evaluation. These are existing entities, not time-neighbour guesses. A final
+decision or Proposal created only after inference remains absent at that boundary.
+A direct daemon evaluation also keeps `run_id` absent unless an actual `AgentRun`
+is already bound; the evaluation ID must not be relabelled as an AgentRun foreign
+key.
+
 Selected News, Learning, and environment artifacts are recorded as content-free
 `ContextArtifact` rows linked to the exact logical call. Evaluation rows also
 carry pair, arm, and fixture identities. A zero-character or absent Learning
@@ -106,6 +120,14 @@ All physical attempts for a logical call use its `logical_call_id` as
 `runtime_cost_events.call_id` and claim monotonically increasing attempt
 indexes. This preserves real retry/fallback consumption while making the
 logical unit queryable.
+
+When the caller has explicitly bound existing causal entities,
+`runtime_cost_events.opportunity_id`, `decision_id`, and `proposal_id` copy only
+those IDs. Missing or not-yet-created downstream entities stay `NULL`. The same
+content-free attribution is retained in the logical call's environment metadata,
+so a successful model call with no Proposal can be distinguished from an
+unattributable call without storing prompt or response content. Telemetry lookup
+failure is fail-open for the business call and records no database exception text.
 
 ## Failure and recovery semantics
 
@@ -170,7 +192,10 @@ For any registered production inference, an owner can determine why it ran,
 which versioned prompt identity and context adapter it used, which model tool
 surface it could access, which output schema it had to satisfy, how many
 physical attempts it consumed, whether fallback occurred, and whether parsing
-and schema validation succeeded—without opening a raw prompt archive.
+and schema validation succeeded—without opening a raw prompt archive. For a
+System Operator candidate evaluation, the owner can also identify the exact
+queued Opportunity and, only for a unique carrier, PiDecision that incurred the
+call while correctly observing that a Proposal may not exist.
 
 ## Invariants and trust boundaries
 

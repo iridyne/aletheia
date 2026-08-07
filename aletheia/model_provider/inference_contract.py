@@ -165,6 +165,16 @@ def capture_environment(*, scope: str = "agent") -> dict[str, Any]:
         environment["agent_run_id"] = _bounded(current_agent_run_id())
         attribution = current_economic_attribution() or {}
         environment["logical_agent"] = _bounded(attribution.get("logical_agent"))
+        # Content-free, explicit causal identities only. These are captured
+        # from the caller's bound context; missing downstream entities remain
+        # absent rather than being guessed from time or surrounding rows.
+        for key in (
+            "evaluation_id",
+            "opportunity_id",
+            "decision_id",
+            "proposal_id",
+        ):
+            environment[key] = _bounded(attribution.get(key))
     except Exception:
         pass
     try:

@@ -244,6 +244,240 @@ async def test_direct_operator_call_uses_explicit_evaluation_identity():
     assert metadata["identity_source"] == "explicit_economic_context"
 
 
+@pytest.mark.parametrize(
+    ("pending_ids", "lookup_failure", "expected_decision_id"),
+    [
+        (["pending-exact"], False, "pending-exact"),
+        ([], False, None),
+        (["pending-a", "pending-b"], False, None),
+        (["pending-exact"], True, None),
+    ],
+    ids=("unique", "missing", "duplicate", "lookup-unavailable"),
+)
+def test_operator_selection_adds_exact_pending_carrier_to_evaluation_context(
+    tmp_path,
+    monkeypatch,
+    caplog,
+    pending_ids,
+    lookup_failure,
+    expected_decision_id,
+):
+    import asyncio
+
+    from pydantic import BaseModel
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime.run_context import (
+        bind_economic_attribution,
+        current_economic_attribution,
+    )
+    from aletheia.agent_shell import commands
+    from aletheia.agent_shell.trading_decision import DecisionUnavailable
+    from aletheia.agents import helpers
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+
+    class _OperatorSchema(BaseModel):
+        value: int
+
+    class _OperatorProvider(_MeasuredProvider):
+        name = "operator_attribution_test"
+
+        async def complete(self, request: ModelRequest) -> ModelResponse:
+            return ModelResponse(
+                content='{"value":3}',
+                model=self.model,
+                usage={"prompt_tokens": 10, "completion_tokens": 3},
+            )
+
+    for pending_id in pending_ids:
+        insert_pi_decision(PiDecision(
+            id=pending_id,
+            action="signal_pending",
+            opportunity_id="opp-exact",
+            signal_source="market_observer",
+            symbol="BTC/USDT",
+            direction="long",
+            market_type="usdt_futures",
+        ))
+    captured = {}
+    context = {
+        "layer1": {"data_health": {}},
+        "layer2": {
+            "pending_queue": {"unresolved_total": 1},
+            "pending_signals": [
+                {
+                    "opportunity_id": "opp-exact",
+                    "signal_source": "market_observer",
+                    "symbol": "BTC/USDT",
+                    "direction": "long",
+                    "market_type": "usdt_futures",
+                }
+            ],
+        },
+    }
+
+    async def direct_complete(request, *, provider=None, provider_name=None):
+        assert provider is not None
+        return await provider.complete(request)
+
+    async def capture_context(_ctx):
+        captured.update(current_economic_attribution())
+        captured["pending_signals"] = (_ctx.get("layer2") or {}).get(
+            "pending_signals"
+        )
+        data, error = await helpers.llm_structured(
+            "system",
+            "user",
+            schema=_OperatorSchema,
+            caller="system_operator.assess_opportunity",
+        )
+        assert error is None and data == {"value": 3}
+        raise DecisionUnavailable("stop_after_attribution_capture")
+
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_context.build_enriched_trading_context",
+        lambda **_kwargs: context,
+    )
+    monkeypatch.setattr(
+        "aletheia.learning.opportunity_information_policy."
+        "ensure_opportunity_information_policy_epoch",
+        lambda: "info-policy",
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.skip_policy.ensure_skip_remediation_policy_epoch",
+        lambda: "skip-policy",
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.skip_policy.skip_policy_context",
+        lambda: {
+            "unchanged_context_defer_window_minutes": 120,
+            "symbol_level_defer_suppression": False,
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.b2_evidence_policy."
+        "ensure_b2_candidate_evidence_policy_epoch",
+        lambda: "b2-policy",
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.b2_evidence_policy.attach_b2_candidate_evidence",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.vergex_policy.ensure_vergex_utilization_policy_epoch",
+        lambda: "vergex-policy",
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_context.scope_operator_context_to_candidate",
+        lambda ctx, _opportunity_id: ctx,
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_context.operator_decision_context_fingerprint",
+        lambda _ctx: "context-fingerprint",
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_context.material_fingerprint_from_candidate_ctx",
+        lambda _ctx, _opportunity_id: "material-fingerprint",
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.decision_facts.candidate_context_unavailable_reason",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "aletheia.learning.prompt_bundles.authorize_operator_learning_context",
+        lambda ctx: ctx,
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_decision.evaluate_trading_opportunity",
+        capture_context,
+    )
+    monkeypatch.setattr(
+        commands,
+        "_existing_deferred_context_observation",
+        lambda *_args, **_kwargs: None,
+    )
+    if lookup_failure:
+        def fail_attribution_lookup(*_args, **_kwargs):
+            raise RuntimeError("sensitive-attribution-read-detail")
+
+        monkeypatch.setattr(
+            "aletheia.storage.repositories.list_pending_pi_decisions_for_opportunity",
+            fail_attribution_lookup,
+        )
+    provider = _OperatorProvider()
+    monkeypatch.setattr(helpers, "get_provider", lambda _name: provider)
+    monkeypatch.setattr(helpers, "complete_with_fallback", direct_complete)
+
+    with bind_economic_attribution(
+        logical_agent="pi_trading_decision",
+        evaluation_id="operator_eval_exact",
+        trigger="signal",
+    ):
+        with pytest.raises(DecisionUnavailable, match="stop_after_attribution_capture"):
+            asyncio.run(commands.evaluate_trading_opportunity({}))
+
+    assert {key: captured[key] for key in (
+        "logical_agent", "evaluation_id", "trigger", "opportunity_id"
+    )} == {
+        "logical_agent": "pi_trading_decision",
+        "evaluation_id": "operator_eval_exact",
+        "trigger": "signal",
+        "opportunity_id": "opp-exact",
+    }
+    assert captured.get("decision_id") == expected_decision_id
+    assert captured["pending_signals"] == context["layer2"]["pending_signals"]
+    assert "decision_id" not in captured["pending_signals"][0]
+    assert "sensitive-attribution-read-detail" not in caplog.text
+
+    db = get_db()
+    logical = db.execute(
+        "SELECT run_id,metadata_json FROM llm_inference_calls "
+        "WHERE caller='system_operator.assess_opportunity'"
+    ).fetchone()
+    assert logical is not None and logical["run_id"] is None
+    logical_environment = json.loads(logical["metadata_json"])["environment"]
+    assert logical_environment["evaluation_id"] == "operator_eval_exact"
+    assert logical_environment["opportunity_id"] == "opp-exact"
+    assert logical_environment.get("decision_id") == expected_decision_id
+    assert "proposal_id" not in logical_environment
+
+    physical = db.execute(
+        "SELECT run_id,opportunity_id,decision_id,proposal_id,metadata_json "
+        "FROM runtime_cost_events WHERE call_id=("
+        "SELECT logical_call_id FROM llm_inference_calls "
+        "WHERE caller='system_operator.assess_opportunity')"
+    ).fetchone()
+    assert physical is not None
+    assert physical["run_id"] is None
+    assert physical["opportunity_id"] == "opp-exact"
+    assert physical["decision_id"] == expected_decision_id
+    assert physical["proposal_id"] is None
+    assert json.loads(physical["metadata_json"])["evaluation_id"] == (
+        "operator_eval_exact"
+    )
+
+
+def test_economic_attribution_rejects_unregistered_metadata_keys():
+    from aletheia.agent_runtime.run_context import (
+        bind_economic_attribution,
+        current_economic_attribution,
+    )
+
+    with bind_economic_attribution(
+        logical_agent="pi_trading_decision",
+        evaluation_id="operator_eval_exact",
+        arbitrary_text="must-not-persist",
+        response_body="must-not-persist",
+    ):
+        assert current_economic_attribution() == {
+            "logical_agent": "pi_trading_decision",
+            "evaluation_id": "operator_eval_exact",
+        }
+
+
 @pytest.mark.asyncio
 async def test_inherited_stream_records_one_physical_attempt_not_two():
     ensure_economics_schema()

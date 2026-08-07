@@ -13,6 +13,14 @@ _CURRENT_AGENT_RUN_ID: ContextVar[str | None] = ContextVar(
 _CURRENT_ECONOMIC_ATTRIBUTION: ContextVar[dict[str, Any] | None] = ContextVar(
     "aletheia_current_economic_attribution", default=None
 )
+_ECONOMIC_ATTRIBUTION_KEYS = frozenset({
+    "logical_agent",
+    "evaluation_id",
+    "trigger",
+    "opportunity_id",
+    "decision_id",
+    "proposal_id",
+})
 
 
 def current_agent_run_id() -> str | None:
@@ -44,9 +52,11 @@ def current_economic_attribution() -> dict[str, Any]:
 def set_current_economic_attribution(values: dict[str, Any] | None) -> Token:
     """Bind one logical evaluation identity without inventing missing entities."""
     cleaned = {
-        str(key): value
+        str(key): str(value).strip()[:160]
         for key, value in (values or {}).items()
-        if value not in (None, "")
+        if str(key) in _ECONOMIC_ATTRIBUTION_KEYS
+        and value not in (None, "")
+        and str(value).strip()
     }
     return _CURRENT_ECONOMIC_ATTRIBUTION.set(cleaned or None)
 

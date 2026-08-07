@@ -437,6 +437,15 @@ def _current_run_id() -> str | None:
         return None
 
 
+def _causal_identity(metadata: dict[str, Any] | None, key: str) -> str | None:
+    """Return one explicitly bound, content-free causal id for ledger columns."""
+    value = (metadata or {}).get(key)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text[:160] if text else None
+
+
 def record_llm_attempt(
     *,
     call_id: str,
@@ -469,9 +478,9 @@ def record_llm_attempt(
             "llm",
             _current_run_id(),
             provenance.get("runtime_session_id"),
-            None,
-            None,
-            None,
+            _causal_identity(metadata, "opportunity_id"),
+            _causal_identity(metadata, "decision_id"),
+            _causal_identity(metadata, "proposal_id"),
             call_id,
             provider,
             model,

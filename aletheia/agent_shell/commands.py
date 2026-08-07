@@ -2339,7 +2339,46 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "operator_debate_gate": "operator_decision_deferred_low_conviction",
     }
     try:
-        decision = await _evaluate(ctx)
+        # The daemon binds the evaluation identity before this command selects a
+        # carrier. Add only the exact durable entities now known at the LLM
+        # boundary. Resolve the pending row by its selected source identity
+        # outside the model-visible context so telemetry cannot change the prompt.
+        # A final PiDecision and Proposal do not exist yet and must not be
+        # pre-created or inferred for telemetry.
+        from aletheia.agent_runtime.run_context import (
+            bind_economic_attribution,
+            current_economic_attribution,
+        )
+        from aletheia.storage.repositories import (
+            list_pending_pi_decisions_for_opportunity,
+        )
+
+        pending_decision_id = None
+        if selected_opportunity_id:
+            try:
+                pending_decisions = list_pending_pi_decisions_for_opportunity(
+                    selected_opportunity_id,
+                    str(
+                        (selected_candidate or {}).get("signal_source")
+                        or "market_observer"
+                    ),
+                )
+            except Exception:
+                # Attribution is observation-only. A read failure must not block
+                # the business decision or retain database exception text.
+                logger.warning("operator inference attribution lookup unavailable")
+            else:
+                # Duplicate carriers make the decision identity ambiguous. Keep
+                # it unavailable instead of choosing one by row order.
+                if len(pending_decisions) == 1:
+                    pending_decision_id = pending_decisions[0].get("id")
+        causal_attribution = current_economic_attribution()
+        causal_attribution.update({
+            "opportunity_id": selected_opportunity_id,
+            "decision_id": pending_decision_id,
+        })
+        with bind_economic_attribution(**causal_attribution):
+            decision = await _evaluate(ctx)
     except DecisionUnavailable as exc:
         if exc.stage not in _DEFERRED_STAGES:
             raise
