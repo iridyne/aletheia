@@ -1,7 +1,9 @@
 """Tests for /api/export routes (catalog + download)."""
 
 import csv
+import hashlib
 import io
+import json
 import zipfile
 
 import pytest
@@ -53,11 +55,15 @@ def test_catalog_includes_preset_membership(client):
 
     # trade_proposals should be in both presets
     assert "analysis" in entry_map["trade_proposals"]["presets"]
-    assert "migration" in entry_map["trade_proposals"]["presets"]
+    assert "diagnostic" in entry_map["trade_proposals"]["presets"]
 
-    # audit_events should be migration-only
+    # audit_events should be diagnostic-only
     assert "analysis" not in entry_map["audit_events"]["presets"]
-    assert "migration" in entry_map["audit_events"]["presets"]
+    assert "diagnostic" in entry_map["audit_events"]["presets"]
+
+    assert data["presets"]["diagnostic"]["restore_supported"] is False
+    assert "migration" not in data["presets"]
+    assert data["removed_presets"]["migration"]["replacement"] == "diagnostic"
 
 
 # ─── download — preset validation ─────────────────────────────────────────────
@@ -65,6 +71,33 @@ def test_catalog_includes_preset_membership(client):
 def test_download_invalid_preset_returns_400(client):
     resp = client.post("/api/export/download", json={"preset": "nonexistent"})
     assert resp.status_code == 400
+
+
+def test_removed_migration_preset_fails_with_supported_recovery_pointer(client):
+    resp = client.post("/api/export/download", json={"preset": "migration"})
+
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert detail["code"] == "migration_preset_removed"
+    assert detail["replacement"] == "diagnostic"
+    assert detail["backup_api"] == "/api/persistence/backups"
+
+    with_custom_tables = client.post(
+        "/api/export/download",
+        json={"preset": "migration", "include_datasets": ["orders"]},
+    )
+    assert with_custom_tables.status_code == 400
+    assert with_custom_tables.json()["detail"]["code"] == "migration_preset_removed"
+
+
+def test_download_rejects_ambiguous_preset_and_custom_dataset_request(client):
+    resp = client.post(
+        "/api/export/download",
+        json={"preset": "analysis", "include_datasets": ["orders"]},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "ambiguous_export_request"
 
 
 def test_download_no_preset_no_datasets_returns_400(client):
@@ -81,6 +114,20 @@ def test_download_unknown_dataset_returns_400(client):
     resp = client.post("/api/export/download", json={"include_datasets": ["nonexistent_table"]})
     assert resp.status_code == 400
     assert "nonexistent_table" in resp.text
+
+
+@pytest.mark.parametrize("partial_table", ("agent_runs", "agent_run_steps", "agent_tool_calls"))
+def test_custom_export_rejects_partial_agent_trace(client, partial_table):
+    resp = client.post("/api/export/download", json={"include_datasets": [partial_table]})
+
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert detail["code"] == "partial_agent_trace"
+    assert set(detail["required_together"]) == {
+        "agent_runs",
+        "agent_run_steps",
+        "agent_tool_calls",
+    }
 
 
 # ─── download — analysis preset ───────────────────────────────────────────────
@@ -107,6 +154,7 @@ def test_download_analysis_preset_contains_expected_files(client):
         "trade_proposals.csv", "risk_decisions.csv", "orders.csv",
         "fills.csv", "positions.csv", "capital_events.csv", "paper_account_events.csv",
     }
+    expected.add("export_manifest.json")
     assert expected == set(files.keys()), f"Unexpected file set: {set(files.keys())}"
 
 
@@ -120,6 +168,8 @@ def test_download_analysis_csvs_have_headers(client):
     resp = client.post("/api/export/download", json={"preset": "analysis"})
     files = _unzip(resp.content)
     for filename, content in files.items():
+        if filename == "export_manifest.json":
+            continue
         text = content.decode("utf-8")
         reader = csv.reader(io.StringIO(text))
         rows = list(reader)
@@ -128,23 +178,59 @@ def test_download_analysis_csvs_have_headers(client):
         assert all(col for col in rows[0]), f"{filename} header has empty column name"
 
 
-# ─── download — migration preset ──────────────────────────────────────────────
+# ─── download — diagnostic preset ─────────────────────────────────────────────
 
-def test_download_migration_preset_contains_audit_and_agent_tables(client):
-    resp = client.post("/api/export/download", json={"preset": "migration"})
+def test_download_diagnostic_preset_contains_complete_physical_agent_trace(client):
+    import aletheia.storage.sqlite as sq
+
+    db = sq.get_db()
+    db.execute(
+        "INSERT INTO agent_runs "
+        "(id, agent_name, trigger_type, permission_mode, started_at, status) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("run-tool-only", "test", "manual", "Observe", "2026-08-07 00:00:00", "completed"),
+    )
+    db.execute(
+        "INSERT INTO agent_tool_calls "
+        "(id, run_id, tool_name, tool_class, input_data, output_data, permitted, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "tool-only",
+            "run-tool-only",
+            "market_scan",
+            "read",
+            "{}",
+            "{}",
+            1,
+            "2026-08-07 00:00:01",
+        ),
+    )
+    db.commit()
+
+    resp = client.post("/api/export/download", json={"preset": "diagnostic"})
     assert resp.status_code == 200
     files = _unzip(resp.content)
-    for expected in ("audit_events.csv", "agent_runs.csv", "agent_run_steps.csv"):
-        assert expected in files, f"{expected} missing from migration export"
+    for expected in (
+        "audit_events.csv",
+        "agent_runs.csv",
+        "agent_run_steps.csv",
+        "agent_tool_calls.csv",
+        "opportunities.csv",
+        "pi_decisions.csv",
+    ):
+        assert expected in files, f"{expected} missing from diagnostic export"
+
+    tool_rows = list(csv.DictReader(io.StringIO(files["agent_tool_calls.csv"].decode())))
+    assert [row["run_id"] for row in tool_rows] == ["run-tool-only"]
 
 
-def test_download_migration_preset_includes_config(client, tmp_path, monkeypatch):
+def test_download_diagnostic_preset_includes_config(client, tmp_path, monkeypatch):
     import aletheia.config.loader as _loader
     config_file = tmp_path / "config.yaml"
     config_file.write_text("app:\n  name: TestAletheia\n")
     monkeypatch.setattr(_loader, "CONFIG_PATH", config_file)
 
-    resp = client.post("/api/export/download", json={"preset": "migration", "include_config": True})
+    resp = client.post("/api/export/download", json={"preset": "diagnostic", "include_config": True})
     assert resp.status_code == 200
     files = _unzip(resp.content)
     assert "config_backup.yaml" in files
@@ -153,17 +239,51 @@ def test_download_migration_preset_includes_config(client, tmp_path, monkeypatch
     assert "TestAletheia" in content
 
 
-def test_download_migration_config_included_even_without_flag(client, tmp_path, monkeypatch):
-    """migration preset always includes config backup regardless of include_config flag."""
+def test_download_diagnostic_config_included_even_without_flag(client, tmp_path, monkeypatch):
+    """Diagnostic preset always includes a redacted config regardless of the flag."""
     import aletheia.config.loader as _loader
     config_file = tmp_path / "config.yaml"
     config_file.write_text("app:\n  name: MigrationTest\n")
     monkeypatch.setattr(_loader, "CONFIG_PATH", config_file)
 
-    resp = client.post("/api/export/download", json={"preset": "migration", "include_config": False})
+    resp = client.post("/api/export/download", json={"preset": "diagnostic", "include_config": False})
     assert resp.status_code == 200
     files = _unzip(resp.content)
     assert "config_backup.yaml" in files
+
+
+def test_export_manifest_is_versioned_non_restorable_and_checks_every_payload(client):
+    resp = client.post("/api/export/download", json={"preset": "diagnostic"})
+    files = _unzip(resp.content)
+    manifest = json.loads(files["export_manifest.json"])
+
+    assert manifest["manifest_version"] == 1
+    assert manifest["preset"]["name"] == "diagnostic"
+    assert manifest["preset"]["version"] == 1
+    assert manifest["restore"]["supported"] is False
+    assert manifest["restore"]["backup_api"] == "/api/persistence/backups"
+    assert manifest["producer"]["application_version"]
+    assert manifest["producer"]["schema_version"].startswith("aletheia-sqlite-")
+    assert manifest["consistency"] == "best_effort_table_by_table"
+
+    records = {record["filename"]: record for record in manifest["files"]}
+    assert set(records) == set(files) - {"export_manifest.json"}
+    for filename, record in records.items():
+        assert record["sha256"] == hashlib.sha256(files[filename]).hexdigest()
+        assert record["bytes"] == len(files[filename])
+        if filename.endswith(".csv"):
+            rows = list(csv.reader(io.StringIO(files[filename].decode())))
+            assert record["row_count"] == len(rows) - 1
+    assert records["agent_tool_calls.csv"]["row_count"] >= 0
+
+    excluded_classes = {item["classification"] for item in manifest["excluded_state"]}
+    assert {
+        "required_durable",
+        "optional_history",
+        "rebuildable_cache",
+        "ephemeral_lock",
+        "secret_excluded",
+    } <= excluded_classes
 
 
 # ─── download — custom include_datasets ───────────────────────────────────────
@@ -172,7 +292,7 @@ def test_download_custom_datasets_subset(client):
     resp = client.post("/api/export/download", json={"include_datasets": ["orders", "fills"]})
     assert resp.status_code == 200
     files = _unzip(resp.content)
-    assert set(files.keys()) == {"orders.csv", "fills.csv"}
+    assert set(files.keys()) == {"orders.csv", "fills.csv", "export_manifest.json"}
 
 
 def test_download_custom_preserves_canonical_order(client):
@@ -180,7 +300,7 @@ def test_download_custom_preserves_canonical_order(client):
     # Request in reverse order
     resp = client.post("/api/export/download", json={"include_datasets": ["fills", "orders"]})
     files = _unzip(resp.content)
-    names = list(files.keys())
+    names = [name for name in files if name.endswith(".csv")]
     assert names.index("orders.csv") < names.index("fills.csv")
 
 
@@ -225,6 +345,10 @@ def test_config_redaction_prefixed_keys(tmp_path, monkeypatch):
         "  bot_token: 1234567890:ABCdef\n"
         "webhook:\n"
         "  webhook_secret: whsec_xyz\n"
+        "exchange:\n"
+        "  passphrase: exchange-passphrase\n"
+        "network:\n"
+        "  proxy_url: http://myuser:mypassword@127.0.0.1:7890\n"
     )
     monkeypatch.setattr(_loader, "CONFIG_PATH", config_file)
 
@@ -232,6 +356,10 @@ def test_config_redaction_prefixed_keys(tmp_path, monkeypatch):
     assert "ck_abc123" not in result
     assert "1234567890:ABCdef" not in result
     assert "whsec_xyz" not in result
+    assert "exchange-passphrase" not in result
+    assert "myuser" not in result
+    assert "mypassword" not in result
+    assert "127.0.0.1:7890" in result
     # Keys themselves must still be recognizable (not mangled)
     assert "coinalyze_api_key:" in result
     assert "bot_token:" in result

@@ -65,8 +65,47 @@ active `app.db` file is not a supported backup or restore path. Restore rehearsa
 must target an isolated data root and must not overwrite the active runtime merely
 to test the archive.
 
+## CSV export is diagnostic, not migration
+
+`/api/export` exposes two bounded CSV presets:
+
+- `analysis` contains selected trading tables for external analysis.
+- `diagnostic` adds selected causal rows, the three physical Agent trace sources
+  (`agent_runs`, `agent_run_steps`, `agent_tool_calls`), SQLite audit history, and
+  a parsed/redacted config copy.
+
+Neither preset is dependency-closed, transactionally quiesced, or accepted as
+restore input. The former `migration` preset is removed and returns
+`migration_preset_removed`; silently treating it as a compatibility alias would
+preserve the false instance-transfer claim. Operators must use
+`POST /api/persistence/backups`, verify the resulting managed archive through
+`POST /api/persistence/backups/verify`, and use `BackupService`/`RestoreService`
+with an isolated rehearsal for recovery evidence.
+
+Every CSV ZIP contains `export_manifest.json` with its manifest/preset version,
+producer and SQLite schema versions, creation time, exact exported row counts,
+per-file byte counts and SHA-256 checksums, source classifications, consistency
+limit, and explicit excluded-state categories. The manifest marks
+`restore.supported=false`. Its exclusions cover unlisted required durable state,
+optional history, rebuildable caches, process/lock authority, and credentials.
+This list is an honesty boundary for a bounded diagnostic artifact, not a claim
+that the export catalog inventories the whole runtime.
+
+Agent step/tool tables are one logical best-effort trace. A diagnostic preset
+includes all three physical sources; a custom request that selects only part of
+the trace is rejected. Within a run, consumers merge steps and tool calls by
+`created_at`, use CSV order as the intra-source tiebreaker, and order a reasoning
+step before a tool call on an exact timestamp tie. Retention or producer drops
+mean absent telemetry never proves that no reasoning/tool action occurred. Agent
+input/output fields may contain private runtime data, so a diagnostic archive
+must not be shared blindly even though configuration credentials are redacted.
+
 ## Executable evidence
 
 `tests/specs/spec_persistence.py` verifies the current stores, deterministic
 identities, wired adapter behavior, and negative tripwires that prevent dormant
 recovery components from being presented as active runtime guarantees.
+
+`tests/test_export_routes.py` verifies the removed migration claim, Agent-trace
+closure, versioned manifest, row counts/checksums, explicit exclusion classes,
+redacted configuration, and the managed backup/restore pointer.
