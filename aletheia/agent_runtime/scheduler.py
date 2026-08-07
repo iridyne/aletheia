@@ -3065,10 +3065,15 @@ def _run_measurement_startup_catchup():
 
 
 def _cleanup_stale_scanner_runs():
-    """Mark stuck 'running' scanner runs as timed_out after 10min wall-clock.
+    """Mark stuck ``running`` scanner runs as timed out after a safe grace period.
 
-    The 10-minute threshold is timeout(360s) + grace(15s) + buffer, ensuring
-    legitimately running scans (~3.5min) are never killed by the periodic cleanup.
+    ``started_at`` is persisted as an ISO-8601 value containing ``T`` while
+    SQLite's ``datetime('now')`` uses a space. A raw text comparison therefore
+    never matched old rows (``T`` sorts after a space), leaving abandoned runs
+    pinned at ``running`` forever. Normalize both sides with ``datetime()``.
+
+    The 12-minute threshold stays beyond the 600-second Universe timeout plus
+    cancellation grace, so a legitimate slow scan is not relabelled mid-flight.
     """
     try:
         from aletheia.storage.sqlite import get_db
@@ -3077,7 +3082,8 @@ def _cleanup_stale_scanner_runs():
         result = db.execute(
             "UPDATE universe_scanner_runs SET status = 'timed_out', "
             "completed_at = datetime('now') "
-            "WHERE status = 'running' AND started_at < datetime('now', '-10 minutes')",
+            "WHERE status = 'running' "
+            "AND datetime(started_at) < datetime('now', '-12 minutes')",
         )
         rows = result.rowcount if result else 0
         if rows:
@@ -3103,7 +3109,7 @@ def _cleanup_stale_agent_runs():
         result = db.execute(
             "UPDATE agent_runs SET status = 'stale', ended_at = datetime('now') "
             "WHERE status = 'running' "
-            "AND started_at < datetime('now', '-20 minutes')",
+            "AND datetime(started_at) < datetime('now', '-20 minutes')",
         )
         rows = result.rowcount if result else 0
         if rows:
@@ -3115,6 +3121,9 @@ def _cleanup_stale_agent_runs():
 
 
 def _run_universe_refresh():
+    # Reconcile a process-abandoned scanner row before starting another run.
+    # This is bookkeeping only: it never triggers a scan or changes allocation.
+    _cleanup_stale_scanner_runs()
     cfg = load_config()
     if cfg.runtime.paused:
         return

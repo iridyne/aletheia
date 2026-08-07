@@ -1,9 +1,86 @@
 import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+
+
+def test_stale_scanner_cleanup_parses_iso_timestamps():
+    from aletheia.agent_runtime import scheduler
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc)
+    db = get_db()
+    db.executemany(
+        "INSERT INTO universe_scanner_runs (id, started_at, status) "
+        "VALUES (?, ?, 'running')",
+        (
+            ("old-run", (now - timedelta(minutes=30)).isoformat()),
+            ("fresh-run", (now - timedelta(minutes=1)).isoformat()),
+        ),
+    )
+    db.commit()
+
+    scheduler._cleanup_stale_scanner_runs()
+
+    rows = {
+        row["id"]: dict(row)
+        for row in db.execute(
+            "SELECT id, status, completed_at FROM universe_scanner_runs"
+        ).fetchall()
+    }
+    assert rows["old-run"]["status"] == "timed_out"
+    assert rows["old-run"]["completed_at"]
+    assert rows["fresh-run"]["status"] == "running"
+
+
+def test_stale_agent_cleanup_parses_iso_timestamps():
+    from aletheia.agent_runtime import scheduler
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AgentRun
+
+    now = datetime.now(timezone.utc)
+    old_run = AgentRun(
+        agent_name="old-agent",
+        started_at=(now - timedelta(minutes=30)).isoformat(),
+    )
+    fresh_run = AgentRun(
+        agent_name="fresh-agent",
+        started_at=(now - timedelta(minutes=1)).isoformat(),
+    )
+    repo.insert_agent_run(old_run)
+    repo.insert_agent_run(fresh_run)
+
+    scheduler._cleanup_stale_agent_runs()
+
+    assert repo.get_agent_run(old_run.id)["status"] == "stale"
+    assert repo.get_agent_run(old_run.id)["ended_at"]
+    assert repo.get_agent_run(fresh_run.id)["status"] == "running"
+
+
+def test_universe_refresh_reconciles_stale_runs_before_skip(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+
+    calls = []
+    monkeypatch.setattr(
+        scheduler,
+        "_cleanup_stale_scanner_runs",
+        lambda: calls.append("cleanup"),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "load_config",
+        lambda: SimpleNamespace(
+            runtime=SimpleNamespace(paused=False),
+            universe=SimpleNamespace(enabled=False),
+        ),
+    )
+
+    scheduler._run_universe_refresh()
+
+    assert calls == ["cleanup"]
 
 
 def _cfg(*, paused: bool = False):
