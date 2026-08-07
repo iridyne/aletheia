@@ -2031,3 +2031,154 @@ def test_startup_gate_reads_core_pending_close_truth(tmp_path, monkeypatch):
     assert allowed is False
     assert "position_absence_unverified=1" in detail
     assert "stale:submitted=1" in detail
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-RX-24",
+        "pipeline_risk_execution_integrity",
+        "§12 rejected close through verified reconciliation",
+        "L2c",
+        "A typed venue no-position rejection retains one durable close claim until "
+        "two independent complete account views and an exact read-only broker query "
+        "converge it administratively, without resubmission, Fill, PnL, or Learning.",
+        status="implemented",
+    )
+)
+@pytest.mark.parametrize(
+    "broker_module,client_name,close_name,execution_mode", CLOSE_TIMEOUT_CASES,
+)
+def test_position_absence_claim_converges_without_fabricated_economics(
+    tmp_path,
+    monkeypatch,
+    broker_module,
+    client_name,
+    close_name,
+    execution_mode,
+):
+    import importlib
+
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.config import loader
+    from aletheia.execution.verified_exit import classify_verified_exit
+    from aletheia.exchanges.submission_errors import ClosePositionAbsentError
+    from aletheia.portfolio import disappearance_settlement, position_reconciler
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    cfg = loader.load_config()
+    cfg.exchange.mode = "demo"
+    cfg.exchange.paper_execution_mode = execution_mode
+    loader.save_config(cfg)
+
+    close_calls: list[str] = []
+
+    class _AbsentCloseClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def place_order(self, order):
+            close_calls.append(order.client_oid)
+            raise ClosePositionAbsentError(
+                "Exchange close rejected: no position available"
+            )
+
+        async def close(self):
+            return None
+
+    broker = importlib.import_module(broker_module)
+    monkeypatch.setattr(broker, client_name, _AbsentCloseClient)
+    position = Position(
+        id=f"absence-to-reconcile-{execution_mode}",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=60_000.0,
+        current_price=60_100.0,
+        execution_mode=execution_mode,
+    )
+    repo.insert_position(position)
+
+    with pytest.raises(ClosePositionAbsentError, match="no position available"):
+        getattr(broker, close_name)(position.id, reason="stop_loss")
+
+    first_order = repo.list_orders(limit=20)[0]
+    unresolved = repo._select_one("positions", position.id)
+    assert unresolved["status"] == "open"
+    assert unresolved["pending_close_order_id"] == first_order["id"]
+    assert unresolved["pending_close_status"] == "position_absence_unverified"
+    assert first_order["status"] == "error"
+    assert repo.list_fills(limit=20) == []
+
+    snapshot = {
+        "accounts": [{"broker_id": execution_mode}],
+        "positions": [],
+        "age_seconds": 1.0,
+        "fetched_at": "2026-08-08T10:00:00+00:00",
+    }
+    monkeypatch.setattr(
+        position_reconciler.exchange_sync,
+        "get_unified_cached_state",
+        lambda: snapshot,
+    )
+    verified_queries: list[str] = []
+
+    class _ReadOnlyVerificationClient:
+        async def get_verified_position_exit(self, request):
+            verified_queries.append(request.position_id)
+            return classify_verified_exit(
+                request,
+                position_absent=True,
+                history_complete=True,
+                close_fills=(),
+                ambiguous_activity=False,
+                pages=1,
+                source_endpoint="private-fill-history",
+            )
+
+        async def place_order(self, *args, **kwargs):
+            raise AssertionError("verified reconciliation must never place an order")
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        disappearance_settlement,
+        "_client_for_mode",
+        lambda mode: _ReadOnlyVerificationClient(),
+    )
+
+    first_reconcile = position_reconciler.run_reconcile("demo")
+    assert first_reconcile["disappearance"]["created"] == 1
+    assert first_reconcile["disappearance"]["confirmed"] == 0
+    assert first_reconcile["settlement"] == []
+    assert repo._select_one("positions", position.id)["status"] == "open"
+
+    snapshot["fetched_at"] = "2026-08-08T10:05:00+00:00"
+    second_reconcile = position_reconciler.run_reconcile("demo")
+
+    assert second_reconcile["disappearance"]["confirmed"] == 1
+    assert second_reconcile["settlement"][0]["closed"] is True
+    assert second_reconcile["settlement"][0]["closure_type"] == "administrative"
+    assert verified_queries == [position.id]
+    assert close_calls == [f"close-{position.id}"]
+
+    closed = repo._select_one("positions", position.id)
+    assert closed["status"] == "closed"
+    assert closed["close_reason"] == "reconciled_gone"
+    assert closed["close_category"] == "administrative"
+    assert closed["realized_pnl"] is None
+    assert closed["exit_fee"] is None
+    assert closed["exit_fill_verified"] == 0
+    assert closed["outcome_eligible"] == 0
+    assert closed["outcome_exclusion_reason"] == "administrative_close"
+    assert closed["pending_close_order_id"] is None
+    assert closed["pending_close_status"] is None
+    assert len(repo.list_orders(limit=20)) == 1
+    assert repo.list_orders(limit=20)[0]["id"] == first_order["id"]
+    assert repo.list_fills(limit=20) == []
+    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+
+    candidate = repo.list_position_disappearance_candidates(limit=5)[0]
+    assert candidate["status"] == "settled_administrative"
