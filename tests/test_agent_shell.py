@@ -189,7 +189,7 @@ async def test_wake_driven_portfolio_review_scopes_and_persists_hold(
     conn = _init_agent_shell_db(tmp_path, monkeypatch)
     from aletheia.agent_shell.commands import review_portfolio_state
     from aletheia.storage.models import Position
-    from aletheia.storage.repositories import _select_one, insert_position
+    from aletheia.storage.repositories import _select_one, insert_position, update_position
 
     target = Position(
         id="wake-review-target",
@@ -615,7 +615,11 @@ async def test_successful_horizon_review_acknowledges_the_durable_wake(
     conn = _init_agent_shell_db(tmp_path, monkeypatch)
     from aletheia.agent_shell.commands import review_portfolio_state
     from aletheia.storage.models import Position
-    from aletheia.storage.repositories import _select_one, insert_position
+    from aletheia.storage.repositories import (
+        _select_one,
+        insert_position,
+        update_position,
+    )
 
     target = Position(
         id="horizon-review-ack-target",
@@ -624,10 +628,16 @@ async def test_successful_horizon_review_acknowledges_the_durable_wake(
         direction="long",
         quantity=1.0,
         entry_price=100.0,
+        current_price=102.0,
+        unrealized_pnl=2.0,
         execution_mode="paper_internal",
-        expected_horizon_hours=10.0,
+        stop_price=95.0,
+        take_profit_price=110.0,
     )
     insert_position(target)
+    # Exit-plan fields were added to the durable table after the base Position
+    # model; the production open path writes them as a separate update too.
+    update_position(target.id, expected_horizon_hours=10.0)
     monkeypatch.setattr(
         "aletheia.agent_shell.context.build_app_context",
         lambda sections=None: {
@@ -635,7 +645,17 @@ async def test_successful_horizon_review_acknowledges_the_durable_wake(
         },
     )
 
-    async def choose_hold(_system, _user, *, schema, **_kwargs):
+    async def choose_hold(_system, user, *, schema, **_kwargs):
+        assert "entry=100.0" in user
+        assert "current=102.0" in user
+        assert "upnl=2.0" in user
+        assert "stop=95.0" in user
+        assert "target=110.0" in user
+        assert "expected_horizon_hours=10.0" in user
+        assert '"hold" acknowledges this one-time horizon review' in user
+        assert "another horizon wake" in user
+        assert "new_horizon_hours to an absolute age from opened_at" in user
+        assert 'horizon review will occur after "hold"' in user
         return ({"action": "hold", "reasoning": "thesis remains valid"}, None)
 
     monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_hold)

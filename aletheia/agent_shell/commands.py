@@ -3006,10 +3006,19 @@ async def review_portfolio_state(params: dict) -> dict:
         "required": ["action", "reasoning"],
     }
 
+    def _position_review_value(value) -> object:
+        return "not available" if value is None else value
+
     pos_summary = "\n".join(
         f"  id={p['id']} {p['symbol']} ({p.get('market_type', 'spot')}) "
         f"{p['direction']} qty={p['quantity']} "
-        f"upnl={p.get('unrealized_pnl', '?')}"
+        f"entry={_position_review_value(p.get('entry_price'))} "
+        f"current={_position_review_value(p.get('current_price'))} "
+        f"upnl={_position_review_value(p.get('unrealized_pnl'))} "
+        f"stop={_position_review_value(p.get('stop_price'))} "
+        f"target={_position_review_value(p.get('take_profit_price'))} "
+        f"opened_at={_position_review_value(p.get('opened_at'))} "
+        f"expected_horizon_hours={_position_review_value(p.get('expected_horizon_hours'))}"
         for p in open_positions
     )
     total_unrealized_text = (
@@ -3044,6 +3053,13 @@ Review the portfolio and decide:
 Be conservative. Global portfolio context is read-only. For adjust_position or
 close_one, target_position_id must identify one listed review-scope position. Never
 act on a position outside the supplied wake evidence.
+
+For a horizon_due wake, "hold" acknowledges this one-time horizon review and does
+not schedule another horizon wake. The next automatic time-based action is the
+existing hard backstop. To request another time-based review, choose
+"adjust_position" and set new_horizon_hours to an absolute age from opened_at that
+is greater than the current age reported in the wake evidence. Do not claim a later
+horizon review will occur after "hold".
 
 Return JSON: {_json.dumps(schema)}"""
 
