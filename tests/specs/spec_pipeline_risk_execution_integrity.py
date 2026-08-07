@@ -1878,13 +1878,16 @@ def test_overfilled_close_claim_never_reaches_exchange_again(
     }.issubset(position_manager._OPEN_CLOSE_STATES)
 
 
+@pytest.mark.parametrize(
+    "broker_module,client_name,close_name,execution_mode", CLOSE_TIMEOUT_CASES,
+)
 @spec_claim(
     SpecClaim(
         "PL-RX-22",
         "pipeline_risk_execution_integrity",
         "§12 venue-reported position absence",
         "L2c",
-        "A Bitget close rejected because the venue reports no matching position "
+        "A close classified by its adapter as having no matching venue position "
         "retains one durable reconciliation claim across later manager cycles and "
         "must not fabricate a Fill or resubmit the close.",
         status="implemented",
@@ -1893,6 +1896,10 @@ def test_overfilled_close_claim_never_reaches_exchange_again(
 def test_position_absence_claim_survives_restart_without_close_resubmission(
     tmp_path,
     monkeypatch,
+    broker_module,
+    client_name,
+    close_name,
+    execution_mode,
 ):
     import importlib
 
@@ -1914,8 +1921,8 @@ def test_position_absence_claim_survives_restart_without_close_resubmission(
         async def close(self):
             pass
 
-    broker = importlib.import_module("aletheia.execution.bitget_broker")
-    monkeypatch.setattr(broker, "BitgetClient", _MustNotReachExchange)
+    broker = importlib.import_module(broker_module)
+    monkeypatch.setattr(broker, client_name, _MustNotReachExchange)
     position = Position(
         id="position-absence-unverified",
         symbol="BTC/USDT",
@@ -1924,7 +1931,7 @@ def test_position_absence_claim_survives_restart_without_close_resubmission(
         quantity=0.01,
         entry_price=60_000.0,
         current_price=60_100.0,
-        execution_mode="bitget_demo",
+        execution_mode=execution_mode,
     )
     repo.insert_position(position)
     close_order = Order(
@@ -1949,7 +1956,7 @@ def test_position_absence_claim_survives_restart_without_close_resubmission(
         pending_close_status="position_absence_unverified",
     )
 
-    result = broker.close_demo_position(position.id, reason="stop_loss")
+    result = getattr(broker, close_name)(position.id, reason="stop_loss")
 
     assert result["already_pending"] is True
     assert result["status"] == "position_absence_unverified"
@@ -1957,6 +1964,7 @@ def test_position_absence_claim_survives_restart_without_close_resubmission(
     assert [row["id"] for row in repo.list_orders(limit=20)] == [close_order.id]
     assert repo.list_fills(limit=20) == []
     assert "position_absence_unverified" in position_manager._OPEN_CLOSE_STATES
+    assert "position_absence_unverified" in broker._OPEN_CLOSE_STATES
 
 
 @spec_claim(

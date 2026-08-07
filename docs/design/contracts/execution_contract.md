@@ -326,12 +326,15 @@ manager 必须重新取得精确新鲜 mark。最终结果和 wake fingerprint �
 - 交易所腿不可跳过:demo 模式仍走真实交易所 close;`paper_internal` 本地撮合。
 - **保护性平仓价格不可伪造**：触发判断和 `paper_internal` close Fill 只使用 Position 精确 `exchange + symbol + market_type` 的新鲜 mark。单仓路由即使收到 `fallback_exit_price`，本地分支也必须忽略它并在 manager 内重新取价。交易所仓由 `execution_mode` 固定 venue（OKX / Bitget / Binance），只有 `paper_internal` 使用配置的 market-data venue。内存 exact-instrument cache 必须小于 90 秒；SQLite 只能回退到同 venue、同 `spot` / `perp`（兼容旧 `usdt_futures` 拼写）且不超过 120 秒的 snapshot。不得用 `Position.current_price`、symbol-only、跨 venue、跨 spot/perp 或过期价格触发/生成退出成交。
 - **逐仓失败必须可见**：一个仓位的 mark 查询、market-aware 评估或 close 异常不得中止其余仓位；`evaluate_open_positions()` 返回稳定的 per-position `errors`，close 异常另计入 `failed_close_count`。`closed=0` 且 close 全失败不能被调度层当作健康空跑。
-- **交易所报告无仓位不能触发重发或伪造成交**：Bitget hedge close 返回确定性的无仓位错误码
-  `22002`/`25227` 时，本次 Order 保持确认拒绝的 `error`，Position 保持 `open` 并以
+- **交易所报告无仓位不能触发重发或伪造成交**：任一 adapter 仅在明确 venue code / typed response
+  可证明本次 close 因无匹配仓位被拒绝时，才归一为共享 `ClosePositionAbsentError`。各 broker 必须
+  以相同语义处理：本次 Order 保持确认拒绝的 `error`，Position 保持 `open` 并以
   `pending_close_status=position_absence_unverified` 留住原 durable claim。后续 manager cycle 不得新建
   Close Order 或再次触达交易所；既有只读 position reconciler 负责按 broker/account/instrument 的完整视图
   查明先前成交、外部关闭、身份错配或证据不可用。该响应自身绝不创建 Fill、realized PnL 或 eligible
-  Outcome，超过 pending-close 时限仍走一次性 reconciliation-required escalation。可执行检查：`PL-RX-22`。
+  Outcome，超过 pending-close 时限仍走一次性 reconciliation-required escalation。当前 Bitget adapter
+  已将 hedge-close 错误码 `22002`/`25227` 作上述分类；OKX/Binance adapter 尚无经权威 fixture 锁定的
+  无仓位错误码，因此普通字符串拒单仍保持 `error`，不得靠文本猜测升级。可执行检查：`PL-RX-22`。
 - **启动准入必须读取权威 Position 主账**：Startup Behavior Gate 的 `pending_closes` 检查不能只读取
   遗留 `ps_positions.status=unknown` 投影；它还必须读取 open `positions.pending_close_status`。
   `submission_unknown`、`materialization_missing`、`position_absence_unverified`、`overfilled` 立即阻挡新的
