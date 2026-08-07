@@ -120,6 +120,46 @@ def test_exchange_upnl_is_scoped_to_its_broker_and_duplicate_is_rejected(db, mon
     assert marked["binance_testnet"]["unrealized_pnl"] == 10.0
 
 
+@pytest.mark.parametrize("prebuilt_index", [False, True])
+def test_paper_internal_never_consumes_exchange_upnl(
+    db, monkeypatch, prebuilt_index,
+):
+    """Local-paper PnL stays local even if a cache row claims its mode."""
+    from aletheia.portfolio import exchange_sync, pnl
+
+    repo.insert_position(Position(
+        id="upnl-local-paper",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="paper_internal",
+    ))
+    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "age_seconds": 0.0,
+        "positions": [{
+            "broker_id": "paper_internal",
+            "symbol": "BTC/USDT",
+            "market_type": "usdt_futures",
+            "side": "long",
+            "unrealized_pnl": 777.0,
+        }],
+    })
+    if prebuilt_index:
+        monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: {
+            ("BTC/USDT", "paper_internal", "perp", "long"): 777.0,
+        })
+
+    [marked] = pnl.mark_positions_to_market(persist=True)
+
+    assert marked["unrealized_pnl"] == 10.0
+    stored = repo._select_one("positions", "upnl-local-paper")
+    assert stored is not None
+    assert stored["unrealized_pnl"] == 10.0
+
+
 @spec_claim(
     SpecClaim(
         "PL-PM-17",
