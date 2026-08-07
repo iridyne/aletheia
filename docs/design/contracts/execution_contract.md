@@ -3,7 +3,7 @@
 > **角色**:定义订单从 proposal 到交易所的完整通路,及其原子性/幂等/对账保证。
 > **基线**:代码为底(file:line),意图差距标 ⚠️;冲突时文档为准。
 > **不变式来源**:[trust_and_change_control §1, §6.3](../../governance/policies/trust_and_change_control.md)。
-> Last updated: 2026-07-14 · 维护者:Aletheia Dev
+> Last updated: 2026-08-07 · 维护者:Aletheia Dev
 
 ---
 
@@ -220,6 +220,23 @@ Live 作用域从 `exchange.name` 派生对应的 `*_live_limited`，不得硬�
 统一 Demo 快照中的每条非零仓位必须有 `broker_id`，且只匹配当前执行账户；账户标签缺失时必须降级为
 不可用，不能据此推断本地仓已从交易所消失（`PL-ADOPT-24`）。统一快照当前不包含 Live 账户，禁止用
 Demo 聚合结果解释 Live 仓位；Live 继续只告警、不自动收敛。
+
+instrument key 必须使用 `(canonical symbol, normalized market_type, direction)`；只允许
+`spot` 和 `perp/futures/swap/usdt_futures → usdt_futures` 的已知归一化。相同 symbol/direction
+的 spot 与 futures 是两个独立身份。任一侧同一完整 key 出现重复行，或任一行缺失/携带未知
+market type 时，受影响身份进入 typed `integrity_issues`，不得 last-row-wins、计算跨市场数量漂移、
+创建 disappearance evidence 或进入 auto-adoption；输入顺序不得改变分类结果。
+
+UTA adapter 不得把期货缺失/非法 leverage 默认成 1x：三家 adapter 统一保留
+`leverage=None` 及 `leverage_source=unavailable/invalid`。外部 futures Position 只有在 leverage
+有限、正数且为整数时才能 adoption；spot 使用明确 `1x + not_applicable_spot`，显式非 1x
+视为矛盾并拒绝。adoption 把已验证值同时写入 synthetic Proposal、Position 及不含凭证的
+`reconciliation_identity/reconciliation_evidence`。Demo 的后续完整 exact-account managed view
+只可在同一 Position id 上补齐缺失 leverage；已有有效值不会被不完整 view 清空。Live 仍保持
+alert-only，不新增自动修复权限。`report_invalid_open_position_exposures()` 只读列出历史 open
+Position 的 id、symbol、market type 与 sanitized field category，不执行批量修复。可执行检查：
+`PL-ADOPT-26~28`、`tests/test_uta.py`、`tests/test_position_reconciler.py`；其中
+`PL-ADOPT-26` 还验证已接管 futures Position 的持久化 leverage 被 Risk 账户杠杆计算实际采用。
 
 交易所返回的 Position uPnL 是账户内的聚合暴露，不能被复制成多个本地 Position 各自的完整 uPnL。
 在没有可直连的 broker Position identity 时，远端当前 match key 只有一个候选且本地 open Position 也

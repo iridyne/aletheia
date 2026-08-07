@@ -4,7 +4,7 @@
 > 这是 trust 边界的核心——[Product Direction](../../product/definition/DIRECTION.md) 要求失败可生还且自主权只能逐级获得。
 > **基线**：以当前代码与可执行证据为底；本契约描述当前权威行为，偏差进入 GitHub Issues，历史问题证据见 [`BACKEND_ISSUES.md`](../../archive/legacy/issues/domain/BACKEND_ISSUES.md)。
 > **不变式来源**:[trust_and_change_control §6.3](../../governance/policies/trust_and_change_control.md)。
-> Last updated: 2026-07-14 · 维护者:Aletheia Dev
+> Last updated: 2026-08-07 · 维护者:Aletheia Dev
 
 ---
 
@@ -40,7 +40,7 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 > 历史:本表曾止于 16 关;6b(跨 broker/池同标的去重)、17(账户杠杆比)、18(爆仓缓冲)、19(单标的累计名义)为后续追加,**2026-06-30 补齐契约**(代码↔spec 早已存在,FL-S08/S09 守 17/18;契约滞后已修)。
 > **四个新增关卡的失败 token(spec RE-S04b 锁定,floor ≥ 20)**:
 > - 6b → `symbol_already_open:{sym}`
-> - 17 → `account_leverage_ratio:{r}x>{cap}x` / `account_leverage_check_error:internal_failure`
+> - 17 → `account_leverage_ratio:{r}x>{cap}x` / `account_leverage_check_error:invalid_position_exposure:position={id}:field={category}` / `account_leverage_check_error:internal_failure`
 > - 18 → `liquidation_too_close:{g}%<{b}%`
 > - 19 → `exceeds_per_symbol_notional:{sym}:{proj}>{cap}`
 
@@ -69,7 +69,7 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 | 14 | Scanner-Family Evidence | live 需该单 `scanner_family`(经 opportunity 解析)在干净窗有 ≥N 已结算证据且方向胜率≥门槛(取代已删的策略 FSM 准入,Position C 2026-07-02;fail-closed:无 family/无证据/样本不足/胜率不足均拒) | `risk.live_family_min_samples`(30)/`risk.live_family_min_win_rate_pct`(50.0) + `repo.family_direction_edge` | `family_not_live_eligible:{unknown/family:no_evidence/family:samples=n<N/family:wr=w<T}` | :211 |
 | 15 | Lesson Constraints | 已接受且未过期的 manual/owner/human block 规则保持静态硬约束；自动来源默认 advisory，只有 exact `risk_lesson_constraint` prospective treatment 可阻断该 Proposal，control/default/error 不得阻断 | `LessonStore.recommendation_json` + Learning path authority | `lesson_block_{symbol/...}:{id}:{v}` / `lesson_check_error:internal_failure` | engine.py `_check_lesson_constraints` |
 | 16 | Portfolio Correlation | 部门集中度 + 组合 BTC beta | `risk.correlation_guard_enabled/max_sector_concentration_pct/max_portfolio_beta` | `sector_concentration/portfolio_beta:...` | :245,387 |
-| 17 | Account Leverage Ratio | 期货:同一账户池的 Position + 未决 entry Order + pre-Order reservation 的 Σ(notional×lev)/同账户 equity ≤ 上限；不同 demo broker 不混算；外部 equity 必须来自新鲜健康的具名缓存；相关 Position 的数量/入场价/杠杆非法时拒绝，不能当零敞口（spot 的 NULL leverage 按其结构语义计 1x，显式非 1x 反而拒绝）。Demo 默认 10x，设置 API 只保留正数下限；live 保持 1.5x | `risk.max_account_leverage_{live/demo}` + named local cache | `account_leverage_ratio:{r}x>{cap}x` / `account_equity_unavailable:{mode}` / `account_leverage_check_error:{invalid_position_exposure/internal_failure}` | engine.py check #17 (RE-B23~27) |
+| 17 | Account Leverage Ratio | 期货:同一账户池的 Position + 未决 entry Order + pre-Order reservation 的 Σ(notional×lev)/同账户 equity ≤ 上限；不同 demo broker 不混算；外部 equity 必须来自新鲜健康的具名缓存；相关 Position 的 market type/数量/价格/杠杆非法时拒绝，不能当零敞口（spot 的 NULL leverage 按其结构语义计 1x，显式非 1x 反而拒绝）。Demo 默认 10x，设置 API 只保留正数下限；live 保持 1.5x | `risk.max_account_leverage_{live/demo}` + named local cache | `account_leverage_ratio:{r}x>{cap}x` / `account_equity_unavailable:{mode}` / `account_leverage_check_error:invalid_position_exposure:position={id}:field={category}` / `account_leverage_check_error:internal_failure` | engine.py check #17 (RE-B23~28) |
 | 18 | Liquidation Buffer | 期货(lev>1):估算爆仓价距入场 ≥ buffer% | `risk.min_liquidation_buffer_pct`(5.0) | `liquidation_too_close:{g}%<{b}%` | :695 (FL-S09) |
 | 19 | Per-symbol Cumulative Notional | 同标的同池累计名义(含本单)≤ 上限(CUM-ADD 均价合并会绕过 #5 单仓上限) | `risk.max_per_symbol_notional_usdt` | `exceeds_per_symbol_notional:{sym}:{proj}>{cap}` | :285 |
 
@@ -87,9 +87,9 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 
 > **本地合约资金费前置门**：`paper_internal + usdt_futures` 只有在该 symbol 存在新鲜、非预测跨 venue 的下一结算快照时才可开仓。通过只代表本地模拟器已有起始锚点；平仓仍逐事件验证完整时间窗，任何断档都关闭仓位但保持净收益不可用。spec: RE-B22、PL-LF-01~06。
 
-> **账户杠杆身份**：check #17 使用同一个账户池判断 open Position、未决 entry Order 和 pre-Order reservation；`paper_internal` 独立、每个 demo execution mode 独立，live 保持合并池。分母只读同一具名账户的新鲜健康本地 equity，过期、异常或具名账户缺失时拒绝，不以 starting capital 代替；相关 Position 的 quantity/entry_price/leverage 只要缺失、非正数或非有限数，也会稳定拒绝而不是从分子消失。唯一结构化例外是 spot Position：spot 本身无杠杆，历史/当前模型以 `leverage=NULL` 表示 1x，因此按 1x 计入；若 spot 显式写入非 1x，则视为数据矛盾并拒绝。合约或未知 market_type 的 NULL leverage 仍拒绝。spec: RE-B23~27。
+> **账户杠杆身份**：check #17 使用同一个账户池判断 open Position、未决 entry Order 和 pre-Order reservation；`paper_internal` 独立、每个 demo execution mode 独立，live 保持合并池。分母只读同一具名账户的新鲜健康本地 equity，过期、异常或具名账户缺失时拒绝，不以 starting capital 代替；相关 Position 的 market_type/quantity/entry_price/current_price/leverage 只要缺失、非正数、非有限数或自相矛盾，也会稳定拒绝而不是从分子消失。拒绝 token 携带 sanitized Position id 与稳定 field category，避免一条坏仓位只产生无法定位的泛化重复告警。唯一结构化例外是 spot Position：spot 本身无杠杆，历史/当前模型以 `leverage=NULL` 表示 1x，因此按 1x 计入；若 spot 显式写入非 1x，则视为数据矛盾并拒绝。合约或未知 market_type 的 NULL leverage 仍拒绝。spec: RE-B23~28。
 
-> **公共杠杆监控不得伪装安全**：`check_account_leverage()` 与 `/api/risk/account-leverage` 使用和 check #17 相同的账户池、Position 数值完整性与未决占用口径；除 open Position 外，还计入尚未形成 Position 的 unresolved entry Order 和 pre-Order Risk reservation。完整数据返回 `status=available`、`reason=null` 和布尔 `violation`；相关 Position/未决占用损坏、读取失败或具名 equity 不可用时返回 `status=unavailable`，同时 `ratio=null`、`violation=null` 并给出稳定 `reason`。不能把未知结果表达成 `violation=false`，System Operator 上下文也只展示空比率。spot 的 `leverage=NULL` 仍是明确的 1x 例外。spec: RE-B28。
+> **公共杠杆监控不得伪装安全**：`check_account_leverage()` 与 `/api/risk/account-leverage` 使用和 check #17 相同的账户池、Position 数值完整性与未决占用口径；除 open Position 外，还计入尚未形成 Position 的 unresolved entry Order 和 pre-Order Risk reservation。完整数据返回 `status=available`、`reason=null` 和布尔 `violation`；相关 Position/未决占用损坏、读取失败或具名 equity 不可用时返回 `status=unavailable`，同时 `ratio=null`、`violation=null` 并给出稳定 `reason`。当损坏来自 Position 时另返回 `invalid_position={position_id, field_category}`；不得包含账户凭证或原始交易所 payload。不能把未知结果表达成 `violation=false`，System Operator 上下文也只展示空比率。spot 的 `leverage=NULL` 仍是明确的 1x 例外。spec: RE-B28。
 
 > **未决原生入场也占用 Risk 容量**：交易所入场 Order 在真正提交前会先以 `pending` 写入本地；
 > 此时交易所是否已经接受仍未知，不能把它当成零敞口。`pending` 与其他未决状态一样，在对应

@@ -334,7 +334,9 @@ def test_adopted_positions_carry_synthetic_chain(tmp_path, monkeypatch):
     from aletheia.portfolio.position_reconciler import adopt_position
 
     ex = {"symbol": "BTCUSDT", "side": "short", "quantity": 0.0004,
-          "entry_price": 61524.3, "unrealized_pnl": -0.87, "mark_price": 63713.9}
+          "entry_price": 61524.3, "unrealized_pnl": -0.87, "mark_price": 63713.9,
+          "market_type": "usdt_futures", "leverage": 3,
+          "leverage_source": "exchange_reported"}
     result = adopt_position(ex, "demo")
 
     pos = repo._select_one("positions", result["position_id"])
@@ -363,6 +365,8 @@ def test_adopt_preserves_exchange_open_time(tmp_path, monkeypatch):
     result = adopt_position({
         "symbol": "BTCUSDT", "side": "long", "quantity": 0.1,
         "entry_price": 60000.0, "cTime": opened_at_ms,
+        "market_type": "usdt_futures", "leverage": 2,
+        "leverage_source": "exchange_reported",
     }, "demo")
 
     position = repo._select_one("positions", result["position_id"])
@@ -386,7 +390,9 @@ def test_adopt_live_position_is_human_only_by_execution_mode(tmp_path, monkeypat
     from aletheia.portfolio import position_manager as pm
 
     ex = {"symbol": "ETHUSDT", "side": "long", "quantity": 0.5,
-          "entry_price": 3000.0, "unrealized_pnl": 5.0, "mark_price": 3010.0}
+          "entry_price": 3000.0, "unrealized_pnl": 5.0, "mark_price": 3010.0,
+          "market_type": "usdt_futures", "leverage": 2,
+          "leverage_source": "exchange_reported"}
     result = adopt_position(ex, "live")
     pos = repo._select_one("positions", result["position_id"])
     assert pos["execution_mode"] == "bitget_live_limited"

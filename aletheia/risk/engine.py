@@ -1910,6 +1910,77 @@ def _symbol_family(symbol: str, positions: list[dict]) -> str | None:
 # Check #17: Account-level leverage ratio
 # ---------------------------------------------------------------------------
 
+
+class _InvalidPositionExposure(ValueError):
+    def __init__(self, field_category: str) -> None:
+        self.field_category = field_category
+        super().__init__(field_category)
+
+
+def _validated_position_exposure(position: dict) -> tuple[float, float, float, float]:
+    market_type = str(position.get("market_type") or "").strip().lower()
+    if market_type not in {"spot", "usdt_futures"}:
+        raise _InvalidPositionExposure("market_type")
+
+    values = {}
+    for field_name in ("quantity", "entry_price"):
+        try:
+            value = float(position.get(field_name))
+        except (TypeError, ValueError):
+            raise _InvalidPositionExposure(field_name) from None
+        if not math.isfinite(value) or value <= 0:
+            raise _InvalidPositionExposure(field_name)
+        values[field_name] = value
+
+    current_price = position.get("current_price")
+    if current_price is None:
+        price = values["entry_price"]
+    else:
+        try:
+            price = float(current_price)
+        except (TypeError, ValueError):
+            raise _InvalidPositionExposure("current_price") from None
+        if not math.isfinite(price) or price <= 0:
+            raise _InvalidPositionExposure("current_price")
+
+    raw_leverage = position.get("leverage")
+    if market_type == "spot" and raw_leverage is None:
+        leverage = 1.0
+    else:
+        try:
+            leverage = float(raw_leverage)
+        except (TypeError, ValueError):
+            raise _InvalidPositionExposure("leverage") from None
+        if (
+            not math.isfinite(leverage)
+            or leverage <= 0
+            or not leverage.is_integer()
+            or (market_type == "spot" and leverage != 1.0)
+        ):
+            raise _InvalidPositionExposure("leverage")
+
+    position_exposure = abs(values["quantity"] * price) * leverage
+    if not math.isfinite(position_exposure):
+        raise _InvalidPositionExposure("position_exposure")
+    return values["quantity"], values["entry_price"], price, leverage
+
+
+def _safe_position_id(position: dict) -> str:
+    raw = str(position.get("id") or "unknown")
+    sanitized = "".join(
+        character if character.isalnum() or character in {"-", "_"} else "_"
+        for character in raw
+    )
+    return sanitized[:64] or "unknown"
+
+
+def _invalid_position_exposure_violation(position: dict, field_category: str) -> str:
+    return (
+        "account_leverage_check_error:invalid_position_exposure:"
+        f"position={_safe_position_id(position)}:field={field_category}"
+    )
+
+
 def _check_account_leverage_ratio(
     proposal: TradeProposal,
     cfg,
@@ -1937,46 +2008,13 @@ def _check_account_leverage_ratio(
         weighted_notional = 0.0
         for p in relevant:
             try:
-                qty = float(p.get("quantity"))
-                entry_price = float(p.get("entry_price"))
-                market_type = str(p.get("market_type") or "").strip().lower()
-                raw_leverage = p.get("leverage")
-                # Spot is structurally unlevered in Aletheia.  Legacy/current spot
-                # rows therefore store NULL, which means exactly 1x rather than an
-                # unknown exposure.  A non-1 explicit value contradicts the market
-                # type and must not be trusted.  Futures/unknown rows retain the
-                # stricter rule: leverage must be explicitly numeric and positive.
-                lev = (
-                    1.0
-                    if market_type == "spot" and raw_leverage is None
-                    else float(raw_leverage)
-                )
-                current_price = p.get("current_price")
-                price = (
-                    entry_price
-                    if current_price is None
-                    else float(current_price)
-                )
-            except (TypeError, ValueError):
-                return ["account_leverage_check_error:invalid_position_exposure"]
-            if (
-                not math.isfinite(qty)
-                or qty <= 0
-                or not math.isfinite(entry_price)
-                or entry_price <= 0
-                or not math.isfinite(lev)
-                or lev <= 0
-                or (market_type == "spot" and lev != 1.0)
-                or not math.isfinite(price)
-                or price <= 0
-            ):
-                return ["account_leverage_check_error:invalid_position_exposure"]
+                qty, _entry_price, price, lev = _validated_position_exposure(p)
+            except _InvalidPositionExposure as exc:
+                return [_invalid_position_exposure_violation(p, exc.field_category)]
             position_exposure = abs(qty * price) * lev
-            if not math.isfinite(position_exposure):
-                return ["account_leverage_check_error:invalid_position_exposure"]
             weighted_notional += position_exposure
             if not math.isfinite(weighted_notional):
-                return ["account_leverage_check_error:invalid_position_exposure"]
+                return [_invalid_position_exposure_violation(p, "account_exposure")]
 
         if unresolved_entries is None:
             unresolved_entries = _unresolved_entry_reservations()
@@ -2262,9 +2300,10 @@ def _unavailable_account_leverage_result(
     cap: float,
     reason: str,
     positions: list[dict] | None = None,
+    invalid_position: dict | None = None,
 ) -> dict:
     """Stable public shape for a leverage metric that cannot be computed honestly."""
-    return {
+    result = {
         "status": "unavailable",
         "reason": reason,
         "ratio": None,
@@ -2273,6 +2312,9 @@ def _unavailable_account_leverage_result(
         "equity": None,
         "positions": list(positions or []),
     }
+    if invalid_position is not None:
+        result["invalid_position"] = invalid_position
+    return result
 
 
 def check_account_leverage(cfg=None, execution_mode: str | None = None) -> dict:
@@ -2308,36 +2350,15 @@ def check_account_leverage(cfg=None, execution_mode: str | None = None) -> dict:
     positions_detail = []
     for p in relevant:
         try:
-            qty = float(p.get("quantity"))
-            entry_price = float(p.get("entry_price"))
-            current_price = p.get("current_price")
-            price = entry_price if current_price is None else float(current_price)
-            market_type = str(p.get("market_type") or "").strip().lower()
-            raw_leverage = p.get("leverage")
-            lev = (
-                1.0
-                if market_type == "spot" and raw_leverage is None
-                else float(raw_leverage)
-            )
-        except (TypeError, ValueError):
+            qty, _entry_price, price, lev = _validated_position_exposure(p)
+        except _InvalidPositionExposure as exc:
             return _unavailable_account_leverage_result(
                 cap=max_ratio,
                 reason="invalid_position_exposure",
-            )
-        if (
-            not math.isfinite(qty)
-            or qty <= 0
-            or not math.isfinite(entry_price)
-            or entry_price <= 0
-            or not math.isfinite(price)
-            or price <= 0
-            or not math.isfinite(lev)
-            or lev <= 0
-            or (market_type == "spot" and lev != 1.0)
-        ):
-            return _unavailable_account_leverage_result(
-                cap=max_ratio,
-                reason="invalid_position_exposure",
+                invalid_position={
+                    "field_category": exc.field_category,
+                    "position_id": _safe_position_id(p),
+                },
             )
         notional = abs(qty * price)
         position_exposure = notional * lev
@@ -2345,12 +2366,20 @@ def check_account_leverage(cfg=None, execution_mode: str | None = None) -> dict:
             return _unavailable_account_leverage_result(
                 cap=max_ratio,
                 reason="invalid_position_exposure",
+                invalid_position={
+                    "field_category": "position_exposure",
+                    "position_id": _safe_position_id(p),
+                },
             )
         weighted_notional += position_exposure
         if not math.isfinite(weighted_notional):
             return _unavailable_account_leverage_result(
                 cap=max_ratio,
                 reason="invalid_position_exposure",
+                invalid_position={
+                    "field_category": "account_exposure",
+                    "position_id": _safe_position_id(p),
+                },
             )
         positions_detail.append({
             "symbol": p.get("symbol"),

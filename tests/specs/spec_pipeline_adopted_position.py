@@ -44,6 +44,7 @@ def _setup_db(tmp_path, monkeypatch):
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    loader._invalidate_config_cache()
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
 
     sq._db_conn = None
@@ -90,15 +91,25 @@ def _make_exchange_pos(
     entry_price: float = 562.73,
     mark_price: float = 566.0,
     unrealized_pnl: float = -0.083,
+    leverage: object = 3,
+    leverage_source: str = "exchange_reported",
+    market_type: str = "usdt_futures",
+    broker_id: str | None = None,
 ) -> dict:
-    return {
+    row = {
         "symbol": symbol,
         "side": side,
         "quantity": quantity,
         "entry_price": entry_price,
         "mark_price": mark_price,
         "unrealized_pnl": unrealized_pnl,
+        "leverage": leverage,
+        "leverage_source": leverage_source,
+        "market_type": market_type,
     }
+    if broker_id is not None:
+        row["broker_id"] = broker_id
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -711,7 +722,9 @@ def test_non_bitget_fresh_unified_manages(tmp_path, monkeypatch):
     # Fresh unified that INCLUDES the active broker (okx_demo) in accounts → complete.
     monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
         "positions": [{"broker_id": "okx_demo", "symbol": "BNBUSDT", "side": "short", "quantity": 0.03,
-                       "entry_price": 562.73, "mark_price": 560.0}],
+                       "entry_price": 562.73, "mark_price": 560.0,
+                       "market_type": "usdt_futures", "leverage": 3,
+                       "leverage_source": "exchange_reported"}],
         "accounts": [{"broker_id": "okx_demo", "equity_usdt": 89000.0}],
         "age_seconds": 5.0, "fetched_at": "2026-07-01T00:00:00+00:00",
     })
@@ -916,6 +929,7 @@ def test_adopt_recovers_strategy_id_from_recent_thrash_close(tmp_path, monkeypat
     conn = _setup_db(tmp_path, monkeypatch)
     _stub_notifications(monkeypatch)
     _stub_audit(monkeypatch, tmp_path)
+    _write_config(tmp_path, monkeypatch, "okx_demo")
 
     from datetime import datetime, timezone
     from aletheia.storage.models import Position
@@ -1320,6 +1334,7 @@ def test_recovered_attribution_threads_to_proposal_and_order(tmp_path, monkeypat
     conn = _setup_db(tmp_path, monkeypatch)
     _stub_notifications(monkeypatch)
     _stub_audit(monkeypatch, tmp_path)
+    _write_config(tmp_path, monkeypatch, "bitget_demo")
 
     from datetime import datetime, timezone
     from aletheia.storage.models import Opportunity, Position
@@ -1377,3 +1392,356 @@ def test_recovered_attribution_threads_to_proposal_and_order(tmp_path, monkeypat
         "recovered adopted position chain must satisfy attribution_chain_complete() "
         "so the learning signal is not dropped as missing_attribution (#189)"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-26",
+        "pipeline_adopted_position",
+        "§26 adopted leverage provenance",
+        "L2c",
+        "UTA exchange leverage is validated and persisted through the adopted "
+        "Proposal and Position together with non-secret account and field provenance.",
+        status="implemented",
+    )
+)
+def test_adopted_futures_position_persists_leverage_and_provenance(
+    tmp_path,
+    monkeypatch,
+):
+    import json
+
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_notifications(monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+    _write_config(tmp_path, monkeypatch, "bitget_demo")
+
+    from aletheia.portfolio.position_reconciler import adopt_position
+
+    ids = adopt_position(
+        _make_exchange_pos(leverage=4, broker_id="bitget_demo"),
+        account_mode="demo",
+    )
+    position = conn.execute(
+        "SELECT * FROM positions WHERE id=?",
+        (ids["position_id"],),
+    ).fetchone()
+    proposal = conn.execute(
+        "SELECT leverage FROM trade_proposals WHERE id=?",
+        (ids["proposal_id"],),
+    ).fetchone()
+    identity = json.loads(position["reconciliation_identity"])
+    evidence = json.loads(position["reconciliation_evidence"])
+
+    assert position["leverage"] == 4
+    assert proposal["leverage"] == 4
+    assert identity["execution_mode"] == "bitget_demo"
+    assert identity["broker_id"] == "bitget_demo"
+    assert identity["account_environment"] == "demo"
+    assert identity["account_fingerprint"].startswith("sha256:")
+    assert identity["market_type"] == "usdt_futures"
+    assert evidence["leverage"] == {
+        "source": "exchange_reported",
+        "status": "verified",
+        "value": 4,
+    }
+
+    import aletheia.risk.engine as risk_engine
+    from aletheia.config.loader import load_config
+
+    monkeypatch.setattr(risk_engine, "_account_equity", lambda *_: 20.0)
+    monkeypatch.setattr(risk_engine, "_unresolved_entry_reservations", lambda: [])
+    monkeypatch.setattr(risk_engine, "_pre_order_entry_reservations", lambda **_: [])
+    leverage_result = risk_engine.check_account_leverage(
+        load_config(),
+        execution_mode="bitget_demo",
+    )
+    assert leverage_result["status"] == "available"
+    assert leverage_result["ratio"] == pytest.approx(3.396)
+    assert leverage_result["positions"] == [{
+        "symbol": "BNB/USDT",
+        "notional": pytest.approx(16.98),
+        "leverage": 4.0,
+    }]
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-27",
+        "pipeline_adopted_position",
+        "§27 leverage validation fails closed",
+        "L2c",
+        "Missing, non-positive, non-finite, fractional, or non-numeric futures "
+        "leverage produces a typed degraded result and no synthetic causal chain.",
+        status="implemented",
+    )
+)
+@pytest.mark.parametrize(
+    "invalid_leverage",
+    (None, 0, -1, float("nan"), float("inf"), 2.5, "not-a-number"),
+)
+def test_invalid_futures_leverage_cannot_create_adopted_position(
+    tmp_path,
+    monkeypatch,
+    invalid_leverage,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_notifications(monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+
+    from aletheia.portfolio.position_reconciler import (
+        PositionAdoptionIntegrityError,
+        adopt_position,
+    )
+
+    with pytest.raises(PositionAdoptionIntegrityError) as exc_info:
+        adopt_position(
+            _make_exchange_pos(
+                leverage=invalid_leverage,
+                leverage_source=(
+                    "unavailable" if invalid_leverage is None else "invalid"
+                ),
+            ),
+            account_mode="demo",
+        )
+
+    assert exc_info.value.code == "invalid_position_economics"
+    assert exc_info.value.field == "leverage"
+    assert conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM trade_proposals").fetchone()[0] == 0
+
+
+def test_account_mismatched_leverage_cannot_create_adopted_position(
+    tmp_path,
+    monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_notifications(monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+    _write_config(tmp_path, monkeypatch, "bitget_demo")
+
+    from aletheia.portfolio.position_reconciler import (
+        PositionAdoptionIntegrityError,
+        adopt_position,
+    )
+
+    with pytest.raises(PositionAdoptionIntegrityError) as exc_info:
+        adopt_position(
+            _make_exchange_pos(leverage=3, broker_id="okx_demo"),
+            account_mode="demo",
+        )
+
+    assert exc_info.value.field == "broker_id"
+    assert conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0] == 0
+
+
+def test_reconcile_surfaces_invalid_leverage_as_degraded_owner_warning(
+    tmp_path,
+    monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+    _write_config(tmp_path, monkeypatch, "bitget_demo")
+
+    from aletheia.portfolio import position_reconciler as pr
+
+    exchange_position = _make_exchange_pos(
+        leverage=None,
+        leverage_source="unavailable",
+        broker_id="bitget_demo",
+    )
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: None)
+    monkeypatch.setattr(pr.exchange_sync, "get_cached_state", lambda *_: {
+        "positions": [exchange_position],
+        "age_seconds": 1.0,
+        "fetched_at": "2026-08-07T00:00:00+00:00",
+    })
+    notices = []
+    monkeypatch.setattr(
+        "aletheia.notifications.notify_operator",
+        lambda **kwargs: notices.append(kwargs),
+    )
+
+    summary = pr.run_reconcile("demo")
+
+    assert summary["adopted"] == []
+    assert summary["errors"] == []
+    assert summary["degraded_positions"] == [{
+        "code": "invalid_position_economics",
+        "field_category": "leverage",
+        "position_id": "not_created",
+        "symbol": "BNB/USDT",
+        "market_type": "usdt_futures",
+        "direction": "short",
+    }]
+    assert conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0] == 0
+    assert any(notice["title"] == "External position not adopted" for notice in notices)
+
+
+def test_spot_adoption_uses_explicit_not_applicable_one_x(tmp_path, monkeypatch):
+    import json
+
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_notifications(monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+    _write_config(tmp_path, monkeypatch, "okx_demo")
+
+    from aletheia.portfolio.position_reconciler import adopt_position
+
+    ids = adopt_position(
+        _make_exchange_pos(
+            market_type="spot",
+            leverage=None,
+            leverage_source="unavailable",
+            broker_id="okx_demo",
+        ),
+        account_mode="demo",
+    )
+    position = conn.execute(
+        "SELECT * FROM positions WHERE id=?",
+        (ids["position_id"],),
+    ).fetchone()
+    evidence = json.loads(position["reconciliation_evidence"])
+
+    assert position["market_type"] == "spot"
+    assert position["leverage"] == 1
+    assert evidence["leverage"] == {
+        "source": "not_applicable_spot",
+        "status": "verified",
+        "value": 1,
+    }
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-28",
+        "pipeline_adopted_position",
+        "§28 exact managed leverage recovery",
+        "L2c",
+        "A later complete exact-account view may fill missing leverage on the same "
+        "Position id; the read-only invalid-exposure report never mutates rows.",
+        status="implemented",
+    )
+)
+def test_exact_managed_view_fills_missing_leverage_without_replacing_position(
+    tmp_path,
+    monkeypatch,
+):
+    import json
+
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_notifications(monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+    _write_config(tmp_path, monkeypatch, "okx_demo")
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        symbol="ETH/USDT",
+        market_type="usdt_futures",
+        direction="short",
+        quantity=1,
+        entry_price=3_000,
+        execution_mode="okx_demo",
+        leverage=None,
+    )
+    repo.insert_position(position)
+
+    from aletheia.portfolio import position_reconciler as pr
+
+    before = pr.report_invalid_open_position_exposures("okx_demo")
+    assert before == [{
+        "field_category": "leverage_unavailable",
+        "market_type": "usdt_futures",
+        "position_id": position.id,
+        "symbol": "ETH/USDT",
+    }]
+    assert conn.execute(
+        "SELECT leverage FROM positions WHERE id=?",
+        (position.id,),
+    ).fetchone()[0] is None
+
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
+        "accounts": [{"broker_id": "okx_demo"}],
+        "positions": [{
+            **_make_exchange_pos(
+                symbol="ETHUSDT",
+                side="short",
+                quantity=1,
+                entry_price=3_000,
+                leverage=5,
+                broker_id="okx_demo",
+            ),
+        }],
+        "age_seconds": 1.0,
+        "fetched_at": "2026-08-07T00:00:00+00:00",
+    })
+
+    summary = pr.run_reconcile("demo")
+    stored = conn.execute(
+        "SELECT * FROM positions WHERE id=?",
+        (position.id,),
+    ).fetchone()
+    evidence = json.loads(stored["reconciliation_evidence"])
+
+    assert stored["id"] == position.id
+    assert stored["leverage"] == 5
+    assert summary["leverage_repairs"] == [{
+        "leverage": 5,
+        "position_id": position.id,
+        "source": "exchange_reported",
+    }]
+    assert evidence["leverage"]["source"] == "exchange_reported"
+    assert pr.report_invalid_open_position_exposures("okx_demo") == []
+
+
+def test_exact_managed_position_preserves_verified_leverage_when_view_lacks_it(
+    tmp_path,
+    monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_notifications(monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+    _write_config(tmp_path, monkeypatch, "okx_demo")
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1,
+        entry_price=150,
+        execution_mode="okx_demo",
+        leverage=3,
+    )
+    repo.insert_position(position)
+
+    from aletheia.portfolio import position_reconciler as pr
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
+        "accounts": [{"broker_id": "okx_demo"}],
+        "positions": [{
+            **_make_exchange_pos(
+                symbol="SOLUSDT",
+                side="long",
+                quantity=1,
+                entry_price=150,
+                leverage=None,
+                leverage_source="unavailable",
+                broker_id="okx_demo",
+            ),
+        }],
+        "age_seconds": 1.0,
+        "fetched_at": "2026-08-07T00:00:00+00:00",
+    })
+
+    summary = pr.run_reconcile("demo")
+
+    assert conn.execute(
+        "SELECT leverage FROM positions WHERE id=?",
+        (position.id,),
+    ).fetchone()[0] == 3
+    assert summary["leverage_repairs"] == []

@@ -2,7 +2,11 @@
 
 import logging
 
-from aletheia.portfolio.uta.broker_protocol import AccountInfo, BrokerPosition
+from aletheia.portfolio.uta.broker_protocol import (
+    AccountInfo,
+    BrokerPosition,
+    parse_exchange_leverage,
+)
 
 logger = logging.getLogger("aletheia.uta.okx")
 
@@ -81,15 +85,16 @@ class OkxDemoAdapter:
         for p in raw:
             ccxt_symbol = p.get("symbol", "")
             symbol = ccxt_symbol.replace(":USDT", "") if ":USDT" in ccxt_symbol else ccxt_symbol
-            leverage_raw = p.get("leverage")
+            leverage, leverage_source = parse_exchange_leverage(p.get("leverage"))
             result.append(BrokerPosition(
                 symbol=symbol,
                 side=p.get("side", "long"),
                 quantity=p.get("quantity", 0),
                 entry_price=p.get("entry_price", 0),
                 unrealized_pnl=p.get("unrealized_pnl", 0),
-                leverage=int(leverage_raw) if leverage_raw else 1,
+                leverage=leverage,
                 mark_price=p.get("mark_price", 0),
+                leverage_source=leverage_source,
             ))
         return result
 

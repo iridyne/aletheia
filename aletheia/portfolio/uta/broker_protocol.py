@@ -1,7 +1,23 @@
 """IBroker Protocol — unified interface for read-only account queries."""
 
 from dataclasses import dataclass, field
+import math
 from typing import Protocol, runtime_checkable
+
+
+def parse_exchange_leverage(raw: object) -> tuple[int | None, str]:
+    """Normalize an exchange leverage field without inventing a 1x fallback."""
+    if raw is None or raw == "":
+        return None, "unavailable"
+    if isinstance(raw, bool):
+        return None, "invalid"
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None, "invalid"
+    if not math.isfinite(value) or value <= 0 or not value.is_integer():
+        return None, "invalid"
+    return int(value), "exchange_reported"
 
 
 @dataclass
@@ -20,9 +36,17 @@ class BrokerPosition:
     quantity: float
     entry_price: float
     unrealized_pnl: float
-    leverage: int = 1
+    leverage: int | None = None
     mark_price: float = 0.0
     opened_at_ms: int | None = None  # exchange-reported position open time
+    leverage_source: str | None = None
+    market_type: str = "usdt_futures"
+
+    def __post_init__(self) -> None:
+        if self.leverage_source is None:
+            self.leverage_source = (
+                "exchange_reported" if self.leverage is not None else "unavailable"
+            )
 
 
 @runtime_checkable

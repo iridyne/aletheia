@@ -8,7 +8,10 @@ tests pin the load-bearing behavior:
   - honest degradation: no usable exchange cache → never infer orphans.
 """
 
+import json
 import sqlite3
+
+import pytest
 
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
@@ -47,9 +50,20 @@ def _stub_cache(monkeypatch, positions, status="ok"):
                         lambda state, max_age_sec=600: status)
 
 
-def _ex(symbol, side, qty, entry=100.0, upnl=0.0):
+def _ex(
+    symbol,
+    side,
+    qty,
+    entry=100.0,
+    upnl=0.0,
+    *,
+    market_type="usdt_futures",
+    leverage=2,
+):
     return {"symbol": symbol, "side": side, "quantity": qty,
-            "entry_price": entry, "unrealized_pnl": upnl, "mark_price": entry}
+            "entry_price": entry, "unrealized_pnl": upnl, "mark_price": entry,
+            "market_type": market_type, "leverage": leverage,
+            "leverage_source": "exchange_reported"}
 
 
 def test_managed_when_local_and_exchange_agree(tmp_path, monkeypatch):
@@ -310,6 +324,42 @@ def test_unified_position_without_broker_id_never_infers_orphan(tmp_path, monkey
     assert result.orphaned == []
 
 
+def test_malformed_unified_quantity_degrades_view_without_inferring_orphan(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    import yaml
+    import aletheia.config.loader as loader
+
+    loader.CONFIG_PATH.write_text(
+        yaml.safe_dump({"exchange": {"mode": "demo", "paper_execution_mode": "okx_demo"}}),
+        encoding="utf-8",
+    )
+    loader._invalidate_config_cache()
+    repo.insert_position(Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.01, entry_price=60_000.0, execution_mode="okx_demo",
+    ))
+
+    from aletheia.portfolio import position_reconciler as pr
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
+        "accounts": [{"broker_id": "okx_demo"}],
+        "positions": [
+            {**_ex("BTCUSDT", "long", "not-a-number", 60_000.0),
+             "broker_id": "okx_demo"},
+        ],
+        "age_seconds": 1.0,
+    })
+
+    result = pr.classify_positions("demo")
+
+    assert result.sync_status == "unconfigured"
+    assert len(result.managed) == 1
+    assert result.external == []
+    assert result.orphaned == []
+
+
 def test_zero_quantity_exchange_rows_ignored(tmp_path, monkeypatch):
     """Bitget sometimes returns zero-qty slots for closed positions — skip them."""
     setup_env(tmp_path, monkeypatch)
@@ -318,6 +368,303 @@ def test_zero_quantity_exchange_rows_ignored(tmp_path, monkeypatch):
     r = classify_positions()
     assert len(r.external) == 0
     assert len(r.managed) == 0
+
+
+def test_invalid_local_quantity_degrades_identity_without_classification(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    _stub_cache(monkeypatch, [_ex("BTCUSDT", "long", 0.01, 60_000.0)])
+
+    from aletheia.portfolio import position_reconciler as pr
+    monkeypatch.setattr(pr, "list_all_open_positions", lambda: [{
+        "id": "position-invalid-quantity",
+        "symbol": "BTC/USDT",
+        "market_type": "usdt_futures",
+        "direction": "long",
+        "quantity": "not-a-number",
+        "entry_price": 60_000.0,
+        "execution_mode": "bitget_demo",
+    }])
+
+    result = pr.classify_positions("demo")
+
+    assert result.managed == []
+    assert result.external == []
+    assert result.orphaned == []
+    assert [issue.reason for issue in result.integrity_issues] == [
+        "invalid_local_quantity"
+    ]
+
+
+def _stub_okx_unified(monkeypatch, positions):
+    import yaml
+    import aletheia.config.loader as loader
+    from aletheia.portfolio import position_reconciler as pr
+
+    loader.CONFIG_PATH.write_text(
+        yaml.safe_dump({
+            "exchange": {"mode": "demo", "paper_execution_mode": "okx_demo"}
+        }),
+        encoding="utf-8",
+    )
+    loader._invalidate_config_cache()
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
+        "accounts": [{"broker_id": "okx_demo"}],
+        "positions": [
+            {**position, "broker_id": "okx_demo"}
+            for position in positions
+        ],
+        "age_seconds": 1.0,
+        "fetched_at": "2026-08-07T00:00:00+00:00",
+    })
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_spot_and_futures_same_symbol_are_independent_and_order_stable(
+    tmp_path,
+    monkeypatch,
+    reverse,
+):
+    setup_env(tmp_path, monkeypatch)
+    locals_ = [
+        Position(
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.2,
+            entry_price=60_000,
+            execution_mode="okx_demo",
+            leverage=None,
+        ),
+        Position(
+            symbol="BTC/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            quantity=0.1,
+            entry_price=60_000,
+            execution_mode="okx_demo",
+            leverage=3,
+        ),
+    ]
+    exchange = [
+        _ex("BTCUSDT", "long", 0.2, 60_000, market_type="spot", leverage=1),
+        _ex(
+            "BTCUSDT",
+            "long",
+            0.1,
+            60_000,
+            market_type="perp",
+            leverage=3,
+        ),
+    ]
+    for position in reversed(locals_) if reverse else locals_:
+        repo.insert_position(position)
+    _stub_okx_unified(
+        monkeypatch,
+        list(reversed(exchange)) if reverse else exchange,
+    )
+
+    from aletheia.portfolio.position_reconciler import classify_positions
+    result = classify_positions("demo")
+
+    assert [item.to_dict()["market_type"] for item in result.managed] == [
+        "spot",
+        "usdt_futures",
+    ]
+    assert result.external == []
+    assert result.orphaned == []
+    assert result.integrity_issues == []
+
+
+def test_missing_market_is_classified_independently(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    spot = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.2,
+        entry_price=60_000,
+        execution_mode="okx_demo",
+    )
+    futures = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.1,
+        entry_price=60_000,
+        execution_mode="okx_demo",
+        leverage=3,
+    )
+    repo.insert_position(spot)
+    repo.insert_position(futures)
+    _stub_okx_unified(monkeypatch, [
+        _ex("BTCUSDT", "long", 0.1, 60_000, leverage=3),
+    ])
+
+    from aletheia.portfolio.position_reconciler import classify_positions
+    result = classify_positions("demo")
+
+    assert [item.local["id"] for item in result.managed] == [futures.id]
+    assert [item.local["id"] for item in result.orphaned] == [spot.id]
+    assert result.external == []
+
+
+def test_run_reconcile_keeps_same_symbol_spot_disappearance_and_futures_adoption_separate(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    spot = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.2,
+        entry_price=60_000,
+        execution_mode="okx_demo",
+        leverage=None,
+    )
+    repo.insert_position(spot)
+    _stub_okx_unified(monkeypatch, [
+        _ex("BTCUSDT", "long", 0.1, 60_000, leverage=3),
+    ])
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "aletheia.notifications.notify_operator",
+        lambda *_args, **_kwargs: None,
+    )
+
+    from aletheia.portfolio.position_reconciler import run_reconcile
+    summary = run_reconcile("demo")
+
+    assert summary["counts"] == {
+        "managed": 0,
+        "external": 1,
+        "orphaned": 1,
+        "degraded": 0,
+    }
+    assert summary["disappearance"]["observations"][0]["position_id"] == spot.id
+    assert len(summary["adopted"]) == 1
+    open_positions = repo.list_positions(status="open")
+    assert {(row["market_type"], row["source"]) for row in open_positions} == {
+        ("spot", "native"),
+        ("usdt_futures", "adopted"),
+    }
+
+
+@pytest.mark.parametrize("duplicate_source", ("local", "exchange"))
+def test_duplicate_exact_identity_fails_closed(tmp_path, monkeypatch, duplicate_source):
+    setup_env(tmp_path, monkeypatch)
+    local_count = 2 if duplicate_source == "local" else 1
+    for quantity in range(1, local_count + 1):
+        repo.insert_position(Position(
+            symbol="ETH/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            quantity=float(quantity),
+            entry_price=3_000,
+            execution_mode="okx_demo",
+            leverage=2,
+        ))
+    exchange = [
+        _ex("ETHUSDT", "short", 1, 3_000),
+        _ex("ETHUSDT", "short", 2, 3_000),
+    ] if duplicate_source == "exchange" else [
+        _ex("ETHUSDT", "short", 1, 3_000),
+    ]
+    _stub_okx_unified(monkeypatch, exchange)
+
+    from aletheia.portfolio.position_reconciler import classify_positions
+    result = classify_positions("demo")
+
+    assert result.managed == []
+    assert result.external == []
+    assert result.orphaned == []
+    assert [issue.reason for issue in result.integrity_issues] == [
+        f"duplicate_{duplicate_source}_identity"
+    ]
+
+
+@pytest.mark.parametrize("unknown_source", ("local", "exchange"))
+def test_unknown_market_type_blocks_same_symbol_direction_identity(
+    tmp_path,
+    monkeypatch,
+    unknown_source,
+):
+    setup_env(tmp_path, monkeypatch)
+    repo.insert_position(Position(
+        symbol="SOL/USDT",
+        market_type=("legacy-unknown" if unknown_source == "local" else "usdt_futures"),
+        direction="long",
+        quantity=1,
+        entry_price=150,
+        execution_mode="okx_demo",
+        leverage=2,
+    ))
+    _stub_okx_unified(monkeypatch, [
+        _ex(
+            "SOLUSDT",
+            "long",
+            1,
+            150,
+            market_type=(
+                "legacy-unknown" if unknown_source == "exchange" else "usdt_futures"
+            ),
+        ),
+    ])
+
+    from aletheia.portfolio.position_reconciler import classify_positions
+    result = classify_positions("demo")
+
+    assert result.managed == []
+    assert result.external == []
+    assert result.orphaned == []
+    assert any(
+        issue.reason == f"unknown_{unknown_source}_market_type"
+        for issue in result.integrity_issues
+    )
+
+
+def test_account_fingerprint_mismatch_blocks_identity(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.1,
+        entry_price=60_000,
+        execution_mode="okx_demo",
+        leverage=2,
+        reconciliation_identity=json.dumps({
+            "account_fingerprint": "sha256:different-logical-account",
+        }),
+    )
+    repo.insert_position(position)
+    spot = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.2,
+        entry_price=60_000,
+        execution_mode="okx_demo",
+        leverage=None,
+    )
+    repo.insert_position(spot)
+    _stub_okx_unified(monkeypatch, [
+        _ex("BTCUSDT", "long", 0.1, 60_000),
+        _ex("BTCUSDT", "long", 0.2, 60_000, market_type="spot", leverage=1),
+    ])
+
+    from aletheia.portfolio.position_reconciler import classify_positions
+    result = classify_positions("demo")
+
+    assert [item.local["id"] for item in result.managed] == [spot.id]
+    assert result.external == []
+    assert result.orphaned == []
+    assert [issue.reason for issue in result.integrity_issues] == [
+        "local_account_fingerprint_mismatch"
+    ]
 
 
 # --- P3 tests: orphan close + run_reconcile orchestration ---
