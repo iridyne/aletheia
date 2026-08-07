@@ -11,6 +11,32 @@ from aletheia.model_provider.inference_contract import InferenceCall
 
 _SCHEMA_VERSION = "llm-inference-call-v1"
 
+_SAFE_RESPONSE_SHAPES = frozenset(
+    {
+        "empty",
+        "json_object",
+        "json_array",
+        "json_string",
+        "json_null",
+        "json_scalar",
+        "markdown_json_object",
+        "embedded_json_object",
+        "non_json_text",
+        "openai_chat_envelope",
+        "openai_responses_envelope",
+        "anthropic_message_envelope",
+    }
+)
+_SAFE_SCHEMA_ERROR_CODES = frozenset(
+    {
+        "missing_required",
+        "outside_enum",
+        "wrong_type",
+        "constraint_violation",
+        "validation_failed",
+    }
+)
+
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -23,6 +49,20 @@ def _json(value: Any) -> str:
 def _runtime_identity(call: InferenceCall) -> tuple[str | None, str | None]:
     environment = call.environment
     return environment.get("agent_run_id"), environment.get("runtime_session_id")
+
+
+def _safe_failure_diagnostics(value: dict[str, str] | None) -> dict[str, str]:
+    """Allow only fixed content-free enums into the durable inference envelope."""
+    if not isinstance(value, dict):
+        return {}
+    safe: dict[str, str] = {}
+    response_shape = value.get("response_shape")
+    if response_shape in _SAFE_RESPONSE_SHAPES:
+        safe["response_shape"] = response_shape
+    schema_error_code = value.get("schema_error_code")
+    if schema_error_code in _SAFE_SCHEMA_ERROR_CODES:
+        safe["schema_error_code"] = schema_error_code
+    return safe
 
 
 def record_inference_started(call: InferenceCall, *, started_at: str | None = None) -> bool:
@@ -92,6 +132,7 @@ def record_inference_finished(
     parse_valid: bool | None = None,
     schema_valid: bool | None = None,
     error_type: str | None = None,
+    failure_diagnostics: dict[str, str] | None = None,
     finished_at: str | None = None,
 ) -> bool:
     """Finalize a logical call without persisting model output content."""
@@ -107,10 +148,26 @@ def record_inference_finished(
         attempt_count = call.attempt_count
         db = ensure_economics_schema()
         was_in_tx = db.in_transaction
+        safe_diagnostics = _safe_failure_diagnostics(failure_diagnostics)
+        metadata_json: str | None = None
+        if status == "error" and safe_diagnostics:
+            row = db.execute(
+                "SELECT metadata_json FROM llm_inference_calls WHERE logical_call_id=?",
+                (call.logical_call_id,),
+            ).fetchone()
+            try:
+                metadata = json.loads(row["metadata_json"] or "{}") if row else {}
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata["structured_failure"] = safe_diagnostics
+            metadata_json = _json(metadata)
         db.execute(
             """UPDATE llm_inference_calls SET
                 status=?,parse_valid=?,schema_valid=?,attempt_count=?,retry_count=?,
-                fallback_used=?,final_provider=?,final_model=?,error_type=?,finished_at=?
+                fallback_used=?,final_provider=?,final_model=?,error_type=?,finished_at=?,
+                metadata_json=COALESCE(?, metadata_json)
                WHERE logical_call_id=?""",
             (
                 status,
@@ -125,6 +182,7 @@ def record_inference_finished(
                 fallback.get("final_model") or getattr(response, "model", None),
                 str(error_type)[:160] if error_type else None,
                 finished_at or _utcnow(),
+                metadata_json,
                 call.logical_call_id,
             ),
         )

@@ -156,3 +156,36 @@ def test_application_model_requests_carry_inference_envelope():
                 if not any(item.arg == "inference" for item in node.keywords):
                     failures.append(f"{path.relative_to(_ROOT)}:{node.lineno}")
     assert not failures, "ModelRequest without inference envelope:\n" + "\n".join(failures)
+
+
+@spec_claim(
+    SpecClaim(
+        "LLMH-S06",
+        _CONTRACT,
+        "§Failure and recovery semantics",
+        "L2a",
+        "Structured failure diagnostics persist only fixed content-free enums, "
+        "never response content, values, arbitrary keys, field names, lengths, or hashes.",
+        status="implemented",
+    ),
+)
+def test_structured_failure_diagnostics_are_content_free_enums():
+    from aletheia.economics.inference_calls import _safe_failure_diagnostics
+
+    assert _safe_failure_diagnostics(
+        {
+            "response_shape": "json_object",
+            "schema_error_code": "missing_required",
+            "response_text": "must never persist",
+            "parsed_root_keys": "must never persist",
+        }
+    ) == {
+        "response_shape": "json_object",
+        "schema_error_code": "missing_required",
+    }
+    assert _safe_failure_diagnostics(
+        {
+            "response_shape": "unregistered-shape",
+            "schema_error_code": "unregistered-error",
+        }
+    ) == {}
