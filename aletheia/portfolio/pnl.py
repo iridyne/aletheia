@@ -179,8 +179,10 @@ def _build_exchange_upnl_index() -> dict[tuple[str, str, str, str], float]:
     try:
         from aletheia.data.symbols import to_canonical
         from aletheia.portfolio import exchange_sync
+        from aletheia.portfolio.uta.registry import available_brokers
 
         candidates: dict[tuple[str, str, str, str], list[float]] = {}
+        exchange_broker_ids = frozenset(available_brokers())
         cached = exchange_sync.get_unified_cached_state()
         if exchange_sync.status_for(cached) != "ok":
             return {}
@@ -193,7 +195,7 @@ def _build_exchange_upnl_index() -> dict[tuple[str, str, str, str], float]:
             upnl = position.get("unrealized_pnl")
             if (
                 not symbol
-                or not broker_id
+                or broker_id not in exchange_broker_ids
                 or market_type is None
                 or direction is None
                 or upnl is None
@@ -232,6 +234,9 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
     # multiple local Position rows that share the same current match key.
     local_match_counts: dict[tuple[str, str, str, str], int] = {}
     for position in positions:
+        execution_mode = str(position.get("execution_mode") or "")
+        if execution_mode == "paper_internal":
+            continue
         direction = position["direction"]
         norm_dir = "long" if direction in ("long", "buy") else "short"
         market_type = _normalize_upnl_market_type(position.get("market_type"))
@@ -239,7 +244,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
             continue
         match_key = (
             to_canonical(position["symbol"]),
-            position.get("execution_mode") or "",
+            execution_mode,
             market_type,
             norm_dir,
         )
@@ -258,15 +263,20 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
         # A single aggregate remote value is also ambiguous when more than one
         # local Position shares the key; never copy the full value to every row.
         market_type = _normalize_upnl_market_type(p.get("market_type"))
+        execution_mode = str(p.get("execution_mode") or "")
         match_key = (
             to_canonical(p["symbol"]),
-            p.get("execution_mode") or "",
+            execution_mode,
             market_type,
             norm_dir,
         )
         exc_val = (
             exc_upnl_index.get(match_key)
-            if market_type is not None and local_match_counts.get(match_key) == 1
+            if (
+                execution_mode != "paper_internal"
+                and market_type is not None
+                and local_match_counts.get(match_key) == 1
+            )
             else None
         )
         if exc_val is not None:
