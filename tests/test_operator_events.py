@@ -980,12 +980,20 @@ async def test_operator_recommendations_use_latest_portfolio_snapshot_not_oldest
 @pytest.mark.anyio
 async def test_operator_recommendations_include_risk_boundary_change_proposal_due_for_repeated_adjustable_rejections(client):
     from aletheia.config.loader import load_config, save_config
+    from aletheia.risk.policy import risk_policy_hash
     from aletheia.storage.models import RiskDecision, TradeProposal
     from aletheia.storage.repositories import insert_risk_decision, insert_trade_proposal
 
     cfg = load_config()
-    cfg.risk.max_demo_position_notional_usdt = 200.0
+    cfg.risk.demo.capital.max_position_notional_usdt = 200.0
     save_config(cfg)
+    demo_policy = cfg.risk.demo
+    identity = {
+        "risk_mode": "demo",
+        "policy_id": demo_policy.policy_id,
+        "policy_revision": demo_policy.revision,
+        "policy_hash": risk_policy_hash(demo_policy),
+    }
 
     first = TradeProposal(
         symbol="BTCUSDT",
@@ -1009,6 +1017,7 @@ async def test_operator_recommendations_include_risk_boundary_change_proposal_du
         RiskDecision(
             proposal_id=first.id,
             approved=False,
+            **identity,
             violations='["exceeds_demo_position_notional:300.0>200.0"]',
             message="Rejected",
         )
@@ -1017,6 +1026,7 @@ async def test_operator_recommendations_include_risk_boundary_change_proposal_du
         RiskDecision(
             proposal_id=second.id,
             approved=False,
+            **identity,
             violations='["exceeds_demo_position_notional:300.0>200.0"]',
             message="Rejected",
         )
@@ -1029,6 +1039,9 @@ async def test_operator_recommendations_include_risk_boundary_change_proposal_du
     risk_proposals = [item for item in payload if item["kind"] == "risk_boundary_change_proposal_due"]
     assert len(risk_proposals) == 1
     assert risk_proposals[0]["metadata"]["proposal_command"] == "propose_risk_boundary_change"
+    assert risk_proposals[0]["metadata"]["risk_mode"] == "demo"
+    assert risk_proposals[0]["metadata"]["policy_id"] == cfg.risk.demo.policy_id
+    assert risk_proposals[0]["metadata"]["policy_revision"] == cfg.risk.demo.revision
     assert risk_proposals[0]["metadata"]["changes"]["max_demo_position_notional_usdt"] == 300.0
 
 

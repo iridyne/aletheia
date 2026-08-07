@@ -2350,9 +2350,17 @@ async def test_propose_risk_boundary_change_creates_artifact(tmp_path, monkeypat
 
     from aletheia.agent_shell.commands import propose_risk_boundary_change
     from aletheia.agent_shell.operator_store import list_artifacts
+    from aletheia.config.loader import load_config
+    from aletheia.risk.policy import risk_policy_hash
+
+    demo_policy = load_config().risk.demo
 
     result = await propose_risk_boundary_change(
         {
+            "risk_mode": "demo",
+            "policy_id": demo_policy.policy_id,
+            "policy_revision": demo_policy.revision,
+            "policy_hash": risk_policy_hash(demo_policy),
             "changes": {"max_demo_position_notional_usdt": 300.0},
             "rationale": "Paper sizing is too restrictive for current symbol set.",
         }
@@ -2361,7 +2369,36 @@ async def test_propose_risk_boundary_change_creates_artifact(tmp_path, monkeypat
     assert result["proposed"] is True
     artifacts = list_artifacts(session_id="operator-main")
     assert artifacts[0]["artifact_type"] == "risk_boundary_change_proposal"
+    assert artifacts[0]["content"]["risk_mode"] == "demo"
+    assert artifacts[0]["content"]["policy_id"] == demo_policy.policy_id
+    assert artifacts[0]["content"]["policy_revision"] == demo_policy.revision
+    assert artifacts[0]["content"]["policy_hash"] == risk_policy_hash(demo_policy)
     assert artifacts[0]["content"]["changes"]["max_demo_position_notional_usdt"] == 300.0
+
+
+@pytest.mark.asyncio
+async def test_propose_risk_boundary_change_rejects_stale_policy_identity(tmp_path, monkeypatch):
+    _init_agent_shell_db(tmp_path, monkeypatch)
+
+    from aletheia.agent_shell.commands import propose_risk_boundary_change
+    from aletheia.agent_shell.operator_store import list_artifacts
+    from aletheia.config.loader import load_config
+    from aletheia.risk.policy import risk_policy_hash
+
+    demo_policy = load_config().risk.demo
+    result = await propose_risk_boundary_change(
+        {
+            "risk_mode": "demo",
+            "policy_id": demo_policy.policy_id,
+            "policy_revision": demo_policy.revision + 1,
+            "policy_hash": risk_policy_hash(demo_policy),
+            "changes": {"max_daily_loss_pct": 2.0},
+            "rationale": "stale candidate",
+        }
+    )
+
+    assert "stale policy identity" in result["error"]
+    assert list_artifacts(session_id="operator-main") == []
 
 
 @pytest.mark.asyncio

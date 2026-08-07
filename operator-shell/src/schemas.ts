@@ -309,6 +309,10 @@ export interface StrategySummary {
 export interface RiskBoundaryProposalCandidate {
   boundary_key: string
   violation_kind: string
+  risk_mode: 'demo' | 'live'
+  policy_id: string
+  policy_revision: number
+  policy_hash: string
   rejection_count: number
   current_value: unknown
   suggested_value: unknown

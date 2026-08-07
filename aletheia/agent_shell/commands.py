@@ -1366,10 +1366,46 @@ async def propose_risk_boundary_change(params: dict) -> dict:
     if not changes:
         return {"error": "Cannot create a risk-boundary proposal without proposed changes."}
 
+    risk_mode = str(params.get("risk_mode") or "").strip().lower()
+    policy_id = str(params.get("policy_id") or "").strip()
+    requested_policy_hash = str(params.get("policy_hash") or "").strip()
+    policy_revision = params.get("policy_revision")
+    if risk_mode not in {"demo", "live"}:
+        return {"error": "Cannot create a risk-boundary proposal without a valid risk_mode."}
+    if (
+        not policy_id
+        or not requested_policy_hash
+        or isinstance(policy_revision, bool)
+        or not isinstance(policy_revision, int)
+    ):
+        return {"error": "Cannot create a risk-boundary proposal without policy identity."}
+
+    from aletheia.risk.policy import risk_policy_hash as compute_risk_policy_hash
+
+    cfg = config_loader.load_config()
+    current_policy = getattr(cfg.risk, risk_mode)
+    current_identity = (
+        current_policy.policy_id,
+        current_policy.revision,
+        compute_risk_policy_hash(current_policy),
+    )
+    requested_identity = (policy_id, policy_revision, requested_policy_hash)
+    if requested_identity != current_identity:
+        return {
+            "error": (
+                "Cannot create a risk-boundary proposal for a stale policy identity; "
+                "refresh risk recommendations first."
+            )
+        }
+
     content = {
+        "risk_mode": risk_mode,
+        "policy_id": policy_id,
+        "policy_revision": policy_revision,
+        "policy_hash": requested_policy_hash,
         "changes": changes,
         "rationale": rationale,
-        "current_risk_snapshot": config_loader.load_config().risk.model_dump(mode="json"),
+        "current_risk_snapshot": cfg.risk.model_dump(mode="json"),
         "requires_human_approval": True,
     }
     artifact_id = _create_proposal_artifact(

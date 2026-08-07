@@ -149,10 +149,18 @@ async def test_risk_status_keeps_latest_rejected_decision_as_history(client):
 @pytest.mark.anyio
 async def test_risk_summary_surfaces_due_boundary_change_after_repeated_adjustable_rejections(client):
     from aletheia.config.loader import load_config, save_config
+    from aletheia.risk.policy import risk_policy_hash
 
     cfg = load_config()
-    cfg.risk.max_demo_position_notional_usdt = 200.0
+    cfg.risk.demo.capital.max_position_notional_usdt = 200.0
     save_config(cfg)
+    demo_policy = cfg.risk.demo
+    identity = {
+        "risk_mode": "demo",
+        "policy_id": demo_policy.policy_id,
+        "policy_revision": demo_policy.revision,
+        "policy_hash": risk_policy_hash(demo_policy),
+    }
     first = TradeProposal(
         symbol="BTCUSDT",
         market_type="spot",
@@ -175,6 +183,7 @@ async def test_risk_summary_surfaces_due_boundary_change_after_repeated_adjustab
         RiskDecision(
             proposal_id=first.id,
             approved=False,
+            **identity,
             violations='["exceeds_demo_position_notional:300.0>200.0"]',
             message="Rejected",
         )
@@ -183,6 +192,7 @@ async def test_risk_summary_surfaces_due_boundary_change_after_repeated_adjustab
         RiskDecision(
             proposal_id=second.id,
             approved=False,
+            **identity,
             violations='["exceeds_demo_position_notional:300.0>200.0"]',
             message="Rejected",
         )
@@ -200,6 +210,17 @@ async def test_risk_summary_surfaces_due_boundary_change_after_repeated_adjustab
 
 @pytest.mark.anyio
 async def test_risk_summary_suppresses_due_boundary_change_when_recent_proposal_exists(client):
+    from aletheia.config.loader import load_config
+    from aletheia.risk.policy import risk_policy_hash
+
+    demo_policy = load_config().risk.demo
+    identity = {
+        "risk_mode": "demo",
+        "policy_id": demo_policy.policy_id,
+        "policy_revision": demo_policy.revision,
+        "policy_hash": risk_policy_hash(demo_policy),
+    }
+
     proposal = TradeProposal(
         symbol="BTCUSDT",
         market_type="spot",
@@ -213,6 +234,7 @@ async def test_risk_summary_suppresses_due_boundary_change_when_recent_proposal_
         RiskDecision(
             proposal_id=proposal.id,
             approved=False,
+            **identity,
             violations='["exceeds_demo_position_notional:300.0>200.0"]',
             message="Rejected",
         )
@@ -221,6 +243,7 @@ async def test_risk_summary_suppresses_due_boundary_change_when_recent_proposal_
         RiskDecision(
             proposal_id=proposal.id,
             approved=False,
+            **identity,
             violations='["exceeds_demo_position_notional:300.0>200.0"]',
             message="Rejected again",
         )
@@ -231,6 +254,10 @@ async def test_risk_summary_suppresses_due_boundary_change_when_recent_proposal_
         artifact_type="risk_boundary_change_proposal",
         title="Risk boundary proposal",
         content={
+            "risk_mode": "demo",
+            "policy_id": demo_policy.policy_id,
+            "policy_revision": demo_policy.revision,
+            "policy_hash": risk_policy_hash(demo_policy),
             "changes": {
                 "max_demo_position_notional_usdt": 300.0,
             },
