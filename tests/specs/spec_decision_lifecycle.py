@@ -2367,7 +2367,25 @@ def test_direct_skip_requires_one_structured_adverse_confirmation(monkeypatch):
     assert decision.filter_trace[0]["inputs"]["confirmation_attempts"] == 1
 
 
-def test_insufficient_evidence_cannot_become_terminal_skip(monkeypatch):
+@spec_claim(
+    SpecClaim(
+        "DL-S70",
+        "decision_lifecycle_contract",
+        "§2.2 skip-kind null compatibility",
+        "L2b",
+        "A JSON null skip_kind is schema-compatible but cannot terminally consume a "
+        "pending Opportunity as a direct skip.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize(
+    "skip_kind",
+    ["insufficient_evidence", None],
+    ids=["insufficient-evidence", "null"],
+)
+def test_neutral_or_null_skip_kind_cannot_become_terminal_skip(
+    monkeypatch, skip_kind
+):
     import asyncio
 
     from aletheia.agent_shell import trading_decision
@@ -2380,7 +2398,7 @@ def test_insufficient_evidence_cannot_become_terminal_skip(monkeypatch):
         "conviction": 20,
         "reasoning": "not enough matured outcomes",
         "bear_case": "the short may fail",
-        "skip_kind": "insufficient_evidence",
+        "skip_kind": skip_kind,
         "adverse_reason_codes": [],
         "adverse_evidence": [],
     }

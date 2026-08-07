@@ -5,7 +5,7 @@
 > 其他契约**竖切**单个子系统(风控/执行/agent/知识);本契约负责它们之间的交接。
 > **不重复**子系统细节 —— 指向已有契约。
 > **基线**:代码为底(file:line);冲突时文档为准。
-> Last updated: 2026-08-07 (v1.7:trade 结构化输出必须携带 Operator 原始入场保护计划) · 维护者:Aletheia Dev · 研究证据:`docs/research/audits/OPPORTUNITY_END_TO_END_LIFECYCLE_AUDIT_2026-07-18.md`
+> Last updated: 2026-08-07 (v1.8:`skip_kind` 允许非 skip 决策显式返回 JSON `null`) · 维护者:Aletheia Dev · 研究证据:`docs/research/audits/OPPORTUNITY_END_TO_END_LIFECYCLE_AUDIT_2026-07-18.md`
 
 ---
 
@@ -80,7 +80,7 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 | `action` | `str`(必填) | 活跃入场面只允许 `trade` / `skip`。缺失或返回 `close` / `reduce` / `scale_in` / `flip` / `watch` 是 `DecisionUnavailable(operator_output_validation)`，不得归一成终态 `skip`、绑定身份或消费 pending。 |
 | `conviction` | `int`(必填) | 0–100。缺失、非整数或越界是评估不可用；合法值低于 55(初始或 debate 后)是**非终态 defer** (DL-INV-2 v1.5)——`DecisionUnavailable('operator_low_conviction' 或 'debate_not_confirmed')`，pending 载体保留待 material fingerprint 变化重新开放；不合成 final `skip`。 |
 | `reasoning` | `str`(必填) | 决策理由(人类可读)。权威 PiDecision 保存全文；短 reflection/UI 可独立截断。 |
-| `skip_kind` | `str \| None` | 仅 direct skip 使用：`adverse_candidate_evidence` 或 `insufficient_evidence`。后者是中性未知，不得终结候选。 |
+| `skip_kind` | `str \| None` | 结构化输出只接受 `adverse_candidate_evidence` / `insufficient_evidence` / JSON `null`；`trade` 可显式返回 `null`。仅 direct skip 使用非空值，`insufficient_evidence` 或 `null` 均为中性未知，不得终结候选。 |
 | `adverse_reason_codes` / `adverse_evidence` | `list[str]` | terminal direct skip 必须至少各有一项允许的 typed reason 与候选特定事实；rank priority 或证据不足不能冒充 adverse reason。 |
 | `validated_adverse_claims` | `list[dict]` | 仅由确定性 validator 生成；逐项保存 `reason_code + fact_refs`。模型文本不能写入或替代该权限。 |
 | `model_reasoning` | `str \| None` | direct skip 的原始模型文本，仅作审计；权威 `reasoning/adverse_evidence` 由 validated fact refs 重建，避免错误判词进入最终状态。 |
@@ -298,6 +298,7 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 | `DL-S67` | L2b | `trade` 结构化输出缺失/无效 market_type、stop/TP 或五项理由时先有界修复、最终仍不完整则 typed defer；`skip` 不被迫伪造入场字段；配置不能改写模型保护计划 |
 | `DL-S68` | L2b | 推理前 mark 下反向保护价先走同一次有界修复；修复成功时初稿只记非 cohort error、正式 first exposure=passed，二次仍错才 rejected；提交前刷新 mark 穿越保护位则记录 pass→reject trace、typed defer 且 carrier 不消费 |
 | `DL-S69` | L2b | 新 Operator `spot+short` 先走一次有界修复、仍不合法则 typed defer；不得创建 futures Proposal、不得消费原 spot carrier；历史 coercion 仅作恢复兼容 |
+| `DL-S70` | L2b | `_DECISION_SCHEMA.skip_kind` 仅接受既有两个字符串或 JSON `null`；`trade+null` schema-valid，未登记的非空值仍是 `outside_enum`，`skip+null` 仍由 direct-skip validation typed defer 且不消费 carrier |
 | `DL-C01` | L2c | `_MIN_CONVICTION_TO_TRADE == 55`(改阈值即爆红,强制同步本契约) |
 | `DL-C02` | L2c | Proposal 前置不可用返回稳定 typed reason；确定性方向拒绝仍是明确 skip |
 

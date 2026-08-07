@@ -126,6 +126,24 @@ def test_structured_schema_requires_plan_only_for_trade():
         )
 
 
+def test_structured_schema_accepts_null_skip_kind_only_as_optional_value():
+    """Trade output may carry JSON null, but unknown non-empty labels stay invalid."""
+    from aletheia.agent_shell.trading_decision import _DECISION_SCHEMA, _DummySchema
+    from aletheia.agents.helpers import _validate_structured_payload
+
+    schema = _DummySchema(_DECISION_SCHEMA)
+    _validate_structured_payload(
+        _complete_trade_payload(skip_kind=None), schema, _DECISION_SCHEMA
+    )
+
+    with pytest.raises(ValueError, match="outside enum"):
+        _validate_structured_payload(
+            _complete_trade_payload(skip_kind="not_a_skip_kind"),
+            schema,
+            _DECISION_SCHEMA,
+        )
+
+
 @pytest.mark.parametrize(
     ("updates", "repair_reason"),
     [
