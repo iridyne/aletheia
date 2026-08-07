@@ -1413,15 +1413,18 @@ class EconomicsConfig(BaseModel):
 
 
 class LearningConfig(BaseModel):
-    """One default-closed configuration surface for paper Learning experiments."""
+    """Paper Learning capability with independently owner-gated authority."""
 
     # Measurement is safe and remains available even if every authority gate is off.
     contribution_evaluation_enabled: bool = True
-    # All behavior-changing controls default off; an empty allowlist is an
-    # additional independent fail-closed gate.
-    lifecycle_automation_enabled: bool = False
-    paper_influence_enabled: bool = False
-    paper_influence_paths: list[str] = Field(default_factory=list)
+    # The sole measured Paper path is available by default.  This does not admit
+    # a Shadow experiment: exact owner admission, policy identity, contribution,
+    # control, harm, allocation, pause, and refreeze gates remain independent.
+    lifecycle_automation_enabled: bool = True
+    paper_influence_enabled: bool = True
+    paper_influence_paths: list[str] = Field(
+        default_factory=lambda: ["universe_family_calibration"],
+    )
     auto_refreeze: bool = True
     evaluation_interval_minutes: int = Field(default=60, ge=15, le=1_440)
     paper_active_allocation_pct: float = Field(default=0.80, gt=0.0, le=0.90)

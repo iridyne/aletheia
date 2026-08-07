@@ -25,7 +25,8 @@ issue-ready findings live under
 
 The active product scope is `crypto-paper-mainline-v1`: crypto spot/perpetual,
 `paper_internal`, System Operator as the sole strategy decision authority, Risk
-Engine as the approval authority, and Learning influence disabled by default.
+Engine as the approval authority, and measured Paper Learning capability enabled
+by default while experiment authority remains owner-gated.
 
 Table IDs are audit-only stable references, not Aletheia product terminology.
 Outside these canonical tables, use the full capability name.

@@ -29,7 +29,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 @spec_claim(SpecClaim(
     "API-L01", "api_reference", "§Settings", "L2a",
-    "The paper-Learning settings endpoint is documented with its default-closed paper-only scope.",
+    "The paper-Learning settings endpoint documents its owner-gated paper-only scope.",
     status="implemented",
 ))
 def test_learning_settings_endpoint_is_documented():

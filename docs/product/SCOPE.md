@@ -43,7 +43,7 @@ factory driving production entries.
 | Execution | Local `paper_internal` is the active proof profile; exchange demo adapters exist outside that active proof | Active Runtime Scope and execution contract |
 | Accounting | Orders, fills, positions, costs, funding, and genuine outcomes retain causal identity and explicit integrity status | Data/outcome contracts |
 | Learning artifacts | Reviews, lessons, cases, memos, retrieval, calibration, and learned-guard observation | Learning and knowledge contracts |
-| Measured Learning | `universe_family_calibration` is the sole measurement-supported treatment path; contribution measurement is enabled, while behavioral influence and lifecycle automation default off | Learning contract and registry |
+| Measured Learning | `universe_family_calibration` is the sole measurement-supported treatment path; measurement, lifecycle automation, and Paper capability default on, while every experiment remains owner-gated | Learning contract and registry |
 | Owner surfaces | Local API, CLI, Dashboard, Doctor, audit history, and honest unavailable/degraded states | Capability Ground Truth |
 
 The repository contains additional implemented or experimental capabilities. Their
