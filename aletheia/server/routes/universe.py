@@ -18,7 +18,12 @@ def get_current_universe():
     svc = UniverseService()
     cfg = load_config()
 
-    snap = repo.get_active_universe_snapshot(cfg.universe.market_type)
+    # UniverseService owns the published snapshot namespace.  The configured
+    # market_type controls which assets are scanned (crypto/stocks/mixed), while
+    # snapshots are currently published under the service's canonical default.
+    # Querying with cfg.universe.market_type here can otherwise return no
+    # snapshot while the service returns members from the active one.
+    snap = repo.get_active_universe_snapshot()
     # execution_eligible_only=False: UI sees stale members (tagged stale=True)
     # rather than falling back to the static 3-symbol pool.
     members = svc.get_current_universe(execution_eligible_only=False)
@@ -72,7 +77,7 @@ async def trigger_refresh():
 
     from aletheia.universe.service import UniverseService
     svc = UniverseService()
-    snapshot_id = await svc.refresh(cfg.universe.market_type)
+    snapshot_id = await svc.refresh()
     if snapshot_id is None:
         raise HTTPException(500, detail="Universe refresh failed — check logs")
     return {"snapshot_id": snapshot_id, "status": "completed"}

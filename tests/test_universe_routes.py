@@ -1,7 +1,7 @@
 """Tests for universe API routes."""
 
 from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -64,11 +64,59 @@ def test_get_current_with_active_snapshot(client, enabled_cfg):
     assert data["members"][0]["symbol"] == "DOGE/USDT"
 
 
+def test_get_current_uses_service_snapshot_namespace_with_mixed_config(client):
+    cfg = MagicMock()
+    cfg.universe = UniverseConfig(enabled=True, market_type="mixed")
+    cfg.market_data = MagicMock()
+    snap = {
+        "id": "snap_mixed_assets",
+        "status": "active",
+        "summary": '{"scanned": 1000, "filtered": 245, "selected": 28}',
+    }
+    members = [{"id": "member_1", "snapshot_id": snap["id"], "symbol": "BTC/USDT"}]
+
+    with patch("aletheia.universe.service.load_config", return_value=cfg), \
+         patch("aletheia.server.routes.universe.load_config", return_value=cfg), \
+         patch(
+             "aletheia.server.routes.universe.repo.get_active_universe_snapshot",
+             return_value=snap,
+         ) as get_snapshot, \
+         patch(
+             "aletheia.universe.service.UniverseService.get_current_universe",
+             return_value=members,
+         ):
+        resp = client.get("/api/universe/current")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["snapshot"] == snap
+    assert data["members"] == members
+    assert data["fallback"] is False
+    get_snapshot.assert_called_once_with()
+
+
 def test_refresh_when_disabled(client, disabled_cfg):
     with patch("aletheia.server.routes.universe.load_config", return_value=disabled_cfg):
         resp = client.post("/api/universe/refresh")
     assert resp.status_code == 400
     assert "disabled" in resp.json()["detail"]
+
+
+def test_refresh_uses_service_snapshot_namespace_with_mixed_config(client):
+    cfg = MagicMock()
+    cfg.universe = UniverseConfig(enabled=True, market_type="mixed")
+
+    with patch("aletheia.server.routes.universe.load_config", return_value=cfg), \
+         patch(
+             "aletheia.universe.service.UniverseService.refresh",
+             new_callable=AsyncMock,
+             return_value="snap_1",
+         ) as refresh:
+        resp = client.post("/api/universe/refresh")
+
+    assert resp.status_code == 200
+    assert resp.json()["snapshot_id"] == "snap_1"
+    refresh.assert_awaited_once_with()
 
 
 def test_list_snapshots(client):
