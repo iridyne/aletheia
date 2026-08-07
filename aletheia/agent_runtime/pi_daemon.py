@@ -39,6 +39,7 @@ _uvicorn_loop: asyncio.AbstractEventLoop | None = None  # captured at startup
 # All three are mutated only on the loop thread (via call_soon_threadsafe).
 _coalescer: WakeCoalescer | None = None
 _pending_events: list[WakeEvent] = []
+_retry_wake_batches: list[dict] = []
 _generic_wake_pending: bool = False
 # Runtime tracking: updated by start/stop, exposed via daemon_status().
 _task_generation: int = 0
@@ -322,14 +323,18 @@ async def _pi_daemon_loop(
             for ev in drained:
                 _coalescer.add(ev, now)
         batches = _coalescer.ready_batches(now) if _coalescer else []
+        retry_batches = _retry_wake_batches[:]
+        _retry_wake_batches.clear()
 
         # Evaluate on: a legacy generic wake, a heartbeat, or at least one position
         # whose events passed the rate limit. Purely rate-limited/coalescing events
         # (no ready batch) do NOT wake the LLM this cycle.
-        if not (generic or triggered_by == "heartbeat" or batches):
+        if not (generic or triggered_by == "heartbeat" or batches or retry_batches):
             continue
 
         wake_context = _build_wake_context(triggered_by, batches)
+        if retry_batches:
+            wake_context.setdefault("wake_batches", []).extend(retry_batches)
         async with _eval_lock:
             pending_queue_remaining = await _run_evaluation(triggered_by, wake_context)
 
@@ -338,7 +343,14 @@ async def _pi_daemon_loop(
         # instead of silently discarding work.
         if cooldown_sec > 0:
             await asyncio.sleep(cooldown_sec)
-        if pending_queue_remaining != 0:
+        if (
+            pending_queue_remaining == _EVALUATION_RETRY_PENDING
+            and _retry_wake_batches
+        ):
+            # A drained portfolio batch has already passed coalescing/rate limits.
+            # Retry that exact batch directly; a generic wake would route to entry.
+            _signal_event.set()
+        elif pending_queue_remaining != 0:
             _generic_wake_pending = True
             _signal_event.set()
 
@@ -364,6 +376,22 @@ def _build_wake_context(triggered_by: str, batches: list) -> dict:
     if batches:
         ctx["wake_batches"] = [b.to_context() for b in batches]
     return ctx
+
+
+def _restore_wake_context(wake_context: dict | None) -> int:
+    """Retain drained batches after a non-terminal portfolio review.
+
+    These batches already passed coalescing and rate limiting.  Keeping the exact
+    context avoids both a second token charge and degradation into a generic
+    entry-opportunity evaluation.
+    """
+    restored = 0
+    for batch in (wake_context or {}).get("wake_batches", []):
+        if not isinstance(batch, dict) or not batch.get("position_id"):
+            continue
+        _retry_wake_batches.append(batch)
+        restored += 1
+    return restored
 
 
 async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -> int:
@@ -399,13 +427,28 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
         if remaining is None:
             remaining = 1 if _has_pending_signal_work() else 0
         logger.info("pi_daemon: evaluation done (trigger=%s, action=%s)", triggered_by, action)
-        if action == "review_unavailable":
+        is_portfolio_review = bool(evaluation_params.get("wake_batches"))
+        review_completed = (
+            result.get("review_completed") if isinstance(result, dict) else None
+        )
+        if is_portfolio_review and review_completed is not True:
             from aletheia.agent_runtime.scheduler import _record_job_failure
 
-            _record_job_failure(
-                "pi_trading_decision", "operator_position_review_unavailable"
+            restored = _restore_wake_context(wake_context)
+            failure_reason = (
+                "operator_position_review_unavailable"
+                if action == "review_unavailable"
+                else "operator_position_review_incomplete"
             )
-            return max(int(remaining or 0), 0)
+            _record_job_failure(
+                "pi_trading_decision", failure_reason
+            )
+            logger.warning(
+                "pi_daemon: portfolio review incomplete (action=%s, restored=%d)",
+                action,
+                restored,
+            )
+            return _EVALUATION_RETRY_PENDING
         _record_job_success("pi_trading_decision")
         _last_error_summary = None
         return max(int(remaining or 0), 0)
@@ -414,6 +457,7 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
         logger.warning("pi_daemon: evaluate_trading_opportunity timed out after 300s")
         _last_error_summary = "evaluation_timeout"
         _record_job_failure("pi_trading_decision", "daemon_evaluation_timeout")
+        _restore_wake_context(wake_context)
         return _EVALUATION_RETRY_PENDING
     except asyncio.CancelledError:
         raise  # propagate shutdown
@@ -422,6 +466,7 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
         logger.warning("pi_daemon: evaluation failed: %s", exc)
         _last_error_summary = f"{type(exc).__name__}"[:120]
         _record_job_failure("pi_trading_decision", "daemon_evaluation_failed")
+        _restore_wake_context(wake_context)
         return _EVALUATION_RETRY_PENDING
     finally:
         # Release thread-local SQLite connection to prevent WAL lock across cooldown

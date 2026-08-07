@@ -28,6 +28,7 @@ def reset_daemon_state():
     pd._uvicorn_loop = None
     pd._coalescer = None
     pd._pending_events.clear()
+    pd._retry_wake_batches.clear()
     pd._generic_wake_pending = False
     pd._task_generation = 0
     pd._started_at = None
@@ -42,6 +43,7 @@ def reset_daemon_state():
     pd._uvicorn_loop = None
     pd._coalescer = None
     pd._pending_events.clear()
+    pd._retry_wake_batches.clear()
     pd._generic_wake_pending = False
     pd._task_generation = 0
     pd._started_at = None

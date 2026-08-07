@@ -317,6 +317,15 @@ manager 必须重新取得精确新鲜 mark。最终结果和 wake fingerprint �
 只能归一为 `hold`，不得静默执行整仓关闭。确定性 evaluator 仍只负责唤醒，
 在 Operator 决定前不得直接修改 Position。
 
+`HORIZON_DUE` 是 must-answer 工作，`horizon_wake_sent_at` 表示**复核完成确认**，
+不是内存事件已排队。Position manager 在复核完成前允许重复投递，因此进程在排队后
+退出时，重启后的下一轮 durable Position 扫描仍会恢复同一唤醒。daemon 遇到
+`review_unavailable`、超时、异常或未确认的 `close_one`，必须恢复原
+`position_id + wake batch` 后重试，不能降级成无持仓上下文的 entry evaluation，
+也不能记 job success。只有有效 `hold`、已完成 `adjust_position`、已确认本地平仓，
+或已有 durable pending-close claim 的交易所平仓才确认该 horizon；后者由既有
+reconciliation 路径收敛，复核重试不得创建替代 Close Order。
+
 ### 10.2 close_position_routed 路由契约(唯一平仓中枢)
 
 `close_position_routed(pos_id, reason, fallback_exit_price)` 是单仓**唯一**平仓出口，自动循环与 Operator 路径都经此；`fallback_exit_price` 仅保留调用兼容，不能授权 `paper_internal` 成交：
