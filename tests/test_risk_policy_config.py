@@ -17,7 +17,9 @@ def test_flat_risk_config_migrates_to_mode_policies_without_changing_values():
         "max_live_position_notional_usdt": 45.0,
     })
 
-    assert risk.schema_version == 2
+    assert risk.schema_version == 3
+    assert risk.demo.capital.base_source == "account_equity"
+    assert risk.live.capital.base_source == "account_equity"
     assert risk.demo.loss.max_daily_loss_pct == 3.5
     assert risk.live.loss.max_daily_loss_pct == 3.5
     assert risk.demo.capital.max_per_symbol_notional_usdt == 750.0

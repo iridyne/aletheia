@@ -263,6 +263,13 @@ def test_live_exposure_cap_blocks_new_order(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _unlock_live_auto(tmp_path)
 
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.risk.live.capital.base_source = "custom"
+    cfg.risk.live.capital.base_usdt = 100.0
+    save_config(cfg)
+
     # Existing live exposure already near limit.
     from aletheia.storage.models import Position
     repo.insert_position(Position(
@@ -285,9 +292,10 @@ def test_live_exposure_cap_blocks_new_order(tmp_path, monkeypatch):
         quantity=0.0001,
         price=10000,
     )
-    # current_exposure ~1, proposal adds ~1 -> cap is 5 (5% of 100).
+    # Existing exposure is $10 and the proposal adds $1, exceeding the $5 cap.
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
+    assert not any(v.startswith("capital_base_unavailable:") for v in result.violations)
     assert any("max_total_live_exposure_exceeded" in v for v in result.violations)
 
 
@@ -346,6 +354,14 @@ def test_demo_leverage_within_limit_ok(tmp_path, monkeypatch):
 def test_single_trade_risk_exceeded_blocks_live(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _unlock_live_auto(tmp_path)
+
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.risk.live.capital.base_source = "custom"
+    cfg.risk.live.capital.base_usdt = 100.0
+    save_config(cfg)
+
     # cap=100, single_trade_risk_pct=0.25 → max risk $0.25.
     # entry 60000, stop 59000 (dist 1000), qty 0.001 → risk = $1 > $0.25 → block.
     p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
@@ -353,6 +369,7 @@ def test_single_trade_risk_exceeded_blocks_live(tmp_path, monkeypatch):
     p.stop_price = 59000
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
+    assert not any(v.startswith("capital_base_unavailable:") for v in result.violations)
     assert any("exceeds_single_trade_risk" in v for v in result.violations)
 
 
