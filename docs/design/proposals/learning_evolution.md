@@ -625,6 +625,7 @@ paths remain static and create no formal experiment, exposure, verdict, or autho
 | LE-B27 | L2b | policy epoch ignores code-only rebuilds, rotates on effective behavior change, and exposures retain running-build identity | implemented |
 | LE-B28 | L2b | conflicting settled values for one outcome identity invalidate/refreeze rather than selecting one copy | implemented |
 | LE-B30 | L2b | qualification uses consecutive UTC eligible-exposure days; a missing day resets the window and pre-gap samples cannot bridge the new run | implemented |
+| LE-B31 | L2b | gateway restart preserves the contribution evaluator's durable deadline and recovers an overdue deadline before the legacy startup catch-up | implemented |
 | LE-V01 | L2b | the Universe runtime verdict adapter reads canonical full-arm filter outcomes by exact key, calculates cluster intent-to-treat allocation utility, uses selected-member Universe rows only as mirror/fallback, and fails closed on disagreement | implemented — measurement-only evaluator; the non-causal Operator Opportunity 4h adapter is disabled; no empirical positive-contribution claim |
 | LE-V02 | L2c | deterministic verdict storage cannot alter Learning authority or experiment lifecycle | implemented — evaluator writes only its idempotent measurement record |
 | LE-V03 | L2c | shadow assignments with no actually applied treatment cannot produce a causal positive/negative verdict | implemented — exposure manifests feed cohort samples and return `insufficient_data/no_actual_intervention` |
