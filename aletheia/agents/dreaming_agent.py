@@ -2,9 +2,12 @@
 
 import json
 import logging
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import llm_complete, log_tool
+from aletheia.agents.helpers import llm_complete, llm_structured, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.knowledge.manager import create_daily_review, create_dreaming_log
@@ -20,6 +23,28 @@ _LEDGER_STATES = [
 ]
 # Knowledge item types that signal learning output.
 _LEDGER_KNOWLEDGE = ["research_note", "strategy_memory", "post_trade_review", "dreaming_log"]
+
+
+class _ExtractedLesson(BaseModel):
+    """One model-proposed lesson; deterministic evidence is merged later."""
+
+    summary: str = Field(min_length=1, max_length=500)
+    category: Literal[
+        "risk_sizing",
+        "entry_timing",
+        "exit_timing",
+        "symbol_selection",
+        "general",
+    ] = "general"
+    severity: Literal["info", "warning", "critical"] = "info"
+    evidence: dict[str, object] = Field(default_factory=dict)
+    recommendation: dict[str, object] | None = None
+
+
+class _LessonExtractionResult(BaseModel):
+    """Structured transport contract for the nightly lesson extractor."""
+
+    lessons: list[_ExtractedLesson] = Field(min_length=1, max_length=3)
 
 
 def _build_daily_trading_performance(cutoff_iso: str) -> str:
@@ -320,12 +345,12 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         )
     summaries = "\n".join(case_lines)
 
-    content, err = await llm_complete(
+    payload, err = await llm_structured(
         system=(
             "You are a trading lesson extractor. Given recent trade case studies with "
             "quantitative metrics (outcome, realized_pnl_pct, factor_key, scanner_family, "
             "close_reason), extract 1-3 actionable lessons grounded in the data. "
-            "Return a JSON array where each object has: "
+            "Return a JSON object with a lessons array where each object has: "
             '"summary" (one sentence referencing specific metrics), '
             '"category" (one of: risk_sizing, entry_timing, exit_timing, symbol_selection, general), '
             '"severity" (info|warning|critical), '
@@ -337,23 +362,30 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
             '{"action": "block_direction", "direction": "short"|"long"}, '
             '{"action": "reduce_size", "factor": 0.3-0.8}; '
             'omit entirely if lesson is general advice without a concrete constraint). '
-            "Return ONLY the JSON array, no other text."
+            "Return ONLY the JSON object, no other text."
         ),
         user=f"Recent trade case studies:\n{summaries}\n\nExtract lessons with evidence.",
+        schema=_LessonExtractionResult,
         max_tokens=600,
         provider=get_provider_for_tier("deep"),
         caller="dreaming.lesson_extraction",
     )
-    log_tool(run_id, "llm_complete_lessons", "observe", True)
-    if err:
-        errors.append(f"lesson_extraction_llm_failed: {err}")
+    log_tool(
+        run_id,
+        "llm_structured_lessons",
+        "observe",
+        True,
+        output="schema_valid" if err is None else f"invalid_output:{err}",
+    )
+    if err or payload is None:
+        errors.append(
+            f"lesson_extraction_invalid_output:{err or 'empty_payload'}"
+        )
         return
 
-    try:
-        content_str = (content or "").strip().strip("`").removeprefix("json").strip()
-        lessons = json.loads(content_str)
-    except (json.JSONDecodeError, ValueError):
-        logger.warning("dreaming_agent: lesson extraction LLM returned non-JSON")
+    lessons = payload.get("lessons")
+    if not isinstance(lessons, list) or not lessons:
+        errors.append("lesson_extraction_invalid_output:empty_lessons")
         return
 
     # Build aggregate evidence from the case study metadata directly — this gives
