@@ -329,7 +329,8 @@ def test_risk_gate_stale_market_data_for_live(tmp_path, monkeypatch):
     cfg.risk.max_live_position_notional_usdt = 1_000_000.0
     cfg.risk.max_total_live_exposure_pct = 100.0
     cfg.risk.max_daily_loss_pct = 99.0
-    cfg.risk.max_live_limited_cap_usdt = 10_000.0
+    cfg.risk.live.capital.base_source = "custom"
+    cfg.risk.live.capital.base_usdt = 10_000.0
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
 
     # Return no market snapshot — simulates completely absent/stale data
