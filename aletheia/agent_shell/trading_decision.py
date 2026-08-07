@@ -172,11 +172,10 @@ class TradingDecision:
     # Persisted only after the authoritative PiDecision row is written.
     filter_trace: list[dict] = field(default_factory=list)
     sizing_trace: dict = field(default_factory=dict)
-    # One concise AI reason for each value that expresses an entry.  The final
-    # numbers are still resolved by submit_decision_as_proposal from the market
-    # snapshot, configured defaults, and venue/risk caps; this only explains why
-    # the AI considers those five choices appropriate.  Empty/missing values are
-    # retained as explicitly absent evidence, never filled in after the fact.
+    # One concise AI reason for each value that expresses an entry. The exact
+    # entry mark and capped size/leverage remain deterministic, while a parsed
+    # model trade must preserve its authored stop/take-profit prices. Empty or
+    # missing reasons are explicitly absent evidence, never filled after the fact.
     parameter_rationale: dict[str, str] = field(default_factory=dict)
     # Set only for decisions parsed from the System Operator's LLM response.
     # Programmatic/historical callers retain compatibility, while an AI trade
@@ -213,13 +212,10 @@ _DECISION_SCHEMA = {
         # leverage: integer ≥1, only meaningful for usdt_futures. The risk engine
         # clamps this to the per-asset-tier cap, so a high request is safely reduced.
         "leverage": {"type": "integer", "minimum": 1, "maximum": 20},
-        # Entry discipline (owner discussion #6): the operator may commit an explicit
-        # stop and take-profit price at decision time. When omitted, the proposal
-        # builder derives them from config defaults so the four-element entry
-        # (entry/stop/tp/reward:risk) is always complete before the limit order.
-        # Geometry: long → stop < entry, tp > entry; short → stop > entry, tp < entry.
-        # Inverted values (LLM applying long-first intuition to a short) are silently
-        # replaced by config defaults before the risk engine sees the proposal.
+        # Entry discipline: a trade must carry explicit Operator-authored stop and
+        # take-profit prices. The exact fresh mark remains the authoritative entry;
+        # reward:risk is derived from those three committed values. Missing or invalid
+        # model values are repaired/retried, never silently replaced by config.
         "stop_price": {"type": "number"},
         "take_profit": {"type": "number"},
         # M2: Operator's intended holding horizon in hours (drives the time-stop /
@@ -228,9 +224,6 @@ _DECISION_SCHEMA = {
         # M3.5 (D10): proactive-close order type + optional resting limit price.
         "order_type": {"type": "string", "enum": ["market", "limit"]},
         "limit_price": {"type": "number"},
-        # Required for trade-like actions by the prompt below.  It remains
-        # optional in the top-level schema because skip/close/reduce decisions
-        # do not have five new-entry parameters to explain.
         # Required for trade by the prompt below. It remains optional in the
         # top-level schema because skip has no entry parameters to explain.
         "parameter_rationale": {
@@ -259,6 +252,50 @@ _DECISION_SCHEMA = {
         "key_assumptions": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["action", "conviction", "reasoning", "bear_case"],
+    # The lightweight structured-output validator supports allOf/oneOf/const.
+    # Keep skip valid without invented entry fields, while making a trade
+    # structurally incomplete until every model-authored plan field is present.
+    "allOf": [{
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "action": {"const": "trade"},
+                    "parameter_rationale": {
+                        "type": "object",
+                        "properties": {
+                            "entry_price": {"type": "string", "minLength": 1},
+                            "stop_loss": {"type": "string", "minLength": 1},
+                            "take_profit": {"type": "string", "minLength": 1},
+                            "notional_usdt": {"type": "string", "minLength": 1},
+                            "leverage": {"type": "string", "minLength": 1},
+                        },
+                        "required": [
+                            "entry_price",
+                            "stop_loss",
+                            "take_profit",
+                            "notional_usdt",
+                            "leverage",
+                        ],
+                    },
+                },
+                "required": [
+                    "action",
+                    "symbol",
+                    "direction",
+                    "market_type",
+                    "stop_price",
+                    "take_profit",
+                    "parameter_rationale",
+                ],
+            },
+            {
+                "type": "object",
+                "properties": {"action": {"const": "skip"}},
+                "required": ["action"],
+            },
+        ],
+    }],
 }
 
 _BULL_SCHEMA = {
@@ -357,13 +394,176 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
         try:
             decision = _parse_decision(corrected or {})
         except DecisionUnavailable as corrected_exc:
+            plan_failure = any(
+                reason.startswith("incomplete_operator_entry_plan:")
+                for reason in (exc.reason, corrected_exc.reason)
+            )
             raise DecisionUnavailable(
                 f"operator_output_not_repaired:{corrected_exc.reason}",
-                stage="operator_skip_validation",
+                stage=(
+                    "operator_entry_plan"
+                    if plan_failure else "operator_skip_validation"
+                ),
             ) from corrected_exc
     # R0: match the pick back to its source opportunity (id + scanner_family)
     # before any return path, so skip records carry attribution.
     _attach_opportunity_context(decision, trading_context)
+
+    def _entry_plan_preflight(current: TradingDecision) -> str | None:
+        entry_mark = (trading_context.get("layer2") or {}).get("entry_mark") or {}
+        mark_price_available = (
+            entry_mark.get("status") == "available"
+            and _valid_protective_price(entry_mark.get("price")) is not None
+        )
+        mark_identity_matches = (
+            entry_mark.get("symbol") == current.symbol
+            and entry_mark.get("market_type") == current.market_type
+        )
+        mark_available = mark_price_available and mark_identity_matches
+        mark_reason = (
+            "candidate_entry_mark_available"
+            if mark_available
+            else (
+                "candidate_entry_mark_identity_mismatch"
+                if mark_price_available else "candidate_entry_mark_unavailable"
+            )
+        )
+        current.filter_trace.append({
+            "filter_name": "operator_entry_mark",
+            "stage": "system_operator",
+            "decision": "passed" if mark_available else "rejected",
+            "reason_code": mark_reason,
+            "inputs": {
+                "decision_symbol": current.symbol,
+                "decision_market_type": current.market_type,
+                "mark_symbol": entry_mark.get("symbol"),
+                "mark_market_type": entry_mark.get("market_type"),
+                "authority": entry_mark.get("authority"),
+            },
+            "parameters": {"required_for_action": "trade"},
+        })
+        if not mark_available:
+            return mark_reason
+
+        entry_price = _valid_protective_price(entry_mark.get("price"))
+        if current.market_type == "spot" and current.direction == "short":
+            reason = "unsupported_operator_instrument_direction:spot_short"
+            current.filter_trace.append({
+                "filter_name": "operator_entry_plan",
+                "stage": "system_operator",
+                "decision": "rejected",
+                "reason_code": reason,
+                "inputs": {
+                    "direction": current.direction,
+                    "market_type": current.market_type,
+                    "entry_price": entry_price,
+                },
+                "parameters": {
+                    "allowed_spot_directions": ["long"],
+                    "instrument_relabel_allowed": False,
+                },
+            })
+            return reason
+        invalid_fields: list[str] = []
+        if current.direction == "long":
+            if current.stop_price is not None and current.stop_price >= entry_price:
+                invalid_fields.append("stop_price")
+            if (
+                current.take_profit is not None
+                and current.take_profit <= entry_price
+            ):
+                invalid_fields.append("take_profit")
+        elif current.direction == "short":
+            if current.stop_price is not None and current.stop_price <= entry_price:
+                invalid_fields.append("stop_price")
+            if (
+                current.take_profit is not None
+                and current.take_profit >= entry_price
+            ):
+                invalid_fields.append("take_profit")
+        geometry_reason = (
+            "invalid_operator_entry_plan_geometry:" + "+".join(invalid_fields)
+            if invalid_fields else "operator_entry_plan_geometry_valid"
+        )
+        current.filter_trace.append({
+            "filter_name": "operator_entry_plan",
+            "stage": "system_operator",
+            "decision": "rejected" if invalid_fields else "passed",
+            "reason_code": geometry_reason,
+            "inputs": {
+                "direction": current.direction,
+                "entry_price": entry_price,
+                "stop_price": current.stop_price,
+                "take_profit": current.take_profit,
+            },
+            "parameters": {
+                "long_geometry": "stop < entry < take_profit",
+                "short_geometry": "take_profit < entry < stop",
+            },
+        })
+        return geometry_reason if invalid_fields else None
+
+    while decision.action == "trade":
+        entry_plan_reason = _entry_plan_preflight(decision)
+        if entry_plan_reason is None:
+            break
+        if entry_plan_reason.startswith("candidate_entry_mark_"):
+            raise DecisionUnavailable(
+                entry_plan_reason,
+                stage="operator_entry_plan",
+                filter_trace=list(decision.filter_trace),
+            )
+        if confirmation_attempts > 0:
+            raise DecisionUnavailable(
+                f"operator_output_not_repaired:{entry_plan_reason}",
+                stage="operator_entry_plan",
+                filter_trace=list(decision.filter_trace),
+            )
+        prior_trace = list(decision.filter_trace)
+        confirmation_attempts = 1
+        try:
+            corrected = await _reassess_direct_skip(
+                trading_context, decision_raw, entry_plan_reason
+            )
+        except DecisionUnavailable as repair_exc:
+            raise DecisionUnavailable(
+                "operator_entry_plan_reassessment_unavailable",
+                stage="operator_entry_plan",
+                filter_trace=prior_trace,
+            ) from repair_exc
+        try:
+            decision = _parse_decision(corrected or {})
+        except DecisionUnavailable as corrected_exc:
+            raise DecisionUnavailable(
+                f"operator_output_not_repaired:{corrected_exc.reason}",
+                stage="operator_entry_plan",
+                filter_trace=prior_trace,
+            ) from corrected_exc
+        # The rejected first draft is an output-repair fact, not the
+        # authoritative business-gate exposure. If repair succeeds, keep that
+        # audit without placing a subsequently approved trade in the rejected
+        # ``operator_entry_plan`` learning cohort. A second invalid plan is
+        # appended below as the true rejected exposure before the typed defer.
+        repair_audit_trace = []
+        for step in prior_trace:
+            if (
+                step.get("filter_name") == "operator_entry_plan"
+                and step.get("decision") == "rejected"
+                and step.get("reason_code") == entry_plan_reason
+            ):
+                step = {
+                    **step,
+                    "filter_name": "operator_entry_plan_output_repair",
+                    "stage": "operator_output_validation",
+                    "decision": "error",
+                    "parameters": {
+                        **(step.get("parameters") or {}),
+                        "repair_attempted": True,
+                    },
+                }
+            repair_audit_trace.append(step)
+        decision.filter_trace = repair_audit_trace + decision.filter_trace
+        _attach_opportunity_context(decision, trading_context)
 
     initial_skip_kind = decision.skip_kind
     skip_confirmation_required = (
@@ -660,6 +860,91 @@ def _latest_exact_entry_snapshot(
     )
 
 
+def attach_candidate_entry_mark(ctx: dict, execution_mode: str) -> str | None:
+    """Bind the exact selected carrier to the price the model may plan around.
+
+    The mark is read-only prompt authority. Proposal preparation independently
+    refreshes it after inference, so movement during the model call fails geometry
+    closed instead of executing a stale plan.
+    """
+    layer2 = ctx.setdefault("layer2", {})
+    pending = list(layer2.get("pending_signals") or [])
+    if len(pending) != 1:
+        layer2["entry_mark"] = {"status": "unavailable"}
+        return "candidate_entry_mark_identity_unavailable"
+    candidate = pending[0]
+    symbol = str(candidate.get("symbol") or "").strip()
+    raw_market = str(
+        candidate.get("market_type") or candidate.get("market") or ""
+    ).lower()
+    market_type = (
+        "usdt_futures"
+        if raw_market in {"perp", "futures", "swap", "usdt_futures"}
+        else "spot" if raw_market == "spot" else ""
+    )
+    if not symbol or not market_type:
+        layer2["entry_mark"] = {"status": "unavailable"}
+        return "candidate_entry_mark_identity_unavailable"
+
+    snapshot: dict | None = None
+    venue: str | None = None
+    try:
+        if execution_mode == "paper_internal":
+            from aletheia.config.loader import load_config
+            from aletheia.data.price_feed import (
+                get_fresh_price_for_protective_close,
+                protective_price_venue,
+            )
+
+            cfg = load_config()
+            venue = protective_price_venue(
+                execution_mode,
+                configured_data_venue=cfg.market_data.ccxt_exchange,
+            )
+            price = get_fresh_price_for_protective_close(
+                symbol, market_type, venue=venue or "",
+            )
+            snapshot = _latest_exact_entry_snapshot(symbol, market_type, venue or "")
+            authority = "fresh_exact_market_mark"
+        else:
+            from aletheia.trading.market_data import latest_snapshot
+
+            snapshot = latest_snapshot(symbol, market_type=market_type)
+            price = (snapshot or {}).get("price")
+            venue = (snapshot or {}).get("exchange")
+            authority = "market_snapshot"
+    except Exception:
+        logger.warning(
+            "candidate entry mark lookup unavailable for %s [%s]",
+            symbol,
+            market_type,
+        )
+        layer2["entry_mark"] = {
+            "status": "unavailable",
+            "symbol": symbol,
+            "market_type": market_type,
+            "price": None,
+            "venue": venue,
+            "authority": "unavailable",
+            "snapshot_id": None,
+            "snapshot_at": None,
+        }
+        return "candidate_entry_mark_unavailable"
+
+    validated_price = _valid_protective_price(price)
+    layer2["entry_mark"] = {
+        "status": "available" if validated_price is not None else "unavailable",
+        "symbol": symbol,
+        "market_type": market_type,
+        "price": validated_price,
+        "venue": venue,
+        "authority": authority,
+        "snapshot_id": (snapshot or {}).get("id"),
+        "snapshot_at": (snapshot or {}).get("snapshot_at"),
+    }
+    return None if validated_price is not None else "candidate_entry_mark_unavailable"
+
+
 async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode: str) -> dict:
     """Resolve one trade intent into an immutable Proposal without persisting it.
 
@@ -743,8 +1028,25 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
     if not market_type:
         market_type = "usdt_futures" if decision.direction == "short" else "spot"
     elif market_type == "spot" and decision.direction == "short":
-        # Spot cannot express a native short; the risk engine retains the hard
-        # backstop, while this keeps the proposal on the intended perp instrument.
+        if decision.parameter_rationale_required:
+            reason = "unsupported_operator_instrument_direction:spot_short"
+            decision.filter_trace.append({
+                "filter_name": "operator_entry_plan",
+                "stage": "proposal_submission",
+                "decision": "rejected",
+                "reason_code": reason,
+                "inputs": {
+                    "direction": decision.direction,
+                    "market_type": market_type,
+                },
+                "parameters": {"instrument_relabel_allowed": False},
+            })
+            raise DecisionUnavailable(
+                reason,
+                stage="operator_entry_plan",
+                filter_trace=list(decision.filter_trace),
+            )
+        # Programmatic/historical objects retain the legacy compatibility path.
         market_type = "usdt_futures"
 
     snap: dict | None
@@ -807,7 +1109,11 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
             },
         })
         logger.warning("%s: %s", reason, decision.symbol)
-        raise DecisionUnavailable(reason, stage="proposal_preflight")
+        raise DecisionUnavailable(
+            reason,
+            stage="operator_entry_plan",
+            filter_trace=list(decision.filter_trace),
+        )
     decision.filter_trace.append({
         "filter_name": "proposal_price_availability",
         "stage": "proposal_submission",
@@ -849,15 +1155,51 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
     # agnostic — only position_manager branches on it.
     trade_school = "serenity" if getattr(decision, "signal_source", None) == "serenity" else "short_term"
 
+    def _reject_operator_entry_plan(reason: str, fields: list[str]) -> None:
+        decision.filter_trace.append({
+            "filter_name": "operator_entry_plan",
+            "stage": "proposal_submission",
+            "decision": "rejected",
+            "reason_code": reason,
+            "inputs": {
+                "action": decision.action,
+                "direction": decision.direction,
+                "market_type": market_type,
+            },
+            "parameters": {
+                "required_source": "system_operator",
+                "fresh_entry_mark": price,
+            },
+            "missing_or_invalid": fields,
+        })
+        raise DecisionUnavailable(
+            reason,
+            stage="operator_entry_plan",
+            filter_trace=list(decision.filter_trace),
+        )
+
     stop_price = _valid_protective_price(decision.stop_price)
-    # Discard geometrically-inverted stop (long: stop must be below entry;
-    # short: stop must be above entry). Falls through to config-default below.
+    if decision.parameter_rationale_required and stop_price is None:
+        _reject_operator_entry_plan(
+            "incomplete_operator_entry_plan:stop_price", ["stop_price"]
+        )
+    # Programmatic/legacy decisions retain their historical config fallback.
+    # A parsed System Operator trade must keep its authored stop; invalid
+    # geometry is retryable unavailability, never a silently different plan.
     _stop_from_operator = stop_price is not None
     if stop_price is not None:
         if decision.direction == "long" and stop_price >= price:
+            if decision.parameter_rationale_required:
+                _reject_operator_entry_plan(
+                    "invalid_operator_entry_plan_geometry:stop_price", ["stop_price"]
+                )
             stop_price = None
             _stop_from_operator = False
         elif decision.direction == "short" and stop_price <= price:
+            if decision.parameter_rationale_required:
+                _reject_operator_entry_plan(
+                    "invalid_operator_entry_plan_geometry:stop_price", ["stop_price"]
+                )
             stop_price = None
             _stop_from_operator = False
     if stop_price is None:
@@ -872,17 +1214,26 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
             stop_price = round(price * (1 + stop_pct / 100.0), 8)
 
     # Commit take-profit + reward:risk before execution. take_profit is the
-    # operator's explicit price, else the configured default
-    # anchored to the entry (price). risk_reward = reward-per-unit / risk-per-unit
-    # from the committed entry/stop/tp. The risk engine rejects every native local
-    # paper entry (and native exchange limit entry) missing any of the four.
+    # operator's explicit price for parsed model decisions. Programmatic/legacy
+    # decisions retain the historical configured fallback. risk_reward is exact
+    # reward-per-unit / risk-per-unit from the committed entry/stop/tp.
     take_profit = _valid_protective_price(decision.take_profit)
-    # Discard geometrically-inverted tp (long: tp must be above entry;
-    # short: tp must be below entry). Falls through to config-default below.
+    if decision.parameter_rationale_required and take_profit is None:
+        _reject_operator_entry_plan(
+            "incomplete_operator_entry_plan:take_profit", ["take_profit"]
+        )
     if take_profit is not None:
         if decision.direction == "long" and take_profit <= price:
+            if decision.parameter_rationale_required:
+                _reject_operator_entry_plan(
+                    "invalid_operator_entry_plan_geometry:take_profit", ["take_profit"]
+                )
             take_profit = None
         elif decision.direction == "short" and take_profit >= price:
+            if decision.parameter_rationale_required:
+                _reject_operator_entry_plan(
+                    "invalid_operator_entry_plan_geometry:take_profit", ["take_profit"]
+                )
             take_profit = None
     if take_profit is None:
         tp_pct = cfg.trading.default_take_profit_pct
@@ -1174,6 +1525,12 @@ async def _assess_opportunity(ctx: dict) -> dict | None:
     )
     if err or result is None:
         logger.warning("LLM assessment failed: %s", err)
+        error_kind = str(err or "").partition(":")[0]
+        if error_kind == "structured_schema_invalid":
+            raise DecisionUnavailable(
+                f"operator_{error_kind}",
+                stage="operator_output_validation",
+            )
         raise DecisionUnavailable("llm_assessment_unavailable")
     return result
 
@@ -1924,11 +2281,21 @@ def _build_assessment_prompt(ctx: dict) -> str:
             f"{queue.get('overflow_count', '?')} beyond this visible batch; "
             "oldest visible signal is listed first."
         )
+        entry_mark = layer2.get("entry_mark") or {}
+        entry_mark_line = (
+            "Authoritative entry mark for planning: "
+            f"{entry_mark.get('symbol')} [{entry_mark.get('market_type')}] "
+            f"price={entry_mark.get('price')} venue={entry_mark.get('venue')} "
+            f"authority={entry_mark.get('authority')}"
+            if entry_mark.get("status") == "available"
+            else "Authoritative entry mark for planning: unavailable"
+        )
         parts += [
             "## ⚡ Pending Signals (awaiting your decision)",
             "These signals were collected by the scanner pipeline. You are the sole decision maker —",
             "make exactly one trade or skip decision for the single selected durable carrier.",
             queue_line,
+            entry_mark_line,
             pending_lines, "",
         ]
         skew_note = _direction_skew_note(pending, "pending signals")
@@ -2042,16 +2409,23 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "",
         "Return: action, symbol (BTC/USDT format), direction (long/short), "
         "conviction (0-100), market_type (spot/usdt_futures), leverage (integer ≥1), "
+        "stop_price, take_profit, "
         "reasoning, bear_case (required: strongest concrete reason this decision can fail), "
         "risk_factors, supporting_signals, opposing_signals, "
         "skip_kind, adverse_reason_codes, adverse_evidence, "
         "key_assumptions (array of ≤3 short strings: critical premises this decision rests on).",
         "",
-        "For every trade action, also return parameter_rationale with five "
+        "For every trade action, stop_price and take_profit are mandatory finite positive "
+        "absolute prices authored from the exact candidate facts above. For a long use "
+        "stop_price < current candidate price < take_profit; for a short use "
+        "take_profit < current candidate price < stop_price. Never return 0/null/sentinel "
+        "values and never invent levels when the shown facts do not support them; choose "
+        "skip with insufficient_evidence instead. Also return parameter_rationale with five "
         "short, setup-specific reasons: entry_price, stop_loss, take_profit, notional_usdt, "
         "and leverage. Explain why each exact choice fits this trade now. These are shown to "
-        "the operator next to the final values. Do not claim that you calculated a value that "
-        "the system will derive from a market snapshot, configured default, or risk cap.",
+        "the operator next to the final values. Entry remains the fresh exact submission mark, "
+        "and notional/leverage remain subject to deterministic sizing and risk caps; do not "
+        "claim that you calculated values owned by those downstream authorities.",
     ]
 
     return "\n".join(parts)
@@ -2272,6 +2646,33 @@ def _parse_decision(raw: dict) -> TradingDecision:
         raise DecisionUnavailable(
             f"unsupported_action:{raw_action}", stage="operator_output_validation"
         )
+    symbol = raw.get("symbol")
+    direction = raw.get("direction")
+    stop_price = _valid_protective_price(raw.get("stop_price"))
+    take_profit = _valid_protective_price(raw.get("take_profit"))
+    if raw_action == "trade":
+        incomplete_plan: list[str] = []
+        if not isinstance(symbol, str) or not symbol.strip():
+            incomplete_plan.append("symbol")
+        if direction not in {"long", "short"}:
+            incomplete_plan.append("direction")
+        if mt is None:
+            incomplete_plan.append("market_type")
+        if stop_price is None:
+            incomplete_plan.append("stop_price")
+        if take_profit is None:
+            incomplete_plan.append("take_profit")
+        incomplete_plan.extend(
+            f"parameter_rationale.{key}"
+            for key in _ENTRY_PARAMETER_KEYS
+            if key not in parameter_rationale
+        )
+        if incomplete_plan:
+            raise DecisionUnavailable(
+                "incomplete_operator_entry_plan:" + "+".join(incomplete_plan),
+                stage="operator_output_validation",
+            )
+        symbol = symbol.strip()
     raw_codes = raw.get("adverse_reason_codes")
     adverse_reason_codes = raw_codes if isinstance(raw_codes, list) else []
     raw_adverse_evidence = raw.get("adverse_evidence")
@@ -2280,15 +2681,15 @@ def _parse_decision(raw: dict) -> TradingDecision:
     )
     decision = TradingDecision(
         action=raw_action,
-        symbol=raw.get("symbol"),
-        direction=raw.get("direction"),
+        symbol=symbol,
+        direction=direction,
         conviction=_conviction(raw.get("conviction")),
         reasoning=raw.get("reasoning", ""),
         bear_case=str(raw.get("bear_case") or "")[:500],
         market_type=mt,
         leverage=leverage,
-        stop_price=_num(raw.get("stop_price")),
-        take_profit=_num(raw.get("take_profit")),
+        stop_price=stop_price,
+        take_profit=take_profit,
         expected_horizon_hours=_num(raw.get("expected_horizon_hours")),
         order_type=raw.get("order_type"),
         limit_price=_num(raw.get("limit_price")),

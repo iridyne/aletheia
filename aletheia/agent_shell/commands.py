@@ -2145,6 +2145,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     from aletheia.agent_shell.trading_context import build_enriched_trading_context
     from aletheia.agent_shell.trading_decision import (
         DecisionUnavailable,
+        attach_candidate_entry_mark,
         evaluate_trading_opportunity as _evaluate,
         prepare_decision_as_proposal,
     )
@@ -2229,6 +2230,10 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         if not opportunity_id:
             continue
         candidate_ctx = scope_operator_context_to_candidate(ctx, opportunity_id)
+        # A skip remains valid when exact entry pricing is unavailable. Bind the
+        # mark for model planning now, then let the trade-only validation seam
+        # create a typed defer if the model nevertheless asks to enter.
+        attach_candidate_entry_mark(candidate_ctx, execution_mode)
         candidate_fingerprint = operator_decision_context_fingerprint(candidate_ctx)
         candidate_material_fp = material_fingerprint_from_candidate_ctx(
             candidate_ctx, opportunity_id
@@ -2325,19 +2330,82 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     #   * ``operator_debate_gate``    — conviction<55 after bull/bear debate
     _DEFERRED_STAGES = {
         "operator_skip_validation",
+        "operator_output_validation",
         "operator_conviction_gate",
         "operator_debate_gate",
+        "operator_entry_plan",
     }
     _STAGE_TO_OBSERVATION_STATUS = {
         "operator_skip_validation": "invalid_or_neutral_direct_skip",
+        "operator_output_validation": "operator_output_unavailable",
         "operator_conviction_gate": "operator_low_conviction",
         "operator_debate_gate": "debate_not_confirmed",
+        "operator_entry_plan": "operator_entry_plan_unavailable",
     }
     _STAGE_TO_EVENT_KIND = {
         "operator_skip_validation": "operator_decision_deferred_unchanged_context",
+        "operator_output_validation": "operator_decision_deferred_unchanged_context",
         "operator_conviction_gate": "operator_decision_deferred_low_conviction",
         "operator_debate_gate": "operator_decision_deferred_low_conviction",
+        "operator_entry_plan": "operator_decision_deferred_unchanged_context",
     }
+
+    def _deferred_evaluation_result(exc: DecisionUnavailable) -> dict:
+        event = _record_deferred_context_observation(
+            ctx,
+            context_fingerprint=context_fingerprint,
+            opportunity_id=selected_opportunity_id,
+            policy_epoch_id=policy_epoch_id,
+            trigger=str(params.get("_trigger") or "manual"),
+            reason=exc.reason,
+            window_minutes=defer_window_minutes,
+            event_kind=_STAGE_TO_EVENT_KIND[exc.stage],
+        )
+        # DL-INV-7: filter facts must be persisted at the moment they happen.
+        if exc.filter_trace and selected_candidate:
+            try:
+                from aletheia.analytics.filter_evidence import (
+                    record_candidate_filter_trace,
+                )
+
+                record_candidate_filter_trace(
+                    {
+                        "opportunity_id": selected_opportunity_id,
+                        "symbol": selected_candidate.get("symbol"),
+                        "market_type": selected_candidate.get("market_type"),
+                        "direction": selected_candidate.get("direction"),
+                        "universe_snapshot_id": selected_candidate.get(
+                            "universe_snapshot_id"
+                        ),
+                        "universe_member_id": selected_candidate.get(
+                            "universe_member_id"
+                        ),
+                        "scanner_family": selected_candidate.get("scanner_family"),
+                        "filter_trace": exc.filter_trace,
+                    },
+                    raise_on_error=False,
+                )
+            except Exception:
+                logger.warning(
+                    "defer filter_trace persistence failed for %s",
+                    selected_opportunity_id,
+                    exc_info=True,
+                )
+        return {
+            "action": "evaluation_deferred",
+            "observation_status": _STAGE_TO_OBSERVATION_STATUS[exc.stage],
+            "operator_evaluation_event_id": event["id"],
+            "policy_epoch_id": policy_epoch_id,
+            "b2_evidence_policy_epoch_id": b2_policy_epoch_id,
+            "context_fingerprint": context_fingerprint,
+            "opportunity_id": selected_opportunity_id,
+            "model_invoked": True,
+            "defer_reason": exc.reason,
+            "defer_stage": exc.stage,
+            "pending_queue_remaining": int((queue or {}).get("unresolved_total") or 0),
+            "pending_queue": queue,
+        }
+
     try:
         # The daemon binds the evaluation identity before this command selects a
         # carrier. Add only the exact durable entities now known at the LLM
@@ -2382,66 +2450,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     except DecisionUnavailable as exc:
         if exc.stage not in _DEFERRED_STAGES:
             raise
-        event = _record_deferred_context_observation(
-            ctx,
-            context_fingerprint=context_fingerprint,
-            opportunity_id=selected_opportunity_id,
-            policy_epoch_id=policy_epoch_id,
-            trigger=str(params.get("_trigger") or "manual"),
-            reason=exc.reason,
-            window_minutes=defer_window_minutes,
-            event_kind=_STAGE_TO_EVENT_KIND[exc.stage],
-        )
-        # DL-INV-7: filter facts must be persisted at the moment they happen.
-        # Phase C defers previously left ``operator_conviction_gate`` /
-        # ``debate_downgrade`` records only on the in-flight decision object,
-        # which vanished when we raised DecisionUnavailable — so filter_decisions
-        # never recorded them and diagnostic six-bucket aggregation undercounted
-        # every non-terminal defer as zero. Persist here using the same
-        # candidate_key (``opportunity:<id>``) as the ranker/emitter trace so
-        # the full journey is queryable end-to-end.
-        if exc.filter_trace and selected_candidate:
-            try:
-                from aletheia.analytics.filter_evidence import (
-                    record_candidate_filter_trace,
-                )
-                record_candidate_filter_trace(
-                    {
-                        "opportunity_id": selected_opportunity_id,
-                        "symbol": selected_candidate.get("symbol"),
-                        "market_type": selected_candidate.get("market_type"),
-                        "direction": selected_candidate.get("direction"),
-                        "universe_snapshot_id": selected_candidate.get(
-                            "universe_snapshot_id"
-                        ),
-                        "universe_member_id": selected_candidate.get(
-                            "universe_member_id"
-                        ),
-                        "scanner_family": selected_candidate.get("scanner_family"),
-                        "filter_trace": exc.filter_trace,
-                    },
-                    raise_on_error=False,
-                )
-            except Exception:
-                logger.warning(
-                    "defer filter_trace persistence failed for %s",
-                    selected_opportunity_id,
-                    exc_info=True,
-                )
-        return {
-            "action": "evaluation_deferred",
-            "observation_status": _STAGE_TO_OBSERVATION_STATUS[exc.stage],
-            "operator_evaluation_event_id": event["id"],
-            "policy_epoch_id": policy_epoch_id,
-            "b2_evidence_policy_epoch_id": b2_policy_epoch_id,
-            "context_fingerprint": context_fingerprint,
-            "opportunity_id": selected_opportunity_id,
-            "model_invoked": True,
-            "defer_reason": exc.reason,
-            "defer_stage": exc.stage,
-            "pending_queue_remaining": int((queue or {}).get("unresolved_total") or 0),
-            "pending_queue": queue,
-        }
+        return _deferred_evaluation_result(exc)
 
     trade_like = decision.action == "trade"
     rejected_missing_pending_carrier = False
@@ -2570,9 +2579,11 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     if trade_like:
         try:
             prepared_result = await prepare_decision_as_proposal(decision, execution_mode)
-        except DecisionUnavailable:
+        except DecisionUnavailable as exc:
             # Assessment/preflight unavailability is not a business decision.
             # Leave the exact queue carrier untouched so the daemon can retry.
+            if exc.stage in _DEFERRED_STAGES:
+                return _deferred_evaluation_result(exc)
             raise
         except Exception as exc:
             decision.filter_trace.append({

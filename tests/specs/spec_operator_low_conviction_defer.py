@@ -117,11 +117,35 @@ def _wire_operator_stubs(
             "direction": direction,
             "conviction": conviction,
             "reasoning": reasoning,
+            "bear_case": "the setup can invalidate before follow-through",
             "market_type": "usdt_futures",
             "leverage": 1,
+            "stop_price": 0.98,
+            "take_profit": 1.04,
+            "parameter_rationale": {
+                key: f"reason for {key}"
+                for key in trading_decision._ENTRY_PARAMETER_KEYS
+            },
         }
 
     monkeypatch.setattr(trading_decision, "_assess_opportunity", _fake_assess)
+
+    def _attach_available_entry_mark(context, _execution_mode):
+        context.setdefault("layer2", {})["entry_mark"] = {
+            "status": "available",
+            "symbol": symbol,
+            "market_type": "usdt_futures",
+            "price": 1.0,
+            "venue": "test",
+            "authority": "fresh_exact_market_mark",
+        }
+        return None
+
+    monkeypatch.setattr(
+        trading_decision,
+        "attach_candidate_entry_mark",
+        _attach_available_entry_mark,
+    )
 
     if debate is not None:
         bull, bear = debate

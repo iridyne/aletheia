@@ -931,6 +931,8 @@ def test_required_debate_unavailable_aborts_evaluation(monkeypatch):
             "conviction": 60,
             "reasoning": "uncertain trade requires debate",
             "bear_case": "momentum may reverse",
+            "stop_price": 98.0,
+            "take_profit": 104.0,
             "parameter_rationale": {
                 key: f"reason for {key}"
                 for key in trading_decision._ENTRY_PARAMETER_KEYS
@@ -951,7 +953,17 @@ def test_required_debate_unavailable_aborts_evaluation(monkeypatch):
         match="required_debate_unavailable",
     ):
         asyncio.run(trading_decision.evaluate_trading_opportunity({
-            "layer1": {}, "layer2": {}, "layer3": {},
+            "layer1": {},
+            "layer2": {
+                "entry_mark": {
+                    "status": "available",
+                    "symbol": "BTC/USDT",
+                    "market_type": "spot",
+                    "price": 100.0,
+                    "authority": "fresh_exact_market_mark",
+                },
+            },
+            "layer3": {},
         }))
 
 
@@ -1007,6 +1019,8 @@ def test_proposal_preflight_unavailable_does_not_claim_pending_source(
             "conviction": 90,
             "reasoning": "trade only if an exact fresh mark exists",
             "bear_case": "the mark may be unavailable",
+            "stop_price": 98.0,
+            "take_profit": 104.0,
             "parameter_rationale": {
                 key: f"reason for {key}"
                 for key in trading_decision._ENTRY_PARAMETER_KEYS
@@ -1036,11 +1050,29 @@ def test_proposal_preflight_unavailable_does_not_claim_pending_source(
         commands, "_configured_paper_execution_mode", lambda: "paper_internal"
     )
 
-    with pytest.raises(
-        trading_decision.DecisionUnavailable,
-        match="market_price_unavailable",
-    ):
-        asyncio.run(commands.evaluate_trading_opportunity({}))
+    def attach_available_planning_mark(context, _execution_mode):
+        """Keep this test focused on the later Proposal preflight seam."""
+        context.setdefault("layer2", {})["entry_mark"] = {
+            "status": "available",
+            "symbol": opportunity.symbol,
+            "market_type": "spot",
+            "price": 100.0,
+            "authority": "fresh_exact_market_mark",
+        }
+        return None
+
+    monkeypatch.setattr(
+        trading_decision,
+        "attach_candidate_entry_mark",
+        attach_available_planning_mark,
+    )
+
+    result = asyncio.run(commands.evaluate_trading_opportunity({}))
+
+    assert result["action"] == "evaluation_deferred"
+    assert result["observation_status"] == "operator_entry_plan_unavailable"
+    assert result["defer_stage"] == "operator_entry_plan"
+    assert result["defer_reason"] == "market_price_unavailable"
 
     db = get_db()
     assert db.execute(
@@ -1048,12 +1080,317 @@ def test_proposal_preflight_unavailable_does_not_claim_pending_source(
         "AND opportunity_id=?", (opportunity.id,),
     ).fetchone()[0] == 0
     assert db.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action='signal_pending' "
+        "AND opportunity_id=?", (opportunity.id,),
+    ).fetchone()[0] == 1
+    assert db.execute(
         "SELECT COUNT(*) FROM trade_proposals WHERE opportunity_id=?",
         (opportunity.id,),
     ).fetchone()[0] == 0
     assert db.execute(
         "SELECT status FROM opportunities WHERE id=?", (opportunity.id,),
     ).fetchone()[0] == "queued"
+    price_trace = db.execute(
+        "SELECT decision, reason_code FROM filter_decisions "
+        "WHERE opportunity_id=? AND filter_name='proposal_price_availability'",
+        (opportunity.id,),
+    ).fetchall()
+    assert [tuple(row) for row in price_trace] == [
+        ("rejected", "market_price_unavailable")
+    ]
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S68",
+        "decision_lifecycle_contract",
+        "§2.3 refreshed entry geometry",
+        "L2b",
+        "If the fresh submission mark crosses an authored protection level after "
+        "inference, Proposal preparation creates a typed entry-plan defer and leaves "
+        "the pending carrier unconsumed.",
+        status="implemented",
+    ),
+)
+def test_refreshed_mark_crossing_stop_is_typed_defer(tmp_path, monkeypatch):
+    import asyncio
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    _bypass_candidate_technical_preflight(monkeypatch)
+    from aletheia.agent_shell import commands, trading_decision
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+    from aletheia.storage.sqlite import get_db
+
+    opportunity = Opportunity(
+        id="opp-refresh-crossed-stop",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        status="queued",
+    )
+    insert_opportunity(opportunity)
+    pending = PiDecision(
+        symbol=opportunity.symbol,
+        direction="long",
+        market_type="spot",
+        action="signal_pending",
+        opportunity_id=opportunity.id,
+        signal_source="market_observer",
+    )
+    insert_pi_decision(pending)
+
+    async def trade(_context):
+        return {
+            "action": "trade",
+            "symbol": opportunity.symbol,
+            "direction": "long",
+            "market_type": "spot",
+            "conviction": 90,
+            "reasoning": "plan against the pre-inference mark",
+            "bear_case": "price can cross the stop during inference",
+            "stop_price": 98.0,
+            "take_profit": 104.0,
+            "parameter_rationale": {
+                key: f"reason for {key}"
+                for key in trading_decision._ENTRY_PARAMETER_KEYS
+            },
+        }
+
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", trade)
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_context.build_enriched_trading_context",
+        lambda **_kwargs: {
+            "layer1": {"data_health": {"signal_status": "healthy", "ohlcv_ready": True}},
+            "layer2": {
+                "pending_signals": [{
+                    "symbol": opportunity.symbol,
+                    "direction": "long",
+                    "market_type": "spot",
+                    "opportunity_id": opportunity.id,
+                    "signal_source": "market_observer",
+                    "at": pending.created_at,
+                }],
+                "pending_queue": {"unresolved_total": 1},
+            },
+            "layer3": {},
+        },
+    )
+    monkeypatch.setattr(
+        commands, "_configured_paper_execution_mode", lambda: "paper_internal"
+    )
+
+    def attach_planning_mark(context, _execution_mode):
+        context.setdefault("layer2", {})["entry_mark"] = {
+            "status": "available",
+            "symbol": opportunity.symbol,
+            "market_type": "spot",
+            "price": 100.0,
+            "venue": "test",
+            "authority": "fresh_exact_market_mark",
+        }
+        return None
+
+    monkeypatch.setattr(
+        trading_decision, "attach_candidate_entry_mark", attach_planning_mark
+    )
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda *_args, **_kwargs: 97.0,
+    )
+    monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda _ctx: [])
+    monkeypatch.setattr(
+        "aletheia.trust.guard_chain.summarize",
+        lambda _verdicts: {"blocks": [], "details": []},
+    )
+    monkeypatch.setattr(
+        trading_decision, "_proposal_direction_overheated", lambda *_args: None
+    )
+
+    result = asyncio.run(commands.evaluate_trading_opportunity({}))
+
+    assert result["action"] == "evaluation_deferred"
+    assert result["observation_status"] == "operator_entry_plan_unavailable"
+    assert result["defer_stage"] == "operator_entry_plan"
+    assert result["defer_reason"] == (
+        "invalid_operator_entry_plan_geometry:stop_price"
+    )
+    db = get_db()
+    assert db.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action!='signal_pending' "
+        "AND opportunity_id=?", (opportunity.id,),
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action='signal_pending' "
+        "AND opportunity_id=?", (opportunity.id,),
+    ).fetchone()[0] == 1
+    assert db.execute(
+        "SELECT COUNT(*) FROM trade_proposals WHERE opportunity_id=?",
+        (opportunity.id,),
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opportunity.id,),
+    ).fetchone()[0] == "queued"
+    trace = db.execute(
+        "SELECT decision, reason_code FROM filter_decisions "
+        "WHERE opportunity_id=? AND filter_name='operator_entry_plan'",
+        (opportunity.id,),
+    ).fetchall()
+    assert [tuple(row) for row in trace] == [
+        ("passed", "operator_entry_plan_geometry_valid"),
+        ("rejected", "invalid_operator_entry_plan_geometry:stop_price")
+    ]
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S69",
+        "decision_lifecycle_contract",
+        "§2.3 exact carrier instrument",
+        "L2b",
+        "A parsed Operator spot-short trade receives one bounded repair and then a "
+        "typed entry-plan defer; it cannot be relabelled as futures or consume the "
+        "spot carrier.",
+        status="implemented",
+    ),
+)
+def test_operator_spot_short_cannot_relabel_or_consume_carrier(tmp_path, monkeypatch):
+    import asyncio
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    _bypass_candidate_technical_preflight(monkeypatch)
+    from aletheia.agent_shell import commands, trading_decision
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+    from aletheia.storage.sqlite import get_db
+
+    opportunity = Opportunity(
+        id="opp-operator-spot-short",
+        symbol="ETH/USDT",
+        market="spot",
+        direction_bias="short",
+        status="queued",
+    )
+    insert_opportunity(opportunity)
+    pending = PiDecision(
+        symbol=opportunity.symbol,
+        direction="short",
+        market_type="spot",
+        action="signal_pending",
+        opportunity_id=opportunity.id,
+        signal_source="market_observer",
+    )
+    insert_pi_decision(pending)
+    spot_short = {
+        "action": "trade",
+        "symbol": opportunity.symbol,
+        "direction": "short",
+        "market_type": "spot",
+        "conviction": 90,
+        "reasoning": "attempt a short on the selected spot carrier",
+        "bear_case": "spot cannot express a native short",
+        "stop_price": 102.0,
+        "take_profit": 98.0,
+        "parameter_rationale": {
+            key: f"reason for {key}"
+            for key in trading_decision._ENTRY_PARAMETER_KEYS
+        },
+    }
+
+    async def assess(_context):
+        return spot_short
+
+    async def unrepaired(_context, _prior, validation_reason):
+        assert validation_reason == (
+            "unsupported_operator_instrument_direction:spot_short"
+        )
+        return spot_short
+
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", assess)
+    monkeypatch.setattr(trading_decision, "_reassess_direct_skip", unrepaired)
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_context.build_enriched_trading_context",
+        lambda **_kwargs: {
+            "layer1": {"data_health": {"signal_status": "healthy", "ohlcv_ready": True}},
+            "layer2": {
+                "pending_signals": [{
+                    "symbol": opportunity.symbol,
+                    "direction": "short",
+                    "market_type": "spot",
+                    "opportunity_id": opportunity.id,
+                    "signal_source": "market_observer",
+                    "at": pending.created_at,
+                }],
+                "pending_queue": {"unresolved_total": 1},
+            },
+            "layer3": {},
+        },
+    )
+    monkeypatch.setattr(
+        commands, "_configured_paper_execution_mode", lambda: "paper_internal"
+    )
+
+    def attach_spot_mark(context, _execution_mode):
+        context.setdefault("layer2", {})["entry_mark"] = {
+            "status": "available",
+            "symbol": opportunity.symbol,
+            "market_type": "spot",
+            "price": 100.0,
+            "venue": "test",
+            "authority": "fresh_exact_market_mark",
+        }
+        return None
+
+    monkeypatch.setattr(
+        trading_decision, "attach_candidate_entry_mark", attach_spot_mark
+    )
+
+    result = asyncio.run(commands.evaluate_trading_opportunity({}))
+
+    assert result["action"] == "evaluation_deferred"
+    assert result["defer_stage"] == "operator_entry_plan"
+    assert result["defer_reason"] == (
+        "operator_output_not_repaired:"
+        "unsupported_operator_instrument_direction:spot_short"
+    )
+    db = get_db()
+    assert db.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action!='signal_pending' "
+        "AND opportunity_id=?", (opportunity.id,),
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action='signal_pending' "
+        "AND opportunity_id=?", (opportunity.id,),
+    ).fetchone()[0] == 1
+    assert db.execute(
+        "SELECT COUNT(*) FROM trade_proposals WHERE opportunity_id=?",
+        (opportunity.id,),
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opportunity.id,),
+    ).fetchone()[0] == "queued"
+    trace = db.execute(
+        "SELECT filter_name, decision, reason_code FROM filter_decisions "
+        "WHERE opportunity_id=? AND filter_name LIKE 'operator_entry_plan%' "
+        "ORDER BY rowid",
+        (opportunity.id,),
+    ).fetchall()
+    assert [tuple(row) for row in trace] == [
+        (
+            "operator_entry_plan_output_repair",
+            "error",
+            "unsupported_operator_instrument_direction:spot_short",
+        ),
+        (
+            "operator_entry_plan",
+            "rejected",
+            "unsupported_operator_instrument_direction:spot_short",
+        ),
+    ]
 
 
 @spec_claim(
@@ -2803,6 +3140,8 @@ def test_submitting_claim_without_proposal_resumes_submission(tmp_path, monkeypa
             "reasoning": "retry the interrupted durable claim",
             "bear_case": "the setup can fail",
             "key_assumptions": ["the stored snapshot remains representative"],
+            "stop_price": 98.0,
+            "take_profit": 104.0,
             "parameter_rationale": {
                 "entry_price": "the current snapshot anchors the retry",
                 "stop_loss": "the stop invalidates the setup",
@@ -3038,6 +3377,8 @@ def test_queued_opportunity_expiry_is_rechecked_before_proposal(
             "reasoning": "consume the queued signal",
             "bear_case": "the signal may already be stale",
             "key_assumptions": ["the source opportunity remains valid"],
+            "stop_price": 98.0,
+            "take_profit": 104.0,
             "parameter_rationale": {
                 "entry_price": "use the stored snapshot",
                 "stop_loss": "bound the downside",
@@ -3160,6 +3501,8 @@ def test_claim_rechecks_source_after_early_authority_check(
             "reasoning": "the source is fresh during the first check",
             "bear_case": "the source may expire before the claim",
             "key_assumptions": ["the source stays queued until claim"],
+            "stop_price": 98.0,
+            "take_profit": 104.0,
             "parameter_rationale": {
                 "entry_price": "use the stored snapshot",
                 "stop_loss": "bound the downside",
@@ -3465,10 +3808,10 @@ def test_submitting_recovery_uses_stored_proposal_after_skip_and_mode_change(
     }
 
 
-def test_single_candidate_scope_can_infer_market_from_selected_complete_carrier(
+def test_single_candidate_scope_requires_explicit_market_for_selected_carrier(
     tmp_path, monkeypatch
 ):
-    """Inference is allowed only for one compatible carrier, never by row order."""
+    """An explicit market selects one compatible carrier, never by row order."""
     import asyncio
 
     from tests.test_entry_logic import setup_env
@@ -3523,21 +3866,24 @@ def test_single_candidate_scope_can_infer_market_from_selected_complete_carrier(
         )
         opportunity_ids.append(opportunity.id)
 
-    async def omit_market(_context):
+    async def choose_spot_market(_context):
         return {
             "action": "trade",
             "symbol": "BTC/USDT",
             "direction": "long",
+            "market_type": "spot",
             "conviction": 90,
-            "reasoning": "choose BTC without declaring the instrument",
+            "reasoning": "choose the exact BTC spot instrument",
             "bear_case": "the wrong instrument would change the risk",
             "key_assumptions": ["there is only one compatible carrier"],
+            "stop_price": 101.0,
+            "take_profit": 104.0,
             "parameter_rationale": {
                 "entry_price": "use the stored snapshot",
                 "stop_loss": "bound the downside",
                 "take_profit": "preserve reward to risk",
                 "notional_usdt": "use the configured paper amount",
-                "leverage": "the instrument was not declared",
+                "leverage": "spot uses no leverage",
             },
         }
 
@@ -3548,7 +3894,17 @@ def test_single_candidate_scope_can_infer_market_from_selected_complete_carrier(
             "reason": "test_blocks_execution_after_persistence",
         }
 
-    monkeypatch.setattr(trading_decision, "_assess_opportunity", omit_market)
+    async def repair_spot_plan(_context, prior, validation_reason):
+        assert prior["stop_price"] == 101.0
+        assert validation_reason == (
+            "invalid_operator_entry_plan_geometry:stop_price"
+        )
+        return {**prior, "stop_price": 98.0}
+
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", choose_spot_market)
+    monkeypatch.setattr(
+        trading_decision, "_reassess_direct_skip", repair_spot_plan
+    )
     monkeypatch.setattr(gateway, "_execute_proposal", store_without_executing)
     monkeypatch.setattr(
         "aletheia.data.price_feed.get_fresh_price_for_protective_close",
@@ -3568,6 +3924,24 @@ def test_single_candidate_scope_can_infer_market_from_selected_complete_carrier(
     assert result["market_type"] == "spot"
     assert [get_opportunity(oid)["status"] for oid in opportunity_ids] == [
         "reviewed", "queued"
+    ]
+    plan_trace = get_db().execute(
+        "SELECT filter_name, decision, reason_code FROM filter_decisions "
+        "WHERE opportunity_id=? AND filter_name LIKE 'operator_entry_plan%' "
+        "ORDER BY rowid",
+        (result["opportunity_id"],),
+    ).fetchall()
+    assert [tuple(row) for row in plan_trace] == [
+        (
+            "operator_entry_plan_output_repair",
+            "error",
+            "invalid_operator_entry_plan_geometry:stop_price",
+        ),
+        (
+            "operator_entry_plan",
+            "passed",
+            "operator_entry_plan_geometry_valid",
+        ),
     ]
 
 
@@ -3888,7 +4262,8 @@ def test_failed_proposal_submission_keeps_structured_reason():
     body = src[start:end]
 
     assert "proposal_price_availability" in body
-    assert 'raise DecisionUnavailable(reason, stage="proposal_preflight")' in body
+    assert 'stage="operator_entry_plan"' in body
+    assert "filter_trace=list(decision.filter_trace)" in body
     assert '"market_price_stale"' in body
     assert '"market_price_unavailable"' in body
     assert 'return {"status": "skipped", "reason": "direction_overheated"' in body
@@ -4524,6 +4899,8 @@ def test_claim_rejects_pending_conflict_inserted_after_context(
             "reasoning": "the context contains one exact pending carrier",
             "bear_case": "another writer can add a conflict before claim",
             "key_assumptions": ["pending identity remains unique"],
+            "stop_price": 98.0,
+            "take_profit": 104.0,
             "parameter_rationale": {
                 "entry_price": "use the stored snapshot",
                 "stop_loss": "bound downside",
@@ -5076,3 +5453,65 @@ def test_evicted_opportunity_not_in_operator_evaluated_set(tmp_path, monkeypatch
         "evicted candidates are retryable, not finalized"
     )
     assert "opp-skipped" in ids, "terminal skip must still block re-queuing"
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S67",
+        "decision_lifecycle_contract",
+        "§2.2 authored entry plan",
+        "L2b",
+        "A structured trade must carry explicit positive stop/take-profit values and "
+        "five non-empty parameter reasons. Incomplete output is retryable and cannot be "
+        "completed from config; skip remains valid without entry fields.",
+        status="implemented",
+    ),
+)
+def test_trade_output_requires_authored_entry_plan_while_skip_does_not():
+    from aletheia.agent_shell.trading_decision import (
+        DecisionUnavailable,
+        _DECISION_SCHEMA,
+        _DummySchema,
+        _ENTRY_PARAMETER_KEYS,
+        _build_assessment_prompt,
+        _parse_decision,
+    )
+    from aletheia.agents.helpers import _validate_structured_payload
+
+    rationale = {key: f"specific reason for {key}" for key in _ENTRY_PARAMETER_KEYS}
+    trade = {
+        "action": "trade",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "market_type": "spot",
+        "conviction": 90,
+        "reasoning": "planned exact-candidate entry",
+        "bear_case": "support can fail",
+        "stop_price": 98.0,
+        "take_profit": 104.0,
+        "parameter_rationale": rationale,
+    }
+    schema = _DummySchema(_DECISION_SCHEMA)
+
+    for field in ("stop_price", "take_profit"):
+        missing = dict(trade)
+        missing.pop(field)
+        with pytest.raises((TypeError, ValueError)):
+            _validate_structured_payload(missing, schema, _DECISION_SCHEMA)
+        invalid = {**trade, field: 0.0}
+        with pytest.raises(
+            DecisionUnavailable, match=f"incomplete_operator_entry_plan:{field}"
+        ):
+            _parse_decision(invalid)
+
+    skip = {
+        "action": "skip",
+        "conviction": 40,
+        "reasoning": "no defensible plan",
+        "bear_case": "entry evidence remains incomplete",
+    }
+    _validate_structured_payload(skip, schema, _DECISION_SCHEMA)
+    assert _parse_decision(skip).action == "skip"
+
+    prompt = _build_assessment_prompt({"layer1": {}, "layer2": {}, "layer3": {}})
+    assert "stop_price and take_profit are mandatory finite positive" in prompt

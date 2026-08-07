@@ -117,6 +117,23 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
             },
         }
 
+    def _entry_mark(item: Any) -> dict[str, Any] | None:
+        if not isinstance(item, dict):
+            return None
+        price = item.get("price")
+        try:
+            normalized_price = round(float(price), 12) if price is not None else None
+        except (TypeError, ValueError):
+            normalized_price = None
+        return {
+            "status": item.get("status"),
+            "symbol": item.get("symbol"),
+            "market_type": _normalize_market_type(item.get("market_type")),
+            "venue": item.get("venue"),
+            "authority": item.get("authority"),
+            "price": normalized_price,
+        }
+
     layer1 = ctx.get("layer1") or {}
     layer2 = ctx.get("layer2") or {}
     pending = [_candidate(item) for item in (layer2.get("pending_signals") or [])]
@@ -164,12 +181,13 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
         str(item.get("scanner_family") or ""),
     )
     projection = {
-        "version": "operator-decision-context-v3",
+        "version": "operator-decision-context-v4",
         "skip_policy_epoch_id": ctx.get("skip_policy_epoch_id"),
         "wake_context": ctx.get("wake_context"),
         "regime": layer1.get("regime") or layer1.get("market_regime"),
         "pending": sorted(pending, key=key),
         "executable": sorted(executable, key=key),
+        "entry_mark": _entry_mark(layer2.get("entry_mark")),
         "features": sorted(features, key=key),
         "serenity": sorted(
             [

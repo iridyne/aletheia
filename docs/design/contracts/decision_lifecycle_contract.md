@@ -5,7 +5,7 @@
 > 其他契约**竖切**单个子系统(风控/执行/agent/知识);本契约负责它们之间的交接。
 > **不重复**子系统细节 —— 指向已有契约。
 > **基线**:代码为底(file:line);冲突时文档为准。
-> Last updated: 2026-07-18 (v1.6:分析 generation / 耐久 Operator carrier 分离，统一 validity 与 typed exits) · 维护者:Aletheia Dev · 研究证据:`docs/research/audits/OPPORTUNITY_END_TO_END_LIFECYCLE_AUDIT_2026-07-18.md`
+> Last updated: 2026-08-07 (v1.7:trade 结构化输出必须携带 Operator 原始入场保护计划) · 维护者:Aletheia Dev · 研究证据:`docs/research/audits/OPPORTUNITY_END_TO_END_LIFECYCLE_AUDIT_2026-07-18.md`
 
 ---
 
@@ -21,6 +21,10 @@
 跳3 唤醒    pi_daemon._run_evaluation(防抖8s/冷却60s/300s兜底) → evaluate_trading_opportunity
 跳4 组装    commands.py:evaluate_trading_opportunity → build_enriched_trading_context (3层Context)
 跳5 定夺    trading_decision.py:evaluate → LLM → TradingDecision  ★唯一开仓决策权★
+            action=trade 的结构化输出必须显式给出 market_type、有限正数 stop_price/take_profit 和五项参数理由；
+            schema 不通过先走 llm_structured 有界重试，语义仍不完整再走一次现有修复，最终失败则 defer。
+            相对推理前精确 mark 的反向保护价也走同一次修复；提交前刷新 mark 若已过期/不可用或
+            穿越保护位，则记入 filter trace 并 typed defer，不改写计划、不消费 carrier。
             direct skip → 一次有界反事实确认；只有候选特定 adverse evidence 才可终结
             conviction∈[40,80] 触发 bull/bear debate;conviction<55(初始或 debate 后)是
             非终态 defer(DL-INV-2 v1.5)——抛 typed DecisionUnavailable，保留 pending
@@ -80,11 +84,12 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 | `adverse_reason_codes` / `adverse_evidence` | `list[str]` | terminal direct skip 必须至少各有一项允许的 typed reason 与候选特定事实；rank priority 或证据不足不能冒充 adverse reason。 |
 | `validated_adverse_claims` | `list[dict]` | 仅由确定性 validator 生成；逐项保存 `reason_code + fact_refs`。模型文本不能写入或替代该权限。 |
 | `model_reasoning` | `str \| None` | direct skip 的原始模型文本，仅作审计；权威 `reasoning/adverse_evidence` 由 validated fact refs 重建，避免错误判词进入最终状态。 |
-| `market_type` | `str \| None` | PI 显式选;省略时继承 `opportunity.market`,再省则"空头→usdt_futures/其余→spot"兜底。 |
+| `market_type` | `str \| None` | 新 LLM `trade` 必须显式选择与 exact carrier 一致的 `spot` / `usdt_futures`；缺失或无效值走同一有界输出修复，不再从 carrier 猜测。新 Operator `spot+short` 不得在下游静默重标为 futures，只能 repair/defer；旧 programmatic/历史恢复对象保留兼容 coercion。`skip` 保留可空语义。 |
 | `opportunity_id` / `strategy_id` / `scanner_family` | `str \| None` | R0 归因,由 `_attach_opportunity_context` 回填(`trading_decision.py:909`)。 |
 | `signal_source` | `str` | 机会来源,默认 `market_observer`;`serenity` 表示解析 `serenity_opportunities.id`(`:85`)。值域 = {`market_observer`,`serenity`}。 |
 | `bear_case` | `str` | S4 强制反方论证。新 LLM 决策 schema 必填；空值仅允许历史记录。 |
-| `parameter_rationale` | `dict[str,str]` | 新开仓的五项 AI 理由：`entry_price` / `stop_loss` / `take_profit` / `notional_usdt` / `leverage`。仅 LLM 解析路径要求齐全；缺项在跳6留下 `missing_parameter_rationale`，不创建 proposal。最终入场价同时保存实际 `market_snapshot_id / market_type / snapshot_at`，不是只写“来自快照”；详见 `trade_decision_rationale_contract.md`。 |
+| `stop_price` / `take_profit` | `float \| None` | `trade` 的 LLM schema 与解析边界要求两者都是显式有限正数；缺失/0/NaN/Infinity 触发有界修复，不能由配置替模型补值。跳6 用提交时新鲜精确 mark 校验多空几何；不合法则 `DecisionUnavailable`，不改写模型计划。`skip` 不要求这些字段。 |
+| `parameter_rationale` | `dict[str,str]` | 新开仓的五项 AI 理由：`entry_price` / `stop_loss` / `take_profit` / `notional_usdt` / `leverage`。仅 `trade` 的 LLM schema/解析路径要求全部为非空字符串；缺项触发同一有界输出修复，最终仍不完整则不创建 final PiDecision/Proposal。最终入场价同时保存实际 `market_snapshot_id / market_type / snapshot_at`，不是只写“来自快照”；详见 `trade_decision_rationale_contract.md`。 |
 
 ### 2.2a PiDecision（耐久 Operator 事实）
 
@@ -188,8 +193,9 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 - `filter_candidate_outcomes` 按候选共享一份目标市场净结果，不按筛选关重复结算。
 - Risk 证据必须在权威 `RiskDecision` 落库后追加；证据失败不改变原始批准/拒绝。
 - `TradingDecision.action='trade'` 表示 System Operator 的交易意图，不等于提案已经创建。
-  方向过热是确定性业务拒绝，转成可耐久的 `skip`；目标市场精确报价缺失/过期、五项参数理由
-  不完整则返回可重试的稳定不可用原因，在形成最终决定前停止，不能消费 pending。
+  方向过热是确定性业务拒绝，转成可耐久的 `skip`；模型 `trade` 缺显式 stop/TP/五项参数理由、
+  或这些保护价相对提交时精确 mark 几何错误时，返回可重试的稳定不可用原因，在形成最终决定前
+  停止，不能消费 pending；配置默认值不得把一个不完整模型计划改写成另一笔交易。
 - 只有首次创建最终 PiDecision 的 owner 可以把本轮 `filter_trace` 绑定到该 decision id；终态重放或
   历史中断恢复不得把新一轮 LLM 的 trace 冒充成原决策事实。对精确 pending 候选的 terminal `skip`，
   PiDecision、trace、可识别的固定 horizon outcome seed 与 `queued→reviewed` 必须同一提交；trace
@@ -205,7 +211,7 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 |------|--------|----------|-----------|-----------|
 | 机会落库 | `market_observer.py:361` | ranker / Layer1 | 仅 `status='open'` 进排序;reviewed 不重复 | (本契约 DL-S01) |
 | signal_pending | `paper_trader.py` | `trading_context._build_pending_signal_queue` | 仅未完成；先去重再限量；oldest-first；显式 backlog/expiry；queued→reviewed 原子终结 | DL-S03 + DL-S10~12 |
-| 决策→提案 | `trading_decision.py` | `gateway.py` | `conviction≥55 且 action='trade'` 且有精确 pending 载体才尝试；LLM 开仓还必须有五项参数理由；`paper_internal` 还需配置行情 venue 的同 symbol/spot-perp 新鲜精确 mark；PiDecision+Proposal 原子提交；不可用时零最终行并保留队列 | DL-S18~19 + DL-S40~41 + DL-C01 + DL-C02 + TDR-C01 + execution_contract §3 |
+| 决策→提案 | `trading_decision.py` | `gateway.py` | `conviction≥55 且 action='trade'` 且有精确 pending 载体才尝试；LLM 开仓还必须显式给出有限正数 stop/TP 与五项参数理由；`paper_internal` 还需配置行情 venue 的同 symbol/spot-perp 新鲜精确 mark，并据此校验几何、计算唯一 reward:risk；PiDecision+Proposal 原子提交；不可用时零最终行并保留队列 | DL-S18~19 + DL-S40~41 + DL-C01 + DL-C02 + TDR-C01 + execution_contract §3 |
 | 提案→风控 | `gateway.py` | `risk/engine.py:67` | `_eval_lock` 串行;每提案恰评估一次;`approved=False` 不执行 | risk_engine_contract / spec_pipeline_risk_gate |
 | 平仓脊柱 | — | — | 见 `execution_contract §10`(退出触发器优先级 / paused 不挡平仓) | PL-PM-01~07 |
 | 筛选证据 | 各关原 writer | filter controller / doctor | 事前输入+参数版本；无方向不生成可学习净结果；Risk 只报告 | filter_evidence_contract / spec_filter_evidence |
@@ -223,7 +229,7 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 - **DL-INV-7 筛选事实不反推**:放行/拒绝必须在当次评估时记录，不得从最终 opportunity/proposal 状态倒推中间关卡。
 - **DL-INV-8 无方向不学收益**:无事前 `long/short` 时只衡量能力和覆盖，禁止事后选最赚方向。
 - **DL-INV-9 提案结果不丢失**:`trade` 是唯一可执行入场意图。确定性方向门拒绝必须成为带稳定原因的 `skip`；报价、必需理由或依赖不可用必须抛稳定 typed reason 并保持队列可重试，禁止写一条 `proposal_id=NULL` 的伪最终 trade。
-- **DL-INV-10 参数理由不伪造**:System Operator 的新开仓须带五项参数理由；提案快照必须把最终值与 `market_snapshot` / `default_config` / `risk_cap_clamped` 等实际来源分开，不能把后端计算说成 AI 选择。详见 `trade_decision_rationale_contract.md`。
+- **DL-INV-10 入场计划与参数理由不伪造**:System Operator 的 `trade` 须显式带有限正数 stop/TP 与五项参数理由；schema/语义不完整只能有界修复或 defer。提交时的新鲜精确 mark 是 entry 权威，reward:risk 只按该 mark 与模型原始 stop/TP 确定性计算；不得用 `default_config` 改写模型缺失或几何错误的保护价，再冒充完整 AI 计划，也不得把新 Operator `spot+short` 静默重标为 futures。修复成功的初稿错误以 `error` 审计、不得成为 rejected 学习 cohort；最终正式 exposure 必须首先为 passed，二次仍错才是 rejected。Programmatic/历史对象的兼容 fallback/coercion 不构成新 LLM 交易权限。详见 `trade_decision_rationale_contract.md`。
 - **DL-INV-11 排序后唤醒**:市场机会生产者只落 Opportunity；只有 `paper_trader` 在排序并成功写入 `signal_pending` 后唤醒 System Operator。已有非 pending 最终决策的 `opportunity_id` 不得再次入队。
 - **DL-INV-12 公平待处理队列**:只向 Operator 暴露尚无最终决定的信号；必须先去重再限量、最早信号优先，并报告 overflow/过期，禁止用“最新 5 条”静默覆盖旧工作。
 - **DL-INV-13 最终决定幂等**:同 `signal_source + opportunity_id` 的首条非 pending PiDecision 是权威结果；重复唤醒只能恢复该行已绑定的 pending Proposal 或返回终态,不得生成第二份提案或最终决定，也不得把 replay-only 筛选痕迹绑定到原 decision id。
@@ -288,7 +294,10 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 | `DL-S38` | L2b | preflight 后、最终 claim 前 `valid_until` 过期时，claim 原子写 expired 与唯一 TTL 拒绝事实，零最终决定/Proposal |
 | `DL-S39` | L2b | claim 内 TTL 证据写失败通过保存点回滚，Opportunity 保持 queued 且零最终决定/Proposal |
 | `DL-S40` | L2b | 必需 bull/bear debate 任一不可用时整轮可重试，零最终决定 |
-| `DL-S41` | L2b | 精确报价缺失/过期或五项理由不完整时零最终决定/Proposal，pending 保持 queued |
+| `DL-S41` | L2b | 提交前精确报价缺失/过期时形成可审计 `operator_entry_plan` defer，零最终决定/Proposal，pending 保持 queued |
+| `DL-S67` | L2b | `trade` 结构化输出缺失/无效 market_type、stop/TP 或五项理由时先有界修复、最终仍不完整则 typed defer；`skip` 不被迫伪造入场字段；配置不能改写模型保护计划 |
+| `DL-S68` | L2b | 推理前 mark 下反向保护价先走同一次有界修复；修复成功时初稿只记非 cohort error、正式 first exposure=passed，二次仍错才 rejected；提交前刷新 mark 穿越保护位则记录 pass→reject trace、typed defer 且 carrier 不消费 |
+| `DL-S69` | L2b | 新 Operator `spot+short` 先走一次有界修复、仍不合法则 typed defer；不得创建 futures Proposal、不得消费原 spot carrier；历史 coercion 仅作恢复兼容 |
 | `DL-C01` | L2c | `_MIN_CONVICTION_TO_TRADE == 55`(改阈值即爆红,强制同步本契约) |
 | `DL-C02` | L2c | Proposal 前置不可用返回稳定 typed reason；确定性方向拒绝仍是明确 skip |
 

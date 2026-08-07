@@ -90,9 +90,18 @@ def test_trading_decision_bear_case_field():
         "action": "trade",
         "symbol": "BTC/USDT",
         "direction": "long",
+        "market_type": "spot",
         "conviction": 70,
         "reasoning": "breakout",
         "bear_case": "failed breakout traps late buyers",
+        "stop_price": 98.0,
+        "take_profit": 104.0,
+        "parameter_rationale": {
+            key: f"reason for {key}"
+            for key in (
+                "entry_price", "stop_loss", "take_profit", "notional_usdt", "leverage"
+            )
+        },
     })
     assert parsed.bear_case == "failed breakout traps late buyers"
     assert "bear_case" in _build_assessment_prompt({})

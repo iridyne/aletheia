@@ -281,8 +281,15 @@ def test_pi_decision_schema_market_type_and_leverage():
     # parser reads them from raw LLM output
     parsed = _parse_decision({
         "action": "trade", "symbol": "BTC/USDT", "direction": "long",
-        "conviction": 70, "reasoning": "x",
+        "conviction": 70, "reasoning": "x", "bear_case": "y",
         "market_type": "usdt_futures", "leverage": 3,
+        "stop_price": 98.0, "take_profit": 104.0,
+        "parameter_rationale": {
+            key: f"reason for {key}"
+            for key in (
+                "entry_price", "stop_loss", "take_profit", "notional_usdt", "leverage"
+            )
+        },
     })
     assert parsed.market_type == "usdt_futures"
     assert parsed.leverage == 3
