@@ -154,7 +154,7 @@ function Status({
 	);
 }
 
-function ApiProfileEditor({
+export function ApiProfileEditor({
 	initial,
 	existing,
 	providerTypes,
@@ -178,8 +178,6 @@ function ApiProfileEditor({
 		key: K,
 		value: ApiProfileDraft[K],
 	) => setDraft((current) => ({ ...current, [key]: value }));
-
-	useEffect(() => setDraft(initial), [initial]);
 
 	const candidate = () => ({
 		provider: draft.profile_id,
