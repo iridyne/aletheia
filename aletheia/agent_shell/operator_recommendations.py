@@ -355,6 +355,19 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
     risk = cfg.risk
     proposal_mode = str((proposal or {}).get("execution_mode") or "")
 
+    def effective_capital_base() -> float:
+        if not proposal_mode:
+            return 0.0
+        try:
+            from aletheia.risk.engine import _resolve_capital_base
+            from aletheia.risk.policy import resolve_risk_policy
+
+            resolved = resolve_risk_policy(cfg, proposal_mode)
+            value, _ = _resolve_capital_base(proposal_mode, resolved.policy, cfg)
+            return float(value or 0.0)
+        except Exception:
+            return 0.0
+
     parsed = _parse_numeric_threshold_violation(
         violation,
         "exceeds_demo_position_notional:",
@@ -397,7 +410,7 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
     )
     if parsed is not None:
         projected, _ = parsed
-        capital_base = float(risk.max_live_limited_cap_usdt or 0.0)
+        capital_base = effective_capital_base()
         current = float(risk.max_total_live_exposure_pct or 0.0)
         if capital_base <= 0:
             return None
@@ -418,7 +431,7 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
     )
     if parsed is not None:
         risk_amount, _ = parsed
-        capital_base = float(risk.max_live_limited_cap_usdt or 0.0)
+        capital_base = effective_capital_base()
         current = float(risk.max_single_trade_risk_pct or 0.0)
         if capital_base <= 0:
             return None
@@ -439,7 +452,7 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
     )
     if parsed is not None:
         risk_amount, _ = parsed
-        capital_base = float(risk.starting_capital_usdt or 0.0)
+        capital_base = effective_capital_base()
         current = float(risk.max_demo_single_trade_risk_pct or 0.0)
         if capital_base <= 0:
             return None
@@ -457,7 +470,7 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
     parsed = _parse_daily_loss_violation(violation)
     if parsed is not None:
         realized, _ = parsed
-        capital_base = float(risk.max_live_limited_cap_usdt or 0.0)
+        capital_base = effective_capital_base()
         current = float(risk.max_daily_loss_pct or 0.0)
         if capital_base <= 0:
             return None

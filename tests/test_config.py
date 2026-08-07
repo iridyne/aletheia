@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from aletheia.config.schema import AletheiaConfig
+from aletheia.config.schema import AletheiaConfig, RiskConfig
 from aletheia.config.loader import load_config, save_config, bootstrap, ensure_data_dirs
 
 
@@ -69,6 +69,31 @@ def test_risk_defaults_conservative():
     assert cfg.risk.max_live_limited_cap_usdt == 100.0
     assert cfg.risk.max_futures_leverage_live == 2
     assert cfg.risk.allowed_exchange == "paper_internal"
+
+
+def test_legacy_risk_policies_migrate_to_account_equity_capital_base():
+    risk = RiskConfig.model_validate({
+        "schema_version": 2,
+        "demo": {"capital": {"base_usdt": 12_345.0}},
+        "live": {"capital": {"base_usdt": 678.0}},
+    })
+
+    assert risk.schema_version == 3
+    assert risk.demo.capital.base_source == "account_equity"
+    assert risk.live.capital.base_source == "account_equity"
+    # Preserve the old values so switching to Custom remains reversible.
+    assert risk.demo.capital.base_usdt == 12_345.0
+    assert risk.live.capital.base_usdt == 678.0
+
+
+def test_explicit_custom_capital_base_survives_roundtrip():
+    risk = RiskConfig.model_validate({
+        "schema_version": 3,
+        "demo": {"capital": {"base_source": "custom", "base_usdt": 250.0}},
+    })
+
+    assert risk.demo.capital.base_source == "custom"
+    assert risk.demo.capital.base_usdt == 250.0
 
 
 # ---------------------------------------------------------------------------
