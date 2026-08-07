@@ -1120,8 +1120,16 @@ def test_concurrent_close_claim_reaches_exchange_once(
     assert len(repo.list_orders(limit=10)) == 1
 
 
-def test_bitget_no_position_close_rejection_keeps_single_durable_claim(
-    tmp_path, monkeypatch,
+@pytest.mark.parametrize(
+    "broker_module,client_name,execution_mode,close_name", CLOSE_BROKERS,
+)
+def test_no_position_close_rejection_keeps_single_durable_claim(
+    tmp_path,
+    monkeypatch,
+    broker_module,
+    client_name,
+    execution_mode,
+    close_name,
 ):
     """A venue-reported absence must investigate, not resubmit a close."""
     _setup_db(tmp_path, monkeypatch)
@@ -1134,13 +1142,13 @@ def test_bitget_no_position_close_rejection_keeps_single_durable_claim(
     async def _no_position(order):
         calls.append(order.client_oid)
         raise ClosePositionAbsentError(
-            "Bitget close rejected: no position available (code=25227)"
+            "Exchange close rejected: no position available"
         )
 
     broker = _prepare_broker(
         monkeypatch,
-        "aletheia.execution.bitget_broker",
-        "BitgetClient",
+        broker_module,
+        client_name,
         _no_position,
     )
     position = Position(
@@ -1150,12 +1158,12 @@ def test_bitget_no_position_close_rejection_keeps_single_durable_claim(
         quantity=0.01,
         entry_price=100.0,
         current_price=101.0,
-        execution_mode="bitget_demo",
+        execution_mode=execution_mode,
     )
     repo.insert_position(position)
 
-    with pytest.raises(ClosePositionAbsentError, match="25227"):
-        broker.close_demo_position(position.id, reason="stop_loss")
+    with pytest.raises(ClosePositionAbsentError, match="no position available"):
+        getattr(broker, close_name)(position.id, reason="stop_loss")
     first_order = repo.list_orders(limit=10)[0]
     first_order_id = first_order["id"]
     first_position = repo._select_one("positions", position.id)
@@ -1168,7 +1176,7 @@ def test_bitget_no_position_close_rejection_keeps_single_durable_claim(
     # Simulate the next Position Manager cycle reaching the same broker boundary.
     # What must not recur is the exchange side effect or a replacement durable
     # Close Order while disappearance remains unverified.
-    retry = broker.close_demo_position(position.id, reason="stop_loss")
+    retry = getattr(broker, close_name)(position.id, reason="stop_loss")
 
     orders = repo.list_orders(limit=10)
     stored_position = repo._select_one("positions", position.id)
@@ -1178,6 +1186,26 @@ def test_bitget_no_position_close_rejection_keeps_single_durable_claim(
     assert calls == [f"close-{position.id}"]
     assert len(orders) == 1
     assert stored_position["pending_close_order_id"] == first_order_id
+    assert stored_position["status"] == "open"
+    assert stored_position["closed_at"] is None
+    assert repo.list_fills(limit=10) == []
+
+    audit_events = [
+        json.loads(line)
+        for line in (tmp_path / "logs" / "audit.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    absence_events = [
+        event
+        for event in audit_events
+        if event.get("event_type") == "close_position_absence_unverified"
+    ]
+    assert len(absence_events) == 1
+    assert absence_events[0]["source"] == broker_module.rsplit(".", 1)[-1]
+    assert absence_events[0]["entity_id"] == position.id
+    assert absence_events[0]["after"]["pending_close_order_id"] == first_order_id
 
 
 @pytest.mark.parametrize(
