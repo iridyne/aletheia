@@ -18,6 +18,8 @@ logger = logging.getLogger("aletheia.connectivity")
 
 _consecutive_failures: int = 0
 _consecutive_successes: int = 0
+# Monotonic process-local fence for recovery attempts that await the LLM gate.
+_exchange_failure_generation: int = 0
 _last_probe_result: dict | None = None
 _last_external_probe_result: dict | None = None
 _external_outage_started_at: float | None = None
@@ -187,8 +189,9 @@ def probe_exchange_sync(cfg=None) -> dict:
 
 
 def _record_probe_result(result: dict, *, observed_at: float | None = None) -> dict:
-    """Record the exchange probe without changing its pause/resume semantics."""
-    global _consecutive_failures, _consecutive_successes, _last_probe_result
+    """Record exchange counters and invalidate in-flight recovery on failure."""
+    global _consecutive_failures, _consecutive_successes
+    global _exchange_failure_generation, _last_probe_result
 
     observed_at = time.time() if observed_at is None else observed_at
     _last_probe_result = {**result, "ts": observed_at}
@@ -198,6 +201,7 @@ def _record_probe_result(result: dict, *, observed_at: float | None = None) -> d
     else:
         _consecutive_successes = 0
         _consecutive_failures += 1
+        _exchange_failure_generation += 1
     return _last_probe_result
 
 
@@ -446,11 +450,13 @@ async def _exchange_auto_resume_loop(interval_sec: int = 60) -> None:
             loop_failures = 0
             logger.info(
                 "exchange_auto_resume: probe OK (%d/%d)",
-                _consecutive_successes, successes_needed,
+                _consecutive_successes,
+                successes_needed,
             )
             if _consecutive_successes >= successes_needed:
-                await _resume_from_network(cfg)
-                return
+                recovery_attempt_finished = await _resume_from_network(cfg)
+                if recovery_attempt_finished:
+                    return
         else:
             loop_failures += 1
 
@@ -503,8 +509,12 @@ def _escalate_exchange_stall(cfg, last_result: dict, consecutive: int) -> None:
         pass
 
 
-async def _resume_from_network(cfg) -> None:
-    """Release the connectivity-owned pause after exchange recovery."""
+async def _resume_from_network(cfg) -> bool:
+    """Release the connectivity-owned pause after exchange recovery.
+
+    Return ``False`` only when a newer exchange failure invalidated this
+    attempt and the recovery loop must collect a fresh success sequence.
+    """
     from aletheia.config.loader import load_config
 
     # Reload immediately before deciding: this task can outlive the outage that
@@ -512,7 +522,8 @@ async def _resume_from_network(cfg) -> None:
     cfg = load_config()
     if not cfg.runtime.paused_by_connectivity:
         logger.info("exchange_auto_resume: pause is not connectivity-owned — exiting")
-        return
+        return True
+    recovery_failure_generation = _exchange_failure_generation
 
     # #146: the paused flag is shared with the LLM startup gate. If the LLM is still
     # unavailable, do NOT clear paused on exchange recovery — that would un-pause a
@@ -523,15 +534,14 @@ async def _resume_from_network(cfg) -> None:
     try:
         if cfg.health.require_llm_at_startup:
             from aletheia.agent_runtime.startup_gate import probe_llm_providers_at_startup
+
             _llm = await probe_llm_providers_at_startup(cfg, max_retries=1)
             if not _llm.get("any_usable"):
                 logger.info("exchange reachable again but LLM still unavailable — staying paused")
-                return
+                return True
     except Exception:
-        logger.warning(
-            "exchange reachable again but required LLM probe failed — staying paused"
-        )
-        return
+        logger.warning("exchange reachable again but required LLM probe failed — staying paused")
+        return True
 
     from aletheia.agent_runtime.scheduler import resume_scheduler
     from aletheia.config.loader import save_config
@@ -543,7 +553,10 @@ async def _resume_from_network(cfg) -> None:
     cfg = load_config()
     if not cfg.runtime.paused_by_connectivity:
         logger.info("exchange_auto_resume: pause ownership changed — exiting")
-        return
+        return True
+    if _exchange_failure_generation != recovery_failure_generation:
+        logger.info("exchange_auto_resume: newer exchange failure observed — staying paused")
+        return False
     cfg.runtime.paused = False
     cfg.runtime.paused_by_connectivity = False
     save_config(cfg)
@@ -556,17 +569,20 @@ async def _resume_from_network(cfg) -> None:
         message=f"Exchange {cfg.exchange.name} reachable again — trading resumed",
         entity_id=cfg.exchange.name,
     )
-    write_audit({
-        "actor": "system",
-        "source": "connectivity_monitor",
-        "event_type": "exchange_connectivity_resumed",
-        "entity_type": "gateway",
-        "entity_id": "gateway",
-        "message": f"Resumed: {cfg.exchange.name} connectivity restored",
-    })
+    write_audit(
+        {
+            "actor": "system",
+            "source": "connectivity_monitor",
+            "event_type": "exchange_connectivity_resumed",
+            "entity_type": "gateway",
+            "entity_id": "gateway",
+            "message": f"Resumed: {cfg.exchange.name} connectivity restored",
+        }
+    )
 
     try:
         from aletheia.notifications import notify_operator
+
         notify_operator(
             "Exchange Connectivity Restored",
             f"Exchange {cfg.exchange.name} reachable — trading resumed.",
@@ -576,6 +592,7 @@ async def _resume_from_network(cfg) -> None:
         pass
 
     logger.info("exchange_auto_resume: connectivity restored — scheduler resumed")
+    return True
 
 
 async def startup_exchange_gate(cfg=None) -> None:

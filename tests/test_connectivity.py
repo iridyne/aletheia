@@ -37,6 +37,7 @@ def _reset_connectivity_state():
     import aletheia.agent_runtime.connectivity as conn_mod
     conn_mod._consecutive_failures = 0
     conn_mod._consecutive_successes = 0
+    conn_mod._exchange_failure_generation = 0
     conn_mod._last_probe_result = None
     conn_mod._last_external_probe_result = None
     conn_mod._external_outage_started_at = None
@@ -740,6 +741,121 @@ async def test_network_recovery_keeps_pause_when_required_llm_probe_raises(
     await conn_mod._resume_from_network(cfg)
 
     persisted = load_config()
+    assert resumed == []
+    assert persisted.runtime.paused is True
+    assert persisted.runtime.paused_by_connectivity is True
+
+
+@pytest.mark.asyncio
+async def test_auto_resume_recollects_successes_after_failure_during_llm_probe(tmp_path, monkeypatch):
+    """A fenced recovery stays active and resumes only after fresh successes."""
+    setup_env(tmp_path, monkeypatch)
+    _reset_connectivity_state()
+
+    from aletheia.config.loader import load_config, save_config
+    import aletheia.agent_runtime.connectivity as conn_mod
+
+    cfg = load_config()
+    cfg.runtime.paused = True
+    cfg.runtime.paused_by_connectivity = True
+    cfg.health.require_llm_at_startup = True
+    cfg.health.exchange_auto_resume_success_threshold = 1
+    save_config(cfg)
+
+    exchange_probe = {
+        "reachable": True,
+        "latency_ms": 1.0,
+        "error": None,
+        "exchange": cfg.exchange.name,
+    }
+    external_probe = {
+        "reachable": True,
+        "latency_ms": 1.0,
+        "error_code": None,
+    }
+    probe_count = 0
+
+    async def _exchange_is_reachable(_cfg):
+        nonlocal probe_count
+        probe_count += 1
+        return exchange_probe, external_probe
+
+    llm_probe_count = 0
+
+    async def _llm_ok_with_one_new_exchange_failure(cfg, max_retries=1):
+        nonlocal llm_probe_count
+        llm_probe_count += 1
+        if llm_probe_count == 1:
+            conn_mod._record_probe_result(
+                {
+                    "reachable": False,
+                    "latency_ms": None,
+                    "error": "new outage",
+                    "exchange": cfg.exchange.name,
+                }
+            )
+        return {"any_usable": True, "checked": 1, "results": []}
+
+    monkeypatch.setattr(conn_mod, "_probe_exchange_and_external", _exchange_is_reachable)
+    monkeypatch.setattr(conn_mod.asyncio, "sleep", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.startup_gate.probe_llm_providers_at_startup",
+        _llm_ok_with_one_new_exchange_failure,
+    )
+    resumed = []
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.resume_scheduler",
+        lambda: resumed.append(True),
+    )
+
+    await conn_mod._exchange_auto_resume_loop(interval_sec=0)
+
+    assert probe_count == 2
+    assert llm_probe_count == 2
+    assert resumed == [True]
+    assert load_config().runtime.paused is False
+
+
+@pytest.mark.asyncio
+async def test_network_recovery_keeps_pause_after_new_failure_during_llm_probe(tmp_path, monkeypatch):
+    """A recovery attempt cannot cross a newer exchange failure generation."""
+    setup_env(tmp_path, monkeypatch)
+    _reset_connectivity_state()
+
+    from aletheia.config.loader import load_config, save_config
+    import aletheia.agent_runtime.connectivity as conn_mod
+
+    cfg = load_config()
+    cfg.runtime.paused = True
+    cfg.runtime.paused_by_connectivity = True
+    cfg.health.require_llm_at_startup = True
+    save_config(cfg)
+
+    async def _llm_ok_after_new_exchange_failure(cfg, max_retries=1):
+        conn_mod._record_probe_result(
+            {
+                "reachable": False,
+                "latency_ms": None,
+                "error": "new outage",
+                "exchange": cfg.exchange.name,
+            }
+        )
+        return {"any_usable": True, "checked": 1, "results": []}
+
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.startup_gate.probe_llm_providers_at_startup",
+        _llm_ok_after_new_exchange_failure,
+    )
+    resumed = []
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.resume_scheduler",
+        lambda: resumed.append(True),
+    )
+
+    recovery_attempt_finished = await conn_mod._resume_from_network(cfg)
+
+    persisted = load_config()
+    assert recovery_attempt_finished is False
     assert resumed == []
     assert persisted.runtime.paused is True
     assert persisted.runtime.paused_by_connectivity is True
