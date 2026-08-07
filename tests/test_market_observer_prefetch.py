@@ -1252,6 +1252,15 @@ async def test_per_symbol_deadline_respects_remaining_budget(tmp_path, monkeypat
 # ---------------------------------------------------------------------------
 
 
+def test_fair_budget_accounts_for_concurrent_llm_slots():
+    """Two parallel slots should budget waves, not pretend work is serial."""
+    from aletheia.agents import market_observer as mo
+
+    assert mo._fair_llm_budget_seconds(460.0, 26) == pytest.approx(460.0 / 13)
+    assert mo._fair_llm_budget_seconds(460.0, 25) == pytest.approx(460.0 / 13)
+    assert mo._fair_llm_budget_seconds(15.0, 3) == pytest.approx(10.0)
+
+
 @pytest.mark.asyncio
 async def test_fair_budget_distributes_remaining_time_evenly(tmp_path, monkeypatch):
     """Later symbols get shorter deadlines when an early one consumed extra time.
