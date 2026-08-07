@@ -6,7 +6,7 @@ import type { AgentRun, Opportunity, TradeProposal } from '../types'
 import { DetailDrawer, DrawerSection, DrawerField } from './DetailDrawer'
 import ThesisText from './ThesisText'
 import { ProposalRationaleDetail } from './ProposalRationaleDetail'
-import { fmtSymbol } from '../lib/format'
+import { fmtOpportunityScore, fmtScore100, fmtSymbol, opportunityScoreLabel } from '../lib/format'
 
 /**
  * Agent activity feed (docs/design/frontend/overview_redesign.md Decision 2).
@@ -200,14 +200,16 @@ export default function AgentFeed() {
   // ----- narrative/both track: outputs (opportunities + proposals) -----
   if (mode === 'narrative' || mode === 'both') {
     for (const o of (opportunities as Opportunity[])) {
-      const conf = o.confidence_score != null ? ` (${o.confidence_score}%)` : o.confidence != null ? ` (${o.confidence})` : ''
+      const score = o.confidence_score != null || o.confidence != null
+        ? ` (${fmtOpportunityScore(o.source_agent, o.confidence_score, o.confidence)})`
+        : ''
       items.push({
         key: `opp-${o.id}`,
         ts: o.created_at,
         kind: 'opportunity',
         agent: o.source_agent || 'agent',
         icon: agentIcon(o.source_agent || ''),
-        headline: `${o.source_agent || 'Agent'} found ${o.direction_bias} opportunity on ${fmtSymbol(o.symbol, o.market)}${conf}`,
+        headline: `${o.source_agent || 'Agent'} found ${o.direction_bias} opportunity on ${fmtSymbol(o.symbol, o.market)}${score}`,
         detail: o.thesis || undefined,
         opportunity: o,
       })
@@ -315,7 +317,13 @@ function FeedDrawer({ item, onClose, navigate }: { item: FeedItem | null; onClos
           <DrawerSection label="Opportunity">
             <DrawerField label="Symbol" value={fmtSymbol(item.opportunity.symbol, item.opportunity.market)} mono />
             <DrawerField label="Bias" value={item.opportunity.direction_bias} />
-            <DrawerField label="Confidence" value={item.opportunity.confidence_score != null ? `${item.opportunity.confidence_score}%` : item.opportunity.confidence ?? null} mono />
+            <DrawerField
+              label={opportunityScoreLabel(item.opportunity.source_agent)}
+              value={item.opportunity.confidence_score != null
+                ? fmtScore100(item.opportunity.confidence_score)
+                : item.opportunity.confidence ?? null}
+              mono
+            />
             <DrawerField label="Source" value={item.opportunity.source_agent} />
           </DrawerSection>
           <DrawerSection label="Thesis">

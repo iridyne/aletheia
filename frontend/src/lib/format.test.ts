@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { fmtCompact, fmtCompactSigned, fmtDelta, fmtNum, fmtPct, fmtSigned } from './format'
+import {
+  fmtCompact,
+  fmtCompactSigned,
+  fmtDelta,
+  fmtNum,
+  fmtOpportunityScore,
+  fmtPct,
+  fmtScore100,
+  fmtSigned,
+  opportunityScoreLabel,
+} from './format'
 
 // Thousands-separated integers depend on the runtime locale (Intl / ICU).
 // Under Node's default en-US we expect "1,234.57"; the tests below use a
@@ -237,5 +247,24 @@ describe('fmtPct (unchanged — no subscript treatment)', () => {
   })
   it('null → dash', () => {
     expect(fmtPct(null)).toBe('—')
+  })
+})
+
+describe('bounded score semantics', () => {
+  it('renders a score without a probability percent sign', () => {
+    expect(fmtScore100(49)).toBe('49/100')
+    expect(fmtScore100(48.925)).toBe('48.93/100')
+  })
+
+  it('distinguishes Universe ranking from observer confidence', () => {
+    expect(opportunityScoreLabel('universe_scanner')).toBe('Scanner score')
+    expect(opportunityScoreLabel('market_observer')).toBe('Confidence score')
+    expect(fmtOpportunityScore('universe_scanner', 49, 'medium')).toBe('Scanner score 49/100')
+    expect(fmtOpportunityScore('market_observer', 65, 'medium')).toBe('Confidence score 65/100')
+  })
+
+  it('keeps categorical legacy values explicit when no numeric score exists', () => {
+    expect(fmtOpportunityScore('universe_scanner', null, 'medium')).toBe('Scanner score medium')
+    expect(fmtOpportunityScore('market_observer', null, null)).toBe('Score not available')
   })
 })

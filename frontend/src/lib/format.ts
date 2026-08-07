@@ -123,6 +123,42 @@ export function fmtPct(
 }
 
 /**
+ * Format a bounded 0-100 score without implying that it is a probability.
+ * Unlike fmtPct, this never appends "%": model confidence and scanner rank
+ * scores are ordinal evidence summaries unless a separate calibration contract
+ * explicitly proves probabilistic semantics.
+ */
+export function fmtScore100(
+  value: number | string | null | undefined,
+  opts?: { dash?: string },
+): string {
+  const dash = opts?.dash ?? '—'
+  if (value == null || value === '') return dash
+  const n = Number(value)
+  if (!Number.isFinite(n)) return dash
+  const rounded = Math.round((n + Number.EPSILON) * 100) / 100
+  const rendered = Number.isInteger(rounded)
+    ? String(rounded)
+    : rounded.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')
+  return `${rendered}/100`
+}
+
+/** Universe emits a composite ranking score; observer agents emit confidence scores. */
+export function opportunityScoreLabel(sourceAgent: string | null | undefined): string {
+  return sourceAgent === 'universe_scanner' ? 'Scanner score' : 'Confidence score'
+}
+
+/** Complete, source-aware Opportunity score text for compact surfaces. */
+export function fmtOpportunityScore(
+  sourceAgent: string | null | undefined,
+  score: number | null | undefined,
+  categorical?: string | null,
+): string {
+  if (score != null) return `${opportunityScoreLabel(sourceAgent)} ${fmtScore100(score)}`
+  return categorical ? `${opportunityScoreLabel(sourceAgent)} ${categorical}` : 'Score not available'
+}
+
+/**
  * Space-constrained numeric formatter for metric tiles where the display
  * budget is a fixed ~7 character cell (roughly "6 digits + 1 decimal point"
  * in mono at 20.8px). Uses SI unit suffixes (k / M / B / T) so a tile
