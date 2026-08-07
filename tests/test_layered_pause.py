@@ -55,6 +55,7 @@ class TestLayeredPause:
             MagicMock(id="data_collector_context"),
             MagicMock(id="connectivity_monitor"),
             MagicMock(id="price_feed"),
+            MagicMock(id="position_manager"),
             MagicMock(id="market_observer"),
             MagicMock(id="paper_trader"),
             MagicMock(id="pi_trading_decision"),
@@ -72,6 +73,7 @@ class TestLayeredPause:
         assert "data_collector_context" not in paused_ids
         assert "connectivity_monitor" not in paused_ids
         assert "price_feed" not in paused_ids
+        assert "position_manager" not in paused_ids
 
         # Non-essential jobs SHOULD be paused
         assert "market_observer" in paused_ids
@@ -194,7 +196,7 @@ class TestEssentialJobsCoverage:
         # Some essential jobs might not have explicit timeouts (they use defaults)
         # but core ones should be recognizable
         for job in ["market_data", "data_collectors", "data_collector_context", "connectivity_monitor",
-                    "price_feed", "exchange_sync", "portfolio_snapshot"]:
+                    "price_feed", "position_manager", "exchange_sync", "portfolio_snapshot"]:
             assert job in _ESSENTIAL_JOBS
 
     def test_ai_dependent_jobs_not_essential(self):
