@@ -3022,12 +3022,17 @@ Return JSON: {_json.dumps(schema)}"""
         user,
         schema=_Schema(),
         caller="agent_shell.portfolio_review",
+        # This bounded JSON choice does not benefit from an internal reasoning
+        # transcript. Reserve the output budget for the schema response so a
+        # thinking model cannot exhaust every retry before emitting JSON.
+        reasoning_effort="none",
     )
     if err or review is None:
         from aletheia.storage.models import PiDecision
         from aletheia.storage.repositories import insert_pi_decision
 
         target = open_positions[0] if len(open_positions) == 1 else None
+        review_error_code = str(err or "empty_review").split(":", 1)[0][:80]
         unavailable = PiDecision(
             symbol=target.get("symbol") if target else None,
             direction=target.get("direction") if target else None,
@@ -3047,6 +3052,7 @@ Return JSON: {_json.dumps(schema)}"""
                     "wake_fingerprint": wake_fingerprint,
                     "wake_batches": wake_batches,
                     "target_position_id": target.get("id") if target else None,
+                    "error_code": review_error_code,
                     "effect": {"status": "unavailable"},
                 }
             }, sort_keys=True, separators=(",", ":"), default=str),
@@ -3056,6 +3062,7 @@ Return JSON: {_json.dumps(schema)}"""
             "action": "review_unavailable",
             "reason": "operator_review_unavailable",
             "review_completed": False,
+            "review_error_code": review_error_code,
             "position_review_decision_id": unavailable.id,
             "wake_fingerprint": wake_fingerprint,
         }

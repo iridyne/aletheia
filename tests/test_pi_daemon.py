@@ -220,7 +220,11 @@ async def _run_horizon_review_retry(first_result):
         new=fake_entry_evaluation,
     ), patch.object(pd, "_has_pending_signal_work", return_value=False), patch(
         "aletheia.config.loader.load_config"
-    ) as mock_cfg:
+    ) as mock_cfg, patch.object(
+        pd, "_PORTFOLIO_RETRY_BASE_SEC", 0.03
+    ), patch.object(
+        pd, "_PORTFOLIO_RETRY_MAX_SEC", 0.05
+    ):
         mock_cfg.return_value.runtime.paused = False
         mock_cfg.return_value.agent.permission_mode = "Paper"
 
@@ -248,6 +252,45 @@ async def _run_horizon_review_retry(first_result):
             pass
 
     return captured, entry_evaluations
+
+
+def test_portfolio_retry_backoff_deduplicates_new_same_kind_wakes():
+    original = {
+        "position_id": "horizon-retry-position",
+        "max_priority": 1,
+        "events": [{"kind": HORIZON_DUE, "priority": 1, "payload": {}}],
+    }
+    duplicate = {
+        "position_id": "horizon-retry-position",
+        "max_priority": 1,
+        "events": [{"kind": HORIZON_DUE, "priority": 1, "payload": {"age": 3.0}}],
+    }
+
+    assert pd._restore_wake_context({"wake_batches": [original]}, now=100.0) == 1
+    assert pd._ready_wake_batches([duplicate], now=399.9) == []
+    assert pd._ready_wake_batches([duplicate], now=400.0) == [original]
+
+
+def test_portfolio_retry_backoff_grows_and_caps_without_losing_batch(monkeypatch):
+    monkeypatch.setattr(pd, "_PORTFOLIO_RETRY_BASE_SEC", 10.0)
+    monkeypatch.setattr(pd, "_PORTFOLIO_RETRY_MAX_SEC", 25.0)
+    batch = {
+        "position_id": "retry-cap-position",
+        "max_priority": 1,
+        "events": [{"kind": HORIZON_DUE, "priority": 1, "payload": {}}],
+    }
+    context = {"wake_batches": [batch]}
+
+    pd._restore_wake_context(context, now=0.0)
+    assert pd._next_retry_delay(0.0) == 10.0
+    pd._restore_wake_context(context, now=10.0)
+    assert pd._next_retry_delay(10.0) == 20.0
+    pd._restore_wake_context(context, now=30.0)
+    assert pd._next_retry_delay(30.0) == 25.0
+    assert pd._ready_wake_batches([], now=55.0) == [batch]
+
+    pd._clear_retry_wake_context(context)
+    assert pd._next_retry_delay(55.0) is None
 
 
 async def test_review_unavailable_retries_the_same_horizon_wake_batch():

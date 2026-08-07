@@ -20,6 +20,7 @@ when the daemon is running it simply calls notify_pi_daemon("heartbeat").
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import logging
 import time
 from uuid import uuid4
@@ -27,6 +28,16 @@ from uuid import uuid4
 from aletheia.agent_runtime.wake_events import WakeCoalescer, WakeEvent
 
 logger = logging.getLogger("aletheia.pi_daemon")
+
+_PORTFOLIO_RETRY_BASE_SEC = 300.0
+_PORTFOLIO_RETRY_MAX_SEC = 1800.0
+
+
+@dataclass(frozen=True)
+class _RetryWakeState:
+    batch: dict
+    attempt: int
+    not_before: float
 
 # Module-level state — set at start_pi_daemon(), cleared at stop_pi_daemon().
 _daemon_task: asyncio.Task | None = None
@@ -39,7 +50,7 @@ _uvicorn_loop: asyncio.AbstractEventLoop | None = None  # captured at startup
 # All three are mutated only on the loop thread (via call_soon_threadsafe).
 _coalescer: WakeCoalescer | None = None
 _pending_events: list[WakeEvent] = []
-_retry_wake_batches: list[dict] = []
+_retry_wake_batches: dict[str, _RetryWakeState] = {}
 _generic_wake_pending: bool = False
 # Runtime tracking: updated by start/stop, exposed via daemon_status().
 _task_generation: int = 0
@@ -278,11 +289,27 @@ async def _pi_daemon_loop(
 
     while True:
         # Wait for signal event OR heartbeat timeout
-        try:
-            await asyncio.wait_for(asyncio.shield(_signal_event.wait()), timeout=heartbeat_sec)
-            triggered_by = "signal"
-        except asyncio.TimeoutError:
-            triggered_by = "heartbeat"
+        loop = asyncio.get_running_loop()
+        retry_delay = _next_retry_delay(loop.time())
+        if retry_delay is not None and retry_delay <= 0:
+            triggered_by = "retry"
+        else:
+            wait_timeout = min(
+                heartbeat_sec,
+                retry_delay if retry_delay is not None else heartbeat_sec,
+            )
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(_signal_event.wait()), timeout=wait_timeout
+                )
+                triggered_by = "signal"
+            except asyncio.TimeoutError:
+                triggered_by = (
+                    "retry"
+                    if (_next_retry_delay(loop.time()) or 0.0) <= 0
+                    and _retry_wake_batches
+                    else "heartbeat"
+                )
 
         _signal_event.clear()
 
@@ -323,18 +350,18 @@ async def _pi_daemon_loop(
             for ev in drained:
                 _coalescer.add(ev, now)
         batches = _coalescer.ready_batches(now) if _coalescer else []
-        retry_batches = _retry_wake_batches[:]
-        _retry_wake_batches.clear()
+        wake_batches = _ready_wake_batches(
+            [batch.to_context() for batch in batches],
+            now=now,
+        )
 
         # Evaluate on: a legacy generic wake, a heartbeat, or at least one position
         # whose events passed the rate limit. Purely rate-limited/coalescing events
         # (no ready batch) do NOT wake the LLM this cycle.
-        if not (generic or triggered_by == "heartbeat" or batches or retry_batches):
+        if not (generic or triggered_by == "heartbeat" or wake_batches):
             continue
 
-        wake_context = _build_wake_context(triggered_by, batches)
-        if retry_batches:
-            wake_context.setdefault("wake_batches", []).extend(retry_batches)
+        wake_context = _build_wake_context(triggered_by, wake_batches)
         async with _eval_lock:
             pending_queue_remaining = await _run_evaluation(triggered_by, wake_context)
 
@@ -345,12 +372,16 @@ async def _pi_daemon_loop(
             await asyncio.sleep(cooldown_sec)
         if (
             pending_queue_remaining == _EVALUATION_RETRY_PENDING
-            and _retry_wake_batches
+            and not _retry_wake_batches
         ):
-            # A drained portfolio batch has already passed coalescing/rate limits.
-            # Retry that exact batch directly; a generic wake would route to entry.
+            # Generic entry-evaluation failures have no exact portfolio batch to
+            # schedule, so preserve their existing cooldown-bounded retry path.
+            _generic_wake_pending = True
             _signal_event.set()
-        elif pending_queue_remaining != 0:
+        elif (
+            pending_queue_remaining != _EVALUATION_RETRY_PENDING
+            and pending_queue_remaining != 0
+        ):
             _generic_wake_pending = True
             _signal_event.set()
 
@@ -374,22 +405,94 @@ def _build_wake_context(triggered_by: str, batches: list) -> dict:
     """Assemble the context handed to one evaluation from the coalesced batches."""
     ctx: dict = {"trigger": triggered_by}
     if batches:
-        ctx["wake_batches"] = [b.to_context() for b in batches]
+        ctx["wake_batches"] = [
+            batch if isinstance(batch, dict) else batch.to_context()
+            for batch in batches
+        ]
     return ctx
 
 
-def _restore_wake_context(wake_context: dict | None) -> int:
+def _wake_batch_key(batch: dict) -> str | None:
+    position_id = str(batch.get("position_id") or "").strip()
+    if not position_id:
+        return None
+    kinds = sorted({
+        str(event.get("kind") or "unknown")
+        for event in (batch.get("events") or [])
+        if isinstance(event, dict)
+    })
+    return f"{position_id}|{','.join(kinds) or 'unknown'}"
+
+
+def _next_retry_delay(now: float) -> float | None:
+    if not _retry_wake_batches:
+        return None
+    return max(
+        min(state.not_before for state in _retry_wake_batches.values()) - now,
+        0.0,
+    )
+
+
+def _ready_wake_batches(batches: list[dict], *, now: float) -> list[dict]:
+    """Return new or due batches without letting duplicates bypass backoff."""
+    ready: list[dict] = []
+    seen: set[str] = set()
+    for batch in batches:
+        if not isinstance(batch, dict):
+            continue
+        key = _wake_batch_key(batch)
+        if key is None or key in seen:
+            continue
+        state = _retry_wake_batches.get(key)
+        if state is not None:
+            if state.not_before > now:
+                continue
+            ready.append(state.batch)
+        else:
+            ready.append(batch)
+        seen.add(key)
+    for key, state in _retry_wake_batches.items():
+        if key not in seen and state.not_before <= now:
+            ready.append(state.batch)
+            seen.add(key)
+    return ready
+
+
+def _clear_retry_wake_context(wake_context: dict | None) -> None:
+    for batch in (wake_context or {}).get("wake_batches", []):
+        if isinstance(batch, dict) and (key := _wake_batch_key(batch)) is not None:
+            _retry_wake_batches.pop(key, None)
+
+
+def _restore_wake_context(wake_context: dict | None, *, now: float | None = None) -> int:
     """Retain drained batches after a non-terminal portfolio review.
 
-    These batches already passed coalescing and rate limiting.  Keeping the exact
-    context avoids both a second token charge and degradation into a generic
-    entry-opportunity evaluation.
+    These batches already passed coalescing and rate limiting. Keeping the exact
+    context avoids degradation into a generic entry evaluation, while capped
+    exponential backoff prevents a provider failure from creating a retry storm.
     """
+    if now is None:
+        now = asyncio.get_running_loop().time()
     restored = 0
+    seen: set[str] = set()
     for batch in (wake_context or {}).get("wake_batches", []):
-        if not isinstance(batch, dict) or not batch.get("position_id"):
+        if not isinstance(batch, dict):
             continue
-        _retry_wake_batches.append(batch)
+        key = _wake_batch_key(batch)
+        if key is None or key in seen:
+            continue
+        previous = _retry_wake_batches.get(key)
+        attempt = previous.attempt + 1 if previous is not None else 1
+        delay = min(
+            _PORTFOLIO_RETRY_BASE_SEC * (2 ** (attempt - 1)),
+            _PORTFOLIO_RETRY_MAX_SEC,
+        )
+        _retry_wake_batches[key] = _RetryWakeState(
+            batch=previous.batch if previous is not None else batch,
+            attempt=attempt,
+            not_before=now + delay,
+        )
+        seen.add(key)
         restored += 1
     return restored
 
@@ -443,12 +546,22 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
             _record_job_failure(
                 "pi_trading_decision", failure_reason
             )
+            error_code = (
+                str(result.get("review_error_code") or "review_incomplete")[:80]
+                if isinstance(result, dict)
+                else "review_incomplete"
+            )
+            _last_error_summary = f"portfolio_review:{error_code}"
             logger.warning(
-                "pi_daemon: portfolio review incomplete (action=%s, restored=%d)",
+                "pi_daemon: portfolio review incomplete "
+                "(action=%s, restored=%d, next_retry_sec=%.1f)",
                 action,
                 restored,
+                _next_retry_delay(asyncio.get_running_loop().time()) or 0.0,
             )
             return _EVALUATION_RETRY_PENDING
+        if is_portfolio_review:
+            _clear_retry_wake_context(wake_context)
         _record_job_success("pi_trading_decision")
         _last_error_summary = None
         return max(int(remaining or 0), 0)
