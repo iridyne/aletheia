@@ -386,6 +386,8 @@ def test_resume_gate_keeps_connectivity_owned_pause(tmp_path, monkeypatch):
     cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
     cfg.runtime.paused = True
     cfg.runtime.paused_by_connectivity = True
+    cfg.runtime.connectivity_pause_generation = "test-connectivity-generation"
+    cfg.runtime.connectivity_pause_acquired_at = "2026-08-07T00:00:00+00:00"
     save_config(cfg)
     probe_called = False
 
@@ -405,6 +407,7 @@ def test_resume_gate_keeps_connectivity_owned_pause(tmp_path, monkeypatch):
     persisted = load_config()
     assert persisted.runtime.paused is True
     assert persisted.runtime.paused_by_connectivity is True
+    assert persisted.runtime.connectivity_pause_generation == "test-connectivity-generation"
     from aletheia.files.jsonl import read_jsonl
 
     events = [e for e in read_jsonl("audit.jsonl") if e.get("event_type") == "gateway_resume_blocked"]
