@@ -13,6 +13,7 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 import time
+from uuid import uuid4
 
 logger = logging.getLogger("aletheia.connectivity")
 
@@ -368,9 +369,13 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
         cfg.exchange.name, _consecutive_failures,
     )
 
+    pause_generation = uuid4().hex
+    pause_acquired_at = datetime.now(timezone.utc).isoformat()
     pause_scheduler()
     cfg.runtime.paused = True
     cfg.runtime.paused_by_connectivity = True
+    cfg.runtime.connectivity_pause_generation = pause_generation
+    cfg.runtime.connectivity_pause_acquired_at = pause_acquired_at
     save_config(cfg)
 
     emit_infra_event(
@@ -387,6 +392,12 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
         "entity_type": "gateway",
         "entity_id": "gateway",
         "message": f"Paused: {cfg.exchange.name} unreachable — {probe_result.get('error', '')}",
+        "after": {
+            "paused": True,
+            "pause_owner": "connectivity",
+            "pause_generation": pause_generation,
+            "pause_acquired_at": pause_acquired_at,
+        },
     })
 
     try:
@@ -412,17 +423,21 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
         mode = _choose_resume_scheduling(_uvicorn_loop, running)
         if mode == "threadsafe":
             _active_resume_task = asyncio.run_coroutine_threadsafe(
-                _exchange_auto_resume_loop(interval), _uvicorn_loop,
+                _exchange_auto_resume_loop(interval, pause_generation), _uvicorn_loop,
             )
         elif mode == "create_task":
             _active_resume_task = running.create_task(
-                _exchange_auto_resume_loop(interval), name="exchange_auto_resume",
+                _exchange_auto_resume_loop(interval, pause_generation),
+                name="exchange_auto_resume",
             )
         else:
             logger.error("connectivity auto-resume: no event loop available to schedule resume task")
 
 
-async def _exchange_auto_resume_loop(interval_sec: int = 60) -> None:
+async def _exchange_auto_resume_loop(
+    interval_sec: int = 60,
+    pause_generation: str | None = None,
+) -> None:
     """Probe exchange until connectivity returns, then resume scheduler."""
     global _consecutive_failures, _consecutive_successes
 
@@ -435,6 +450,9 @@ async def _exchange_auto_resume_loop(interval_sec: int = 60) -> None:
 
         from aletheia.config.loader import load_config
         cfg = load_config()
+
+        if pause_generation is None:
+            pause_generation = cfg.runtime.connectivity_pause_generation
 
         if not cfg.runtime.paused:
             logger.info("exchange_auto_resume: system already resumed — exiting")
@@ -454,7 +472,10 @@ async def _exchange_auto_resume_loop(interval_sec: int = 60) -> None:
                 successes_needed,
             )
             if _consecutive_successes >= successes_needed:
-                recovery_attempt_finished = await _resume_from_network(cfg)
+                recovery_attempt_finished = await _resume_from_network(
+                    cfg,
+                    pause_generation=pause_generation,
+                )
                 if recovery_attempt_finished:
                     return
         else:
@@ -509,7 +530,11 @@ def _escalate_exchange_stall(cfg, last_result: dict, consecutive: int) -> None:
         pass
 
 
-async def _resume_from_network(cfg) -> bool:
+async def _resume_from_network(
+    cfg,
+    *,
+    pause_generation: str | None = None,
+) -> bool:
     """Release the connectivity-owned pause after exchange recovery.
 
     Return ``False`` only when a newer exchange failure invalidated this
@@ -517,11 +542,21 @@ async def _resume_from_network(cfg) -> bool:
     """
     from aletheia.config.loader import load_config
 
+    if pause_generation is None:
+        pause_generation = cfg.runtime.connectivity_pause_generation
+
     # Reload immediately before deciding: this task can outlive the outage that
     # created it, and a different gate/operator may now own the shared pause.
     cfg = load_config()
     if not cfg.runtime.paused_by_connectivity:
         logger.info("exchange_auto_resume: pause is not connectivity-owned — exiting")
+        return True
+    active_pause_generation = cfg.runtime.connectivity_pause_generation
+    if not pause_generation or active_pause_generation != pause_generation:
+        logger.warning(
+            "exchange_auto_resume: connectivity pause generation is absent or changed "
+            "— staying paused"
+        )
         return True
     recovery_failure_generation = _exchange_failure_generation
 
@@ -554,11 +589,16 @@ async def _resume_from_network(cfg) -> bool:
     if not cfg.runtime.paused_by_connectivity:
         logger.info("exchange_auto_resume: pause ownership changed — exiting")
         return True
+    if cfg.runtime.connectivity_pause_generation != pause_generation:
+        logger.info("exchange_auto_resume: pause generation changed — staying paused")
+        return True
     if _exchange_failure_generation != recovery_failure_generation:
         logger.info("exchange_auto_resume: newer exchange failure observed — staying paused")
         return False
     cfg.runtime.paused = False
     cfg.runtime.paused_by_connectivity = False
+    cfg.runtime.connectivity_pause_generation = None
+    cfg.runtime.connectivity_pause_acquired_at = None
     save_config(cfg)
     resume_scheduler()
 
@@ -577,6 +617,16 @@ async def _resume_from_network(cfg) -> bool:
             "entity_type": "gateway",
             "entity_id": "gateway",
             "message": f"Resumed: {cfg.exchange.name} connectivity restored",
+            "before": {
+                "paused": True,
+                "pause_owner": "connectivity",
+                "pause_generation": pause_generation,
+            },
+            "after": {
+                "paused": False,
+                "pause_owner": None,
+                "pause_generation": None,
+            },
         }
     )
 
