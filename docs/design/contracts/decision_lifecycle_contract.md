@@ -5,7 +5,7 @@
 > 其他契约**竖切**单个子系统(风控/执行/agent/知识);本契约负责它们之间的交接。
 > **不重复**子系统细节 —— 指向已有契约。
 > **基线**:代码为底(file:line);冲突时文档为准。
-> Last updated: 2026-08-07 (v1.8:`skip_kind` 允许非 skip 决策显式返回 JSON `null`) · 维护者:Aletheia Dev · 研究证据:`docs/research/audits/OPPORTUNITY_END_TO_END_LIFECYCLE_AUDIT_2026-07-18.md`
+> Last updated: 2026-08-07 (v1.9:Operator 与 Risk 共享 `[1.00, 10.00]` 入场 RR 合理性包络) · 维护者:Aletheia Dev · 研究证据:`docs/research/audits/OPPORTUNITY_END_TO_END_LIFECYCLE_AUDIT_2026-07-18.md`
 
 ---
 
@@ -23,8 +23,9 @@
 跳5 定夺    trading_decision.py:evaluate → LLM → TradingDecision  ★唯一开仓决策权★
             action=trade 的结构化输出必须显式给出 market_type、有限正数 stop_price/take_profit 和五项参数理由；
             schema 不通过先走 llm_structured 有界重试，语义仍不完整再走一次现有修复，最终失败则 defer。
-            相对推理前精确 mark 的反向保护价也走同一次修复；提交前刷新 mark 若已过期/不可用或
-            穿越保护位，则记入 filter trace 并 typed defer，不改写计划、不消费 carrier。
+            相对推理前精确 mark 的反向保护价或超出 `[1.00, 10.00]` 的价格推导 RR 也走同一次修复；
+            提交前刷新 mark 若已过期/不可用、穿越保护位或使 RR 超出包络，则记入 filter trace 并 typed defer，
+            不改写计划、不消费 carrier。
             direct skip → 一次有界反事实确认；只有候选特定 adverse evidence 才可终结
             conviction∈[40,80] 触发 bull/bear debate;conviction<55(初始或 debate 后)是
             非终态 defer(DL-INV-2 v1.5)——抛 typed DecisionUnavailable，保留 pending
@@ -88,7 +89,7 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 | `opportunity_id` / `strategy_id` / `scanner_family` | `str \| None` | R0 归因,由 `_attach_opportunity_context` 回填(`trading_decision.py:909`)。 |
 | `signal_source` | `str` | 机会来源,默认 `market_observer`;`serenity` 表示解析 `serenity_opportunities.id`(`:85`)。值域 = {`market_observer`,`serenity`}。 |
 | `bear_case` | `str` | S4 强制反方论证。新 LLM 决策 schema 必填；空值仅允许历史记录。 |
-| `stop_price` / `take_profit` | `float \| None` | `trade` 的 LLM schema 与解析边界要求两者都是显式有限正数；缺失/0/NaN/Infinity 触发有界修复，不能由配置替模型补值。跳6 用提交时新鲜精确 mark 校验多空几何；不合法则 `DecisionUnavailable`，不改写模型计划。`skip` 不要求这些字段。 |
+| `stop_price` / `take_profit` | `float \| None` | `trade` 的 LLM schema 与解析边界要求两者都是显式有限正数；缺失/0/NaN/Infinity 触发有界修复，不能由配置替模型补值。跳6 用新鲜精确 mark 校验多空几何及 `1.00 <= round(abs(tp-entry)/abs(entry-stop), 2) <= 10.00`；初稿越界走一次有界修复，二次仍错或提交时 mark 刷新导致越界则 `DecisionUnavailable(operator_entry_plan)`，不改写模型计划。`skip` 不要求这些字段。 |
 | `parameter_rationale` | `dict[str,str]` | 新开仓的五项 AI 理由：`entry_price` / `stop_loss` / `take_profit` / `notional_usdt` / `leverage`。仅 `trade` 的 LLM schema/解析路径要求全部为非空字符串；缺项触发同一有界输出修复，最终仍不完整则不创建 final PiDecision/Proposal。最终入场价同时保存实际 `market_snapshot_id / market_type / snapshot_at`，不是只写“来自快照”；详见 `trade_decision_rationale_contract.md`。 |
 
 ### 2.2a PiDecision（耐久 Operator 事实）
@@ -296,9 +297,10 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 | `DL-S40` | L2b | 必需 bull/bear debate 任一不可用时整轮可重试，零最终决定 |
 | `DL-S41` | L2b | 提交前精确报价缺失/过期时形成可审计 `operator_entry_plan` defer，零最终决定/Proposal，pending 保持 queued |
 | `DL-S67` | L2b | `trade` 结构化输出缺失/无效 market_type、stop/TP 或五项理由时先有界修复、最终仍不完整则 typed defer；`skip` 不被迫伪造入场字段；配置不能改写模型保护计划 |
-| `DL-S68` | L2b | 推理前 mark 下反向保护价先走同一次有界修复；修复成功时初稿只记非 cohort error、正式 first exposure=passed，二次仍错才 rejected；提交前刷新 mark 穿越保护位则记录 pass→reject trace、typed defer 且 carrier 不消费 |
+| `DL-S68` | L2b | 推理前 mark 下反向保护价或价格推导 RR 超出 `[1.00, 10.00]` 先走同一次有界修复；修复成功时初稿只记非 cohort error、正式 first exposure=passed，二次仍错才 rejected；提交前刷新 mark 穿越保护位或使 RR 越界，则记录 pass→reject trace、typed defer 且 carrier 不消费 |
 | `DL-S69` | L2b | 新 Operator `spot+short` 先走一次有界修复、仍不合法则 typed defer；不得创建 futures Proposal、不得消费原 spot carrier；历史 coercion 仅作恢复兼容 |
 | `DL-S70` | L2b | `_DECISION_SCHEMA.skip_kind` 仅接受既有两个字符串或 JSON `null`；`trade+null` schema-valid，未登记的非空值仍是 `outside_enum`，`skip+null` 仍由 direct-skip validation typed defer 且不消费 carrier |
+| `DL-S71` | L2b | Operator 入场 RR 越界初稿只允许一次有界修复；二次仍越界时稳定返回 `operator_output_not_repaired:invalid_operator_entry_plan_risk_reward:outside_envelope`，零 final PiDecision/Proposal 且 Opportunity 保持 queued；当前边界只在 trace parameters 与契约中表达 |
 | `DL-C01` | L2c | `_MIN_CONVICTION_TO_TRADE == 55`(改阈值即爆红,强制同步本契约) |
 | `DL-C02` | L2c | Proposal 前置不可用返回稳定 typed reason；确定性方向拒绝仍是明确 skip |
 

@@ -52,7 +52,7 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 | 1b | Local Paper Causal Identity | authoritative `native + paper_internal` 必须在 `opportunities` 与 `serenity_opportunities` 中恰有一个 durable carrier，且 canonical symbol、physical market、direction 完全一致 | —（始终启用） | `proposal_opportunity_required/not_found/ambiguous/symbol_mismatch/market_mismatch/direction_mismatch/check_error` | engine.py `_paper_opportunity_identity_violations` |
 | 2 | Market Allowed | spot/futures 开关 | `exchange.enabled_markets` | `spot_market_disabled`（market_type=='spot' 且 enabled_markets['spot']==False）/ `futures_market_disabled`（market_type=='usdt_futures' 且 enabled_markets['usdt_futures']==False） | :93 |
 | 2a | Local Futures Funding Ready | `paper_internal` 合约开仓前须有该 symbol 15 分钟内的主 venue 下一结算快照 | `funding_rate_snapshots` | `local_paper_futures_funding_unavailable` | engine.py check #2a |
-| 2b | Complete Entry Plan | 每个 native 本地纸面 market 入场及 native exchange limit 入场必须在 Risk 前固定有限正数的 entry/stop/take-profit/risk_reward；多空几何正确，risk_reward 必须等于 `round(abs(tp-entry)/abs(entry-stop), 2)`。exchange market close/reduce 与 adopted chain 豁免 | —（Proposal immutable fields） | `incomplete_entry_plan:{fields}` / `entry_plan_geometry:*` / `entry_plan_risk_reward_mismatch` | engine.py check #2b/#2c |
+| 2b | Complete Entry Plan | 每个 native 本地纸面 market 入场及 native exchange limit 入场必须在 Risk 前固定有限正数的 entry/stop/take-profit/risk_reward；多空几何正确，risk_reward 必须等于 `round(abs(tp-entry)/abs(entry-stop), 2)` 且该结果必须在包含边界的 `[1.00, 10.00]` 合理性包络内。exchange market close/reduce 与 adopted chain 豁免 | —（Proposal immutable fields） | `incomplete_entry_plan:{fields}` / `entry_plan_geometry:*` / `entry_plan_risk_reward_mismatch` / `entry_plan_risk_reward_outside_envelope` | engine.py check #2b/#2c |
 | 3 | Live State | 非 `live_disabled` | `live.state` | `live_disabled` | :99 |
 | 4 | Permission Mode | Observe 仅 paper_internal | `agent.permission_mode` | `permission_mode_insufficient:{mode}` | :104 |
 | 5 | Max Position Notional | live/demo 配置上限与对应账户的本地可用 USDT 取较小值，再应用回撤缩放；`paper_internal` 必须读取本地纸面账户账本，读取失败不可退回配置资金。Demo 默认 100,000 USDT，设置 API 只保留正数下限、不施加应用层最大值；live 边界不变 | `risk.max_{live/demo}_position_notional_usdt` + local exchange-account cache / paper-account ledger | `exceeds_max_position_notional:{n}>{cap}` (live path); `exceeds_demo_position_notional:{n}>{cap}` (demo path); `paper_account_balance_unavailable` | :109 |
@@ -77,9 +77,9 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 >
 > **本地纸面入场不是“有一条新鲜行情就够了”**：Risk 会重新读取精确 venue+symbol+physical-market
 > mark，并核对 hash-covered Proposal.price。报价不一致、行情缺失/过期、两张 Opportunity 表发生同 ID
-> 冲突，或入场计划缺字段/数学自相矛盾，都会在 authoritative RiskDecision 中拒绝且保持零
+> 冲突，或入场计划缺字段/数学自相矛盾/RR 超出 `[1.00, 10.00]` 合理性包络，都会在 authoritative RiskDecision 中拒绝且保持零
 > Order/Fill/Position。合法 Proposal 以 mark 获批后，paper broker 才按配置施加不利滑点。spec:
-> `PL-RG-07~13`、`PL-EC-01~05`。
+> `PL-RG-07~14`、`PL-EC-01~05`。
 >
 > ⚠️ 关卡 #5 的回撤缩放(`_portfolio_drawdown_scale`, engine.py:356):缩放系数(0-5% DD→1.0, 5-10%→1.0→0.5, 10-20%→0.5→0.0, >20%→0)由组合回撤驱动。**回撤的数据源**:交易所模式(okx_demo/*_demo/live)读 `portfolio_snapshots` 的 `exchange_account` 行(真实账户 equity),**不读**每个 mode 自己的行——后者的 `total_value_usdt` 是持仓 notional(Σqty×price)而非 equity,平掉盈利持仓会让 notional 暴跌被误判成回撤、把 cap 缩到 $0 锁死开仓。paper_internal 没有可信的模拟账户权益序列：本地快照是持仓名义金额，外部账户快照属于另一账户，因此它跳过回撤缩放并继续受固定上限、日损和持仓数限制。spec: RE-B05(分段)+ RE-B05a(交易所数据源)+ RE-B05b(本地模拟)。
 

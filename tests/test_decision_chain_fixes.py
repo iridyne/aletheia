@@ -336,6 +336,100 @@ def test_unrepaired_prompt_mark_geometry_is_typed_entry_plan_defer(monkeypatch):
     assert exc_info.value.filter_trace[-1]["decision"] == "rejected"
 
 
+@pytest.mark.parametrize(
+    "invalid_take_profit",
+    [100.99, 110.01, 655.09],
+    ids=["below-minimum", "above-maximum", "observed-outlier"],
+)
+def test_out_of_envelope_risk_reward_uses_bounded_output_repair(
+    monkeypatch, invalid_take_profit
+):
+    """A plausible geometry still needs a bounded reward:risk magnitude."""
+    import asyncio
+    import aletheia.agent_shell.trading_decision as td
+
+    invalid = _complete_trade_payload(
+        stop_price=99.0,
+        take_profit=invalid_take_profit,
+    )
+    repaired = _complete_trade_payload(stop_price=98.0, take_profit=104.0)
+    repair_reasons: list[str] = []
+
+    async def assess(_ctx):
+        return invalid
+
+    async def repair(_ctx, prior, validation_reason):
+        assert prior is invalid
+        repair_reasons.append(validation_reason)
+        return repaired
+
+    monkeypatch.setattr(td, "_assess_opportunity", assess)
+    monkeypatch.setattr(td, "_reassess_direct_skip", repair)
+    monkeypatch.setattr(td, "_proposal_bias_brake_reason", lambda _decision: None)
+    monkeypatch.setattr(td, "_get_strategy_paper_trade_count", lambda _strategy_id: 0)
+    monkeypatch.setattr(td, "_compute_position_size", lambda *_args, **_kwargs: 25.0)
+
+    decision = asyncio.run(td.evaluate_trading_opportunity({
+        "layer2": {
+            "entry_mark": {
+                "status": "available",
+                "symbol": "BTC/USDT",
+                "market_type": "spot",
+                "price": 100.0,
+                "authority": "fresh_exact_market_mark",
+            },
+        },
+    }))
+
+    assert repair_reasons == [
+        "invalid_operator_entry_plan_risk_reward:outside_envelope"
+    ]
+    assert decision.stop_price == 98.0
+    assert decision.take_profit == 104.0
+
+
+def test_unrepaired_out_of_envelope_risk_reward_is_typed_defer(monkeypatch):
+    """A second implausible plan cannot become a Proposal-ready decision."""
+    import asyncio
+    import aletheia.agent_shell.trading_decision as td
+
+    invalid = _complete_trade_payload(stop_price=99.0, take_profit=655.09)
+
+    async def assess(_ctx):
+        return invalid
+
+    async def repair(_ctx, _prior, validation_reason):
+        assert validation_reason == (
+            "invalid_operator_entry_plan_risk_reward:outside_envelope"
+        )
+        return invalid
+
+    monkeypatch.setattr(td, "_assess_opportunity", assess)
+    monkeypatch.setattr(td, "_reassess_direct_skip", repair)
+
+    with pytest.raises(
+        DecisionUnavailable,
+        match=(
+            "operator_output_not_repaired:"
+            "invalid_operator_entry_plan_risk_reward:outside_envelope"
+        ),
+    ) as exc_info:
+        asyncio.run(td.evaluate_trading_opportunity({
+            "layer2": {
+                "entry_mark": {
+                    "status": "available",
+                    "symbol": "BTC/USDT",
+                    "market_type": "spot",
+                    "price": 100.0,
+                    "authority": "fresh_exact_market_mark",
+                },
+            },
+        }))
+
+    assert exc_info.value.stage == "operator_entry_plan"
+    assert exc_info.value.filter_trace[-1]["decision"] == "rejected"
+
+
 def test_operator_spot_short_repairs_then_defers_without_relabel(monkeypatch):
     """A spot carrier cannot silently become a futures short after inference."""
     import asyncio
