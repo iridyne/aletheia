@@ -107,10 +107,11 @@ and the logical call remains an error.
 
 Reasoning control is caller-owned and default-off. `llm_structured()` preserves
 the existing provider request shape unless a caller explicitly selects a
-`reasoning_effort`. Market Observer selects `none` because its bounded market
-read requires immediate schema output and does not have budget for a separate
-reasoning phase. OpenAI-compatible adapters send that field only when selected.
-If an endpoint returns a 400/422 that explicitly identifies
+`reasoning_effort`. Market Observer, News Analyzer, and the System Operator's
+assessment, reassessment, and Bull/Bear debate calls select `none` because these
+bounded reads require immediate schema output and do not have budget for a
+separate reasoning phase. OpenAI-compatible adapters send that field only when
+selected. If an endpoint returns a 400/422 that explicitly identifies
 `reasoning_effort` as unknown or unsupported, the adapter retries that read-only
 completion exactly once without the optional field; unrelated client errors
 remain failures. Soft prompt text such as `/no_think` is not treated as proof
@@ -145,6 +146,10 @@ failure is fail-open for the business call and records no database exception tex
 - Measurement writes are best-effort and never authorize or block a trade.
 - Provider/budget/timeout/parse/schema failure finalizes the logical row as
   `error`; it is never relabelled as success because a default object exists.
+- External task cancellation finalizes an already-started logical structured call
+  as `error` with content-free `error_type=cancelled`, then re-raises the original
+  `CancelledError`. Cancellation is never converted into a default object or an
+  availability tuple.
 - Terminal parse/schema failures may add only allowlisted, content-free enums to
   `metadata_json.structured_failure`: response shape and schema error class.
   These facts diagnose a future replay without normalizing

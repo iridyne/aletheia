@@ -709,6 +709,58 @@ async def test_three_layer_context_injected_into_llm_prompt(monkeypatch):
     )
 
 
+@pytest.mark.asyncio
+async def test_operator_structured_calls_disable_provider_reasoning(monkeypatch):
+    """Bounded Operator JSON calls must reserve their budget for schema output."""
+    import aletheia.agents.helpers as helpers
+    import aletheia.model_provider.router as router
+    from aletheia.agent_shell import trading_decision
+
+    captured: dict[str, str | None] = {}
+
+    async def _fake_llm(
+        _system,
+        _user,
+        *,
+        schema,
+        caller,
+        reasoning_effort=None,
+        **_kwargs,
+    ):
+        del schema
+        captured[caller] = reasoning_effort
+        if caller == "system_operator.debate_bull":
+            return {"confidence": 60, "thesis": "bull", "evidence": []}, None
+        if caller == "system_operator.debate_bear":
+            return {"confidence": 40, "thesis": "bear", "evidence": []}, None
+        return {"action": "skip"}, None
+
+    monkeypatch.setattr(helpers, "llm_structured", _fake_llm)
+    monkeypatch.setattr(router, "get_provider_for_tier", lambda _tier: "mock_provider")
+    monkeypatch.setattr(
+        trading_decision, "_build_assessment_prompt", lambda _ctx: "assessment"
+    )
+    monkeypatch.setattr(
+        trading_decision, "_build_bull_prompt", lambda *_args: "bull"
+    )
+    monkeypatch.setattr(
+        trading_decision, "_build_bear_prompt", lambda *_args: "bear"
+    )
+
+    await trading_decision._assess_opportunity({})
+    await trading_decision._reassess_direct_skip(
+        {}, {"action": "skip"}, "counterfactual_confirmation_required"
+    )
+    await trading_decision._run_debate("BTC/USDT", "long", {})
+
+    assert captured == {
+        "system_operator.assess_opportunity": "none",
+        "system_operator.reassess_direct_skip": "none",
+        "system_operator.debate_bull": "none",
+        "system_operator.debate_bear": "none",
+    }
+
+
 @spec_claim(
     SpecClaim(
         "PI-S09",
