@@ -1,6 +1,7 @@
 """Overview PnL must keep polling and explain unavailable realized economics."""
 
 from pathlib import Path
+from datetime import datetime
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,38 @@ def test_overview_portfolio_and_curve_poll_at_status_cadence() -> None:
     assert "AccountEquityChart" in pnl_zone
     assert "getAccountEquityHistory" in chart
     assert "refetchInterval: 60_000" in chart
+
+
+def test_overview_curve_uses_the_same_current_portfolio_reading() -> None:
+    """The hero and provisional chart tail must advance from one query result."""
+    pnl_zone = (ROOT / "frontend/src/components/PnLZone.tsx").read_text(encoding="utf-8")
+    chart = (ROOT / "frontend/src/charts/AccountEquityChart.tsx").read_text(encoding="utf-8")
+
+    assert "const uta = p?.uta_state" in pnl_zone
+    assert "queryKey: ['utaState']" not in pnl_zone
+    assert "currentPoint={totalRaw" in pnl_zone
+    assert "rawSeries.update" in chart
+    assert "chart.remove()" in chart
+    assert "Full replacement is reserved for durable-history" in chart
+
+
+def test_portfolio_response_timestamps_the_cached_computation(monkeypatch) -> None:
+    """as_of remains stable for a cached reading and names its computation time."""
+    from aletheia.server.routes import data as data_routes
+
+    monkeypatch.setattr(data_routes, "_portfolio_cache", None)
+    monkeypatch.setattr(
+        data_routes,
+        "compute_portfolio",
+        lambda execution_mode=None: {"account_equity_usdt": 4321.0},
+    )
+
+    first = data_routes.get_portfolio()
+    second = data_routes.get_portfolio()
+
+    assert first == second
+    assert first["account_equity_usdt"] == 4321.0
+    assert datetime.fromisoformat(first["as_of"])
 
 
 def test_overview_explains_unavailable_realized_pnl() -> None:

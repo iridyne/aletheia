@@ -57,6 +57,7 @@ VALID_KNOWLEDGE_TYPES = {
 # --- In-process result caches (avoids re-computing expensive aggregations on every poll) ---
 _portfolio_cache_lock = threading.Lock()
 _portfolio_cache: "tuple[float, dict] | None" = None
+_PORTFOLIO_CACHE_TTL_SEC = 8.0
 
 _equity_history_cache_lock = threading.Lock()
 _equity_history_cache: "dict[tuple, tuple[float, dict]]" = {}
@@ -1118,9 +1119,15 @@ def get_portfolio():
     with _portfolio_cache_lock:
         if _portfolio_cache is not None:
             ts, cached = _portfolio_cache
-            if now - ts < 30.0:
+            if now - ts < _PORTFOLIO_CACHE_TTL_SEC:
                 return cached
-    result = compute_portfolio(execution_mode=None)
+    result = {
+        **compute_portfolio(execution_mode=None),
+        # This timestamp belongs to the cached computation, not the HTTP
+        # response. Overview uses it for the provisional right-edge equity
+        # point so the headline and chart always describe the same reading.
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
     with _portfolio_cache_lock:
         _portfolio_cache = (now, result)
     return result

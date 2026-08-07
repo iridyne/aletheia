@@ -2501,6 +2501,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .pnl-curve { margin-bottom: 0; }
 .pnl-curve-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .pnl-curve-header h3 { margin: 0; }
+.pnl-curve-updated { display: block; margin-top: 2px; color: var(--muted); font-size: 0.72rem; }
 .time-range-selector { display: flex; gap: 2px; background: var(--surface-2); border-radius: 6px; padding: 2px; }
 .time-range-btn { padding: 4px 10px; font-size: 0.7rem; font-weight: 500; border: none; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; transition: background 0.12s, color 0.12s; }
 .time-range-btn:hover { color: var(--text); }

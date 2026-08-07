@@ -12,6 +12,16 @@ const SLICE_COLORS = ['#00e5ff', '#7c3aed', '#f59e0b', '#10b981', '#f43f5e', '#3
 // money panel aligned so an open page never freezes at its initial value.
 const OVERVIEW_PNL_REFRESH_MS = 10_000
 
+function updatedAgo(value: unknown): string | null {
+  if (!value) return null
+  const timestamp = Date.parse(String(value))
+  if (!Number.isFinite(timestamp)) return null
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000))
+  if (seconds < 60) return `${seconds}s ago`
+  const minutes = Math.floor(seconds / 60)
+  return minutes < 60 ? `${minutes}m ago` : `${Math.floor(minutes / 60)}h ago`
+}
+
 interface AssetItem { coin: string; usdt_value: number; pct: number }
 
 function AssetPie({ items }: { items: AssetItem[] }) {
@@ -207,7 +217,6 @@ export default function PnLZone() {
     refetchInterval: OVERVIEW_PNL_REFRESH_MS,
     staleTime: 8000,
   })
-  const { data: utaState } = useQuery({ queryKey: ['utaState'], queryFn: api.getUtaState, refetchInterval: 30000, staleTime: 28000 })
   const [hovered, setHovered] = useState(false)
   const [rangeDays, setRangeDays] = useState<number | undefined>(30)
 
@@ -217,7 +226,10 @@ export default function PnLZone() {
   const toneOf = (n: number | null) => (n == null ? 'muted' : n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral')
 
   const p = portfolio as any
-  const uta = utaState as any
+  // Keep every headline number and the chart's provisional tail on the same
+  // cached portfolio computation. A separate /uta/state query could advance
+  // the hero independently and leave the curve visibly behind.
+  const uta = p?.uta_state as any
 
   // UTA unified equity takes priority when available and has multiple accounts
   const utaEquity = uta?.sync_status === 'ok' && uta?.total_equity_usdt > 0 ? uta.total_equity_usdt : null
@@ -272,6 +284,7 @@ export default function PnLZone() {
 
   const todayPnlBySymbol = (p?.today_pnl_by_symbol || {}) as Record<string, number | null>
   const unrealBySymbol = (p?.unrealized_by_symbol || {}) as Record<string, number>
+  const portfolioUpdatedAgo = updatedAgo(p?.as_of)
 
   return (
     <div className="pnl-zone">
@@ -356,7 +369,10 @@ export default function PnLZone() {
       {/* One account-equity curve.  Raw and verified PnL cohorts live in Analytics. */}
       <div className="card pnl-curve">
         <div className="pnl-curve-header">
-          <h3>Account Equity</h3>
+          <div>
+            <h3>Account Equity</h3>
+            {portfolioUpdatedAgo && <span className="pnl-curve-updated">Updated {portfolioUpdatedAgo}</span>}
+          </div>
           <div className="time-range-selector">
             {([{ label: '7D', days: 7 }, { label: '30D', days: 30 }, { label: '90D', days: 90 }, { label: 'All', days: undefined }] as const).map(opt => (
               <button
@@ -369,7 +385,13 @@ export default function PnLZone() {
             ))}
           </div>
         </div>
-        <AccountEquityChart days={rangeDays} />
+        <AccountEquityChart
+          days={rangeDays}
+          currentPoint={totalRaw != null && p?.as_of ? {
+            time: String(p.as_of),
+            equity_usdt: Number(totalRaw),
+          } : null}
+        />
       </div>
     </div>
   )
