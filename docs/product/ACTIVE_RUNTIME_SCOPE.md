@@ -14,7 +14,7 @@ risk_authority: aletheia.risk.engine.evaluate_proposal
 execution_entrypoint: aletheia.execution.gateway.submit_proposal
 outcome_entrypoint: aletheia.portfolio.outcome_closure.close_position_verified
 learning_measurement: enabled
-learning_influence_default: disabled
+learning_influence_default: enabled_owner_gated
 learning_authority_gate: aletheia.learning.experiments.apply_numeric_treatment
 causal_chain:
   - opportunity
@@ -41,11 +41,11 @@ mode is the local `paper_internal` simulator. Exchange demo modes remain support
 adapters, but are not part of this active-scope proof until an owner-selected demo
 mode is added here with matching Golden Path and replay evidence.
 
-Learning may keep measuring outcomes and recording shadow/control exposure while
-behavioural influence is disabled by default. A Learning result can affect a later
-decision only through the declared authority gate, with a neutral fallback when
-prospective evidence is missing or invalid. It never gains direct risk, execution,
-credential, or live-unlock authority.
+Learning measurement, lifecycle automation, and the sole measured Paper influence
+path are enabled by default. A Learning result can affect a later decision only
+after explicit owner trial admission and through the declared authority gate, with
+a neutral fallback when prospective evidence is missing or invalid. It never gains
+direct risk, execution, credential, or live-unlock authority.
 
 ## Enforced boundaries
 

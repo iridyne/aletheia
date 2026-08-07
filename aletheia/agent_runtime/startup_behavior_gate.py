@@ -327,11 +327,11 @@ def _check_reconciliation_incident(cfg) -> tuple[bool, str]:
 def _check_learning_influence(cfg) -> tuple[bool, str]:
     """Learning influence / lifecycle automation / allowlist must be self-consistent.
 
-    The active scope keeps behavioural influence disabled by default; enabling it
-    is a deliberate override that is only valid with a non-empty allowlist and a
-    bounded allocation. Contradictory settings (lifecycle automation on while
-    influence is off, influence on with an empty allowlist, an allocation outside
-    (0, 0.90]) indicate a misconfigured surface and must block the trading loop.
+    The active scope enables the measured Paper capability by default, while
+    experiment authority remains independently owner-gated. Contradictory settings
+    (lifecycle automation on while influence is off, influence on with an empty
+    allowlist, or an allocation outside (0, 0.90]) indicate a misconfigured surface
+    and must block the trading loop.
     """
     try:
         learning = cfg.learning
@@ -347,7 +347,7 @@ def _check_learning_influence(cfg) -> tuple[bool, str]:
         return False, f"paper_active_allocation_pct={alloc} outside (0, 0.90]"
 
     if not learning.paper_influence_enabled:
-        return True, "influence disabled (scope default)"
+        return True, "influence disabled by configured override"
     return True, f"influence enabled over {len(learning.paper_influence_paths)} path(s)"
 
 

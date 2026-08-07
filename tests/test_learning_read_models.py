@@ -300,7 +300,7 @@ def test_lco_projection_keeps_measurement_when_operations_read_fails(
     }
     assert result["operations"]["evaluator"] is None
     assert result["operations"]["lifecycle_audit"] is None
-    assert result["operations"]["config"]["paper_influence_enabled"] is False
+    assert result["operations"]["config"]["paper_influence_enabled"] is True
     assert result["data_freshness"]["state"] == "unavailable"
     assert result["items"]
     assert "private operations failure" not in str(result)
@@ -1005,7 +1005,7 @@ def test_lco_projection_excludes_unsupported_paths_when_window_is_full(
     import aletheia.config.loader as loader_mod
     from aletheia.config.schema import AletheiaConfig, LearningConfig
 
-    # Part A: empty paper_influence_paths — the deployed configuration.
+    # Part A: canonical defaults include the sole measurement-supported path.
     monkeypatch.setattr(
         loader_mod, "load_config", lambda **_kwargs: AletheiaConfig(),
     )
@@ -1015,12 +1015,12 @@ def test_lco_projection_excludes_unsupported_paths_when_window_is_full(
     result_default = build_learning_contribution_projection(limit=20)
     returned_ids_default = {item["experiment_id"] for item in result_default["items"]}
     assert ufc_experiment_id in returned_ids_default, (
-        "A measured experiment must stay visible with an empty influence allowlist"
+        "A measured experiment must stay visible with the default influence allowlist"
     )
     assert len(result_default["items"]) == 1
     assert all(item["path_id"] != "filler_path" for item in result_default["items"])
 
-    # Part B: authority configuration does not widen measurement eligibility.
+    # Part B: an explicit authority configuration does not widen measurement eligibility.
     influence_cfg = AletheiaConfig(
         learning=LearningConfig(paper_influence_paths=["universe_family_calibration"])
     )

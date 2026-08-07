@@ -1044,7 +1044,7 @@ def test_retired_operator_path_cannot_recover_legacy_authority(monkeypatch):
     assert decision.reason == "measurement_unsupported"
 
 
-def test_canonical_defaults_keep_numeric_consumers_on_static_baseline(monkeypatch):
+def test_canonical_defaults_keep_unadmitted_shadow_consumers_on_static_baseline(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
     import aletheia.learning.authority as authority
     import aletheia.learning.control as control
@@ -1066,12 +1066,12 @@ def test_canonical_defaults_keep_numeric_consumers_on_static_baseline(monkeypatc
         consumer="universe_allocator", consumer_stage="score",
     )
 
-    assert cfg.learning.lifecycle_automation_enabled is False
-    assert cfg.learning.paper_influence_enabled is False
-    assert cfg.learning.paper_influence_paths == []
+    assert cfg.learning.lifecycle_automation_enabled is True
+    assert cfg.learning.paper_influence_enabled is True
+    assert cfg.learning.paper_influence_paths == ["universe_family_calibration"]
     assert decision.value == 1.0
     assert decision.applied is False
-    assert decision.reason == "baseline:paper_influence_disabled"
+    assert decision.reason == "baseline:experiment_not_active"
 
 
 def test_refrozen_hypothesis_reopens_only_for_new_behavior_contract(monkeypatch):
@@ -1177,7 +1177,7 @@ def test_refrozen_hypothesis_reopens_only_for_new_behavior_contract(monkeypatch)
     assert successor.exposure_id is not None
     assert successor.applied is False
     assert successor.value == 1.0
-    assert successor.reason == "baseline:paper_influence_disabled"
+    assert successor.reason == "baseline:experiment_not_active"
     assert get_record("learning_hypotheses", successor.hypothesis_id)["status"] == "shadow"
     assert db.execute(
         "SELECT COUNT(*) FROM learning_experiments WHERE hypothesis_id=?",

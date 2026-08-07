@@ -122,8 +122,9 @@ not otherwise re-audited here.
   `learning_job_health` rows with that historical id are retained as history, not deleted or
   interpreted as an active schedule.
 - Measurement remains essential under layered pause and independent of autonomous Learning.
-  `learning_lifecycle_controller` is separate and default-closed; it cannot cross
-  `shadow -> paper_10`, and may only recommend explicit owner admission.
+  `learning_lifecycle_controller` is separate; its capability defaults on, but its
+  experiment authority remains owner-gated. It cannot cross `shadow -> paper_10`,
+  and may only recommend explicit owner admission.
 - A lifecycle-controller cycle with one or more isolated experiment failures completes the remaining
   experiments but persists `degraded`, advances only `next_due_at`, and does not record a successful
   watermark. A later fully successful cycle may recover current health while preserving durable

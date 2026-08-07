@@ -164,7 +164,7 @@ def test_lco_scheduler_recovery_projection_is_sanitized(tmp_path, monkeypatch):
 @spec_claim(SpecClaim(
     "LCO-C01", _CONTRACT, "§1 authority boundary", "L2c",
     "The observability UI remains read-only; admission readiness is separate from owner-route "
-    "authentication and every default-closed paper gate.",
+    "authentication and every owner-gated paper authority check.",
     status="implemented",
 ))
 def test_lco_admission_recommendation_is_read_only(tmp_path, monkeypatch):
@@ -176,9 +176,9 @@ def test_lco_admission_recommendation_is_read_only(tmp_path, monkeypatch):
     lifecycle = build_learning_contribution_projection()["items"][0]["lifecycle"]
     assert lifecycle["recommended_action"] == "admit_trial"
     assert lifecycle["authority_enabled"] is False
-    assert lifecycle["authority_block_reason"] == "paper_influence_disabled"
+    assert lifecycle["authority_block_reason"] == "experiment_stage_not_paper"
     assert lifecycle["mutation_available"] is False
-    assert lifecycle["mutation_unavailable_reason"] == "lifecycle_automation_disabled"
+    assert lifecycle["mutation_unavailable_reason"] == "harm_gate_indeterminate"
 
 
 @spec_claim(SpecClaim(

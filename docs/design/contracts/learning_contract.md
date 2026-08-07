@@ -208,8 +208,9 @@ loop contributes positively. Current behavior has these contract-relevant limita
   recommend an owner admission. The public `admit_shadow_trial` API remains fail
   closed even when passed the string `owner`; the separately scoped protected
   settings route requires explicit confirmation, server-derived current epoch
-  identity and every default-closed paper gate. Lifecycle automation and paper
-  influence remain off by default.
+  identity and every default-closed experiment-authority gate. Lifecycle
+  automation and the sole measured Paper influence path are available by default,
+  but no Shadow experiment gains treatment authority without that admission.
 - the bounded `lco-v1` owner projection exposes current measurement, cohort
   integrity and sanitized job health on the default Learning tab. Legacy
   artifact/funnel counts remain activity-oriented and cannot establish
