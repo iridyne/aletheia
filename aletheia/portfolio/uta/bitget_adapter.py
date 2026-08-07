@@ -2,7 +2,11 @@
 
 import logging
 
-from aletheia.portfolio.uta.broker_protocol import AccountInfo, BrokerPosition
+from aletheia.portfolio.uta.broker_protocol import (
+    AccountInfo,
+    BrokerPosition,
+    parse_exchange_leverage,
+)
 
 logger = logging.getLogger("aletheia.uta.bitget_adapter")
 
@@ -100,19 +104,21 @@ class BitgetDemoAdapter:
 
     async def get_positions(self) -> list[BrokerPosition]:
         futures = await self._client.get_positions()
-        return [
-            BrokerPosition(
-                symbol=p.symbol,
-                side=p.side,
-                quantity=float(p.quantity),
-                entry_price=float(p.entry_price),
-                unrealized_pnl=float(p.unrealized_pnl or 0),
-                leverage=int(p.leverage or 1),
-                mark_price=float(p.mark_price or 0),
-                opened_at_ms=p.ctime_ms,
-            )
-            for p in futures
-        ]
+        result = []
+        for position in futures:
+            leverage, leverage_source = parse_exchange_leverage(position.leverage)
+            result.append(BrokerPosition(
+                symbol=position.symbol,
+                side=position.side,
+                quantity=float(position.quantity),
+                entry_price=float(position.entry_price),
+                unrealized_pnl=float(position.unrealized_pnl or 0),
+                leverage=leverage,
+                mark_price=float(position.mark_price or 0),
+                opened_at_ms=position.ctime_ms,
+                leverage_source=leverage_source,
+            ))
+        return result
 
     async def test_connection(self) -> bool:
         try:

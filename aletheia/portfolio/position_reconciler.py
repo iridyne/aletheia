@@ -19,15 +19,16 @@ Classification is PURE and READ-ONLY (no exchange call, no DB write) — it read
 exchange cache and the local positions table. Adoption and orphan-close (which DO
 write local rows) live in later phases and are clearly separated.
 
-Match identity is the PAIR (canonical symbol, direction), never the symbol alone:
-the demo account runs hedge mode and can hold SOL long AND SOL short at the same
-time. Quantity is compared within a tolerance because the exchange aggregates fills
-(e.g. paper_trader averaging in) and may drift slightly from the local sum.
+Match identity is (canonical symbol, normalized market type, direction), never the
+symbol alone. The account may hold spot and futures exposure, plus both hedge-mode
+directions, at the same time. Quantity is compared only inside that exact identity.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -71,9 +72,75 @@ def _norm_direction(side: str) -> str:
     return s
 
 
-def _key(symbol: str, direction: str) -> tuple[str, str]:
-    """Match identity: (canonical symbol, normalised direction)."""
-    return (to_canonical(symbol), _norm_direction(direction))
+def _normalize_market_type(market_type: object) -> str | None:
+    value = str(market_type or "").strip().lower()
+    if value == "spot":
+        return "spot"
+    if value in {"perp", "futures", "swap", "usdt_futures"}:
+        return "usdt_futures"
+    return None
+
+
+def _base_key(symbol: object, direction: object) -> tuple[str, str]:
+    return (to_canonical(str(symbol or "")), _norm_direction(str(direction or "")))
+
+
+def _key(
+    symbol: object,
+    market_type: object,
+    direction: object,
+) -> tuple[str, str, str] | None:
+    """Return canonical instrument identity, or None when market type is unknown."""
+    normalized_market = _normalize_market_type(market_type)
+    if normalized_market is None:
+        return None
+    canonical_symbol, normalized_direction = _base_key(symbol, direction)
+    return (canonical_symbol, normalized_market, normalized_direction)
+
+
+class PositionAdoptionIntegrityError(ValueError):
+    """Typed, sanitized rejection for an incomplete exchange Position projection."""
+
+    def __init__(
+        self,
+        *,
+        code: str,
+        field: str,
+        symbol: str,
+        market_type: str,
+        direction: str,
+    ) -> None:
+        self.code = code
+        self.field = field
+        self.identity = {
+            "symbol": symbol,
+            "market_type": market_type,
+            "direction": direction,
+        }
+        super().__init__(
+            f"{code}: field={field} identity="
+            f"{symbol}|{market_type}|{direction}"
+        )
+
+
+@dataclass(frozen=True)
+class ReconcileIntegrityIssue:
+    reason: str
+    source: str
+    symbol: str
+    market_type: str
+    direction: str
+    row_count: int = 1
+
+    def to_dict(self) -> dict:
+        return {
+            "reason": self.reason,
+            "source": self.source,
+            "symbol": self.symbol,
+            "market_type": self.market_type,
+            "direction": self.direction,
+            "row_count": self.row_count,
+        }
 
 
 @dataclass
@@ -96,11 +163,12 @@ class ReconcileItem:
             market_type = self.local.get("market_type")
         if not market_type and self.exchange:
             market_type = self.exchange.get("market_type")
+        normalized_market = _normalize_market_type(market_type)
         return {
             "symbol": self.symbol,
             "direction": self.direction,
             "classification": self.classification,
-            "market_type": market_type,
+            "market_type": normalized_market or market_type,
             "local": self.local,
             "exchange": self.exchange,
             "qty_drift": self.qty_drift,
@@ -112,6 +180,7 @@ class ReconcileResult:
     managed: list[ReconcileItem] = field(default_factory=list)
     external: list[ReconcileItem] = field(default_factory=list)
     orphaned: list[ReconcileItem] = field(default_factory=list)
+    integrity_issues: list[ReconcileIntegrityIssue] = field(default_factory=list)
     sync_status: str = "unconfigured"
     view_evidence: dict | None = None
 
@@ -123,10 +192,12 @@ class ReconcileResult:
                 "managed": len(self.managed),
                 "external": len(self.external),
                 "orphaned": len(self.orphaned),
+                "degraded": len(self.integrity_issues),
             },
             "managed": [i.to_dict() for i in self.managed],
             "external": [i.to_dict() for i in self.external],
             "orphaned": [i.to_dict() for i in self.orphaned],
+            "integrity_issues": [issue.to_dict() for issue in self.integrity_issues],
         }
 
 
@@ -197,11 +268,23 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
             # cache. An old/partial row without broker_id cannot safely prove either
             # presence or absence for the active account, so degrade instead of
             # inferring an orphan.
-            positions_identified = all(
-                position.get("broker_id")
-                for position in unified_positions
-                if float(position.get("quantity") or 0) > 0
-            )
+            positions_identified = True
+            for position in unified_positions:
+                try:
+                    quantity = float(position.get("quantity") or 0)
+                except (TypeError, ValueError):
+                    if position.get("broker_id") in {None, target_execution_mode}:
+                        positions_identified = False
+                        break
+                    continue
+                if not math.isfinite(quantity) or quantity < 0:
+                    if position.get("broker_id") in {None, target_execution_mode}:
+                        positions_identified = False
+                        break
+                    continue
+                if quantity > 0 and not position.get("broker_id"):
+                    positions_identified = False
+                    break
             if age is not None and age < 600 and positions_identified:
                 cached = {
                     "positions": [
@@ -238,9 +321,6 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
             cached = exchange_sync.get_cached_state(account_mode)
     sync_status = exchange_sync.status_for(cached)
 
-    local_by_key: dict[tuple[str, str], dict] = {}
-    for p in in_scope:
-        local_by_key[_key(p["symbol"], p["direction"])] = p
     result.sync_status = sync_status
     if target_execution_mode:
         from aletheia.portfolio.disappearance_confirmation import build_view_evidence
@@ -267,52 +347,203 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
         return result
 
     exchange_positions = cached.get("positions") or []
-    exchange_by_key: dict[tuple[str, str], dict] = {}
-    for ep in exchange_positions:
-        # Skip zero-quantity rows the exchange sometimes returns for closed slots.
-        if float(ep.get("quantity") or 0) <= 0:
-            continue
-        exchange_by_key[_key(ep.get("symbol", ""), ep.get("side", ""))] = ep
+    expected_fingerprint = str(
+        (result.view_evidence or {}).get("account_fingerprint") or ""
+    )
+    local_groups: dict[tuple[str, str, str], list[dict]] = {}
+    exchange_groups: dict[tuple[str, str, str], list[dict]] = {}
+    blocked_bases: set[tuple[str, str]] = set()
+    blocked_keys: set[tuple[str, str, str]] = set()
 
-    # managed + external: walk the exchange (the source of truth for what exists).
-    for k, ep in exchange_by_key.items():
-        symbol, direction = k
-        lp = local_by_key.get(k)
-        if lp is not None:
-            ex_qty = float(ep.get("quantity") or 0)
-            lo_qty = float(lp.get("quantity") or 0)
-            result.managed.append(
-                ReconcileItem(
-                    symbol=symbol,
-                    direction=direction,
-                    classification="managed",
-                    local=lp,
-                    exchange=ep,
-                    qty_drift=round(ex_qty - lo_qty, 8),
-                )
-            )
+    def add_issue(
+        *,
+        reason: str,
+        source: str,
+        row: dict,
+        row_count: int = 1,
+    ) -> None:
+        raw_direction = row.get("direction") or row.get("side") or ""
+        result.integrity_issues.append(ReconcileIntegrityIssue(
+            reason=reason,
+            source=source,
+            symbol=to_canonical(str(row.get("symbol") or "")),
+            market_type=str(row.get("market_type") or "unknown"),
+            direction=_norm_direction(str(raw_direction)),
+            row_count=row_count,
+        ))
+
+    def account_matches(row: dict, source: str) -> bool:
+        fingerprint = ""
+        if source == "local":
+            raw_identity = row.get("reconciliation_identity")
+            if raw_identity:
+                try:
+                    identity = json.loads(raw_identity)
+                except (TypeError, json.JSONDecodeError):
+                    add_issue(
+                        reason="invalid_local_reconciliation_identity",
+                        source=source,
+                        row=row,
+                    )
+                    return False
+                if not isinstance(identity, dict):
+                    add_issue(
+                        reason="invalid_local_reconciliation_identity",
+                        source=source,
+                        row=row,
+                    )
+                    return False
+                fingerprint = str(identity.get("account_fingerprint") or "")
         else:
-            result.external.append(
-                ReconcileItem(
-                    symbol=symbol,
-                    direction=direction,
-                    classification="external",
-                    exchange=ep,
+            fingerprint = str(row.get("account_fingerprint") or "")
+        if fingerprint and expected_fingerprint and fingerprint != expected_fingerprint:
+            add_issue(
+                reason=f"{source}_account_fingerprint_mismatch",
+                source=source,
+                row=row,
+            )
+            return False
+        return True
+
+    def index_rows(rows: list[dict], source: str) -> dict[tuple[str, str, str], list[dict]]:
+        grouped: dict[tuple[str, str, str], list[dict]] = {}
+        for row in rows:
+            raw_direction = row.get("direction") or row.get("side") or ""
+            base = _base_key(row.get("symbol"), raw_direction)
+            normalized_market = _normalize_market_type(row.get("market_type"))
+            if normalized_market is None:
+                add_issue(
+                    reason=f"unknown_{source}_market_type",
+                    source=source,
+                    row=row,
                 )
+                blocked_bases.add(base)
+                continue
+            if not base[0] or base[1] not in {"long", "short"}:
+                add_issue(
+                    reason=f"invalid_{source}_position_identity",
+                    source=source,
+                    row=row,
+                )
+                blocked_bases.add(base)
+                continue
+            identity = (base[0], normalized_market, base[1])
+            if source == "local":
+                try:
+                    local_quantity = float(row.get("quantity"))
+                except (TypeError, ValueError):
+                    local_quantity = math.nan
+                if not math.isfinite(local_quantity) or local_quantity <= 0:
+                    add_issue(
+                        reason="invalid_local_quantity",
+                        source=source,
+                        row=row,
+                    )
+                    blocked_keys.add(identity)
+                    continue
+            if not account_matches(row, source):
+                blocked_keys.add(identity)
+                continue
+            grouped.setdefault(identity, []).append(row)
+        return grouped
+
+    def block_row(row: dict) -> None:
+        raw_direction = row.get("direction") or row.get("side") or ""
+        base = _base_key(row.get("symbol"), raw_direction)
+        identity = _key(row.get("symbol"), row.get("market_type"), raw_direction)
+        if identity is None or not base[0] or base[1] not in {"long", "short"}:
+            blocked_bases.add(base)
+        else:
+            blocked_keys.add(identity)
+
+    local_groups = index_rows(in_scope, "local")
+    usable_exchange_rows: list[dict] = []
+    for exchange_row in exchange_positions:
+        try:
+            quantity = float(exchange_row.get("quantity") or 0)
+        except (TypeError, ValueError):
+            add_issue(
+                reason="invalid_exchange_quantity",
+                source="exchange",
+                row=exchange_row,
+            )
+            block_row(exchange_row)
+            continue
+        if quantity == 0:
+            continue
+        if not math.isfinite(quantity) or quantity < 0:
+            add_issue(
+                reason="invalid_exchange_quantity",
+                source="exchange",
+                row=exchange_row,
+            )
+            block_row(exchange_row)
+            continue
+        usable_exchange_rows.append(exchange_row)
+    exchange_groups = index_rows(usable_exchange_rows, "exchange")
+
+    ambiguous_keys: set[tuple[str, str, str]] = set()
+    for source, groups in (("local", local_groups), ("exchange", exchange_groups)):
+        for identity, rows in groups.items():
+            if len(rows) <= 1:
+                continue
+            ambiguous_keys.add(identity)
+            add_issue(
+                reason=f"duplicate_{source}_identity",
+                source=source,
+                row=rows[0],
+                row_count=len(rows),
             )
 
-    # orphaned: local open positions with no matching exchange position.
-    for k, lp in local_by_key.items():
-        if k not in exchange_by_key:
-            symbol, direction = k
-            result.orphaned.append(
-                ReconcileItem(
-                    symbol=symbol,
-                    direction=direction,
-                    classification="orphaned",
-                    local=lp,
-                )
-            )
+    result.integrity_issues.sort(
+        key=lambda issue: (
+            issue.symbol,
+            issue.direction,
+            issue.market_type,
+            issue.source,
+            issue.reason,
+        )
+    )
+
+    for identity in sorted(set(local_groups) | set(exchange_groups)):
+        symbol, market_type, direction = identity
+        if (
+            identity in ambiguous_keys
+            or identity in blocked_keys
+            or (symbol, direction) in blocked_bases
+        ):
+            continue
+        local_rows = local_groups.get(identity, [])
+        exchange_rows = exchange_groups.get(identity, [])
+        local_row = local_rows[0] if local_rows else None
+        exchange_row = exchange_rows[0] if exchange_rows else None
+        if local_row is not None and exchange_row is not None:
+            result.managed.append(ReconcileItem(
+                symbol=symbol,
+                direction=direction,
+                classification="managed",
+                local=local_row,
+                exchange=exchange_row,
+                qty_drift=round(
+                    float(exchange_row.get("quantity") or 0)
+                    - float(local_row.get("quantity") or 0),
+                    8,
+                ),
+            ))
+        elif exchange_row is not None:
+            result.external.append(ReconcileItem(
+                symbol=symbol,
+                direction=direction,
+                classification="external",
+                exchange=exchange_row,
+            ))
+        elif local_row is not None:
+            result.orphaned.append(ReconcileItem(
+                symbol=symbol,
+                direction=direction,
+                classification="orphaned",
+                local=local_row,
+            ))
 
     return result
 
@@ -450,7 +681,308 @@ def detect_reconcile_thrash(window_minutes: int = 30) -> dict:
     return out
 
 
-def _recover_strategy_link(symbol: str, direction: str, entry_price: float) -> tuple[str | None, str | None]:
+def _adoption_error(
+    *,
+    field: str,
+    symbol: str,
+    market_type: str,
+    direction: str,
+) -> PositionAdoptionIntegrityError:
+    return PositionAdoptionIntegrityError(
+        code="invalid_position_economics",
+        field=field,
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+    )
+
+
+def _validated_adoption_leverage(
+    exchange_pos: dict,
+    *,
+    symbol: str,
+    market_type: str,
+    direction: str,
+) -> tuple[int, str]:
+    raw = exchange_pos.get("leverage")
+    reported_source = str(exchange_pos.get("leverage_source") or "")
+    if market_type == "spot":
+        if raw not in (None, ""):
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                raise _adoption_error(
+                    field="leverage",
+                    symbol=symbol,
+                    market_type=market_type,
+                    direction=direction,
+                ) from None
+            if not math.isfinite(value) or value != 1.0:
+                raise _adoption_error(
+                    field="leverage",
+                    symbol=symbol,
+                    market_type=market_type,
+                    direction=direction,
+                )
+        return 1, "not_applicable_spot"
+
+    if reported_source in {"unavailable", "invalid"}:
+        raise _adoption_error(
+            field="leverage",
+            symbol=symbol,
+            market_type=market_type,
+            direction=direction,
+        )
+    if isinstance(raw, bool):
+        raise _adoption_error(
+            field="leverage",
+            symbol=symbol,
+            market_type=market_type,
+            direction=direction,
+        )
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise _adoption_error(
+            field="leverage",
+            symbol=symbol,
+            market_type=market_type,
+            direction=direction,
+        ) from None
+    if not math.isfinite(value) or value <= 0 or not value.is_integer():
+        raise _adoption_error(
+            field="leverage",
+            symbol=symbol,
+            market_type=market_type,
+            direction=direction,
+        )
+    return int(value), "exchange_reported"
+
+
+def _reconciliation_identity(
+    exchange_pos: dict,
+    *,
+    account_mode: str,
+    execution_mode: str,
+    symbol: str,
+    market_type: str,
+    direction: str,
+) -> dict:
+    from aletheia.portfolio.disappearance_confirmation import (
+        logical_account_fingerprint,
+    )
+
+    broker_id = str(exchange_pos.get("broker_id") or execution_mode)
+    if broker_id != execution_mode:
+        raise _adoption_error(
+            field="broker_id",
+            symbol=symbol,
+            market_type=market_type,
+            direction=direction,
+        )
+    supplied_environment = str(
+        exchange_pos.get("account_environment") or account_mode
+    )
+    if supplied_environment != account_mode:
+        raise _adoption_error(
+            field="account_environment",
+            symbol=symbol,
+            market_type=market_type,
+            direction=direction,
+        )
+    account_fingerprint = logical_account_fingerprint(
+        broker_id=broker_id,
+        account_environment=account_mode,
+        execution_mode=execution_mode,
+    )
+    supplied_fingerprint = str(exchange_pos.get("account_fingerprint") or "")
+    if supplied_fingerprint and supplied_fingerprint != account_fingerprint:
+        raise _adoption_error(
+            field="account_fingerprint",
+            symbol=symbol,
+            market_type=market_type,
+            direction=direction,
+        )
+    return {
+        "execution_mode": execution_mode,
+        "broker_id": broker_id,
+        "account_environment": account_mode,
+        "account_fingerprint": account_fingerprint,
+        "symbol": symbol,
+        "market_type": market_type,
+        "direction": direction,
+    }
+
+
+def _position_exposure_field_category(position: dict) -> str | None:
+    market_type = _normalize_market_type(position.get("market_type"))
+    if market_type is None:
+        return "market_type_unknown"
+    for field_name in ("quantity", "entry_price"):
+        try:
+            value = float(position.get(field_name))
+        except (TypeError, ValueError):
+            return f"{field_name}_invalid"
+        if not math.isfinite(value) or value <= 0:
+            return f"{field_name}_invalid"
+    current_price = position.get("current_price")
+    if current_price is not None:
+        try:
+            current_value = float(current_price)
+        except (TypeError, ValueError):
+            return "current_price_invalid"
+        if not math.isfinite(current_value) or current_value <= 0:
+            return "current_price_invalid"
+    raw_leverage = position.get("leverage")
+    if market_type == "spot" and raw_leverage is None:
+        return None
+    if raw_leverage is None:
+        return "leverage_unavailable"
+    try:
+        leverage = float(raw_leverage)
+    except (TypeError, ValueError):
+        return "leverage_invalid"
+    if (
+        not math.isfinite(leverage)
+        or leverage <= 0
+        or not leverage.is_integer()
+        or (market_type == "spot" and leverage != 1.0)
+    ):
+        return "leverage_invalid"
+    return None
+
+
+def report_invalid_open_position_exposures(
+    execution_mode: str | None = None,
+) -> list[dict]:
+    """Read-only, sanitized inventory of open Position exposure defects."""
+    rows = list_all_open_positions()
+    report = []
+    for position in rows:
+        if execution_mode and position.get("execution_mode") != execution_mode:
+            continue
+        category = _position_exposure_field_category(position)
+        if category is None:
+            continue
+        report.append({
+            "field_category": category,
+            "market_type": str(position.get("market_type") or "unknown"),
+            "position_id": str(position.get("id") or "unknown"),
+            "symbol": to_canonical(str(position.get("symbol") or "")),
+        })
+    return sorted(report, key=lambda item: item["position_id"])
+
+
+def _merged_json(raw: object, updates: dict) -> str:
+    try:
+        current = json.loads(str(raw)) if raw else {}
+    except (TypeError, json.JSONDecodeError):
+        current = {}
+    if not isinstance(current, dict):
+        current = {}
+    current.update(updates)
+    return json.dumps(current, sort_keys=True, separators=(",", ":"))
+
+
+def _reconcile_managed_leverage(
+    result: ReconcileResult,
+    *,
+    account_mode: str,
+) -> tuple[list[dict], list[dict]]:
+    """Fill only missing/invalid futures leverage on an exact managed identity."""
+    from aletheia.files.jsonl import write_audit
+    from aletheia.storage import repositories as repo
+
+    repairs = []
+    degraded = []
+    for item in result.managed:
+        local = item.local or {}
+        exchange = item.exchange or {}
+        market_type = _normalize_market_type(local.get("market_type"))
+        if market_type != "usdt_futures":
+            continue
+        category = _position_exposure_field_category(local)
+        if category not in {"leverage_unavailable", "leverage_invalid"}:
+            continue
+        try:
+            leverage, leverage_source = _validated_adoption_leverage(
+                exchange,
+                symbol=item.symbol,
+                market_type=market_type,
+                direction=item.direction,
+            )
+            execution_mode = str(local.get("execution_mode") or "")
+            identity = _reconciliation_identity(
+                exchange,
+                account_mode=account_mode,
+                execution_mode=execution_mode,
+                symbol=item.symbol,
+                market_type=market_type,
+                direction=item.direction,
+            )
+        except PositionAdoptionIntegrityError as exc:
+            degraded.append({
+                "code": exc.code,
+                "field_category": exc.field,
+                "position_id": str(local.get("id") or "unknown"),
+                **exc.identity,
+            })
+            continue
+        position_id = str(local["id"])
+        identity["position_id"] = position_id
+        evidence = {
+            "leverage": {
+                "source": leverage_source,
+                "status": "verified",
+                "value": leverage,
+            },
+            "projection_source": "exact_managed_exchange_view",
+        }
+        repo.update_position(
+            position_id,
+            leverage=leverage,
+            reconciliation_identity=_merged_json(
+                local.get("reconciliation_identity"),
+                identity,
+            ),
+            reconciliation_evidence=_merged_json(
+                local.get("reconciliation_evidence"),
+                evidence,
+            ),
+        )
+        repair = {
+            "leverage": leverage,
+            "position_id": position_id,
+            "source": leverage_source,
+        }
+        repairs.append(repair)
+        try:
+            write_audit({
+                "actor": "system",
+                "source": "position_reconciler",
+                "event_type": "position_leverage_recovered",
+                "entity_type": "position",
+                "entity_id": position_id,
+                "before": {"leverage": local.get("leverage")},
+                "after": repair,
+                "message": "Recovered validated leverage from exact managed exchange view",
+            })
+        except Exception:
+            logger.warning(
+                "Position leverage repair audit unavailable for %s",
+                position_id,
+                exc_info=True,
+            )
+    return repairs, degraded
+
+
+def _recover_strategy_link(
+    symbol: str,
+    market_type: str,
+    direction: str,
+    entry_price: float,
+    execution_mode: str,
+) -> tuple[str | None, str | None]:
     """Recover (strategy_id, opportunity_id) for an external about to be adopted,
     IFF it tightly matches a very recently thrash-closed local position.
 
@@ -470,8 +1002,10 @@ def _recover_strategy_link(symbol: str, direction: str, entry_price: float) -> t
         return None, None
     best = None
     for r in rows:
-        if (r.get("symbol") != symbol
+        if (to_canonical(str(r.get("symbol") or "")) != symbol
+                or _normalize_market_type(r.get("market_type")) != market_type
                 or _norm_direction(r.get("direction") or "") != direction
+                or r.get("execution_mode") != execution_mode
                 or r.get("close_reason") != "reconciled_gone"
                 or not r.get("strategy_id")):
             continue
@@ -533,14 +1067,40 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
             f"quantity={quantity} entry_price={entry_price} (need both > 0)"
         )
 
+    market_type = _normalize_market_type(exchange_pos.get("market_type"))
+    if market_type is None:
+        raise _adoption_error(
+            field="market_type",
+            symbol=symbol,
+            market_type=str(exchange_pos.get("market_type") or "unknown"),
+            direction=direction,
+        )
+    leverage, leverage_source = _validated_adoption_leverage(
+        exchange_pos,
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+    )
+    reconciliation_identity = _reconciliation_identity(
+        exchange_pos,
+        account_mode=account_mode,
+        execution_mode=execution_mode,
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+    )
+
     # Attribution recovery (P2-2): if this external matches a position we just
     # thrash-closed (reconciled_gone), inherit its strategy_id/opportunity_id so a
     # transient orphan→re-adopt keeps trade attribution intact. Tight match only
     # (see _recover_strategy_link) — a genuinely-new external stays unattributed.
-    recovered_strategy_id, recovered_opp_id = _recover_strategy_link(symbol, direction, entry_price)
-
-    # Adopted positions are USDT-futures mix positions on Bitget.
-    market_type = "usdt_futures"
+    recovered_strategy_id, recovered_opp_id = _recover_strategy_link(
+        symbol,
+        market_type,
+        direction,
+        entry_price,
+        execution_mode,
+    )
     now = datetime.now(timezone.utc).isoformat()
     # Prefer exchange-provided open time for accurate max_hold calculation
     ctime_ms = exchange_pos.get("cTime") or exchange_pos.get("created_at")
@@ -564,6 +1124,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         order_type="market",
         quantity=quantity,
         price=entry_price,
+        leverage=leverage,
         execution_mode=execution_mode,
         agent_rationale=rationale,
         status="executed",
@@ -615,6 +1176,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         current_price=float(exchange_pos.get("mark_price") or 0) or None,
         unrealized_pnl=float(exchange_pos.get("unrealized_pnl") or 0),
         execution_mode=execution_mode,
+        leverage=leverage,
         proposal_id=proposal.id,
         order_id=order.id,
         # Recovered attribution (None for a genuinely-new external — the honest default).
@@ -632,6 +1194,24 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         # site and satisfies the SDD propagation rule (see spec_serenity_holding
         # SH-S05: ALL FOUR brokers + reconciler must propagate trade_school).
         trade_school="short_term",
+    )
+    reconciliation_identity["position_id"] = position.id
+    position.reconciliation_identity = json.dumps(
+        reconciliation_identity,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    position.reconciliation_evidence = json.dumps(
+        {
+            "leverage": {
+                "source": leverage_source,
+                "status": "verified",
+                "value": leverage,
+            },
+            "projection_source": "external_position_adoption",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
     )
     # Backfill position_id on the order now that position.id is known (#189).
     order.position_id = position.id
@@ -656,6 +1236,9 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         "after": {
             "symbol": symbol, "direction": direction, "quantity": quantity,
             "entry_price": entry_price, "execution_mode": execution_mode,
+            "market_type": market_type, "leverage": leverage,
+            "leverage_source": leverage_source,
+            "account_fingerprint": reconciliation_identity["account_fingerprint"],
             "source": "adopted", "proposal_id": proposal.id, "order_id": order.id,
             "stop_price": _adopted_stop, "take_profit_price": _adopted_tp,
             "stop_source": "adopted_default_pct",
@@ -718,7 +1301,11 @@ def run_reconcile(mode: str | None = None) -> dict:
             "managed": len(result.managed),
             "external": len(result.external),
             "orphaned": len(result.orphaned),
+            "degraded": len(result.integrity_issues),
         },
+        "integrity_issues": [issue.to_dict() for issue in result.integrity_issues],
+        "degraded_positions": [],
+        "leverage_repairs": [],
         "adopted": [],
         "closed_orphans": [],
         "deferred_orphans": [],
@@ -813,6 +1400,36 @@ def run_reconcile(mode: str | None = None) -> dict:
             except Exception:
                 pass
 
+    if incident is None and account_mode == "demo":
+        repairs, leverage_degraded = _reconcile_managed_leverage(
+            result,
+            account_mode=account_mode,
+        )
+        summary["leverage_repairs"] = repairs
+        summary["degraded_positions"].extend(leverage_degraded)
+
+    if result.integrity_issues or summary["degraded_positions"]:
+        logger.warning(
+            "Reconcile degraded %d identity rows and %d position projections",
+            len(result.integrity_issues),
+            len(summary["degraded_positions"]),
+        )
+        try:
+            from aletheia.notifications import notify_operator
+            notify_operator(
+                title="Position reconciliation degraded",
+                message=(
+                    f"identity_issues={len(result.integrity_issues)} "
+                    f"position_projection_issues={len(summary['degraded_positions'])}"
+                ),
+                level="warning",
+                event_type="self_heal",
+                entity_type="portfolio",
+                error_log=False,
+            )
+        except Exception:
+            pass
+
     # Evidence collection is state bookkeeping, not a destructive reconcile action.
     # A complete view miss creates/advances a durable candidate; a verified exchange
     # reappearance resolves it. Even a confirmed candidate is only handed to the
@@ -882,6 +1499,30 @@ def run_reconcile(mode: str | None = None) -> dict:
             try:
                 adopted = adopt_position(item.exchange, account_mode)
                 summary["adopted"].append(adopted)
+            except PositionAdoptionIntegrityError as exc:
+                degraded = {
+                    "code": exc.code,
+                    "field_category": exc.field,
+                    "position_id": "not_created",
+                    **exc.identity,
+                }
+                summary["degraded_positions"].append(degraded)
+                logger.warning("Reconcile adoption degraded: %s", exc)
+                try:
+                    from aletheia.notifications import notify_operator
+                    notify_operator(
+                        title="External position not adopted",
+                        message=(
+                            f"{exc.identity['symbol']} {exc.identity['market_type']} "
+                            f"{exc.identity['direction']}: unavailable {exc.field}"
+                        ),
+                        level="warning",
+                        event_type="self_heal",
+                        entity_type="portfolio",
+                        error_log=False,
+                    )
+                except Exception:
+                    pass
             except Exception as e:
                 err = f"adopt {item.symbol} {item.direction}: {e}"
                 logger.warning("Reconcile adopt failed: %s", err)

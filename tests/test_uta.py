@@ -10,6 +10,8 @@ Covers:
 """
 
 import asyncio
+from types import SimpleNamespace
+
 import pytest
 
 from aletheia.portfolio.uta.broker_protocol import AccountInfo, BrokerPosition, IBroker
@@ -89,7 +91,9 @@ def test_broker_position_defaults():
         symbol="BTC/USDT", side="long", quantity=0.1,
         entry_price=60000, unrealized_pnl=100,
     )
-    assert p.leverage == 1
+    assert p.leverage is None
+    assert p.leverage_source == "unavailable"
+    assert p.market_type == "usdt_futures"
     assert p.mark_price == 0.0
 
 
@@ -217,6 +221,126 @@ async def test_unified_state_preserves_broker_open_time(monkeypatch):
     state = await get_unified_state()
 
     assert state.positions[0]["cTime"] == opened_at_ms
+
+
+@pytest.mark.asyncio
+async def test_unified_state_preserves_market_and_leverage_provenance(monkeypatch):
+    adapter = MockAdapter(
+        "okx_demo",
+        "OKX Demo",
+        positions=[BrokerPosition(
+            "BTC/USDT",
+            "long",
+            0.1,
+            60_000,
+            100,
+            leverage=4,
+            leverage_source="exchange_reported",
+            market_type="usdt_futures",
+        )],
+    )
+    monkeypatch.setattr(
+        "aletheia.portfolio.uta.registry.create_all_configured",
+        lambda: [adapter],
+    )
+
+    state = await get_unified_state()
+
+    assert state.positions[0]["leverage"] == 4
+    assert state.positions[0]["leverage_source"] == "exchange_reported"
+    assert state.positions[0]["market_type"] == "usdt_futures"
+
+
+class _PositionClient:
+    def __init__(self, rows):
+        self.rows = rows
+
+    async def get_positions(self):
+        return self.rows
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw_leverage", (None, 0, -2, float("nan"), 2.5))
+async def test_all_uta_adapters_preserve_unavailable_or_invalid_leverage(
+    raw_leverage,
+):
+    from aletheia.portfolio.uta.binance_adapter import BinanceTestnetAdapter
+    from aletheia.portfolio.uta.bitget_adapter import BitgetDemoAdapter
+    from aletheia.portfolio.uta.okx_adapter import OkxDemoAdapter
+
+    bitget = BitgetDemoAdapter.__new__(BitgetDemoAdapter)
+    bitget._client = _PositionClient([SimpleNamespace(
+        symbol="BTCUSDT",
+        side="long",
+        quantity=0.1,
+        entry_price=60_000,
+        unrealized_pnl=0,
+        leverage=raw_leverage,
+        mark_price=60_100,
+        ctime_ms=None,
+    )])
+    dict_row = {
+        "symbol": "BTC/USDT:USDT",
+        "side": "long",
+        "quantity": 0.1,
+        "entry_price": 60_000,
+        "unrealized_pnl": 0,
+        "leverage": raw_leverage,
+        "mark_price": 60_100,
+    }
+    okx = OkxDemoAdapter.__new__(OkxDemoAdapter)
+    okx._client = _PositionClient([dict_row])
+    binance = BinanceTestnetAdapter.__new__(BinanceTestnetAdapter)
+    binance._client = _PositionClient([dict_row])
+
+    rows = [
+        (await adapter.get_positions())[0]
+        for adapter in (bitget, okx, binance)
+    ]
+
+    assert all(row.leverage is None for row in rows)
+    expected_source = "unavailable" if raw_leverage is None else "invalid"
+    assert all(row.leverage_source == expected_source for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_all_uta_adapters_preserve_valid_exchange_leverage():
+    from aletheia.portfolio.uta.binance_adapter import BinanceTestnetAdapter
+    from aletheia.portfolio.uta.bitget_adapter import BitgetDemoAdapter
+    from aletheia.portfolio.uta.okx_adapter import OkxDemoAdapter
+
+    bitget = BitgetDemoAdapter.__new__(BitgetDemoAdapter)
+    bitget._client = _PositionClient([SimpleNamespace(
+        symbol="ETHUSDT",
+        side="short",
+        quantity=1,
+        entry_price=3_000,
+        unrealized_pnl=0,
+        leverage=3,
+        mark_price=2_990,
+        ctime_ms=None,
+    )])
+    dict_row = {
+        "symbol": "ETH/USDT:USDT",
+        "side": "short",
+        "quantity": 1,
+        "entry_price": 3_000,
+        "unrealized_pnl": 0,
+        "leverage": "3",
+        "mark_price": 2_990,
+    }
+    okx = OkxDemoAdapter.__new__(OkxDemoAdapter)
+    okx._client = _PositionClient([dict_row])
+    binance = BinanceTestnetAdapter.__new__(BinanceTestnetAdapter)
+    binance._client = _PositionClient([dict_row])
+
+    rows = [
+        (await adapter.get_positions())[0]
+        for adapter in (bitget, okx, binance)
+    ]
+
+    assert all(row.leverage == 3 for row in rows)
+    assert all(row.leverage_source == "exchange_reported" for row in rows)
 
 
 # ---------------------------------------------------------------------------

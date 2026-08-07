@@ -1310,16 +1310,18 @@ def test_account_leverage_uses_one_account_pool_for_every_exposure(monkeypatch):
         eng,
         "list_all_open_positions",
         lambda: [
-            {
-                "symbol": "ETH/USDT",
-                "execution_mode": "okx_demo",
+                {
+                    "symbol": "ETH/USDT",
+                    "market_type": "usdt_futures",
+                    "execution_mode": "okx_demo",
                 "quantity": 0.1,
                 "entry_price": 100.0,
                 "leverage": 1,
             },
-            {
-                "symbol": "BTC/USDT",
-                "execution_mode": "bitget_demo",
+                {
+                    "symbol": "BTC/USDT",
+                    "market_type": "usdt_futures",
+                    "execution_mode": "bitget_demo",
                 "quantity": 10.0,
                 "entry_price": 100.0,
                 "leverage": 3,
@@ -1398,6 +1400,7 @@ def test_account_leverage_uses_one_account_pool_for_every_exposure(monkeypatch):
         ("entry_price", 0.0),
         ("entry_price", float("inf")),
         ("leverage", 0.0),
+        ("leverage", 1.5),
         ("leverage", "not-a-number"),
     ],
 )
@@ -1424,6 +1427,7 @@ def test_account_leverage_rejects_invalid_relevant_position_exposure(
     position = {
         "id": "position-corrupt",
         "symbol": "ETH/USDT",
+        "market_type": "usdt_futures",
         "execution_mode": "okx_demo",
         "quantity": 1.0,
         "entry_price": 100.0,
@@ -1438,7 +1442,10 @@ def test_account_leverage_rejects_invalid_relevant_position_exposure(
         cfg,
         unresolved_entries=[],
         pre_order_entries=[],
-    ) == ["account_leverage_check_error:invalid_position_exposure"]
+    ) == [
+        "account_leverage_check_error:invalid_position_exposure:"
+        f"position=position-corrupt:field={field}"
+    ]
 
 
 def test_account_leverage_counts_unlevered_spot_position_as_one_x(monkeypatch):
@@ -1530,12 +1537,17 @@ def test_account_leverage_rejects_missing_or_impossible_market_leverage(
     )
     monkeypatch.setattr(eng, "_account_equity", lambda *_: 1_000.0)
 
+    expected_field = "market_type" if market_type is None else "leverage"
     assert eng._check_account_leverage_ratio(
         proposal,
         cfg,
         unresolved_entries=[],
         pre_order_entries=[],
-    ) == ["account_leverage_check_error:invalid_position_exposure"]
+    ) == [
+        "account_leverage_check_error:invalid_position_exposure:"
+        "position=position-invalid-market-leverage:"
+        f"field={expected_field}"
+    ]
 
 
 @spec_claim(
@@ -1732,15 +1744,16 @@ def test_public_account_leverage_counts_null_spot_leverage_as_one_x(monkeypatch)
 
 
 @pytest.mark.parametrize(
-    ("market_type", "field", "invalid_value"),
+    ("market_type", "field", "invalid_value", "expected_field"),
     [
-        ("usdt_futures", "leverage", None),
-        (None, "leverage", None),
-        ("usdt_futures", "leverage", "not-a-number"),
-        ("usdt_futures", "leverage", float("nan")),
-        ("usdt_futures", "leverage", 1e308),
-        ("usdt_futures", "quantity", float("inf")),
-        ("usdt_futures", "current_price", -1.0),
+        ("usdt_futures", "leverage", None, "leverage"),
+        (None, "leverage", None, "market_type"),
+        ("usdt_futures", "leverage", "not-a-number", "leverage"),
+        ("usdt_futures", "leverage", float("nan"), "leverage"),
+        ("usdt_futures", "leverage", 1.5, "leverage"),
+        ("usdt_futures", "leverage", 1e308, "position_exposure"),
+        ("usdt_futures", "quantity", float("inf"), "quantity"),
+        ("usdt_futures", "current_price", -1.0, "current_price"),
     ],
 )
 def test_public_account_leverage_marks_invalid_position_unavailable(
@@ -1748,6 +1761,7 @@ def test_public_account_leverage_marks_invalid_position_unavailable(
     market_type,
     field,
     invalid_value,
+    expected_field,
 ):
     import aletheia.risk.engine as eng
     from aletheia.config.loader import load_config
@@ -1773,6 +1787,10 @@ def test_public_account_leverage_marks_invalid_position_unavailable(
     assert result["reason"] == "invalid_position_exposure"
     assert result["ratio"] is None
     assert result["violation"] is None
+    assert result["invalid_position"] == {
+        "field_category": expected_field,
+        "position_id": "position-corrupt",
+    }
 
 
 def test_public_account_leverage_marks_unknown_equity_unavailable(monkeypatch):
