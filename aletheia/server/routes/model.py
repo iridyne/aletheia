@@ -35,6 +35,19 @@ HTTP_PROVIDERS = {"openai_compatible", "anthropic_compatible", "databricks", "an
 CLI_PROVIDERS = set(CLI_PROVIDER_TYPES)
 
 
+def _has_provider_completion_evidence(raw: object) -> bool:
+    """Recognize protocol-level completion when no final text was emitted."""
+
+    if not isinstance(raw, dict):
+        return False
+
+    choices = raw.get("choices")
+    return isinstance(choices, list) and any(
+        isinstance(choice, dict) and bool(choice.get("finish_reason"))
+        for choice in choices
+    )
+
+
 async def _close_candidate_provider(provider) -> None:
     """Close every loop-owned pool used by an ephemeral candidate probe."""
 
@@ -131,7 +144,9 @@ async def ping_model():
     """Instant inference test on the current default provider.
 
     Sends 'Say OK' with max_tokens=10. Returns latency, model name, and
-    the actual response text. Never raises — errors are in the response body.
+    any final response text. Reasoning-only protocol completions are successful
+    even when the bounded probe emits no final text. Never raises — errors are
+    in the response body.
     """
     import time
     from aletheia.model_provider.router import get_provider_async
@@ -180,7 +195,7 @@ async def ping_model():
         record_inference_finished(inference_call, status="success", response=resp)
         latency_ms = int((time.monotonic() - t0) * 1000)
         content = (resp.content or "").strip()
-        if not content:
+        if not content and not _has_provider_completion_evidence(resp.raw):
             return {
                 "ok": False,
                 "latency_ms": latency_ms,
