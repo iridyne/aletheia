@@ -240,8 +240,12 @@ _DECISION_SCHEMA = {
         "supporting_signals": {"type": "array", "items": {"type": "string"}},
         "opposing_signals": {"type": "array", "items": {"type": "string"}},
         "skip_kind": {
-            "type": "string",
-            "enum": ["adverse_candidate_evidence", "insufficient_evidence"],
+            "type": ["string", "null"],
+            "enum": [
+                "adverse_candidate_evidence",
+                "insufficient_evidence",
+                None,
+            ],
         },
         "adverse_reason_codes": {
             "type": "array",
