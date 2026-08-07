@@ -1,7 +1,9 @@
 """Config schema using Pydantic v2 models."""
 
+from datetime import datetime, timezone
 import logging
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -46,19 +48,112 @@ class AppConfig(BaseModel):
         return v
 
 
+class PauseOwnerLease(BaseModel):
+    """Durable evidence that one subsystem currently requires a pause."""
+
+    reason: str
+    generation: str | None = None
+    acquired_at: str | None = None
+
+
 class RuntimeConfig(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_pause_owner(cls, value):
+        """Lift the old shared boolean/connection flag into explicit owners.
+
+        An old unowned ``paused: true`` cannot be attributed after the fact, so
+        it is conservatively represented as a manual owner with unknown time and
+        generation.  No timestamp or identity is invented during migration.
+        """
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        owners = dict(data.get("pause_owners") or {})
+        if not owners and (data.get("paused") or data.get("paused_by_connectivity")):
+            if data.get("paused_by_connectivity"):
+                owners["exchange_connectivity"] = {
+                    "reason": "legacy_connectivity_pause",
+                    "generation": data.get("connectivity_pause_generation"),
+                    "acquired_at": data.get("connectivity_pause_acquired_at"),
+                }
+            else:
+                owners["manual"] = {
+                    "reason": "legacy_unowned_pause",
+                    "generation": None,
+                    "acquired_at": None,
+                }
+        if owners:
+            data["pause_owners"] = owners
+            data["paused"] = True
+        return data
+
     def __setattr__(self, name: str, value) -> None:
+        if name == "paused" and "pause_owners" in self.__dict__:
+            if bool(value):
+                if "manual" not in self.pause_owners:
+                    self.acquire_pause("manual", reason="manual_pause_assignment")
+            else:
+                self.release_pause("manual")
+            return
         super().__setattr__(name, value)
-        if name == "paused" and value is True:
-            # Every non-connectivity pause assignment takes ownership unless the
-            # connectivity monitor explicitly claims it immediately afterward.
-            super().__setattr__("paused_by_connectivity", False)
-            super().__setattr__("connectivity_pause_generation", None)
-            super().__setattr__("connectivity_pause_acquired_at", None)
+
+    @model_validator(mode="after")
+    def normalize_pause_fields(self):
+        self._sync_pause_fields()
+        return self
+
+    def _sync_pause_fields(self) -> None:
+        owners = self.pause_owners
+        connectivity = owners.get("exchange_connectivity")
+        super().__setattr__("paused", bool(owners))
+        super().__setattr__("paused_by_connectivity", connectivity is not None)
+        super().__setattr__(
+            "connectivity_pause_generation",
+            connectivity.generation if connectivity is not None else None,
+        )
+        super().__setattr__(
+            "connectivity_pause_acquired_at",
+            connectivity.acquired_at if connectivity is not None else None,
+        )
+
+    def acquire_pause(
+        self,
+        owner: str,
+        *,
+        reason: str,
+        generation: str | None = None,
+        acquired_at: str | None = None,
+    ) -> PauseOwnerLease:
+        """Acquire or refresh one owner's lease without disturbing other owners."""
+        lease = PauseOwnerLease(
+            reason=reason,
+            generation=generation or uuid4().hex,
+            acquired_at=acquired_at or datetime.now(timezone.utc).isoformat(),
+        )
+        owners = dict(self.pause_owners)
+        owners[owner] = lease
+        super().__setattr__("pause_owners", owners)
+        self._sync_pause_fields()
+        return lease
+
+    def release_pause(self, owner: str, *, generation: str | None = None) -> bool:
+        """Release only the matching owner generation; keep all others paused."""
+        current = self.pause_owners.get(owner)
+        if current is None:
+            return False
+        if generation is not None and current.generation != generation:
+            return False
+        owners = dict(self.pause_owners)
+        del owners[owner]
+        super().__setattr__("pause_owners", owners)
+        self._sync_pause_fields()
+        return True
 
     gateway_mode: str = "background"
     scheduler_enabled: bool = True
     paused: bool = False
+    pause_owners: dict[str, PauseOwnerLease] = Field(default_factory=dict)
     # Only connectivity recovery may release a pause it acquired.
     paused_by_connectivity: bool = False
     # Durable evidence binding recovery to the exact connectivity pause it owns.

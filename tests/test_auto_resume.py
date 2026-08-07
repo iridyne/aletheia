@@ -38,7 +38,12 @@ def _save_paused_cfg(auto_resume_enabled=True, require_llm=True):
     """Persist a paused config to disk (the loop reads from disk each iteration)."""
     from aletheia.config.loader import save_config
     cfg = AletheiaConfig()
-    cfg.runtime.paused = True
+    cfg.runtime.acquire_pause(
+        "llm_startup_gate",
+        reason="no usable LLM provider",
+        generation="test-llm-pause",
+        acquired_at="2026-08-08T00:00:00+00:00",
+    )
     cfg.health.auto_resume_enabled = auto_resume_enabled
     cfg.health.auto_resume_interval_sec = 1
     cfg.health.require_llm_at_startup = require_llm
@@ -150,8 +155,8 @@ async def test_stays_paused_until_llm_recovers(tmp_path, monkeypatch):
 async def test_exits_on_manual_resume_without_probing(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     cfg = _save_paused_cfg()
-    # Operator resumed manually between scheduling and first probe.
-    cfg.runtime.paused = False
+    # The LLM owner was already released between scheduling and first probe.
+    cfg.runtime.release_pause("llm_startup_gate", generation="test-llm-pause")
     from aletheia.config.loader import save_config
     save_config(cfg)
     _bounded_sleep(monkeypatch, max_iters=5)

@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from aletheia.agent_runtime.startup_gate import probe_llm_providers_at_startup
-from aletheia.config.loader import load_config, save_config
+from aletheia.config.loader import load_config
 
 
 def summarize_resume_gate(result: dict[str, Any]) -> str:
@@ -27,16 +27,39 @@ def summarize_resume_gate(result: dict[str, Any]) -> str:
     return f"{reason}: {detail}"
 
 
-def _persist_resumed() -> None:
-    cfg = load_config()
-    cfg.runtime.paused = False
-    save_config(cfg)
-    try:
-        from aletheia.agent_runtime.scheduler import resume_scheduler
+def _persist_resumed(*, actor: str, source: str):
+    from aletheia.agent_runtime.pause_ownership import (
+        LLM_STARTUP_OWNER,
+        MANUAL_OWNER,
+        release_pauses,
+    )
 
-        resume_scheduler()
-    except Exception:
-        pass
+    owners = {LLM_STARTUP_OWNER: None}
+    if not (actor == "system" and source == "auto_resume"):
+        owners[MANUAL_OWNER] = None
+    return release_pauses(
+        owners,
+        resume_when_clear=True,
+        actor=actor,
+        source=source,
+    )
+
+
+def _remaining_owner_response(
+    release,
+    *,
+    checked: int = 0,
+    results: list[dict] | None = None,
+) -> dict[str, Any] | None:
+    if release.remaining_owners:
+        return {
+            "allowed": False,
+            "reason": "active_pause_owners",
+            "checked": checked,
+            "results": list(results or []),
+            "blockers": list(release.remaining_owners),
+        }
+    return None
 
 
 def _audit_resume_blocked(*, actor: str, source: str, cause: str, result: dict[str, Any]) -> None:
@@ -110,7 +133,11 @@ async def resume_if_llm_available(
             return response
 
     if not cfg.health.require_llm_at_startup:
-        _persist_resumed()
+        release = _persist_resumed(actor=actor, source=source)
+        blocked = _remaining_owner_response(release)
+        if blocked is not None:
+            _audit_resume_blocked(actor=actor, source=source, cause=cause, result=blocked)
+            return blocked
         return {
             "allowed": True,
             "reason": "llm_startup_gate_disabled",
@@ -140,7 +167,15 @@ async def resume_if_llm_available(
         record_llm_success()
     except Exception:
         pass
-    _persist_resumed()
+    release = _persist_resumed(actor=actor, source=source)
+    blocked = _remaining_owner_response(
+        release,
+        checked=response["checked"],
+        results=response["results"],
+    )
+    if blocked is not None:
+        response.update(blocked)
+        _audit_resume_blocked(actor=actor, source=source, cause=cause, result=response)
     return response
 
 

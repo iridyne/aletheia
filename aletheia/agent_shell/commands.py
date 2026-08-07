@@ -689,14 +689,14 @@ async def get_recommendations(params: dict) -> dict:
 
 
 async def pause_agents(params: dict) -> dict:
-    cfg = config_loader.load_config()
-    cfg.runtime.paused = True
-    config_loader.save_config(cfg)
-    try:
-        from aletheia.agent_runtime.scheduler import pause_scheduler
-        pause_scheduler()
-    except Exception:
-        pass
+    from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, acquire_pause
+
+    acquire_pause(
+        MANUAL_OWNER,
+        reason="agent_shell_pause",
+        actor="agent_shell",
+        source="command_center",
+    )
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "agent_shell", "source": "command_center",
                  "event_type": "gateway_paused", "message": "Agents paused via Agent Shell"})

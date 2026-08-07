@@ -204,30 +204,46 @@ async def _llm_startup_gate(cfg) -> None:
     if result["any_usable"]:
         # Clear any stale failure count so /api/health starts clean.
         from aletheia.agent_runtime.health import record_llm_success
+        from aletheia.agent_runtime.pause_ownership import (
+            LLM_STARTUP_OWNER,
+            release_pause,
+        )
 
         record_llm_success()
+        release = release_pause(
+            LLM_STARTUP_OWNER,
+            resume_when_clear=True,
+            source="llm_startup_gate",
+        )
+        if release.resume_failed:
+            logger.warning(
+                "LLM startup gate: scheduler resume failed — pause owner retained for retry"
+            )
+            from aletheia.agent_runtime.auto_resume import start_auto_resume_task
+            from aletheia.config.loader import load_config as _load_config
+
+            fresh = _load_config()
+            if fresh.health.auto_resume_enabled:
+                start_auto_resume_task(
+                    interval_sec=fresh.health.auto_resume_interval_sec
+                )
         return
 
     # No provider could complete a real inference call — pause the loop.
-    # Pause the live scheduler too (it is already running at this point, having
-    # been started before this background task), not just the persisted flag —
-    # otherwise jobs keep firing for the gap until each one re-reads the flag.
-    try:
-        from aletheia.agent_runtime.scheduler import pause_scheduler
-
-        pause_scheduler()
-    except Exception:
-        pass
     # Read-modify-write a FRESH on-disk config rather than the boot snapshot, so
     # we only flip `paused` and don't clobber any edit made during the probe
     # window (e.g. an operator changing settings via the dashboard, now reachable
     # because the port is already serving). Full elimination of the last-writer
     # race would need a file lock and is outside this startup safeguard's scope.
-    from aletheia.config.loader import load_config as _load_config, save_config
+    from aletheia.agent_runtime.pause_ownership import LLM_STARTUP_OWNER, acquire_pause
+    from aletheia.config.loader import load_config as _load_config
 
+    acquire_pause(
+        LLM_STARTUP_OWNER,
+        reason="no_usable_llm_provider",
+        source="llm_startup_gate",
+    )
     fresh = _load_config()
-    fresh.runtime.paused = True
-    save_config(fresh)
 
     from aletheia.agent_runtime.health import record_llm_failure
 
