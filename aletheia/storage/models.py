@@ -81,8 +81,10 @@ class Opportunity(_Provenanced):
     direction_bias: str | None = None
     thesis: str | None = None
     confidence: str = "speculative"
-    # Numeric calibration the LLM emits alongside the categorical `confidence`.
-    # 0..100; None when the model didn't supply one — keeps older rows valid.
+    # Source-relative 0..100 evidence score, never an implied probability.
+    # Observer agents use model confidence; universe_scanner uses its composite
+    # ranking score.  Consumers must preserve that source-specific distinction.
+    # None keeps older rows without a numeric score valid.
     confidence_score: int | None = None
     source_agent: str | None = None
     created_at: str = Field(default_factory=_utcnow)
