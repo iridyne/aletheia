@@ -19,10 +19,10 @@ from aletheia.model_provider.fallback import BudgetExceededError, complete_with_
 
 logger = logging.getLogger("aletheia.agents")
 
-# Must stay below the observer loop budget (200s) and observer job timeout (240s).
-# The provider may allow 300s for long research generations, but structured observer
-# calls need their own total budget across all repair attempts so scheduler cancellation
-# never abandons the event-loop thread mid-request.
+# Must stay below the observer loop budget (460s) and observer job timeout (500s).
+# Observer calls additionally pass a shorter per-symbol deadline. The provider may
+# allow 300s for long research generations, but structured calls still need a bounded
+# total across repair attempts so scheduler cancellation never abandons the event loop.
 _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC = 180.0
 _LAST_INFERENCE_CALL_ID: ContextVar[str | None] = ContextVar(
     "aletheia_last_inference_call_id", default=None

@@ -79,6 +79,14 @@ _RETRYABLE_EVIDENCE_ERROR_PREFIX = "observer_pre_filter_evidence_failed:"
 _RETRYABLE_EMISSION_ERROR_PREFIX = "observer_opportunity_emission_evidence_failed:"
 
 
+def _fair_llm_budget_seconds(remaining_run_s: float, outstanding_count: int) -> float:
+    """Split remaining time across parallel LLM waves, with a useful floor."""
+    concurrency = max(1, _MARKET_OBSERVER_LLM_CONCURRENCY)
+    outstanding = max(1, outstanding_count)
+    remaining_waves = max(1, math.ceil(outstanding / concurrency))
+    return max(10.0, remaining_run_s / remaining_waves)
+
+
 @dataclass
 class _DbCache:
     """Batch-prefetched DB rows for all instruments in a run."""
@@ -2010,9 +2018,10 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     _skipped_count = 0
     # Tracks how many symbols have not yet entered the semaphore slot (i.e., not
     # yet started their LLM call).  Used to compute a fair per-symbol budget:
-    # fair_budget = remaining_run_time / pending_count so that early slow calls
-    # shorten the budget for later symbols rather than leaving them with nothing.
+    # fair_budget = remaining_run_time / remaining_parallel_waves so that early
+    # slow calls shorten later budgets without pretending the two slots are serial.
     _pending_count = len(processing_order)
+    _active_count = 0
     # Run-local EWMA of observed LLM call duration (seconds).  Updated after each
     # completed call; used to detect budget pressure and skip low-signal symbols
     # when the remaining budget is likely insufficient for the full queue.
@@ -2023,7 +2032,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
 
     async def _run_one(instrument) -> None:
         nonlocal _success_count, _fail_count, _skip_count, _skipped_count
-        nonlocal _next_unprocessed_index, _pending_count, _llm_ewma_s
+        nonlocal _next_unprocessed_index, _pending_count, _active_count, _llm_ewma_s
         # Each slot first checks the budget before acquiring the semaphore.
         # This prevents a task from queuing inside the semaphore past the deadline.
         if _monotonic() >= _run_deadline:
@@ -2040,21 +2049,24 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             # Per-symbol LLM deadline uses a three-way min:
             #   (a) _MARKET_OBSERVER_PER_SYMBOL_LLM_CAP_SEC — absolute hard cap
             #       so one slow provider call never starves the whole queue.
-            #   (b) fair_budget = remaining_run_time / pending_count — distributes
-            #       the remaining budget equally across outstanding symbols so that
-            #       an early 60s call automatically shortens the budget for later
-            #       ones rather than leaving the tail with essentially no time.
+            #   (b) fair_budget = remaining_run_time / parallel waves — distributes
+            #       the remaining budget across the bounded concurrent slots so an
+            #       early slow wave shortens later symbols without halving every
+            #       deadline merely because two calls run at once.
             #       Clamped to a 10s floor so the very last symbol always gets a
             #       meaningful attempt.
             #   (c) remaining run budget — never exceeds the job-level deadline.
             _loop_now = asyncio.get_event_loop().time()
             _remaining_run_s = max(1.0, _run_deadline - _monotonic())
-            # Read _pending_count under _rr_lock to get a consistent snapshot,
-            # then decrement it now that this slot is committed.
+            # Count queued + already-active work so the budget represents actual
+            # remaining waves. Then remove this item from the not-yet-started set.
             async with _rr_lock:
-                _local_pending = max(1, _pending_count)
+                _local_outstanding = max(1, _pending_count + _active_count)
                 _pending_count -= 1
-            _fair_budget_s = max(10.0, _remaining_run_s / _local_pending)
+            _fair_budget_s = _fair_llm_budget_seconds(
+                _remaining_run_s,
+                _local_outstanding,
+            )
             _per_symbol_llm_deadline = _loop_now + min(
                 _MARKET_OBSERVER_PER_SYMBOL_LLM_CAP_SEC,
                 _fair_budget_s,
@@ -2088,6 +2100,8 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                         _skip_count += 1
                     return
             completed_attempt = False
+            async with _rr_lock:
+                _active_count += 1
             try:
                 u_member = _universe_lookup.get(instrument.symbol)
                 _sym_canonical = to_canonical(instrument.symbol)
@@ -2164,8 +2178,9 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 # in-flight item.  Successful out-of-order attempts are remembered,
                 # but the durable cursor moves only through the completed canonical
                 # prefix — guarded by _rr_lock for concurrent access.
-                if completed_attempt:
-                    async with _rr_lock:
+                async with _rr_lock:
+                    _active_count = max(0, _active_count - 1)
+                    if completed_attempt:
                         _completed_attempt_keys.add(instrument_key(instrument))
                         _next_unprocessed_index = _advance_completed_round_robin_prefix(
                             round_robin,
