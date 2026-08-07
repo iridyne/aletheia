@@ -167,6 +167,61 @@ async def test_context_artifacts_link_to_exact_evaluation_call():
 
 
 @pytest.mark.asyncio
+async def test_operator_inference_records_existing_causal_identity_without_fabricating_proposal():
+    from aletheia.agent_runtime.run_context import bind_economic_attribution
+    from aletheia.agents import helpers
+
+    provider = _RepairProvider([{"value": 3}])
+    with (
+        bind_economic_attribution(
+            logical_agent="pi_trading_decision",
+            evaluation_id="operator_eval_exact",
+            opportunity_id="opp-exact",
+            decision_id="pending-exact",
+            arbitrary_text="must-not-persist",
+        ),
+        patch.object(helpers, "get_provider", lambda _name: provider),
+        patch.object(helpers, "complete_with_fallback", _physical_complete),
+    ):
+        data, error = await helpers.llm_structured(
+            "system",
+            "user",
+            schema=_ValueSchema,
+            caller="system_operator.assess_opportunity",
+        )
+
+    assert error is None and data == {"value": 3}
+    db = get_db()
+    logical = db.execute(
+        "SELECT run_id,metadata_json FROM llm_inference_calls "
+        "WHERE caller='system_operator.assess_opportunity'"
+    ).fetchone()
+    assert logical is not None
+    assert logical["run_id"] is None
+    environment = json.loads(logical["metadata_json"])["environment"]
+    assert environment["evaluation_id"] == "operator_eval_exact"
+    assert environment["opportunity_id"] == "opp-exact"
+    assert environment["decision_id"] == "pending-exact"
+    assert "proposal_id" not in environment
+    assert "arbitrary_text" not in environment
+
+    physical = db.execute(
+        "SELECT run_id,opportunity_id,decision_id,proposal_id,metadata_json "
+        "FROM runtime_cost_events WHERE call_id=("
+        "SELECT logical_call_id FROM llm_inference_calls "
+        "WHERE caller='system_operator.assess_opportunity')"
+    ).fetchone()
+    assert physical is not None
+    assert physical["run_id"] is None
+    assert physical["opportunity_id"] == "opp-exact"
+    assert physical["decision_id"] == "pending-exact"
+    assert physical["proposal_id"] is None
+    metadata = json.loads(physical["metadata_json"])
+    assert metadata["evaluation_id"] == "operator_eval_exact"
+    assert "arbitrary_text" not in metadata
+
+
+@pytest.mark.asyncio
 async def test_no_fallback_request_skips_candidate_discovery(monkeypatch):
     from aletheia.model_provider import fallback
     from aletheia.model_provider.base import ModelRequest

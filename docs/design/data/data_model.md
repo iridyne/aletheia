@@ -184,8 +184,8 @@ verdicts; it does not rewrite or delete older verdict history.
 | `agent_runs` | Agent execution records | agent_name, trigger_type, status, outputs (JSON) |
 | `agent_run_steps` | Step-by-step agent traces | run_id, step_number, action, result |
 | `agent_tool_calls` | Tool invocation log | run_id, inference_call_id, tool_name, arguments (JSON), result |
-| `llm_inference_calls` | Content-free logical inference envelope | logical_call_id, caller, prompt/context/tool/schema identities and hashes, validation outcome, retry/fallback summary |
-| `runtime_cost_events` | Physical LLM/tool/data cost attempts | call_id, attempt_index, provider/model/tool, usage, price snapshot, cost status |
+| `llm_inference_calls` | Content-free logical inference envelope | logical_call_id, caller, prompt/context/tool/schema identities and hashes, existing causal identities in environment metadata, validation outcome, retry/fallback summary |
+| `runtime_cost_events` | Physical LLM/tool/data cost attempts | call_id, attempt_index, provider/model/tool, opportunity/decision/proposal IDs when explicitly known, usage, price snapshot, cost status |
 | `llm_context_artifacts` | Content-free selected-context manifest | logical_call_id, caller, evaluation pair/arm/fixture, kind, stable_id, freshness, rendered_chars |
 | `llm_context_pair_reviews` | Aggregate-only blinded Learning B review | pair/fixture IDs, control/treatment call IDs, quality/grounded-use/harm scores, verdict |
 | `audit_events` | System-wide audit trail | actor, source, event_type, entity_id, before/after (JSON) |

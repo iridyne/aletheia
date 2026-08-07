@@ -273,6 +273,12 @@ durably queued and independently retried by `outcome_hook_replay`.
 - **Attribution**: `_attach_opportunity_context` backfills `opportunity_id` + `signal_source`
   (`market_observer` Layer 1 wins on tie; `serenity` Layer 3 is the fallback). `signal_source`
   disambiguates the two bare-uuid id spaces. Phase 2 of Serenity Option A.
+- **Inference attribution**: the daemon binds one content-free `evaluation_id`; after the
+  queue selects one carrier, every assessment/reassessment/debate attempt also records that
+  exact Opportunity. The existing `signal_pending` PiDecision is recorded only when that
+  source identity resolves to exactly one row; zero, duplicate, or unavailable telemetry reads
+  leave it absent. A not-yet-created final decision or Proposal remains absent, and a daemon
+  call never fabricates an `AgentRun` link.
 - **Learning attribution**: reflection, memo, reasoning, calibration, trade cases, and structured
   lessons are declared as one `operator_learning_bundle`, but the path is currently
   measurement-unsupported and the static no-Learning prompt baseline applies. The existing
