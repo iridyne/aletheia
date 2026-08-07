@@ -603,6 +603,41 @@ def test_l1_selfheal_action_types_suspended():
 
 @spec_claim(
     SpecClaim(
+        "OL-S14", "operator_layer", "§scope_freeze automatic methodology research", "L2a",
+        "The deterministic Python operator does not emit or execute automatic "
+        "methodology research while the product is converged on the money loop.",
+        status="implemented",
+    ),
+)
+def test_automatic_methodology_research_is_suspended():
+    """Research remains manually available, outside this automatic control loop."""
+    import aletheia.agent_shell.operator_loop as _ol
+
+    source = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    decide = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "decide_actions"
+    )
+    execute = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_execute_level1_action"
+    )
+
+    suspended = "trigger_strategy_research"
+    assert suspended not in _ol._LEVEL_1_ACTIONS
+    assert _ol.classify_action(suspended) == 2
+    assert not any(
+        isinstance(node, ast.Constant) and node.value == suspended
+        for function in (decide, execute)
+        for node in ast.walk(function)
+    )
+
+
+@spec_claim(
+    SpecClaim(
         "OL-B10", "operator_layer", "§selfheal structured_audit fields", "L2b",
         "_emit_self_heal_action must persist all 5 required audit fields in "
         "KnowledgeItem.content (JSON): operation_type / trigger_reason / result "
