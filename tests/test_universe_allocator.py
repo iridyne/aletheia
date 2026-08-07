@@ -46,11 +46,60 @@ def test_family_quota_enforcement(cfg):
 
     result = allocate_universe(items, cfg)
     momentum_count = sum(1 for r in result if r["scanner_family"] == "momentum")
-    # Exploit quota is 30% of 10 = 3, explore may randomly add more from remainder
-    # But exploit-only should be capped; total with explore should stay reasonable
-    exploit_count = int(cfg.max_candidates * (1 - cfg.explore_ratio))  # 8
-    exploit_momentum = min(3, exploit_count)  # at most 3 in exploit phase
-    assert momentum_count <= exploit_momentum + cfg.max_candidates - exploit_count  # 3 + 2 = 5 max from explore
+    # The configured family limit applies to the final pool, including explore.
+    assert momentum_count <= 3
+
+
+def test_explore_rechecks_family_capacity_after_each_random_pick(monkeypatch):
+    cfg = UniverseConfig(
+        max_candidates=30,
+        explore_ratio=0.2,
+        family_quota={
+            "derivatives": 0.25,
+            "event": 0.05,
+            "mean_reversion": 0.35,
+            "momentum": 0.20,
+            "short_bias": 0.05,
+            "volatility": 0.10,
+        },
+    )
+    # Fill the 24 exploit slots while leaving mean_reversion one slot below its
+    # limit. Put several more mean_reversion rows first in the explore remainder:
+    # the former one-shot sample admitted all of them and exceeded the cap of 10.
+    families = (
+        ["mean_reversion"] * 9
+        + ["derivatives"] * 7
+        + ["momentum"] * 6
+        + ["short_bias"]
+        + ["volatility"]
+        + ["mean_reversion"] * 5
+        + ["volatility"] * 3
+        + ["event"]
+    )
+    items = [
+        _scored_item(f"S{i}", family, 200 - i)
+        for i, family in enumerate(families)
+    ]
+    monkeypatch.setattr(
+        "aletheia.universe.allocator.random.sample",
+        lambda population, _size: list(population),
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.allocator.has_fresh_market_snapshot",
+        lambda *_args: True,
+    )
+
+    result = allocate_universe(items, cfg, regime_state=None)
+    counts = {
+        family: sum(1 for item in result if item["scanner_family"] == family)
+        for family in cfg.family_quota
+    }
+
+    assert counts["mean_reversion"] == 10
+    assert all(
+        count <= max(1, int(cfg.max_candidates * cfg.family_quota[family]))
+        for family, count in counts.items()
+    )
 
 
 def test_explore_exploit_split(cfg):
