@@ -198,6 +198,7 @@ async def test_wake_driven_portfolio_review_scopes_and_persists_hold(
         direction="long",
         quantity=1.0,
         entry_price=100.0,
+        unrealized_pnl=-0.25,
         execution_mode="paper_internal",
     )
     unrelated = Position(
@@ -207,6 +208,7 @@ async def test_wake_driven_portfolio_review_scopes_and_persists_hold(
         direction="short",
         quantity=1.0,
         entry_price=2000.0,
+        unrealized_pnl=1.0,
         execution_mode="paper_internal",
     )
     insert_position(target)
@@ -228,6 +230,8 @@ async def test_wake_driven_portfolio_review_scopes_and_persists_hold(
         assert target.id in user
         assert "adverse_signal" in user
         assert unrelated.id not in user
+        assert "Positions in this review scope (1 of 2 total open positions)" in user
+        assert "Global unrealized PnL: 0.75 USDT" in user
         return ({"action": "hold", "reasoning": "signal is not yet decisive"}, None)
 
     monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_hold)
@@ -257,6 +261,64 @@ async def test_wake_driven_portfolio_review_scopes_and_persists_hold(
     assert row["symbol"] == target.symbol
     assert evidence["position_review"]["target_position_id"] == target.id
     assert evidence["position_review"]["wake_batches"] == wake_batches
+    assert evidence["position_review"]["portfolio_context"] == {
+        "review_scope_positions": 1,
+        "total_open_positions": 2,
+        "total_unrealized_pnl_usdt": 0.75,
+        "unrealized_pnl_available": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_portfolio_review_does_not_coerce_missing_global_pnl_to_zero(
+    tmp_path, monkeypatch
+):
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import insert_position
+
+    target = Position(
+        id="wake-review-missing-pnl",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.1,
+        entry_price=100.0,
+        execution_mode="paper_internal",
+    )
+    insert_position(target)
+    conn.execute(
+        "UPDATE positions SET unrealized_pnl=NULL WHERE id=?",
+        (target.id,),
+    )
+    conn.commit()
+    monkeypatch.setattr(
+        "aletheia.agent_shell.context.build_app_context",
+        lambda sections=None: {
+            "risk": {"max_open_positions_demo": 3, "kill_switch": False},
+        },
+    )
+
+    async def choose_hold(_system, user, *, schema, **_kwargs):
+        assert "Global unrealized PnL: not available" in user
+        return ({"action": "hold", "reasoning": "missing aggregate evidence"}, None)
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_hold)
+    result = await review_portfolio_state({
+        "trigger": "horizon_due",
+        "wake_batches": [{"position_id": target.id, "events": []}],
+    })
+
+    row = conn.execute(
+        "SELECT evidence_manifest_json FROM pi_decisions WHERE id=?",
+        (result["position_review_decision_id"],),
+    ).fetchone()
+    context = json.loads(row["evidence_manifest_json"])["position_review"][
+        "portfolio_context"
+    ]
+    assert context["unrealized_pnl_available"] is False
+    assert context["total_unrealized_pnl_usdt"] is None
 
 
 @pytest.mark.asyncio
