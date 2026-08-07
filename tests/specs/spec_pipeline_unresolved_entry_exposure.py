@@ -392,7 +392,7 @@ def test_unresolved_entry_is_consumed_by_existing_live_exposure_gate(
 
 @spec_claim(
     SpecClaim(
-        "PL-UEE-10",
+        "PL-UEE-16",
         "pipeline_unresolved_entry_exposure",
         "§3 Demo exposure gate integration",
         "L2b",
@@ -441,7 +441,7 @@ def test_unresolved_paper_entry_is_consumed_by_demo_exposure_gate(
 
 @spec_claim(
     SpecClaim(
-        "PL-UEE-11",
+        "PL-UEE-17",
         "pipeline_unresolved_entry_exposure",
         "§3 Demo exposure gate integration",
         "L2b",

@@ -96,7 +96,7 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 > live/demo 池中继续占用持仓槽位、保留同符号互斥，并把尚未由 open Position 表示的数量计入
 > 名义敞口。若未决 Order 已有部分数量投影为 Position，只补计剩余数量，且不重复占一个槽位；
 > 平仓 Order 不占新增入场容量。Demo 总敞口使用与资本基数相同的精确账户池，不把
-> `paper_internal` 和 exchange demo 账户混算。spec: `PL-UEE-01~11`。
+> `paper_internal` 和 exchange demo 账户混算。spec: `PL-UEE-01~17`。
 
 > **关卡 #8 的权威损失源**：Risk 不再读取 `today_realized_pnl` 或任何策略表现聚合。
 > `paper_internal` 的 verified close 必须与 append-only `paper_account_events` 一一对应且金额一致；
