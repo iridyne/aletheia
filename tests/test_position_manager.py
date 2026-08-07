@@ -363,7 +363,7 @@ def test_live_market_exit_still_works(tmp_path, monkeypatch):
 
 
 def test_stale_pending_close_is_escalated_without_resubmission(tmp_path, monkeypatch):
-    """A stale uncertain close remains claimed while reconciliation is escalated once."""
+    """Each stale close claim remains owned and is escalated exactly once."""
     setup_env(tmp_path, monkeypatch)
     p = Position(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
@@ -388,6 +388,30 @@ def test_stale_pending_close_is_escalated_without_resubmission(tmp_path, monkeyp
     incidents = [event for event in repo.list_audit_events(limit=20)
                  if event["event_type"] == "pending_close_reconciliation_required"]
     assert len(incidents) == 1
+
+    repo.update_position(
+        p.id,
+        pending_close_order_id="second-unresolved-close",
+        pending_close_status="submission_unknown",
+        pending_close_requested_at=(
+            datetime.now(timezone.utc) - timedelta(hours=5)
+        ).isoformat(),
+    )
+    third = evaluate_open_positions()
+    fourth = evaluate_open_positions()
+
+    assert third["closed"] == fourth["closed"] == 0
+    assert repo._select_one("positions", p.id)["pending_close_order_id"] == (
+        "second-unresolved-close"
+    )
+    incidents = [event for event in repo.list_audit_events(limit=20)
+                 if event["event_type"] == "pending_close_reconciliation_required"]
+    assert len(incidents) == 2
+    messages = {event["message"] for event in incidents}
+    assert any("Pending close unresolved-close has remained" in message
+               for message in messages)
+    assert any("Pending close second-unresolved-close has remained" in message
+               for message in messages)
 
 
 @pytest.mark.parametrize("requested_at", [
