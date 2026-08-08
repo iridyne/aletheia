@@ -11,7 +11,11 @@ import pytest
 
 def _cfg(*, paused: bool = False, layered: bool = True):
     return SimpleNamespace(
-        runtime=SimpleNamespace(paused=paused, scheduler_enabled=True),
+        runtime=SimpleNamespace(
+            paused=paused,
+            scheduler_enabled=True,
+            pause_owners={},
+        ),
         health=SimpleNamespace(
             layered_pause_enabled=layered,
             exchange_probe_interval_sec=30,

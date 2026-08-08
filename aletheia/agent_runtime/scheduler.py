@@ -1350,27 +1350,57 @@ def pause_scheduler(layered: bool | None = None) -> None:
     )
 
 
-def resume_scheduler() -> None:
-    """Resume all paused jobs (whether blanket or selectively paused)."""
+def resume_scheduler() -> bool:
+    """Resume paused jobs only when no durable pause owner remains.
+
+    The owner check and APScheduler mutation share the pause-ownership transition
+    lock.  A concurrent gate therefore cannot acquire a durable owner between the
+    check and the resume action.  The final-owner release path re-enters this same
+    ``RLock`` after persisting the empty owner set.
+
+    Returns ``False`` only when an active owner blocks the request.  Otherwise the
+    request keeps the historical best-effort semantics, including the configured-
+    disabled/no-scheduler case.
+    """
+    # Lazy import avoids a module cycle: pause_ownership imports scheduler only
+    # inside acquire/release operations.
+    from aletheia.agent_runtime.pause_ownership import _pause_transition_lock
+
     global _scheduler
-    if _scheduler is None:
-        init_scheduler()
+    with _pause_transition_lock:
+        cfg = load_config()
+        active_owners = tuple(sorted(cfg.runtime.pause_owners))
+        if active_owners:
+            logger.warning(
+                "resume_scheduler: blocked by durable pause owner(s): %s",
+                ", ".join(active_owners),
+            )
+            return False
+
         if _scheduler is None:
-            logger.warning("resume_scheduler: scheduler unavailable (disabled or init failed)")
-        return
-    # If blanket-paused, resume the whole scheduler
-    if _scheduler.state == STATE_PAUSED:
-        _scheduler.resume()
-        logger.info("Scheduler resumed (from blanket pause)")
-    # Also resume any selectively-paused jobs
-    if _selectively_paused_jobs:
-        for job_id in list(_selectively_paused_jobs):
-            try:
-                _scheduler.resume_job(job_id)
-            except Exception:
-                pass
-        logger.info("Scheduler resumed %d selectively-paused jobs", len(_selectively_paused_jobs))
-        _selectively_paused_jobs.clear()
+            init_scheduler()
+            if _scheduler is None:
+                logger.warning(
+                    "resume_scheduler: scheduler unavailable (disabled or init failed)"
+                )
+            return True
+        # If blanket-paused, resume the whole scheduler
+        if _scheduler.state == STATE_PAUSED:
+            _scheduler.resume()
+            logger.info("Scheduler resumed (from blanket pause)")
+        # Also resume any selectively-paused jobs
+        if _selectively_paused_jobs:
+            for job_id in list(_selectively_paused_jobs):
+                try:
+                    _scheduler.resume_job(job_id)
+                except Exception:
+                    pass
+            logger.info(
+                "Scheduler resumed %d selectively-paused jobs",
+                len(_selectively_paused_jobs),
+            )
+            _selectively_paused_jobs.clear()
+        return True
 
 
 def get_pause_state() -> dict:
