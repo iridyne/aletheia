@@ -918,8 +918,8 @@ def acknowledge_horizon_review(position_ids: list[str]) -> list[str]:
     """Durably mark horizon wakes only after their portfolio review completed.
 
     This marker is an acknowledgement, not a delivery receipt.  The caller filters
-    the supplied ids to HORIZON_DUE batches and invokes this only after a valid
-    hold/adjust result or a confirmed/durably claimed close.
+    the supplied ids to open HORIZON_DUE positions and invokes this only after an
+    effective future-horizon extension or a confirmed/durably claimed close.
     """
     from aletheia.storage.repositories import update_position
 
@@ -1449,6 +1449,11 @@ def apply_operator_adjustment(
     pos = get_position(position_id)
     if pos is None or pos.get("status") != "open":
         return {"error": "position_not_found_or_not_open", "position_id": position_id}
+    if all(
+        value is None
+        for value in (new_stop, new_target, new_horizon, new_trailing)
+    ):
+        return {"error": "no_adjustment_requested", "position_id": position_id}
 
     if new_stop is not None:
         validated_stop = _positive_adjustment_number(new_stop)
@@ -1469,6 +1474,20 @@ def apply_operator_adjustment(
         if validated_horizon is None:
             return {"error": "invalid_new_horizon", "position_id": position_id}
         new_horizon = validated_horizon
+        opened_at = _parse_dt(pos.get("opened_at"))
+        if opened_at is None:
+            return {
+                "error": "position_age_unavailable",
+                "position_id": position_id,
+            }
+        position_age_hours = (
+            datetime.now(timezone.utc) - opened_at
+        ).total_seconds() / 3600.0
+        if new_horizon <= position_age_hours:
+            return {
+                "error": "new_horizon_not_in_future",
+                "position_id": position_id,
+            }
 
     if new_trailing is not None:
         validated_trailing = _validated_trailing_adjustment(new_trailing)

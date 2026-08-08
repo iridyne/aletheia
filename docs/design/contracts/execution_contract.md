@@ -339,9 +339,13 @@ manager 必须重新取得精确新鲜 mark。最终结果和 wake fingerprint �
 退出时，重启后的下一轮 durable Position 扫描仍会恢复同一唤醒。daemon 遇到
 `review_unavailable`、超时、异常或未确认的 `close_one`，必须恢复原
 `position_id + wake batch` 后重试，不能降级成无持仓上下文的 entry evaluation，
-也不能记 job success。只有有效 `hold`、已完成 `adjust_position`、已确认本地平仓，
-或已有 durable pending-close claim 的交易所平仓才确认该 horizon；后者由既有
-reconciliation 路径收敛，复核重试不得创建替代 Close Order。
+也不能记 job success。非 horizon 的 adverse review 可用 `hold` 完成；仍开放的
+`HORIZON_DUE` Position 则只允许已确认平仓，或把 `new_horizon_hours` 明确延长到
+严格晚于当前持仓 age 的 `adjust_position` 完成。`hold`、空调整、只改 stop/target、
+以及未越过当前 age 的 horizon 都保持未完成并重试，不得确认原 horizon。混合批次中
+已关闭 Position 的陈旧 horizon wake 不得限制另一笔开放 Position 的 action schema，
+也不得被写入确认。交易所平仓已有 durable pending-close claim 时可确认，由既有
+reconciliation 路径收敛；复核重试不得创建替代 Close Order。
 
 ### 10.2 close_position_routed 路由契约(唯一平仓中枢)
 

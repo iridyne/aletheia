@@ -496,6 +496,51 @@ def test_horizon_change_rearms_wake():
     assert row["horizon_wake_sent_at"] is None   # re-armed → can wake again at the new horizon
 
 
+def test_noop_adjustment_is_rejected_without_version_bump():
+    from aletheia.portfolio import position_manager as pm
+    from aletheia.storage.sqlite import get_db
+
+    _insert(get_db(), "noop-adjustment", entry=100.0, stop=95.0, horizon=10.0, version=4)
+    before = get_db().total_changes
+
+    result = pm.apply_operator_adjustment("noop-adjustment")
+
+    assert result == {
+        "error": "no_adjustment_requested",
+        "position_id": "noop-adjustment",
+    }
+    assert get_db().total_changes == before
+    row = get_db().execute(
+        "SELECT exit_plan_version FROM positions WHERE id='noop-adjustment'"
+    ).fetchone()
+    assert row["exit_plan_version"] == 4
+
+
+def test_horizon_must_be_strictly_later_than_current_position_age(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.portfolio import position_manager as pm
+    from aletheia.storage.sqlite import get_db
+
+    _insert(get_db(), "expired-horizon", entry=100.0, stop=95.0, horizon=4.0, version=2)
+    opened_at = (datetime.now(timezone.utc) - timedelta(hours=10)).isoformat()
+    get_db().execute(
+        "UPDATE positions SET opened_at=? WHERE id='expired-horizon'",
+        (opened_at,),
+    )
+    before = get_db().total_changes
+
+    result = pm.apply_operator_adjustment(
+        "expired-horizon", new_horizon=10.0
+    )
+
+    assert result == {
+        "error": "new_horizon_not_in_future",
+        "position_id": "expired-horizon",
+    }
+    assert get_db().total_changes == before
+
+
 def test_stop_sync_only_reports_success_when_dispatcher_replaces(monkeypatch):
     calls = []
     monkeypatch.setattr(
