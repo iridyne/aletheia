@@ -25,3 +25,7 @@ Research files are evidence, audits, and explorations. They can guide work but d
 ## Agent Rule
 
 Use research to find evidence and hypotheses. If a conclusion becomes authoritative, promote it into `design/`, `product/`, `governance/`, or `operations/`.
+
+## Current Review Plans
+
+- [Universe scoring causal promotion plan (2026-08-08)](audits/UNIVERSE_SCORING_CAUSAL_PROMOTION_PLAN_2026-08-08.md) — review-gated Paper scoring evidence and rollout contract; grants no authority.
