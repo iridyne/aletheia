@@ -11,12 +11,17 @@ import random
 import textwrap
 from types import SimpleNamespace
 
+import pytest
+
 from aletheia.config.schema import UniverseConfig
 from aletheia.storage import repositories as repo
 from aletheia.universe import service
 from aletheia.universe.continuous_scoring import ContinuousScoringPolicy
 from aletheia.universe.twin_allocation import replay_twin_shadow_allocations
 from aletheia.universe.twin_persistence import (
+    TWIN_SHADOW_CAPTURE_INTERVAL_SEC,
+    TWIN_SHADOW_MAX_INPUT_BYTES,
+    TWIN_SHADOW_MAX_OUTPUT_BYTES,
     build_twin_shadow_bundle,
     replay_twin_shadow_bundle,
 )
@@ -82,12 +87,21 @@ def _input() -> TwinShadowInput:
     )
 
 
-def _bundle(items: tuple[TwinShadowInput, ...] | None = None):
+def _bundle(
+    items: tuple[TwinShadowInput, ...] | None = None,
+    *,
+    scanner_run_id: str = "run-1",
+    captured_at: str = "2026-08-08T00:00:00+00:00",
+):
     inputs = items or (_input(),)
     policy = ContinuousScoringPolicy()
     universe_config = UniverseConfig(max_candidates=1, explore_ratio=0.0)
     random_state = random.getstate()
-    records = build_twin_shadow_batch(inputs, scanner_run_id="run-1", base_policy=policy)
+    records = build_twin_shadow_batch(
+        inputs,
+        scanner_run_id=scanner_run_id,
+        base_policy=policy,
+    )
     app_config = SimpleNamespace(
         exchange=SimpleNamespace(
             enabled_markets={"spot": True, "usdt_futures": True},
@@ -97,7 +111,7 @@ def _bundle(items: tuple[TwinShadowInput, ...] | None = None):
     records = replay_twin_shadow_allocations(
         records,
         inputs,
-        scanner_run_id="run-1",
+        scanner_run_id=scanner_run_id,
         universe_config=universe_config,
         app_config=app_config,
         family_tolerances={},
@@ -113,7 +127,7 @@ def _bundle(items: tuple[TwinShadowInput, ...] | None = None):
     return build_twin_shadow_bundle(
         records,
         inputs,
-        scanner_run_id="run-1",
+        scanner_run_id=scanner_run_id,
         authority_snapshot_id="snapshot-1",
         policy=policy,
         allocator_random_state=random_state,
@@ -123,7 +137,7 @@ def _bundle(items: tuple[TwinShadowInput, ...] | None = None):
         family_tolerances={},
         regime_state="normal",
         provider_id="ccxt:binance",
-        captured_at="2026-08-08T00:00:00+00:00",
+        captured_at=captured_at,
     )
 
 
@@ -136,42 +150,55 @@ def test_bundle_is_complete_sanitized_and_explicitly_non_authoritative() -> None
     assert bundle.batch.promotion_eligible is False
     assert len(bundle.evidence) == 1
     evidence = bundle.evidence[0]
-    assert evidence.assignment_unit_id == "run-1"
-    assert evidence.assignment_arm is None
-    assert evidence.propensity is None
-    assert evidence.treatment_coefficient is None
     assert evidence.shadow_authority_applied is False
     assert evidence.promotion_eligible is False
     assert "must-not-be-persisted" not in evidence.input_json
     assert "api_key" not in evidence.input_json
-    record_payload = json.loads(evidence.record_json)["record"]
-    assert "task5_diagnostic_only" in record_payload["blocking_reasons"]
-    assert "task4_diagnostic_only" not in record_payload["blocking_reasons"]
-    assert record_payload["unavailable_promotion_identities"] == [
+    output = json.loads(evidence.compact_output_json)
+    contract = output["evidence_contract"]
+    assert "sampled_diagnostic_only" in contract["blocking_reasons"]
+    assert "task4_diagnostic_only" not in contract["blocking_reasons"]
+    assert contract["unavailable_identities"] == [
         "policy_epoch",
         "availability_profile",
+        "feature_observation_lineage",
+        "fixed_horizon_outcome",
         "assignment",
         "propensity",
     ]
-    assert 4 <= len(bundle.outcomes) <= 8
-    assert {outcome.horizon for outcome in bundle.outcomes} == {"15m", "1h", "4h", "24h"}
-    assert all(outcome.allocation_selected is None for outcome in bundle.outcomes)
+    assert contract["fixed_horizon_outcomes_collected"] is False
+    assert len(output["top_sensitivities"]) <= 8
+    assert len(evidence.compact_output_json.encode()) <= TWIN_SHADOW_MAX_OUTPUT_BYTES
+    assert len(evidence.input_json.encode()) <= TWIN_SHADOW_MAX_INPUT_BYTES
+
+
+def test_oversized_replay_identity_fails_closed_before_database_write() -> None:
+    base = _input()
+    oversized = TwinShadowInput(
+        feature={**base.feature, "symbol": "X" * 3000},
+        authority_scanner_result=base.authority_scanner_result,
+        authority_total_score=base.authority_total_score,
+        authority_score_audit=base.authority_score_audit,
+    )
+
+    with pytest.raises(ValueError, match="twin_replay_input_too_large"):
+        _bundle((oversized,))
 
 
 def test_bundle_persistence_is_atomic_idempotent_and_replayable() -> None:
     bundle = _bundle()
 
-    inserted_records, inserted_outcomes = repo.insert_universe_twin_shadow_bundle(
+    inserted_records = repo.insert_universe_twin_shadow_bundle(
         bundle.batch,
         bundle.evidence,
-        list(bundle.outcomes),
     )
     assert inserted_records == 1
-    assert inserted_outcomes >= 4
-    retry_records, _retry_outcomes = repo.insert_universe_twin_shadow_bundle(
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM filter_candidate_outcomes"
+    ).fetchone()[0] == 0
+    retry_records = repo.insert_universe_twin_shadow_bundle(
         bundle.batch,
         bundle.evidence,
-        list(bundle.outcomes),
     )
     assert retry_records == 0
 
@@ -237,7 +264,7 @@ def test_persistence_failure_is_nonfatal_to_authority() -> None:
             policy_kwargs={},
         )
     )
-    assert result == (0, 0)
+    assert result == 0
 
     result = asyncio.run(
         service._persist_twin_shadow_nonfatal(
@@ -249,28 +276,42 @@ def test_persistence_failure_is_nonfatal_to_authority() -> None:
             policy_kwargs={},
         )
     )
-    assert result == (0, 0)
+    assert result == 0
 
 
-def test_twin_retention_deletes_children_before_batches_and_honors_clean_window() -> None:
+def test_capture_cadence_is_enforced_inside_repository_transaction() -> None:
+    first = _bundle(scanner_run_id="run-1", captured_at="2026-08-08T00:00:00+00:00")
+    too_soon = _bundle(scanner_run_id="run-2", captured_at="2026-08-08T00:10:00+00:00")
+    due = _bundle(scanner_run_id="run-3", captured_at="2026-08-08T00:55:00+00:00")
+
+    assert repo.insert_universe_twin_shadow_bundle(first.batch, first.evidence) == 1
+    assert repo.insert_universe_twin_shadow_bundle(too_soon.batch, too_soon.evidence) == 0
+    assert repo.get_universe_twin_shadow_batch("run-2") is None
+    assert repo.universe_twin_shadow_capture_due(
+        due.batch.captured_at,
+        min_interval_sec=TWIN_SHADOW_CAPTURE_INTERVAL_SEC,
+    ) is True
+    assert repo.insert_universe_twin_shadow_bundle(due.batch, due.evidence) == 1
+
+
+def test_hourly_compact_evidence_has_bounded_thirty_day_projection() -> None:
+    evidence = _bundle().evidence[0]
+    per_candidate = len(evidence.compact_output_json.encode()) + len(evidence.input_json.encode())
+    projected_payload_bytes = per_candidate * 240 * 24 * 30
+
+    assert projected_payload_bytes <= 600_000_000
+
+
+def test_twin_retention_deletes_children_before_batches_on_fixed_window() -> None:
     bundle = _bundle()
     old = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
     old_batch = bundle.batch.model_copy(update={"captured_at": old})
     old_evidence = tuple(
         item.model_copy(update={"captured_at": old}) for item in bundle.evidence
     )
-    repo.insert_universe_twin_shadow_bundle(old_batch, old_evidence, list(bundle.outcomes))
+    repo.insert_universe_twin_shadow_bundle(old_batch, old_evidence)
 
-    assert repo.prune_universe_twin_shadow_evidence(
-        days=30,
-        min_experiment_started_at=(datetime.now(timezone.utc) - timedelta(days=90)).isoformat(),
-    ) == 0
-    assert repo.get_universe_twin_shadow_batch("run-1") is not None
-
-    deleted = repo.prune_universe_twin_shadow_evidence(
-        days=30,
-        min_experiment_started_at=None,
-    )
+    deleted = repo.prune_universe_twin_shadow_evidence(days=30)
     assert deleted == 2
     assert repo.get_universe_twin_shadow_batch("run-1") is None
     assert repo.list_universe_twin_shadow_records("run-1") == []
@@ -293,7 +334,6 @@ def test_persistence_identity_conflict_fails_closed() -> None:
     repo.insert_universe_twin_shadow_bundle(
         bundle.batch,
         bundle.evidence,
-        list(bundle.outcomes),
     )
 
     conflicting = bundle.batch.model_copy(update={"batch_hash": "0" * 64})
@@ -301,7 +341,6 @@ def test_persistence_identity_conflict_fails_closed() -> None:
         repo.insert_universe_twin_shadow_bundle(
             conflicting,
             bundle.evidence,
-            list(bundle.outcomes),
         )
     except ValueError as exc:
         assert str(exc) == "universe_twin_shadow_batch_identity_conflict"

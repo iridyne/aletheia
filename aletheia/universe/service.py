@@ -174,17 +174,29 @@ async def _persist_twin_shadow_nonfatal(
     *,
     policy_factory,
     policy_kwargs: dict[str, object],
+    capture_due=None,
+    min_interval_sec: int = 55 * 60,
     **kwargs,
-) -> tuple[int, int]:
+) -> int:
     """Build and persist diagnostic evidence without delaying authority failure."""
 
     if not records:
-        return (0, 0)
+        return 0
 
-    def build_and_persist() -> tuple[int, int]:
+    def build_and_persist() -> int:
+        captured_at = str(kwargs.get("captured_at") or "")
+        if capture_due is not None and captured_at and not capture_due(
+            captured_at,
+            min_interval_sec=min_interval_sec,
+        ):
+            return 0
         policy = policy_factory(**policy_kwargs)
         bundle = builder(records, inputs, policy=policy, **kwargs)
-        return persist(bundle.batch, bundle.evidence, list(bundle.outcomes))
+        return persist(
+            bundle.batch,
+            bundle.evidence,
+            min_interval_sec=min_interval_sec,
+        )
 
     try:
         return await asyncio.wait_for(
@@ -196,7 +208,7 @@ async def _persist_twin_shadow_nonfatal(
             "Universe twin Shadow persistence unavailable without authority impact: %s",
             type(shadow_exc).__name__,
         )
-        return (0, 0)
+        return 0
 
 
 @contextmanager
@@ -560,7 +572,10 @@ class UniverseService:
             summarize_twin_shadow_records,
         )
         from aletheia.universe.twin_allocation import replay_twin_shadow_allocations
-        from aletheia.universe.twin_persistence import build_twin_shadow_bundle
+        from aletheia.universe.twin_persistence import (
+            TWIN_SHADOW_CAPTURE_INTERVAL_SEC,
+            build_twin_shadow_bundle,
+        )
         from aletheia.universe.signal_emitter import (
             emit_deterministic_opportunities,
             _infer_direction,
@@ -886,6 +901,8 @@ class UniverseService:
                         "min_volume_24h_usdt": cfg.universe.min_volume_24h_usdt,
                         "min_depth_10bps_usd": cfg.universe.min_depth_10bps_usd,
                     },
+                    capture_due=repo.universe_twin_shadow_capture_due,
+                    min_interval_sec=TWIN_SHADOW_CAPTURE_INTERVAL_SEC,
                     scanner_run_id=run.id,
                     authority_snapshot_id=prev_snapshot_id,
                     allocator_random_state=allocator_random_state,
@@ -1072,6 +1089,8 @@ class UniverseService:
                     "min_volume_24h_usdt": cfg.universe.min_volume_24h_usdt,
                     "min_depth_10bps_usd": cfg.universe.min_depth_10bps_usd,
                 },
+                capture_due=repo.universe_twin_shadow_capture_due,
+                min_interval_sec=TWIN_SHADOW_CAPTURE_INTERVAL_SEC,
                 scanner_run_id=run.id,
                 authority_snapshot_id=snap.id,
                 allocator_random_state=allocator_random_state,

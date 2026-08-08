@@ -1262,8 +1262,6 @@ class UniverseTwinShadowBatch(BaseModel):
     policy_epoch_id: str | None = None
     feature_source_fingerprint: str
     availability_profile_id: str | None = None
-    outcome_contract_version: str
-    cost_model_version: str
     metric_version: str
     allocator_random_state_json: str
     policy_json: str
@@ -1284,13 +1282,6 @@ class UniverseTwinShadowEvidence(BaseModel):
     asset_id: str | None = None
     symbol: str
     market_type: str
-    assignment_unit_id: str
-    assignment_arm: str | None = None
-    propensity: float | None = None
-    treatment_coefficient: float | None = None
-    authority_outcome_candidate_key: str | None = None
-    shadow_point_outcome_candidate_key: str | None = None
-    shadow_pessimistic_outcome_candidate_key: str | None = None
     authority_total_score: float
     shadow_point_score: float | None = None
     shadow_pessimistic_score: float | None = None
@@ -1304,7 +1295,7 @@ class UniverseTwinShadowEvidence(BaseModel):
     shadow_authority_applied: bool = False
     promotion_eligible: bool = False
     shadow_valid: bool = False
-    record_json: str
+    compact_output_json: str
     input_json: str
     record_hash: str
     captured_at: str = Field(default_factory=_utcnow)

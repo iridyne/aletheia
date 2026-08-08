@@ -290,7 +290,17 @@ def test_universe_twin_shadow_migration_is_additive_and_idempotent():
             "PRAGMA table_info(universe_twin_shadow_records)"
         )
     }
-    assert {"candidate_index", "assignment_arm", "propensity", "record_hash"} <= columns
+    assert {
+        "candidate_index",
+        "compact_output_json",
+        "input_json",
+        "record_hash",
+    } <= columns
+    assert {
+        "assignment_arm",
+        "propensity",
+        "authority_outcome_candidate_key",
+    }.isdisjoint(columns)
     connection.close()
 
 

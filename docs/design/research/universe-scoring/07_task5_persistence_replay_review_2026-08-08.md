@@ -1,121 +1,113 @@
-# Task 5 Durable Twin Evidence and Replay Review
+# Task 5 Bounded Twin Evidence and Replay Review
 
 > Date: 2026-08-08
 >
-> Verdict: PASS for diagnostic persistence and replay only
+> Verdict: PASS for bounded diagnostic persistence and replay only
 >
 > Authority scorer: `universe-step-v1`
 >
-> Runtime/Fedora validation: not performed
+> Runtime/Fedora validation: pending
 
-## 1. Implemented scope
+## 1. Accepted scope
 
-Task 5 closes the evidence gap left deliberately open by Task 4. Every
-coarse-filter survivor now has durable step, continuous point, and continuous
-pessimistic score/rank/selection facts. Both continuous arms are replayed through
-the current fine filter, preferred-market deduplication, family quotas,
-explore/exploit allocator, regime context, and the exact allocator random state
-captured immediately before the step allocation.
+Task 5 retains a sampled, replayable comparison of step authority against the
+continuous point and pessimistic paths. Both continuous paths replay the current
+fine filter, preferred-market deduplication, family quotas, regime context, and
+allocator mechanics. The change does not switch the scorer, alter a quota, emit
+a continuous Opportunity, create a Learning treatment, or touch Risk/Execution
+authority.
 
-The change does not switch the scorer, change a quota, emit a continuous
-Opportunity, add a Learning treatment, or touch Risk/Execution authority.
+The production capture is deliberately bounded to one scanner run per 55
+minutes. Within that run, every coarse-filter survivor is retained so ranks and
+selected/dropped comparisons remain internally coherent.
 
-## 2. Strict reverse review findings
+## 2. Rejected first draft
 
-The first Task-5 draft was not accepted as-is. Reverse evaluation found and
-corrected these defects:
+The first persistence draft was not accepted. Direct measurement found:
 
-1. A replay based on database row order was unstable for exactly tied scores.
-   The current record stores a zero-based `candidate_index`, enforces uniqueness
-   and contiguity, and reconstructs the original allocator order.
-2. Batch hashing initially depended on transient record iteration order. Record
-   hashes are now canonically ordered by candidate identity.
-3. Rank alone was insufficient for selected/dropped comparison. The current
-   implementation runs the same fine-filter, dedupe, quota, regime, and random
-   exploration mechanics with database decoration and filter-evidence writes
-   disabled.
-4. Arbitrary feature/scanner dictionaries were unsafe to persist. The writer now
-   uses source-controlled allowlists and drops unknown keys instead of serializing
-   them or guessing their meaning.
-5. A retry could otherwise hide replay drift. Batch and candidate identities now
-   fail closed when their canonical hashes conflict.
+- about 23,537 bytes of record JSON per representative candidate;
+- four fixed horizons per direction, producing four to eight shared outcome
+  rows per candidate;
+- at 240 candidates on a 10-minute refresh, about 24 GiB of record body over 30
+  days, before SQLite/index overhead;
+- roughly 138,000 or more additional outcome rows per day, plus settlement load.
 
-Task 4 was also re-audited during this work. The apparent duplicate market field
-seen in one truncated terminal output was not present in source; the existing
-exact-instrument selection regression confirmed the code was already correct.
+That design would have reintroduced the database-growth and memory-pressure
+risk this hardening cycle is removing. It also mixed diagnostic scorer evidence
+into Learning's shared outcome table before a primary horizon, prospective
+assignment, or causal contract had been approved. The original draft is
+therefore explicitly rejected for merge or deployment.
 
-## 3. Data and outcome design
+## 3. Corrections in the accepted design
 
-`aletheia-sqlite-v8` adds two append-only diagnostic tables:
+The bounded design applies all of the following:
 
-- `universe_twin_shadow_batches` freezes versions, source/policy/allocation
-  identities, random state, blockers, and the batch hash;
-- `universe_twin_shadow_records` freezes each candidate's safe input, complete
-  score evidence, three-arm ranks/selections, outcome links, and record hash.
+1. Capture cadence is 55 minutes. A service precheck avoids unnecessary bundle
+   construction and the repository repeats the check inside `BEGIN IMMEDIATE`.
+2. `filter_candidate_outcomes` and all fixed-horizon outcome construction are
+   absent from the Twin persistence path.
+3. Full dataclass serialization is replaced with compact score/rank/selection,
+   threshold, missingness, flag, group, and top-eight sensitivity evidence.
+4. Replay inputs remain source-allowlisted and sufficient to regenerate the
+   pure scorer and allocator comparison.
+5. Batch and candidate hashes are canonical; equal-score input order is frozen
+   by contiguous `candidate_index`.
+6. Identical retries are idempotent; identity reuse with different content
+   fails closed.
 
-Direction-specific outcome keys share one canonical market result across arms
-that express the same direction. At most long and short are registered, each at
-15m/1h/4h/24h through the existing settlement and cost-economics path. Shared
-outcome rows keep `allocation_selected=NULL`; arm-specific selection remains on
-the twin record.
+The representative candidate now uses 2,442 bytes of compact output and 844
+bytes of replay input. At 240 candidates, 24 daily samples, and 30 days, the
+payload projection is 567,820,800 bytes before SQLite/index overhead. Automated
+guards cap output at 4 KiB, input at 2 KiB, and that projection at 600 MB.
 
 ## 4. Experimental facts remain unavailable
 
-Task 5 records, rather than fills, the next-stage gaps:
-
-| Identity | Task-5 value | Reason |
+| Identity | Value | Reason |
 | --- | --- | --- |
-| policy epoch | `NULL` | no prospective continuous policy epoch opened |
+| policy epoch | `NULL` | no prospective continuous policy epoch |
 | availability profile | `NULL` | no frozen prospective availability cohort |
-| exact per-feature observation lineage | `not available` blocker | current feature rows do not carry complete provider lineage |
-| assignment arm | `NULL` | no randomized or admissible assignment |
-| propensity | `NULL` | no assignment means no overlap probability |
-| treatment coefficient | `NULL` | no factor treatment is authorized |
+| exact observation lineage | unavailable blocker | feature rows lack complete provider lineage |
+| assignment arm | not collected | no randomized/admissible assignment |
+| propensity | not collected | no assignment or overlap probability |
+| fixed-horizon outcome | not collected | no approved primary horizon/outcome contract |
 | authority applied | `false` | step scorer remains sole authority |
 | promotion eligible | `false` | diagnostic evidence cannot self-promote |
 
 This prevents retrospective return differences from being mislabeled as causal
 Learning evidence or feeding a self-reinforcing score loop.
 
-## 5. Transaction and failure proof
+## 5. Random exploration evidence boundary
 
-The authority snapshot/Opportunity publication commits first. Twin serialization
-and persistence run afterward through a non-fatal background boundary. Batch,
-records, and fixed-horizon outcome registration share one short transaction;
-there is no network or `await` inside it. Failure returns `(0, 0)` diagnostic
-counts and cannot alter the already-completed scanner run or snapshot result.
+The runtime captures the process-global allocator random state immediately
+before step allocation and uses it for Shadow replay. This is useful for
+integrity comparison, but it is not a prospective randomization contract.
+Concurrent global-random consumers could still advance state between capture
+and allocation. Such drift must surface as a replay mismatch; it cannot be
+silently relabeled as exact causal selection.
 
-Retention uses 30 days via `universe_scanner_runs_days`, deletes child records
-before parent batches, and honors the existing active-experiment clean-window
-cutoff. Outcome rows remain governed by their canonical outcome retention.
+A later experiment design should separate deterministic core ranking from
+exploration treatment and own a dedicated random source. That work is outside
+Task 5 and requires owner approval.
 
-## 6. Verification
-
-Current focused evidence:
+## 6. Current verification
 
 | Check | Result |
 | --- | --- |
-| Task-4/5, migration, and data-CLI focused suite | `52 passed` |
-| Wider focused Universe regression suite | `292 passed` |
-| Ruff on touched Python and tests | passed |
-| Python compilation | passed |
-| Semgrep Python rules on changed runtime/storage modules | passed, zero findings |
-| Replay after reversed database row order | passed |
-| Canonical tamper detection | passed |
-| Persistence outside authority transaction AST check | passed |
-| Documentation governance | passed |
+| Persistence and migration focused suite | `28 passed` |
+| Ruff on touched runtime/storage/tests | passed |
+| Representative output/input | `2,442 B / 844 B` |
+| 30-day 240-candidate payload projection | `567,820,800 B` |
+| Outcome rows written by Twin | `0` |
+| Fedora focused validation | pending |
+| Runtime deployment | not performed |
 
-These are focused macOS checks, not a large local pytest run and not Fedora
-runtime evidence.
+These checks prove only the focused code contract. Wider focused regression,
+Semgrep, documentation governance, Fedora validation, and runtime observation
+remain required before the dependent PR can be ready.
 
-## 7. Verdict and stop gate
+## 7. Stop gate
 
-Task 5 meets its initial purpose: complete diagnostic selected/dropped evidence
-can be retained, settled, and replayed without granting it authority. The design
-is stricter than the initial draft because equal-score ordering and identity
-conflicts are now explicit.
-
-Task 6 has not started. Opening a policy epoch, assigning arms, calculating
-propensities, estimating causal contribution, or allowing factor Learning still
-requires a separate review and approval. This Task-5 PASS is not evidence of
-positive runtime effect or profitability.
+Task 6 has not started. Opening a policy epoch, assigning arms, choosing a
+primary outcome horizon, estimating causal contribution, or allowing factor
+Learning requires a separate plan and explicit owner approval. This Task-5 PASS
+is not evidence of positive runtime effect or profitability.

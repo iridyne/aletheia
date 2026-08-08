@@ -1,9 +1,9 @@
 """Durable, replayable evidence for the non-authoritative Universe twin scorer.
 
-This module has no runtime authority.  It serializes an already-computed twin
-batch, registers direction-specific fixed-horizon outcomes, and can replay the
-pure scoring/allocation path for integrity checks.  Missing experiment identity
-is recorded as missing; no assignment or propensity is inferred.
+This module has no runtime authority.  It samples an already-computed twin
+batch, persists compact scorer/allocation diagnostics, and can replay the pure
+path for integrity checks.  It deliberately does not create fixed-horizon
+outcomes or infer experiment assignment/propensity.
 """
 
 from __future__ import annotations
@@ -13,14 +13,11 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
-import random
 from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
 
-from aletheia.analytics.filter_evidence import build_candidate_outcomes
 from aletheia.config.schema import UniverseConfig
 from aletheia.storage.models import (
-    FilterCandidateOutcome,
     UniverseTwinShadowBatch,
     UniverseTwinShadowEvidence,
 )
@@ -28,7 +25,6 @@ from aletheia.universe.continuous_scoring import (
     ContinuousScoringPolicy,
     raw_feature_declarations,
 )
-from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 from aletheia.universe.twin_allocation import (
     TWIN_ALLOCATION_REPLAY_CONTRACT,
     replay_twin_shadow_allocations,
@@ -42,8 +38,11 @@ from aletheia.universe.twin_scoring import (
 
 
 TWIN_FEATURE_SOURCE_CONTRACT = "universe-twin-feature-source-v1"
-TWIN_OUTCOME_CONTRACT_VERSION = "universe-twin-direction-outcomes-v1"
 TWIN_METRIC_VERSION = "universe-continuous-shadow-cluster-allocation-utility-v1"
+TWIN_SHADOW_CAPTURE_INTERVAL_SEC = 55 * 60
+TWIN_SHADOW_MAX_TOP_SENSITIVITIES = 8
+TWIN_SHADOW_MAX_OUTPUT_BYTES = 4 * 1024
+TWIN_SHADOW_MAX_INPUT_BYTES = 2 * 1024
 
 _IDENTITY_AND_MARKET_FIELDS = frozenset(
     {
@@ -58,7 +57,7 @@ _IDENTITY_AND_MARKET_FIELDS = frozenset(
     }
 )
 _SCANNER_FIELDS = frozenset(
-    {"scanner_family", "scanner_direction", "direction", "opportunity_score", "reasons"}
+    {"scanner_family", "scanner_direction", "direction", "opportunity_score"}
 )
 _AUDIT_FIELDS = frozenset(
     {"contract", "effective_opportunity_multiplier", "calibration_authority_applied"}
@@ -67,13 +66,16 @@ _TASK5_BLOCKERS = (
     "assignment_not_available",
     "availability_profile_not_available",
     "feature_observation_lineage_not_available",
+    "fixed_horizon_outcome_not_collected",
     "policy_epoch_not_available",
     "propensity_not_available",
-    "task5_diagnostic_only",
+    "sampled_diagnostic_only",
 )
 _TASK5_UNAVAILABLE_IDENTITIES = (
     "policy_epoch",
     "availability_profile",
+    "feature_observation_lineage",
+    "fixed_horizon_outcome",
     "assignment",
     "propensity",
 )
@@ -83,7 +85,6 @@ _TASK5_UNAVAILABLE_IDENTITIES = (
 class TwinShadowBundle:
     batch: UniverseTwinShadowBatch
     evidence: tuple[UniverseTwinShadowEvidence, ...]
-    outcomes: tuple[FilterCandidateOutcome, ...]
 
 
 @dataclass(frozen=True)
@@ -129,9 +130,18 @@ def _selected(source: Mapping[str, object], allowed: frozenset[str]) -> dict[str
 
 def _safe_input(item: TwinShadowInput) -> dict[str, object]:
     feature_fields = frozenset(raw_feature_declarations()) | _IDENTITY_AND_MARKET_FIELDS
+    scanner = _selected(item.authority_scanner_result, _SCANNER_FIELDS)
+    reasons = item.authority_scanner_result.get("reasons")
+    scanner["reasons"] = (
+        ["no chase"]
+        if isinstance(reasons, Sequence)
+        and not isinstance(reasons, (str, bytes))
+        and any("no chase" in str(reason).lower() for reason in reasons)
+        else []
+    )
     return {
         "feature": _selected(item.feature, feature_fields),
-        "authority_scanner_result": _selected(item.authority_scanner_result, _SCANNER_FIELDS),
+        "authority_scanner_result": scanner,
         "authority_total_score": float(item.authority_total_score),
         "authority_score_audit": _selected(item.authority_score_audit, _AUDIT_FIELDS),
     }
@@ -178,62 +188,88 @@ def _candidate_key(scanner_run_id: str, feature: Mapping[str, object]) -> str:
     )
 
 
-def _positive_float(value: object) -> float | None:
-    if isinstance(value, bool):
-        return None
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed if math.isfinite(parsed) and parsed > 0 else None
-
-
-def _optional_float(value: object) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed if math.isfinite(parsed) else None
-
-
-def _direction_outcome_key(candidate_key: str, direction: str | None) -> str | None:
-    if direction not in {"long", "short"}:
-        return None
-    return f"{candidate_key}:direction:{direction}"
-
-
-def _record_material(
+def _compact_output_material(
     record: TwinShadowRecord,
     *,
     candidate_index: int,
-    outcome_keys: Mapping[str, str | None],
 ) -> dict[str, object]:
-    record_payload = asdict(record)
-    record_payload["unavailable_promotion_identities"] = list(
-        _TASK5_UNAVAILABLE_IDENTITIES
-    )
-    record_payload["blocking_reasons"] = sorted(
+    shadow = record.shadow
+    top_sensitivities = sorted(
+        shadow.sensitivities,
+        key=lambda item: (-abs(item.local_score_sensitivity), item.raw_feature_id),
+    )[:TWIN_SHADOW_MAX_TOP_SENSITIVITIES]
+    blockers = sorted(
         {
             *(reason for reason in record.blocking_reasons if reason != "task4_diagnostic_only"),
-            "feature_observation_lineage_not_available",
-            "task5_diagnostic_only",
+            *_TASK5_BLOCKERS,
         }
     )
     return {
-        "record": record_payload,
+        "record_version": record.record_version,
+        "candidate_index": candidate_index,
+        "authority_behavior_version": record.authority_behavior_version,
+        "shadow_behavior_version": record.shadow_behavior_version,
+        "authority": {
+            "family": record.authority_family,
+            "direction": record.authority_direction,
+            "opportunity_score": record.authority_opportunity_score,
+            "total_score": record.authority_total_score,
+            "rank": record.authority_rank,
+            "fine_filter_passed": record.fine_filter_passed,
+            "selected": record.authority_selected,
+        },
+        "shadow": {
+            "valid": shadow.valid,
+            "invalid_reason": shadow.invalid_reason,
+            "point_family": shadow.point_family,
+            "pessimistic_family": shadow.pessimistic_family,
+            "point_direction": shadow.point_direction,
+            "pessimistic_direction": shadow.pessimistic_direction,
+            "point_score": shadow.point_score,
+            "pessimistic_score": shadow.pessimistic_score,
+            "point_rank": record.shadow_point_rank,
+            "pessimistic_rank": record.shadow_pessimistic_rank,
+            "point_selected": record.shadow_point_selected,
+            "pessimistic_selected": record.shadow_pessimistic_selected,
+            "missingness_delta": shadow.missingness_delta,
+            "missingness_feature_ids": list(shadow.missingness_feature_ids),
+            "observed_signal_group_count": shadow.observed_signal_group_count,
+            "concentration_share": shadow.concentration_share,
+            "joint_neutral_score_delta": shadow.joint_neutral_score_delta,
+            "interaction_residual": shadow.interaction_residual,
+            "flags": list(shadow.flags),
+        },
+        "thresholds": [
+            [
+                item.threshold_id,
+                item.threshold,
+                item.authority_passed,
+                item.shadow_point_passed,
+                item.shadow_pessimistic_passed,
+            ]
+            for item in record.threshold_comparisons
+        ],
+        "top_sensitivities": [
+            [
+                item.raw_feature_id,
+                item.evidence_group_id,
+                item.local_score_sensitivity,
+                item.score_delta_to_neutral,
+                item.budget_exceeded,
+            ]
+            for item in top_sensitivities
+        ],
+        "group_sensitivities": [
+            [group_id, sensitivity]
+            for group_id, sensitivity in shadow.group_sensitivities
+        ],
         "evidence_contract": {
-            "candidate_index": candidate_index,
-            "assignment_unit_id": record.scanner_run_id,
-            "assignment_arm": None,
-            "propensity": None,
-            "treatment_coefficient": None,
             "shadow_authority_applied": False,
             "promotion_eligible": False,
-            "unavailable_identities": list(_TASK5_BLOCKERS),
+            "unavailable_identities": list(_TASK5_UNAVAILABLE_IDENTITIES),
+            "blocking_reasons": blockers,
+            "fixed_horizon_outcomes_collected": False,
         },
-        "outcome_candidate_keys": dict(outcome_keys),
     }
 
 
@@ -272,58 +308,26 @@ def build_twin_shadow_bundle(
     provider_id: str,
     captured_at: str | None = None,
 ) -> TwinShadowBundle:
-    """Build complete Task-5 evidence in memory; performs no database writes."""
+    """Build one compact diagnostic sample in memory; performs no writes."""
 
     captured = captured_at or datetime.now(timezone.utc).isoformat()
     safe_inputs = {_candidate_key(scanner_run_id, item.feature): _safe_input(item) for item in inputs}
     evidence: list[UniverseTwinShadowEvidence] = []
-    outcomes_by_id: dict[str, FilterCandidateOutcome] = {}
 
     for candidate_index, record in enumerate(records):
         safe_input = safe_inputs.get(record.candidate_key)
         if safe_input is None:
             raise ValueError(f"twin_input_not_available:{record.candidate_key}")
-        directions = {
-            "authority": record.authority_direction,
-            "shadow_point": record.shadow.point_direction if record.shadow.valid else None,
-            "shadow_pessimistic": record.shadow.pessimistic_direction if record.shadow.valid else None,
-        }
-        outcome_keys = {
-            arm: _direction_outcome_key(record.candidate_key, direction)
-            for arm, direction in directions.items()
-        }
-        feature = safe_input["feature"]
-        assert isinstance(feature, dict)
-        entry_price = _positive_float(
-            feature.get("last_price") or feature.get("price") or feature.get("close")
-        )
-        for arm, outcome_key in outcome_keys.items():
-            direction = directions[arm]
-            if outcome_key is None or direction is None or entry_price is None:
-                continue
-            for outcome in build_candidate_outcomes(
-                outcome_candidate_key=outcome_key,
-                venue=str(feature.get("venue") or provider_id or "not_available"),
-                symbol=record.symbol,
-                market_type=record.market_type,
-                direction=direction,
-                scanner_family=None,
-                regime_tag=regime_state,
-                entry_price_usd=entry_price,
-                entry_spread_bps=_optional_float(feature.get("spread_bps")),
-                funding_rate_at_entry=_optional_float(feature.get("funding_rate")),
-                entry_ts=captured,
-                allocation_selected=None,
-            ):
-                outcomes_by_id[outcome.id] = outcome
-
-        material = _record_material(
+        material = _compact_output_material(
             record,
             candidate_index=candidate_index,
-            outcome_keys=outcome_keys,
         )
-        record_json = _canonical_json(material)
+        compact_output_json = _canonical_json(material)
         input_json = _canonical_json(safe_input)
+        if len(compact_output_json.encode("utf-8")) > TWIN_SHADOW_MAX_OUTPUT_BYTES:
+            raise ValueError("twin_compact_output_too_large")
+        if len(input_json.encode("utf-8")) > TWIN_SHADOW_MAX_INPUT_BYTES:
+            raise ValueError("twin_replay_input_too_large")
         evidence.append(
             UniverseTwinShadowEvidence(
                 id=_sha256({"scanner_run_id": scanner_run_id, "candidate_key": record.candidate_key})[:24],
@@ -334,10 +338,6 @@ def build_twin_shadow_bundle(
                 asset_id=record.asset_id,
                 symbol=record.symbol,
                 market_type=record.market_type,
-                assignment_unit_id=scanner_run_id,
-                authority_outcome_candidate_key=outcome_keys["authority"],
-                shadow_point_outcome_candidate_key=outcome_keys["shadow_point"],
-                shadow_pessimistic_outcome_candidate_key=outcome_keys["shadow_pessimistic"],
                 authority_total_score=record.authority_total_score,
                 shadow_point_score=record.shadow.point_score if record.shadow.valid else None,
                 shadow_pessimistic_score=record.shadow.pessimistic_score if record.shadow.valid else None,
@@ -351,9 +351,9 @@ def build_twin_shadow_bundle(
                 shadow_authority_applied=False,
                 promotion_eligible=False,
                 shadow_valid=record.shadow.valid,
-                record_json=record_json,
+                compact_output_json=compact_output_json,
                 input_json=input_json,
-                record_hash=_sha256({"record": material, "input": safe_input}),
+                record_hash=_sha256({"output": material, "input": safe_input}),
                 captured_at=captured,
             )
         )
@@ -382,8 +382,6 @@ def build_twin_shadow_bundle(
         "policy_epoch_id": None,
         "feature_source_fingerprint": source_fingerprint,
         "availability_profile_id": None,
-        "outcome_contract_version": TWIN_OUTCOME_CONTRACT_VERSION,
-        "cost_model_version": COST_MODEL_VERSION,
         "metric_version": TWIN_METRIC_VERSION,
         "policy": json.loads(policy_json),
         "allocation_context": context,
@@ -406,8 +404,6 @@ def build_twin_shadow_bundle(
         policy_epoch_id=None,
         feature_source_fingerprint=source_fingerprint,
         availability_profile_id=None,
-        outcome_contract_version=TWIN_OUTCOME_CONTRACT_VERSION,
-        cost_model_version=COST_MODEL_VERSION,
         metric_version=TWIN_METRIC_VERSION,
         allocator_random_state_json=random_state_json,
         policy_json=policy_json,
@@ -418,7 +414,7 @@ def build_twin_shadow_bundle(
         batch_hash=_sha256(batch_material),
         captured_at=captured,
     )
-    return TwinShadowBundle(batch, tuple(evidence), tuple(outcomes_by_id.values()))
+    return TwinShadowBundle(batch, tuple(evidence))
 
 
 def _dedupe_for_replay(values: list[dict], app_config: Any) -> list[dict]:
@@ -498,14 +494,12 @@ def replay_twin_shadow_bundle(
     record_hashes_by_key: dict[str, str] = {}
     for record in replayed:
         row = by_key[record.candidate_key]
-        stored_material = json.loads(str(row["record_json"]))
-        replay_material = _record_material(
+        replay_material = _compact_output_material(
             record,
             candidate_index=int(row["candidate_index"]),
-            outcome_keys=stored_material["outcome_candidate_keys"],
         )
         input_payload = json.loads(str(row["input_json"]))
-        record_hash = _sha256({"record": replay_material, "input": input_payload})
+        record_hash = _sha256({"output": replay_material, "input": input_payload})
         record_hashes_by_key[record.candidate_key] = record_hash
         if record_hash != str(row["record_hash"]):
             mismatches.append(record.candidate_key)
@@ -520,8 +514,6 @@ def replay_twin_shadow_bundle(
         "policy_epoch_id": batch.get("policy_epoch_id"),
         "feature_source_fingerprint": batch["feature_source_fingerprint"],
         "availability_profile_id": batch.get("availability_profile_id"),
-        "outcome_contract_version": batch["outcome_contract_version"],
-        "cost_model_version": batch["cost_model_version"],
         "metric_version": batch["metric_version"],
         "policy": json.loads(str(batch["policy_json"])),
         "allocation_context": context,
@@ -544,7 +536,9 @@ def replay_twin_shadow_bundle(
 __all__ = [
     "TWIN_FEATURE_SOURCE_CONTRACT",
     "TWIN_METRIC_VERSION",
-    "TWIN_OUTCOME_CONTRACT_VERSION",
+    "TWIN_SHADOW_CAPTURE_INTERVAL_SEC",
+    "TWIN_SHADOW_MAX_INPUT_BYTES",
+    "TWIN_SHADOW_MAX_OUTPUT_BYTES",
     "TwinReplayReport",
     "TwinShadowBundle",
     "build_twin_shadow_bundle",

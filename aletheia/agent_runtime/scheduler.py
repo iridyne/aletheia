@@ -2638,11 +2638,11 @@ def _run_cleanup():
             "runtime_sessions": repo.prune_runtime_sessions(r.runtime_sessions_days),
             "backtest_runs": repo.prune_backtest_runs(r.backtest_runs_days),
             # Twin Shadow evidence is a logical child of scanner runs (no FK so
-            # retention remains safe across legacy databases). Delete it first;
-            # the clean-window guard preserves any future open experiment span.
+            # retention remains safe across legacy databases). It is not
+            # experiment evidence, so its fixed retention must not be extended
+            # by a Learning clean window.
             "universe_twin_shadow_evidence": repo.prune_universe_twin_shadow_evidence(
                 r.universe_scanner_runs_days,
-                min_experiment_started_at=min_open_exp_at,
             ),
             # Universe: scanner_runs next, then snapshots which cascade-delete
             # universe_members inside its own transaction.

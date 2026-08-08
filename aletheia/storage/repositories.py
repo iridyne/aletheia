@@ -4739,15 +4739,54 @@ def update_universe_scanner_run(run_id: str, **kwargs) -> None:
     _update("universe_scanner_runs", run_id, kwargs)
 
 
+def _universe_twin_shadow_capture_due_from_latest(
+    captured_at: str,
+    latest_captured_at: str | None,
+    *,
+    min_interval_sec: int,
+) -> bool:
+    if latest_captured_at is None:
+        return True
+    candidate = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+    latest = datetime.fromisoformat(latest_captured_at.replace("Z", "+00:00"))
+    if candidate.tzinfo is None:
+        candidate = candidate.replace(tzinfo=timezone.utc)
+    if latest.tzinfo is None:
+        latest = latest.replace(tzinfo=timezone.utc)
+    return candidate - latest >= timedelta(seconds=max(0, min_interval_sec))
+
+
+def universe_twin_shadow_capture_due(
+    captured_at: str,
+    *,
+    min_interval_sec: int = 55 * 60,
+) -> bool:
+    """Return whether a compact diagnostic sample may be captured now."""
+
+    row = get_db().execute(
+        "SELECT captured_at FROM universe_twin_shadow_batches "
+        "ORDER BY captured_at DESC LIMIT 1"
+    ).fetchone()
+    latest = str(row["captured_at"]) if row else None
+    return _universe_twin_shadow_capture_due_from_latest(
+        captured_at,
+        latest,
+        min_interval_sec=min_interval_sec,
+    )
+
+
 def insert_universe_twin_shadow_bundle(
     batch: UniverseTwinShadowBatch,
     evidence: Sequence[UniverseTwinShadowEvidence],
-    outcomes: list,
-) -> tuple[int, int]:
-    """Atomically persist one immutable, diagnostic-only twin batch.
+    *,
+    min_interval_sec: int = 55 * 60,
+) -> int:
+    """Atomically persist one immutable, cadence-bounded diagnostic batch.
 
     An identical retry is idempotent.  Reusing an identity with different
     canonical content is rejected so replay drift cannot be silently hidden.
+    A second scanner run inside the minimum interval is skipped in the same
+    writer transaction, preventing concurrent refreshes from bypassing cadence.
     """
 
     batch_data = batch.model_dump()
@@ -4762,9 +4801,29 @@ def insert_universe_twin_shadow_bundle(
         raise ValueError("universe_twin_shadow_capture_time_mismatch")
     db = get_db()
     with transaction(immediate=True):
+        stored_batch = db.execute(
+            "SELECT batch_hash FROM universe_twin_shadow_batches WHERE scanner_run_id=?",
+            (batch.scanner_run_id,),
+        ).fetchone()
+        if stored_batch is not None:
+            if stored_batch["batch_hash"] != batch.batch_hash:
+                raise ValueError("universe_twin_shadow_batch_identity_conflict")
+            return 0
+
+        latest = db.execute(
+            "SELECT captured_at FROM universe_twin_shadow_batches "
+            "ORDER BY captured_at DESC LIMIT 1"
+        ).fetchone()
+        if not _universe_twin_shadow_capture_due_from_latest(
+            batch.captured_at,
+            str(latest["captured_at"]) if latest else None,
+            min_interval_sec=min_interval_sec,
+        ):
+            return 0
+
         columns = list(batch_data)
         execute_write(
-            f"INSERT OR IGNORE INTO universe_twin_shadow_batches "
+            f"INSERT INTO universe_twin_shadow_batches "
             f"({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})",
             [batch_data[column] for column in columns],
         )
@@ -4793,8 +4852,7 @@ def insert_universe_twin_shadow_bundle(
                 ).fetchone()
                 if stored is None or stored["record_hash"] != item.record_hash:
                     raise ValueError("universe_twin_shadow_record_identity_conflict")
-        inserted_outcomes = insert_filter_candidate_outcomes_batch(outcomes)
-    return inserted_evidence, inserted_outcomes
+    return inserted_evidence
 
 
 def get_universe_twin_shadow_batch(scanner_run_id: str) -> dict | None:
@@ -7020,18 +7078,15 @@ def prune_universe_scanner_runs(days: int = 30) -> int:
 
 def prune_universe_twin_shadow_evidence(
     days: int = 30,
-    min_experiment_started_at: str | None = None,
 ) -> int:
-    """Prune Task-5 diagnostic evidence, preserving any open clean window.
+    """Prune sampled diagnostic evidence after its fixed retention window.
 
-    Records are deleted before their logical parent batch.  Fixed-horizon
-    outcomes use their existing retention path and are intentionally not owned
-    by this diagnostic table.
+    Records are deleted before their logical parent batch. Twin persistence
+    owns no fixed-horizon outcomes or Learning evidence, so open experiments
+    must not extend its lifetime.
     """
 
-    if min_experiment_started_at is None:
-        min_experiment_started_at = min_open_experiment_exposure_at()
-    cutoff = _effective_cutoff(days, min_experiment_started_at)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     with transaction(immediate=True):
         run_rows = db.execute(

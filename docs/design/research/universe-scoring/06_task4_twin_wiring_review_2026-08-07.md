@@ -183,10 +183,11 @@ complete.
 ## 7. Residual gate
 
 Task 5 may add durable full-candidate records only after separate approval. It
-must define migrations, retention, write-transaction boundaries, replay, source
-fingerprint, availability profile, policy/behavior identity, outcome/cost/metric
-versions, assignment facts, and explicit handling of records whose interaction
-residual is unavailable.
+must define migrations, cadence and payload capacity, retention,
+write-transaction boundaries, replay, source fingerprint, policy/behavior and
+metric identity, and explicit handling of records whose interaction residual is
+unavailable. Missing outcome, assignment, propensity, or observation-lineage
+facts must remain blockers rather than being inferred by persistence.
 
 Until that gate passes, the local summary is operational visibility only. It
 cannot be pooled as an experiment, shown as calibrated confidence, or used to

@@ -231,8 +231,8 @@ and spec `AR-S08`.
 | `universe_members` | Assets in a universe snapshot | snapshot_id, symbol, market_type, rank, score, scanner_direction |
 | `universe_forward_outcomes` | Fixed-horizon selected-Universe-member economics; legacy mirror/fallback for contribution measurement, not the canonical full-arm source | outcome_candidate_key, venue, symbol, market_type, direction, horizon, gross_return_pct, directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, min_tradable_edge_pct, mfe_pct, mae_pct, settlement_price_source, cost_model_version |
 | `universe_policies` | Universe selection rules | policy_name, filters (JSON), priority |
-| `universe_twin_shadow_batches` | Non-authoritative continuous-score replay identity per scanner run | scanner_run_id, behavior/policy/source/outcome/cost/metric identities, allocator random state, blockers, batch_hash |
-| `universe_twin_shadow_records` | Full coarse-candidate step/point/pessimistic evidence and selection comparison | scanner_run_id, candidate_index, candidate/feature/asset/instrument ids, ranks, selections, outcome keys, canonical input/record JSON, record_hash |
+| `universe_twin_shadow_batches` | Non-authoritative continuous-score replay identity, sampled at most once per 55min | scanner_run_id, behavior/policy/source/metric identities, allocator random state, blockers, batch_hash |
+| `universe_twin_shadow_records` | Compact complete-batch step/point/pessimistic comparison | scanner_run_id, candidate_index, candidate/feature/asset/instrument ids, ranks, selections, compact output JSON, allowlisted replay input JSON, record_hash |
 
 ### G-bis. Opportunity Filter Evidence (6 tables)
 
@@ -466,7 +466,7 @@ current defaults; see `RETENTION_POLICY.md` for rationale and cascade details.
 | `universe_forward_outcomes` | 30d + earliest-exposure guard for active open experiments | `prune_universe_forward_outcomes` |
 | `universe_snapshots` / `universe_members` | 30d + protected fallback-outcome guard | `prune_universe_snapshots` (cascade) |
 | `universe_scanner_runs` | 30d | `prune_universe_scanner_runs` |
-| `universe_twin_shadow_batches` / `universe_twin_shadow_records` | 30d via `universe_scanner_runs_days` + earliest-exposure guard for active open experiments; records before batches | `prune_universe_twin_shadow_evidence` |
+| `universe_twin_shadow_batches` / `universe_twin_shadow_records` | fixed 30d via `universe_scanner_runs_days`; ≤1 batch/55min, records before batches, no Twin-owned outcomes or Learning clean-window extension | `prune_universe_twin_shadow_evidence` |
 | `market_ohlcv` | 1m=2d / 5m=7d / 15m=30d / 1h=90d / 4h=180d / 1d=730d + hard drop `exchange='legacy_unknown'` | `prune_market_ohlcv` (new) |
 | `market_regimes` | 60d + skip-if-unchanged dedup | `prune_market_regimes` (new) |
 | `filter_decision_batches` | 30d (contract) | `prune_filter_decision_batches` |
