@@ -406,17 +406,18 @@ Proposal 的这一权限边界。
 
 **Spec claims**:`PL-PM-01~06`(mark/stop/TP/max_hold/ATR/audit) + `PL-PM-07`(paused 不挡保护性平仓) + `PL-PM-10~13`(fresh exact venue/market mark / 逐仓 close 与 market-aware 失败可见) + `PL-PCM-05/11~15`(dashboard 全量枚举、mark 预检、单仓 fallback 隔离与部分失败诚实返回)。
 
-### 10.6 Protective Barrier 持久化基础（schema v9，尚未启用）
+### 10.6 Protective Barrier（schema v9；仅新建 paper_internal）
 
-Schema v9 只增加未来保护屏障所需的持久化契约；字段、身份、CAS 与 retention
-不变量由 [data_model §11](../data/data_model.md#11-protective-barrier-storage-contract-schema-v9-dormant)
+Schema v9 提供保护屏障持久化契约；字段、身份、CAS 与 retention
+不变量由 [data_model §11](../data/data_model.md#11-protective-barrier-contract-schema-v9-storage-new-paper-runtime-active)
 统一定义。
 
-这不是新的执行路径。当前 §10.1～10.5 的退出行为、Position Manager、交易所 TPSL、
-Risk/Execution/Live 权限和配置默认值均保持不变。迁移不会回填或激活已有 paper Position，
-也没有 scheduler、OHLCV evaluator、Order 创建或 Position close consumer。后续 PR 必须
-分别证明激活/恢复和逐根完整 bar 的确定性，再单独接入既有 native close 因果链；在这些
-工作完成前，v9 行不会自行触发任何交易副作用。
+新建 `paper_internal` Position 在原入场事务内冻结初始 ExitPlan、exact venue/symbol/
+physical-market 与首个非回溯 1m cursor。protective executor 每 30 秒逐根读取已闭合的 exact
+1m bar；缺失数据不 fallback，同 bar 同触 stop/target 时固定 stop-first。bar 只授权触发，
+成交仍通过既有 `close_position_routed` 重新取得 fresh mark 并应用 adverse slippage，随后把
+真实 Order/Fill write-once 链回触发证据。迁移和重启不回填旧 Position；Risk、外部 Execution、
+Live 权限与配置默认值均保持不变。
 
 ## 11. Position 关闭与结果完整性（OI-S01/S02、OI-B01～B05、OI-C01～C06 implemented；自然 Runtime soak 待补）
 

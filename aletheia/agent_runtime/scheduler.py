@@ -2216,12 +2216,20 @@ def _run_position_manager():
     # `if cfg.runtime.paused: return` here is a safety regression.
     # Invariant: execution_contract §10 + spec PL-PM-07.
     try:
+        from aletheia.portfolio.protective_barrier import (
+            evaluate_due_position_protection,
+        )
         from aletheia.portfolio.position_manager import evaluate_open_positions
+
+        barrier_summary = evaluate_due_position_protection()
         summary = evaluate_open_positions()
-        if isinstance(summary, dict) and summary.get("errors"):
+        reported_errors = list(barrier_summary.get("errors") or [])
+        if isinstance(summary, dict):
+            reported_errors.extend(summary.get("errors") or [])
+        if reported_errors:
             logger.warning(
                 "position_manager completed with %d reported errors",
-                len(summary["errors"]),
+                len(reported_errors),
             )
             _record_job_failure(
                 "position_manager", "position_manager_reported_errors"
