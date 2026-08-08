@@ -348,6 +348,10 @@ async def test_wake_driven_portfolio_review_adjusts_exact_position(
             "risk": {"max_open_positions_demo": 3, "kill_switch": False},
         },
     )
+    monkeypatch.setattr(
+        "aletheia.portfolio.position_manager.get_fresh_price_for_protective_close",
+        lambda symbol, market_type, *, venue: 100.0,
+    )
 
     async def choose_adjust(_system, _user, *, schema, **_kwargs):
         return ({
