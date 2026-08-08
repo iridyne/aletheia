@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v10"
+SCHEMA_VERSION = "aletheia-sqlite-v11"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4055,6 +4055,109 @@ _LEARNING_FIXED_LOOK_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+_EXIT_BREAKEVEN_SHADOW_SQL = """
+CREATE TABLE IF NOT EXISTS exit_breakeven_shadow_assignments (
+    position_id TEXT PRIMARY KEY REFERENCES positions(id),
+    experiment_version TEXT NOT NULL CHECK (experiment_version = 'exit-breakeven-shadow/v1'),
+    treatment_id TEXT NOT NULL CHECK (treatment_id = 'entry-lock-after-1.5pct/v1'),
+    assigned_at TEXT NOT NULL CHECK (julianday(assigned_at) IS NOT NULL),
+    venue TEXT NOT NULL CHECK (length(trim(venue)) > 0),
+    symbol TEXT NOT NULL CHECK (length(trim(symbol)) > 0),
+    market_type TEXT NOT NULL CHECK (market_type IN ('spot', 'perp')),
+    timeframe TEXT NOT NULL CHECK (timeframe = '1m'),
+    direction TEXT NOT NULL CHECK (direction IN ('long', 'short')),
+    entry_price REAL NOT NULL CHECK (entry_price > 0),
+    quantity REAL NOT NULL CHECK (quantity > 0),
+    entry_fee REAL NOT NULL CHECK (entry_fee >= 0),
+    exit_fee_rate REAL NOT NULL CHECK (exit_fee_rate >= 0),
+    slippage_bps REAL NOT NULL CHECK (slippage_bps >= 0),
+    trigger_return_pct REAL NOT NULL CHECK (trigger_return_pct > 0),
+    trigger_price REAL NOT NULL CHECK (trigger_price > 0),
+    shadow_stop_price REAL NOT NULL CHECK (shadow_stop_price > 0),
+    exit_plan_version INTEGER NOT NULL CHECK (exit_plan_version >= 1),
+    exit_plan_effective_at TEXT NOT NULL CHECK (julianday(exit_plan_effective_at) IS NOT NULL),
+    exit_plan_hash TEXT NOT NULL CHECK (
+        length(exit_plan_hash) = 64 AND exit_plan_hash = lower(exit_plan_hash)
+        AND exit_plan_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    rule_json TEXT NOT NULL CHECK (json_valid(rule_json)),
+    rule_hash TEXT NOT NULL CHECK (
+        length(rule_hash) = 64 AND rule_hash = lower(rule_hash)
+        AND rule_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    behavior_authority INTEGER NOT NULL DEFAULT 0 CHECK (behavior_authority = 0),
+    runtime_session_id TEXT,
+    code_commit TEXT,
+    behavior_fingerprint TEXT,
+    created_at TEXT NOT NULL CHECK (julianday(created_at) IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS exit_breakeven_shadow_outcomes (
+    position_id TEXT PRIMARY KEY REFERENCES exit_breakeven_shadow_assignments(position_id),
+    status TEXT NOT NULL CHECK (status IN ('unchanged', 'counterfactual_close', 'unavailable')),
+    reason TEXT NOT NULL CHECK (length(trim(reason)) > 0),
+    treatment_changed INTEGER NOT NULL CHECK (treatment_changed IN (0, 1)),
+    actual_closed_at TEXT NOT NULL CHECK (julianday(actual_closed_at) IS NOT NULL),
+    trigger_bar_open_ms INTEGER CHECK (trigger_bar_open_ms IS NULL OR trigger_bar_open_ms >= 0),
+    shadow_exit_bar_open_ms INTEGER CHECK (shadow_exit_bar_open_ms IS NULL OR shadow_exit_bar_open_ms >= 0),
+    shadow_exit_at TEXT CHECK (shadow_exit_at IS NULL OR julianday(shadow_exit_at) IS NOT NULL),
+    shadow_reference_price REAL CHECK (shadow_reference_price IS NULL OR shadow_reference_price > 0),
+    shadow_fill_price REAL CHECK (shadow_fill_price IS NULL OR shadow_fill_price > 0),
+    shadow_entry_fee REAL CHECK (shadow_entry_fee IS NULL OR shadow_entry_fee >= 0),
+    shadow_exit_fee REAL CHECK (shadow_exit_fee IS NULL OR shadow_exit_fee >= 0),
+    shadow_funding_cost REAL,
+    actual_net_pnl REAL,
+    shadow_net_pnl REAL,
+    incremental_net_pnl REAL,
+    cost_model_version TEXT,
+    evidence_json TEXT NOT NULL CHECK (json_valid(evidence_json)),
+    evidence_hash TEXT NOT NULL CHECK (
+        length(evidence_hash) = 64 AND evidence_hash = lower(evidence_hash)
+        AND evidence_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    settled_at TEXT NOT NULL CHECK (julianday(settled_at) IS NOT NULL),
+    CHECK (
+        (status = 'unavailable' AND treatment_changed = 0
+            AND shadow_net_pnl IS NULL AND incremental_net_pnl IS NULL)
+        OR (status = 'unchanged' AND treatment_changed = 0
+            AND actual_net_pnl IS NOT NULL AND shadow_net_pnl IS NOT NULL
+            AND incremental_net_pnl IS NOT NULL)
+        OR (status = 'counterfactual_close' AND treatment_changed = 1
+            AND trigger_bar_open_ms IS NOT NULL AND shadow_exit_bar_open_ms IS NOT NULL
+            AND shadow_exit_at IS NOT NULL AND shadow_fill_price IS NOT NULL
+            AND actual_net_pnl IS NOT NULL AND shadow_net_pnl IS NOT NULL
+            AND incremental_net_pnl IS NOT NULL AND cost_model_version IS NOT NULL)
+    )
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_exit_breakeven_assignment_no_update
+BEFORE UPDATE ON exit_breakeven_shadow_assignments
+BEGIN
+    SELECT RAISE(ABORT, 'Exit breakeven shadow assignment is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_exit_breakeven_assignment_no_delete
+BEFORE DELETE ON exit_breakeven_shadow_assignments
+BEGIN
+    SELECT RAISE(ABORT, 'Exit breakeven shadow assignment is retained');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_exit_breakeven_outcome_no_update
+BEFORE UPDATE ON exit_breakeven_shadow_outcomes
+BEGIN
+    SELECT RAISE(ABORT, 'Exit breakeven shadow outcome is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_exit_breakeven_outcome_no_delete
+BEFORE DELETE ON exit_breakeven_shadow_outcomes
+BEGIN
+    SELECT RAISE(ABORT, 'Exit breakeven shadow outcome is retained');
+END;
+"""
+_EXIT_BREAKEVEN_SHADOW_CHECKSUM = hashlib.sha256(
+    (_EXIT_BREAKEVEN_SHADOW_SQL + "\nexit_breakeven_shadow_v1\nPRAGMA optimize").encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -4112,6 +4215,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260808_0009_learning_fixed_look_v10": (
         "prospective fixed-look Learning inference decisions"
+    ),
+    "20260808_0010_exit_breakeven_shadow_v11": (
+        "prospective read-only exit breakeven shadow evidence"
     ),
 }
 
@@ -4247,6 +4353,13 @@ def _apply_learning_fixed_look_v10(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_exit_breakeven_shadow_v11(db: sqlite3.Connection) -> None:
+    """Add prospective shadow evidence without changing Position behavior."""
+
+    db.executescript(_EXIT_BREAKEVEN_SHADOW_SQL)
+    db.execute("PRAGMA optimize")
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -4299,8 +4412,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260808_0009_learning_fixed_look_v10",
         checksum=_LEARNING_FIXED_LOOK_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v10",
         apply=_apply_learning_fixed_look_v10,
+    ),
+    MigrationStep(
+        migration_id="20260808_0010_exit_breakeven_shadow_v11",
+        checksum=_EXIT_BREAKEVEN_SHADOW_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_exit_breakeven_shadow_v11,
     ),
 )
 

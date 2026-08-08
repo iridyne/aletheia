@@ -56,6 +56,8 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `position_exit_plan_versions` | Retained, append-only resolved ExitPlan history. `(position_id, version)` is contiguous and immutable; insert atomically advances the nullable Position projection. | position_id, version, effective_at, resolved stop/take-profit/exit-limit, plan_json, plan_hash, provenance, created_at | protection repository + new-paper runtime |
 | `position_protection_state` | One retained row per newly protected local-paper Position. It freezes exact instrument identity and monotonic cursors, preserves gap history, and projects first-trigger plus exact close linkage. | position_id, venue, canonical symbol, physical market_type, timeframe=1m, activated_at, cursor/gap/status, trigger_id, close Order/Fill linkage | protection repository + protective scheduler |
 | `position_protection_triggers` | Append-only first-barrier evidence. One immutable row per protected Position contains the exact 1-minute bar, resolved ExitPlan and deterministic collision policy. | trigger_id, position_id, exact instrument/bar/provider/hash, ExitPlan identity/barriers, hit flags/reason | protective scheduler + native paper close |
+| `exit_breakeven_shadow_assignments` | Prospective immutable assignment for the read-only profit-capture experiment. The fixed +1.5% trigger and entry-price shadow stop are frozen with exact instrument, ExitPlan, cost and build provenance before any eligible bar. | position_id, treatment/rule hash, assigned_at, exact instrument, entry economics, trigger/stop, ExitPlan and runtime provenance, behavior_authority=0 | new protected local-paper activation |
+| `exit_breakeven_shadow_outcomes` | One immutable paired result after an eligible actual close. Missing exact 1m coverage, identity, ordering or funding remains unavailable; available rows contain actual, shadow and incremental net PnL under the frozen cost model. | position_id, disposition/reason, trigger/exit bars, shadow fill/costs, actual/shadow/incremental net PnL, evidence hash | durable outcome-hook replay |
 | `position_close_events` | **Per-close economic ledger** (exit-intent R1) — one row per close EVENT (full close = 1 row; partial reduce = 1 row per reduction) so realized PnL sums from close events, unifying full + partial closes. Delayed funding finalization atomically converges the unique full-close projection with Position and paper cash. The daily-loss breaker adds partial-close realized via this ledger (`is_partial=1`) on top of the verified full-close read | position_id, close_reason, exit_price, closed_qty, realized_pnl, entry_fee, exit_fee, is_partial, closed_at | `pnl.close_position` / `pnl.reduce_position` / paper account service |
 | `outcome_hook_jobs` | Durable eligible-close feedback outbox; one row per Position and hook, with leased replay after failure | position_id, hook_type, status, attempts, next_attempt_at, claim_token, last_error | outcome close transaction / outcome_hook_replay |
 | `position_disappearance_candidates` | Durable account-scoped position-disappearance confirmation state; never authorizes close by itself | position_id, identity_key, broker_id, account_environment, non-secret account_fingerprint, instrument identity, confirmation_count, direct_query_state, semantics_version | position reconciler (OI-B01 target) |
@@ -365,6 +367,8 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | PositionExitPlanVersion | position_exit_plan_versions | Trading protection storage |
 | PositionProtectionState | position_protection_state | Trading protection storage |
 | PositionProtectionTrigger | position_protection_triggers | Trading protection storage |
+| ExitBreakevenShadowAssignment | exit_breakeven_shadow_assignments | Observe-only exit experiment |
+| ExitBreakevenShadowOutcome | exit_breakeven_shadow_outcomes | Observe-only exit experiment |
 | Fill | fills | Trading |
 | Position | positions | Trading |
 | OutcomeHookJob | outcome_hook_jobs | Trading feedback |
@@ -438,6 +442,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 8. Pytest retains the in-memory blueprint optimization and records the same ledger rows in the cloned schema; test fixtures may continue to call the compatibility `run_migrations()` helper.
 9. Dataset-size-sensitive repair is never an implicit read/startup side effect. Schema v3 rebuilds `knowledge_fts` once as migration `20260806_0002_startup_dataset_boundary_v3` and installs indexes for startup reconciliation and windowed telemetry reads. Normal knowledge writes maintain FTS incrementally; later full rebuilds require the explicit `knowledge reindex` maintenance command or a new versioned migration.
 12. Schema v9 adds `positions.exit_plan_effective_at`, immutable `position_exit_plan_versions`, retained `position_protection_state`, and append-only `position_protection_triggers` through migration `20260808_0008_position_protection_state_v9`. It performs no Position backfill or activation and does not install an evaluator or close consumer.
+13. Schema v11 adds retained `exit_breakeven_shadow_assignments` and `exit_breakeven_shadow_outcomes` through migration `20260808_0010_exit_breakeven_shadow_v11`. It performs no historical backfill and grants no trading or Learning authority.
 10. Physical packing is outside the migration ledger. In particular, `market_ohlcv` rowid-to-`WITHOUT ROWID` conversion runs only inside explicit offline `data compact --apply`, after a verified backup and with the Gateway stopped; fresh deploy and normal Gateway startup never perform it.
 11. Schema v6 adds the content-free `inference_call_id` linkage columns through migration `20260806_0005_llm_inference_linkage_v6`. The LLM inference harness does not edit the frozen legacy baseline; databases that already received the columns from pre-ledger code are accepted idempotently.
 
@@ -731,3 +736,29 @@ regress to an evaluable state. All three new tables are permanent trust-bearing
 evidence and are excluded from retention pruning.
 schema and central ledger writer reject NaN, both infinities, and finite-input
 arithmetic overflow before any append or audit event.
+
+## 12. Exit Breakeven Shadow Contract (schema v11, observe-only)
+
+Schema v11 adds a single-variable prospective experiment for the concrete MVP
+failure mode "a trade was profitable, then exited at a loss." For each newly
+protected native `paper_internal` short-term Position, activation best-effort
+freezes one rule before the first eligible bar: after a completed exact 1-minute
+bar reaches 1.5% favorable return, an additional shadow stop at the entry fill
+becomes active from the next completed bar. The treatment has
+`behavior_authority=0`; it never changes the Position, ExitPlan, RiskDecision,
+Order, Fill, scheduler authority, or Learning authority.
+
+Settlement runs through the existing durable eligible-outcome hook. It compares
+the real net result with the paired shadow result only when exact instrument
+identity and contiguous completed 1-minute bars are available. A same-bar
+trigger/stop cannot activate retrospectively. A shadow stop touch uses that
+completed bar's close as the observable detection mark, then applies the frozen
+adverse Paper slippage and fee model. Perpetual rows additionally require a
+complete local funding window through the shadow close time. Any missing identity,
+bar, ordering, arithmetic, actual Outcome, or funding fact produces an immutable
+`unavailable` row with no invented delta.
+
+Assignments and outcomes are retained append-only evidence. The descriptive
+report can total paired incremental net PnL, but no sample count or result grants
+promotion or parameter-mutation authority; a later owner-reviewed behavior trial
+requires a separate measured Learning contract.

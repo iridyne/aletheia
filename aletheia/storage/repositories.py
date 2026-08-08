@@ -31,6 +31,8 @@ from aletheia.storage.models import (
     PositionExitPlanVersion,
     PositionProtectionState,
     PositionProtectionTrigger,
+    ExitBreakevenShadowAssignment,
+    ExitBreakevenShadowOutcome,
     PositionDisappearanceCandidate,
     PositionDisappearanceObservation,
     ReconciliationIntegrityIncident,
@@ -64,6 +66,10 @@ _PHYSICAL_PROTECTION_MARKETS = {
 
 class PositionProtectionConflict(RuntimeError):
     """A durable protection write conflicts with already-observed authority."""
+
+
+class ExitBreakevenShadowConflict(RuntimeError):
+    """A prospective exit-shadow fact conflicts with retained evidence."""
 
 
 def _required_protection_text(value: object, field: str) -> str:
@@ -3379,6 +3385,101 @@ def materialize_position_protection_close(
         if cursor.rowcount != 1:
             raise PositionProtectionConflict("close Fill linkage compare-and-set failed")
     return True
+
+
+def insert_exit_breakeven_shadow_assignment(
+    assignment: ExitBreakevenShadowAssignment,
+) -> bool:
+    """Append one prospective assignment; exact retries are idempotent."""
+
+    data = assignment.model_dump()
+    expected_rule_hash = hashlib.sha256(assignment.rule_json.encode("utf-8")).hexdigest()
+    if assignment.rule_hash != expected_rule_hash:
+        raise ExitBreakevenShadowConflict("exit breakeven shadow rule_hash mismatch")
+    db = get_db()
+    with transaction(immediate=True):
+        existing = db.execute(
+            "SELECT * FROM exit_breakeven_shadow_assignments WHERE position_id=?",
+            (assignment.position_id,),
+        ).fetchone()
+        if existing is not None:
+            if all(dict(existing).get(field) == value for field, value in data.items()):
+                return False
+            raise ExitBreakevenShadowConflict(
+                "exit breakeven shadow assignment already exists with different content"
+            )
+        columns = ", ".join(data)
+        placeholders = ", ".join("?" for _ in data)
+        execute_write(
+            f"INSERT INTO exit_breakeven_shadow_assignments ({columns}) "
+            f"VALUES ({placeholders})",
+            tuple(data.values()),
+        )
+    return True
+
+
+def get_exit_breakeven_shadow_assignment(position_id: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM exit_breakeven_shadow_assignments WHERE position_id=?",
+        (position_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def insert_exit_breakeven_shadow_outcome(
+    outcome: ExitBreakevenShadowOutcome,
+) -> bool:
+    """Append one paired result; retained outcomes can never be revised."""
+
+    data = outcome.model_dump()
+    expected_evidence_hash = hashlib.sha256(
+        outcome.evidence_json.encode("utf-8")
+    ).hexdigest()
+    if outcome.evidence_hash != expected_evidence_hash:
+        raise ExitBreakevenShadowConflict("exit breakeven shadow evidence_hash mismatch")
+    db = get_db()
+    with transaction(immediate=True):
+        existing = db.execute(
+            "SELECT * FROM exit_breakeven_shadow_outcomes WHERE position_id=?",
+            (outcome.position_id,),
+        ).fetchone()
+        if existing is not None:
+            if all(dict(existing).get(field) == value for field, value in data.items()):
+                return False
+            raise ExitBreakevenShadowConflict(
+                "exit breakeven shadow outcome already exists with different content"
+            )
+        columns = ", ".join(data)
+        placeholders = ", ".join("?" for _ in data)
+        execute_write(
+            f"INSERT INTO exit_breakeven_shadow_outcomes ({columns}) "
+            f"VALUES ({placeholders})",
+            tuple(data.values()),
+        )
+    return True
+
+
+def get_exit_breakeven_shadow_outcome(position_id: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM exit_breakeven_shadow_outcomes WHERE position_id=?",
+        (position_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def list_exit_breakeven_shadow_outcomes(limit: int = 1000) -> list[dict]:
+    if limit < 1 or limit > 10000:
+        raise ValueError("limit must be between 1 and 10000")
+    rows = get_db().execute(
+        "SELECT outcome.*, assignment.direction, assignment.market_type, "
+        "assignment.treatment_id, assignment.code_commit "
+        "FROM exit_breakeven_shadow_outcomes AS outcome "
+        "JOIN exit_breakeven_shadow_assignments AS assignment "
+        "ON assignment.position_id=outcome.position_id "
+        "ORDER BY outcome.settled_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def find_compatible_open_position(

@@ -259,15 +259,16 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert migrations._MIGRATIONS[0].schema_version == "aletheia-sqlite-v2"
-    assert migrations._MIGRATIONS[-8].schema_version == "aletheia-sqlite-v3"
-    assert migrations._MIGRATIONS[-7].schema_version == "aletheia-sqlite-v4"
-    assert migrations._MIGRATIONS[-6].schema_version == "aletheia-sqlite-v5"
-    assert migrations._MIGRATIONS[-5].schema_version == "aletheia-sqlite-v6"
-    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v7"
-    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v8"
-    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v9"
+    assert migrations._MIGRATIONS[-9].schema_version == "aletheia-sqlite-v3"
+    assert migrations._MIGRATIONS[-8].schema_version == "aletheia-sqlite-v4"
+    assert migrations._MIGRATIONS[-7].schema_version == "aletheia-sqlite-v5"
+    assert migrations._MIGRATIONS[-6].schema_version == "aletheia-sqlite-v6"
+    assert migrations._MIGRATIONS[-5].schema_version == "aletheia-sqlite-v7"
+    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v8"
+    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v9"
+    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v10"
     assert migrations._MIGRATIONS[-1].schema_version == migrations.SCHEMA_VERSION
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v10"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v11"
     connection.close()
 
 
@@ -355,7 +356,41 @@ def test_learning_fixed_look_v10_migration_is_additive_and_idempotent():
     connection.close()
 
 
-def test_production_v9_ledger_advances_only_through_v10(tmp_path, monkeypatch):
+def test_exit_breakeven_shadow_v11_migration_is_additive_and_idempotent():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE positions (id TEXT PRIMARY KEY)")
+
+    migrations._apply_exit_breakeven_shadow_v11(connection)
+    migrations._apply_exit_breakeven_shadow_v11(connection)
+
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    assert {
+        "exit_breakeven_shadow_assignments",
+        "exit_breakeven_shadow_outcomes",
+    } <= tables
+    triggers = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger'"
+        )
+    }
+    assert {
+        "trg_exit_breakeven_assignment_no_update",
+        "trg_exit_breakeven_assignment_no_delete",
+        "trg_exit_breakeven_outcome_no_update",
+        "trg_exit_breakeven_outcome_no_delete",
+    } <= triggers
+    connection.close()
+
+
+def test_production_v10_ledger_advances_only_through_v11(tmp_path, monkeypatch):
     import aletheia.storage.migrations as migrations
 
     connection = _connection(tmp_path / "v9.db")
@@ -371,6 +406,7 @@ def test_production_v9_ledger_advances_only_through_v10(tmp_path, monkeypatch):
         VALUES ('legacy-positive', 'legacy-experiment');
         """
     )
+    migrations._apply_learning_fixed_look_v10(connection)
     connection.executescript(migrations._MIGRATION_LEDGER_DDL)
     connection.executemany(
         "INSERT INTO aletheia_schema_migrations "
@@ -396,8 +432,8 @@ def test_production_v9_ledger_advances_only_through_v10(tmp_path, monkeypatch):
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260808_0009_learning_fixed_look_v10",
-        "aletheia-sqlite-v10",
+        "20260808_0010_exit_breakeven_shadow_v11",
+        "aletheia-sqlite-v11",
     )
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "

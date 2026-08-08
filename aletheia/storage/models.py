@@ -573,6 +573,67 @@ class PositionProtectionTrigger(BaseModel):
     collision_policy: Literal["stop_first_v1"] = "stop_first_v1"
 
 
+class ExitBreakevenShadowAssignment(BaseModel):
+    """Prospective, immutable assignment for the read-only exit experiment."""
+
+    model_config = ConfigDict(allow_inf_nan=False, extra="forbid", frozen=True)
+
+    position_id: str
+    experiment_version: Literal["exit-breakeven-shadow/v1"] = "exit-breakeven-shadow/v1"
+    treatment_id: Literal["entry-lock-after-1.5pct/v1"] = "entry-lock-after-1.5pct/v1"
+    assigned_at: str
+    venue: str
+    symbol: str
+    market_type: Literal["spot", "perp"]
+    timeframe: Literal["1m"] = "1m"
+    direction: Literal["long", "short"]
+    entry_price: float = Field(gt=0)
+    quantity: float = Field(gt=0)
+    entry_fee: float = Field(ge=0)
+    exit_fee_rate: float = Field(ge=0)
+    slippage_bps: float = Field(ge=0)
+    trigger_return_pct: float = Field(gt=0)
+    trigger_price: float = Field(gt=0)
+    shadow_stop_price: float = Field(gt=0)
+    exit_plan_version: int = Field(ge=1)
+    exit_plan_effective_at: str
+    exit_plan_hash: str
+    rule_json: str
+    rule_hash: str
+    behavior_authority: Literal[False] = False
+    runtime_session_id: str | None = None
+    code_commit: str | None = None
+    behavior_fingerprint: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+
+
+class ExitBreakevenShadowOutcome(BaseModel):
+    """Immutable paired economic result for one assigned Position."""
+
+    model_config = ConfigDict(allow_inf_nan=False, extra="forbid", frozen=True)
+
+    position_id: str
+    status: Literal["unchanged", "counterfactual_close", "unavailable"]
+    reason: str
+    treatment_changed: bool
+    actual_closed_at: str
+    trigger_bar_open_ms: int | None = Field(default=None, ge=0)
+    shadow_exit_bar_open_ms: int | None = Field(default=None, ge=0)
+    shadow_exit_at: str | None = None
+    shadow_reference_price: float | None = Field(default=None, gt=0)
+    shadow_fill_price: float | None = Field(default=None, gt=0)
+    shadow_entry_fee: float | None = Field(default=None, ge=0)
+    shadow_exit_fee: float | None = Field(default=None, ge=0)
+    shadow_funding_cost: float | None = None
+    actual_net_pnl: float | None = None
+    shadow_net_pnl: float | None = None
+    incremental_net_pnl: float | None = None
+    cost_model_version: str | None = None
+    evidence_json: str
+    evidence_hash: str
+    settled_at: str = Field(default_factory=_utcnow)
+
+
 class PositionDisappearanceCandidate(BaseModel):
     """Durable, account-scoped suspicion that an open position disappeared.
 

@@ -13,6 +13,12 @@ The consumer is wired only for newly opened `paper_internal` Positions that have
 a resolved protective level; storage does not claim historical backfill,
 protection for level-less entries, or external-exchange protection.
 
+Schema v11 additionally retains prospective, observe-only exit experiment facts
+in `exit_breakeven_shadow_assignments` and `exit_breakeven_shadow_outcomes`.
+Assignment is best-effort and cannot block a valid Position open; settlement is
+replayed by the existing durable outcome-hook outbox after an eligible close.
+Neither table is a recovery command or trading authority.
+
 The future safety design is
 [`gateway_recovery.md`](../proposals/gateway_recovery.md).
 
@@ -34,6 +40,7 @@ The future safety design is
 | Artifact store | lessons, skills, policies, and operator-facing readers |
 | Deterministic client order ids | supported exchange adapter submission paths |
 | `position_exit_plan_versions` / `position_protection_state` / `position_protection_triggers` | new local-paper activation, exact-1m protective scheduler, existing native local close |
+| `exit_breakeven_shadow_assignments` / `exit_breakeven_shadow_outcomes` | new protected local-paper assignment and eligible-close shadow settlement |
 
 An in-memory object is never promoted to durable fact merely because a class or
 test exists.
@@ -53,6 +60,8 @@ Explicitly written protection rows survive restart without being inferred or rep
 - Secrets and dirty runtime state are excluded from sync/export artifacts.
 - Protective-barrier storage obeys the immutable/CAS/retention invariants in
   `data_model` §11.
+- Exit shadow assignments/outcomes obey the immutable, observe-only and
+  fail-closed economics invariants in `data_model` §12.
 - A recovery class with no production caller is not a recovery guarantee.
 - Backup evidence has three distinct levels: archive created, archive integrity
   verified, and an isolated restore successfully opened and passed the relevant
