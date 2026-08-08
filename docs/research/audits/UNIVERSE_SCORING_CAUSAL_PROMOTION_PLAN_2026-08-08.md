@@ -68,21 +68,36 @@ persisted Ranker score of 32.81 is exactly:
 ```
 
 At the same Fedora checkpoint, all 51 verified closes linked to a Universe
-member split into 42 `market_observer` entries (8 winners, `-9.464945 USDT`)
-and nine deterministic scanner entries (five winners, `-0.560303 USDT`).
-Twenty-eight entries had Universe scores below 45; all 28 came through
-`market_observer`. These are descriptive, non-randomized observations spanning
-multiple producer commits. They identify the authority seam but do not prove
-that disabling the Observer, adding a hard rank cutoff, or changing weights
-would improve net returns.
+member split by the stored `source_agent` field into 42 `market_observer` rows
+(8 winners, `-9.464945 USDT`) and nine `universe_scanner` rows (five winners,
+`-0.560303 USDT`). Only eight final `confidence_score` values were within one
+point of the linked `total_score`. Twenty-eight entries had Universe scores
+below 45; all 28 stored `source_agent=market_observer`.
+
+The stored source is not sufficient producer or score provenance. Observer
+enrichment can reuse an open deterministic Opportunity, replace its confidence
+with `max(old_score, model_score)`, change its direction, and leave
+`source_agent=universe_scanner`. A subsequent SLX observation demonstrated the
+exact mutation: the scanner emitted short with `total_score=49.105`; the first
+Ranker pass scored it 46.28. Observer enrichment changed the same row to long
+with confidence 65; the next Ranker pass scored it 54.28 while its stored source
+remained `universe_scanner`. No append-only score-revision row identifies the
+before/after inputs.
+
+These are descriptive, non-randomized observations spanning multiple producer
+commits. They identify the authority and provenance seam but do not prove that
+disabling the Observer, adding a hard rank cutoff, or changing weights would
+improve net returns.
 
 Three behavior hypotheses must remain separate:
 
-1. **Producer eligibility:** whether Observer-created opportunities should
-   inspect the full Universe or a prospectively frozen eligible subset.
-2. **Ranker semantics:** whether model confidence and decomposed Universe facts
-   should each contribute once, without substituting a composite score for a
-   missing model confidence or recounting its components.
+1. **Producer eligibility:** whether Observer-created or Observer-enriched
+   opportunities should inspect the full Universe or a prospectively frozen
+   eligible subset.
+2. **Ranker semantics and provenance:** whether model confidence and decomposed
+   Universe facts should each contribute once, with immutable input revisions,
+   without substituting a composite score for a missing model confidence or
+   recounting its components.
 3. **Universe scorer:** whether the pessimistic continuous twin selects a better
    fixed-capacity set than the current authoritative scorer.
 
@@ -118,9 +133,11 @@ one assignment/inference unit.
   merely by dropping difficult slots.
 - **Outcome horizon:** the predeclared natural family horizon already used by
   Universe candidate settlement. It cannot be selected after observing returns.
-- **Producer stratum:** `market_observer` and deterministic scanner opportunities
-  are reported separately. A producer-policy change is a different experiment,
-  not an implicit part of the continuous-score treatment.
+- **Producer stratum:** original emitter, every later enrichment revision, and
+  the exact Ranker-consumed revision are reported separately. The mutable
+  `source_agent` projection alone is not causal attribution. A producer-policy
+  change is a different experiment, not an implicit part of the
+  continuous-score treatment.
 - **Ranker contract:** the current formula remains the control. A score-semantics
   treatment must persist each named input and its single contribution; it cannot
   run with the continuous-score treatment in the same allocation unit.
@@ -200,7 +217,8 @@ new scorer.
 
 1. **Diagnostic linkage:** persist direct twin-to-outcome identity and complete
    batch settlement; expose paired batch rows and producer-specific Ranker input
-   decompositions. No score, eligibility, or selection changes.
+   decompositions with immutable revision identity. No score, eligibility, or
+   selection changes.
 2. **Shadow validation:** prove deterministic replay, restart idempotency,
    coverage, costs, fixed-look readiness, and one-use score decomposition on
    Fedora. Replaying a proposed Ranker formula remains non-authoritative.
