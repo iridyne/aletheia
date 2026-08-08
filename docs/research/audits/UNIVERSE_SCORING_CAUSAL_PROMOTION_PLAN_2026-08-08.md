@@ -41,6 +41,54 @@ ranks. Two complete scanner batches showed the pessimistic continuous twin with
 less-negative selected-set mean returns than authority, but both treatments
 remained negative and two batches are not an inference sample.
 
+## Confirmed producer and Ranker seam
+
+The entry surface is not one homogeneous Universe-score path:
+
+- the deterministic `universe_scanner` emitter requires `total_score >= 45`
+  and copies `round(total_score)` into `Opportunity.confidence_score`;
+- `market_observer` iterates the full current Universe up to
+  `max_candidates`, may emit an Opportunity below that threshold, and supplies
+  its own model-authored confidence score;
+- the Ranker then adds `0.50 * confidence_score`, `0.25 * total_score`, and
+  `0.10 * tradability_score`, before subtracting the full late-entry and
+  crowding penalties;
+- `total_score` already contains `0.25 * tradability_score` and the same
+  late-entry and crowding penalties. Direct scanner opportunities therefore
+  reuse the composite score itself, and both producers reuse some composite
+  components with different effective weights.
+
+The first exact-bar stop illustrates the distinction. SKYAI was emitted by
+`market_observer` with model confidence 65 while its linked Universe member had
+`total_score=23.25`, `tradability_score=75`, and `late_entry_penalty=13`. Its
+persisted Ranker score of 32.81 is exactly:
+
+```text
+0.50 * 65 + 0.25 * 23.25 + 0.10 * 75 - 13 = 32.8125
+```
+
+At the same Fedora checkpoint, all 51 verified closes linked to a Universe
+member split into 42 `market_observer` entries (8 winners, `-9.464945 USDT`)
+and nine deterministic scanner entries (five winners, `-0.560303 USDT`).
+Twenty-eight entries had Universe scores below 45; all 28 came through
+`market_observer`. These are descriptive, non-randomized observations spanning
+multiple producer commits. They identify the authority seam but do not prove
+that disabling the Observer, adding a hard rank cutoff, or changing weights
+would improve net returns.
+
+Three behavior hypotheses must remain separate:
+
+1. **Producer eligibility:** whether Observer-created opportunities should
+   inspect the full Universe or a prospectively frozen eligible subset.
+2. **Ranker semantics:** whether model confidence and decomposed Universe facts
+   should each contribute once, without substituting a composite score for a
+   missing model confidence or recounting its components.
+3. **Universe scorer:** whether the pessimistic continuous twin selects a better
+   fixed-capacity set than the current authoritative scorer.
+
+No treatment may combine these hypotheses. Otherwise a better result cannot be
+attributed to the producer boundary, score semantics, or continuous scorer.
+
 ## Causal question
 
 For the same prospective scanner batch and the same pre-outcome candidate facts,
@@ -70,6 +118,12 @@ one assignment/inference unit.
   merely by dropping difficult slots.
 - **Outcome horizon:** the predeclared natural family horizon already used by
   Universe candidate settlement. It cannot be selected after observing returns.
+- **Producer stratum:** `market_observer` and deterministic scanner opportunities
+  are reported separately. A producer-policy change is a different experiment,
+  not an implicit part of the continuous-score treatment.
+- **Ranker contract:** the current formula remains the control. A score-semantics
+  treatment must persist each named input and its single contribution; it cannot
+  run with the continuous-score treatment in the same allocation unit.
 
 ## Required evidence contract
 
@@ -145,9 +199,11 @@ new scorer.
 ## Rollout sequence
 
 1. **Diagnostic linkage:** persist direct twin-to-outcome identity and complete
-   batch settlement; expose paired batch rows. No score or selection changes.
+   batch settlement; expose paired batch rows and producer-specific Ranker input
+   decompositions. No score, eligibility, or selection changes.
 2. **Shadow validation:** prove deterministic replay, restart idempotency,
-   coverage, costs, and fixed-look readiness on Fedora.
+   coverage, costs, fixed-look readiness, and one-use score decomposition on
+   Fedora. Replaying a proposed Ranker formula remains non-authoritative.
 3. **Owner review:** review the frozen treatment, thresholds, sample plan, and
    observed shadow evidence.
 4. **Paper 10%:** prospectively randomize complete batches or allocation units;
@@ -179,4 +235,3 @@ or hard loss limits.
 Approval of this document authorizes implementation of diagnostic linkage and
 shadow validation only. A second explicit approval is required before any Paper
 score or selection treatment is enabled.
-
