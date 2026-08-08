@@ -494,6 +494,10 @@ _EXECUTOR_WORKERS = {
     # reconciliation, or settlement jobs.  The position manager is the only job
     # in this lane and still uses SQLite's normal single-writer coordination.
     "protective": 1,
+    # Contribution measurement and its one-shot restart recovery share one
+    # serial lane.  This preserves their mutual exclusion without letting the
+    # 31-job general IO queue postpone the current measurement window.
+    "learning_measurement": 1,
     "observer": 1,
     # LLM-backed jobs also write run logs/artifacts. Keep them serial so a slow
     # model call cannot make two agent jobs compete for SQLite at once.
@@ -1198,13 +1202,15 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("learning_contribution_evaluator", _run_learning_contribution_evaluator),
         "interval", minutes=_learning_interval, id="learning_contribution_evaluator",
-        misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
+        misfire_grace_time=300, max_instances=1, coalesce=True,
+        executor="learning_measurement",
         next_run_time=_learning_evaluator_initial_run,
     )
     _scheduler.add_job(
         _guarded("learning_measurement_startup_catchup", _run_measurement_startup_catchup),
         "date", run_date=datetime.now() + timedelta(minutes=2),
-        id="learning_measurement_startup_catchup", misfire_grace_time=None, executor="io",
+        id="learning_measurement_startup_catchup", misfire_grace_time=None,
+        executor="learning_measurement",
     )
     _scheduler.add_job(
         _guarded("learning_lifecycle_controller", _run_learning_lifecycle_controller),

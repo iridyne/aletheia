@@ -40,6 +40,8 @@ _EXECUTOR_WORKERS = {
     "default": 2,
     "io":      1,
     "fast_io": 1,
+    "protective": 1,
+    "learning_measurement": 1,
     "observer":1,
     "agents":  1,
 }
@@ -50,10 +52,12 @@ _EXECUTOR_WORKERS = {
 | `default` | 2 | 通用基础设施（portfolio_snapshot） |
 | `io` | 1 | 短时 read/write 基础任务（market_data、reconciliation、cleanup 等）；单写防 WAL 碰撞 |
 | `fast_io` | 1 | 延迟敏感的基础设施（price_feed，30s 周期） |
+| `protective` | 1 | Position 保护检查；不得排在长时数据/结算任务之后 |
+| `learning_measurement` | 1 | 串行执行 contribution evaluator 与 boot measurement catch-up；不与 31-job `io` 队列共享排队 |
 | `observer` | 1 | boot catch-up 市场观察者；独立隔离，防被 LLM job 饿死 |
 | `agents` | 1 | LLM/agent 密集型 job（paper_trader、post_trade_reviewer 等）；串行防 SQLite 竞争 |
 
-**总工人数**：2 + 1 + 1 + 1 + 1 = **6**。
+**总工人数**：2 + 1 + 1 + 1 + 1 + 1 + 1 = **8**。
 
 注：各池 `max_workers` 全部 ≤ 3，满足 spec AC-S01（`spec_agent_contracts.py:18–33`）。timeout 层不计入上述 APScheduler 命名池：`_run_async_with_timeout` 复用一条进程级常驻 event-loop lane，`_run_sync_with_timeout` 复用一条常驻 daemon lane；两者 outstanding 容量均固定为 16，不为每次调用创建新的 loop、executor 或替代线程（见 §4.3）。
 
@@ -116,12 +120,14 @@ not otherwise re-audited here.
 
 - `learning_contribution_evaluator` is the sole recurring contribution evaluator. It runs at
   `learning.evaluation_interval_minutes` (minimum 15, default 60), with `max_instances=1`,
-  `coalesce=True`, the `io` executor, and a 60-second timeout. Gateway restart preserves an earlier
+  `coalesce=True`, the serial `learning_measurement` executor, and a 60-second timeout. Gateway restart preserves an earlier
   future durable `next_due_at` instead of resetting the first run to boot plus a full interval; an
   already-overdue deadline receives one bounded run after 60 seconds.
 - `learning_measurement_startup_catchup` remains a one-shot at boot plus two minutes. It checks and,
   only when due, invokes the same evaluator; after an overdue direct recovery succeeds, its updated
-  watermark makes the one-shot a no-op, while a failed recovery leaves it available as a retry.
+  watermark makes the one-shot a no-op, while a failed recovery leaves it available as a retry. It
+  shares the one-worker `learning_measurement` lane with the recurring evaluator, preserving mutual
+  serialization while avoiding starvation behind the general `io` queue.
   Executable continuity claim: `LE-B31`.
 - `learning_verdict_runner` is not registered and has no timeout entry. Existing
   `learning_job_health` rows with that historical id are retained as history, not deleted or

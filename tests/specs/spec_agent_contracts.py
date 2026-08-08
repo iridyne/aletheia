@@ -168,7 +168,8 @@ def test_scheduler_minimum_job_count():
     SpecClaim(
         "AC-S09", "agent_contracts", "§1 executor pools", "L2a",
         "scheduler.py defines exactly the executor pools "
-        "{default, io, fast_io, protective, observer, agents} — no extras, no missing",
+        "{default, io, fast_io, protective, learning_measurement, observer, agents} "
+        "— no extras, no missing",
     ),
 )
 def test_scheduler_executor_pool_names():
@@ -180,7 +181,15 @@ def test_scheduler_executor_pool_names():
     m = re.search(r'_EXECUTOR_WORKERS\s*=\s*\{([^}]+)\}', source, re.DOTALL)
     assert m, "_EXECUTOR_WORKERS dict not found in scheduler.py"
     keys = set(re.findall(r'"(\w+)"\s*:', m.group(1)))
-    expected = {"default", "io", "fast_io", "protective", "observer", "agents"}
+    expected = {
+        "default",
+        "io",
+        "fast_io",
+        "protective",
+        "learning_measurement",
+        "observer",
+        "agents",
+    }
     assert keys == expected, (
         f"Executor pool names mismatch. Expected={sorted(expected)} Got={sorted(keys)}"
     )
