@@ -363,7 +363,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
             datetime.fromisoformat(verdict.window_end)
             - datetime.fromisoformat(verdict.window_start)
         ) >= timedelta(days=7)
-        assert verdict.unique_treatment_n + verdict.unique_control_n == expected_count
+        assert harm["assigned_treatment_n"] + verdict.unique_control_n == expected_count
         assert harm["harm_indeterminate_reason"] is None
         return verdict, harm
 
@@ -395,9 +395,11 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
         shadow_verdict.unique_treatment_n,
         shadow_verdict.unique_control_n,
     ) == (
-        shadow_cluster_counts["treatment"],
+        0,
         shadow_cluster_counts["control"],
     )
+    assert shadow_harm["assigned_treatment_n"] == shadow_cluster_counts["treatment"]
+    assert shadow_harm["baseline_treatment_n"] == shadow_cluster_counts["treatment"]
 
     # Admission is an authenticated owner action: invalid confirmation still
     # fails validation, while missing/wrong credentials fail before the route.

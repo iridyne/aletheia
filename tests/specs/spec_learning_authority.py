@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -260,7 +261,10 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
             metric_version=METRIC_VERSION,
             code_commit="older-build",
             behavior_contract_hash=behavior_contract_hash,
-            harm_metrics_json='{"harm_state":"clear","breached":false}',
+            harm_metrics_json=(
+                '{"harm_state":"clear","breached":false,'
+                '"authority_applied_treatment_n":1}'
+            ),
     )
     assert insert_record("learning_contribution_verdicts", activation)
     db = get_db()
@@ -312,7 +316,10 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
         stage="paper_10", target_horizon="4h", outcome_contract_version="v1",
             metric_version=METRIC_VERSION, code_commit="newer-build",
             behavior_contract_hash=behavior_contract_hash,
-            harm_metrics_json='{"harm_state":"clear","breached":false}',
+            harm_metrics_json=(
+                '{"harm_state":"clear","breached":false,'
+                '"authority_applied_treatment_n":1}'
+            ),
     )
     insert_record("learning_contribution_verdicts", positive)
     authorized_candidate = next(
@@ -525,6 +532,7 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
         assignment_salt="salt-p03",
         min_samples_per_arm=1,
         min_market_days=0,
+        stage="paper_10",
         status="active",
         started_at=(datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
     )
@@ -557,10 +565,14 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
             assignment_unit_key=ck,
             candidate_key=ck, outcome_candidate_key=f"{ck}:4h",
             outcome_source="fixed_horizon_candidate", concurrent_policy_epoch=epoch,
-                experiment_stage="shadow",
-                code_commit="test-commit",
-                behavior_contract_hash=behavior_contract_hash,
-            ))
+            manifest_json=json.dumps({
+                "authority_applied": arm == "treatment",
+                "authority_reason": "current_stage_measurement_healthy",
+            }),
+            experiment_stage="paper_10",
+            code_commit="test-commit",
+            behavior_contract_hash=behavior_contract_hash,
+        ))
 
     now = datetime.now(timezone.utc).isoformat()
     scored = [

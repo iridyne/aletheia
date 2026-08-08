@@ -76,6 +76,8 @@ def _measurement(
     code_commit: str | None = "test-build",
     behavior_contract_hash: str | None = None,
     breached: bool = False,
+    authority_applied_treatment_n: int | None = None,
+    assigned_treatment_n: int = 50,
 ):
     from aletheia.learning.behavior_contracts import build_behavior_contract_hash
     from aletheia.learning.ledger import insert_record
@@ -94,6 +96,13 @@ def _measurement(
     identifier = (
         f"verdict-{experiment.experiment_id}-{verdict}-{epoch}-{horizon}-{contract}"
         f"-{behavior_contract_hash}{'-breached' if breached else ''}"
+    )
+    actual_treatment_n = (
+        0
+        if reason == "no_actual_intervention"
+        else 50
+        if authority_applied_treatment_n is None
+        else authority_applied_treatment_n
     )
     record = LearningContributionVerdict(
         verdict_id=identifier,
@@ -114,6 +123,9 @@ def _measurement(
             "horizon": horizon,
             "outcome_contract_version": contract,
             "metric_version": metric,
+            "assigned_treatment_n": assigned_treatment_n,
+            "authority_applied_treatment_n": actual_treatment_n,
+            "baseline_treatment_n": assigned_treatment_n - actual_treatment_n,
             "breached": breached,
             "harm_state": "breached" if breached else "clear",
             **({"breach_reasons": ["mae_p95_worsening"]} if breached else {}),
@@ -183,6 +195,37 @@ def test_positive_with_automation_off_only_recommends_and_does_not_transition(mo
     assert result.successor_experiment_id is None
     assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 0
     assert verdict.verdict == "positive"
+
+
+def test_positive_verdict_with_insufficient_actual_interventions_cannot_promote(monkeypatch):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    verdict = _measurement(
+        hypothesis,
+        experiment,
+        "positive",
+        authority_applied_treatment_n=1,
+        assigned_treatment_n=50,
+    )
+    _configure(monkeypatch, _settings(
+        automation=True,
+        paper=True,
+        paths=[hypothesis.path_id],
+    ))
+    from aletheia.learning.lifecycle import process_lifecycle
+    from aletheia.storage.sqlite import get_db
+
+    result = process_lifecycle(
+        experiment.experiment_id,
+        current_policy_epoch="epoch-a",
+    )
+
+    assert result.action == "hold"
+    assert result.recommended_action == "promote_stage"
+    assert result.reason == "insufficient_actual_intervention_samples"
+    assert result.verdict_id == verdict.verdict_id
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM learning_lifecycle_events"
+    ).fetchone()[0] == 0
 
 
 def test_shadow_positive_never_auto_promotes_to_paper(monkeypatch):
@@ -949,6 +992,25 @@ def test_authority_rejects_current_measurement_from_a_different_hypothesis(monke
 
     assert decision.authorized is False
     assert decision.reason == "measurement_hypothesis_mismatch"
+
+
+def test_authority_rejects_positive_current_measurement_with_insufficient_interventions(
+    monkeypatch,
+):
+    hypothesis, _parent, _activation, successor = _promoted_successor(monkeypatch)
+    _measurement(
+        hypothesis,
+        successor,
+        "positive",
+        authority_applied_treatment_n=1,
+        assigned_treatment_n=50,
+    )
+    from aletheia.learning.authority import resolve_learning_authority
+
+    decision = resolve_learning_authority(hypothesis.path_id, successor, "epoch-a")
+
+    assert decision.authorized is False
+    assert decision.reason == "insufficient_actual_intervention_samples"
 
 
 def test_authority_rejects_current_measurement_with_wrong_declared_horizon(monkeypatch):

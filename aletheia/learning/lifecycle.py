@@ -13,6 +13,7 @@ from aletheia.learning.authority import (
     MEASUREMENT_VERDICTS,
     measurement_harm_block_reason,
     measurement_identity_reason,
+    measurement_intervention_block_reason,
     resolve_learning_authority,
 )
 from aletheia.learning.cohorts import SUPPORTED_PATH_ID, SUPPORTED_PATH_IDS
@@ -214,6 +215,18 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
         )
     if experiment.stage not in STAGE_SUCCESSOR:
         return LifecycleResult("hold", "promote_stage", "terminal_stage", experiment_id, verdict_id=verdict["verdict_id"])
+    intervention_reason = measurement_intervention_block_reason(
+        verdict,
+        required_per_arm=experiment.min_samples_per_arm,
+    )
+    if intervention_reason:
+        return LifecycleResult(
+            "hold",
+            "promote_stage",
+            intervention_reason,
+            experiment_id,
+            verdict_id=verdict["verdict_id"],
+        )
 
     gate_reason = _promotion_gate_reason(hypothesis.path_id)
     if gate_reason == "lifecycle_automation_disabled":
@@ -696,7 +709,15 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
         "activation_verdict_id": experiment.activation_verdict_id,
         "current_verdict_id": authority.current_verdict_id,
         "treatment_control_progress": {
-            "treatment": sum(len(cohort.treatment_samples) for cohort in cohorts),
+            "treatment": sum(
+                len(cohort.actual_treatment_samples) for cohort in cohorts
+            ),
+            "assigned_treatment": sum(
+                len(cohort.treatment_samples) for cohort in cohorts
+            ),
+            "baseline_treatment": sum(
+                len(cohort.baseline_treatment_samples) for cohort in cohorts
+            ),
             "control": sum(len(cohort.control_samples) for cohort in cohorts),
             "required_per_arm": experiment.min_samples_per_arm,
             "cohorts": [cohort.inspection() for cohort in cohorts],

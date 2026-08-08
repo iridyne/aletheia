@@ -374,6 +374,18 @@ def _project_experiment(
         measurement_reason,
         stage=str(row.get("stage") or ""),
     )
+    intervention_block_reason = None
+    if recommended == "promote_stage" and current_verdict is not None:
+        from aletheia.learning.authority import (
+            measurement_intervention_block_reason,
+        )
+
+        intervention_block_reason = measurement_intervention_block_reason(
+            current_verdict,
+            required_per_arm=_safe_int(row.get("min_samples_per_arm")),
+        )
+        if intervention_block_reason is not None:
+            recommended = "hold"
     mutation_reason = "admission_not_recommended"
     mutation_available = False
     if recommended == "admit_trial" and current_verdict is not None:
@@ -503,6 +515,12 @@ def _project_experiment(
                 _safe_int((current_verdict or {}).get("unique_treatment_n"))
                 if current else 0
             ),
+            "assigned_treatment_units": _safe_int(
+                metrics.get("assigned_treatment_n")
+            ),
+            "baseline_treatment_units": _safe_int(
+                metrics.get("baseline_treatment_n")
+            ),
             "control_assignment_units": (
                 _safe_int((current_verdict or {}).get("unique_control_n"))
                 if current else 0
@@ -542,6 +560,15 @@ def _project_experiment(
             ),
             "harm_state": str(metrics.get("harm_state") or "unknown"),
             "harm_indeterminate_reason": metrics.get("harm_indeterminate_reason"),
+            "treatment_compliance_state": str(
+                metrics.get("treatment_compliance_state") or "unknown"
+            ),
+            "treatment_compliance_reason": metrics.get(
+                "treatment_compliance_reason"
+            ),
+            "treatment_authority_rejection_reasons": _safe_int_dict(
+                metrics.get("treatment_authority_rejection_reasons")
+            ),
             "harm_breached": bool(metrics.get("breached")),
             "breach_reasons": [
                 str(value)
@@ -551,7 +578,9 @@ def _project_experiment(
         },
         "lifecycle": {
             "recommended_action": recommended,
-            "recommendation_reason": measurement_reason,
+            "recommendation_reason": (
+                intervention_block_reason or measurement_reason
+            ),
             "authority_enabled": authority_enabled,
             "authority_block_reason": authority_block_reason,
             "mutation_available": mutation_available,

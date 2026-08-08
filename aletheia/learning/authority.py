@@ -184,6 +184,13 @@ def resolve_learning_authority(
     # activation record is malformed or a controller has not run yet.
     if current is not None and str(current.get("verdict") or "") in {"negative", "invalid"}:
         return blocked(f"current_measurement_{current['verdict']}", current)
+    if current is not None and str(current.get("verdict") or "") == "positive":
+        intervention_reason = measurement_intervention_block_reason(
+            current,
+            required_per_arm=experiment.min_samples_per_arm,
+        )
+        if intervention_reason:
+            return blocked(intervention_reason, current)
     if current is not None and str(current.get("hypothesis_id") or "") != experiment.hypothesis_id:
         return blocked("measurement_hypothesis_mismatch", current)
     activation = get_record("learning_contribution_verdicts", experiment.activation_verdict_id)
@@ -204,6 +211,13 @@ def resolve_learning_authority(
     )
     if not activation_is_positive and not activation_is_admitted_trial:
         return blocked("invalid_activation_verdict")
+    if activation_is_positive:
+        intervention_reason = measurement_intervention_block_reason(
+            activation,
+            required_per_arm=experiment.min_samples_per_arm,
+        )
+        if intervention_reason:
+            return blocked(intervention_reason, activation)
     predecessor_stage = PREVIOUS_STAGE.get(experiment.stage)
     if not experiment.parent_experiment_id or not predecessor_stage:
         return blocked("missing_predecessor_experiment")
@@ -304,6 +318,41 @@ def measurement_harm_block_reason(verdict: dict[str, Any]) -> str | None:
     if metrics.get("harm_state") != "clear":
         return "measurement_metadata_invalid"
     return None
+
+
+def measurement_intervention_block_reason(
+    verdict: dict[str, Any],
+    *,
+    required_per_arm: int,
+) -> str | None:
+    """Fail closed when a positive verdict lacks enough actual interventions.
+
+    ``unique_treatment_n`` is a causal count, not an assignment count.  The
+    manifest-derived metric is checked independently so legacy or malformed
+    verdicts cannot promote by relabeling baseline treatment rows as applied.
+    """
+    try:
+        metrics = json.loads(verdict.get("harm_metrics_json") or "{}")
+        required = max(1, int(required_per_arm))
+    except (TypeError, ValueError):
+        return "treatment_compliance_unavailable"
+    if not isinstance(metrics, dict):
+        return "treatment_compliance_unavailable"
+    actual = _non_negative_int(metrics.get("authority_applied_treatment_n"))
+    persisted = _non_negative_int(verdict.get("unique_treatment_n"))
+    if actual is None or persisted is None:
+        return "treatment_compliance_unavailable"
+    if actual < required:
+        return "insufficient_actual_intervention_samples"
+    if actual != persisted:
+        return "treatment_compliance_count_mismatch"
+    return None
+
+
+def _non_negative_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 def measurement_identity_reason(

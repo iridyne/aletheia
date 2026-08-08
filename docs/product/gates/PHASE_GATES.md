@@ -100,6 +100,13 @@ all promotion gates remain enabled. Allocation is bounded to 10%, 25%, 50%, then
 the configured `paper_active_allocation_pct` (default 80%, maximum 90%) so a control
 holdout remains.
 
+The treatment sample gate counts only assignment units whose exposure manifest
+records `authority_applied=true`. Assigned treatment units that fell back to the
+baseline remain visible as compliance/rejection evidence, but cannot contribute to
+the treatment mean, confidence interval, sample minimum, or promotion. Lifecycle
+rechecks this actual-intervention count so a legacy or malformed positive verdict
+cannot grant a successor stage.
+
 | Current evidence | Required lifecycle result |
 |---|---|
 | `positive` and all gates current | Promote one stage |

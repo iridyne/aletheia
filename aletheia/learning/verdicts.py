@@ -37,21 +37,42 @@ class VerdictEvaluation:
 
 def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
     """Classify one already-isolated cohort without changing any authority state."""
-    raw_treatment = cohort.treatment_samples
+    assigned_treatment = cohort.treatment_samples
     raw_control = cohort.control_samples
-    coverage, treatment, control = _market_day_coverage(
+    coverage, qualified_assigned_treatment, control = _market_day_coverage(
         cohort,
-        raw_treatment,
+        assigned_treatment,
         raw_control,
     )
+    treatment = [
+        sample for sample in qualified_assigned_treatment
+        if sample.authority_applied
+    ]
+    coverage["qualified_actual_intervention_treatment_n"] = len(treatment)
     treatment_values = [sample.net_return_pct for sample in treatment]
     control_values = [sample.net_return_pct for sample in control]
     observed = fmean(treatment_values) if treatment_values else None
     baseline = fmean(control_values) if control_values else None
     delta = observed - baseline if observed is not None and baseline is not None else None
     confidence_low, confidence_high = _bootstrap_interval(treatment_values, control_values)
-    harm_metrics = _harm_metrics(cohort, treatment, control, delta)
+    # Shadow must complete the ordinary assignment/outcome/harm-integrity gates
+    # before owner admission even though it has no causal treatment effect yet.
+    # Once any intervention exists, harm is computed only from actually applied
+    # treatment units so baseline fallbacks cannot dilute observed damage.
+    harm_treatment = treatment or qualified_assigned_treatment
+    harm_metrics = _harm_metrics(cohort, harm_treatment, control, delta)
+    harm_metrics["harm_treatment_basis"] = (
+        "actual_intervention"
+        if treatment else "assigned_baseline_no_intervention"
+    )
     harm_metrics["market_day_coverage"] = coverage
+    required = max(1, int(cohort.experiment.min_samples_per_arm))
+    harm_metrics.update(_treatment_compliance_metrics(
+        assigned_treatment=qualified_assigned_treatment,
+        actual_treatment=treatment,
+        required=required,
+        raw_assigned_treatment_n=len(assigned_treatment),
+    ))
 
     def result(verdict: str, reason: str) -> VerdictEvaluation:
         return VerdictEvaluation(
@@ -69,21 +90,25 @@ def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
 
     if cohort.invalid_reasons:
         return result("invalid", _reason("invalid evidence", cohort.invalid_reasons))
-    required = max(1, int(cohort.experiment.min_samples_per_arm))
-    if len(raw_treatment) < required or len(raw_control) < required:
+    if len(assigned_treatment) < required or len(raw_control) < required:
         return result(
             "insufficient_data",
             "insufficient unique prospective treatment/control samples",
         )
     if coverage["status"] not in {"qualified", "not_required"}:
         return result("insufficient_data", "market_day_coverage_gap")
-    if len(treatment) < required or len(control) < required:
+    if len(qualified_assigned_treatment) < required or len(control) < required:
         return result(
             "insufficient_data",
             "insufficient unique prospective treatment/control samples in continuous window",
         )
-    if not any(sample.authority_applied for sample in treatment):
+    if not treatment:
         return result("insufficient_data", "no_actual_intervention")
+    if len(treatment) < required:
+        return result(
+            "insufficient_data",
+            "insufficient_actual_intervention_samples",
+        )
     assert delta is not None
     if harm_metrics["breached"]:
         return result("negative", _reason("harm gate breached", harm_metrics["breach_reasons"]))
@@ -99,6 +124,45 @@ def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
         "positive",
         "cost-aware treatment mean exceeds control with deterministic confidence and no harm breach",
     )
+
+
+def _treatment_compliance_metrics(
+    *,
+    assigned_treatment: list[CohortSample],
+    actual_treatment: list[CohortSample],
+    required: int,
+    raw_assigned_treatment_n: int,
+) -> dict[str, Any]:
+    baseline = [sample for sample in assigned_treatment if not sample.authority_applied]
+    if not actual_treatment:
+        compliance_reason = "no_actual_intervention"
+    elif len(actual_treatment) < required:
+        compliance_reason = "insufficient_actual_intervention_samples"
+    else:
+        compliance_reason = "sufficient_actual_intervention"
+    return {
+        "raw_assigned_treatment_n": raw_assigned_treatment_n,
+        "assigned_treatment_n": len(assigned_treatment),
+        "authority_applied_treatment_n": len(actual_treatment),
+        "baseline_treatment_n": len(baseline),
+        "required_actual_intervention_n": required,
+        "treatment_compliance_rate": (
+            len(actual_treatment) / len(assigned_treatment)
+            if assigned_treatment else None
+        ),
+        "treatment_compliance_state": (
+            "none"
+            if not actual_treatment
+            else "partial"
+            if baseline
+            else "complete"
+        ),
+        "treatment_compliance_reason": compliance_reason,
+        "treatment_authority_rejection_reasons": dict(sorted(Counter(
+            sample.authority_reason or "authority_reason_unavailable"
+            for sample in baseline
+        ).items())),
+    }
 
 
 def _market_day_coverage(

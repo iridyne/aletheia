@@ -134,6 +134,13 @@ loop contributes positively. Current behavior has these contract-relevant limita
   `universe_family_calibration_cluster_allocation_utility_v4` applies only to new verdicts. Earlier
   metric verdict rows remain immutable history. A verdict's `created_at` is evaluation time, while
   `window_start` and `window_end` remain observation bounds;
+- treatment assignment and treatment intervention remain distinct. Shadow assignment units still
+  satisfy the ordinary assignment/outcome/continuity readiness gates, but
+  `authority_applied=false` units never enter the causal treatment mean or persisted
+  `unique_treatment_n`. Paper verdicts and lifecycle promotion require the full per-arm minimum of
+  manifest-proven `authority_applied=true` treatment units. Baseline treatment fallbacks remain
+  auditable through assigned/baseline counts, compliance state, and bounded authority-reason
+  counts; missing or inconsistent compliance metadata fails promotion closed;
 - harm is determinate only after both arms reach the experiment's 50-assignment-unit gate. Before
   that point the persisted state is `indeterminate`: it blocks authority but does not claim a
   breach. Determinate loss-rate harm is an absolute increase above `0.15` (15 percentage points),
