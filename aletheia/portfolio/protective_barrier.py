@@ -12,7 +12,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from aletheia.data.symbols import to_canonical
+from aletheia.data.symbols import InstrumentId, to_canonical
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
     PositionExitPlanVersion,
@@ -297,6 +297,87 @@ def _materialize_triggered(state: dict) -> dict:
     return {"closed": True, "position_id": state["position_id"], "reason": expected_reason}
 
 
+async def _refresh_due_position_protection_bars(*, limit: int = 200) -> dict:
+    """Fetch missing exact 1m bars for the frozen protected instruments.
+
+    The normal price feed refreshes point-in-time tickers, while the general
+    OHLCV cache may remain valid for ten minutes.  Protective barriers cannot
+    consume either source: they need the exact completed bar at their durable
+    cursor.  Passing ``since`` deliberately bypasses that cache, and using the
+    same venue as both primary and fallback prevents cross-venue evidence.
+    """
+
+    from aletheia.data.ccxt_provider import get_market_data_provider
+
+    now_ms = int(_now().timestamp() * 1000)
+    due: dict[InstrumentId, int] = {}
+    for state in repo.list_position_protection_work(limit=limit):
+        if state.get("status") == "triggered":
+            continue
+        cursor = int(state["next_bar_open_ms"])
+        if cursor + 60_000 > now_ms or repo.get_exact_position_protection_bar(state) is not None:
+            continue
+        instrument = InstrumentId.from_parts(
+            state["venue"], state["symbol"], state["market_type"]
+        )
+        due[instrument] = min(cursor, due.get(instrument, cursor))
+
+    summary = {"requested": len(due), "available": 0, "errors": []}
+    providers: dict[str, object] = {}
+    try:
+        for instrument, cursor in sorted(due.items(), key=lambda item: str(item[0])):
+            provider = providers.get(instrument.exchange)
+            if provider is None:
+                provider = get_market_data_provider(
+                    exchange=instrument.exchange,
+                    native_ccxt=True,
+                    fallback_exchange=instrument.exchange,
+                )
+                providers[instrument.exchange] = provider
+            backlog_bars = max(1, (now_ms - cursor) // 60_000)
+            fetch_limit = min(500, max(2, backlog_bars + 1))
+            try:
+                await provider.get_ohlcv(
+                    instrument,
+                    timeframe="1m",
+                    limit=fetch_limit,
+                    since=cursor,
+                )
+                probe = {
+                    "venue": instrument.exchange,
+                    "symbol": instrument.symbol,
+                    "market_type": instrument.market_type,
+                    "next_bar_open_ms": cursor,
+                }
+                if repo.get_exact_position_protection_bar(probe) is None:
+                    raise RuntimeError("exact completed 1m bar remained unavailable")
+                summary["available"] += 1
+            except Exception as exc:
+                summary["errors"].append(
+                    {
+                        "instrument": str(instrument),
+                        "code": "protective_ohlcv_refresh_failed",
+                        "error_type": type(exc).__name__,
+                        "message": str(exc)[:200],
+                    }
+                )
+    finally:
+        for provider in providers.values():
+            try:
+                await provider.close()
+            except Exception:
+                logger.debug("protective OHLCV provider close failed", exc_info=True)
+    return summary
+
+
+def refresh_due_position_protection_bars(*, limit: int = 200) -> dict:
+    """Synchronously refresh the bounded due set from the scheduler worker."""
+
+    import asyncio
+
+    return asyncio.run(_refresh_due_position_protection_bars(limit=limit))
+
+
 def _evaluate_state(state: dict, *, now_ms: int, detected_at: str) -> dict:
     if state["status"] == "triggered":
         return _materialize_triggered(state)
@@ -407,19 +488,38 @@ def _evaluate_state(state: dict, *, now_ms: int, detected_at: str) -> dict:
     return _materialize_triggered(refreshed)
 
 
-def evaluate_due_position_protection(*, limit: int = 200) -> dict:
-    """Evaluate a bounded workset; one Position failure never stops other protection."""
+def evaluate_due_position_protection(
+    *, limit: int = 200, max_bars_per_position: int = 120
+) -> dict:
+    """Evaluate a bounded workset and catch each Position up in bar order."""
 
     now = _now()
     detected_at = now.isoformat()
     now_ms = int(now.timestamp() * 1000)
-    summary = {"checked": 0, "closed": 0, "errors": []}
+    summary = {"checked": 0, "bars_evaluated": 0, "closed": 0, "errors": []}
     for state in repo.list_position_protection_work(limit=limit):
         summary["checked"] += 1
         try:
-            result = _evaluate_state(state, now_ms=now_ms, detected_at=detected_at)
-            if result.get("closed") is True:
-                summary["closed"] += 1
+            current = state
+            for _ in range(max(1, min(int(max_bars_per_position), 500))):
+                result = _evaluate_state(
+                    current, now_ms=now_ms, detected_at=detected_at
+                )
+                if result.get("evaluated") is True:
+                    summary["bars_evaluated"] += 1
+                if result.get("closed") is True:
+                    summary["closed"] += 1
+                    break
+                previous_cursor = int(current["next_bar_open_ms"])
+                refreshed = repo.get_position_protection_state(current["position_id"])
+                if (
+                    refreshed is None
+                    or int(refreshed["next_bar_open_ms"]) <= previous_cursor
+                    or result.get("waiting") is True
+                    or result.get("blocked") is True
+                ):
+                    break
+                current = refreshed
         except Exception as exc:
             logger.exception("protective barrier failed position=%s", state.get("position_id"))
             summary["errors"].append(
@@ -431,3 +531,16 @@ def evaluate_due_position_protection(*, limit: int = 200) -> dict:
                 }
             )
     return summary
+
+
+def run_due_position_protection_cycle(*, limit: int = 200) -> dict:
+    """Refresh exact bars, then evaluate them; keep both evidence streams visible."""
+
+    refresh = refresh_due_position_protection_bars(limit=limit)
+    evaluation = evaluate_due_position_protection(limit=limit)
+    return {
+        **evaluation,
+        "refresh_requested": refresh["requested"],
+        "refresh_available": refresh["available"],
+        "errors": [*(refresh.get("errors") or []), *(evaluation.get("errors") or [])],
+    }

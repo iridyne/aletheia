@@ -693,6 +693,10 @@ restart never backfill historical Positions or backdate a cursor. The protective
 scheduler evaluates only the frozen exact instrument's completed 1-minute bar;
 missing data remains a visible gap and a bar bisected by an ExitPlan change is
 skipped as `exit_plan_boundary_unordered` rather than assigned to either plan.
+Before evaluation, the same protective worker refreshes only missing due bars
+from the frozen venue with an explicit `since` cursor, bypassing the general
+OHLCV TTL cache and forbidding a fallback venue. Available backlog bars are then
+consumed in chronological order under a bounded per-position catch-up limit.
 
 The storage invariants are:
 

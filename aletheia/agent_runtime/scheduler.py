@@ -2217,11 +2217,11 @@ def _run_position_manager():
     # Invariant: execution_contract §10 + spec PL-PM-07.
     try:
         from aletheia.portfolio.protective_barrier import (
-            evaluate_due_position_protection,
+            run_due_position_protection_cycle,
         )
         from aletheia.portfolio.position_manager import evaluate_open_positions
 
-        barrier_summary = evaluate_due_position_protection()
+        barrier_summary = run_due_position_protection_cycle()
         summary = evaluate_open_positions()
         reported_errors = list(barrier_summary.get("errors") or [])
         if isinstance(summary, dict):
