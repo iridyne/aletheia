@@ -345,7 +345,11 @@ manager 必须重新取得精确新鲜 mark。最终结果和 wake fingerprint �
 以及未越过当前 age 的 horizon 都保持未完成并重试，不得确认原 horizon。混合批次中
 已关闭 Position 的陈旧 horizon wake 不得限制另一笔开放 Position 的 action schema，
 也不得被写入确认。交易所平仓已有 durable pending-close claim 时可确认，由既有
-reconciliation 路径收敛；复核重试不得创建替代 Close Order。
+reconciliation 路径收敛；复核重试不得创建替代 Close Order。确认只归属于刚完成的
+一次复核，并非该 Position 的永久豁免：明确延长后的新 horizon 再次到期时，manager
+必须在短事务中清除旧确认、写入 `horizon_review_rearmed` audit，再投递下一次 must-answer
+复核。该规则同时向前收敛历史版本中由 `hold` 错误留下的确认；存在 durable pending-close
+claim 时绝不清除，由 reconciliation 继续独占收敛。
 
 ### 10.2 close_position_routed 路由契约(唯一平仓中枢)
 
