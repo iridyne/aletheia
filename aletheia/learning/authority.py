@@ -104,6 +104,14 @@ def resolve_learning_authority(
         return blocked("paper_influence_disabled")
     if path_id not in set(learning.paper_influence_paths or []):
         return blocked("path_not_allowlisted")
+    # A newly registered Shadow experiment records its first exposure before
+    # ``insert_exposure`` atomically activates the experiment.  That bootstrap
+    # row is still blocked because Shadow has no Paper authority; classify it
+    # by the stable authority boundary instead of poisoning the cohort with a
+    # transient ``experiment_not_active`` provenance.  Closed/refrozen rows
+    # continue to fail as inactive below.
+    if experiment.status == "registered" and experiment.stage == "shadow":
+        return blocked("experiment_stage_not_paper")
     if experiment.status != "active":
         return blocked("experiment_not_active")
     if experiment.stage not in PAPER_STAGES:

@@ -1633,7 +1633,7 @@ def test_canonical_defaults_keep_unadmitted_shadow_consumers_on_static_baseline(
     assert cfg.learning.paper_influence_paths == ["universe_family_calibration"]
     assert decision.value == 1.0
     assert decision.applied is False
-    assert decision.reason == "baseline:experiment_not_active"
+    assert decision.reason == "baseline:experiment_stage_not_paper"
 
 
 def test_refrozen_hypothesis_reopens_only_for_new_behavior_contract(monkeypatch):
@@ -1739,7 +1739,7 @@ def test_refrozen_hypothesis_reopens_only_for_new_behavior_contract(monkeypatch)
     assert successor.exposure_id is not None
     assert successor.applied is False
     assert successor.value == 1.0
-    assert successor.reason == "baseline:experiment_not_active"
+    assert successor.reason == "baseline:experiment_stage_not_paper"
     assert get_record("learning_hypotheses", successor.hypothesis_id)["status"] == "shadow"
     assert db.execute(
         "SELECT COUNT(*) FROM learning_experiments WHERE hypothesis_id=?",
