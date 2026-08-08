@@ -14,7 +14,7 @@ from typing import Any
 from aletheia.learning.cohorts import ContributionCohort, CohortSample
 
 
-METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v4"
+METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v5"
 BOOTSTRAP_SEED = 20260712
 BOOTSTRAP_RESAMPLES = 2000
 _PRACTICAL_NEUTRAL_DELTA_PCT = 0.10
@@ -37,21 +37,46 @@ class VerdictEvaluation:
 
 def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
     """Classify one already-isolated cohort without changing any authority state."""
-    raw_treatment = cohort.treatment_samples
+    assigned_treatment = cohort.treatment_samples
     raw_control = cohort.control_samples
-    coverage, treatment, control = _market_day_coverage(
+    coverage, qualified_assigned_treatment, control = _market_day_coverage(
         cohort,
-        raw_treatment,
+        assigned_treatment,
         raw_control,
     )
+    treatment = qualified_assigned_treatment
+    authority_applied_treatment = [
+        sample for sample in qualified_assigned_treatment
+        if sample.authority_applied
+    ]
+    actual_treatment = [
+        sample for sample in qualified_assigned_treatment
+        if sample.authority_applied and sample.behavior_changed
+    ]
+    coverage["qualified_authority_applied_treatment_n"] = len(
+        authority_applied_treatment
+    )
+    coverage["qualified_actual_intervention_treatment_n"] = len(actual_treatment)
     treatment_values = [sample.net_return_pct for sample in treatment]
     control_values = [sample.net_return_pct for sample in control]
     observed = fmean(treatment_values) if treatment_values else None
     baseline = fmean(control_values) if control_values else None
     delta = observed - baseline if observed is not None and baseline is not None else None
     confidence_low, confidence_high = _bootstrap_interval(treatment_values, control_values)
+    # Preserve the randomized intent-to-treat estimand. Authority refusal can be
+    # correlated with market or risk state, so selecting only applied rows would
+    # turn the primary result into a biased post-assignment comparison.
     harm_metrics = _harm_metrics(cohort, treatment, control, delta)
+    harm_metrics["harm_treatment_basis"] = "randomized_assignment_intent_to_treat"
     harm_metrics["market_day_coverage"] = coverage
+    required = max(1, int(cohort.experiment.min_samples_per_arm))
+    harm_metrics.update(_treatment_intervention_metrics(
+        assigned_treatment=qualified_assigned_treatment,
+        authority_applied_treatment=authority_applied_treatment,
+        actual_treatment=actual_treatment,
+        required=required,
+        raw_assigned_treatment_n=len(assigned_treatment),
+    ))
 
     def result(verdict: str, reason: str) -> VerdictEvaluation:
         return VerdictEvaluation(
@@ -69,26 +94,30 @@ def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
 
     if cohort.invalid_reasons:
         return result("invalid", _reason("invalid evidence", cohort.invalid_reasons))
-    required = max(1, int(cohort.experiment.min_samples_per_arm))
-    if len(raw_treatment) < required or len(raw_control) < required:
+    if len(assigned_treatment) < required or len(raw_control) < required:
         return result(
             "insufficient_data",
             "insufficient unique prospective treatment/control samples",
         )
     if coverage["status"] not in {"qualified", "not_required"}:
         return result("insufficient_data", "market_day_coverage_gap")
-    if len(treatment) < required or len(control) < required:
+    if len(qualified_assigned_treatment) < required or len(control) < required:
         return result(
             "insufficient_data",
             "insufficient unique prospective treatment/control samples in continuous window",
         )
-    if not any(sample.authority_applied for sample in treatment):
-        return result("insufficient_data", "no_actual_intervention")
     assert delta is not None
     if harm_metrics["breached"]:
         return result("negative", _reason("harm gate breached", harm_metrics["breach_reasons"]))
+    if not actual_treatment:
+        return result("insufficient_data", "no_actual_intervention")
     if delta < 0:
         return result("negative", "treatment cost-aware mean trails control")
+    if len(actual_treatment) < required:
+        return result(
+            "insufficient_data",
+            "insufficient_actual_intervention_samples",
+        )
     threshold = max(_PRACTICAL_NEUTRAL_DELTA_PCT, float(cohort.hypothesis.effect_threshold or 0.0))
     if delta < threshold or confidence_low is None or confidence_low <= 0:
         return result(
@@ -99,6 +128,63 @@ def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
         "positive",
         "cost-aware treatment mean exceeds control with deterministic confidence and no harm breach",
     )
+
+
+def _treatment_intervention_metrics(
+    *,
+    assigned_treatment: list[CohortSample],
+    authority_applied_treatment: list[CohortSample],
+    actual_treatment: list[CohortSample],
+    required: int,
+    raw_assigned_treatment_n: int,
+) -> dict[str, Any]:
+    baseline = [
+        sample for sample in assigned_treatment
+        if not (sample.authority_applied and sample.behavior_changed)
+    ]
+    if not actual_treatment:
+        intervention_reason = "no_actual_intervention"
+    elif len(actual_treatment) < required:
+        intervention_reason = "insufficient_actual_intervention_samples"
+    else:
+        intervention_reason = "sufficient_actual_intervention_samples"
+    return {
+        "raw_assigned_treatment_n": raw_assigned_treatment_n,
+        "assigned_treatment_n": len(assigned_treatment),
+        "authority_applied_treatment_n": len(authority_applied_treatment),
+        "actual_intervention_treatment_n": len(actual_treatment),
+        "baseline_treatment_n": len(baseline),
+        "required_actual_intervention_n": required,
+        "authority_application_rate": (
+            len(authority_applied_treatment) / len(assigned_treatment)
+            if assigned_treatment else None
+        ),
+        "actual_intervention_rate": (
+            len(actual_treatment) / len(assigned_treatment)
+            if assigned_treatment else None
+        ),
+        "actual_intervention_state": (
+            "none"
+            if not actual_treatment
+            else "partial"
+            if baseline
+            else "complete"
+        ),
+        "actual_intervention_reason": intervention_reason,
+        "treatment_authority_rejection_reasons": dict(sorted(Counter(
+            sample.authority_reason or "authority_reason_unavailable"
+            for sample in assigned_treatment
+            if not sample.authority_applied
+        ).items())),
+        "treatment_non_intervention_reasons": dict(sorted(Counter(
+            (
+                f"authority:{sample.authority_reason or 'authority_reason_unavailable'}"
+                if not sample.authority_applied
+                else sample.behavior_change_reason
+            )
+            for sample in baseline
+        ).items())),
+    }
 
 
 def _market_day_coverage(

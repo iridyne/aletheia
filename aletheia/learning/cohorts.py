@@ -129,6 +129,9 @@ class CohortSample:
     entry_ts: str
     exposed_at: str
     authority_applied: bool
+    authority_reason: str | None
+    behavior_changed: bool
+    behavior_change_reason: str
 
 
 @dataclass
@@ -153,6 +156,24 @@ class ContributionCohort:
         return [sample for sample in self.samples if sample.assignment == "treatment"]
 
     @property
+    def authority_applied_treatment_samples(self) -> list[CohortSample]:
+        return [sample for sample in self.treatment_samples if sample.authority_applied]
+
+    @property
+    def actual_treatment_samples(self) -> list[CohortSample]:
+        return [
+            sample for sample in self.authority_applied_treatment_samples
+            if sample.behavior_changed
+        ]
+
+    @property
+    def baseline_treatment_samples(self) -> list[CohortSample]:
+        return [
+            sample for sample in self.treatment_samples
+            if not (sample.authority_applied and sample.behavior_changed)
+        ]
+
+    @property
     def control_samples(self) -> list[CohortSample]:
         return [sample for sample in self.samples if sample.assignment == "control"]
 
@@ -171,6 +192,9 @@ class ContributionCohort:
             ),
             "raw_exposure_n": self.raw_exposure_n,
             "unique_treatment_n": len(self.treatment_samples),
+            "assigned_treatment_n": len(self.treatment_samples),
+            "actual_intervention_treatment_n": len(self.actual_treatment_samples),
+            "baseline_treatment_n": len(self.baseline_treatment_samples),
             "unique_control_n": len(self.control_samples),
             "duplicate_exposure_n": self.duplicate_exposure_n,
             "duplicate_outcome_n": self.duplicate_outcome_n,
@@ -182,9 +206,18 @@ class ContributionCohort:
             ],
             "evidence_conflict_total_n": len(self.evidence_conflicts),
             "evidence_conflict_provenance_truncated": len(self.evidence_conflicts) > 20,
-            "authority_applied_treatment_n": sum(
-                sample.authority_applied for sample in self.treatment_samples
+            "authority_applied_treatment_n": len(
+                self.authority_applied_treatment_samples
             ),
+            "treatment_authority_rejection_reasons": dict(sorted(Counter(
+                sample.authority_reason or "authority_reason_unavailable"
+                for sample in self.treatment_samples
+                if not sample.authority_applied
+            ).items())),
+            "treatment_non_intervention_reasons": dict(sorted(Counter(
+                _non_intervention_reason(sample)
+                for sample in self.baseline_treatment_samples
+            ).items())),
             "exclusion_reasons": dict(sorted(self.exclusion_reasons.items())),
             "invalid_reasons": dict(sorted(self.invalid_reasons.items())),
             "outcome_candidate_keys": sorted({
@@ -402,6 +435,17 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
             exposure, outcome = rows_for_assignment[0]
             net = _finite_float(outcome.get("net_return_pct"))
             assert net is not None
+            authority_applied, authority_reason = _manifest_authority(
+                exposure.get("manifest_json")
+            )
+            behavior_changed, behavior_change_reason = _exposure_behavior_change(
+                exposure,
+                assignment=assignment,
+                authority_applied=authority_applied,
+            )
+            if behavior_changed is None or behavior_change_reason is None:
+                cohort.invalid_reasons["invalid_behavior_change_provenance"] += 1
+                continue
             cohort.samples.append(CohortSample(
                 assignment_unit_key=str(exposure["assignment_unit_key"]),
                 candidate_key=str(exposure.get("candidate_key") or outcome_key),
@@ -425,7 +469,10 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
                 mae_pct=_finite_float(outcome.get("mae_pct")),
                 entry_ts=str(outcome["entry_ts"]),
                 exposed_at=str(exposure["exposed_at"]),
-                authority_applied=_manifest_authority_applied(exposure.get("manifest_json")),
+                authority_applied=authority_applied,
+                authority_reason=authority_reason,
+                behavior_changed=behavior_changed,
+                behavior_change_reason=behavior_change_reason,
             ))
     for cohort in cohorts.values():
         cohort.samples = _aggregate_assignment_units(
@@ -437,13 +484,75 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
     return [cohorts[key] for key in sorted(cohorts)]
 
 
-def _manifest_authority_applied(manifest_json: Any) -> bool:
-    """Read only an explicit JSON boolean; missing/malformed manifests fail closed."""
+def _manifest_authority(manifest_json: Any) -> tuple[bool, str | None]:
+    """Read explicit authority provenance; missing/malformed values fail closed."""
     try:
         manifest = json.loads(manifest_json or "{}")
     except (TypeError, ValueError):
-        return False
-    return isinstance(manifest, dict) and manifest.get("authority_applied") is True
+        return False, None
+    if not isinstance(manifest, dict):
+        return False, None
+    reason = manifest.get("authority_reason")
+    return (
+        manifest.get("authority_applied") is True,
+        reason.strip() if isinstance(reason, str) and reason.strip() else None,
+    )
+
+
+def _exposure_behavior_change(
+    exposure: dict[str, Any],
+    *,
+    assignment: str,
+    authority_applied: bool,
+) -> tuple[bool | None, str | None]:
+    """Derive effective numeric behavior from durable before/after provenance."""
+    try:
+        before = json.loads(exposure.get("before_json") or "{}")
+        after = json.loads(exposure.get("after_json") or "{}")
+        manifest = json.loads(exposure.get("manifest_json") or "{}")
+    except (TypeError, ValueError):
+        return None, None
+    if not all(isinstance(value, dict) for value in (before, after, manifest)):
+        return None, None
+    before_value = _finite_float(before.get("value"))
+    after_value = _finite_float(after.get("value"))
+    if before_value is None or after_value is None:
+        return None, None
+    delta = after_value - before_value
+    if not math.isfinite(delta):
+        return None, None
+    changed = delta != 0.0
+    if authority_applied and assignment != "treatment":
+        return None, None
+    if changed and not (authority_applied and assignment == "treatment"):
+        return None, None
+    declared = manifest.get("behavior_changed")
+    if declared is not None and (
+        not isinstance(declared, bool) or declared is not changed
+    ):
+        return None, None
+    expected_reason = (
+        "effective_treatment_delta"
+        if changed
+        else "no_effective_treatment_delta"
+        if authority_applied
+        else "control_assignment"
+        if assignment == "control"
+        else "authority_not_applied"
+    )
+    declared_reason = manifest.get("behavior_change_reason")
+    if declared_reason is not None and (
+        not isinstance(declared_reason, str)
+        or declared_reason.strip() != expected_reason
+    ):
+        return None, None
+    return changed, expected_reason
+
+
+def _non_intervention_reason(sample: CohortSample) -> str:
+    if not sample.authority_applied:
+        return f"authority:{sample.authority_reason or 'authority_reason_unavailable'}"
+    return sample.behavior_change_reason or "behavior_change_reason_unavailable"
 
 
 def _load_exact_outcomes(
@@ -669,6 +778,9 @@ def _aggregate_assignment_units(
         if len(authority_values) != 1:
             cohort.invalid_reasons["conflicting_authority_application"] += 1
             continue
+        authority_reasons = {sample.authority_reason for sample in members}
+        behavior_changed = any(sample.behavior_changed for sample in members)
+        behavior_change_reasons = {sample.behavior_change_reason for sample in members}
         assignment = next(iter(unit_assignments))
         if any(sample.assignment != assignment for sample in members):
             cohort.invalid_reasons["conflicting_assignment_unit"] += 1
@@ -731,6 +843,18 @@ def _aggregate_assignment_units(
                 key=lambda s: _parse_time(s.exposed_at) or datetime.min.replace(tzinfo=timezone.utc),
             ).exposed_at,
             authority_applied=next(iter(authority_values)),
+            authority_reason=(
+                next(iter(authority_reasons))
+                if len(authority_reasons) == 1 else "mixed_authority_reasons"
+            ),
+            behavior_changed=behavior_changed,
+            behavior_change_reason=(
+                "effective_treatment_delta"
+                if behavior_changed
+                else next(iter(behavior_change_reasons))
+                if len(behavior_change_reasons) == 1
+                else "no_effective_treatment_delta"
+            ),
         ))
     return samples
 

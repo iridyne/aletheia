@@ -79,7 +79,7 @@ surface look shipped.
 | --- | --- | --- |
 | Measured ledger | Seven permanent Learning tables exist | Read-only typed projection |
 | Measurable path | `universe_family_calibration` has a current causal cohort adapter; Operator remains consumer-wired but measurement-unsupported | Explicit `measurement_supported` per path |
-| Current metric | `universe_family_calibration_cluster_allocation_utility_v4` | Current identity plus append-only metric history |
+| Current metric | `universe_family_calibration_cluster_allocation_utility_v5` | Current identity plus append-only metric history |
 | Cohort inspection | Internal aggregate inspection exists | Bounded aggregate plus selected cluster detail |
 | Lifecycle inspection | Internal read function returns progress, recommendation and job health | Public sanitized projection |
 | Job health | Current and durable last-failure fields exist | Current, recovery and catch-up states remain separate |
@@ -306,7 +306,7 @@ Each item contains:
     "policy_epoch": "...",
     "target_horizon": "4h",
     "outcome_contract_version": "...",
-    "metric_version": "universe_family_calibration_cluster_allocation_utility_v4",
+    "metric_version": "universe_family_calibration_cluster_allocation_utility_v5",
     "behavior_contract_hash": "...",
     "code_commit": "...",
     "matches_running_cohort": true,
@@ -336,6 +336,10 @@ Each item contains:
   "samples": {
     "raw_exposures": 0,
     "treatment_assignment_units": 0,
+    "assigned_treatment_units": 0,
+    "authority_applied_treatment_units": 0,
+    "actual_intervention_treatment_units": 0,
+    "baseline_treatment_units": 0,
     "control_assignment_units": 0,
     "required_per_arm": 50,
     "complete_assignment_units": 0,
@@ -350,6 +354,10 @@ Each item contains:
     "exclusion_reasons": {},
     "invalid_reasons": {},
     "conflict_count": 0,
+    "actual_intervention_state": "none",
+    "actual_intervention_reason": "no_actual_intervention",
+    "treatment_authority_rejection_reasons": {},
+    "treatment_non_intervention_reasons": {},
     "harm_breached": false
   },
   "lifecycle": {
@@ -363,8 +371,11 @@ Each item contains:
 }
 ```
 
-Counts are named by statistical unit. `raw_exposures` and `cluster_members` must
-never be displayed as treatment/control sample size.
+Counts are named by statistical unit. Permission and effective behavior remain
+separate: an authorized all-no-op cluster is visible in
+`authority_applied_treatment_units` but not `actual_intervention_treatment_units`.
+`raw_exposures` and `cluster_members` must never be displayed as treatment/control
+sample size.
 
 `mutation_available=true` is readiness information only. It requires a current
 identity-matched `admit_trial` recommendation plus all default-closed paper

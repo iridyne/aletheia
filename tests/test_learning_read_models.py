@@ -121,6 +121,18 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
             "evidence_conflict_provenance_truncated": False,
             "harm_state": "indeterminate",
             "harm_indeterminate_reason": "insufficient_samples",
+            "assigned_treatment_n": 4,
+            "authority_applied_treatment_n": 0,
+            "actual_intervention_treatment_n": 0,
+            "baseline_treatment_n": 4,
+            "actual_intervention_state": "none",
+            "actual_intervention_reason": "no_actual_intervention",
+            "treatment_authority_rejection_reasons": {
+                "experiment_stage_not_paper": 4,
+            },
+            "treatment_non_intervention_reasons": {
+                "authority:experiment_stage_not_paper": 4,
+            },
             "breached": False,
             "breach_reasons": [],
             "market_day_coverage": {
@@ -208,6 +220,10 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     assert item["samples"] == {
         "raw_exposures": 18,
         "treatment_assignment_units": 4,
+        "assigned_treatment_units": 4,
+        "authority_applied_treatment_units": 0,
+        "actual_intervention_treatment_units": 0,
+        "baseline_treatment_units": 4,
         "control_assignment_units": 5,
         "required_per_arm": 10,
         "complete_assignment_units": 9,
@@ -219,6 +235,16 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     }
     assert item["integrity"]["harm_state"] == "indeterminate"
     assert item["integrity"]["harm_indeterminate_reason"] == "insufficient_samples"
+    assert item["integrity"]["actual_intervention_state"] == "none"
+    assert item["integrity"]["actual_intervention_reason"] == (
+        "no_actual_intervention"
+    )
+    assert item["integrity"]["treatment_authority_rejection_reasons"] == {
+        "experiment_stage_not_paper": 4,
+    }
+    assert item["integrity"]["treatment_non_intervention_reasons"] == {
+        "authority:experiment_stage_not_paper": 4,
+    }
     assert item["lifecycle"]["recommended_action"] == "admit_trial"
     assert item["lifecycle"]["mutation_available"] is False
     assert item["lifecycle"]["authority_enabled"] is False
@@ -248,6 +274,57 @@ def test_lco_projection_reports_resolved_treatment_authority(tmp_path, monkeypat
 
     assert lifecycle["authority_enabled"] is True
     assert lifecycle["authority_block_reason"] is None
+
+
+def test_lco_projection_holds_positive_with_insufficient_actual_interventions(
+    tmp_path,
+    monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    metrics = json.loads(db.execute(
+        "SELECT harm_metrics_json FROM learning_contribution_verdicts "
+        "WHERE experiment_id=?",
+        (experiment_id,),
+    ).fetchone()[0])
+    metrics.update({
+        "harm_state": "clear",
+        "harm_indeterminate_reason": None,
+        "assigned_treatment_n": 10,
+        "authority_applied_treatment_n": 1,
+        "actual_intervention_treatment_n": 1,
+        "baseline_treatment_n": 9,
+        "actual_intervention_state": "partial",
+        "treatment_authority_rejection_reasons": {
+            "test_authority_rejection": 9,
+        },
+        "treatment_non_intervention_reasons": {
+            "authority:test_authority_rejection": 9,
+        },
+    })
+    db.execute(
+        "UPDATE learning_experiments SET stage='paper_10' WHERE experiment_id=?",
+        (experiment_id,),
+    )
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET stage='paper_10', verdict='positive', "
+        "reason='apparent positive', unique_treatment_n=10, harm_metrics_json=? "
+        "WHERE experiment_id=?",
+        (json.dumps(metrics), experiment_id),
+    )
+    db.commit()
+
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    lifecycle = build_learning_contribution_projection()["items"][0]["lifecycle"]
+
+    assert lifecycle["recommended_action"] == "hold"
+    assert lifecycle["recommendation_reason"] == (
+        "insufficient_actual_intervention_samples"
+    )
 
 
 def test_lco_projection_marks_authority_read_failure_partial(tmp_path, monkeypatch):

@@ -65,6 +65,10 @@ def test_lco_cluster_integrity_projection_is_distinct(tmp_path, monkeypatch):
     assert item["samples"] == {
         "raw_exposures": 18,
         "treatment_assignment_units": 4,
+        "assigned_treatment_units": 4,
+        "authority_applied_treatment_units": 0,
+        "actual_intervention_treatment_units": 0,
+        "baseline_treatment_units": 4,
         "control_assignment_units": 5,
         "required_per_arm": 10,
         "complete_assignment_units": 9,

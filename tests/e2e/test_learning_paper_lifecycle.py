@@ -18,7 +18,7 @@ _FAMILY = "momentum"
 _DIRECTION = "long"
 _MARKET_TYPE = "perp"
 _CALIBRATION_KEY = f"{_FAMILY}:{_DIRECTION}:{_MARKET_TYPE}"
-_METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v4"
+_METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v5"
 
 
 @pytest.mark.anyio
@@ -363,7 +363,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
             datetime.fromisoformat(verdict.window_end)
             - datetime.fromisoformat(verdict.window_start)
         ) >= timedelta(days=7)
-        assert verdict.unique_treatment_n + verdict.unique_control_n == expected_count
+        assert harm["assigned_treatment_n"] + verdict.unique_control_n == expected_count
         assert harm["harm_indeterminate_reason"] is None
         return verdict, harm
 
@@ -391,6 +391,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     assert shadow_verdict.reason == "no_actual_intervention"
     assert shadow_harm["harm_state"] == "clear"
     assert shadow_harm["authority_applied_treatment_n"] == 0
+    assert shadow_harm["actual_intervention_treatment_n"] == 0
     assert (
         shadow_verdict.unique_treatment_n,
         shadow_verdict.unique_control_n,
@@ -398,6 +399,8 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
         shadow_cluster_counts["treatment"],
         shadow_cluster_counts["control"],
     )
+    assert shadow_harm["assigned_treatment_n"] == shadow_cluster_counts["treatment"]
+    assert shadow_harm["baseline_treatment_n"] == shadow_cluster_counts["treatment"]
 
     # Admission is an authenticated owner action: invalid confirmation still
     # fails validation, while missing/wrong credentials fail before the route.
@@ -508,6 +511,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     assert harm["breached"] is True
     assert harm["loss_rate_delta"] > 0.15
     assert harm["authority_applied_treatment_n"] == paper_cluster_counts["treatment"]
+    assert harm["actual_intervention_treatment_n"] == paper_cluster_counts["treatment"]
     assert (
         negative.unique_treatment_n,
         negative.unique_control_n,

@@ -63,6 +63,8 @@ def _exposure(
     exposed_at: str | None = None,
     outcome_key: str | None = None,
     authority_applied: bool | None = None,
+    authority_reason: str | None = None,
+    behavior_changed: bool | None = None,
     code_commit: str | None = "test-commit",
     behavior_contract_hash: str | None = "behavior-v1",
     assignment_unit_key: str | None = None,
@@ -80,6 +82,11 @@ def _exposure(
         ended_at=_iso(),
     ), ignore_duplicates=True)
 
+    applied = (
+        assignment == "treatment"
+        if authority_applied is None else authority_applied
+    )
+    changed = applied if behavior_changed is None else behavior_changed
     exposure = LearningExposure(
         exposure_id=f"exposure-{candidate}-{assignment}-{epoch}-{contract}",
         dedup_key=f"{experiment.experiment_id}:{candidate}:{assignment}:{epoch}:{contract}",
@@ -95,10 +102,23 @@ def _exposure(
         outcome_candidate_key=outcome_key if outcome_key is not None else candidate,
         outcome_source="fixed_horizon_candidate",
         outcome_contract_version=contract,
+        before_json=json.dumps({"value": 0.0}),
+        after_json=json.dumps({"value": 1.0 if changed else 0.0}),
         manifest_json=json.dumps({
-            "authority_applied": (
-                assignment == "treatment"
-                if authority_applied is None else authority_applied
+            "authority_applied": applied,
+            "behavior_changed": changed,
+            "behavior_change_reason": (
+                "effective_treatment_delta"
+                if changed
+                else "no_effective_treatment_delta"
+                if applied
+                else "control_assignment"
+                if assignment == "control"
+                else "authority_not_applied"
+            ),
+            **(
+                {"authority_reason": authority_reason}
+                if authority_reason is not None else {}
             ),
         }),
         experiment_stage=experiment.stage,
@@ -656,6 +676,69 @@ def test_different_behavior_contracts_stay_isolated_on_same_commit():
     }
 
 
+def test_v5_v6_identity_does_not_mix_v4_v5_evidence(monkeypatch):
+    from dataclasses import replace
+
+    from aletheia.learning import behavior_contracts
+    from aletheia.learning.cohorts import build_experiment_cohorts
+    from aletheia.learning.registry import get_learning_path
+    from aletheia.learning.verdicts import METRIC_VERSION
+
+    hypothesis, experiment = _experiment()
+    path = get_learning_path(hypothesis.path_id)
+    common = {
+        "path_id": hypothesis.path_id,
+        "policy_hash": "policy-hash:epoch-a",
+        "target_horizon": hypothesis.target_horizon,
+        "outcome_contract_version": "v1",
+    }
+    current_hash = behavior_contracts.build_behavior_contract_hash(
+        **common,
+        metric_version=METRIC_VERSION,
+    )
+    monkeypatch.setattr(
+        behavior_contracts,
+        "get_learning_path",
+        lambda _path_id: replace(
+            path,
+            behavior_contract_version="universe-family-calibration/v5",
+        ),
+    )
+    prior_hash = behavior_contracts.build_behavior_contract_hash(
+        **common,
+        metric_version="universe_family_calibration_cluster_allocation_utility_v4",
+    )
+    assert current_hash != prior_hash
+
+    _exposure(
+        experiment,
+        hypothesis,
+        candidate="prior-identity-treatment",
+        assignment="treatment",
+        behavior_contract_hash=prior_hash,
+    )
+    _outcome("prior-identity-treatment", net=9.0)
+    _exposure(
+        experiment,
+        hypothesis,
+        candidate="current-identity-control",
+        assignment="control",
+        behavior_contract_hash=current_hash,
+    )
+    _outcome("current-identity-control", net=0.0)
+
+    cohorts = {
+        cohort.key.behavior_contract_hash: cohort
+        for cohort in build_experiment_cohorts(experiment.experiment_id)
+    }
+
+    assert len(cohorts) == 2
+    assert len(cohorts[prior_hash].treatment_samples) == 1
+    assert len(cohorts[prior_hash].control_samples) == 0
+    assert len(cohorts[current_hash].treatment_samples) == 0
+    assert len(cohorts[current_hash].control_samples) == 1
+
+
 def test_policy_epoch_from_another_path_is_invalid_cohort_evidence():
     hypothesis, experiment = _experiment()
     _exposure(
@@ -1122,6 +1205,10 @@ def test_shadow_without_actual_intervention_is_not_a_causal_verdict(treatment_ne
 
     cohort = build_experiment_cohorts(experiment.experiment_id)[0]
     assert all(sample.authority_applied is False for sample in cohort.samples)
+    assert cohort.inspection()["unique_treatment_n"] == 2
+    assert cohort.inspection()["assigned_treatment_n"] == 2
+    assert cohort.inspection()["actual_intervention_treatment_n"] == 0
+    assert cohort.inspection()["baseline_treatment_n"] == 2
     assert verdict.verdict == "insufficient_data"
     assert verdict.reason == "no_actual_intervention"
     assert metrics["authority_applied_treatment_n"] == 0
@@ -1131,6 +1218,242 @@ def test_shadow_without_actual_intervention_is_not_a_causal_verdict(treatment_ne
     assert verdict.outcome_contract_version == "v1"
     assert verdict.metric_version == metrics["metric_version"]
     assert verdict.code_commit == "test-commit"
+
+
+def test_baseline_treatment_units_do_not_satisfy_actual_intervention_gate():
+    hypothesis, experiment = _experiment(min_samples=2, stage="paper_10")
+    for candidate, applied, net, reason in (
+        ("actual-treatment", True, 1.0, "current_stage_measurement_healthy"),
+        ("baseline-treatment-a", False, 50.0, "harm_gate_indeterminate"),
+        ("baseline-treatment-b", False, 60.0, "runtime_paused"),
+    ):
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=candidate,
+            assignment="treatment",
+            authority_applied=applied,
+            authority_reason=reason,
+        )
+        _outcome(candidate, net=net)
+    for index in range(2):
+        candidate = f"actual-gate-control-{index}"
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=candidate,
+            assignment="control",
+            authority_applied=False,
+            authority_reason="current_stage_measurement_healthy",
+        )
+        _outcome(candidate, net=0.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "insufficient_data"
+    assert verdict.reason == "insufficient_actual_intervention_samples"
+    assert verdict.unique_treatment_n == 3
+    assert verdict.unique_control_n == 2
+    assert verdict.observed == pytest.approx(37.0)
+    assert metrics["assigned_treatment_n"] == 3
+    assert metrics["authority_applied_treatment_n"] == 1
+    assert metrics["actual_intervention_treatment_n"] == 1
+    assert metrics["baseline_treatment_n"] == 2
+    assert metrics["actual_intervention_state"] == "partial"
+    assert metrics["actual_intervention_reason"] == (
+        "insufficient_actual_intervention_samples"
+    )
+    assert metrics["treatment_authority_rejection_reasons"] == {
+        "harm_gate_indeterminate": 1,
+        "runtime_paused": 1,
+    }
+
+
+def test_primary_effect_remains_intent_to_treat_with_baseline_fallback():
+    hypothesis, experiment = _experiment(min_samples=2, stage="paper_10")
+    for candidate, applied, net, reason in (
+        ("applied-treatment-a", True, 1.0, "current_stage_measurement_healthy"),
+        ("applied-treatment-b", True, 1.2, "current_stage_measurement_healthy"),
+        ("excluded-baseline-treatment", False, -100.0, "runtime_paused"),
+    ):
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=candidate,
+            assignment="treatment",
+            authority_applied=applied,
+            authority_reason=reason,
+        )
+        _outcome(candidate, net=net)
+    for index in range(2):
+        candidate = f"effect-control-{index}"
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=candidate,
+            assignment="control",
+            authority_applied=False,
+            authority_reason="current_stage_measurement_healthy",
+        )
+        _outcome(candidate, net=0.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "negative"
+    assert verdict.unique_treatment_n == 3
+    assert verdict.observed == pytest.approx((1.0 + 1.2 - 100.0) / 3)
+    assert verdict.delta == pytest.approx((1.0 + 1.2 - 100.0) / 3)
+    assert metrics["assigned_treatment_n"] == 3
+    assert metrics["actual_intervention_treatment_n"] == 2
+    assert metrics["baseline_treatment_n"] == 1
+    assert metrics["actual_intervention_state"] == "partial"
+    assert metrics["actual_intervention_reason"] == (
+        "sufficient_actual_intervention_samples"
+    )
+    assert metrics["treatment_authority_rejection_reasons"] == {
+        "runtime_paused": 1,
+    }
+
+
+def test_required_effective_interventions_can_be_positive_with_one_noop_in_itt():
+    hypothesis, experiment = _experiment(min_samples=50, stage="paper_10")
+    for index in range(50):
+        candidate = f"effective-treatment-{index}"
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=candidate,
+            assignment="treatment",
+            authority_applied=True,
+            authority_reason="current_stage_measurement_healthy",
+        )
+        _outcome(candidate, net=1.0)
+    _exposure(
+        experiment,
+        hypothesis,
+        candidate="authorized-noop-treatment",
+        assignment="treatment",
+        authority_applied=True,
+        authority_reason="current_stage_measurement_healthy",
+        behavior_changed=False,
+    )
+    _outcome("authorized-noop-treatment", net=1.0)
+    for index in range(50):
+        candidate = f"qualified-control-{index}"
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=candidate,
+            assignment="control",
+            authority_applied=False,
+            authority_reason="current_stage_measurement_healthy",
+        )
+        _outcome(candidate, net=0.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "positive"
+    assert verdict.unique_treatment_n == 51
+    assert verdict.observed == pytest.approx(1.0)
+    assert metrics["authority_applied_treatment_n"] == 51
+    assert metrics["actual_intervention_treatment_n"] == 50
+    assert metrics["baseline_treatment_n"] == 1
+    assert metrics["actual_intervention_state"] == "partial"
+    assert metrics["actual_intervention_reason"] == (
+        "sufficient_actual_intervention_samples"
+    )
+    assert metrics["treatment_authority_rejection_reasons"] == {}
+    assert metrics["treatment_non_intervention_reasons"] == {
+        "no_effective_treatment_delta": 1,
+    }
+
+
+def test_cluster_actual_intervention_requires_any_effective_member_delta():
+    hypothesis, experiment = _experiment(min_samples=1, stage="paper_10")
+    for candidate, unit, changed in (
+        ("all-noop-a", "all-noop-cluster", False),
+        ("all-noop-b", "all-noop-cluster", False),
+        ("mixed-noop", "mixed-cluster", False),
+        ("mixed-effective", "mixed-cluster", True),
+    ):
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=candidate,
+            assignment="treatment",
+            assignment_unit_key=unit,
+            authority_applied=True,
+            authority_reason="current_stage_measurement_healthy",
+            behavior_changed=changed,
+        )
+        _outcome(candidate, net=1.0)
+
+    from aletheia.learning.cohorts import build_experiment_cohorts
+
+    cohort = build_experiment_cohorts(experiment.experiment_id)[0]
+    samples = {sample.assignment_unit_key: sample for sample in cohort.samples}
+
+    assert cohort.invalid_reasons == {}
+    assert samples["all-noop-cluster"].authority_applied is True
+    assert samples["all-noop-cluster"].behavior_changed is False
+    assert samples["mixed-cluster"].authority_applied is True
+    assert samples["mixed-cluster"].behavior_changed is True
+    assert cohort.inspection()["authority_applied_treatment_n"] == 2
+    assert cohort.inspection()["actual_intervention_treatment_n"] == 1
+    assert cohort.inspection()["baseline_treatment_n"] == 1
+    assert cohort.inspection()["treatment_non_intervention_reasons"] == {
+        "no_effective_treatment_delta": 1,
+    }
+
+
+def test_conflicting_behavior_change_provenance_invalidates_the_unit():
+    hypothesis, experiment = _experiment(min_samples=1, stage="paper_10")
+    exposure = _exposure(
+        experiment,
+        hypothesis,
+        candidate="conflicting-behavior-change",
+        assignment="treatment",
+        authority_applied=True,
+        behavior_changed=True,
+    )
+    _outcome("conflicting-behavior-change", net=1.0)
+    from aletheia.storage.sqlite import get_db
+
+    manifest = json.loads(exposure.manifest_json)
+    manifest["behavior_changed"] = False
+    get_db().execute(
+        "UPDATE learning_exposures SET manifest_json=? WHERE exposure_id=?",
+        (json.dumps(manifest), exposure.exposure_id),
+    )
+    get_db().commit()
+    from aletheia.learning.cohorts import build_experiment_cohorts
+
+    cohort = build_experiment_cohorts(experiment.experiment_id)[0]
+
+    assert cohort.samples == []
+    assert cohort.invalid_reasons == {"invalid_behavior_change_provenance": 1}
+
+
+def test_behavior_change_without_treatment_permission_invalidates_the_unit():
+    hypothesis, experiment = _experiment(min_samples=1, stage="paper_10")
+    _exposure(
+        experiment,
+        hypothesis,
+        candidate="unauthorized-behavior-change",
+        assignment="treatment",
+        authority_applied=False,
+        behavior_changed=True,
+    )
+    _outcome("unauthorized-behavior-change", net=1.0)
+    from aletheia.learning.cohorts import build_experiment_cohorts
+
+    cohort = build_experiment_cohorts(experiment.experiment_id)[0]
+
+    assert cohort.samples == []
+    assert cohort.invalid_reasons == {"invalid_behavior_change_provenance": 1}
 
 
 def test_real_shadow_flow_stays_shadow_after_at01_and_at02(monkeypatch):
