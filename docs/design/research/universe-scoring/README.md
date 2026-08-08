@@ -24,11 +24,13 @@ second source of behavioral authority.
 | [03_adversarial_review_2026-08-07.md](03_adversarial_review_2026-08-07.md) | Implementer-versus-risk-reviewer challenge, corrections, residual risks, and task-2 verdict |
 | [04_references_and_practical_notes.md](04_references_and_practical_notes.md) | Annotated primary references, public industry evidence boundaries, and reusable engineering lessons |
 | [05_task3_pure_implementation_review_2026-08-07.md](05_task3_pure_implementation_review_2026-08-07.md) | Pure scorer boundary, safeguard coverage, adversarial self-review, verification evidence, and task-3 verdict |
+| [06_task4_twin_wiring_review_2026-08-07.md](06_task4_twin_wiring_review_2026-08-07.md) | Step-authoritative in-memory Twin wiring, isolation proof, unavailable fields, performance baseline, and task-4 verdict |
 
 Read the Proposal first for the accepted direction, then file 02 when
 implementing exact curves. Files 01 and 03 explain why the constraints exist;
 file 04 is a reusable research and experience index. File 05 records what the
 task-3 implementation proves and, equally importantly, what remains unavailable.
+File 06 records the non-persistent task-4 wiring and authority-isolation proof.
 
 ## Maintenance rule
 

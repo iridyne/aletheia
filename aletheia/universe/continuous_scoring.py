@@ -1,9 +1,8 @@
 """Pure, non-authoritative Universe continuous scoring primitives.
 
-This module deliberately has no production consumer.  It does not import the
-legacy allocator, filters, signal emitter, Learning, repositories, or runtime
-services.  The current ``universe-step-v1`` path remains authoritative until a
-later task wires an explicitly versioned twin Shadow scorer.
+The module does not import the legacy allocator, filters, signal emitter,
+Learning, repositories, or runtime services.  A separate twin adapter may call
+it for diagnostics, but ``universe-step-v1`` remains the only authority.
 """
 
 from __future__ import annotations
@@ -26,12 +25,15 @@ class ContinuousScoringPolicy:
 
     min_volume_24h_usdt: float = 5_000_000.0
     min_depth_10bps_usd: float = 25_000.0
+    external_opportunity_multiplier: float = 1.0
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.min_volume_24h_usdt) or self.min_volume_24h_usdt <= 0:
             raise ValueError("min_volume_24h_usdt must be finite and positive")
         if not math.isfinite(self.min_depth_10bps_usd) or self.min_depth_10bps_usd <= 0:
             raise ValueError("min_depth_10bps_usd must be finite and positive")
+        if not math.isfinite(self.external_opportunity_multiplier) or self.external_opportunity_multiplier < 0:
+            raise ValueError("external_opportunity_multiplier must be finite and non-negative")
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,7 @@ class RawFeatureDeclaration:
     consumer_curve_ids: tuple[str, ...]
     neutral_value: float
     influence_budget: float
+    unit: str
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,9 @@ class FactorEvidence:
     raw_feature_id: str
     evidence_group_id: str
     consumer_curve_ids: tuple[str, ...]
+    unit: str
+    neutral_value: float
+    influence_budget: float
     raw_value: float | None
     transformed_value: float | None
     observed: bool
@@ -75,9 +81,19 @@ class FeatureSensitivity:
     observed_value: float
     normalized_half_step: float
     local_score_sensitivity: float
-    score_delta_to_neutral: float
+    score_delta_to_neutral: float | None
+    neutral_comparison_valid: bool
     influence_budget: float
     budget_exceeded: bool
+
+
+@dataclass(frozen=True)
+class EvidenceGroupSensitivity:
+    evidence_group_id: str
+    raw_feature_ids: tuple[str, ...]
+    aggregate_abs_local_score_sensitivity: float
+    score_delta_to_joint_neutral: float | None
+    neutral_comparison_valid: bool
 
 
 @dataclass(frozen=True)
@@ -95,9 +111,12 @@ class CandidateScore:
     pessimistic_evidence: tuple[FactorEvidence, ...]
     sensitivities: tuple[FeatureSensitivity, ...] = ()
     group_sensitivities: tuple[tuple[str, float], ...] = ()
+    group_evidence: tuple[EvidenceGroupSensitivity, ...] = ()
     observed_signal_group_count: int = 0
     concentration_share: float | None = None
     flags: tuple[str, ...] = ()
+    joint_neutral_score_delta: float | None = None
+    interaction_residual: float | None = None
 
     @property
     def missingness_delta(self) -> float:
@@ -214,42 +233,55 @@ def shape_preserving_curve(
 
 
 _FEATURES: Mapping[str, RawFeatureDeclaration] = {
-    "rs_beta_adj_24h": RawFeatureDeclaration("price_path", ("MOM-01", "SH-03"), 0.0, 10.5),
-    "relative_strength_24h": RawFeatureDeclaration("price_path", ("MOM-01", "SH-03"), 0.0, 10.5),
-    "relative_strength_4h": RawFeatureDeclaration("price_path", ("MOM-03",), 0.0, 5.25),
-    "return_1h": RawFeatureDeclaration("price_path", ("DER-03", "DER-04", "EVT-01", "ALLOC-03a"), 0.0, 15.75),
+    "rs_beta_adj_24h": RawFeatureDeclaration("price_path", ("MOM-01", "SH-03"), 0.0, 10.5, "percent"),
+    "relative_strength_24h": RawFeatureDeclaration("price_path", ("MOM-01", "SH-03"), 0.0, 10.5, "percent"),
+    "relative_strength_4h": RawFeatureDeclaration("price_path", ("MOM-03",), 0.0, 5.25, "percent"),
+    "return_1h": RawFeatureDeclaration(
+        "price_path", ("DER-03", "DER-04", "EVT-01", "ALLOC-03a"), 0.0, 15.75, "percent"
+    ),
     "return_4h": RawFeatureDeclaration(
         "price_path",
         ("MOM-02", "MR-03", "VOL-06", "DER-03", "DER-04", "DER-05", "EVT-05", "SH-01", "ALLOC-03b", "ALLOC-04"),
         0.0,
         23.75,
+        "percent",
     ),
-    "return_24h": RawFeatureDeclaration("price_path", ("MOM-10", "MR-04", "SH-02a", "SH-02b"), 0.0, 10.15),
+    "return_24h": RawFeatureDeclaration("price_path", ("MOM-10", "MR-04", "SH-02a", "SH-02b"), 0.0, 10.15, "percent"),
     "rsi_14": RawFeatureDeclaration(
-        "price_path", ("MOM-04", "MR-01", "DER-05", "EVT-04", "SH-05a", "SH-05b", "ALLOC-03c", "ALLOC-04"), 50.0, 21.5
+        "price_path",
+        ("MOM-04", "MR-01", "DER-05", "EVT-04", "SH-05a", "SH-05b", "ALLOC-03c", "ALLOC-04"),
+        50.0,
+        21.5,
+        "index_0_100",
     ),
-    "rsi_4h": RawFeatureDeclaration("price_path", ("MOM-05", "MR-02", "SH-06a", "SH-06b"), 50.0, 5.25),
-    "atr_pct": RawFeatureDeclaration("price_path", ("VOL-01",), 0.0, 10.5),
-    "atr_4h": RawFeatureDeclaration("price_path", ("VOL-04",), 0.0, 4.2),
-    "bb_squeeze_ratio": RawFeatureDeclaration("price_path", ("VOL-02",), 1.0, 5.25),
-    "bb_width_pct": RawFeatureDeclaration("price_path", ("VOL-03",), 4.0, 3.5),
-    "bb_width_4h": RawFeatureDeclaration("price_path", ("VOL-05",), 6.0, 4.2),
+    "rsi_4h": RawFeatureDeclaration("price_path", ("MOM-05", "MR-02", "SH-06a", "SH-06b"), 50.0, 5.25, "index_0_100"),
+    "atr_pct": RawFeatureDeclaration("price_path", ("VOL-01",), 0.0, 10.5, "percent"),
+    "atr_4h": RawFeatureDeclaration("price_path", ("VOL-04",), 0.0, 4.2, "percent"),
+    "bb_squeeze_ratio": RawFeatureDeclaration("price_path", ("VOL-02",), 1.0, 5.25, "ratio"),
+    "bb_width_pct": RawFeatureDeclaration("price_path", ("VOL-03",), 4.0, 3.5, "percent"),
+    "bb_width_4h": RawFeatureDeclaration("price_path", ("VOL-05",), 6.0, 4.2, "percent"),
     "vol_ratio": RawFeatureDeclaration(
-        "market_activity_liquidity", ("MOM-06", "MR-05", "VOL-08a", "VOL-08b", "EVT-06a", "EVT-06b"), 1.0, 14.875
+        "market_activity_liquidity",
+        ("MOM-06", "MR-05", "VOL-08a", "VOL-08b", "EVT-06a", "EVT-06b"),
+        1.0,
+        14.875,
+        "ratio",
     ),
     "quote_volume_24h": RawFeatureDeclaration(
-        "market_activity_liquidity", ("TRD-01", "ALLOC-01"), 5_000_000.0, 12.500001
+        "market_activity_liquidity", ("TRD-01", "ALLOC-01"), 5_000_000.0, 12.500001, "usd"
     ),
-    "spread_bps": RawFeatureDeclaration("market_activity_liquidity", ("TRD-02", "ALLOC-02"), 10.0, 25.00075),
-    "depth_10bps_usd": RawFeatureDeclaration("market_activity_liquidity", ("TRD-04",), 25_000.0, 5.0),
+    "spread_bps": RawFeatureDeclaration(
+        "market_activity_liquidity", ("TRD-02", "ALLOC-02"), 10.0, 25.00075, "basis_points"
+    ),
+    "depth_10bps_usd": RawFeatureDeclaration("market_activity_liquidity", ("TRD-04",), 25_000.0, 5.0, "usd"),
     "funding_rate": RawFeatureDeclaration(
-        "positioning_flow", ("MOM-09", "MR-06", "DER-01", "SH-04a", "SH-04b"), 0.0, 14.0
+        "positioning_flow", ("MOM-09", "MR-06", "DER-01", "SH-04a", "SH-04b"), 0.0, 14.0, "fraction"
     ),
     "oi_delta_1h": RawFeatureDeclaration(
-        "positioning_flow", ("MOM-08", "DER-02", "DER-03", "DER-04", "EVT-03", "SH-07a", "SH-07b"), 0.0, 10.5
+        "positioning_flow", ("MOM-08", "DER-02", "DER-03", "DER-04", "EVT-03", "SH-07a", "SH-07b"), 0.0, 10.5, "percent"
     ),
-    "taker_buy_ratio": RawFeatureDeclaration("positioning_flow", ("MOM-07", "VOL-07", "EVT-02"), 1.0, 5.25),
-    "data_freshness_sec": RawFeatureDeclaration("data_quality_cost", ("TRD-03", "ALLOC-05"), 0.0, 16.25),
+    "taker_buy_ratio": RawFeatureDeclaration("positioning_flow", ("MOM-07", "VOL-07", "EVT-02"), 1.0, 5.25, "ratio"),
+    "data_freshness_sec": RawFeatureDeclaration("data_quality_cost", ("TRD-03", "ALLOC-05"), 0.0, 16.25, "seconds"),
 }
 
 
@@ -371,6 +403,9 @@ def _evidence(
         raw_feature_id=key,
         evidence_group_id=declaration.evidence_group_id,
         consumer_curve_ids=declaration.consumer_curve_ids,
+        unit=declaration.unit,
+        neutral_value=declaration.neutral_value,
+        influence_budget=declaration.influence_budget,
         raw_value=raw_value,
         transformed_value=transformed_value,
         observed=raw_value is not None if observed is None else observed,
@@ -1240,7 +1275,7 @@ def _score_total_for_family(
     stale_penalty = _curve(freshness, ((1200.0, 0.0), (1800.0, 2.5), (2400.0, 5.0), (3600.0, 7.5), (5400.0, 10.0)))
     evidence.append(_evidence("ALLOC-05", "data_freshness_sec", freshness, freshness, -stale_penalty))
     point = (
-        0.35 * family.point_score
+        0.35 * family.point_score * policy.external_opportunity_multiplier
         + 0.25 * tradability.point_score
         + 0.15 * liquidity
         - cost_point
@@ -1249,7 +1284,7 @@ def _score_total_for_family(
         - stale_penalty
     )
     pessimistic = (
-        0.35 * family.pessimistic_score
+        0.35 * family.pessimistic_score * policy.external_opportunity_multiplier
         + 0.25 * tradability.pessimistic_score
         + 0.15 * liquidity
         - cost_pessimistic
@@ -1406,7 +1441,7 @@ def _feature_sensitivity(
     neutral_feat = dict(feat)
     neutral_feat[key] = _neutral_value(key, policy)
     neutral = _candidate_core(neutral_feat, policy)
-    neutral_delta = abs(base.point_score - neutral.point_score) if neutral.valid else 0.0
+    neutral_delta = abs(base.point_score - neutral.point_score) if neutral.valid else None
     return FeatureSensitivity(
         key,
         declaration.evidence_group_id,
@@ -1414,8 +1449,9 @@ def _feature_sensitivity(
         0.05,
         local_sensitivity,
         neutral_delta,
+        neutral.valid,
         declaration.influence_budget,
-        neutral_delta > declaration.influence_budget + 1e-9,
+        neutral_delta is not None and neutral_delta > declaration.influence_budget + 1e-9,
     )
 
 
@@ -1451,7 +1487,7 @@ def _summarize_sensitivities(
         item.evidence_group_id
         for item in sensitivities
         if item.evidence_group_id in _SIGNAL_GROUPS
-        and (abs(item.local_score_sensitivity) > 1e-12 or abs(item.score_delta_to_neutral) > 1e-12)
+        and (abs(item.local_score_sensitivity) > 1e-12 or abs(item.score_delta_to_neutral or 0.0) > 1e-12)
     }
     signal_values = [value for key, value in group_values.items() if key in _SIGNAL_GROUPS and value > 1e-12]
     signal_total = sum(signal_values)
@@ -1464,12 +1500,81 @@ def _summarize_sensitivities(
         flags.add("evidence_concentrated")
     if any(item.budget_exceeded for item in sensitivities):
         flags.add("raw_feature_budget_exceeded")
+    if any(not item.neutral_comparison_valid for item in sensitivities):
+        flags.add("neutral_comparison_unavailable")
     return (
         tuple(sorted(group_values.items())),
         len(observed_signal_groups),
         concentration,
         tuple(sorted(flags)),
     )
+
+
+def _group_evidence(
+    feat: Mapping[str, object],
+    policy: ContinuousScoringPolicy,
+    base: CandidateScore,
+    sensitivities: Sequence[FeatureSensitivity],
+) -> tuple[EvidenceGroupSensitivity, ...]:
+    groups: dict[str, list[FeatureSensitivity]] = {}
+    for sensitivity in sensitivities:
+        groups.setdefault(sensitivity.evidence_group_id, []).append(sensitivity)
+
+    results: list[EvidenceGroupSensitivity] = []
+    for group_id, members in sorted(groups.items()):
+        raw_feature_ids = tuple(sorted(item.raw_feature_id for item in members))
+        local_total = sum(abs(item.local_score_sensitivity) for item in members)
+        comparison_valid = all(item.neutral_comparison_valid for item in members)
+        group_delta: float | None = None
+        if comparison_valid:
+            neutral_feat = dict(feat)
+            for item in members:
+                neutral_feat[item.raw_feature_id] = _neutral_value(item.raw_feature_id, policy)
+            neutral = _candidate_core(neutral_feat, policy)
+            comparison_valid = neutral.valid
+            if comparison_valid:
+                group_delta = abs(base.point_score - neutral.point_score)
+        results.append(
+            EvidenceGroupSensitivity(
+                evidence_group_id=group_id,
+                raw_feature_ids=raw_feature_ids,
+                aggregate_abs_local_score_sensitivity=local_total,
+                score_delta_to_joint_neutral=group_delta,
+                neutral_comparison_valid=comparison_valid,
+            )
+        )
+    return tuple(results)
+
+
+def _joint_neutral_diagnostics(
+    feat: Mapping[str, object],
+    policy: ContinuousScoringPolicy,
+    base: CandidateScore,
+    sensitivities: Sequence[FeatureSensitivity],
+    group_evidence: Sequence[EvidenceGroupSensitivity],
+) -> tuple[float | None, float | None]:
+    if not sensitivities:
+        return 0.0, 0.0
+    if any(not sensitivity.neutral_comparison_valid for sensitivity in sensitivities):
+        return None, None
+    if any(not group.neutral_comparison_valid for group in group_evidence):
+        return None, None
+    comparable = [
+        sensitivity
+        for sensitivity in sensitivities
+        if sensitivity.neutral_comparison_valid and sensitivity.score_delta_to_neutral is not None
+    ]
+    if not comparable:
+        return None, None
+    neutral_feat = dict(feat)
+    for sensitivity in comparable:
+        neutral_feat[sensitivity.raw_feature_id] = _neutral_value(sensitivity.raw_feature_id, policy)
+    joint_neutral = _candidate_core(neutral_feat, policy)
+    if not joint_neutral.valid:
+        return None, None
+    joint_delta = abs(base.point_score - joint_neutral.point_score)
+    group_delta_sum = sum(group.score_delta_to_joint_neutral or 0.0 for group in group_evidence)
+    return joint_delta, joint_delta - group_delta_sum
 
 
 def evaluate_continuous_candidate(
@@ -1493,13 +1598,28 @@ def evaluate_continuous_candidate(
     except InvalidFeature as exc:
         return replace(base, valid=False, invalid_reason=str(exc))
     group_values, observed_group_count, concentration, flags = _summarize_sensitivities(sensitivities)
+    group_evidence = _group_evidence(feat, policy, base, sensitivities)
+    if any(not group.neutral_comparison_valid for group in group_evidence):
+        flags = tuple(sorted({*flags, "group_neutral_comparison_unavailable"}))
+    joint_neutral_delta, interaction_residual = _joint_neutral_diagnostics(
+        feat,
+        policy,
+        base,
+        sensitivities,
+        group_evidence,
+    )
+    if interaction_residual is None:
+        flags = tuple(sorted({*flags, "interaction_residual_unavailable"}))
     return replace(
         base,
         sensitivities=sensitivities,
         group_sensitivities=group_values,
+        group_evidence=group_evidence,
         observed_signal_group_count=observed_group_count,
         concentration_share=concentration,
         flags=flags,
+        joint_neutral_score_delta=joint_neutral_delta,
+        interaction_residual=interaction_residual,
     )
 
 
@@ -1508,6 +1628,7 @@ __all__ = [
     "CandidateScore",
     "ComponentScore",
     "ContinuousScoringPolicy",
+    "EvidenceGroupSensitivity",
     "FactorEvidence",
     "FeatureSensitivity",
     "InvalidFeature",

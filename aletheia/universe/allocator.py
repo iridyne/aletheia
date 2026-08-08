@@ -191,6 +191,7 @@ def compute_total_score(
     scoring_cohort_key: str | None = None,
     *,
     calibration_evidence: dict[str, dict] | None = None,
+    scoring_audit_out: dict[str, object] | None = None,
 ) -> float:
     """Compute the final total_score for universe ranking.
 
@@ -198,8 +199,13 @@ def compute_total_score(
     When calibration multipliers are provided, opportunity_score is scaled by
     the family's empirical hit_rate performance.
     """
-    opportunity = scanner_result.get("opportunity_score", 0)
+    raw_opportunity = scanner_result.get("opportunity_score", 0)
+    opportunity = raw_opportunity
     family = scanner_result.get("scanner_family", "momentum")
+    calibration_effective_multiplier = 1.0
+    calibration_authority_applied = False
+    calibration_assignment = "not_evaluated"
+    calibration_reason = "not_configured"
     if calibration:
         exact_key = _calibration_key(
             family,
@@ -261,6 +267,13 @@ def compute_total_score(
                 assignment_key=cluster_key,
             )
             opportunity = influence.value
+            calibration_effective_multiplier = (
+                influence.value / float(raw_opportunity)
+                if abs(float(raw_opportunity)) > 1e-12 else 1.0
+            )
+            calibration_authority_applied = influence.applied
+            calibration_assignment = influence.assignment
+            calibration_reason = influence.reason
             if candidate_key:
                 feat["learning_candidate_key"] = candidate_key
                 feat["learning_exposure_id"] = influence.exposure_id
@@ -269,7 +282,21 @@ def compute_total_score(
     # cfg.scanner_weights via _action_adjust_scanner_weight (OL-C09) and the UI
     # shows it, but scoring never consumed it — the manual bias was inert. Empty
     # dict (default) → 1.0 for every family, preserving current behavior.
-    opportunity *= cfg.scanner_weights.get(family, 1.0)
+    operator_multiplier = cfg.scanner_weights.get(family, 1.0)
+    opportunity *= operator_multiplier
+    if scoring_audit_out is not None:
+        scoring_audit_out.update({
+            "contract": "universe-authority-score-audit/v1",
+            "raw_opportunity_score": float(raw_opportunity),
+            "calibration_effective_multiplier": calibration_effective_multiplier,
+            "calibration_authority_applied": calibration_authority_applied,
+            "calibration_assignment": calibration_assignment,
+            "calibration_reason": calibration_reason,
+            "operator_multiplier": float(operator_multiplier),
+            "effective_opportunity_multiplier": (
+                calibration_effective_multiplier * float(operator_multiplier)
+            ),
+        })
     tradability = feat.get("tradability_score", 50.0)
 
     # Liquidity score from volume (simple: high volume = good liquidity)
