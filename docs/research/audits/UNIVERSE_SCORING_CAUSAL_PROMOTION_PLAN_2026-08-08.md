@@ -1,7 +1,7 @@
 # Universe Scoring Causal Promotion Plan
 
-**Status:** review required; no trading authority is granted by this document  
-**Date:** 2026-08-08  
+**Status:** review required; no trading authority is granted by this document
+**Date:** 2026-08-08
 **Scope:** Local Paper Universe scoring and ranking only
 
 ## Decision
