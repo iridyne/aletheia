@@ -14,7 +14,7 @@
 | 入口 | `submit_proposal(...) -> dict` | `aletheia/execution/gateway.py:16` |
 | 重执行 | `execute_existing_proposal(proposal_id, mode)` | `gateway.py:52` |
 
-**因果链(不可断,[trust §1.1](../../governance/policies/trust_and_change_control.md)):**
+**开仓因果链(不可断,[trust §1.1](../../governance/policies/trust_and_change_control.md)):**
 
 ```
 trade_proposals.id
@@ -23,6 +23,19 @@ trade_proposals.id
   → fills.order_id
   → positions (从 orders/fills 投影;schema 现直接携带 `proposal_id` + `order_id` + `opportunity_id`,新 position 开仓即写,adopt 也走同一路径 — #30/#50)
 ```
+
+**平仓因果链**不伪造第二个 RiskDecision：
+
+```
+open positions.id
+  → orders.position_id + orders.close_reason（risk_decision_id=NULL）
+  → fills.order_id
+  → 同一 positions.id 收敛为 closed
+```
+
+开仓 Order 消费 approved authoritative RiskDecision；平仓 Order 消费它所减少的
+open Position，并必须匹配 Position 的 proposal/instrument/execution mode/quantity 与
+durable close client identity。入场 RiskDecision 不能被复制到平仓单上冒充退出授权。
 
 **契约**:一个 proposed trade 只创建一次 `trade_proposals` 行。批准/拒绝/风控/执行**绝不**创建第二行。所有订单**必须**经 Execution Gateway——agent/dashboard/telegram 不得直接调交易所下单([trust §6.3](../../governance/policies/trust_and_change_control.md))。
 
@@ -34,7 +47,7 @@ trade_proposals.id
 |----|------|--------|------|
 | Proposal | `TradeProposal(symbol, direction, quantity, price, execution_mode...)`; `agent_rationale.entry_parameters` carries the immutable final-value/source/reason snapshot for AI-originated entries | `pending/approved→executing→executed` / `→rejected` / `→error`; uncertain exchange submission uses `submission_unknown`, incomplete local paper materialization uses `materialization_missing` | `models.py:102` |
 | RiskDecision | 见 [risk_engine_contract §3](risk_engine_contract.md) | 不可变(一次写) | `models.py:125` |
-| Order | `Order(proposal_id, risk_decision_id, symbol, direction, qty, price, mode, status)` | `pending→submitted→filled` / `→error` | `models.py:136` |
+| Order | 入场：`Order(proposal_id, risk_decision_id, ...)`；平仓：`Order(proposal_id, position_id, close_reason, risk_decision_id=NULL, ...)` | `pending→submitted→filled` / `→error` | `models.py:136` |
 | Fill | `Fill(order_id, fill_price, fill_quantity, fee)` | 不可变 | `models.py:155` |
 | Position | `Position(symbol, direction, qty, entry_price, stop_price, take_profit_price, mode...)` + 入场环境(btc_entry_price/regime_tag) + `exit_reasoning` (actual close actor/source/trigger) | `open→closed` | `models.py:165` |
 
@@ -334,6 +347,10 @@ reconciliation 路径收敛，复核重试不得创建替代 Close Order。
 
 `close_position_routed(pos_id, reason, fallback_exit_price)` 是单仓**唯一**平仓出口，自动循环与 Operator 路径都经此；`fallback_exit_price` 仅保留调用兼容，不能授权 `paper_internal` 成交：
 
+- **平仓授权语义**：native close Order 消费正在减少的 open Position，不复用入场
+  RiskDecision。`risk_decision_id` 必须为 `NULL`；`position_id + close_reason +
+  close-{position_id}` 以及与 Position 完全一致的 proposal/instrument/mode/quantity
+  构成持久授权链。完整性扫描必须按 entry/close 分型，不能把合法平仓误报为缺失风控。
 - 按 `execution_mode` 分派:`bitget_demo→close_demo_position` / `okx_demo→close_okx_position` / `binance_testnet→close_testnet_position` / `paper_internal→本地 close`。
 - **live 守卫(不变式)**:`live_limited` 模式且 `allow_live=False` → `RaiseError`,阻止自动循环误平**真实资金**持仓(`position_manager.py:59`)。守卫在中枢层,不分散到各调用方。
 - 交易所腿不可跳过:demo 模式仍走真实交易所 close;`paper_internal` 本地撮合。
