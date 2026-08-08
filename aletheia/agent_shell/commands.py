@@ -2922,6 +2922,16 @@ async def review_portfolio_state(params: dict) -> dict:
     wake_position_ids = list(dict.fromkeys(
         str(batch["position_id"]) for batch in wake_batches
     ))
+    from aletheia.agent_runtime.wake_events import HORIZON_DUE
+
+    horizon_due_position_ids = {
+        str(batch["position_id"])
+        for batch in wake_batches
+        if any(
+            isinstance(event, dict) and event.get("kind") == HORIZON_DUE
+            for event in (batch.get("events") or [])
+        )
+    }
     wake_fingerprint = (
         "sha256:"
         + hashlib.sha256(
@@ -2970,6 +2980,12 @@ async def review_portfolio_state(params: dict) -> dict:
             for position in open_positions
             if str(position.get("id") or "") in wake_ids
         ]
+    # Stale wake batches are terminal for already-closed Positions and must not
+    # change the action contract for a different open Position in the same
+    # review.  Only in-scope open horizon wakes require close-or-extend.
+    open_scope_ids = {str(position.get("id") or "") for position in open_positions}
+    horizon_due_position_ids.intersection_update(open_scope_ids)
+    horizon_due_review = bool(horizon_due_position_ids)
     portfolio_context["review_scope_positions"] = len(open_positions)
     risk = ctx.get("risk", {})
 
@@ -2989,7 +3005,11 @@ async def review_portfolio_state(params: dict) -> dict:
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["hold", "adjust_position", "close_one"],
+                "enum": (
+                    ["adjust_position", "close_one"]
+                    if horizon_due_review
+                    else ["hold", "adjust_position", "close_one"]
+                ),
             },
             "target_symbol": {"type": "string"},
             "target_market_type": {"type": "string"},
@@ -3054,13 +3074,11 @@ Be conservative. Global portfolio context is read-only. For adjust_position or
 close_one, target_position_id must identify one listed review-scope position. Never
 act on a position outside the supplied wake evidence.
 
-For horizon_due wakes, "hold" acknowledges the one-time horizon review for every
-supplied horizon-due position and does not schedule another horizon wake. The next
-automatic time-based action is the existing hard backstop. To request another
-time-based review, choose
-"adjust_position" and set new_horizon_hours to an absolute age from opened_at that
-is greater than the current age reported in the wake evidence. Do not claim a later
-horizon review will occur after "hold".
+For horizon_due wakes, "hold" is not a valid terminal answer. Choose "close_one",
+or choose "adjust_position" and set new_horizon_hours to an absolute age from
+opened_at that is strictly greater than the current age reported in the wake
+evidence. A stop/target-only or empty adjustment does not extend the horizon and
+will be retried.
 
 Return JSON: {_json.dumps(schema)}"""
 
@@ -3121,7 +3139,7 @@ Return JSON: {_json.dumps(schema)}"""
         }
 
     raw_action = str(review.get("action") or "hold")
-    supported_action = raw_action in {"hold", "adjust_position", "close_one"}
+    supported_action = raw_action in set(schema["properties"]["action"]["enum"])
     action = raw_action if supported_action else "hold"
     reasoning = str(review.get("reasoning") or "")[:300]
     if not supported_action:
@@ -3133,6 +3151,10 @@ Return JSON: {_json.dumps(schema)}"""
         "reasoning": reasoning,
         "target_symbol": review.get("target_symbol"),
     }
+    if horizon_due_review and raw_action == "hold":
+        result["horizon_review_error"] = (
+            "explicit_extension_or_close_required"
+        )
 
     sym = review.get("target_symbol") or ""
     mkt = review.get("target_market_type")
@@ -3176,6 +3198,7 @@ Return JSON: {_json.dumps(schema)}"""
                 "close_error",
                 "close_one_error",
                 "positions_closed",
+                "horizon_review_error",
             }
         }
 
@@ -3223,13 +3246,19 @@ Return JSON: {_json.dumps(schema)}"""
         from aletheia.portfolio.position_manager import apply_operator_adjustment
 
         target = matching[0]
-        result["adjust"] = apply_operator_adjustment(
-            target["id"],
-            new_stop=review.get("new_stop_price"),
-            new_target=review.get("new_target_price"),
-            new_horizon=review.get("new_horizon_hours"),
-            reason=reasoning,
-        )
+        if (
+            target["id"] in horizon_due_position_ids
+            and review.get("new_horizon_hours") is None
+        ):
+            result["adjust_position_error"] = "horizon_extension_required"
+        else:
+            result["adjust"] = apply_operator_adjustment(
+                target["id"],
+                new_stop=review.get("new_stop_price"),
+                new_target=review.get("new_target_price"),
+                new_horizon=review.get("new_horizon_hours"),
+                reason=reasoning,
+            )
 
     closed_count = 0
     if action == "close_one" and matching:
@@ -3258,7 +3287,7 @@ Return JSON: {_json.dumps(schema)}"""
     # durable pending-close claim is subsequently owned by reconciliation; retrying
     # the review must never submit a replacement order.
     if action == "hold":
-        review_completed = supported_action
+        review_completed = supported_action and not horizon_due_review
     elif action == "adjust_position":
         adjustment = result.get("adjust")
         review_completed = bool(
@@ -3280,16 +3309,12 @@ Return JSON: {_json.dumps(schema)}"""
     result["review_completed"] = review_completed
 
     if review_completed and wake_batches:
-        from aletheia.agent_runtime.wake_events import HORIZON_DUE
         from aletheia.portfolio.position_manager import acknowledge_horizon_review
 
         horizon_position_ids = list(dict.fromkeys(
             str(batch["position_id"])
             for batch in wake_batches
-            if any(
-                isinstance(event, dict) and event.get("kind") == HORIZON_DUE
-                for event in (batch.get("events") or [])
-            )
+            if str(batch["position_id"]) in horizon_due_position_ids
         ))
         if action in {"adjust_position", "close_one"}:
             effective_target_id = str(matching[0]["id"]) if matching else None
