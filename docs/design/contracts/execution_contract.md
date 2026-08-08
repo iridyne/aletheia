@@ -3,7 +3,7 @@
 > **角色**:定义订单从 proposal 到交易所的完整通路,及其原子性/幂等/对账保证。
 > **基线**:代码为底(file:line),意图差距标 ⚠️;冲突时文档为准。
 > **不变式来源**:[trust_and_change_control §1, §6.3](../../governance/policies/trust_and_change_control.md)。
-> Last updated: 2026-08-07 · 维护者:Aletheia Dev
+> Last updated: 2026-08-08 · 维护者:Aletheia Dev
 
 ---
 
@@ -405,6 +405,18 @@ Proposal 的这一权限边界。
 - ⚠️ **live 对账仍受 paused**:`_run_reconciliation`(live-only,`scheduler.py:822`)仍有 paused 门,本次未改(live 默认禁用,且仅做收敛检测,优先级低)。若未来 live 常开,应一并对齐本节语义。
 
 **Spec claims**:`PL-PM-01~06`(mark/stop/TP/max_hold/ATR/audit) + `PL-PM-07`(paused 不挡保护性平仓) + `PL-PM-10~13`(fresh exact venue/market mark / 逐仓 close 与 market-aware 失败可见) + `PL-PCM-05/11~15`(dashboard 全量枚举、mark 预检、单仓 fallback 隔离与部分失败诚实返回)。
+
+### 10.6 Protective Barrier 持久化基础（schema v9，尚未启用）
+
+Schema v9 只增加未来保护屏障所需的持久化契约；字段、身份、CAS 与 retention
+不变量由 [data_model §11](../data/data_model.md#11-protective-barrier-storage-contract-schema-v9-dormant)
+统一定义。
+
+这不是新的执行路径。当前 §10.1～10.5 的退出行为、Position Manager、交易所 TPSL、
+Risk/Execution/Live 权限和配置默认值均保持不变。迁移不会回填或激活已有 paper Position，
+也没有 scheduler、OHLCV evaluator、Order 创建或 Position close consumer。后续 PR 必须
+分别证明激活/恢复和逐根完整 bar 的确定性，再单独接入既有 native close 因果链；在这些
+工作完成前，v9 行不会自行触发任何交易副作用。
 
 ## 11. Position 关闭与结果完整性（OI-S01/S02、OI-B01～B05、OI-C01～C06 implemented；自然 Runtime soak 待补）
 

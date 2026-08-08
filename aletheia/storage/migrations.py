@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v8"
+SCHEMA_VERSION = "aletheia-sqlite-v9"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3444,6 +3444,458 @@ _UNIVERSE_TWIN_SHADOW_EVIDENCE_CHECKSUM = hashlib.sha256(
     (_UNIVERSE_TWIN_SHADOW_EVIDENCE_SQL + "\nPRAGMA optimize").encode("utf-8")
 ).hexdigest()
 
+_POSITION_PROTECTION_COLUMNS = (("exit_plan_effective_at", "positions", "TEXT"),)
+_POSITION_PROTECTION_SQL = """
+CREATE TABLE IF NOT EXISTS position_exit_plan_versions (
+    position_id TEXT NOT NULL REFERENCES positions(id),
+    version INTEGER NOT NULL CHECK (version >= 1),
+    effective_at TEXT NOT NULL CHECK (julianday(effective_at) IS NOT NULL),
+    stop_price REAL CHECK (stop_price IS NULL OR stop_price > 0),
+    take_profit_price REAL CHECK (
+        take_profit_price IS NULL OR take_profit_price > 0
+    ),
+    exit_limit_price REAL CHECK (exit_limit_price IS NULL OR exit_limit_price > 0),
+    exit_limit_source TEXT CHECK (
+        exit_limit_source IS NULL
+        OR exit_limit_source IN ('human', 'system_operator')
+    ),
+    plan_json TEXT NOT NULL CHECK (json_valid(plan_json)),
+    plan_hash TEXT NOT NULL CHECK (
+        length(plan_hash) = 64
+        AND plan_hash = lower(plan_hash)
+        AND plan_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    provenance TEXT NOT NULL CHECK (length(trim(provenance)) > 0),
+    created_at TEXT NOT NULL CHECK (julianday(created_at) IS NOT NULL),
+    PRIMARY KEY(position_id, version),
+    UNIQUE(position_id, version, effective_at, plan_hash),
+    CHECK (
+        (exit_limit_price IS NULL AND exit_limit_source IS NULL)
+        OR (exit_limit_price IS NOT NULL AND exit_limit_source IS NOT NULL)
+    ),
+    CHECK (
+        stop_price IS NOT NULL
+        OR take_profit_price IS NOT NULL
+        OR exit_limit_price IS NOT NULL
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_position_exit_plan_versions_effective
+ON position_exit_plan_versions(position_id, effective_at);
+
+CREATE TABLE IF NOT EXISTS position_protection_state (
+    position_id TEXT PRIMARY KEY REFERENCES positions(id),
+    venue TEXT NOT NULL CHECK (length(trim(venue)) > 0),
+    symbol TEXT NOT NULL CHECK (length(trim(symbol)) > 0),
+    market_type TEXT NOT NULL CHECK (market_type IN ('spot', 'perp')),
+    timeframe TEXT NOT NULL DEFAULT '1m' CHECK (timeframe = '1m'),
+    activated_at TEXT NOT NULL CHECK (julianday(activated_at) IS NOT NULL),
+    next_bar_open_ms INTEGER NOT NULL CHECK (next_bar_open_ms >= 0),
+    last_evaluated_bar_open_ms INTEGER CHECK (
+        last_evaluated_bar_open_ms IS NULL OR last_evaluated_bar_open_ms >= 0
+    ),
+    last_inspected_bar_open_ms INTEGER CHECK (
+        last_inspected_bar_open_ms IS NULL OR last_inspected_bar_open_ms >= 0
+    ),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN (
+        'active', 'gap', 'triggered', 'materialized', 'superseded',
+        'integrity_blocked'
+    )),
+    gap_reason TEXT,
+    gap_detected_at TEXT CHECK (
+        gap_detected_at IS NULL OR julianday(gap_detected_at) IS NOT NULL
+    ),
+    gap_count INTEGER NOT NULL DEFAULT 0 CHECK (gap_count >= 0),
+    recent_error TEXT,
+    trigger_id TEXT UNIQUE,
+    close_order_id TEXT REFERENCES orders(id),
+    close_fill_id TEXT REFERENCES fills(id),
+    close_fill_price REAL,
+    close_filled_at TEXT CHECK (
+        close_filled_at IS NULL OR julianday(close_filled_at) IS NOT NULL
+    ),
+    final_state TEXT CHECK (
+        final_state IS NULL OR final_state IN ('materialized', 'integrity_blocked')
+    ),
+    created_at TEXT NOT NULL CHECK (julianday(created_at) IS NOT NULL),
+    updated_at TEXT NOT NULL CHECK (julianday(updated_at) IS NOT NULL),
+    FOREIGN KEY (
+        position_id,
+        trigger_id
+    ) REFERENCES position_protection_triggers(
+        position_id,
+        trigger_id
+    ),
+    CHECK (
+        last_evaluated_bar_open_ms IS NULL
+        OR (
+            last_inspected_bar_open_ms IS NOT NULL
+            AND last_evaluated_bar_open_ms <= last_inspected_bar_open_ms
+        )
+    ),
+    CHECK (
+        last_inspected_bar_open_ms IS NULL
+        OR last_inspected_bar_open_ms <= next_bar_open_ms
+    ),
+    CHECK (
+        status != 'gap'
+        OR (
+            length(trim(gap_reason)) > 0
+            AND gap_detected_at IS NOT NULL
+            AND gap_count >= 1
+        )
+    ),
+    CHECK (
+        (trigger_id IS NULL AND status NOT IN ('triggered', 'materialized'))
+        OR trigger_id IS NOT NULL
+    ),
+    CHECK (
+        close_order_id IS NULL
+        OR (
+            trigger_id IS NOT NULL
+            AND status IN ('triggered', 'materialized', 'integrity_blocked')
+        )
+    ),
+    CHECK (
+        (
+            close_fill_id IS NULL
+            AND close_fill_price IS NULL
+            AND close_filled_at IS NULL
+            AND final_state IS NULL
+        )
+        OR (
+            close_fill_id IS NOT NULL
+            AND close_order_id IS NOT NULL
+            AND close_fill_price > 0
+            AND close_filled_at IS NOT NULL
+            AND final_state IS NOT NULL
+        )
+    ),
+    CHECK (
+        status != 'materialized'
+        OR (
+            trigger_id IS NOT NULL
+            AND close_order_id IS NOT NULL
+            AND close_fill_id IS NOT NULL
+            AND final_state = 'materialized'
+        )
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_position_protection_state_due
+ON position_protection_state(status, next_bar_open_ms);
+
+CREATE TABLE IF NOT EXISTS position_protection_triggers (
+    trigger_id TEXT PRIMARY KEY CHECK (
+        length(trigger_id) = 36
+        AND length(replace(trigger_id, '-', '')) = 32
+        AND substr(trigger_id, 9, 1) = '-'
+        AND substr(trigger_id, 14, 1) = '-'
+        AND substr(trigger_id, 19, 1) = '-'
+        AND substr(trigger_id, 24, 1) = '-'
+        AND lower(trigger_id) = trigger_id
+        AND replace(trigger_id, '-', '') NOT GLOB '*[^0-9a-f]*'
+    ),
+    position_id TEXT NOT NULL UNIQUE REFERENCES position_protection_state(position_id),
+    detected_at TEXT NOT NULL CHECK (julianday(detected_at) IS NOT NULL),
+    venue TEXT NOT NULL CHECK (length(trim(venue)) > 0),
+    symbol TEXT NOT NULL CHECK (length(trim(symbol)) > 0),
+    market_type TEXT NOT NULL CHECK (market_type IN ('spot', 'perp')),
+    timeframe TEXT NOT NULL CHECK (timeframe = '1m'),
+    bar_open_ms INTEGER NOT NULL CHECK (bar_open_ms >= 0),
+    bar_close_ms INTEGER NOT NULL CHECK (bar_close_ms = bar_open_ms + 60000),
+    bar_open REAL NOT NULL CHECK (bar_open > 0),
+    bar_high REAL NOT NULL CHECK (bar_high >= bar_open),
+    bar_low REAL NOT NULL CHECK (bar_low > 0 AND bar_low <= bar_open),
+    bar_close REAL NOT NULL CHECK (bar_close > 0),
+    bar_volume REAL NOT NULL CHECK (bar_volume >= 0),
+    provider TEXT NOT NULL CHECK (length(trim(provider)) > 0),
+    bar_hash TEXT NOT NULL CHECK (
+        length(bar_hash) = 64
+        AND bar_hash = lower(bar_hash)
+        AND bar_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    plan_version INTEGER NOT NULL CHECK (plan_version >= 1),
+    plan_effective_at TEXT NOT NULL CHECK (julianday(plan_effective_at) IS NOT NULL),
+    plan_hash TEXT NOT NULL CHECK (
+        length(plan_hash) = 64
+        AND plan_hash = lower(plan_hash)
+        AND plan_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    stop_price REAL CHECK (stop_price IS NULL OR stop_price > 0),
+    upside_price REAL CHECK (upside_price IS NULL OR upside_price > 0),
+    stop_hit INTEGER NOT NULL CHECK (stop_hit IN (0, 1)),
+    target_hit INTEGER NOT NULL CHECK (target_hit IN (0, 1)),
+    reason TEXT NOT NULL CHECK (reason IN ('stop_loss', 'take_profit', 'exit_limit')),
+    collision_policy TEXT NOT NULL CHECK (collision_policy = 'stop_first_v1'),
+    UNIQUE(position_id, trigger_id),
+    FOREIGN KEY (
+        position_id,
+        plan_version,
+        plan_effective_at,
+        plan_hash
+    ) REFERENCES position_exit_plan_versions(
+        position_id,
+        version,
+        effective_at,
+        plan_hash
+    ),
+    CHECK (bar_high >= bar_close AND bar_low <= bar_close),
+    CHECK (stop_price IS NOT NULL OR upside_price IS NOT NULL),
+    CHECK (stop_hit + target_hit >= 1),
+    CHECK (stop_hit = 0 OR stop_price IS NOT NULL),
+    CHECK (target_hit = 0 OR upside_price IS NOT NULL),
+    CHECK (stop_hit = 0 OR reason = 'stop_loss')
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_positions_exit_plan_projection_insert_guard
+BEFORE INSERT ON positions
+WHEN NEW.exit_plan_effective_at IS NOT NULL
+BEGIN
+    SELECT RAISE(ABORT, 'Position must start without an ExitPlan projection');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_exit_plan_versions_contiguous
+BEFORE INSERT ON position_exit_plan_versions
+BEGIN
+    SELECT CASE
+        WHEN (SELECT status FROM positions WHERE id = NEW.position_id) != 'open'
+        THEN RAISE(ABORT, 'ExitPlan requires an open Position')
+    END;
+    SELECT CASE
+        WHEN NEW.version != COALESCE(
+            (SELECT MAX(version) + 1
+             FROM position_exit_plan_versions
+             WHERE position_id = NEW.position_id),
+            1
+        )
+        THEN RAISE(ABORT, 'exit plan versions must be contiguous')
+    END;
+    SELECT CASE
+        WHEN NEW.version = 1
+         AND (SELECT exit_plan_effective_at FROM positions WHERE id = NEW.position_id)
+             IS NOT NULL
+        THEN RAISE(ABORT, 'exit plan projection conflicts with first version')
+    END;
+    SELECT CASE
+        WHEN NEW.version > 1
+         AND (SELECT exit_plan_effective_at FROM positions WHERE id = NEW.position_id)
+             IS NOT (
+                 SELECT effective_at
+                 FROM position_exit_plan_versions
+                 WHERE position_id = NEW.position_id
+                 ORDER BY version DESC
+                 LIMIT 1
+             )
+        THEN RAISE(ABORT, 'exit plan projection is stale')
+    END;
+    SELECT CASE
+        WHEN NEW.version > 1
+         AND julianday(NEW.effective_at) <= julianday((
+             SELECT effective_at
+             FROM position_exit_plan_versions
+             WHERE position_id = NEW.position_id
+             ORDER BY version DESC
+             LIMIT 1
+         ))
+        THEN RAISE(ABORT, 'exit plan effective_at must advance')
+    END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_exit_plan_versions_project
+AFTER INSERT ON position_exit_plan_versions
+BEGIN
+    UPDATE positions
+    SET exit_plan_effective_at = NEW.effective_at
+    WHERE id = NEW.position_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_positions_exit_plan_projection_guard
+BEFORE UPDATE OF exit_plan_effective_at ON positions
+WHEN NEW.exit_plan_effective_at IS NOT OLD.exit_plan_effective_at
+BEGIN
+    SELECT CASE
+        WHEN NEW.exit_plan_effective_at IS NULL
+        THEN RAISE(ABORT, 'exit plan projection cannot be cleared')
+    END;
+    SELECT CASE
+        WHEN NOT EXISTS (
+            SELECT 1
+            FROM position_exit_plan_versions
+            WHERE position_id = NEW.id
+              AND effective_at = NEW.exit_plan_effective_at
+        )
+        THEN RAISE(ABORT, 'exit plan projection requires an immutable version')
+    END;
+    SELECT CASE
+        WHEN OLD.exit_plan_effective_at IS NOT NULL
+         AND julianday(NEW.exit_plan_effective_at) < julianday(OLD.exit_plan_effective_at)
+        THEN RAISE(ABORT, 'exit plan projection cannot regress')
+    END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_exit_plan_versions_no_update
+BEFORE UPDATE ON position_exit_plan_versions
+BEGIN
+    SELECT RAISE(ABORT, 'position exit plan version is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_exit_plan_versions_no_delete
+BEFORE DELETE ON position_exit_plan_versions
+BEGIN
+    SELECT RAISE(ABORT, 'position exit plan versions are retained');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_no_delete
+BEFORE DELETE ON position_protection_state
+BEGIN
+    SELECT RAISE(ABORT, 'position protection state is retained');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_triggers_no_update
+BEFORE UPDATE ON position_protection_triggers
+BEGIN
+    SELECT RAISE(ABORT, 'position protection trigger evidence is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_triggers_no_delete
+BEFORE DELETE ON position_protection_triggers
+BEGIN
+    SELECT RAISE(ABORT, 'position protection trigger evidence is retained');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_identity_immutable
+BEFORE UPDATE OF venue, symbol, market_type, timeframe, activated_at, created_at
+ON position_protection_state
+BEGIN
+    SELECT RAISE(ABORT, 'position protection identity is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_cursor_monotonic
+BEFORE UPDATE OF next_bar_open_ms, last_evaluated_bar_open_ms,
+                 last_inspected_bar_open_ms
+ON position_protection_state
+WHEN NEW.next_bar_open_ms < OLD.next_bar_open_ms
+  OR (
+      OLD.last_evaluated_bar_open_ms IS NOT NULL
+      AND (
+          NEW.last_evaluated_bar_open_ms IS NULL
+          OR NEW.last_evaluated_bar_open_ms < OLD.last_evaluated_bar_open_ms
+      )
+  )
+  OR (
+      OLD.last_inspected_bar_open_ms IS NOT NULL
+      AND (
+          NEW.last_inspected_bar_open_ms IS NULL
+          OR NEW.last_inspected_bar_open_ms < OLD.last_inspected_bar_open_ms
+      )
+  )
+BEGIN
+    SELECT RAISE(ABORT, 'position protection cursor cannot regress');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_gap_count_monotonic
+BEFORE UPDATE OF gap_count ON position_protection_state
+WHEN NEW.gap_count < OLD.gap_count
+BEGIN
+    SELECT RAISE(ABORT, 'position protection gap count cannot regress');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_trigger_write_once
+BEFORE UPDATE OF trigger_id
+ON position_protection_state
+WHEN OLD.trigger_id IS NOT NULL
+BEGIN
+    SELECT RAISE(ABORT, 'position protection trigger evidence is write-once');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_triggers_plan_exact
+BEFORE INSERT ON position_protection_triggers
+WHEN NOT EXISTS (
+        SELECT 1
+        FROM position_exit_plan_versions
+        WHERE position_id = NEW.position_id
+          AND version = NEW.plan_version
+          AND effective_at = NEW.plan_effective_at
+          AND plan_hash = NEW.plan_hash
+          AND stop_price IS NEW.stop_price
+          AND COALESCE(exit_limit_price, take_profit_price) IS NEW.upside_price
+          AND julianday(effective_at) <= julianday(
+              NEW.bar_open_ms / 1000.0,
+              'unixepoch'
+          )
+    )
+ OR EXISTS (
+        SELECT 1
+        FROM position_exit_plan_versions AS later
+        WHERE later.position_id = NEW.position_id
+          AND later.version > NEW.plan_version
+          AND julianday(later.effective_at) < julianday(
+              NEW.bar_close_ms / 1000.0,
+              'unixepoch'
+          )
+    )
+BEGIN
+    SELECT RAISE(ABORT, 'position protection trigger ExitPlan is inconsistent');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_triggers_project
+AFTER INSERT ON position_protection_triggers
+BEGIN
+    UPDATE position_protection_state
+    SET trigger_id = NEW.trigger_id,
+        last_inspected_bar_open_ms = NEW.bar_open_ms,
+        last_evaluated_bar_open_ms = NEW.bar_open_ms,
+        next_bar_open_ms = NEW.bar_close_ms,
+        status = 'triggered',
+        updated_at = NEW.detected_at
+    WHERE position_id = NEW.position_id
+      AND trigger_id IS NULL
+      AND status IN ('active', 'gap')
+      AND venue = NEW.venue
+      AND symbol = NEW.symbol
+      AND market_type = NEW.market_type
+      AND timeframe = NEW.timeframe
+      AND next_bar_open_ms = NEW.bar_open_ms;
+    SELECT CASE
+        WHEN changes() != 1
+        THEN RAISE(ABORT, 'position protection first-trigger CAS failed')
+    END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_close_order_write_once
+BEFORE UPDATE OF close_order_id ON position_protection_state
+WHEN OLD.close_order_id IS NOT NULL
+ AND NEW.close_order_id IS NOT OLD.close_order_id
+BEGIN
+    SELECT RAISE(ABORT, 'position protection close order is write-once');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_close_fill_write_once
+BEFORE UPDATE OF close_fill_id, close_fill_price, close_filled_at, final_state
+ON position_protection_state
+WHEN OLD.close_fill_id IS NOT NULL
+BEGIN
+    SELECT RAISE(ABORT, 'position protection close fill evidence is write-once');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_terminal_status
+BEFORE UPDATE OF status ON position_protection_state
+WHEN (OLD.status IN ('materialized', 'superseded') AND NEW.status != OLD.status)
+  OR (OLD.trigger_id IS NOT NULL AND NEW.status IN ('active', 'gap', 'superseded'))
+BEGIN
+    SELECT RAISE(ABORT, 'position protection terminal status cannot regress');
+END;
+"""
+_POSITION_PROTECTION_CHECKSUM = hashlib.sha256(
+    (
+        repr(_POSITION_PROTECTION_COLUMNS)
+        + "\n"
+        + _POSITION_PROTECTION_SQL
+        + "\nposition_protection_storage_v1\nPRAGMA optimize"
+    ).encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -3495,6 +3947,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260807_0006_market_signal_identity_v7": "exact market-signal evidence column",
     "20260808_0007_universe_twin_shadow_evidence_v8": (
         "non-authoritative Universe twin Shadow evidence tables"
+    ),
+    "20260808_0008_position_protection_state_v9": (
+        "immutable ExitPlan history and dormant protective-barrier state"
     ),
 }
 
@@ -3604,6 +4059,19 @@ def _apply_universe_twin_shadow_evidence_v8(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_position_protection_state_v9(db: sqlite3.Connection) -> None:
+    """Add dormant protection state without initializing or evaluating Positions."""
+
+    for column, table, column_type in _POSITION_PROTECTION_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.executescript(_POSITION_PROTECTION_SQL)
+    db.execute("PRAGMA optimize")
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -3644,8 +4112,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260808_0007_universe_twin_shadow_evidence_v8",
         checksum=_UNIVERSE_TWIN_SHADOW_EVIDENCE_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v8",
         apply=_apply_universe_twin_shadow_evidence_v8,
+    ),
+    MigrationStep(
+        migration_id="20260808_0008_position_protection_state_v9",
+        checksum=_POSITION_PROTECTION_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_position_protection_state_v9,
     ),
 )
 

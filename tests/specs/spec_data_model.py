@@ -1044,3 +1044,32 @@ def test_perp_structure_expansion_fields_registered():
     }
     missing = required - cols
     assert not missing, f"missing Position X perp-structure columns: {missing}"
+
+
+@spec_claim(
+    SpecClaim(
+        "DM-S30",
+        "data_model",
+        "§11 protective barrier storage",
+        "L2a",
+        "Schema v9 declares retained immutable ExitPlan history, one exact "
+        "Position protection-state row, and append-only trigger evidence without "
+        "adding any of the three tables to pruning.",
+    ),
+)
+def test_dormant_position_protection_storage_contract():
+    from aletheia.storage.migrations import _POSITION_PROTECTION_SQL
+    from aletheia.storage.repositories import _PRUNABLE
+
+    assert "CREATE TABLE IF NOT EXISTS position_exit_plan_versions" in _POSITION_PROTECTION_SQL
+    assert "CREATE TABLE IF NOT EXISTS position_protection_state" in _POSITION_PROTECTION_SQL
+    assert "CREATE TABLE IF NOT EXISTS position_protection_triggers" in _POSITION_PROTECTION_SQL
+    assert "position protection trigger evidence is immutable" in _POSITION_PROTECTION_SQL
+    assert (
+        not {
+            "position_exit_plan_versions",
+            "position_protection_state",
+            "position_protection_triggers",
+        }
+        & _PRUNABLE.keys()
+    )

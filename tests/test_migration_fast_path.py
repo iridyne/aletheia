@@ -259,13 +259,101 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert migrations._MIGRATIONS[0].schema_version == "aletheia-sqlite-v2"
-    assert migrations._MIGRATIONS[-6].schema_version == "aletheia-sqlite-v3"
-    assert migrations._MIGRATIONS[-5].schema_version == "aletheia-sqlite-v4"
-    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v5"
-    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v6"
-    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v7"
+    assert migrations._MIGRATIONS[-7].schema_version == "aletheia-sqlite-v3"
+    assert migrations._MIGRATIONS[-6].schema_version == "aletheia-sqlite-v4"
+    assert migrations._MIGRATIONS[-5].schema_version == "aletheia-sqlite-v5"
+    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v6"
+    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v7"
+    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v8"
     assert migrations._MIGRATIONS[-1].schema_version == migrations.SCHEMA_VERSION
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v8"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v9"
+    connection.close()
+
+
+def test_position_protection_v9_migration_is_additive_and_idempotent():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE positions (id TEXT PRIMARY KEY)")
+
+    migrations._apply_position_protection_state_v9(connection)
+    migrations._apply_position_protection_state_v9(connection)
+
+    position_columns = [
+        row[1] for row in connection.execute("PRAGMA table_info(positions)")
+    ]
+    assert position_columns.count("exit_plan_effective_at") == 1
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    assert {
+        "position_exit_plan_versions",
+        "position_protection_state",
+        "position_protection_triggers",
+    } <= tables
+    indexes = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'"
+        )
+    }
+    assert "idx_position_exit_plan_versions_effective" in indexes
+    triggers = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger'"
+        )
+    }
+    assert {
+        "trg_position_exit_plan_versions_no_update",
+        "trg_position_exit_plan_versions_no_delete",
+        "trg_position_protection_state_trigger_write_once",
+        "trg_position_protection_state_no_delete",
+        "trg_position_protection_triggers_no_update",
+        "trg_position_protection_triggers_no_delete",
+    } <= triggers
+    connection.close()
+
+
+def test_production_v8_ledger_advances_only_through_v9(tmp_path, monkeypatch):
+    import aletheia.storage.migrations as migrations
+
+    connection = _connection(tmp_path / "v8.db")
+    connection.execute("CREATE TABLE positions (id TEXT PRIMARY KEY)")
+    connection.executescript(migrations._MIGRATION_LEDGER_DDL)
+    connection.executemany(
+        "INSERT INTO aletheia_schema_migrations "
+        "(migration_id, checksum, schema_version, applied_at, duration_ms) "
+        "VALUES (?, ?, ?, '2026-08-08T00:00:00+00:00', 0)",
+        [
+            (step.migration_id, step.checksum, step.schema_version)
+            for step in migrations._MIGRATIONS[:-1]
+        ],
+    )
+    connection.commit()
+    monkeypatch.setattr(migrations, "get_db", lambda: connection)
+    monkeypatch.setattr(migrations, "_is_pytest", lambda: False)
+    monkeypatch.setattr(migrations, "acquire_write_lock", lambda **_kwargs: 0.0)
+    monkeypatch.setattr(migrations, "release_write_lock", lambda: None)
+
+    assert migrations.apply_migrations() is True
+    assert migrations.apply_migrations() is False
+
+    rows = connection.execute(
+        "SELECT migration_id, schema_version FROM aletheia_schema_migrations "
+        "ORDER BY migration_id"
+    ).fetchall()
+    assert len(rows) == len(migrations._MIGRATIONS)
+    assert tuple(rows[-1]) == (
+        "20260808_0008_position_protection_state_v9",
+        "aletheia-sqlite-v9",
+    )
+    assert "exit_plan_effective_at" in {
+        row[1] for row in connection.execute("PRAGMA table_info(positions)")
+    }
     connection.close()
 
 

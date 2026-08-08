@@ -1,9 +1,9 @@
 # Data Model Reference
 
 > Complete index of Aletheia Trading OS data layer.
-> ~96 SQLite table declarations, 59 Pydantic models, WAL mode, versioned additive migrations.
+> ~99 SQLite table declarations, 62 Pydantic models, WAL mode, versioned additive migrations.
 > Source of truth: `aletheia/storage/migrations.py` (DDL) + `models.py` (types).
-> Last updated: 2026-08-07
+> Last updated: 2026-08-08
 
 ---
 
@@ -41,7 +41,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 
 ## 3. Table Groups
 
-### A. Trading Core (17 tables)
+### A. Trading Core (20 tables)
 | Table | Purpose | Key columns | Written by |
 |-------|---------|-------------|------------|
 | `opportunities` | Scanner output -- trading signals; lifecycle is `open→queued→reviewed` or `open/queued→expired`; expired never regresses to reviewed | symbol, direction, confidence, key_observations (JSON), last_ranked_at, universe snapshot/member identity | market_observer |
@@ -52,7 +52,10 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `approvals` | Human approval records | proposal_id, decision, decided_by | frontend |
 | `orders` | Execution orders; native exchange entry `pending` is an unresolved Risk reservation, not zero exposure | symbol, side, quantity, order_type, status | execution gateway |
 | `fills` | Order fill confirmations | order_id, fill_price, fill_quantity, fee | broker adapter |
-| `positions` | Open/closed positions; a closed future may keep net economics unavailable. Delayed local funding materialization stores its versioned evidence fingerprint in reconciliation evidence. Market-aware evaluation remains advisory: its structured evidence records the exact venue/symbol/physical-market identity and source rows used for an Operator wake. | symbol, direction, entry_price, quantity, status, nullable realized_pnl, funding_cost, funding_source, **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence), **exit_limit_source** ('human'|'system_operator'; author of a resting limit exit — selects human_limit_exit vs operator_limit_exit in close_reason for attribution honesty), **last_market_signal_evidence** (versioned JSON; exact position/signal identities, Opportunity/member/asset/Feature provenance, evaluation and delivery result) | position_manager / outcome closure / paper funding settler |
+| `positions` | Open/closed positions; a closed future may keep net economics unavailable. Delayed local funding materialization stores its versioned evidence fingerprint in reconciliation evidence. Market-aware evaluation remains advisory: its structured evidence records the exact venue/symbol/physical-market identity and source rows used for an Operator wake. | symbol, direction, entry_price, quantity, status, nullable realized_pnl, funding_cost, funding_source, **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence), **exit_limit_source** ('human'|'system_operator'; author of a resting limit exit — selects human_limit_exit vs operator_limit_exit in close_reason for attribution honesty), **exit_plan_effective_at** (nullable projection to the current immutable ExitPlan; NULL means the dormant barrier has not been activated), **last_market_signal_evidence** (versioned JSON; exact position/signal identities, Opportunity/member/asset/Feature provenance, evaluation and delivery result) | position_manager / outcome closure / paper funding settler |
+| `position_exit_plan_versions` | Retained, append-only resolved ExitPlan history. `(position_id, version)` is contiguous and immutable; insert atomically advances the nullable Position projection. | position_id, version, effective_at, resolved stop/take-profit/exit-limit, plan_json, plan_hash, provenance, created_at | protection storage repository (not yet runtime-wired) |
+| `position_protection_state` | One retained row per Position for a future 1-minute protective barrier. It freezes exact instrument identity and monotonic cursors, preserves gap history, and projects the first-trigger identity plus exact close linkage. | position_id, venue, canonical symbol, physical market_type, timeframe=1m, activated_at, cursor/gap/status, trigger_id, close Order/Fill linkage | protection storage repository (not yet runtime-wired) |
+| `position_protection_triggers` | Append-only first-barrier evidence. One immutable row per protected Position contains the exact 1-minute bar, resolved ExitPlan and deterministic collision policy. | trigger_id, position_id, exact instrument/bar/provider/hash, ExitPlan identity/barriers, hit flags/reason | protection storage repository (not yet runtime-wired) |
 | `position_close_events` | **Per-close economic ledger** (exit-intent R1) — one row per close EVENT (full close = 1 row; partial reduce = 1 row per reduction) so realized PnL sums from close events, unifying full + partial closes. Delayed funding finalization atomically converges the unique full-close projection with Position and paper cash. The daily-loss breaker adds partial-close realized via this ledger (`is_partial=1`) on top of the verified full-close read | position_id, close_reason, exit_price, closed_qty, realized_pnl, entry_fee, exit_fee, is_partial, closed_at | `pnl.close_position` / `pnl.reduce_position` / paper account service |
 | `outcome_hook_jobs` | Durable eligible-close feedback outbox; one row per Position and hook, with leased replay after failure | position_id, hook_type, status, attempts, next_attempt_at, claim_token, last_error | outcome close transaction / outcome_hook_replay |
 | `position_disappearance_candidates` | Durable account-scoped position-disappearance confirmation state; never authorizes close by itself | position_id, identity_key, broker_id, account_environment, non-secret account_fingerprint, instrument identity, confirmation_count, direct_query_state, semantics_version | position reconciler (OI-B01 target) |
@@ -342,7 +345,7 @@ production trading state and cannot authorize a parameter change.
 
 ---
 
-## 4. Pydantic Model Index (59 models)
+## 4. Pydantic Model Index (62 models)
 
 All models in `aletheia/storage/models.py`. Key mapping:
 
@@ -358,6 +361,9 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | TradeProposal | trade_proposals | Trading |
 | RiskDecision | risk_decisions | Trading |
 | Order | orders | Trading |
+| PositionExitPlanVersion | position_exit_plan_versions | Trading protection storage |
+| PositionProtectionState | position_protection_state | Trading protection storage |
+| PositionProtectionTrigger | position_protection_triggers | Trading protection storage |
 | Fill | fills | Trading |
 | Position | positions | Trading |
 | OutcomeHookJob | outcome_hook_jobs | Trading feedback |
@@ -430,6 +436,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 7. Production apply holds the process and cross-process SQLite writer permit across ledger recheck, migration execution, and success recording. This is an upgrade-only critical section; the Gateway must not be serving normal writers during it.
 8. Pytest retains the in-memory blueprint optimization and records the same ledger rows in the cloned schema; test fixtures may continue to call the compatibility `run_migrations()` helper.
 9. Dataset-size-sensitive repair is never an implicit read/startup side effect. Schema v3 rebuilds `knowledge_fts` once as migration `20260806_0002_startup_dataset_boundary_v3` and installs indexes for startup reconciliation and windowed telemetry reads. Normal knowledge writes maintain FTS incrementally; later full rebuilds require the explicit `knowledge reindex` maintenance command or a new versioned migration.
+12. Schema v9 adds `positions.exit_plan_effective_at`, immutable `position_exit_plan_versions`, retained `position_protection_state`, and append-only `position_protection_triggers` through migration `20260808_0008_position_protection_state_v9`. It performs no Position backfill or activation and does not install an evaluator or close consumer.
 10. Physical packing is outside the migration ledger. In particular, `market_ohlcv` rowid-to-`WITHOUT ROWID` conversion runs only inside explicit offline `data compact --apply`, after a verified backup and with the Gateway stopped; fresh deploy and normal Gateway startup never perform it.
 11. Schema v6 adds the content-free `inference_call_id` linkage columns through migration `20260806_0005_llm_inference_linkage_v6`. The LLM inference harness does not edit the frozen legacy baseline; databases that already received the columns from pre-ledger code are accepted idempotently.
 
@@ -494,6 +501,10 @@ current defaults; see `RETENTION_POLICY.md` for rationale and cascade details.
 
 Audit chain (12): `trade_proposals` · `risk_decisions` · `orders` · `fills` · `positions` ·
 `audit_events` · `capital_events` · `approvals` · `knowledge_items` · `ps_orders` · `ps_fills` ·
+Protective-barrier evidence (3): `position_exit_plan_versions` ·
+`position_protection_state` · `position_protection_triggers`. All are retained
+and absent from `_PRUNABLE`.
+
 `ps_positions`.
 
 Measured Learning Ledger (7): `learning_experiments` · `learning_exposures` ·
@@ -665,5 +676,51 @@ row commit in one SQLite transaction. The periodic settler also scans orphaned
 rows even when no NULL-PnL close remains.
 
 Every paper cash delta and resulting cash balance must be finite. The HTTP
+
+## 11. Protective Barrier Storage Contract (schema v9, dormant)
+
+Schema v9 provides only the durable substrate for a later protective-barrier
+consumer. It is deliberately dormant: migration does not initialize existing
+paper Positions, backdate a cursor, schedule market-data reads, evaluate OHLCV,
+or submit/close an Order. Those behaviors require separately reviewed follow-up
+changes.
+
+The storage invariants are:
+
+1. `positions.exit_plan_effective_at` is nullable. It advances atomically only
+   when a contiguous immutable `position_exit_plan_versions` row is inserted;
+   it cannot be cleared, fabricated, or regressed.
+2. ExitPlan identity is `(position_id, version, effective_at, plan_hash)`. The
+   stored JSON hash and resolved stop/take-profit/exit-limit values must agree,
+   and an applied version cannot be updated or deleted.
+3. Each activated Position has at most one retained
+   `position_protection_state` row. Activation freezes lowercase venue,
+   canonical `BASE/QUOTE` symbol, physical market (`spot` or `perp`), and
+   `timeframe='1m'`. Only logical `spot -> spot` and
+   `perp|usdt_futures -> perp` mappings are accepted; unknown market types fail
+   closed. Activation is explicit and never historical backfill.
+4. `next_bar_open_ms`, `last_inspected_bar_open_ms`, and
+   `last_evaluated_bar_open_ms` are monotonic compare-and-set cursors. A gap
+   retains its reason, detection time, count, and bounded recent error without
+   silently advancing the evaluation cursor.
+5. The first trigger is one complete row in the append-only
+   `position_protection_triggers` table: UUID/detection time,
+   frozen identity, exact 1-minute bar and provider/hash, exact ExitPlan
+   identity and resolved barriers, hit flags/reason, and
+   `collision_policy='stop_first_v1'`. Inserting it atomically projects
+   `trigger_id` and `triggered` onto state. Neither repositories nor direct SQL
+   may replace any trigger field after the first successful compare-and-set. A
+   trigger bar must be fully covered by one authoritative ExitPlan: a stale
+   version, a plan effective after bar open, or a later plan effective before
+   bar close is rejected instead of retroactively applying either plan.
+6. Close linkage is storage evidence only. `close_order_id`, then the exact
+   `close_fill_id`/price/time/final state, are write-once and must resolve to the
+   same Position and native close chain. These APIs do not create an Order,
+   execute a close, or grant Risk/Execution/Live authority.
+
+Status is restricted to `active`, `gap`, `triggered`, `materialized`,
+`superseded`, or `integrity_blocked`; terminal and triggered states cannot
+regress to an evaluable state. All three new tables are permanent trust-bearing
+evidence and are excluded from retention pruning.
 schema and central ledger writer reject NaN, both infinities, and finite-input
 arithmetic overflow before any append or audit event.
