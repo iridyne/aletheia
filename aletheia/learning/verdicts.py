@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from itertools import combinations
 import json
 import math
 import random
@@ -14,9 +15,11 @@ from typing import Any
 from aletheia.learning.cohorts import ContributionCohort, CohortSample
 
 
-METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v9"
-BOOTSTRAP_SEED = 20260712
-BOOTSTRAP_RESAMPLES = 2000
+METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v10"
+RANDOMIZATION_INFERENCE_VERSION = "conditional-randomization-itt/v1"
+RANDOMIZATION_SEED = 20260712
+RANDOMIZATION_RESAMPLES = 2000
+_MAX_EXACT_RANDOMIZATIONS = 20_000
 _PRACTICAL_NEUTRAL_DELTA_PCT = 0.10
 _HARM_MIN_SAMPLES_PER_ARM = 50
 SHADOW_TRIAL_INTEGRITY_REASON = "trial_integrity_ready_no_actual_intervention"
@@ -70,11 +73,15 @@ def evaluate_cohort(
     observed = fmean(treatment_values) if treatment_values else None
     baseline = fmean(control_values) if control_values else None
     delta = observed - baseline if observed is not None and baseline is not None else None
-    confidence_low, confidence_high = _bootstrap_interval(
-        treatment_values,
-        control_values,
-        tail_probability=(0.10 if authority_alpha is None else authority_alpha),
+    inference_alpha = 0.10 if authority_alpha is None else authority_alpha
+    randomization = _conditional_randomization_inference(
+        [*qualified_assigned_treatment, *control],
+        alpha=inference_alpha,
     )
+    # The legacy fields used an IID percentile bootstrap even though adjacent
+    # Universe decisions share 1h/4h market paths.  That interval was
+    # anti-conservative and is intentionally retired rather than relabelled.
+    confidence_low = confidence_high = None
     # Preserve the randomized intent-to-treat estimand. Authority refusal can be
     # correlated with market or risk state, so selecting only applied rows would
     # turn the primary result into a biased post-assignment comparison.
@@ -83,6 +90,7 @@ def evaluate_cohort(
         "monitoring" if authority_alpha is None else "confirmatory"
     )
     harm_metrics["authority_alpha"] = authority_alpha
+    harm_metrics["randomization_inference"] = randomization
     harm_metrics["harm_treatment_basis"] = "randomized_assignment_intent_to_treat"
     harm_metrics["market_day_coverage"] = coverage
     required = max(1, int(cohort.experiment.min_samples_per_arm))
@@ -185,10 +193,14 @@ def evaluate_cohort(
             "insufficient_actual_intervention_samples",
         )
     threshold = max(_PRACTICAL_NEUTRAL_DELTA_PCT, float(cohort.hypothesis.effect_threshold or 0.0))
-    if delta < threshold or confidence_low is None or confidence_low <= 0:
+    if (
+        delta < threshold
+        or randomization["p_value"] is None
+        or float(randomization["p_value"]) > inference_alpha
+    ):
         return result(
             "neutral",
-            "effect is within the practical-neutral band or confidence is inconclusive",
+            "effect is within the practical-neutral band or randomization inference is inconclusive",
         )
     return result(
         "positive",
@@ -387,25 +399,103 @@ def _missing_days(
     return missing_n, missing
 
 
-def _bootstrap_interval(
-    treatment: list[float],
-    control: list[float],
+def _conditional_randomization_inference(
+    samples: list[CohortSample],
     *,
-    tail_probability: float = 0.10,
-) -> tuple[float | None, float | None]:
-    if not treatment or not control:
-        return None, None
-    rng = random.Random(BOOTSTRAP_SEED)
-    deltas = []
-    for _ in range(BOOTSTRAP_RESAMPLES):
-        treated = fmean(treatment[rng.randrange(len(treatment))] for _ in treatment)
-        baseline = fmean(control[rng.randrange(len(control))] for _ in control)
-        deltas.append(treated - baseline)
-    deltas.sort()
-    return (
-        _quantile(deltas, tail_probability),
-        _quantile(deltas, 1.0 - tail_probability),
+    alpha: float,
+) -> dict[str, Any]:
+    """Test the randomized ITT null without assuming independent outcomes.
+
+    Universe assigns complete scanner-run clusters prospectively from an opaque
+    experiment salt.  Adjacent clusters can share most of a 1h/4h price path,
+    so resampling their outcomes as IID observations is invalid.  Conditional
+    randomization inference instead holds every observed cluster outcome fixed
+    and reassigns the observed number of treatment labels.  Under the sharp
+    no-effect null this remains valid when outcomes are serially dependent.
+    """
+
+    ordered = sorted(
+        samples,
+        key=lambda sample: (
+            _parse_time(sample.exposed_at)
+            or datetime.min.replace(tzinfo=timezone.utc),
+            sample.assignment_unit_key,
+        ),
     )
+    values = [float(sample.net_return_pct) for sample in ordered]
+    treatment_n = sum(sample.assignment == "treatment" for sample in ordered)
+    total_n = len(values)
+    control_n = total_n - treatment_n
+    base = {
+        "contract_version": RANDOMIZATION_INFERENCE_VERSION,
+        "estimand": "randomized_assignment_intent_to_treat",
+        "null": "sharp_no_assignment_effect",
+        "alternative": "treatment_greater_than_control",
+        "conditioning": "observed_treatment_count",
+        "iid_outcome_assumption": False,
+        "interference_assumption": (
+            "assignment_unit_outcome_is_not_changed_by_other_assignments"
+        ),
+        "alpha": float(alpha),
+        "seed": RANDOMIZATION_SEED,
+        "treatment_n": treatment_n,
+        "control_n": control_n,
+        "total_n": total_n,
+    }
+    if not 0 < treatment_n < total_n:
+        return {
+            **base,
+            "mode": "unavailable",
+            "evaluated_assignments": 0,
+            "p_value": None,
+            "reason": "both_randomized_arms_required",
+        }
+
+    observed = fmean([
+        sample.net_return_pct for sample in ordered
+        if sample.assignment == "treatment"
+    ]) - fmean([
+        sample.net_return_pct for sample in ordered
+        if sample.assignment == "control"
+    ])
+    indices = tuple(range(total_n))
+    assignment_count = math.comb(total_n, treatment_n)
+    total_sum = sum(values)
+    tolerance = 1e-12
+
+    def permuted_delta(treated_indices: tuple[int, ...] | list[int]) -> float:
+        treated_sum = sum(values[index] for index in treated_indices)
+        control_sum = total_sum - treated_sum
+        return treated_sum / treatment_n - control_sum / control_n
+
+    if assignment_count <= _MAX_EXACT_RANDOMIZATIONS:
+        extreme_n = sum(
+            permuted_delta(treated) >= observed - tolerance
+            for treated in combinations(indices, treatment_n)
+        )
+        evaluated = assignment_count
+        p_value = extreme_n / evaluated
+        mode = "exact"
+    else:
+        rng = random.Random(RANDOMIZATION_SEED)
+        extreme_n = 0
+        for _ in range(RANDOMIZATION_RESAMPLES):
+            treated = rng.sample(indices, treatment_n)
+            extreme_n += int(permuted_delta(treated) >= observed - tolerance)
+        evaluated = RANDOMIZATION_RESAMPLES
+        # Phipson-Smyth correction: a sampled randomization p-value is never 0.
+        p_value = (extreme_n + 1) / (evaluated + 1)
+        mode = "monte_carlo"
+
+    return {
+        **base,
+        "mode": mode,
+        "evaluated_assignments": evaluated,
+        "assignment_space_size": assignment_count,
+        "observed_delta": observed,
+        "p_value": p_value,
+        "reason": "ok",
+    }
 
 
 def _harm_metrics(
@@ -459,8 +549,7 @@ def _harm_metrics(
     return {
         "metric_version": METRIC_VERSION,
         "stage": cohort.experiment.stage,
-        "bootstrap_seed": BOOTSTRAP_SEED,
-        "bootstrap_resamples": BOOTSTRAP_RESAMPLES,
+        "iid_bootstrap": "retired_overlapping_horizon_outcomes",
         "policy_epoch": cohort.key.policy_epoch,
         "horizon": cohort.key.horizon,
         "outcome_contract_version": cohort.key.outcome_contract_version,

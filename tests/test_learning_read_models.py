@@ -133,6 +133,12 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
             "treatment_non_intervention_reasons": {
                 "authority:experiment_stage_not_paper": 4,
             },
+            "randomization_inference": {
+                "contract_version": "conditional-randomization-itt/v1",
+                "mode": "exact",
+                "p_value": 0.25,
+                "iid_outcome_assumption": False,
+            },
             "breached": False,
             "breach_reasons": [],
             "market_day_coverage": {
@@ -217,6 +223,12 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     assert item["measurement"]["coverage"]["missing_market_days"] == [
         "2026-07-18"
     ]
+    assert item["measurement"]["randomization_contract_version"] == (
+        "conditional-randomization-itt/v1"
+    )
+    assert item["measurement"]["randomization_p_value"] == 0.25
+    assert item["measurement"]["randomization_mode"] == "exact"
+    assert item["measurement"]["iid_outcome_assumption"] is False
     assert item["samples"] == {
         "raw_exposures": 18,
         "treatment_assignment_units": 4,

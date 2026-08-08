@@ -1438,12 +1438,9 @@ def test_authority_rejects_activation_with_wrong_declared_horizon(monkeypatch):
     db = get_db()
     was_in_tx = db.in_transaction
     db.execute(
-        "UPDATE learning_contribution_verdicts SET target_horizon='1h', harm_metrics_json=? "
+        "UPDATE learning_contribution_verdicts SET target_horizon='1h' "
         "WHERE verdict_id=?",
-        (json.dumps({
-            "policy_epoch": "epoch-a", "horizon": "1h", "outcome_contract_version": "v1",
-            "metric_version": "universe_family_calibration_net_return_v1", "breached": False,
-        }), activation.verdict_id),
+        (activation.verdict_id,),
     )
     if not was_in_tx:
         db.commit()

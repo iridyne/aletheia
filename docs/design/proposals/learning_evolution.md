@@ -315,12 +315,13 @@ an identical mirror is not counted twice, absence of a canonical row may use the
 row, and economic disagreement fails closed. Ambiguous allocation identity excludes only that
 sample and remains explicit. Proven economic conflict metadata includes source row ids and exact
 differing fields; it does not authorize sample-level conflict exclusion. The evaluator persists
-deterministic confidence, harm, source provenance, and exclusion details. A recurring monitoring
+deterministic conditional-randomization inference, harm, source provenance, and exclusion details.
+A recurring monitoring
 `positive` result is not an authority promotion signal. Only the once-consumed, fixed-cutoff
 confirmatory result can be considered by the separate lifecycle gates.
 
 The evaluator uses metric version
-`universe_family_calibration_cluster_allocation_utility_v9`. Existing verdicts under older metric
+`universe_family_calibration_cluster_allocation_utility_v10`. Existing verdicts under older metric
 versions remain append-only history and cannot satisfy a current metric-identity gate. Verdict
 `created_at` records evaluation time; `window_start` and `window_end` continue to bound the
 observations used.
@@ -342,6 +343,9 @@ prospective fixed-look authority. Metric v9 and behavior contract v10 separate f
 readiness (one day, 10 complete units per arm) from the unchanged seven-day/50-per-arm Paper
 promotion evidence. Monitoring remains descriptive, the exposure-ordered cutoff is write-once, one
 confirmatory verdict is consumed, and each successor stage starts a fresh plan.
+Metric v10 and behavior contract v11 replace IID outcome bootstrap authority with conditional
+randomization inference over the prospectively assigned complete clusters; overlapping 1h/4h
+market paths therefore do not impersonate independent evidence.
 Older experiments and verdicts remain immutable, non-authorizing history.
 
 The current harm contract uses the experiment's 50 assignment units per arm as the minimum

@@ -378,7 +378,9 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 - **Outcome precedence**: `filter_candidate_outcomes` is canonical full-arm truth;
   `universe_forward_outcomes` is a selected-member mirror/fallback and disagreement fails closed
 - **Outputs**: append-only monitoring and once-consumed confirmatory verdicts under
-  `universe_family_calibration_cluster_allocation_utility_v9`; old metric verdicts remain history
+  `universe_family_calibration_cluster_allocation_utility_v10`; old metric verdicts remain history
+- **Inference**: conditional randomization over the prospectively assigned complete clusters;
+  overlapping 1h/4h price paths are allowed and never resampled as IID outcomes
 - **Intervention provenance**: `authority_applied` records consistent treatment permission;
   finite before/after behavior change is separate, and an authorized cluster is an actual
   intervention only when at least one member changed
