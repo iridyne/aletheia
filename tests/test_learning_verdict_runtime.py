@@ -220,6 +220,150 @@ def _filter_outcome(
     )
 
 
+def test_fixed_look_evaluator_consumes_one_predeclared_cutoff_and_ignores_later_rows():
+    from aletheia.learning.contribution_runner import evaluate_experiment
+    from aletheia.learning.fixed_look import (
+        get_fixed_look_decision,
+        register_fixed_look_decision,
+    )
+
+    hypothesis, experiment = _experiment(min_samples=50, min_days=0)
+    behavior_hash = "behavior-v1"
+    register_fixed_look_decision(
+        experiment,
+        hypothesis,
+        policy_epoch="epoch-a",
+        behavior_contract_hash=behavior_hash,
+    )
+    for index in range(50):
+        treatment = f"fixed-treatment-{index:02d}"
+        control = f"fixed-control-{index:02d}"
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=treatment,
+            assignment="treatment",
+            exposed_at=_iso(minutes=index * 2),
+            behavior_contract_hash=behavior_hash,
+        )
+        _outcome(
+            treatment,
+            net=1.0,
+            entry_at=_iso(minutes=index * 2 + 1),
+        )
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=control,
+            assignment="control",
+            exposed_at=_iso(minutes=index * 2 + 1),
+            behavior_contract_hash=behavior_hash,
+        )
+        _outcome(
+            control,
+            net=0.0,
+            entry_at=_iso(minutes=index * 2 + 2),
+        )
+
+    verdicts = evaluate_experiment(experiment.experiment_id)
+    confirmatory = [row for row in verdicts if row.inference_role == "confirmatory"]
+    assert len(confirmatory) == 1
+    assert confirmatory[0].verdict == "positive"
+    assert confirmatory[0].authority_eligible is True
+    decision = get_fixed_look_decision(experiment.experiment_id)
+    assert decision is not None and decision.status == "consumed"
+    assert decision.consumed_verdict_id == confirmatory[0].verdict_id
+    consumed_id = decision.consumed_verdict_id
+    cutoff_fingerprint = decision.cutoff_fingerprint
+
+    for candidate, assignment, net in (
+        ("late-treatment", "treatment", -10.0),
+        ("late-control", "control", 10.0),
+    ):
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=candidate,
+            assignment=assignment,
+            exposed_at=_iso(minutes=200),
+            behavior_contract_hash=behavior_hash,
+        )
+        _outcome(candidate, net=net, entry_at=_iso(minutes=201))
+    evaluate_experiment(experiment.experiment_id)
+
+    after = get_fixed_look_decision(experiment.experiment_id)
+    assert after is not None
+    assert after.consumed_verdict_id == consumed_id
+    assert after.cutoff_fingerprint == cutoff_fingerprint
+
+
+def test_post_cutoff_invalid_row_cannot_change_confirmatory_fixed_look():
+    from aletheia.learning.contribution_runner import evaluate_experiment
+    from aletheia.learning.fixed_look import (
+        freeze_fixed_look_cutoff,
+        get_fixed_look_decision,
+        register_fixed_look_decision,
+    )
+    from aletheia.learning.ledger import get_latest_measurement_verdict
+
+    hypothesis, experiment = _experiment(min_samples=50, min_days=0)
+    behavior_hash = "behavior-v1"
+    register_fixed_look_decision(
+        experiment,
+        hypothesis,
+        policy_epoch="epoch-a",
+        behavior_contract_hash=behavior_hash,
+    )
+    for index in range(50):
+        for assignment, net, minute in (
+            ("treatment", 1.0, index * 2),
+            ("control", 0.0, index * 2 + 1),
+        ):
+            candidate = f"cutoff-{assignment}-{index:02d}"
+            _exposure(
+                experiment,
+                hypothesis,
+                candidate=candidate,
+                assignment=assignment,
+                exposed_at=_iso(minutes=minute),
+                behavior_contract_hash=behavior_hash,
+            )
+            _outcome(candidate, net=net, entry_at=_iso(minutes=minute + 1))
+
+    frozen = freeze_fixed_look_cutoff(experiment.experiment_id)
+    assert frozen.status == "cutoff_frozen"
+
+    _exposure(
+        experiment,
+        hypothesis,
+        candidate="post-cutoff-invalid",
+        assignment="control",
+        exposed_at=_iso(minutes=200),
+        behavior_contract_hash=behavior_hash,
+    )
+    _outcome(
+        "post-cutoff-invalid",
+        net=0.0,
+        entry_at=_iso(minutes=201),
+        cost_model_version=None,
+    )
+
+    verdicts = evaluate_experiment(experiment.experiment_id)
+    monitoring = [row for row in verdicts if row.inference_role == "monitoring"]
+    confirmatory = [row for row in verdicts if row.inference_role == "confirmatory"]
+    assert len(monitoring) == 1 and monitoring[0].verdict == "invalid"
+    assert len(confirmatory) == 1 and confirmatory[0].verdict == "positive"
+    decision = get_fixed_look_decision(experiment.experiment_id)
+    assert decision is not None and decision.status == "consumed"
+    assert decision.consumed_verdict_id == confirmatory[0].verdict_id
+    latest_safety = get_latest_measurement_verdict(
+        experiment.experiment_id,
+        inference_role="monitoring",
+    )
+    assert latest_safety is not None
+    assert latest_safety["verdict_id"] == monitoring[0].verdict_id
+
+
 def _filter_outcome_matrix(
     candidate: str,
     *,

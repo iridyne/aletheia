@@ -25,6 +25,10 @@ from aletheia.learning.ledger import (
 from aletheia.learning.models import LearningExperiment
 from aletheia.learning.behavior_contracts import current_behavior_contract_hash
 from aletheia.learning.verdicts import METRIC_VERSION
+from aletheia.learning.fixed_look import (
+    inference_authority_reason,
+    inference_collection_reason,
+)
 
 
 PAPER_STAGES = ("paper_10", "paper_25", "paper_50", "paper_active")
@@ -131,6 +135,7 @@ def resolve_learning_authority(
             outcome_contract_version="v1",
             metric_version=METRIC_VERSION,
             behavior_contract_hash=expected_behavior_contract_hash,
+            inference_role="monitoring",
         )
         if (
             measurement is not None
@@ -163,9 +168,13 @@ def resolve_learning_authority(
         outcome_contract_version="v1",
         metric_version=METRIC_VERSION,
         behavior_contract_hash=expected_behavior_contract_hash,
+        inference_role="monitoring",
     )
     if current is None:
-        current = get_latest_measurement_verdict(experiment.experiment_id)
+        current = get_latest_measurement_verdict(
+            experiment.experiment_id,
+            inference_role="monitoring",
+        )
     current_stage_underpowered = False
     if current is not None:
         identity_reason = measurement_identity_reason(
@@ -200,6 +209,14 @@ def resolve_learning_authority(
             return blocked(intervention_reason, current)
     if current is not None and str(current.get("hypothesis_id") or "") != experiment.hypothesis_id:
         return blocked("measurement_hypothesis_mismatch", current)
+    collection_reason = inference_collection_reason(
+        experiment,
+        policy_epoch=current_policy_epoch,
+        behavior_contract_hash=expected_behavior_contract_hash,
+        target_horizon=expected_horizon,
+    )
+    if collection_reason is not None:
+        return blocked(collection_reason, current)
     activation = get_record("learning_contribution_verdicts", experiment.activation_verdict_id)
     if activation is None:
         return blocked("invalid_activation_verdict")
@@ -218,13 +235,6 @@ def resolve_learning_authority(
     )
     if not activation_is_positive and not activation_is_admitted_trial:
         return blocked("invalid_activation_verdict")
-    if activation_is_positive:
-        intervention_reason = measurement_intervention_block_reason(
-            activation,
-            required_per_arm=experiment.min_samples_per_arm,
-        )
-        if intervention_reason:
-            return blocked(intervention_reason, activation)
     predecessor_stage = PREVIOUS_STAGE.get(experiment.stage)
     if not experiment.parent_experiment_id or not predecessor_stage:
         return blocked("missing_predecessor_experiment")
@@ -239,6 +249,16 @@ def resolve_learning_authority(
         return blocked("activation_experiment_mismatch")
     if str(activation.get("hypothesis_id") or "") != experiment.hypothesis_id:
         return blocked("activation_hypothesis_mismatch")
+    if activation_is_positive:
+        inference_reason = inference_authority_reason(activation)
+        if inference_reason:
+            return blocked(inference_reason, activation)
+        intervention_reason = measurement_intervention_block_reason(
+            activation,
+            required_per_arm=experiment.min_samples_per_arm,
+        )
+        if intervention_reason:
+            return blocked(intervention_reason, activation)
 
     if current is None:
         # A fresh successor may use its validated predecessor result only while

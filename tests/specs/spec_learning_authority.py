@@ -268,8 +268,19 @@ def test_numeric_treatment_rejects_non_finite_values(invalid):
 )
 def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
     from aletheia.learning.experiments import apply_numeric_treatment, stable_assignment
-    from aletheia.learning.ledger import get_record, insert_experiment, insert_record
-    from aletheia.learning.models import LearningContributionVerdict, LearningExperiment
+    from aletheia.learning.fixed_look import register_fixed_look_decision
+    from aletheia.learning.ledger import (
+        get_record,
+        insert_experiment,
+        insert_lifecycle_event,
+        insert_record,
+    )
+    from aletheia.learning.models import (
+        LearningContributionVerdict,
+        LearningExperiment,
+        LearningHypothesis,
+        LearningLifecycleEvent,
+    )
     from aletheia.learning.verdicts import METRIC_VERSION
     from aletheia.storage.sqlite import get_db
 
@@ -289,7 +300,7 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
     behavior_contract_hash = first_exposure["behavior_contract_hash"]
     now = datetime.now(timezone.utc)
     activation = LearningContributionVerdict(
-        verdict_id="paper-activation-positive",
+        verdict_id="paper-shadow-admission-evidence",
         experiment_id=parent.experiment_id,
         hypothesis_id=parent.hypothesis_id,
         stage="shadow",
@@ -297,8 +308,8 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
         window_end=now.isoformat(),
         unique_treatment_n=1,
         unique_control_n=1,
-        verdict="positive",
-        reason="positive shadow measurement",
+        verdict="insufficient_data",
+        reason="no_actual_intervention",
         created_at=now.isoformat(),
         policy_epoch=epoch,
         target_horizon="4h",
@@ -310,9 +321,9 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
                 "harm_state": "clear",
                 "breached": False,
                 "assigned_treatment_n": 1,
-                "authority_applied_treatment_n": 1,
-                "actual_intervention_treatment_n": 1,
-                "baseline_treatment_n": 0,
+                "authority_applied_treatment_n": 0,
+                "actual_intervention_treatment_n": 0,
+                "baseline_treatment_n": 1,
                 "treatment_authority_rejection_reasons": {},
                 "treatment_non_intervention_reasons": {},
             }),
@@ -340,6 +351,27 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
         started_at=now.isoformat(),
     )
     assert insert_experiment(experiment)
+    assert insert_lifecycle_event(LearningLifecycleEvent(
+        dedup_key="paper-shadow-admission-evidence:shadow:admit_trial",
+        hypothesis_id=parent.hypothesis_id,
+        experiment_id=parent.experiment_id,
+        successor_experiment_id=experiment.experiment_id,
+        verdict_id=activation.verdict_id,
+        from_stage="shadow",
+        to_stage="paper_10",
+        action="admit_trial",
+        reason="owner_admitted:test",
+        policy_epoch=epoch,
+        audit_actor="human",
+        audit_source="test",
+        created_at=now.isoformat(),
+    ))
+    register_fixed_look_decision(
+        experiment,
+        LearningHypothesis(**get_record("learning_hypotheses", parent.hypothesis_id)),
+        policy_epoch=epoch,
+        behavior_contract_hash=behavior_contract_hash,
+    )
     if not was_in_tx:
         db.commit()
     treatment_candidate = next(

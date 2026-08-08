@@ -259,14 +259,15 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert migrations._MIGRATIONS[0].schema_version == "aletheia-sqlite-v2"
-    assert migrations._MIGRATIONS[-7].schema_version == "aletheia-sqlite-v3"
-    assert migrations._MIGRATIONS[-6].schema_version == "aletheia-sqlite-v4"
-    assert migrations._MIGRATIONS[-5].schema_version == "aletheia-sqlite-v5"
-    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v6"
-    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v7"
-    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v8"
+    assert migrations._MIGRATIONS[-8].schema_version == "aletheia-sqlite-v3"
+    assert migrations._MIGRATIONS[-7].schema_version == "aletheia-sqlite-v4"
+    assert migrations._MIGRATIONS[-6].schema_version == "aletheia-sqlite-v5"
+    assert migrations._MIGRATIONS[-5].schema_version == "aletheia-sqlite-v6"
+    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v7"
+    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v8"
+    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v9"
     assert migrations._MIGRATIONS[-1].schema_version == migrations.SCHEMA_VERSION
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v9"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v10"
     connection.close()
 
 
@@ -318,11 +319,58 @@ def test_position_protection_v9_migration_is_additive_and_idempotent():
     connection.close()
 
 
-def test_production_v8_ledger_advances_only_through_v9(tmp_path, monkeypatch):
+def test_learning_fixed_look_v10_migration_is_additive_and_idempotent():
     import aletheia.storage.migrations as migrations
 
-    connection = _connection(tmp_path / "v8.db")
-    connection.execute("CREATE TABLE positions (id TEXT PRIMARY KEY)")
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        """
+        CREATE TABLE learning_experiments (experiment_id TEXT PRIMARY KEY);
+        CREATE TABLE learning_contribution_verdicts (
+            verdict_id TEXT PRIMARY KEY,
+            experiment_id TEXT NOT NULL REFERENCES learning_experiments(experiment_id)
+        );
+        """
+    )
+
+    migrations._apply_learning_fixed_look_v10(connection)
+    migrations._apply_learning_fixed_look_v10(connection)
+
+    verdict_columns = {
+        row[1] for row in connection.execute(
+            "PRAGMA table_info(learning_contribution_verdicts)"
+        )
+    }
+    assert {
+        "inference_contract_version",
+        "inference_role",
+        "authority_eligible",
+        "inference_plan_hash",
+        "inference_cutoff_fingerprint",
+    } <= verdict_columns
+    assert connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='learning_inference_decisions'"
+    ).fetchone() is not None
+    connection.close()
+
+
+def test_production_v9_ledger_advances_only_through_v10(tmp_path, monkeypatch):
+    import aletheia.storage.migrations as migrations
+
+    connection = _connection(tmp_path / "v9.db")
+    connection.executescript(
+        """
+        CREATE TABLE learning_experiments (experiment_id TEXT PRIMARY KEY);
+        CREATE TABLE learning_contribution_verdicts (
+            verdict_id TEXT PRIMARY KEY,
+            experiment_id TEXT NOT NULL REFERENCES learning_experiments(experiment_id)
+        );
+        INSERT INTO learning_experiments VALUES ('legacy-experiment');
+        INSERT INTO learning_contribution_verdicts
+        VALUES ('legacy-positive', 'legacy-experiment');
+        """
+    )
     connection.executescript(migrations._MIGRATION_LEDGER_DDL)
     connection.executemany(
         "INSERT INTO aletheia_schema_migrations "
@@ -348,12 +396,14 @@ def test_production_v8_ledger_advances_only_through_v9(tmp_path, monkeypatch):
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260808_0008_position_protection_state_v9",
-        "aletheia-sqlite-v9",
+        "20260808_0009_learning_fixed_look_v10",
+        "aletheia-sqlite-v10",
     )
-    assert "exit_plan_effective_at" in {
-        row[1] for row in connection.execute("PRAGMA table_info(positions)")
-    }
+    legacy = connection.execute(
+        "SELECT inference_role, authority_eligible "
+        "FROM learning_contribution_verdicts WHERE verdict_id='legacy-positive'"
+    ).fetchone()
+    assert tuple(legacy) == ("monitoring", 0)
     connection.close()
 
 

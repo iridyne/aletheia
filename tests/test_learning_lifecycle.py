@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -83,6 +84,7 @@ def _measurement(
     unique_control_n: int = 50,
     harm_state: str | None = None,
     harm_indeterminate_reason: str | None = None,
+    created_at: str | None = None,
 ):
     from aletheia.learning.behavior_contracts import build_behavior_contract_hash
     from aletheia.learning.ledger import insert_record
@@ -183,7 +185,7 @@ def _measurement(
         }),
         verdict=verdict,
         reason=reason,
-        created_at=_iso(),
+        created_at=created_at or _iso(),
         policy_epoch=epoch,
         target_horizon=horizon,
         outcome_contract_version=contract,
@@ -193,6 +195,114 @@ def _measurement(
     )
     assert insert_record("learning_contribution_verdicts", record)
     return record
+
+
+def _consume_confirmatory(
+    hypothesis,
+    experiment,
+    monitoring,
+    *,
+    created_at: str | None = None,
+):
+    """Promote a unit-test measurement through the durable fixed-look seam."""
+    from aletheia.learning.fixed_look import (
+        consume_fixed_look_verdict,
+        get_fixed_look_decision,
+        register_fixed_look_decision,
+    )
+    from aletheia.storage.repositories import transaction
+    from aletheia.storage.sqlite import get_db
+
+    decision = get_fixed_look_decision(experiment.experiment_id)
+    if decision is None:
+        decision = register_fixed_look_decision(
+            experiment,
+            hypothesis,
+            policy_epoch=str(monitoring.policy_epoch),
+            behavior_contract_hash=str(monitoring.behavior_contract_hash),
+        )
+    if decision.status == "collecting":
+        cutoff_json = json.dumps(
+            {
+                "assignment_unit_keys": ["test-treatment", "test-control"],
+                "cutoff_exposed_at": monitoring.window_end,
+                "cutoff_assignment_unit_key": "test-control",
+                "selection_basis": "outcome_blind_exposure_prefix",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        cutoff_fingerprint = hashlib.sha256(cutoff_json.encode()).hexdigest()
+        with transaction(immediate=True):
+            get_db().execute(
+                "UPDATE learning_inference_decisions SET status='cutoff_frozen', "
+                "cutoff_json=?, cutoff_fingerprint=?, cutoff_frozen_at=?, updated_at=? "
+                "WHERE experiment_id=? AND status='collecting'",
+                (
+                    cutoff_json,
+                    cutoff_fingerprint,
+                    _iso(),
+                    _iso(),
+                    experiment.experiment_id,
+                ),
+            )
+        decision = get_fixed_look_decision(experiment.experiment_id)
+    assert decision is not None and decision.status == "cutoff_frozen"
+    confirmatory = monitoring.model_copy(update={
+        "verdict_id": f"confirmatory-{monitoring.verdict_id}",
+        **({"created_at": created_at} if created_at is not None else {}),
+        "inference_contract_version": decision.inference_contract_version,
+        "inference_role": "confirmatory",
+        "authority_eligible": True,
+        "inference_plan_hash": decision.plan_hash,
+        "inference_cutoff_fingerprint": decision.cutoff_fingerprint,
+    })
+    assert consume_fixed_look_verdict(confirmatory)
+    return confirmatory
+
+
+def test_newer_confirmatory_cannot_mask_monitoring_invalid_safety(monkeypatch):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    positive = _measurement(
+        hypothesis,
+        experiment,
+        "positive",
+        created_at=_iso(-2),
+    )
+    _consume_confirmatory(
+        hypothesis,
+        experiment,
+        positive,
+        created_at=_iso(1),
+    )
+    invalid = _measurement(
+        hypothesis,
+        experiment,
+        "invalid",
+        created_at=_iso(),
+    )
+    _configure(
+        monkeypatch,
+        _settings(automation=True, paper=True, paths=[hypothesis.path_id]),
+    )
+    from aletheia.learning.authority import resolve_learning_authority
+    from aletheia.learning.lifecycle import process_lifecycle
+
+    authority = resolve_learning_authority(
+        hypothesis.path_id,
+        experiment,
+        "epoch-a",
+    )
+    transition = process_lifecycle(
+        experiment.experiment_id,
+        current_policy_epoch="epoch-a",
+    )
+
+    assert authority.authorized is False
+    assert authority.reason == "current_measurement_invalid"
+    assert authority.current_verdict_id == invalid.verdict_id
+    assert transition.action == "invalidate"
+    assert transition.verdict_id == invalid.verdict_id
 
 
 def _configure(monkeypatch, cfg):
@@ -281,14 +391,14 @@ def test_positive_verdict_with_insufficient_actual_interventions_cannot_promote(
 
 def test_positive_with_required_actual_interventions_can_promote_with_one_noop(monkeypatch):
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
-    verdict = _measurement(
+    verdict = _consume_confirmatory(hypothesis, experiment, _measurement(
         hypothesis,
         experiment,
         "positive",
         actual_intervention_treatment_n=50,
         authority_applied_treatment_n=51,
         assigned_treatment_n=51,
-    )
+    ))
     _configure(monkeypatch, _settings(
         automation=True,
         paper=True,
@@ -902,7 +1012,9 @@ def test_admission_retry_cannot_rebind_existing_verdict_to_another_experiment(
 
 def test_successor_needs_its_own_measurement_before_it_can_promote_again(monkeypatch):
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
-    _measurement(hypothesis, experiment, "positive")
+    _consume_confirmatory(
+        hypothesis, experiment, _measurement(hypothesis, experiment, "positive")
+    )
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
     from aletheia.learning.lifecycle import process_lifecycle
 
@@ -915,7 +1027,9 @@ def test_successor_needs_its_own_measurement_before_it_can_promote_again(monkeyp
 
 def test_lifecycle_retry_is_idempotent_and_does_not_duplicate_successor(monkeypatch):
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
-    _measurement(hypothesis, experiment, "positive")
+    _consume_confirmatory(
+        hypothesis, experiment, _measurement(hypothesis, experiment, "positive")
+    )
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
     from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.storage.sqlite import get_db
@@ -930,7 +1044,9 @@ def test_lifecycle_retry_is_idempotent_and_does_not_duplicate_successor(monkeypa
 
 def test_failed_successor_insert_rolls_back_event_and_current_stage(monkeypatch):
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
-    _measurement(hypothesis, experiment, "positive")
+    _consume_confirmatory(
+        hypothesis, experiment, _measurement(hypothesis, experiment, "positive")
+    )
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
     import aletheia.learning.lifecycle as lifecycle
     from aletheia.learning.ledger import get_record
@@ -951,7 +1067,9 @@ def test_failed_successor_insert_rolls_back_event_and_current_stage(monkeypatch)
 
 def test_positive_without_paper_influence_records_blocked_recommendation_not_authority(monkeypatch):
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
-    _measurement(hypothesis, experiment, "positive")
+    _consume_confirmatory(
+        hypothesis, experiment, _measurement(hypothesis, experiment, "positive")
+    )
     _configure(monkeypatch, _settings(automation=True, paper=False, paths=[hypothesis.path_id]))
     from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.learning.authority import resolve_learning_authority
@@ -987,8 +1105,8 @@ def _promoted_successor(
     activation_code_commit: str = "test-build",
     activation_behavior_contract_hash: str | None = None,
 ):
-    # Seed the post-authentication state directly. The production module has no
-    # authenticated owner mutation route yet and therefore cannot create it.
+    # Seed the post-authentication state directly, including the prospective
+    # fixed-look plan that production admission writes in the same transaction.
     hypothesis, experiment = _experiment()
     activation = _measurement(
         hypothesis, experiment, "insufficient_data", reason="no_actual_intervention",
@@ -1031,6 +1149,22 @@ def _promoted_successor(
     db.commit()
     assert insert_experiment(successor)
     assert insert_lifecycle_event(event)
+    from aletheia.learning.behavior_contracts import build_behavior_contract_hash
+    from aletheia.learning.fixed_look import register_fixed_look_decision
+    from aletheia.learning.verdicts import METRIC_VERSION
+
+    register_fixed_look_decision(
+        successor,
+        hypothesis,
+        policy_epoch="epoch-a",
+        behavior_contract_hash=build_behavior_contract_hash(
+            path_id=hypothesis.path_id,
+            policy_hash="epoch-a",
+            target_horizon=hypothesis.target_horizon,
+            outcome_contract_version="v1",
+            metric_version=METRIC_VERSION,
+        ),
+    )
     return hypothesis, experiment, activation, successor
 
 
@@ -1065,7 +1199,9 @@ def test_owner_admitted_trial_keeps_authority_while_current_stage_is_underpowere
         (_iso(-1), current.verdict_id),
     )
     db.commit()
-    complete = _measurement(hypothesis, successor, "positive")
+    complete = _consume_confirmatory(
+        hypothesis, successor, _measurement(hypothesis, successor, "positive")
+    )
     from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.learning.ledger import get_record
 
@@ -1715,7 +1851,9 @@ def test_positive_with_stale_or_mismatched_cohort_cannot_promote(monkeypatch, ep
 
 def test_global_reconciliation_refreeze_overrides_every_authority_gate(monkeypatch):
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
-    _measurement(hypothesis, experiment, "positive")
+    _consume_confirmatory(
+        hypothesis, experiment, _measurement(hypothesis, experiment, "positive")
+    )
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
     import aletheia.learning.authority as authority
     from aletheia.learning.authority import resolve_learning_authority
@@ -1729,7 +1867,9 @@ def test_global_reconciliation_refreeze_overrides_every_authority_gate(monkeypat
 
 def test_paper_active_keeps_a_control_holdout_and_never_allocation_above_ninety(monkeypatch):
     hypothesis, experiment = _experiment(stage="paper_active", allocation=0.95)
-    _measurement(hypothesis, experiment, "positive")
+    _consume_confirmatory(
+        hypothesis, experiment, _measurement(hypothesis, experiment, "positive")
+    )
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
     from aletheia.learning.authority import resolve_learning_authority
 
@@ -1820,7 +1960,9 @@ def test_concurrent_promotion_attempts_create_one_durable_successor(tmp_path, mo
     run_migrations()
 
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
-    _measurement(hypothesis, experiment, "positive")
+    _consume_confirmatory(
+        hypothesis, experiment, _measurement(hypothesis, experiment, "positive")
+    )
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
     from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.storage.sqlite import get_db

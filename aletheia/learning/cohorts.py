@@ -228,8 +228,17 @@ class ContributionCohort:
         }
 
 
-def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
-    """Return validly scoped cohorts without modifying Learning or trading state."""
+def build_experiment_cohorts(
+    experiment_id: str,
+    *,
+    assignment_unit_keys: frozenset[str] | None = None,
+) -> list[ContributionCohort]:
+    """Return validly scoped cohorts without modifying Learning or trading state.
+
+    ``assignment_unit_keys`` freezes the evidence domain for confirmatory
+    inference.  Filtering happens before outcomes or integrity counters are
+    resolved, so later rows cannot change an already-declared fixed look.
+    """
     experiment_row = get_record("learning_experiments", experiment_id)
     if experiment_row is None:
         return []
@@ -246,6 +255,12 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
         "AND path_id=? ORDER BY datetime(exposed_at), exposure_id",
         (experiment.experiment_id, hypothesis.hypothesis_id, hypothesis.path_id),
     ).fetchall()]
+    if assignment_unit_keys is not None:
+        rows = [
+            row
+            for row in rows
+            if str(row.get("assignment_unit_key") or "") in assignment_unit_keys
+        ]
     epoch_ids = sorted({
         str(row.get("concurrent_policy_epoch") or "") for row in rows
         if row.get("concurrent_policy_epoch")

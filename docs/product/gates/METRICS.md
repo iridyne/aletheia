@@ -4,7 +4,7 @@
 > what a metric can prove; it does not record current values, progress, or an
 > observation-window checkpoint.
 >
-> Last aligned with code: 2026-08-06.
+> Last aligned with code: 2026-08-08.
 
 ## 1. Primary outcome
 
@@ -21,7 +21,7 @@ The current measured path is `universe_family_calibration`. Its software evidenc
 unit is one complete assignment cluster. Selected members contribute fixed-horizon
 net return; dropped members contribute zero under intent-to-treat allocation
 utility. The current metric version is
-`universe_family_calibration_cluster_allocation_utility_v5`.
+`universe_family_calibration_cluster_allocation_utility_v6`.
 
 ## 2. Learning qualification metrics
 
@@ -32,7 +32,8 @@ utility. The current metric version is
 | Continuous market days | At least 7 consecutive UTC dates with a complete eligible exposure unit from either arm; 50-per-arm sufficiency is independent and scoped to that run | `LearningExperiment.min_market_days` and verdict `market_day_coverage` |
 | Actual intervention | At least the per-arm minimum has consistent treatment permission and one or more members with a finite before/after behavior delta | Exposure manifest, before/after values, and cohort sample |
 | Contribution delta | Cost-aware treatment mean minus control mean | `learning/verdicts.py` |
-| Confidence interval | Deterministic bootstrap interval for the contribution delta | `learning/verdicts.py` |
+| Monitoring interval | Deterministic descriptive bootstrap interval for the contribution delta; never promotion authority | `learning/verdicts.py` |
+| Confirmatory decision | One prospective, outcome-blind frozen cutoff and one consumed fixed look at authority alpha `0.025` | `learning/fixed_look.py` and `learning_inference_decisions` |
 | Harm state | `indeterminate`, `clear`, or `breached`; underpowered evidence never claims safety | contribution verdict harm metrics |
 | Measurement identity | Exact hypothesis, stage, epoch, horizon, outcome contract, metric version, and behavior-contract hash | Learning ledger/authority resolver |
 | Operational health | Evaluator/lifecycle freshness, failures, watermark, and catch-up state | `learning_job_health` and `lco-v1` |
@@ -43,10 +44,14 @@ before that gap do not satisfy counts, economics, confidence, or harm gates
 afterward. Daily arm imbalance remains visible and is handled by the independent
 50-per-arm gate. Planned or partial outages have no implicit waiver when they leave
 a full UTC day uncovered. Metric v4 and UFC behavior contract v5 started the
-continuous-window cohort. Metric v5 and UFC behavior contract v6 start another
-from-zero cohort because effective-intervention sufficiency and its behavior-change
-provenance are now explicit positive/promotion qualifications; v4/v5 identity
-evidence remains immutable, non-authorizing history for the new contract.
+continuous-window cohort. Metric v5 and UFC behavior contract v6 started another
+from-zero cohort for explicit effective-intervention provenance. Metric v6 and UFC
+behavior contract v7 add the prospective fixed-look authority contract: recurring
+monitoring stays descriptive, one exposure-ordered cutoff is frozen without looking
+at outcomes, and exactly one matching confirmatory verdict may be consumed. Later
+samples cannot turn the same stage positive; current monitoring negative, invalid,
+or determinate harm remains an anytime safety withdrawal. Older identities remain
+immutable, non-authorizing history.
 
 ### Verdict meaning
 
@@ -56,7 +61,7 @@ evidence remains immutable, non-authorizing history for the new contract.
 | `invalid` | Identity, provenance, or economic evidence cannot support comparison |
 | `negative` | Treatment trails control or breaches a determinate harm gate |
 | `neutral` | Effect is practically small or confidence remains inconclusive |
-| `positive` | ITT cost-aware treatment improvement clears the practical/confidence threshold, actual-intervention minimum, and harm gate |
+| `positive` | ITT cost-aware treatment improvement clears the practical/confidence threshold, actual-intervention minimum, and harm gate; it grants promotion authority only when it is the consumed confirmatory fixed look |
 
 A healthy evaluator or a large cohort count cannot substitute for one of these
 measurement states.

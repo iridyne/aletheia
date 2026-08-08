@@ -18,7 +18,7 @@ _FAMILY = "momentum"
 _DIRECTION = "long"
 _MARKET_TYPE = "perp"
 _CALIBRATION_KEY = f"{_FAMILY}:{_DIRECTION}:{_MARKET_TYPE}"
-_METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v5"
+_METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v6"
 
 
 @pytest.mark.anyio
@@ -350,8 +350,15 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
         assert not cohorts[0].invalid_reasons
         assert not cohorts[0].exclusion_reasons
         verdicts = evaluate_experiment(experiment.experiment_id)
-        assert len(verdicts) == 1
-        verdict = verdicts[0]
+        monitoring = [row for row in verdicts if row.inference_role == "monitoring"]
+        assert len(monitoring) == 1
+        verdict = monitoring[0]
+        if experiment.stage.startswith("paper_"):
+            confirmatory = [
+                row for row in verdicts if row.inference_role == "confirmatory"
+            ]
+            assert len(confirmatory) == 1
+            assert confirmatory[0].authority_eligible is True
         harm = json.loads(verdict.harm_metrics_json)
         assert verdict.stage == experiment.stage
         assert verdict.target_horizon == "4h"
@@ -531,7 +538,13 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
         current_policy_epoch=epoch,
     )
     assert transition.action == "refreeze"
-    assert transition.verdict_id == negative.verdict_id
+    transition_verdict = get_record(
+        "learning_contribution_verdicts",
+        str(transition.verdict_id),
+    )
+    assert transition_verdict is not None
+    assert transition_verdict["verdict"] == "negative"
+    assert json.loads(transition_verdict["harm_metrics_json"])["breached"] is True
     persisted = get_record("learning_experiments", successor.experiment_id)
     assert persisted["status"] == "refrozen"
     assert persisted["ended_at"] is not None
@@ -583,7 +596,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     ).fetchall()
     assert {row["experiment_id"]: row["n"] for row in verdict_rows} == {
         shadow.experiment_id: 1,
-        successor.experiment_id: 1,
+        successor.experiment_id: 2,
     }
     exposure_rows = db.execute(
         "SELECT experiment_id,COUNT(*) AS n FROM learning_exposures "
@@ -597,7 +610,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     }
     assert db.execute(
         "SELECT COUNT(*) FROM learning_lifecycle_events WHERE verdict_id IN (?, ?)",
-        (shadow_verdict.verdict_id, negative.verdict_id),
+        (shadow_verdict.verdict_id, transition.verdict_id),
     ).fetchone()[0] == 2
 
     lifecycle_audits = [
@@ -615,7 +628,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     ]
     assert transitions[0]["metadata"]["successor_experiment_id"] == successor.experiment_id
     assert transitions[0]["metadata"]["verdict_id"] == shadow_verdict.verdict_id
-    assert transitions[1]["metadata"]["verdict_id"] == negative.verdict_id
+    assert transitions[1]["metadata"]["verdict_id"] == transition.verdict_id
 
     for table in (
         "trade_proposals",

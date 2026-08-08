@@ -250,6 +250,56 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     assert item["lifecycle"]["authority_enabled"] is False
 
 
+def test_lco_projection_never_recommends_promotion_from_monitoring_positive(
+    tmp_path,
+    monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+    from aletheia.learning.read_models import build_learning_contribution_projection
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "UPDATE learning_experiments SET stage='paper_10', allocation_pct=0.1 "
+        "WHERE experiment_id=?",
+        (experiment_id,),
+    )
+    row = db.execute(
+        "SELECT verdict_id,harm_metrics_json FROM learning_contribution_verdicts "
+        "WHERE experiment_id=?",
+        (experiment_id,),
+    ).fetchone()
+    metrics = json.loads(row["harm_metrics_json"])
+    metrics.update({
+        "harm_state": "clear",
+        "breached": False,
+        "assigned_treatment_n": 10,
+        "authority_applied_treatment_n": 10,
+        "actual_intervention_treatment_n": 10,
+        "baseline_treatment_n": 0,
+        "treatment_authority_rejection_reasons": {},
+        "treatment_non_intervention_reasons": {},
+    })
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET stage='paper_10', "
+        "verdict='positive', reason='descriptive positive', "
+        "unique_treatment_n=10, unique_control_n=10, harm_metrics_json=? "
+        "WHERE verdict_id=?",
+        (json.dumps(metrics), row["verdict_id"]),
+    )
+    db.commit()
+
+    item = build_learning_contribution_projection()["items"][0]
+    assert item["measurement"]["state"] == "positive"
+    assert item["measurement"]["inference_role"] == "monitoring"
+    assert item["lifecycle"]["recommended_action"] == "hold"
+    assert item["lifecycle"]["recommendation_reason"] == (
+        "inference_role_not_confirmatory"
+    )
+    assert item["inference"]["status"] == "not_registered"
+
+
 def test_lco_projection_reports_resolved_treatment_authority(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     _seed_current_experiment(monkeypatch)
@@ -322,9 +372,7 @@ def test_lco_projection_holds_positive_with_insufficient_actual_interventions(
     lifecycle = build_learning_contribution_projection()["items"][0]["lifecycle"]
 
     assert lifecycle["recommended_action"] == "hold"
-    assert lifecycle["recommendation_reason"] == (
-        "insufficient_actual_intervention_samples"
-    )
+    assert lifecycle["recommendation_reason"] == "inference_role_not_confirmatory"
 
 
 def test_lco_projection_marks_authority_read_failure_partial(tmp_path, monkeypatch):

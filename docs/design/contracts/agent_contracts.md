@@ -377,8 +377,8 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
   MAE; incomplete or legacy unit-less clusters are excluded
 - **Outcome precedence**: `filter_candidate_outcomes` is canonical full-arm truth;
   `universe_forward_outcomes` is a selected-member mirror/fallback and disagreement fails closed
-- **Outputs**: append-only verdicts under
-  `universe_family_calibration_cluster_allocation_utility_v5`; old metric verdicts remain history
+- **Outputs**: append-only monitoring and once-consumed confirmatory verdicts under
+  `universe_family_calibration_cluster_allocation_utility_v6`; old metric verdicts remain history
 - **Intervention provenance**: `authority_applied` records consistent treatment permission;
   finite before/after behavior change is separate, and an authorized cluster is an actual
   intervention only when at least one member changed
@@ -386,6 +386,10 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
   from either arm. Seven consecutive days plus 50 units in each arm inside that run are required;
   a missing day resets the current window, planned outages receive no implicit waiver, and verdict
   `created_at` remains evaluation time
+- **Inference semantics**: recurring results are descriptive monitoring. A Paper stage registered
+  before exposure freezes one outcome-blind assignment-unit cutoff, waits for those exact outcomes,
+  and consumes one confirmatory look at authority alpha `0.025`; cutoff-external rows cannot change
+  that decision, while current monitoring harm/negative/invalid evidence remains an anytime brake
 - **Authority**: measurement only; cannot change experiment stage, multiplier, paper authority,
   Risk, Execution, exchange, or live state
 - **Current owner projection**: the implemented bounded summary is read-only and

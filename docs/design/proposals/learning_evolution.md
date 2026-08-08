@@ -292,14 +292,17 @@ An artifact can promote only when:
 
 1. unique treatment/control samples and the consecutive market-day window are satisfied;
 2. treatment-control net-return delta exceeds the configured practical threshold;
-3. deterministic bootstrap confidence does not include a material negative effect;
+3. a pre-registered fixed-look confirmatory interval clears its declared authority threshold;
 4. no harm budget is breached;
 5. source, exposure, and outcome chains are complete;
 6. scheduler and data-quality health are green;
 7. no contradictory active artifact has equal or stronger evidence.
 
 `insufficient_data`, `neutral`, `positive`, and `negative` are distinct verdicts. Absence
-of evidence is never positive. A positive verdict expires unless continuously renewed.
+of evidence is never positive. Recurring monitoring positive is descriptive only; a Paper
+stage may promote only from its one consumed prospective confirmatory decision. Later
+monitoring remains an anytime harm/negative/invalid safety source, not another chance to
+obtain efficacy authority.
 
 Current runtime scope: the contribution evaluator is measurement-only and accepts only
 prospective `universe_family_calibration` exposures. It isolates experiment, policy epoch,
@@ -312,11 +315,12 @@ an identical mirror is not counted twice, absence of a canonical row may use the
 row, and economic disagreement fails closed. Ambiguous allocation identity excludes only that
 sample and remains explicit. Proven economic conflict metadata includes source row ids and exact
 differing fields; it does not authorize sample-level conflict exclusion. The evaluator persists
-deterministic confidence, harm, source provenance, and exclusion details. Its `positive` result is not an authority promotion
-signal, so it cannot enable a treatment or alter a multiplier.
+deterministic confidence, harm, source provenance, and exclusion details. A recurring monitoring
+`positive` result is not an authority promotion signal. Only the once-consumed, fixed-cutoff
+confirmatory result can be considered by the separate lifecycle gates.
 
 The evaluator uses metric version
-`universe_family_calibration_cluster_allocation_utility_v5`. Existing verdicts under older metric
+`universe_family_calibration_cluster_allocation_utility_v6`. Existing verdicts under older metric
 versions remain append-only history and cannot satisfy a current metric-identity gate. Verdict
 `created_at` records evaluation time; `window_start` and `window_end` continue to bound the
 observations used.
@@ -329,12 +333,14 @@ uninterrupted run must contain `min_market_days` dates. A UTC date with no eligi
 arm resets that run,
 and all pre-gap samples are excluded from the post-gap sample, economic, confidence and harm gates.
 Continuity is derived from durable exposure timestamps; transient scheduler health alone cannot
-reconstruct historical coverage. Planned and partial outages have no waiver representation in v6
+reconstruct historical coverage. Planned and partial outages have no waiver representation in v7
 and therefore fail closed. Bounded `market_day_coverage` metadata gives the owner the current run,
 missing-day counts and dates. Metric v4 and behavior contract v5 created the continuous-window
-cohort. Metric v5 and behavior contract v6 create a new from-zero identity for the stricter actual-
-intervention and behavior-change provenance qualification; older experiments and verdicts remain
-immutable, non-authorizing history.
+cohort. Metric v5 and behavior contract v6 created a from-zero identity for stricter actual-
+intervention provenance. Metric v6 and behavior contract v7 start another from-zero identity for
+prospective fixed-look authority: monitoring remains descriptive, the exposure-ordered cutoff is
+write-once, one confirmatory verdict is consumed, and each successor stage starts a fresh plan.
+Older experiments and verdicts remain immutable, non-authorizing history.
 
 The current harm contract uses the experiment's 50 assignment units per arm as the minimum
 determinate sample. A smaller cohort persists `harm_state=indeterminate`, blocks authority, and
