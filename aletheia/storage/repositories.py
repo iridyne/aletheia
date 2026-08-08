@@ -1195,6 +1195,59 @@ def active_defer_opportunity_ids(now_iso: str | None = None) -> set[str]:
     return {str(row["opportunity_id"]) for row in rows if row["opportunity_id"]}
 
 
+def next_pending_signal_defer_deadline(now_iso: str | None = None) -> str | None:
+    """Return the earliest durable Operator defer that is still owed a review.
+
+    The deadline remains visible after it passes, until the exact market-observer
+    carrier receives either a newer Operator observation or a terminal PI
+    decision.  This lets the daemon recover the promise after restart and avoids
+    heartbeat phase alignment becoming part of trading behavior.
+    """
+    if now_iso is None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+    row = get_db().execute(
+        "SELECT json_extract(defer.queue_snapshot_json,'$.defer_until') AS deadline "
+        "FROM operator_evaluation_events defer "
+        "JOIN opportunities source ON source.id="
+        " json_extract(defer.queue_snapshot_json,'$.opportunity_id') "
+        "WHERE defer.event_kind LIKE 'operator_decision_deferred_%' "
+        "AND datetime(json_extract(defer.queue_snapshot_json,'$.defer_until')) IS NOT NULL "
+        "AND source.status IN ('queued','reviewed') "
+        "AND datetime(source.valid_until)>datetime(?) "
+        "AND NOT EXISTS ("
+        " SELECT 1 FROM operator_evaluation_events newer "
+        " WHERE json_extract(newer.queue_snapshot_json,'$.opportunity_id')="
+        "       json_extract(defer.queue_snapshot_json,'$.opportunity_id') "
+        " AND (julianday(newer.created_at)>julianday(defer.created_at) "
+        "      OR (julianday(newer.created_at)=julianday(defer.created_at) "
+        "          AND newer.rowid>defer.rowid))"
+        ") "
+        "AND EXISTS ("
+        " SELECT 1 FROM pi_decisions pending "
+        " WHERE pending.opportunity_id=source.id "
+        " AND pending.action='signal_pending' "
+        " AND COALESCE(pending.signal_source,'market_observer')='market_observer' "
+        " AND NOT EXISTS ("
+        "  SELECT 1 FROM pi_decisions final "
+        "  WHERE final.opportunity_id=pending.opportunity_id "
+        "  AND COALESCE(final.signal_source,'market_observer')="
+        "      COALESCE(pending.signal_source,'market_observer') "
+        "  AND final.symbol IS pending.symbol "
+        "  AND final.direction IS pending.direction "
+        "  AND final.market_type IS pending.market_type "
+        "  AND final.action NOT IN ('signal_pending','close','reduce') "
+        "  AND COALESCE(final.proposal_status,'')!='submitting' "
+        "  AND (julianday(final.created_at)>julianday(pending.created_at) "
+        "       OR (julianday(final.created_at)=julianday(pending.created_at) "
+        "           AND final.rowid>pending.rowid))"
+        " )"
+        ") "
+        "ORDER BY datetime(deadline) ASC, defer.rowid ASC LIMIT 1",
+        (now_iso,),
+    ).fetchone()
+    return str(row["deadline"]) if row is not None and row["deadline"] else None
+
+
 def latest_direct_skip_defer_for_setup(
     symbol: str,
     direction: str,
