@@ -270,9 +270,10 @@ def _materialize_paper_entry(
                 )
                 from aletheia.portfolio.paper_account import record_position_opened
 
-                # The Position, first immutable ExitPlan, protection cursor and
-                # paper cash reservation share this outer transaction.  A new
-                # local position must never commit only half protected.
+                # When the approved entry has a resolved protective level, the
+                # Position, first immutable ExitPlan, protection cursor and paper
+                # cash reservation share this outer transaction. Level-less Paper
+                # entries retain their existing contract without fabricated state.
                 activate_new_paper_position(position_id)
                 record_position_opened(position_id)
         # Every entry leg, including an averaging leg, retains a direct backlink

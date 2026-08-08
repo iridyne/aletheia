@@ -80,15 +80,18 @@ def activate_new_paper_position(position_id: str) -> dict:
         return {"activated": False, "reason": "already_activated"}
 
     cfg = load_config()
+    resolved = effective_exit_plan(position, cfg)
+    if resolved.stop_price is None and resolved.target_price is None:
+        # Paper historically permits an approved native Proposal without an SL/TP.
+        # There is no barrier to evaluate, so preserve that entry contract without
+        # fabricating an ExitPlan, venue identity, or cursor.
+        return {"activated": False, "reason": "no_resolved_protective_level"}
     venue = protective_price_venue(
         "paper_internal",
         configured_data_venue=cfg.market_data.ccxt_exchange,
     )
     if not venue:
         raise ValueError("paper protection venue is unavailable")
-    resolved = effective_exit_plan(position, cfg)
-    if resolved.stop_price is None and resolved.target_price is None:
-        raise ValueError("paper position has no resolved protective level")
 
     effective_at = str(position.get("opened_at") or "")
     activated_ms = _timestamp_ms(effective_at)

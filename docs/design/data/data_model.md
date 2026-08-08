@@ -681,7 +681,9 @@ Every paper cash delta and resulting cash balance must be finite. The HTTP
 ## 11. Protective Barrier Contract (schema v9 storage; new paper runtime active)
 
 Schema v9 provides the durable substrate. The runtime consumer activates it only
-inside the transaction that opens a new `paper_internal` Position. Migration and
+inside the transaction that opens a new `paper_internal` Position with at least
+one resolved protective level. A level-less Paper entry does not fabricate an
+ExitPlan or cursor. Migration and
 restart never backfill historical Positions or backdate a cursor. The protective
 scheduler evaluates only the frozen exact instrument's completed 1-minute bar;
 missing data remains a visible gap and a bar bisected by an ExitPlan change is

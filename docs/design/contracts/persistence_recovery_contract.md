@@ -9,8 +9,9 @@ reconciliation before startup, or `SAFE_FREEZE` enforcement.
 
 Schema v9 also retains the protective-barrier substrate defined by
 [`data_model` §11](../data/data_model.md#11-protective-barrier-contract-schema-v9-storage-new-paper-runtime-active).
-The consumer is wired only for newly opened `paper_internal` Positions; storage
-does not claim historical backfill or external-exchange protection.
+The consumer is wired only for newly opened `paper_internal` Positions that have
+a resolved protective level; storage does not claim historical backfill,
+protection for level-less entries, or external-exchange protection.
 
 The future safety design is
 [`gateway_recovery.md`](../proposals/gateway_recovery.md).
@@ -66,7 +67,7 @@ into a successful write. Current startup does not enter a mandatory
 and does not enforce `SAFE_FREEZE` from the dormant recovery state machine.
 
 Schema v9 still does not initialize old Positions. The wired consumer resumes
-only rows explicitly activated when a new local-paper Position committed, from
+only rows explicitly activated when a protected new local-paper Position committed, from
 their stored exact 1-minute cursor. It fails closed on a gap or unknown physical
 market and never reinterprets missing trigger evidence as proof that no barrier
 was crossed. A recorded trigger may retry the existing native local close after
