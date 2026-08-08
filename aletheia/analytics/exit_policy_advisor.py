@@ -4,6 +4,7 @@ Proposes exit-policy changes but NEVER applies them. Output is data only.
 
 Read-only. No DB mutations. No LLM calls. No config writes.
 """
+
 from __future__ import annotations
 
 import logging
@@ -56,9 +57,7 @@ def build_exit_policy_advice(limit: int = 500, min_trades: int = 3) -> list[dict
     return results
 
 
-def _diagnose_group(
-    key_value: str, group_type: str, rows: list[dict], min_trades: int
-) -> dict:
+def _diagnose_group(key_value: str, group_type: str, rows: list[dict], min_trades: int) -> dict:
     """Diagnose exit policy for a group of trades."""
     trade_count = len(rows)
 
@@ -84,8 +83,14 @@ def _diagnose_group(
         confidence = "low"
     else:
         diagnosis, suggested, confidence = _classify_exit_problem(
-            rows, avg_mfe, avg_mae, avg_realized, avg_capture,
-            common_close_reason, bucket_counts, trade_count,
+            rows,
+            avg_mfe,
+            avg_mae,
+            avg_realized,
+            avg_capture,
+            common_close_reason,
+            bucket_counts,
+            trade_count,
         )
 
     return {
@@ -120,6 +125,7 @@ def _classify_exit_problem(
     # Count dominant buckets as fractions
     bad_entry_frac = bucket_counts.get("bad_entry", 0) / total
     stop_tight_frac = bucket_counts.get("stop_too_tight", 0) / total
+    profit_giveback_frac = bucket_counts.get("profit_giveback_before_stop", 0) / total
     edge_lost_frac = bucket_counts.get("edge_lost", 0) / total
     time_decay_frac = bucket_counts.get("time_exit_decay", 0) / total
     tp_early_frac = bucket_counts.get("take_profit_too_early", 0) / total
@@ -138,6 +144,16 @@ def _classify_exit_problem(
             return "stop_too_tight", "switch_to_atr_stop", "high"
         return "stop_too_tight", "increase_stop_loss_pct", "medium"
 
+    # Ordered exact-protection evidence proves that a favorable excursion
+    # preceded the first stop barrier. It does not prove which replacement
+    # policy is profitable, so only recommend the prospective paired shadow.
+    if profit_giveback_frac >= 0.3:
+        return (
+            "profit_giveback_before_stop",
+            "evaluate_breakeven_or_trailing_shadow",
+            "medium",
+        )
+
     # Edge lost: had MFE but couldn't capture it
     if edge_lost_frac >= 0.3:
         return "edge_lost", "add_trailing_stop_candidate", "medium"
@@ -146,7 +162,8 @@ def _classify_exit_problem(
     if time_decay_frac >= 0.3:
         # Check if MFE came early (first half of bars)
         early_mfe_count = sum(
-            1 for r in rows
+            1
+            for r in rows
             if r.get("time_to_mfe_bars") is not None
             and r.get("bars_in_trade") is not None
             and r["time_to_mfe_bars"] < r["bars_in_trade"] * 0.4
