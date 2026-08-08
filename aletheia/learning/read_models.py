@@ -426,8 +426,8 @@ def _project_experiment(
     mutation_available = False
     if recommended == "admit_trial" and current_verdict is not None:
         from aletheia.learning.authority import (
-            measurement_harm_block_reason,
             measurement_identity_reason,
+            trial_admission_measurement_block_reason,
         )
         from aletheia.learning.lifecycle import trial_admission_gate_reason
 
@@ -443,7 +443,11 @@ def _project_experiment(
                 expected_horizon=str(row.get("target_horizon") or ""),
                 expected_behavior_contract_hash=behavior_contract_hash,
                 expected_hypothesis_id=str(row.get("hypothesis_id") or ""),
-            ) or measurement_harm_block_reason(current_verdict)
+            ) or trial_admission_measurement_block_reason(
+                current_verdict,
+                required_per_arm=_safe_int(row.get("min_samples_per_arm")) or 1,
+                required_market_days=_safe_int(row.get("min_market_days")) or 0,
+            )
         mutation_available = mutation_reason is None
 
     authority_enabled = False
@@ -794,7 +798,13 @@ def _identity_mismatch(
 
 
 def _recommended_action(state: str, reason: str | None, *, stage: str) -> str:
-    if stage == "shadow" and state == "insufficient_data" and reason == "no_actual_intervention":
+    from aletheia.learning.authority import TRIAL_ADMISSION_REASONS
+
+    if (
+        stage == "shadow"
+        and state == "insufficient_data"
+        and reason in TRIAL_ADMISSION_REASONS
+    ):
         return "admit_trial"
     return {
         "positive": "promote_stage" if stage != "shadow" else "admit_trial",

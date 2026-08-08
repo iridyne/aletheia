@@ -642,6 +642,67 @@ def test_lco_projection_reports_protected_admission_readiness(
     assert lifecycle_view["mutation_unavailable_reason"] is None
 
 
+def test_lco_projection_reports_integrity_ready_admission_with_underpowered_harm(
+    tmp_path,
+    monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    row = db.execute(
+        "SELECT harm_metrics_json FROM learning_contribution_verdicts "
+        "WHERE experiment_id=?",
+        (experiment_id,),
+    ).fetchone()
+    metrics = json.loads(row[0])
+    metrics.update({
+        "assigned_treatment_n": 10,
+        "baseline_treatment_n": 10,
+        "authority_applied_treatment_n": 0,
+        "actual_intervention_treatment_n": 0,
+        "treatment_authority_rejection_reasons": {
+            "experiment_stage_not_paper": 10,
+        },
+        "trial_integrity_readiness": {
+            "contract_version": "ufc-shadow-trial-integrity/v1",
+            "required_per_arm": 10,
+            "required_market_days": 1,
+            "qualified_treatment_n": 10,
+            "qualified_control_n": 10,
+            "current_consecutive_market_days": 1,
+            "status": "ready",
+        },
+    })
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET reason=?, "
+        "unique_treatment_n=10, unique_control_n=10, harm_metrics_json=? "
+        "WHERE experiment_id=?",
+        (
+            "trial_integrity_ready_no_actual_intervention",
+            json.dumps(metrics),
+            experiment_id,
+        ),
+    )
+    db.commit()
+
+    import aletheia.learning.lifecycle as lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "trial_admission_gate_reason",
+        lambda _path_id, **_kwargs: None,
+    )
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    lifecycle_view = build_learning_contribution_projection()["items"][0]["lifecycle"]
+
+    assert lifecycle_view["recommended_action"] == "admit_trial"
+    assert lifecycle_view["mutation_available"] is True
+    assert lifecycle_view["mutation_unavailable_reason"] is None
+
+
 def test_lco_projection_never_offers_admission_with_indeterminate_harm(
     tmp_path,
     monkeypatch,

@@ -50,10 +50,10 @@ def test_read_only_verdict_runtime_surface_exists():
     assert "behavior_changed" in {field.name for field in fields(CohortSample)}
     assert "behavior_change_reason" in {field.name for field in fields(CohortSample)}
     assert "assignment_unit_key" in {field.name for field in fields(CohortSample)}
-    assert METRIC_VERSION == "universe_family_calibration_cluster_allocation_utility_v6"
+    assert METRIC_VERSION == "universe_family_calibration_cluster_allocation_utility_v7"
     assert (
         get_learning_path("universe_family_calibration").behavior_contract_version
-        == "universe-family-calibration/v7"
+        == "universe-family-calibration/v8"
     )
 
 

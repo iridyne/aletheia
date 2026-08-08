@@ -24,7 +24,13 @@ from aletheia.learning.ledger import (
 )
 from aletheia.learning.models import LearningExperiment
 from aletheia.learning.behavior_contracts import current_behavior_contract_hash
-from aletheia.learning.verdicts import METRIC_VERSION
+from aletheia.learning.verdicts import (
+    METRIC_VERSION,
+    SHADOW_TRIAL_INTEGRITY_CONTRACT,
+    SHADOW_TRIAL_INTEGRITY_REASON,
+    SHADOW_TRIAL_MIN_MARKET_DAYS,
+    SHADOW_TRIAL_MIN_SAMPLES_PER_ARM,
+)
 from aletheia.learning.fixed_look import (
     inference_authority_reason,
     inference_collection_reason,
@@ -40,6 +46,10 @@ PREVIOUS_STAGE = {
 }
 MEASUREMENT_VERDICTS = frozenset({
     "positive", "neutral", "negative", "insufficient_data", "invalid",
+})
+TRIAL_ADMISSION_REASONS = frozenset({
+    "no_actual_intervention",
+    SHADOW_TRIAL_INTEGRITY_REASON,
 })
 _AUTHORITY_RETIRED_PATH_IDS = frozenset({"operator_learning_bundle"})
 
@@ -224,9 +234,15 @@ def resolve_learning_authority(
     if experiment.stage == "paper_10":
         trial_admission = get_trial_admission_event(experiment.experiment_id)
     activation_is_positive = activation.get("verdict") == "positive"
+    activation_admission_reason = trial_admission_measurement_block_reason(
+        activation,
+        required_per_arm=experiment.min_samples_per_arm,
+        required_market_days=experiment.min_market_days,
+    )
     activation_is_admitted_trial = (
         activation.get("verdict") == "insufficient_data"
-        and activation.get("reason") == "no_actual_intervention"
+        and activation.get("reason") in TRIAL_ADMISSION_REASONS
+        and activation_admission_reason is None
         and trial_admission is not None
         and trial_admission.get("verdict_id") == experiment.activation_verdict_id
         and trial_admission.get("from_stage") == "shadow"
@@ -268,7 +284,11 @@ def resolve_learning_authority(
             expected_horizon=expected_horizon,
             expected_behavior_contract_hash=expected_behavior_contract_hash,
             expected_hypothesis_id=experiment.hypothesis_id,
-        ) or measurement_harm_block_reason(activation)
+        ) or (
+            None
+            if activation_is_admitted_trial
+            else measurement_harm_block_reason(activation)
+        )
         if activation_reason:
             return blocked(activation_reason)
         return AuthorityDecision(
@@ -500,4 +520,90 @@ def measurement_identity_reason(
         return "metric_version_mismatch"
     if str(behavior_contract_hash) != expected_behavior_contract_hash:
         return "behavior_contract_mismatch"
+    return None
+
+
+def trial_admission_measurement_block_reason(
+    verdict: dict[str, Any],
+    *,
+    required_per_arm: int,
+    required_market_days: int,
+) -> str | None:
+    """Validate the distinct evidence contract for first bounded Paper authority."""
+
+    reason = str(verdict.get("reason") or "")
+    if str(verdict.get("verdict") or "") != "insufficient_data":
+        return "verdict_not_insufficient_data"
+    if reason == "no_actual_intervention":
+        # Mature v6-compatible Shadow evidence remains admissible only when its
+        # original full harm gate is clear.
+        return measurement_harm_block_reason(verdict)
+    if reason != SHADOW_TRIAL_INTEGRITY_REASON:
+        return "verdict_not_trial_integrity_ready"
+    try:
+        metrics = json.loads(verdict.get("harm_metrics_json") or "{}")
+    except (TypeError, ValueError):
+        return "trial_integrity_metadata_invalid"
+    if not isinstance(metrics, dict):
+        return "trial_integrity_metadata_invalid"
+    treatment_n = _non_negative_int(verdict.get("unique_treatment_n"))
+    control_n = _non_negative_int(verdict.get("unique_control_n"))
+    assigned_n = _non_negative_int(metrics.get("assigned_treatment_n"))
+    authority_n = _non_negative_int(metrics.get("authority_applied_treatment_n"))
+    actual_n = _non_negative_int(metrics.get("actual_intervention_treatment_n"))
+    baseline_n = _non_negative_int(metrics.get("baseline_treatment_n"))
+    if None in {treatment_n, control_n, assigned_n, authority_n, actual_n, baseline_n}:
+        return "trial_integrity_metadata_invalid"
+    samples_required = min(
+        SHADOW_TRIAL_MIN_SAMPLES_PER_ARM,
+        max(1, int(required_per_arm)),
+    )
+    if min(treatment_n, control_n) < samples_required:
+        return "trial_integrity_samples_insufficient"
+    if assigned_n != treatment_n or baseline_n != assigned_n:
+        return "trial_integrity_count_mismatch"
+    if authority_n != 0 or actual_n != 0:
+        return "trial_integrity_intervention_present"
+    coverage = metrics.get("market_day_coverage")
+    if not isinstance(coverage, dict):
+        return "trial_integrity_metadata_invalid"
+    covered_days = _non_negative_int(coverage.get("current_consecutive_market_days"))
+    if covered_days is None:
+        return "trial_integrity_metadata_invalid"
+    days_required = min(
+        SHADOW_TRIAL_MIN_MARKET_DAYS,
+        max(0, int(required_market_days)),
+    )
+    if covered_days < days_required:
+        return "trial_integrity_market_days_insufficient"
+    readiness = metrics.get("trial_integrity_readiness")
+    if (
+        not isinstance(readiness, dict)
+        or readiness.get("contract_version") != SHADOW_TRIAL_INTEGRITY_CONTRACT
+        or readiness.get("status") != "ready"
+        or _non_negative_int(readiness.get("required_per_arm")) != samples_required
+        or _non_negative_int(readiness.get("required_market_days")) != days_required
+        or _non_negative_int(readiness.get("qualified_treatment_n")) != treatment_n
+        or _non_negative_int(readiness.get("qualified_control_n")) != control_n
+        or _non_negative_int(readiness.get("current_consecutive_market_days"))
+        != covered_days
+    ):
+        return "trial_integrity_contract_invalid"
+    if metrics.get("invalid_reasons"):
+        return "trial_integrity_evidence_invalid"
+    rejections = metrics.get("treatment_authority_rejection_reasons")
+    if (
+        not isinstance(rejections, dict)
+        or set(rejections) != {"experiment_stage_not_paper"}
+        or _non_negative_int(rejections.get("experiment_stage_not_paper")) != assigned_n
+    ):
+        return "trial_integrity_authority_provenance_invalid"
+    if bool(metrics.get("breached")) or metrics.get("harm_state") == "breached":
+        return "harm_gate_breached"
+    harm_is_underpowered = (
+        metrics.get("harm_state") == "indeterminate"
+        and metrics.get("harm_indeterminate_reason") == "insufficient_samples"
+    )
+    if metrics.get("harm_state") != "clear" and not harm_is_underpowered:
+        return "trial_integrity_harm_state_invalid"
     return None

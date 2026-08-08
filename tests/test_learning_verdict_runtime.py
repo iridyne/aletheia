@@ -1364,6 +1364,70 @@ def test_shadow_without_actual_intervention_is_not_a_causal_verdict(treatment_ne
     assert verdict.code_commit == "test-commit"
 
 
+def test_shadow_integrity_readiness_does_not_wait_for_promotion_window():
+    hypothesis, experiment = _experiment(
+        min_samples=50, min_days=7, stage="shadow",
+    )
+    for index in range(10):
+        for assignment in ("treatment", "control"):
+            candidate = f"integrity-{assignment}-{index}"
+            _exposure(
+                experiment,
+                hypothesis,
+                candidate=candidate,
+                assignment=assignment,
+                exposed_at=_iso(),
+                authority_applied=False,
+                authority_reason="experiment_stage_not_paper",
+            )
+            _outcome(candidate, net=0.1 if assignment == "treatment" else 0.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "insufficient_data"
+    assert verdict.reason == "trial_integrity_ready_no_actual_intervention"
+    assert verdict.unique_treatment_n == 10
+    assert verdict.unique_control_n == 10
+    assert metrics["market_day_coverage"]["current_consecutive_market_days"] == 1
+    assert metrics["market_day_coverage"]["status"] == "gap"
+    assert metrics["harm_state"] == "indeterminate"
+    assert metrics["actual_intervention_treatment_n"] == 0
+    assert metrics["trial_integrity_readiness"] == {
+        "contract_version": "ufc-shadow-trial-integrity/v1",
+        "required_per_arm": 10,
+        "required_market_days": 1,
+        "qualified_treatment_n": 10,
+        "qualified_control_n": 10,
+        "current_consecutive_market_days": 1,
+        "status": "ready",
+    }
+
+
+def test_shadow_integrity_readiness_requires_ten_complete_units_per_arm():
+    hypothesis, experiment = _experiment(
+        min_samples=50, min_days=7, stage="shadow",
+    )
+    for assignment, count in (("treatment", 10), ("control", 9)):
+        for index in range(count):
+            candidate = f"underpowered-{assignment}-{index}"
+            _exposure(
+                experiment,
+                hypothesis,
+                candidate=candidate,
+                assignment=assignment,
+                exposed_at=_iso(),
+                authority_applied=False,
+                authority_reason="experiment_stage_not_paper",
+            )
+            _outcome(candidate, net=0.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+
+    assert verdict.verdict == "insufficient_data"
+    assert verdict.reason == "insufficient unique prospective treatment/control samples"
+
+
 def test_baseline_treatment_units_do_not_satisfy_actual_intervention_gate():
     hypothesis, experiment = _experiment(min_samples=2, stage="paper_10")
     for candidate, applied, net, reason in (
