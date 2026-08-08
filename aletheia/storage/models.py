@@ -1,7 +1,9 @@
 """Pydantic models for storage entities."""
 
 from datetime import datetime, timezone
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 from uuid import uuid4
 
 
@@ -415,6 +417,10 @@ class Position(_Provenanced):
     take_profit_price: float | None = None
     close_reason: str | None = None
     # JSON record written only after a close succeeds. It names the real actor
+    # Current immutable ExitPlan projection.  The timestamp resolves against
+    # position_exit_plan_versions; NULL means protection has not been activated.
+    # The v9 storage migration adds this field without backfilling old rows.
+    exit_plan_effective_at: str | None = None
     # and source (AI, automatic protection, manual, or reconciliation), avoiding
     # any retrospective invention of an AI rationale for a mechanical close.
     exit_reasoning: str | None = None
@@ -480,6 +486,91 @@ class Position(_Provenanced):
     last_market_signal_reason: str | None = None
     last_market_signal_at: str | None = None
     last_market_signal_evidence: str | None = None
+
+
+class PositionExitPlanVersion(BaseModel):
+    """One append-only resolved ExitPlan for a Position."""
+
+    model_config = ConfigDict(allow_inf_nan=False, extra="forbid", frozen=True)
+
+    position_id: str
+    version: int = Field(ge=1)
+    effective_at: str
+    stop_price: float | None = Field(default=None, gt=0)
+    take_profit_price: float | None = Field(default=None, gt=0)
+    exit_limit_price: float | None = Field(default=None, gt=0)
+    exit_limit_source: Literal["human", "system_operator"] | None = None
+    plan_json: str
+    plan_hash: str
+    provenance: str
+    created_at: str = Field(default_factory=_utcnow)
+
+
+class PositionProtectionState(BaseModel):
+    """Insert-only activation state for one exact physical Position instrument.
+
+    First-trigger evidence is stored separately as an immutable fact.  This
+    state retains only its write-once trigger projection and close linkage;
+    every mutation goes through a compare-and-set repository API.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    position_id: str
+    venue: str
+    symbol: str
+    market_type: Literal["spot", "perp"]
+    timeframe: Literal["1m"] = "1m"
+    activated_at: str
+    next_bar_open_ms: int = Field(ge=0)
+    last_evaluated_bar_open_ms: int | None = Field(default=None, ge=0)
+    last_inspected_bar_open_ms: int | None = Field(default=None, ge=0)
+    status: Literal[
+        "active",
+        "gap",
+        "triggered",
+        "materialized",
+        "superseded",
+        "integrity_blocked",
+    ] = "active"
+    gap_reason: str | None = None
+    gap_detected_at: str | None = None
+    gap_count: int = Field(default=0, ge=0)
+    recent_error: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+
+
+class PositionProtectionTrigger(BaseModel):
+    """Complete first-trigger evidence for one frozen 1-minute instrument."""
+
+    model_config = ConfigDict(allow_inf_nan=False, extra="forbid", frozen=True)
+
+    position_id: str
+    trigger_id: str
+    detected_at: str
+    venue: str
+    symbol: str
+    market_type: Literal["spot", "perp"]
+    timeframe: Literal["1m"] = "1m"
+    bar_open_ms: int = Field(ge=0)
+    bar_close_ms: int = Field(gt=0)
+    bar_open: float = Field(gt=0)
+    bar_high: float = Field(gt=0)
+    bar_low: float = Field(gt=0)
+    bar_close: float = Field(gt=0)
+    bar_volume: float = Field(ge=0)
+    provider: str
+    bar_hash: str
+    plan_version: int = Field(ge=1)
+    plan_effective_at: str
+    plan_hash: str
+    stop_price: float | None = Field(default=None, gt=0)
+    upside_price: float | None = Field(default=None, gt=0)
+    stop_hit: bool
+    target_hit: bool
+    reason: str
+    collision_policy: Literal["stop_first_v1"] = "stop_first_v1"
 
 
 class PositionDisappearanceCandidate(BaseModel):

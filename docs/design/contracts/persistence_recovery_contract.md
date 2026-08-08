@@ -7,6 +7,10 @@ and selected policy/learning state. These stores survive a normal process
 restart. This Contract does not claim automatic Gateway recovery, exchange
 reconciliation before startup, or `SAFE_FREEZE` enforcement.
 
+Schema v9 also retains the dormant protective-barrier substrate defined by
+[`data_model` §11](../data/data_model.md#11-protective-barrier-storage-contract-schema-v9-dormant).
+Persistence is not a claim that its runtime consumer is wired.
+
 The future safety design is
 [`gateway_recovery.md`](../proposals/gateway_recovery.md).
 
@@ -27,6 +31,7 @@ The future safety design is
 | Append-only event log | reconciliation and learning/policy readers |
 | Artifact store | lessons, skills, policies, and operator-facing readers |
 | Deterministic client order ids | supported exchange adapter submission paths |
+| `position_exit_plan_versions` / `position_protection_state` / `position_protection_triggers` | storage repositories only; no scheduler/evaluator/close consumer yet |
 
 An in-memory object is never promoted to durable fact merely because a class or
 test exists.
@@ -36,6 +41,7 @@ test exists.
 After a normal application restart, committed SQLite rows, appended events, and
 stored artifacts remain readable by their existing consumers. Repeating an
 order intent through a currently wired adapter uses its deterministic identity.
+Explicitly written protection rows survive restart without being inferred or replayed.
 
 ## Invariants and trust boundaries
 
@@ -43,6 +49,8 @@ order intent through a currently wired adapter uses its deterministic identity.
 - Event records are append-only.
 - Artifact manifests identify immutable persisted content.
 - Secrets and dirty runtime state are excluded from sync/export artifacts.
+- Protective-barrier storage obeys the immutable/CAS/retention invariants in
+  `data_model` §11.
 - A recovery class with no production caller is not a recovery guarantee.
 - Backup evidence has three distinct levels: archive created, archive integrity
   verified, and an isolated restore successfully opened and passed the relevant
@@ -55,6 +63,12 @@ Storage failures must remain visible to their caller and must not be converted
 into a successful write. Current startup does not enter a mandatory
 `RECOVERY_MODE`, does not guarantee exchange reconciliation before new work,
 and does not enforce `SAFE_FREEZE` from the dormant recovery state machine.
+
+Likewise, schema v9 does not initialize old Positions, fetch or inspect OHLCV,
+resume a barrier evaluator, create a close Order, or close a Position. A future
+recovery consumer must resume from the stored exact 1-minute cursor and fail
+closed on a gap or unknown physical market; it must not backdate activation or
+reinterpret a missing trigger as proof that no barrier was crossed.
 
 Those absent guarantees are a product gap, not current Contract behavior. Their
 approved target and rollback boundary are recorded in the Gateway Recovery
@@ -109,3 +123,8 @@ recovery components from being presented as active runtime guarantees.
 `tests/test_export_routes.py` verifies the removed migration claim, Agent-trace
 closure, versioned manifest, row counts/checksums, explicit exclusion classes,
 redacted configuration, and the managed backup/restore pointer.
+
+`tests/test_position_protection_storage.py` and the v8-to-v9 migration checks in
+`tests/test_migration_fast_path.py` verify the dormant storage substrate,
+append/compare-and-set atomicity, retention, and first-trigger write-once rules;
+they do not constitute scheduler, market-data, close-path, or restart-soak proof.
