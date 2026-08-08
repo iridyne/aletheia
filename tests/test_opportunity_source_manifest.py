@@ -122,6 +122,70 @@ async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
     }
 
 
+@pytest.mark.asyncio
+async def test_proposal_preflight_rejects_scanner_t0_direction_conflict(
+    tmp_path, monkeypatch,
+):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.trading_decision import (
+        DecisionUnavailable,
+        TradingDecision,
+        prepare_decision_as_proposal,
+    )
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.repositories import insert_opportunity
+
+    opportunity = Opportunity(
+        id="corrupted-direction-carrier",
+        symbol="SLX/USDT",
+        market="usdt_futures",
+        direction_bias="long",
+        source_agent="universe_scanner",
+        scanner_family="mean_reversion",
+        metadata=json.dumps({
+            "evidence_manifest": {
+                "version": "opportunity-information-integrity-v1",
+                "t0": {
+                    "status": "available",
+                    "trigger_type": "universe_scanner",
+                    "direction": "short",
+                },
+            },
+        }),
+    )
+    insert_opportunity(opportunity)
+    decision = TradingDecision(
+        action="trade",
+        symbol=opportunity.symbol,
+        market_type=opportunity.market,
+        direction="long",
+        conviction=70,
+        reasoning="trade the corrupted long carrier",
+        opportunity_id=opportunity.id,
+        scanner_family=opportunity.scanner_family,
+    )
+
+    with pytest.raises(
+        DecisionUnavailable,
+        match="opportunity_direction_lineage_conflict",
+    ):
+        await prepare_decision_as_proposal(decision, "paper_internal")
+
+    assert decision.filter_trace[-1] == {
+        "filter_name": "opportunity_direction_lineage",
+        "stage": "proposal_submission",
+        "decision": "rejected",
+        "reason_code": "opportunity_direction_lineage_conflict",
+        "inputs": {
+            "opportunity_id": opportunity.id,
+            "source_agent": "universe_scanner",
+            "scanner_direction": "short",
+            "decision_direction": "long",
+        },
+        "parameters": {"direction_match_required": True},
+    }
+
+
 def test_universe_opportunity_metadata_has_bounded_exact_t0_trigger():
     from aletheia.universe.signal_emitter import emit_deterministic_opportunities
 

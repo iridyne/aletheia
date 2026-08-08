@@ -1000,6 +1000,73 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         })
         raise DecisionUnavailable(identity_failure, stage="proposal_preflight")
 
+    # A Universe Scanner carrier cannot authorize the opposite trade direction.
+    # T0 is the immutable producer fact; the mutable Opportunity projection may
+    # contain legacy rows whose outer direction was rewritten by enrichment.
+    if decision.opportunity_id and decision.signal_source == "market_observer":
+        from aletheia.storage.repositories import get_opportunity
+
+        source_opportunity = get_opportunity(decision.opportunity_id)
+        if source_opportunity:
+            raw_metadata = source_opportunity.get("metadata") or {}
+            try:
+                metadata = (
+                    raw_metadata
+                    if isinstance(raw_metadata, dict)
+                    else json.loads(raw_metadata)
+                )
+            except (TypeError, ValueError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            evidence_manifest = metadata.get("evidence_manifest") or {}
+            if not isinstance(evidence_manifest, dict):
+                evidence_manifest = {}
+            t0 = evidence_manifest.get("t0") or {}
+            if not isinstance(t0, dict):
+                t0 = {}
+
+            source_agent = str(
+                source_opportunity.get("source_agent") or ""
+            ).strip().lower()
+            trigger_type = str(t0.get("trigger_type") or "").strip().lower()
+            scanner_owned = (
+                source_agent == "universe_scanner"
+                or trigger_type == "universe_scanner"
+            )
+            scanner_direction = str(t0.get("direction") or "").strip().lower()
+            decision_direction = str(decision.direction or "").strip().lower()
+            if (
+                scanner_owned
+                and scanner_direction in {"long", "short"}
+                and decision_direction in {"long", "short"}
+            ):
+                direction_matches = scanner_direction == decision_direction
+                reason = (
+                    "opportunity_direction_lineage_match"
+                    if direction_matches
+                    else "opportunity_direction_lineage_conflict"
+                )
+                decision.filter_trace.append({
+                    "filter_name": "opportunity_direction_lineage",
+                    "stage": "proposal_submission",
+                    "decision": "passed" if direction_matches else "rejected",
+                    "reason_code": reason,
+                    "inputs": {
+                        "opportunity_id": decision.opportunity_id,
+                        "source_agent": source_agent,
+                        "scanner_direction": scanner_direction,
+                        "decision_direction": decision_direction,
+                    },
+                    "parameters": {"direction_match_required": True},
+                })
+                if not direction_matches:
+                    raise DecisionUnavailable(
+                        reason,
+                        stage="proposal_preflight",
+                        filter_trace=list(decision.filter_trace),
+                    )
+
     missing_parameter_reasons = [
         key for key in _ENTRY_PARAMETER_KEYS
         if not isinstance(decision.parameter_rationale.get(key), str)
