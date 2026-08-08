@@ -226,6 +226,11 @@ function StatusBar() {
     .sort((a, b) => eventPriority(a, connectivityState) - eventPriority(b, connectivityState) || Date.parse(b.created_at) - Date.parse(a.created_at))
     .slice(0, 5)
 
+  const acknowledgeInfraMut = useMutation({
+    mutationFn: api.acknowledgeInfraEvents,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['infra-events'] }),
+  })
+
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
@@ -453,7 +458,17 @@ function StatusBar() {
 
           {recentInfraEvents.length > 0 && (
             <div className="sp-section">
-              <div className="sp-section-label">Infra Events</div>
+              <div className="sp-section-heading">
+                <div className="sp-section-label">Infra Events</div>
+                <button
+                  type="button"
+                  className="sp-events-ack"
+                  disabled={acknowledgeInfraMut.isPending}
+                  onClick={() => acknowledgeInfraMut.mutate()}
+                >
+                  {acknowledgeInfraMut.isPending ? 'Clearing…' : 'Mark all read'}
+                </button>
+              </div>
               <div className="sp-events">
                 {recentInfraEvents.map((e, idx) => (
                   <div key={`${e.created_at}-${e.code}-${idx}`} className="sp-event-row">
@@ -469,6 +484,9 @@ function StatusBar() {
                   </div>
                 ))}
               </div>
+              {acknowledgeInfraMut.isError && (
+                <div className="sp-events-error">Could not clear events. Check remote-control authorization.</div>
+              )}
             </div>
           )}
 

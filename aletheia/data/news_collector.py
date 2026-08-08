@@ -100,7 +100,6 @@ async def fetch_news_feeds() -> dict:
     if not active_feeds:
         return {"fetched": 0, "new": 0}
 
-    db = get_db()
     loop = asyncio.get_event_loop()
     total_fetched = 0
     total_new = 0
@@ -119,6 +118,11 @@ async def fetch_news_feeds() -> dict:
             continue
 
         total_fetched += len(entries)
+
+        # Async scheduler jobs share a persistent event-loop thread. Another job
+        # may close that thread's SQLite connection while this coroutine awaits
+        # network I/O, so never retain a connection across the await above.
+        db = get_db()
 
         for entry in entries:
             dedup_key = _compute_dedup_key(entry)

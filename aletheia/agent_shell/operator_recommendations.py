@@ -104,6 +104,16 @@ def _is_stuck_task(task: dict, *, threshold_minutes: int = 30) -> bool:
     return (datetime.now(timezone.utc) - parsed) >= timedelta(minutes=threshold_minutes)
 
 
+def _is_recent_failed_task(task: dict, *, threshold_minutes: int = 30) -> bool:
+    if str(task.get("status") or "") != "failed":
+        return False
+    terminal_at = task.get("completed_at") or task.get("created_at")
+    parsed = _parse_utc_timestamp(terminal_at)
+    if parsed is None:
+        return False
+    return (datetime.now(timezone.utc) - parsed) < timedelta(minutes=threshold_minutes)
+
+
 def _task_age_minutes(task: dict) -> float | None:
     parsed = _parse_utc_timestamp(task.get("created_at"))
     if parsed is None:
@@ -355,6 +365,19 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
     risk = cfg.risk
     proposal_mode = str((proposal or {}).get("execution_mode") or "")
 
+    def effective_capital_base() -> float:
+        if not proposal_mode:
+            return 0.0
+        try:
+            from aletheia.risk.engine import _resolve_capital_base
+            from aletheia.risk.policy import resolve_risk_policy
+
+            resolved = resolve_risk_policy(cfg, proposal_mode)
+            value, _ = _resolve_capital_base(proposal_mode, resolved.policy, cfg)
+            return float(value or 0.0)
+        except Exception:
+            return 0.0
+
     parsed = _parse_numeric_threshold_violation(
         violation,
         "exceeds_demo_position_notional:",
@@ -397,7 +420,7 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
     )
     if parsed is not None:
         projected, _ = parsed
-        capital_base = float(risk.max_live_limited_cap_usdt or 0.0)
+        capital_base = effective_capital_base()
         current = float(risk.max_total_live_exposure_pct or 0.0)
         if capital_base <= 0:
             return None
@@ -418,7 +441,7 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
     )
     if parsed is not None:
         risk_amount, _ = parsed
-        capital_base = float(risk.max_live_limited_cap_usdt or 0.0)
+        capital_base = effective_capital_base()
         current = float(risk.max_single_trade_risk_pct or 0.0)
         if capital_base <= 0:
             return None
@@ -439,7 +462,7 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
     )
     if parsed is not None:
         risk_amount, _ = parsed
-        capital_base = float(risk.starting_capital_usdt or 0.0)
+        capital_base = effective_capital_base()
         current = float(risk.max_demo_single_trade_risk_pct or 0.0)
         if capital_base <= 0:
             return None
@@ -457,7 +480,7 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
     parsed = _parse_daily_loss_violation(violation)
     if parsed is not None:
         realized, _ = parsed
-        capital_base = float(risk.max_live_limited_cap_usdt or 0.0)
+        capital_base = effective_capital_base()
         current = float(risk.max_daily_loss_pct or 0.0)
         if capital_base <= 0:
             return None
@@ -885,7 +908,11 @@ def build_recommendations(limit: int = 10) -> list[dict]:
     cfg = load_config()
     recommendations: list[dict] = []
     heartbeat = get_latest_heartbeat()
-    failed_tasks = list_tasks(limit=10, status="failed")
+    failed_tasks = [
+        task
+        for task in list_tasks(limit=10, status="failed")
+        if _is_recent_failed_task(task)
+    ]
     running_tasks = list_tasks(limit=20, status="running")
     queued_tasks = list_tasks(limit=20, status="queued")
     recent_events = list_events(limit=100)

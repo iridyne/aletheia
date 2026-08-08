@@ -46,6 +46,26 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+function parseStringList(value: string | null | undefined): string[] {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.map(item => String(item)) : [String(parsed)]
+  } catch {
+    return [String(value)]
+  }
+}
+
+const TERMINAL_AGENT_RUN_STATUSES = new Set([
+  'completed',
+  'completed_with_errors',
+  'failed',
+  'error',
+  'timed_out',
+  'cancelled',
+  'rejected',
+])
+
 export class BackendClient implements BackendGatewayClient {
   constructor(private readonly baseUrl: string) {}
 
@@ -222,11 +242,32 @@ export class BackendClient implements BackendGatewayClient {
   }
 
   async startAgentRun(agentName: string): Promise<AgentRunInvocationResult> {
-    return fetchJson<AgentRunInvocationResult>(`${this.baseUrl}/api/agent-runs/start`, {
+    const queued = await fetchJson<{ run_id: string; status: string }>(`${this.baseUrl}/api/agent-runs/start`, {
       method: 'POST',
       body: JSON.stringify({
         agent_name: agentName,
       }),
     })
+    const deadline = Date.now() + 5 * 60 * 1000
+    while (Date.now() < deadline) {
+      const run = await fetchJson<AgentRunSummary>(
+        `${this.baseUrl}/api/agent-runs/${encodeURIComponent(queued.run_id)}`,
+      )
+      if (TERMINAL_AGENT_RUN_STATUSES.has(run.status)) {
+        return {
+          run_id: run.id,
+          status: run.status,
+          outputs: parseStringList(run.outputs_created),
+          errors: parseStringList(run.errors),
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 250))
+    }
+    return {
+      run_id: queued.run_id,
+      status: 'timed_out',
+      outputs: [],
+      errors: ['Delegated agent run did not reach a terminal state within 5 minutes.'],
+    }
   }
 }

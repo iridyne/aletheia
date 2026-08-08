@@ -1181,6 +1181,29 @@ def test_paper_proposal_cannot_accept_live_mode():
 
 
 @spec_claim(
+    SpecClaim(
+        "RE-B21", "risk_engine_contract", "§2 percentage-limit denominator", "L2b",
+        "Percentage-based risk limits default to the matching account equity; an "
+        "unavailable snapshot fails closed and never silently uses stored custom capital",
+    ),
+)
+def test_default_capital_base_tracks_account_equity_and_fails_closed(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.risk.engine as eng
+
+    cfg = AletheiaConfig()
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 4321.0)
+    value, reason = eng._resolve_capital_base("paper_internal", cfg.risk.demo, cfg)
+    assert value == 4321.0
+    assert reason is None
+
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: None)
+    value, reason = eng._resolve_capital_base("paper_internal", cfg.risk.demo, cfg)
+    assert value is None
+    assert reason == "account_equity_unavailable:paper_internal"
+
+
+@spec_claim(
     SpecClaim("RE-B13", "risk_engine_contract", "§2 check #8", "L2b",
               "demo daily-loss limit is computed from starting_capital_usdt (demo base), "
               "NOT max_live_limited_cap_usdt — so a demo loss small relative to the demo "

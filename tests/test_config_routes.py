@@ -499,6 +499,8 @@ async def test_risk_policy_copy_is_revision_guarded_and_preserves_live_identity(
     policies = (await client.get("/api/settings/risk-policies")).json()
     demo = policies["demo"]
     live = policies["live"]
+    assert demo["capital"]["base_source"] == "account_equity"
+    assert live["capital"]["base_source"] == "account_equity"
 
     copied = await client.post(
         "/api/settings/risk-policies/copy",

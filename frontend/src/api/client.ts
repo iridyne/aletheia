@@ -613,6 +613,8 @@ export const api = {
 		fetchJson<{ events: InfraEvent[] }>(
 			"/infra/events?limit=12&min_severity=info",
 		),
+	acknowledgeInfraEvents: () =>
+		post<{ acknowledged: number }>("/infra/events/acknowledge"),
 	getOperatorStatus: () => fetchJson<any>("/operator/status"),
 	getRuntimeStatus: () => fetchJson<any>("/operator/runtime"),
 	createRuntimeCandidate: (body: {

@@ -417,6 +417,17 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   text-transform: uppercase; color: var(--muted);
   margin-bottom: var(--space-1); padding: 0;
 }
+.sp-section-heading {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+}
+.sp-section-heading .sp-section-label { margin-bottom: 0; }
+.sp-events-ack {
+  border: 0; padding: 0; background: transparent; color: var(--muted);
+  font-size: 0.64rem; cursor: pointer;
+}
+.sp-events-ack:hover:not(:disabled) { color: var(--text); text-decoration: underline; }
+.sp-events-ack:disabled { cursor: wait; opacity: 0.6; }
+.sp-events-error { margin-top: var(--space-1); color: var(--red); font-size: 0.66rem; line-height: 1.35; }
 .sp-row {
   display: flex; align-items: baseline; gap: 6px;
   padding: 2px 0; font-size: 0.74rem; min-height: 20px;

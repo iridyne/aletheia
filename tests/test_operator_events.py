@@ -297,6 +297,31 @@ async def test_operator_recommendations_reflect_real_backend_state(client):
 
 
 @pytest.mark.anyio
+async def test_operator_recommendations_keep_historical_failures_out_of_active_alerts(
+    client,
+):
+    from datetime import datetime, timedelta, timezone
+
+    failed = await client.post(
+        "/api/operator/internal/tasks",
+        json={
+            "task_type": "run_dreaming",
+            "status": "failed",
+            "priority": "normal",
+            "created_by": "operator_loop",
+            "assigned_to": "dreaming_agent",
+            "error": "historical failure",
+            "completed_at": (datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat(),
+        },
+    )
+    assert failed.status_code == 200
+
+    recommendations = (await client.get("/api/operator/recommendations")).json()
+
+    assert all(item["kind"] != "failed_tasks_present" for item in recommendations)
+
+
+@pytest.mark.anyio
 async def test_operator_recommendations_reuse_recent_artifact_scan(client, monkeypatch):
     from aletheia.agent_shell import operator_recommendations as recs
 

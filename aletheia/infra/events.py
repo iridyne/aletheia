@@ -68,9 +68,16 @@ def list_infra_events(limit: int = 20, min_severity: str | None = None) -> list[
     return out[: max(0, min(limit, _MAX_EVENTS))]
 
 
+def acknowledge_infra_events() -> int:
+    """Remove current notifications without resetting emission rate limits."""
+    with _lock:
+        removed = len(_events)
+        _events.clear()
+        return removed
+
+
 def clear_infra_events() -> None:
-    """Test helper."""
+    """Reset the event buffer and de-duplication state for tests."""
     with _lock:
         _events.clear()
         _last_emit.clear()
-

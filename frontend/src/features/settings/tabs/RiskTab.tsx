@@ -573,14 +573,49 @@ export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' 
     setIsDirty(true)
     setMsg(null)
   }
-  const threshold = Number(policy.capital.base_usdt || 0) * Number(policy.loss.max_daily_loss_pct || 0) / 100
+  const capitalSource = policy.capital.base_source ?? 'account_equity'
+  const customCapital = Number(policy.capital.base_usdt || 0)
+  const threshold = customCapital * Number(policy.loss.max_daily_loss_pct || 0) / 100
   return (
     <div style={{ flex: '1 1 420px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 'var(--space-4)' }}>
       <div className="section-label">{mode === 'demo' ? 'Demo / Paper Policy' : 'Live Policy'}</div>
       <p className="hint mono">{policy.policy_id} · revision {policy.revision}</p>
+      <div className="settings-form-grid">
+        <label className="settings-form-field">
+          <span className="settings-form-label">Capital base source</span>
+          <select value={capitalSource} onChange={event => set('capital.base_source', event.target.value)}>
+            <option value="account_equity">Follow account equity</option>
+            <option value="custom">Custom</option>
+          </select>
+          <span className="settings-form-description">
+            Account equity follows the matching paper, demo broker, or live account pool and fails closed when unavailable.
+          </span>
+        </label>
+        {capitalSource === 'custom' && (
+          <label className="settings-form-field">
+            <span className="settings-form-label">Custom capital base</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={policy.capital.base_usdt}
+                aria-label="Custom capital base"
+                onChange={event => set('capital.base_usdt', Number(event.target.value))}
+              />
+              <span className="text-xs text-muted">USDT</span>
+            </div>
+          </label>
+        )}
+      </div>
       <NumGrid fields={numFields} vals={vals} set={set} />
       <ToggleGrid fields={RISK_POLICY_BOOLS} vals={vals} set={set} />
-      <p className="hint">Daily-loss threshold: −{fmtNum(threshold)} USDT. A breach trips only the {mode} brake.</p>
+      <p className="hint">
+        {capitalSource === 'custom'
+          ? `Daily-loss threshold: −${fmtNum(threshold)} USDT.`
+          : 'Daily-loss threshold follows the matching account equity.'}
+        {' '}A breach trips only the {mode} brake.
+      </p>
       <p className="hint">Margin warning/block ratios are retained for migration but are not enforced yet; entry/runtime liquidation buffers are enforced.</p>
       {mode === 'live' && policy.eligibility && (
         <p className="hint">Live evidence gate: ≥{policy.eligibility.family_min_samples} samples and ≥{policy.eligibility.family_min_win_rate_pct}% win rate. Copying Demo does not replace this gate.</p>

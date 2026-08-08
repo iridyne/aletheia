@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from aletheia import __version__
 from aletheia.config.loader import load_config, save_config
-from aletheia.infra.events import list_infra_events
+from aletheia.infra.events import acknowledge_infra_events, list_infra_events
 
 router = APIRouter(prefix="/api", tags=["system"])
 infra_router = APIRouter(prefix="/_infra", tags=["infra"])
@@ -147,6 +147,12 @@ def infra_events(limit: int = 20, min_severity: str | None = None):
     return {
         "events": list_infra_events(limit=limit, min_severity=min_severity),
     }
+
+
+@router.post("/infra/events/acknowledge")
+def acknowledge_current_infra_events():
+    """Acknowledge the current non-durable notification buffer."""
+    return {"acknowledged": acknowledge_infra_events()}
 
 
 @router.get("/ready")

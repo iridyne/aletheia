@@ -5407,6 +5407,44 @@ test('operator loop delegates dreaming tasks to dreaming_agent and closes the ta
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')
 })
 
+test('backend client waits for an asynchronously queued delegated agent run', async () => {
+  const originalFetch = globalThis.fetch
+  let runReads = 0
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input)
+    if (url.endsWith('/api/agent-runs/start')) {
+      return Response.json({ run_id: 'run-queued-1', status: 'queued' }, { status: 202 })
+    }
+    if (url.endsWith('/api/agent-runs/run-queued-1')) {
+      runReads += 1
+      return Response.json(
+        runReads === 1
+          ? { id: 'run-queued-1', status: 'running', outputs_created: '[]', errors: '[]' }
+          : {
+              id: 'run-queued-1',
+              status: 'completed',
+              outputs_created: '["dreaming_log:abc123"]',
+              errors: '[]',
+            },
+      )
+    }
+    throw new Error(`unexpected fetch: ${url}`)
+  }) as typeof fetch
+
+  try {
+    const result = await new BackendClient('http://gateway').startAgentRun('dreaming_agent')
+    assert.deepEqual(result, {
+      run_id: 'run-queued-1',
+      status: 'completed',
+      outputs: ['dreaming_log:abc123'],
+      errors: [],
+    })
+    assert.equal(runReads, 2)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('operator loop delegates review tasks to post_trade_reviewer and closes the task', async () => {
   const snapshot = makeSnapshot()
   const { backend, calls } = makeFakeBackend(snapshot)
