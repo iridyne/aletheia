@@ -7,7 +7,7 @@
 > machine-readable trading mainline is [Active Runtime Scope](ACTIVE_RUNTIME_SCOPE.md).
 > This file is not a roadmap or runtime-status page.
 >
-> Last aligned with current authorities: 2026-08-06.
+> Last aligned with current authorities: 2026-08-08.
 
 ## Product boundary
 
@@ -26,7 +26,10 @@ crypto spot/perpetual evidence
   -> RiskDecision
   -> Execution Gateway
   -> paper_internal order/fill/position
+  -> position evaluation / exact protective close
   -> verified genuine outcome
+  -> review / counterfactual / measured Learning
+  -> owner-gated bounded influence on a later decision
 ```
 
 `System Operator` is the only native entry-decision role. Historical strategy
@@ -41,6 +44,7 @@ factory driving production entries.
 | Decision | One attributable System Operator decision path with neutral/fail-closed behavior when required evidence is missing | Active Runtime Scope and agent contracts |
 | Risk | Deterministic Risk approval is mandatory before every execution attempt | Risk Engine contract |
 | Execution | Local `paper_internal` is the active proof profile; exchange demo adapters exist outside that active proof | Active Runtime Scope and execution contract |
+| Position and exit | New protected native Paper positions freeze an immutable ExitPlan and exact-instrument 1m cursor; point-mark protection remains a second layer and all closes use the routed fresh-mark path | Execution, persistence, and data-model contracts |
 | Accounting | Orders, fills, positions, costs, funding, and genuine outcomes retain causal identity and explicit integrity status | Data/outcome contracts |
 | Learning artifacts | Reviews, lessons, cases, memos, retrieval, calibration, and learned-guard observation | Learning and knowledge contracts |
 | Measured Learning | `universe_family_calibration` is the sole measurement-supported treatment path; measurement, lifecycle automation, and Paper capability default on, while every experiment remains owner-gated | Learning contract and registry |
@@ -61,6 +65,8 @@ Learning is allowed to:
 - recommend an owner action;
 - apply bounded paper influence only after every default-closed gate and explicit
   owner trial admission;
+- treat recurring contribution evaluations as monitoring only and allow positive
+  Paper progression only from the one consumed prospective fixed-look verdict;
 - refreeze or invalidate harmful, stale, or untrustworthy authority.
 
 Learning is not allowed to infer effectiveness from artifact counts, evaluator
@@ -82,6 +88,7 @@ resets the run and pre-gap samples cannot bridge the new qualification window.
 | Live trading | Disabled by default; requires the live contract, quantitative gates, and explicit human authorization |
 | Exchange-backed qualification | Adapters may be implemented, but the active proof remains `paper_internal` until Active Runtime Scope and executable evidence change together |
 | Additional measured Learning paths | Require a causal unit, outcome adapter, behavior contract, failure semantics, focused tests, and a fresh observation window |
+| Authoritative learned exit policy | Current exit advice and the prospective entry-lock treatment are read-only evidence; any real ExitPlan mutation requires a separately reviewed treatment and fresh window |
 | Full Learning owner workbench | Proposal exists; delivery is tracked by GitHub issue #614 |
 | Multiple long-lived managed Runtimes | Requires the approved multi-instance Runtime design; manual directory copies are not supported |
 | New agents, assets, markets, data sources, or self-evolution tiers | Separate scope and evidence required; they do not enter the MVP by implication |
