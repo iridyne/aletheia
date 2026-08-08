@@ -53,7 +53,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `orders` | Execution orders; native exchange entry `pending` is an unresolved Risk reservation, not zero exposure | symbol, side, quantity, order_type, status | execution gateway |
 | `fills` | Order fill confirmations | order_id, fill_price, fill_quantity, fee | broker adapter |
 | `positions` | Open/closed positions; a closed future may keep net economics unavailable. Delayed local funding materialization stores its versioned evidence fingerprint in reconciliation evidence. Market-aware evaluation remains advisory: its structured evidence records the exact venue/symbol/physical-market identity and source rows used for an Operator wake. | symbol, direction, entry_price, quantity, status, nullable realized_pnl, funding_cost, funding_source, **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence), **exit_limit_source** ('human'|'system_operator'; author of a resting limit exit — selects human_limit_exit vs operator_limit_exit in close_reason for attribution honesty), **exit_plan_effective_at** (nullable projection to the current immutable ExitPlan; NULL means the dormant barrier has not been activated), **last_market_signal_evidence** (versioned JSON; exact position/signal identities, Opportunity/member/asset/Feature provenance, evaluation and delivery result) | position_manager / outcome closure / paper funding settler |
-| `position_exit_plan_versions` | Retained, append-only resolved ExitPlan history. `(position_id, version)` is contiguous and immutable; insert atomically advances the nullable Position projection. | position_id, version, effective_at, resolved stop/take-profit/exit-limit, plan_json, plan_hash, provenance, created_at | protection repository + new-paper runtime |
+| `position_exit_plan_versions` | Retained, append-only resolved ExitPlan history. `(position_id, version)` is contiguous and immutable; insert atomically advances the nullable Position projection. | position_id, version, effective_at, resolved stop/take-profit/exit-limit, plan_json, plan_hash, provenance, created_at | protection repository + new/forward-adopted Paper runtime |
 | `position_protection_state` | One retained row per newly protected local-paper Position. It freezes exact instrument identity and monotonic cursors, preserves gap history, and projects first-trigger plus exact close linkage. | position_id, venue, canonical symbol, physical market_type, timeframe=1m, activated_at, cursor/gap/status, trigger_id, close Order/Fill linkage | protection repository + protective scheduler |
 | `position_protection_triggers` | Append-only first-barrier evidence. One immutable row per protected Position contains the exact 1-minute bar, resolved ExitPlan and deterministic collision policy. | trigger_id, position_id, exact instrument/bar/provider/hash, ExitPlan identity/barriers, hit flags/reason | protective scheduler + native paper close |
 | `exit_breakeven_shadow_assignments` | Prospective immutable assignment for the read-only profit-capture experiment. The fixed +1.5% trigger and entry-price shadow stop are frozen with exact instrument, ExitPlan, cost and build provenance before any eligible bar. | position_id, treatment/rule hash, assigned_at, exact instrument, entry economics, trigger/stop, ExitPlan and runtime provenance, behavior_authority=0 | new protected local-paper activation |
@@ -683,14 +683,18 @@ rows even when no NULL-PnL close remains.
 
 Every paper cash delta and resulting cash balance must be finite. The HTTP
 
-## 11. Protective Barrier Contract (schema v9 storage; new paper runtime active)
+## 11. Protective Barrier Contract (schema v9 storage; Paper runtime active)
 
-Schema v9 provides the durable substrate. The runtime consumer activates it only
+Schema v9 provides the durable substrate. The runtime consumer activates it
 inside the transaction that opens a new `paper_internal` Position with at least
-one resolved protective level. A level-less Paper entry does not fabricate an
-ExitPlan or cursor. Migration and
-restart never backfill historical Positions or backdate a cursor. The protective
-scheduler evaluates only the frozen exact instrument's completed 1-minute bar;
+one resolved protective level. Its periodic cycle also forward-adopts a still-open
+local-paper Position that lacks protection: the current resolved plan becomes
+effective at the adoption instant and the cursor starts at the first complete
+1-minute bar whose open is not earlier than that instant. No pre-adoption candle
+is replayed, and a mid-hold adoption is not assigned to the prospective exit
+shadow. A level-less Paper entry does not fabricate an ExitPlan or cursor.
+Migration never creates these facts. The protective scheduler evaluates only
+the frozen exact instrument's completed 1-minute bar;
 missing data remains a visible gap and a bar bisected by an ExitPlan change is
 skipped as `exit_plan_boundary_unordered` rather than assigned to either plan.
 Before evaluation, the same protective worker refreshes only missing due bars
@@ -711,7 +715,8 @@ The storage invariants are:
    canonical `BASE/QUOTE` symbol, physical market (`spot` or `perp`), and
    `timeframe='1m'`. Only logical `spot -> spot` and
    `perp|usdt_futures -> perp` mappings are accepted; unknown market types fail
-   closed. Activation is explicit and never historical backfill.
+   closed. Activation is explicit; forward adoption never backdates its plan or
+   cursor and never claims historical barrier coverage.
 4. `next_bar_open_ms`, `last_inspected_bar_open_ms`, and
    `last_evaluated_bar_open_ms` are monotonic compare-and-set cursors. A gap
    retains its reason, detection time, count, and bounded recent error without
@@ -736,8 +741,10 @@ The storage invariants are:
 
 Status is restricted to `active`, `gap`, `triggered`, `materialized`,
 `superseded`, or `integrity_blocked`; terminal and triggered states cannot
-regress to an evaluable state. All three new tables are permanent trust-bearing
-evidence and are excluded from retention pruning.
+regress to an evaluable state. A native non-barrier close supersedes an
+untriggered cursor before any post-close candle is evaluated; a recorded trigger
+continues through its exact close-linkage recovery instead. All three new tables
+are permanent trust-bearing evidence and are excluded from retention pruning.
 schema and central ledger writer reject NaN, both infinities, and finite-input
 arithmetic overflow before any append or audit event.
 

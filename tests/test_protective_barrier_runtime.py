@@ -7,6 +7,7 @@ from aletheia.data.providers import Candle
 from aletheia.portfolio.paper_account import record_position_opened
 from aletheia.portfolio.protective_barrier import (
     activate_new_paper_position,
+    adopt_existing_paper_positions,
     evaluate_due_position_protection,
     persist_position_exit_plan,
     run_due_position_protection_cycle,
@@ -47,6 +48,86 @@ def _bar(cursor: int, *, high: float, low: float, exchange: str = "binance"):
         exchange=exchange,
         market_type="spot",
     )
+
+
+def test_forward_adoption_starts_after_current_bar_without_historical_replay(
+    tmp_path, monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio import protective_barrier
+
+    actual_now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    adoption_ms = ((actual_now_ms // 60_000) - 3) * 60_000 + 30_000
+    adoption_at = datetime.fromtimestamp(adoption_ms / 1000, timezone.utc)
+    clock = [adoption_at]
+    monkeypatch.setattr(protective_barrier, "_now", lambda: clock[0])
+    position = _position_with_entry_chain(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        entry_fee=0.06,
+        stop_price=98.0,
+        take_profit_price=110.0,
+        opened_at=datetime.fromtimestamp(
+            (adoption_ms - 3_600_000) / 1000, timezone.utc
+        ).isoformat(),
+    )
+    record_position_opened(position.id)
+    historical_cursor = ((adoption_ms - 3_000_000) // 60_000) * 60_000
+    _bar(historical_cursor, high=101.0, low=97.0)
+
+    first = adopt_existing_paper_positions()
+    second = adopt_existing_paper_positions()
+
+    state = repo.get_position_protection_state(position.id)
+    plan = repo.get_current_position_exit_plan(position.id)
+    first_forward_bar = ((adoption_ms + 59_999) // 60_000) * 60_000
+    assert first["adopted"] == 1
+    assert second["adopted"] == 0
+    assert second["already_protected"] == 1
+    assert state["activated_at"] == adoption_at.isoformat()
+    assert state["next_bar_open_ms"] == first_forward_bar
+    assert plan["effective_at"] == adoption_at.isoformat()
+    assert plan["provenance"] == "paper_forward_adoption_v1"
+    assert repo.get_exit_breakeven_shadow_assignment(position.id) is None
+
+    evaluate_due_position_protection()
+    assert repo.get_position(position.id)["status"] == "open"
+    assert repo.get_position_protection_trigger(position.id) is None
+
+    _bar(first_forward_bar, high=101.0, low=97.0)
+    _snap("BTC/USDT", 97.5)
+    clock[0] = datetime.fromtimestamp(
+        (first_forward_bar + 65_000) / 1000, timezone.utc
+    )
+
+    summary = run_due_position_protection_cycle()
+
+    assert summary["closed"] == 1
+    assert repo.get_position(position.id)["close_reason"] == "stop_loss"
+
+
+def test_non_barrier_close_supersedes_untriggered_protection(tmp_path, monkeypatch):
+    position, _cursor = _protected_position(tmp_path, monkeypatch)
+    closed_at = datetime.now(timezone.utc).isoformat()
+    repo.update_position(
+        position.id,
+        status="closed",
+        closed_at=closed_at,
+        close_reason="max_hold",
+    )
+
+    summary = run_due_position_protection_cycle()
+
+    state = repo.get_position_protection_state(position.id)
+    assert summary["errors"] == []
+    assert state["status"] == "superseded"
+    assert state["updated_at"] == closed_at
+    assert state["trigger_id"] is None
+    assert repo.get_position_protection_trigger(position.id) is None
+    assert repo.supersede_position_protection_after_close(position.id) is False
 
 
 def test_long_wick_stop_records_trigger_and_closes_at_fresh_mark(tmp_path, monkeypatch):

@@ -66,6 +66,26 @@ def _plan_payload(
 def activate_new_paper_position(position_id: str) -> dict:
     """Atomically activate immutable protection for one newly inserted Position."""
 
+    position = repo.get_position(position_id)
+    if position is None:
+        raise ValueError("protection activation requires an open Position")
+    return _activate_paper_position(
+        position_id,
+        effective_at=str(position.get("opened_at") or ""),
+        provenance="paper_entry_protection_v1",
+        assign_shadow=True,
+    )
+
+
+def _activate_paper_position(
+    position_id: str,
+    *,
+    effective_at: str,
+    provenance: str,
+    assign_shadow: bool,
+) -> dict:
+    """Activate one exact-instrument cursor without applying a plan backward."""
+
     from aletheia.config.loader import load_config
     from aletheia.data.price_feed import protective_price_venue
     from aletheia.portfolio.exit_plan import effective_exit_plan
@@ -78,6 +98,8 @@ def activate_new_paper_position(position_id: str) -> dict:
     existing = repo.get_position_protection_state(position_id)
     if existing is not None:
         return {"activated": False, "reason": "already_activated"}
+    if position.get("exit_plan_effective_at"):
+        return {"activated": False, "reason": "immutable_plan_without_state"}
 
     cfg = load_config()
     resolved = effective_exit_plan(position, cfg)
@@ -93,7 +115,6 @@ def activate_new_paper_position(position_id: str) -> dict:
     if not venue:
         raise ValueError("paper protection venue is unavailable")
 
-    effective_at = str(position.get("opened_at") or "")
     activated_ms = _timestamp_ms(effective_at)
     next_bar_open_ms = ((activated_ms + 59_999) // 60_000) * 60_000
     created_at = _now().isoformat()
@@ -113,7 +134,7 @@ def activate_new_paper_position(position_id: str) -> dict:
         exit_limit_source=position.get("exit_limit_source"),
         plan_json=payload,
         plan_hash=repo.hash_position_exit_plan_json(payload),
-        provenance="paper_entry_protection_v1",
+        provenance=provenance,
         created_at=created_at,
     )
     state = PositionProtectionState(
@@ -136,21 +157,78 @@ def activate_new_paper_position(position_id: str) -> dict:
             exit_plan_version=1,
         )
         repo.insert_position_protection_state(state)
-        try:
-            from aletheia.analytics.exit_breakeven_shadow import (
-                assign_new_protected_position,
-            )
+        if assign_shadow:
+            try:
+                from aletheia.analytics.exit_breakeven_shadow import (
+                    assign_new_protected_position,
+                )
 
-            assign_new_protected_position(position_id)
-        except Exception as exc:
-            # The experiment is read-only evidence.  It must never make a valid
-            # protected Paper entry fail; absence remains visible as no assignment.
-            logger.warning(
-                "exit breakeven shadow assignment unavailable for %s: %s",
-                position_id,
-                type(exc).__name__,
-            )
+                assign_new_protected_position(position_id)
+            except Exception as exc:
+                # The experiment is read-only evidence.  It must never make a valid
+                # protected Paper entry fail; absence remains visible as no assignment.
+                logger.warning(
+                    "exit breakeven shadow assignment unavailable for %s: %s",
+                    position_id,
+                    type(exc).__name__,
+                )
     return {"activated": True, "position_id": position_id, "next_bar_open_ms": next_bar_open_ms}
+
+
+def adopt_existing_paper_positions(*, limit: int = 200) -> dict:
+    """Forward-activate unprotected Paper Positions from the current instant.
+
+    Adoption never backdates the immutable plan or cursor and deliberately does
+    not enroll a mid-hold Position into the prospective exit-shadow cohort.
+    """
+
+    adoption_at = _now().isoformat()
+    bounded_limit = max(0, min(int(limit), 500))
+    summary = {
+        "checked": 0,
+        "adopted": 0,
+        "already_protected": 0,
+        "skipped": 0,
+        "errors": [],
+    }
+    for position in repo.list_all_open_positions()[:bounded_limit]:
+        summary["checked"] += 1
+        if position.get("execution_mode") != "paper_internal":
+            summary["skipped"] += 1
+            continue
+        try:
+            result = _activate_paper_position(
+                str(position["id"]),
+                effective_at=adoption_at,
+                provenance="paper_forward_adoption_v1",
+                assign_shadow=False,
+            )
+        except Exception as exc:
+            logger.exception(
+                "forward protection adoption failed position=%s",
+                position.get("id"),
+            )
+            summary["errors"].append({
+                "position_id": position.get("id"),
+                "code": "protective_forward_adoption_failed",
+                "error_type": type(exc).__name__,
+                "message": str(exc)[:200],
+            })
+            continue
+        if result.get("activated") is True:
+            summary["adopted"] += 1
+        elif result.get("reason") == "already_activated":
+            summary["already_protected"] += 1
+        elif result.get("reason") == "immutable_plan_without_state":
+            summary["errors"].append({
+                "position_id": position.get("id"),
+                "code": "protective_forward_adoption_integrity_conflict",
+                "error_type": "PositionProtectionConflict",
+                "message": "immutable ExitPlan exists without protection state",
+            })
+        else:
+            summary["skipped"] += 1
+    return summary
 
 
 def persist_position_exit_plan(
@@ -314,6 +392,9 @@ async def _refresh_due_position_protection_bars(*, limit: int = 200) -> dict:
     for state in repo.list_position_protection_work(limit=limit):
         if state.get("status") == "triggered":
             continue
+        position = repo.get_position(state["position_id"])
+        if position is None or position.get("status") != "open":
+            continue
         cursor = int(state["next_bar_open_ms"])
         if cursor + 60_000 > now_ms or repo.get_exact_position_protection_bar(state) is not None:
             continue
@@ -381,6 +462,19 @@ def refresh_due_position_protection_bars(*, limit: int = 200) -> dict:
 def _evaluate_state(state: dict, *, now_ms: int, detected_at: str) -> dict:
     if state["status"] == "triggered":
         return _materialize_triggered(state)
+    position = repo.get_position(state["position_id"])
+    if position is None:
+        repo.block_position_protection_integrity(
+            state["position_id"],
+            reason="protected Position is unavailable",
+            blocked_at=detected_at,
+        )
+        return {"blocked": True, "reason": "protected_position_unavailable"}
+    if position.get("status") != "open":
+        superseded = repo.supersede_position_protection_after_close(
+            state["position_id"]
+        )
+        return {"superseded": superseded}
     cursor = int(state["next_bar_open_ms"])
     if cursor + 60_000 > now_ms:
         return {"waiting": True}
@@ -534,13 +628,22 @@ def evaluate_due_position_protection(
 
 
 def run_due_position_protection_cycle(*, limit: int = 200) -> dict:
-    """Refresh exact bars, then evaluate them; keep both evidence streams visible."""
+    """Forward-adopt, refresh exact bars, then evaluate with visible evidence."""
 
+    adoption = adopt_existing_paper_positions(limit=limit)
     refresh = refresh_due_position_protection_bars(limit=limit)
     evaluation = evaluate_due_position_protection(limit=limit)
     return {
         **evaluation,
+        "adoption_checked": adoption["checked"],
+        "adopted": adoption["adopted"],
+        "already_protected": adoption["already_protected"],
+        "adoption_skipped": adoption["skipped"],
         "refresh_requested": refresh["requested"],
         "refresh_available": refresh["available"],
-        "errors": [*(refresh.get("errors") or []), *(evaluation.get("errors") or [])],
+        "errors": [
+            *(adoption.get("errors") or []),
+            *(refresh.get("errors") or []),
+            *(evaluation.get("errors") or []),
+        ],
     }

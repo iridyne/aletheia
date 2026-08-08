@@ -3006,6 +3006,50 @@ def block_position_protection_integrity(
     return cursor.rowcount == 1
 
 
+def supersede_position_protection_after_close(position_id: str) -> bool:
+    """Retire an untriggered cursor after another native path closed Position."""
+
+    db = get_db()
+    with transaction(immediate=True):
+        state_row = db.execute(
+            "SELECT * FROM position_protection_state WHERE position_id=?",
+            (position_id,),
+        ).fetchone()
+        if state_row is None:
+            return False
+        state = dict(state_row)
+        if state["status"] == "superseded":
+            return False
+        if state["trigger_id"] is not None or state["status"] not in {"active", "gap"}:
+            raise PositionProtectionConflict(
+                "only untriggered active protection can be superseded"
+            )
+        position_row = db.execute(
+            "SELECT status, closed_at FROM positions WHERE id=?",
+            (position_id,),
+        ).fetchone()
+        if (
+            position_row is None
+            or position_row["status"] != "closed"
+            or not position_row["closed_at"]
+        ):
+            raise PositionProtectionConflict(
+                "protection supersession requires a durably closed Position"
+            )
+        _utc_timestamp_ms(position_row["closed_at"], "Position closed_at")
+        cursor = execute_write(
+            "UPDATE position_protection_state SET status='superseded', updated_at=? "
+            "WHERE position_id=? AND trigger_id IS NULL "
+            "AND status IN ('active','gap')",
+            (position_row["closed_at"], position_id),
+        )
+        if cursor.rowcount != 1:
+            raise PositionProtectionConflict(
+                "protection supersession compare-and-set failed"
+            )
+    return True
+
+
 def _trigger_row_matches(row: dict, trigger: PositionProtectionTrigger) -> bool:
     return all(row.get(field) == value for field, value in trigger.model_dump().items())
 
