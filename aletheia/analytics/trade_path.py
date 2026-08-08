@@ -129,6 +129,26 @@ def _analyze_path(row: dict, post_exit_bars: int) -> dict:
         _set_insufficient(result, candle_error or "invalid_ohlcv")
         return result
 
+    full_start_ts = _ceil_bar(entry_ts)
+    full_end_ts = _floor_bar(exit_ts)
+    full_holding_ts = list(range(full_start_ts, full_end_ts, _BAR_MS))
+    # Exact trigger/linkage evidence is independent of complete path coverage.
+    # Preserve its conservative pre-stop MFE lower bound even when an unrelated
+    # entry/exit boundary candle is unavailable.
+    available_full_holding = [
+        candle_by_ts[ts] for ts in full_holding_ts if ts in candle_by_ts
+    ]
+    _attach_first_stop_barrier_evidence(
+        result,
+        row=row,
+        identity=identity,
+        entry_ts=entry_ts,
+        exit_ts=exit_ts,
+        entry_price=entry_price,
+        direction=direction,
+        full_holding=available_full_holding,
+    )
+
     holding_ts = list(range(entry_bar_ts, holding_end_exclusive, _BAR_MS))
     missing_holding = [ts for ts in holding_ts if ts not in candle_by_ts]
     result["holding_bars_expected"] = len(holding_ts)
@@ -137,10 +157,7 @@ def _analyze_path(row: dict, post_exit_bars: int) -> dict:
         _set_insufficient(result, "holding_path_coverage_unavailable")
         return result
 
-    full_start_ts = _ceil_bar(entry_ts)
-    full_end_ts = _floor_bar(exit_ts)
-    full_holding_ts = list(range(full_start_ts, full_end_ts, _BAR_MS))
-    full_holding = [candle_by_ts[ts] for ts in full_holding_ts]
+    full_holding = available_full_holding
     overlapping_holding = [candle_by_ts[ts] for ts in holding_ts]
     result["bars_in_trade"] = len(full_holding)
     result["boundary_bars_excluded"] = len(holding_ts) - len(full_holding_ts)
@@ -205,6 +222,21 @@ def _analyze_path(row: dict, post_exit_bars: int) -> dict:
         realized_pct=realized_pnl_pct,
         close_reason=row.get("close_reason"),
     )
+    pre_stop_mfe = result.get("pre_stop_mfe_lower_bound_pct")
+    if (
+        result.get("first_stop_barrier_status") == "available"
+        and pre_stop_mfe is not None
+        and float(pre_stop_mfe) >= _STOP_FAVORABLE_MFE_PCT
+    ):
+        result["path_bucket"] = "profit_giveback_before_stop"
+        result["path_bucket_reason"] = f"pre_stop_mfe_lower_bound={float(pre_stop_mfe):.2f}%"
+        return result
+    if result.get("first_stop_barrier_status") == "available" and ambiguous and row.get("close_reason") == "stop_loss":
+        # The first stop bar is known, but OHLC cannot order the favorable and
+        # adverse extremes inside that same minute. Only earlier complete bars
+        # can prove giveback-before-stop.
+        bucket = "possible_favorable_excursion_in_boundary_bar"
+        bucket_reason = "intrabar_and_stop_barrier_order_unavailable"
     if ambiguous:
         if bucket != "insufficient_path_data":
             result["noncausal_path_observation"] = bucket
@@ -273,6 +305,111 @@ def _resolve_instrument_identity(
     ):
         return None, "instrument_identity_mismatch"
     return _InstrumentIdentity(exchange, market_type, "universe_registry"), None
+
+
+def _attach_first_stop_barrier_evidence(
+    result: dict[str, Any],
+    *,
+    row: dict[str, Any],
+    identity: _InstrumentIdentity,
+    entry_ts: int,
+    exit_ts: int,
+    entry_price: float,
+    direction: str,
+    full_holding: list[dict],
+) -> None:
+    """Attach ordered pre-stop evidence from one materialized exact trigger.
+
+    Version-one plans have no earlier plan-boundary bar that the protective
+    cursor could have skipped as intrinsically unordered. Later plan versions
+    remain fail-closed until durable boundary-gap history exists.
+    """
+    if row.get("close_reason") != "stop_loss":
+        result["first_stop_barrier_status"] = "not_applicable"
+        result["first_stop_barrier_reason"] = "close_reason_not_stop_loss"
+        return
+    position_id = str(row.get("position_id") or "").strip()
+    if not position_id:
+        result["first_stop_barrier_reason"] = "position_identity_unavailable"
+        return
+    try:
+        state = repo.get_position_protection_state(position_id)
+        trigger = repo.get_position_protection_trigger(position_id)
+    except Exception as exc:
+        logger.debug("protection evidence read failed: %s", type(exc).__name__)
+        result["first_stop_barrier_reason"] = "protection_evidence_read_unavailable"
+        return
+    if state is None or trigger is None:
+        result["first_stop_barrier_reason"] = "first_stop_barrier_cross_unavailable"
+        return
+    if int(trigger.get("plan_version") or 0) != 1:
+        result["first_stop_barrier_reason"] = "exit_plan_changed_before_first_stop"
+        return
+
+    trigger_open = _integer(trigger.get("bar_open_ms"))
+    trigger_close = _integer(trigger.get("bar_close_ms"))
+    activated_at = _iso_to_ms(state.get("activated_at"))
+    detected_at = _iso_to_ms(trigger.get("detected_at"))
+    filled_at = _iso_to_ms(state.get("close_filled_at"))
+    fill_price = _positive_float(state.get("close_fill_price"))
+    exit_price = _positive_float(row.get("exit_price"))
+    identity_matches = (
+        str(state.get("venue") or "").lower() == identity.exchange
+        and str(state.get("symbol") or "") == str(row.get("symbol") or "")
+        and str(state.get("market_type") or "").lower() == identity.market_type
+        and state.get("timeframe") == _DEFAULT_TIMEFRAME
+        and str(trigger.get("venue") or "").lower() == identity.exchange
+        and str(trigger.get("symbol") or "") == str(row.get("symbol") or "")
+        and str(trigger.get("market_type") or "").lower() == identity.market_type
+        and trigger.get("timeframe") == _DEFAULT_TIMEFRAME
+    )
+    linkage_matches = (
+        state.get("position_id") == position_id
+        and trigger.get("position_id") == position_id
+        and state.get("trigger_id") == trigger.get("trigger_id")
+        and state.get("status") == "materialized"
+        and state.get("final_state") == "materialized"
+        and bool(state.get("close_fill_id"))
+        and trigger.get("reason") == "stop_loss"
+        and bool(trigger.get("stop_hit"))
+    )
+    timing_matches = (
+        trigger_open is not None
+        and trigger_close == trigger_open + _BAR_MS
+        and trigger_close == _integer(state.get("next_bar_open_ms"))
+        and trigger_open == _integer(state.get("last_evaluated_bar_open_ms"))
+        and trigger_open == _integer(state.get("last_inspected_bar_open_ms"))
+        and activated_at is not None
+        and activated_at >= entry_ts
+        and _ceil_bar(activated_at) == _ceil_bar(entry_ts)
+        and trigger_open >= _ceil_bar(entry_ts)
+        and trigger_close <= exit_ts
+        and detected_at is not None
+        and detected_at >= trigger_close
+        and filled_at == exit_ts
+    )
+    price_matches = (
+        fill_price is not None
+        and exit_price is not None
+        and math.isclose(fill_price, exit_price, rel_tol=1e-12, abs_tol=1e-12)
+    )
+    if not (identity_matches and linkage_matches and timing_matches and price_matches):
+        result["first_stop_barrier_reason"] = "protection_evidence_mismatch"
+        return
+
+    pre_trigger = [
+        candle for candle in full_holding if _integer(candle.get("ts")) is not None and int(candle["ts"]) < trigger_open
+    ]
+    pre_mfe, _ = _excursion_values(
+        direction,
+        entry_price,
+        pre_trigger,
+        [entry_price],
+    )
+    result["first_stop_barrier_status"] = "available"
+    result["first_stop_barrier_reason"] = "materialized_exact_1m_first_trigger"
+    result["first_stop_barrier_open_ms"] = trigger_open
+    result["pre_stop_mfe_lower_bound_pct"] = round(pre_mfe, 4)
 
 
 def _validated_candle_map(
@@ -561,6 +698,10 @@ def _initialize_evidence_fields(result: dict, post_exit_bars: Any) -> None:
             "bounded_path_bucket": None,
             "bounded_path_bucket_reason": None,
             "noncausal_path_observation": None,
+            "first_stop_barrier_status": "unavailable",
+            "first_stop_barrier_reason": None,
+            "first_stop_barrier_open_ms": None,
+            "pre_stop_mfe_lower_bound_pct": None,
         }
     )
 
@@ -592,6 +733,15 @@ def _finite_float(value: Any) -> float | None:
 def _positive_float(value: Any) -> float | None:
     parsed = _finite_float(value)
     return parsed if parsed is not None and parsed > 0 else None
+
+
+def _integer(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def _physical_market_type(value: Any) -> str | None:
