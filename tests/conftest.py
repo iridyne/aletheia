@@ -12,7 +12,10 @@ overrides this within the test body. A test that reaches the exchange without a 
 fails loudly instead of silently placing a real order.
 """
 
+import os
 import sqlite3
+from pathlib import Path
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -166,7 +169,28 @@ _DOMAIN_PATTERNS = [
 ]
 
 
+def _configure_xdist_runtime_dir(config) -> None:
+    """Give each xdist worker its own process-owned runtime directory.
+
+    CI already selects one ``ALETHEIA_DATA_DIR`` per regression tier.  That
+    remains shared by all xdist workers, though, and a few runtime paths use it
+    before a test's ``tmp_path`` monkeypatch is installed.  Scheduler and
+    auto-resume state must never cross worker processes.
+    """
+    worker_input = getattr(config, "workerinput", None)
+    if not worker_input:
+        return
+    root = os.environ.get("ALETHEIA_DATA_DIR", "").strip()
+    worker_id = str(worker_input.get("workerid", "")).strip()
+    if not root or not worker_id:
+        return
+    worker_root = Path(root).resolve() / "pytest-xdist" / worker_id
+    worker_root.mkdir(parents=True, exist_ok=True)
+    os.environ["ALETHEIA_DATA_DIR"] = str(worker_root)
+
+
 def pytest_configure(config):
+    _configure_xdist_runtime_dir(config)
     for marker in _PYTEST_MARKERS:
         config.addinivalue_line("markers", marker)
 
