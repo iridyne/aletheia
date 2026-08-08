@@ -333,7 +333,7 @@ reconstruct historical coverage. Planned and partial outages have no waiver repr
 and therefore fail closed. Bounded `market_day_coverage` metadata gives the owner the current run,
 missing-day counts and dates. Metric v4 and behavior contract v5 created the continuous-window
 cohort. Metric v5 and behavior contract v6 create a new from-zero identity for the stricter actual-
-intervention and complete-compliance qualification; older experiments and verdicts remain
+intervention and behavior-change provenance qualification; older experiments and verdicts remain
 immutable, non-authorizing history.
 
 The current harm contract uses the experiment's 50 assignment units per arm as the minimum
@@ -343,9 +343,10 @@ absolute worsening above `0.25` percentage points breach. MAE keys use `_pp` bec
 is a subtraction in percentage points, not a proportional ratio. A determinate breach drives
 refreeze even when the stored verdict is otherwise labelled positive.
 
-The evaluator also reads `authority_applied` from each exposure manifest. A treatment assignment
-that stayed on its baseline is a shadow observation, not an intervention. When every treatment
-sample is still shadow, the cohort may prove that collection and settlement work, but it cannot
+The evaluator reads permission from `authority_applied` and derives effective behavior from finite
+before/after values. Mixed no-op and changed members remain one valid authorized cluster, which is
+an actual intervention when at least one member changed; an all-no-op cluster is not. When every
+treatment sample is still shadow, the cohort may prove that collection and settlement work, but it cannot
 produce a causal `positive` or `negative`; after the ordinary sample/time gates are met it returns
 `insufficient_data` with reason `no_actual_intervention`. Persisted verdicts carry the policy epoch,
 stage, target horizon, outcome-contract version, metric version, and producing code commit.

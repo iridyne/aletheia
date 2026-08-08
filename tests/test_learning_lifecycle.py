@@ -76,6 +76,7 @@ def _measurement(
     code_commit: str | None = "test-build",
     behavior_contract_hash: str | None = None,
     breached: bool = False,
+    actual_intervention_treatment_n: int | None = None,
     authority_applied_treatment_n: int | None = None,
     assigned_treatment_n: int = 50,
     unique_treatment_n: int | None = None,
@@ -105,11 +106,17 @@ def _measurement(
         0
         if reason == "no_actual_intervention"
         else assigned_treatment_n
+        if actual_intervention_treatment_n is None
+        else actual_intervention_treatment_n
+    )
+    authority_treatment_n = (
+        actual_treatment_n
         if authority_applied_treatment_n is None
         else authority_applied_treatment_n
     )
     baseline_treatment_n = assigned_treatment_n - actual_treatment_n
-    compliance_state = (
+    required_actual_n = max(1, int(getattr(experiment, "min_samples_per_arm", 50)))
+    intervention_state = (
         "none"
         if actual_treatment_n == 0
         else "partial"
@@ -140,19 +147,31 @@ def _measurement(
             "outcome_contract_version": contract,
             "metric_version": metric,
             "assigned_treatment_n": assigned_treatment_n,
-            "authority_applied_treatment_n": actual_treatment_n,
+            "authority_applied_treatment_n": authority_treatment_n,
+            "actual_intervention_treatment_n": actual_treatment_n,
             "baseline_treatment_n": baseline_treatment_n,
-            "treatment_compliance_state": compliance_state,
-            "treatment_compliance_reason": (
+            "actual_intervention_state": intervention_state,
+            "actual_intervention_reason": (
                 "no_actual_intervention"
                 if actual_treatment_n == 0
-                else "incomplete_treatment_compliance"
-                if baseline_treatment_n
-                else "complete_treatment_compliance"
+                else "insufficient_actual_intervention_samples"
+                if actual_treatment_n < required_actual_n
+                else "sufficient_actual_intervention_samples"
             ),
             "treatment_authority_rejection_reasons": (
-                {"test_authority_rejection": baseline_treatment_n}
-                if baseline_treatment_n else {}
+                {"test_authority_rejection": assigned_treatment_n - authority_treatment_n}
+                if assigned_treatment_n > authority_treatment_n else {}
+            ),
+            "treatment_non_intervention_reasons": ({
+                **(
+                    {"authority:test_authority_rejection": assigned_treatment_n - authority_treatment_n}
+                    if assigned_treatment_n > authority_treatment_n else {}
+                ),
+                **(
+                    {"no_effective_treatment_delta": authority_treatment_n - actual_treatment_n}
+                    if authority_treatment_n > actual_treatment_n else {}
+                ),
+            }
             ),
             "breached": breached,
             "harm_state": resolved_harm_state,
@@ -235,7 +254,7 @@ def test_positive_verdict_with_insufficient_actual_interventions_cannot_promote(
         hypothesis,
         experiment,
         "positive",
-        authority_applied_treatment_n=1,
+        actual_intervention_treatment_n=1,
         assigned_treatment_n=50,
     )
     _configure(monkeypatch, _settings(
@@ -260,13 +279,14 @@ def test_positive_verdict_with_insufficient_actual_interventions_cannot_promote(
     ).fetchone()[0] == 0
 
 
-def test_positive_verdict_with_partial_compliance_cannot_promote(monkeypatch):
+def test_positive_with_required_actual_interventions_can_promote_with_one_noop(monkeypatch):
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     verdict = _measurement(
         hypothesis,
         experiment,
         "positive",
-        authority_applied_treatment_n=50,
+        actual_intervention_treatment_n=50,
+        authority_applied_treatment_n=51,
         assigned_treatment_n=51,
     )
     _configure(monkeypatch, _settings(
@@ -282,13 +302,34 @@ def test_positive_verdict_with_partial_compliance_cannot_promote(monkeypatch):
         current_policy_epoch="epoch-a",
     )
 
-    assert result.action == "hold"
+    assert result.action == "promote_stage"
     assert result.recommended_action == "promote_stage"
-    assert result.reason == "incomplete_treatment_compliance"
+    assert result.reason == "promoted_one_stage"
     assert result.verdict_id == verdict.verdict_id
     assert get_db().execute(
         "SELECT COUNT(*) FROM learning_lifecycle_events"
-    ).fetchone()[0] == 0
+    ).fetchone()[0] == 1
+
+
+def test_intervention_gate_rejects_mismatched_nonintervention_reason_counts():
+    from aletheia.learning.authority import measurement_intervention_block_reason
+
+    verdict = {
+        "unique_treatment_n": 51,
+        "harm_metrics_json": json.dumps({
+            "assigned_treatment_n": 51,
+            "authority_applied_treatment_n": 51,
+            "actual_intervention_treatment_n": 50,
+            "baseline_treatment_n": 1,
+            "treatment_authority_rejection_reasons": {},
+            "treatment_non_intervention_reasons": {},
+        }),
+    }
+
+    assert measurement_intervention_block_reason(
+        verdict,
+        required_per_arm=50,
+    ) == "treatment_intervention_count_mismatch"
 
 
 def test_shadow_positive_never_auto_promotes_to_paper(monkeypatch):
@@ -1003,7 +1044,7 @@ def test_owner_admitted_trial_keeps_authority_while_current_stage_is_underpowere
         "insufficient_data",
         reason="insufficient unique prospective treatment/control samples",
         assigned_treatment_n=1,
-        authority_applied_treatment_n=1,
+        actual_intervention_treatment_n=1,
         unique_control_n=1,
         harm_state="indeterminate",
         harm_indeterminate_reason="insufficient_samples",
@@ -1047,7 +1088,7 @@ def test_owner_admitted_trial_still_withdraws_immediately_on_harm_breach(monkeyp
         "negative",
         reason="harm gate breached: mae_p95_worsening",
         assigned_treatment_n=50,
-        authority_applied_treatment_n=50,
+        actual_intervention_treatment_n=50,
         breached=True,
     )
     from aletheia.learning.authority import resolve_learning_authority
@@ -1144,7 +1185,7 @@ def test_authority_rejects_positive_current_measurement_with_insufficient_interv
         hypothesis,
         successor,
         "positive",
-        authority_applied_treatment_n=1,
+        actual_intervention_treatment_n=1,
         assigned_treatment_n=50,
     )
     from aletheia.learning.authority import resolve_learning_authority

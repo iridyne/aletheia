@@ -103,18 +103,20 @@ holdout remains.
 The primary result remains randomized intent-to-treat: all qualified assigned
 treatment units, including baseline fallbacks, contribute their realized outcome to
 the treatment mean, confidence interval and harm calculation. Actual intervention is
-a separate promotion gate. The full per-arm minimum must have
-`authority_applied=true`, and the current window must have complete treatment
-compliance; baseline fallbacks remain visible with their authority reasons but cannot
-help a positive result promote. Lifecycle rechecks these counts so a legacy or
-malformed positive verdict cannot grant a successor stage.
+a separate promotion gate. `authority_applied` records permission consistently across
+the cluster; an actual intervention additionally requires at least one member with a
+finite before/after behavior delta. The full per-arm minimum must be actual
+interventions. Refused and all-no-op clusters remain visible and stay in ITT, so they
+dilute the policy effect, but they do not count toward the intervention minimum.
+Lifecycle rechecks these counts so a legacy or malformed positive verdict cannot grant
+a successor stage.
 
 A validly activated bounded Paper stage does not lose its existing allocation merely
 because its current `insufficient_data` verdict has an `indeterminate` harm state from
 sample/continuity underpower. It may continue collecting the predeclared window.
 Negative/invalid evidence, determinate harm, identity/config/refreeze failure, or a
 non-underpower indeterminate reason still withdraws authority immediately; promotion
-continues to require positive, clear-harm, complete-compliance evidence.
+continues to require positive ITT, clear-harm, and sufficient actual-intervention evidence.
 
 | Current evidence | Required lifecycle result |
 |---|---|

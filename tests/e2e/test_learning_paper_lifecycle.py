@@ -391,6 +391,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     assert shadow_verdict.reason == "no_actual_intervention"
     assert shadow_harm["harm_state"] == "clear"
     assert shadow_harm["authority_applied_treatment_n"] == 0
+    assert shadow_harm["actual_intervention_treatment_n"] == 0
     assert (
         shadow_verdict.unique_treatment_n,
         shadow_verdict.unique_control_n,
@@ -510,6 +511,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     assert harm["breached"] is True
     assert harm["loss_rate_delta"] > 0.15
     assert harm["authority_applied_treatment_n"] == paper_cluster_counts["treatment"]
+    assert harm["actual_intervention_treatment_n"] == paper_cluster_counts["treatment"]
     assert (
         negative.unique_treatment_n,
         negative.unique_control_n,

@@ -157,8 +157,10 @@ classified as non-current by the read model.
 The current metric version is
 `universe_family_calibration_cluster_allocation_utility_v5`. Its existing `harm_metrics_json`
 evaluation envelope also carries bounded `market_day_coverage` facts for the latest consecutive
-eligible UTC exposure-day window and its per-arm sample counts. A metric-version change appends new
-verdicts; it does not rewrite or delete older verdict history.
+eligible UTC exposure-day window, its per-arm sample counts, separate treatment-permission and
+effective-intervention counts, and bounded non-intervention reasons. Effective intervention is
+derived from finite exposure `before_json`/`after_json` values rather than inferred from permission.
+A metric-version change appends new verdicts; it does not rewrite or delete older verdict history.
 
 ### D. Market Data Collection (11 tables)
 

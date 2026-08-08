@@ -158,9 +158,10 @@ zero, healthy, or positive by inference.
 The current v5 Universe primary estimand is randomized intent-to-treat: every
 qualified assigned-treatment unit remains in the primary effect and harm comparison,
 including an authority-refused baseline fallback. Actual intervention count and
-complete treatment compliance are separate positive/promotion gates; filtering the
-primary treatment arm down to applied rows is prohibited because refusal can be
-correlated with market or risk state.
+effective behavior provenance form a separate positive/promotion gate: permission is
+recorded independently, and a cluster counts as actual only when at least one member
+has a finite before/after delta. Refused and all-no-op clusters stay in ITT and dilute
+the policy effect; filtering the primary arm down to changed rows is prohibited.
 
 ## 7. Stop and invalidation rules
 

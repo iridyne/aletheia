@@ -30,7 +30,7 @@ utility. The current metric version is
 | Treatment/control assignment units | Complete, unique prospective clusters per arm | Learning cohort builder and `lco-v1` projection |
 | Minimum samples | 50 complete assignment units in each arm | `LearningExperiment.min_samples_per_arm` |
 | Continuous market days | At least 7 consecutive UTC dates with a complete eligible exposure unit from either arm; 50-per-arm sufficiency is independent and scoped to that run | `LearningExperiment.min_market_days` and verdict `market_day_coverage` |
-| Actual intervention and compliance | At least the per-arm minimum proves `authority_applied=true`, with no treatment fallback in the qualifying window | Exposure manifest and cohort sample |
+| Actual intervention | At least the per-arm minimum has consistent treatment permission and one or more members with a finite before/after behavior delta | Exposure manifest, before/after values, and cohort sample |
 | Contribution delta | Cost-aware treatment mean minus control mean | `learning/verdicts.py` |
 | Confidence interval | Deterministic bootstrap interval for the contribution delta | `learning/verdicts.py` |
 | Harm state | `indeterminate`, `clear`, or `breached`; underpowered evidence never claims safety | contribution verdict harm metrics |
@@ -44,19 +44,19 @@ afterward. Daily arm imbalance remains visible and is handled by the independent
 50-per-arm gate. Planned or partial outages have no implicit waiver when they leave
 a full UTC day uncovered. Metric v4 and UFC behavior contract v5 started the
 continuous-window cohort. Metric v5 and UFC behavior contract v6 start another
-from-zero cohort because actual-intervention sufficiency and complete treatment
-compliance are now explicit positive/promotion qualifications; v4/v5 identity
+from-zero cohort because effective-intervention sufficiency and its behavior-change
+provenance are now explicit positive/promotion qualifications; v4/v5 identity
 evidence remains immutable, non-authorizing history for the new contract.
 
 ### Verdict meaning
 
 | Verdict | Meaning |
 |---|---|
-| `insufficient_data` | Sample/time/actual-intervention requirement is unmet, the shadow cohort had no actual intervention, or treatment compliance is incomplete |
+| `insufficient_data` | Sample/time/actual-intervention requirement is unmet, or the shadow cohort had no actual intervention |
 | `invalid` | Identity, provenance, or economic evidence cannot support comparison |
 | `negative` | Treatment trails control or breaches a determinate harm gate |
 | `neutral` | Effect is practically small or confidence remains inconclusive |
-| `positive` | ITT cost-aware treatment improvement clears the practical/confidence threshold, actual-intervention minimum, complete compliance, and harm gate |
+| `positive` | ITT cost-aware treatment improvement clears the practical/confidence threshold, actual-intervention minimum, and harm gate |
 
 A healthy evaluator or a large cohort count cannot substitute for one of these
 measurement states.

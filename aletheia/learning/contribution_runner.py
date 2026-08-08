@@ -173,6 +173,8 @@ def _cohort_fingerprint(cohort: ContributionCohort, evaluation: VerdictEvaluatio
                 "exposed_at": sample.exposed_at,
                 "authority_applied": sample.authority_applied,
                 "authority_reason": sample.authority_reason,
+                "behavior_changed": sample.behavior_changed,
+                "behavior_change_reason": sample.behavior_change_reason,
             }
             for sample in sorted(cohort.samples, key=lambda row: (row.assignment, row.outcome_candidate_key))
         ],

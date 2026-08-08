@@ -518,8 +518,11 @@ def _project_experiment(
             "assigned_treatment_units": _safe_int(
                 metrics.get("assigned_treatment_n")
             ),
-            "actual_intervention_treatment_units": _safe_int(
+            "authority_applied_treatment_units": _safe_int(
                 metrics.get("authority_applied_treatment_n")
+            ),
+            "actual_intervention_treatment_units": _safe_int(
+                metrics.get("actual_intervention_treatment_n")
             ),
             "baseline_treatment_units": _safe_int(
                 metrics.get("baseline_treatment_n")
@@ -563,14 +566,17 @@ def _project_experiment(
             ),
             "harm_state": str(metrics.get("harm_state") or "unknown"),
             "harm_indeterminate_reason": metrics.get("harm_indeterminate_reason"),
-            "treatment_compliance_state": str(
-                metrics.get("treatment_compliance_state") or "unknown"
+            "actual_intervention_state": str(
+                metrics.get("actual_intervention_state") or "unknown"
             ),
-            "treatment_compliance_reason": metrics.get(
-                "treatment_compliance_reason"
+            "actual_intervention_reason": metrics.get(
+                "actual_intervention_reason"
             ),
             "treatment_authority_rejection_reasons": _safe_int_dict(
                 metrics.get("treatment_authority_rejection_reasons")
+            ),
+            "treatment_non_intervention_reasons": _safe_int_dict(
+                metrics.get("treatment_non_intervention_reasons")
             ),
             "harm_breached": bool(metrics.get("breached")),
             "breach_reasons": [

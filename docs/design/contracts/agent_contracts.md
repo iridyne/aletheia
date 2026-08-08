@@ -379,6 +379,9 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
   `universe_forward_outcomes` is a selected-member mirror/fallback and disagreement fails closed
 - **Outputs**: append-only verdicts under
   `universe_family_calibration_cluster_allocation_utility_v5`; old metric verdicts remain history
+- **Intervention provenance**: `authority_applied` records consistent treatment permission;
+  finite before/after behavior change is separate, and an authorized cluster is an actual
+  intervention only when at least one member changed
 - **Time semantics**: a market day is a UTC date with at least one complete eligible exposure unit
   from either arm. Seven consecutive days plus 50 units in each arm inside that run are required;
   a missing day resets the current window, planned outages receive no implicit waiver, and verdict

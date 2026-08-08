@@ -137,14 +137,17 @@ loop contributes positively. Current behavior has these contract-relevant limita
 - treatment assignment and treatment intervention remain distinct. The v5 primary estimand stays
   randomized intent-to-treat: every qualified assigned-treatment unit, including a baseline
   fallback, enters the treatment mean, confidence interval, harm calculation and persisted
-  `unique_treatment_n`. Selecting only `authority_applied=true` rows is forbidden because authority
-  refusal can correlate with market or risk state. Actual-intervention count and compliance are
-  independent qualification gates: Paper positive/promotion requires the full manifest-proven
-  actual-intervention minimum and complete compliance for the current window. Assigned baseline
-  fallbacks remain auditable through counts and bounded authority-reason counts, but cannot help a
-  positive result promote. Because this stricter qualification changes which evidence may be called
-  positive, metric v5 plus Universe behavior contract v6 starts a from-zero identity; v4/v5
-  identity evidence remains immutable history and is never mixed or implicitly migrated;
+  `unique_treatment_n`. Selecting only effectively changed rows is forbidden because authority
+  refusal or a no-op baseline can correlate with market state. Permission and behavior are separate
+  provenance: `authority_applied` records a consistent authorized treatment assignment, while a
+  finite before/after delta records `behavior_changed`. A complete cluster is an actual intervention
+  only when permission is consistent and at least one member changed. Paper positive/promotion
+  requires the full actual-intervention minimum, not 100% intervention compliance. Refused and
+  all-no-op clusters remain in ITT and dilute the estimated policy effect; they cannot satisfy the
+  actual-intervention count but do not deadlock an otherwise qualified window. Counts and bounded
+  non-intervention reasons remain auditable. Metric v5 plus Universe behavior contract v6 starts a
+  from-zero identity; v4/v5 identity evidence remains immutable history and is never mixed or
+  implicitly migrated;
 - harm is determinate only after both arms reach the experiment's 50-assignment-unit gate. Before
   that point the persisted state is `indeterminate`: it blocks new authority and promotion but does
   not claim a breach; the narrowly declared activated-trial collection exception below may retain
@@ -171,8 +174,8 @@ loop contributes positively. Current behavior has these contract-relevant limita
   indeterminate solely because the predeclared sample/continuity window is underpowered. This is a
   collection liveness rule, not a promotion waiver: negative/invalid evidence, a determinate harm
   breach, identity/config/refreeze failure, or any non-underpower indeterminate reason still
-  withdraws authority. Incomplete compliance remains fail closed for positive/promotion, and
-  progression still requires positive, clear-harm, complete-compliance evidence;
+  withdraws authority. Progression still requires positive ITT evidence, clear harm, and the full
+  actual-intervention minimum;
 - experiment registration is not an observation start. The first durable exposure atomically and
   idempotently changes an open experiment from `registered` to `active`, and `started_at` is always
   repaired to the earliest durable exposure;
@@ -211,9 +214,9 @@ loop contributes positively. Current behavior has these contract-relevant limita
 - hypothesis identity includes the path behavior-contract version. A refreeze remains durable for
   repeated calls under that version, while a version change creates a distinct shadow hypothesis
   and experiment; it never reopens or mutates the refrozen predecessor.
-- the current UFC continuity contract is behavior version v5. It preserves the v4 bounded,
-  deterministic source-lineage fingerprint and adds consecutive eligible UTC exposure-day
-  qualification; the v2 harm, v3 settlement-source and v4 source-lineage-only semantics are
+- the current UFC contract is behavior version v6. It retains the v5 continuous-window and v4
+  deterministic source-lineage rules, and adds permission-versus-effective-behavior provenance;
+  the v2 harm, v3 settlement-source, v4 source-lineage-only, and v5 continuity-only semantics are
   historical.
   Every path-version change rotates the policy epoch and starts a fresh from-zero window.
 - canonical/mirror disagreement remains whole-cohort `invalid`; no conflicting sample is silently

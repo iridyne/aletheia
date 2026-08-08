@@ -22,8 +22,8 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
     SpecClaim(
         "LE-V03", "learning_evolution", "§7 actual intervention", "L2c",
         "AT-01 preserves randomized intent-to-treat across all assigned treatment units while "
-        "carrying actual intervention and refusal reasons as an independent compliance gate. "
-        "Baseline fallback cannot help a result promote, and an activated underpowered paper "
+        "separating permission from finite before/after behavior change at the cluster level. "
+        "No-op clusters cannot satisfy the actual-intervention minimum, and an underpowered paper "
         "trial can continue gathering evidence without weakening harm or promotion gates.",
         status="implemented",
     ),
@@ -47,6 +47,8 @@ def test_read_only_verdict_runtime_surface_exists():
     assert callable(inspect_experiment)
     assert "authority_applied" in {field.name for field in fields(CohortSample)}
     assert "authority_reason" in {field.name for field in fields(CohortSample)}
+    assert "behavior_changed" in {field.name for field in fields(CohortSample)}
+    assert "behavior_change_reason" in {field.name for field in fields(CohortSample)}
     assert "assignment_unit_key" in {field.name for field in fields(CohortSample)}
     assert METRIC_VERSION == "universe_family_calibration_cluster_allocation_utility_v5"
     assert (

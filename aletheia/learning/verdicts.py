@@ -45,10 +45,17 @@ def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
         raw_control,
     )
     treatment = qualified_assigned_treatment
-    actual_treatment = [
+    authority_applied_treatment = [
         sample for sample in qualified_assigned_treatment
         if sample.authority_applied
     ]
+    actual_treatment = [
+        sample for sample in qualified_assigned_treatment
+        if sample.authority_applied and sample.behavior_changed
+    ]
+    coverage["qualified_authority_applied_treatment_n"] = len(
+        authority_applied_treatment
+    )
     coverage["qualified_actual_intervention_treatment_n"] = len(actual_treatment)
     treatment_values = [sample.net_return_pct for sample in treatment]
     control_values = [sample.net_return_pct for sample in control]
@@ -63,8 +70,9 @@ def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
     harm_metrics["harm_treatment_basis"] = "randomized_assignment_intent_to_treat"
     harm_metrics["market_day_coverage"] = coverage
     required = max(1, int(cohort.experiment.min_samples_per_arm))
-    harm_metrics.update(_treatment_compliance_metrics(
+    harm_metrics.update(_treatment_intervention_metrics(
         assigned_treatment=qualified_assigned_treatment,
+        authority_applied_treatment=authority_applied_treatment,
         actual_treatment=actual_treatment,
         required=required,
         raw_assigned_treatment_n=len(assigned_treatment),
@@ -110,8 +118,6 @@ def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
             "insufficient_data",
             "insufficient_actual_intervention_samples",
         )
-    if len(actual_treatment) != len(treatment):
-        return result("insufficient_data", "incomplete_treatment_compliance")
     threshold = max(_PRACTICAL_NEUTRAL_DELTA_PCT, float(cohort.hypothesis.effect_threshold or 0.0))
     if delta < threshold or confidence_low is None or confidence_low <= 0:
         return result(
@@ -124,42 +130,58 @@ def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
     )
 
 
-def _treatment_compliance_metrics(
+def _treatment_intervention_metrics(
     *,
     assigned_treatment: list[CohortSample],
+    authority_applied_treatment: list[CohortSample],
     actual_treatment: list[CohortSample],
     required: int,
     raw_assigned_treatment_n: int,
 ) -> dict[str, Any]:
-    baseline = [sample for sample in assigned_treatment if not sample.authority_applied]
+    baseline = [
+        sample for sample in assigned_treatment
+        if not (sample.authority_applied and sample.behavior_changed)
+    ]
     if not actual_treatment:
-        compliance_reason = "no_actual_intervention"
+        intervention_reason = "no_actual_intervention"
     elif len(actual_treatment) < required:
-        compliance_reason = "insufficient_actual_intervention_samples"
-    elif baseline:
-        compliance_reason = "incomplete_treatment_compliance"
+        intervention_reason = "insufficient_actual_intervention_samples"
     else:
-        compliance_reason = "complete_treatment_compliance"
+        intervention_reason = "sufficient_actual_intervention_samples"
     return {
         "raw_assigned_treatment_n": raw_assigned_treatment_n,
         "assigned_treatment_n": len(assigned_treatment),
-        "authority_applied_treatment_n": len(actual_treatment),
+        "authority_applied_treatment_n": len(authority_applied_treatment),
+        "actual_intervention_treatment_n": len(actual_treatment),
         "baseline_treatment_n": len(baseline),
         "required_actual_intervention_n": required,
-        "treatment_compliance_rate": (
+        "authority_application_rate": (
+            len(authority_applied_treatment) / len(assigned_treatment)
+            if assigned_treatment else None
+        ),
+        "actual_intervention_rate": (
             len(actual_treatment) / len(assigned_treatment)
             if assigned_treatment else None
         ),
-        "treatment_compliance_state": (
+        "actual_intervention_state": (
             "none"
             if not actual_treatment
             else "partial"
             if baseline
             else "complete"
         ),
-        "treatment_compliance_reason": compliance_reason,
+        "actual_intervention_reason": intervention_reason,
         "treatment_authority_rejection_reasons": dict(sorted(Counter(
             sample.authority_reason or "authority_reason_unavailable"
+            for sample in assigned_treatment
+            if not sample.authority_applied
+        ).items())),
+        "treatment_non_intervention_reasons": dict(sorted(Counter(
+            (
+                f"authority:{sample.authority_reason or 'authority_reason_unavailable'}"
+                if not sample.authority_applied
+                else sample.behavior_change_reason
+            )
             for sample in baseline
         ).items())),
     }

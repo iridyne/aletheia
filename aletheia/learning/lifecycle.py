@@ -713,6 +713,10 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
             "assigned_treatment": sum(
                 len(cohort.treatment_samples) for cohort in cohorts
             ),
+            "authority_applied_treatment": sum(
+                len(cohort.authority_applied_treatment_samples)
+                for cohort in cohorts
+            ),
             "actual_intervention_treatment": sum(
                 len(cohort.actual_treatment_samples) for cohort in cohorts
             ),

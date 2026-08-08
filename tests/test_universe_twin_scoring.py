@@ -7,6 +7,7 @@ import ast
 import copy
 from dataclasses import replace
 import inspect
+import json
 from pathlib import Path
 import random
 import textwrap
@@ -170,6 +171,53 @@ def test_allocator_audit_records_realized_learning_authority(
     assert audit["calibration_authority_applied"] is True
     assert audit["calibration_assignment"] == "treatment"
     assert audit["effective_opportunity_multiplier"] == pytest.approx(1.1)
+
+
+def test_zero_score_ufc_treatment_persists_authority_without_effective_intervention(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.learning import authority, experiments
+    from aletheia.learning.authority import AuthorityDecision
+    from aletheia.learning.ledger import get_record
+
+    cfg = AletheiaConfig()
+    monkeypatch.setattr(experiments, "load_config", lambda: cfg)
+    monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+    monkeypatch.setattr(experiments, "stable_assignment", lambda *_args: "treatment")
+    monkeypatch.setattr(
+        authority,
+        "resolve_learning_authority",
+        lambda _path, experiment, _epoch: AuthorityDecision(
+            True,
+            "current_stage_measurement_underpowered",
+            experiment.stage,
+            experiment.allocation_pct,
+            experiment.activation_verdict_id,
+            None,
+        ),
+    )
+    feature = _feature(feature_snapshot_id="zero-score-feature")
+    audit: dict[str, object] = {}
+
+    compute_total_score(
+        feature,
+        _step_result(opportunity_score=0.0),
+        cfg.universe,
+        calibration={"momentum:long:perp": 1.2},
+        scoring_cohort_key="zero-score-run",
+        scoring_audit_out=audit,
+    )
+
+    exposure = get_record("learning_exposures", feature["learning_exposure_id"])
+    manifest = json.loads(exposure["manifest_json"])
+    assert audit["calibration_assignment"] == "treatment"
+    assert audit["calibration_authority_applied"] is False
+    assert audit["calibration_reason"] == "baseline:no_effective_treatment_delta"
+    assert exposure["before_json"] == exposure["after_json"]
+    assert manifest["authority_applied"] is True
+    assert manifest["behavior_changed"] is False
+    assert manifest["behavior_change_reason"] == "no_effective_treatment_delta"
 
 
 def test_twin_applies_same_realized_external_multiplier_without_authority() -> None:

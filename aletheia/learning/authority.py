@@ -341,40 +341,51 @@ def measurement_intervention_block_reason(
     """Fail closed when a positive verdict lacks enough actual interventions.
 
     ``unique_treatment_n`` remains the randomized assigned-treatment count for
-    the ITT estimand. Manifest-derived actual/baseline counts are a separate
-    compliance gate, so fallback rows cannot help a positive result promote.
+    the ITT estimand. Effective-intervention counts are a separate qualification
+    gate; authorized no-op and refused treatment units remain in ITT but cannot
+    satisfy that gate.
     """
     try:
         metrics = json.loads(verdict.get("harm_metrics_json") or "{}")
         required = max(1, int(required_per_arm))
     except (TypeError, ValueError):
-        return "treatment_compliance_unavailable"
+        return "treatment_intervention_evidence_unavailable"
     if not isinstance(metrics, dict):
-        return "treatment_compliance_unavailable"
+        return "treatment_intervention_evidence_unavailable"
     assigned = _non_negative_int(metrics.get("assigned_treatment_n"))
-    actual = _non_negative_int(metrics.get("authority_applied_treatment_n"))
+    authority_applied = _non_negative_int(
+        metrics.get("authority_applied_treatment_n")
+    )
+    actual = _non_negative_int(metrics.get("actual_intervention_treatment_n"))
     baseline = _non_negative_int(metrics.get("baseline_treatment_n"))
     persisted = _non_negative_int(verdict.get("unique_treatment_n"))
     rejection_reasons = metrics.get("treatment_authority_rejection_reasons")
+    non_intervention_reasons = metrics.get("treatment_non_intervention_reasons")
     if (
         assigned is None
+        or authority_applied is None
         or actual is None
         or baseline is None
         or persisted is None
         or not isinstance(rejection_reasons, dict)
+        or not isinstance(non_intervention_reasons, dict)
         or any(_non_negative_int(value) is None for value in rejection_reasons.values())
+        or any(
+            _non_negative_int(value) is None
+            for value in non_intervention_reasons.values()
+        )
     ):
-        return "treatment_compliance_unavailable"
-    if persisted != assigned or actual + baseline != assigned:
-        return "treatment_compliance_count_mismatch"
+        return "treatment_intervention_evidence_unavailable"
+    if (
+        persisted != assigned
+        or actual + baseline != assigned
+        or not actual <= authority_applied <= assigned
+        or sum(rejection_reasons.values()) != assigned - authority_applied
+        or sum(non_intervention_reasons.values()) != baseline
+    ):
+        return "treatment_intervention_count_mismatch"
     if actual < required:
         return "insufficient_actual_intervention_samples"
-    if (
-        baseline
-        or metrics.get("treatment_compliance_state") != "complete"
-        or any(value for value in rejection_reasons.values())
-    ):
-        return "incomplete_treatment_compliance"
     return None
 
 

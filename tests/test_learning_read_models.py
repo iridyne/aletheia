@@ -123,11 +123,15 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
             "harm_indeterminate_reason": "insufficient_samples",
             "assigned_treatment_n": 4,
             "authority_applied_treatment_n": 0,
+            "actual_intervention_treatment_n": 0,
             "baseline_treatment_n": 4,
-            "treatment_compliance_state": "none",
-            "treatment_compliance_reason": "no_actual_intervention",
+            "actual_intervention_state": "none",
+            "actual_intervention_reason": "no_actual_intervention",
             "treatment_authority_rejection_reasons": {
                 "experiment_stage_not_paper": 4,
+            },
+            "treatment_non_intervention_reasons": {
+                "authority:experiment_stage_not_paper": 4,
             },
             "breached": False,
             "breach_reasons": [],
@@ -217,6 +221,7 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
         "raw_exposures": 18,
         "treatment_assignment_units": 4,
         "assigned_treatment_units": 4,
+        "authority_applied_treatment_units": 0,
         "actual_intervention_treatment_units": 0,
         "baseline_treatment_units": 4,
         "control_assignment_units": 5,
@@ -230,12 +235,15 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     }
     assert item["integrity"]["harm_state"] == "indeterminate"
     assert item["integrity"]["harm_indeterminate_reason"] == "insufficient_samples"
-    assert item["integrity"]["treatment_compliance_state"] == "none"
-    assert item["integrity"]["treatment_compliance_reason"] == (
+    assert item["integrity"]["actual_intervention_state"] == "none"
+    assert item["integrity"]["actual_intervention_reason"] == (
         "no_actual_intervention"
     )
     assert item["integrity"]["treatment_authority_rejection_reasons"] == {
         "experiment_stage_not_paper": 4,
+    }
+    assert item["integrity"]["treatment_non_intervention_reasons"] == {
+        "authority:experiment_stage_not_paper": 4,
     }
     assert item["lifecycle"]["recommended_action"] == "admit_trial"
     assert item["lifecycle"]["mutation_available"] is False
@@ -287,10 +295,14 @@ def test_lco_projection_holds_positive_with_insufficient_actual_interventions(
         "harm_indeterminate_reason": None,
         "assigned_treatment_n": 10,
         "authority_applied_treatment_n": 1,
+        "actual_intervention_treatment_n": 1,
         "baseline_treatment_n": 9,
-        "treatment_compliance_state": "partial",
+        "actual_intervention_state": "partial",
         "treatment_authority_rejection_reasons": {
             "test_authority_rejection": 9,
+        },
+        "treatment_non_intervention_reasons": {
+            "authority:test_authority_rejection": 9,
         },
     })
     db.execute(

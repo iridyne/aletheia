@@ -336,6 +336,10 @@ Each item contains:
   "samples": {
     "raw_exposures": 0,
     "treatment_assignment_units": 0,
+    "assigned_treatment_units": 0,
+    "authority_applied_treatment_units": 0,
+    "actual_intervention_treatment_units": 0,
+    "baseline_treatment_units": 0,
     "control_assignment_units": 0,
     "required_per_arm": 50,
     "complete_assignment_units": 0,
@@ -350,6 +354,10 @@ Each item contains:
     "exclusion_reasons": {},
     "invalid_reasons": {},
     "conflict_count": 0,
+    "actual_intervention_state": "none",
+    "actual_intervention_reason": "no_actual_intervention",
+    "treatment_authority_rejection_reasons": {},
+    "treatment_non_intervention_reasons": {},
     "harm_breached": false
   },
   "lifecycle": {
@@ -363,8 +371,11 @@ Each item contains:
 }
 ```
 
-Counts are named by statistical unit. `raw_exposures` and `cluster_members` must
-never be displayed as treatment/control sample size.
+Counts are named by statistical unit. Permission and effective behavior remain
+separate: an authorized all-no-op cluster is visible in
+`authority_applied_treatment_units` but not `actual_intervention_treatment_units`.
+`raw_exposures` and `cluster_members` must never be displayed as treatment/control
+sample size.
 
 `mutation_available=true` is readiness information only. It requires a current
 identity-matched `admit_trial` recommendation plus all default-closed paper

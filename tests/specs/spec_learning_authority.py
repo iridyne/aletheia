@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 
+import pytest
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -195,6 +197,30 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
     assert exposure["candidate_key"] == applied_candidate
     assert '"value": 50.0' in exposure["before_json"]
     assert '"value": 40.0' in exposure["after_json"]
+    applied_manifest = json.loads(exposure["manifest_json"])
+    assert applied_manifest["authority_applied"] is True
+    assert applied_manifest["behavior_changed"] is True
+
+    noop_candidate = next(
+        f"noop:{i}" for i in range(1000)
+        if stable_assignment(experiment, f"noop:{i}") == "treatment"
+    )
+    noop = apply_numeric_treatment(
+        candidate_key=noop_candidate,
+        **{**common, "treatment": common["baseline"]},
+    )
+    noop_exposure = get_record("learning_exposures", noop.exposure_id)
+    noop_manifest = json.loads(noop_exposure["manifest_json"])
+
+    assert noop.assignment == "treatment"
+    assert noop.applied is False
+    assert noop.value == 50.0
+    assert noop.reason == "baseline:no_effective_treatment_delta"
+    assert noop_exposure["before_json"] == noop_exposure["after_json"]
+    assert noop_manifest["authority_applied"] is True
+    assert noop_manifest["authority_reason"] == "legacy_promote_compatibility"
+    assert noop_manifest["behavior_changed"] is False
+    assert noop_manifest["behavior_change_reason"] == "no_effective_treatment_delta"
 
     later_control = next(
         f"later-control:{i}" for i in range(1000)
@@ -202,6 +228,25 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
     )
     control = apply_numeric_treatment(candidate_key=later_control, **common)
     assert not control.applied and control.value == 50.0
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), float("-inf")])
+def test_numeric_treatment_rejects_non_finite_values(invalid):
+    from aletheia.learning.experiments import apply_numeric_treatment
+
+    with pytest.raises(ValueError, match="must be finite"):
+        apply_numeric_treatment(
+            path_id="universe_family_calibration",
+            scope={"family": "momentum", "direction": "long", "market_type": "perp"},
+            action={"type": "opportunity_multiplier", "multiplier": 1.1},
+            source_cohort="universe_forward_outcomes:clean_net:v2",
+            target_horizon="4h",
+            candidate_key="non-finite-candidate",
+            baseline=0.0,
+            treatment=invalid,
+            consumer="universe_allocator",
+            consumer_stage="opportunity_score",
+        )
 
 
 @spec_claim(
@@ -266,9 +311,10 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
                 "breached": False,
                 "assigned_treatment_n": 1,
                 "authority_applied_treatment_n": 1,
+                "actual_intervention_treatment_n": 1,
                 "baseline_treatment_n": 0,
-                "treatment_compliance_state": "complete",
                 "treatment_authority_rejection_reasons": {},
+                "treatment_non_intervention_reasons": {},
             }),
     )
     assert insert_record("learning_contribution_verdicts", activation)
@@ -326,9 +372,10 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
                 "breached": False,
                 "assigned_treatment_n": 1,
                 "authority_applied_treatment_n": 1,
+                "actual_intervention_treatment_n": 1,
                 "baseline_treatment_n": 0,
-                "treatment_compliance_state": "complete",
                 "treatment_authority_rejection_reasons": {},
+                "treatment_non_intervention_reasons": {},
             }),
     )
     insert_record("learning_contribution_verdicts", positive)
@@ -575,9 +622,18 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
             assignment_unit_key=ck,
             candidate_key=ck, outcome_candidate_key=f"{ck}:4h",
             outcome_source="fixed_horizon_candidate", concurrent_policy_epoch=epoch,
+            before_json='{"value":100.0}',
+            after_json=(
+                '{"value":110.0}' if arm == "treatment" else '{"value":100.0}'
+            ),
             manifest_json=json.dumps({
                 "authority_applied": arm == "treatment",
                 "authority_reason": "current_stage_measurement_healthy",
+                "behavior_changed": arm == "treatment",
+                "behavior_change_reason": (
+                    "effective_treatment_delta"
+                    if arm == "treatment" else "control_assignment"
+                ),
             }),
             experiment_stage="paper_10",
             code_commit="test-commit",
