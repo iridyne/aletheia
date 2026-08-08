@@ -490,6 +490,10 @@ _EXECUTOR_WORKERS = {
     # cascade into ``database is locked`` across unrelated jobs.
     "io": 1,
     "fast_io": 1,
+    # Protective lifecycle checks must not queue behind 60--300 second market,
+    # reconciliation, or settlement jobs.  The position manager is the only job
+    # in this lane and still uses SQLite's normal single-writer coordination.
+    "protective": 1,
     "observer": 1,
     # LLM-backed jobs also write run logs/artifacts. Keep them serial so a slow
     # model call cannot make two agent jobs compete for SQLite at once.
@@ -1048,9 +1052,14 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=15, next_run_time=datetime.now() + timedelta(seconds=10),
         executor="fast_io",
     )
+    # Protective paper exits consume the exact-instrument cache refreshed above
+    # every 30 seconds.  A five-minute cadence left a four-and-a-half-minute blind
+    # window where a stop/target could be crossed and recover before the next
+    # sampled mark.  Match the available mark cadence; this remains sampled-paper
+    # semantics and does not claim exchange-native or tick-level triggering.
     _scheduler.add_job(
-        _guarded("position_manager", _run_position_manager), "interval", minutes=5, id="position_manager",
-        misfire_grace_time=60, executor="io",
+        _guarded("position_manager", _run_position_manager), "interval", seconds=30,
+        id="position_manager", misfire_grace_time=60, executor="protective",
     )
     _scheduler.add_job(
         _guarded("position_reconcile", _run_position_reconcile), "interval", minutes=5, id="position_reconcile",

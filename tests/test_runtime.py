@@ -95,6 +95,10 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     market_data_job = s.get_job("market_data")
     assert market_data_job is not None
     assert market_data_job.executor == "io"
+    position_manager_job = s.get_job("position_manager")
+    assert position_manager_job is not None
+    assert position_manager_job.trigger.interval == timedelta(seconds=30)
+    assert position_manager_job.executor == "protective"
     post_trade_job = s.get_job("post_trade_reviewer")
     assert post_trade_job is not None
     assert post_trade_job.executor == "agents"

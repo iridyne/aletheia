@@ -317,8 +317,6 @@ async def refresh_watched_prices() -> dict:
 
     refreshed: list[str] = []
     errors: list[str] = []
-    now = datetime.now(timezone.utc)
-
     try:
         from collections import defaultdict
 
@@ -354,13 +352,14 @@ async def refresh_watched_prices() -> dict:
                             await provider.get_ticker(instrument), venue,
                         )
                         if ticker and ticker.last_price and ticker.last_price > 0:
+                            observed_at = datetime.now(timezone.utc)
                             with _cache_lock:
                                 prev_entry = _price_cache.get(sym, {})
                                 prev_price = prev_entry.get("price")
                                 volume_24h = getattr(ticker, "volume_24h", None) or prev_entry.get("volume_24h")
                                 entry = {
                                     "price": ticker.last_price,
-                                    "ts": now,
+                                    "ts": observed_at,
                                     "prev_price": prev_price,
                                     "volume_24h": volume_24h,
                                     "provider": getattr(ticker, "provider", None) or "unknown",
