@@ -5,7 +5,9 @@
 > Reference intent: [Product Direction - evidence-to-learning loop](../../product/definition/DIRECTION.md#2-complete-the-evidence-to-learning-loop).
 > Future designs:
 > [`learning_evolution.md`](../proposals/learning_evolution.md) and
-> [`learning_observability.md`](../proposals/learning_observability.md).
+> [`learning_observability.md`](../proposals/learning_observability.md), plus the
+> factor-scoring-specific
+> [`universe_continuous_scoring_safety.md`](../proposals/universe_continuous_scoring_safety.md).
 > They are Proposals, not current guarantees.
 
 Learning is not a dashboard-only feature. Its product role is to turn market
@@ -108,6 +110,11 @@ loop contributes positively. Current behavior has these contract-relevant limita
 
 - factor, ranker, learned-guard, automatic Risk-lesson, Observer-bundle and persona hooks remain
   behaviorally static because they are measurement-unsupported; they create no formal exposure;
+- continuous Universe curves, pessimistic missing-data scoring, and factor-level
+  suppression remain accepted future design only; the step scorer and static
+  factor fallback remain authoritative until the separate safeguards in
+  [`universe_continuous_scoring_safety.md`](../proposals/universe_continuous_scoring_safety.md)
+  are implemented and admitted;
 - factor identity is standardized as `factor_key` through producer, ranker and Operator context,
   but its unsupported experiment hook emits no before/after exposure;
 - the scheduled contribution evaluator measures the sole supported path through its

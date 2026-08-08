@@ -2,7 +2,8 @@
 
 > Date: 2026-08-07
 >
-> Status: owner review required before any scoring-behavior change
+> Status: research resolved into an accepted Shadow-only Proposal; no scoring
+> behavior is implemented or active
 >
 > Scope: minimum money loop only; Universe scoring, score semantics, and future
 > factor-level Learning feedback
@@ -320,3 +321,15 @@ The already-completed score-semantic correction is independent: it changes
 `49%` to source-aware `Scanner score 49/100` and keeps model confidence as
 `Confidence score n/100`. It does not claim probability calibration and does
 not alter trading decisions.
+
+## 8. Resolution
+
+On 2026-08-07 the curve anchors and four fail-closed safeguards were accepted
+for staged, non-authoritative implementation. The durable future design is
+[Universe continuous scoring safety](../../proposals/universe_continuous_scoring_safety.md);
+the exact anchors remain in the dated
+[continuous curve specification](02_continuous_curve_specification_2026-08-07.md).
+
+This resolution does not claim that the scorer, twin wiring, factor treatment,
+Fedora deployment, Paper authority, or positive contribution exists. The frozen
+step scorer remains authoritative.

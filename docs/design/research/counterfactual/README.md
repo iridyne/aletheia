@@ -14,7 +14,10 @@
 | [02_calibration_findings_2026-07-31.md](02_calibration_findings_2026-07-31.md) | L2 全局 Conviction gate 校准 | 初稿 |
 | [03_filter_experiment_status_2026-07-31.md](03_filter_experiment_status_2026-07-31.md) | L4 过滤器前瞻实验状态 | 初稿 |
 | [04_per_family_calibration_2026-07-31.md](04_per_family_calibration_2026-07-31.md) | L2 Per-scanner-family 深度校准（新增 --family 参数） | 初稿 |
-| [06_universe_score_continuity_and_learning_safety_2026-08-07.md](06_universe_score_continuity_and_learning_safety_2026-08-07.md) | Universe 连续评分、语义修复与因子级 Learning 安全计划 | 待 owner 审阅 |
+Universe 连续评分和未来因子 Learning 研究已迁移到专门的
+[Universe scoring design and research](../universe-scoring/README.md) 资料包。
+反事实结果仍由本目录和模块契约负责；评分曲线、参考资料和反反馈设计
+不再混入本目录。
 
 ## 当前研究快照（2026-07-31）
 

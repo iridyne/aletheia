@@ -35,6 +35,9 @@ Proposal as stable decision history.
 - [Learning evolution](learning_evolution.md): governed learning changes.
 - [Learning observability](learning_observability.md): learning measurement and
   operator visibility.
+- [Universe continuous scoring safety](universe_continuous_scoring_safety.md):
+  bounded continuous curves plus raw-evidence, missingness, reversible-feedback,
+  and pessimistic-promotion safeguards.
 - [Tokenomics harness phase plan](tokenomics_harness_phase_plan_2026-07-30.md):
   controlled inference-harness rollout.
 - [Model provider profiles and access methods](model_provider_profiles_and_access_methods.md):
