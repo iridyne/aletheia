@@ -3000,6 +3000,57 @@ async def review_portfolio_state(params: dict) -> dict:
             "review_completed": bool(wake_position_ids),
         }
 
+    from aletheia.data.price_feed import (
+        get_fresh_mark_for_protective_close,
+        protective_price_venue,
+    )
+
+    configured_data_venue = config_loader.load_config().market_data.ccxt_exchange
+    review_marks: dict[str, dict | None] = {}
+    review_mark_evidence: list[dict] = []
+    review_now = datetime.now(timezone.utc)
+    for position in open_positions:
+        position_id = str(position.get("id") or "")
+        venue = protective_price_venue(
+            position.get("execution_mode"),
+            configured_data_venue=configured_data_venue,
+        )
+        mark = (
+            get_fresh_mark_for_protective_close(
+                str(position.get("symbol") or ""),
+                str(position.get("market_type") or ""),
+                venue=venue,
+            )
+            if venue
+            else None
+        )
+        review_marks[position_id] = mark
+        evidence = {
+            "position_id": position_id,
+            "status": "unavailable",
+            "requested_venue": venue,
+            "requested_symbol": str(position.get("symbol") or ""),
+            "requested_market_type": str(position.get("market_type") or ""),
+        }
+        if mark is not None:
+            evidence = {
+                "position_id": position_id,
+                "status": "available",
+                **{
+                    key: mark[key]
+                    for key in (
+                        "price",
+                        "observed_at",
+                        "age_seconds",
+                        "source",
+                        "venue",
+                        "symbol",
+                        "market_type",
+                    )
+                },
+            }
+        review_mark_evidence.append(evidence)
+
     schema = {
         "type": "object",
         "properties": {
@@ -3029,18 +3080,62 @@ async def review_portfolio_state(params: dict) -> dict:
     def _position_review_value(value) -> object:
         return "not available" if value is None else value
 
-    pos_summary = "\n".join(
-        f"  id={p['id']} {p['symbol']} ({p.get('market_type', 'spot')}) "
-        f"{p['direction']} qty={p['quantity']} "
-        f"entry={_position_review_value(p.get('entry_price'))} "
-        f"current={_position_review_value(p.get('current_price'))} "
-        f"upnl={_position_review_value(p.get('unrealized_pnl'))} "
-        f"stop={_position_review_value(p.get('stop_price'))} "
-        f"target={_position_review_value(p.get('take_profit_price'))} "
-        f"opened_at={_position_review_value(p.get('opened_at'))} "
-        f"expected_horizon_hours={_position_review_value(p.get('expected_horizon_hours'))}"
-        for p in open_positions
-    )
+    def _position_holding_age_hours(position: dict) -> float | None:
+        try:
+            opened_at = datetime.fromisoformat(
+                str(position.get("opened_at") or "").replace("Z", "+00:00")
+            )
+            if opened_at.tzinfo is None:
+                opened_at = opened_at.replace(tzinfo=timezone.utc)
+            age = (review_now - opened_at).total_seconds() / 3600.0
+        except (TypeError, ValueError):
+            return None
+        return round(age, 4) if math.isfinite(age) and age >= 0 else None
+
+    def _mark_directional_return_pct(position: dict, mark: dict | None) -> float | None:
+        if mark is None:
+            return None
+        try:
+            entry = float(position.get("entry_price"))
+            price = float(mark["price"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not math.isfinite(entry) or entry <= 0:
+            return None
+        direction = str(position.get("direction") or "").lower()
+        if direction not in {"long", "short"}:
+            return None
+        signed = price - entry if direction == "long" else entry - price
+        return round((signed / entry) * 100.0, 6)
+
+    position_lines = []
+    for position in open_positions:
+        mark = review_marks.get(str(position.get("id") or ""))
+        position_lines.append(
+            f"  id={position['id']} {position['symbol']} "
+            f"({position.get('market_type', 'spot')}) "
+            f"{position['direction']} qty={position['quantity']} "
+            f"entry={_position_review_value(position.get('entry_price'))} "
+            f"fresh_mark={_position_review_value(mark.get('price') if mark else None)} "
+            f"fresh_mark_observed_at="
+            f"{_position_review_value(mark.get('observed_at') if mark else None)} "
+            f"fresh_mark_age_seconds="
+            f"{_position_review_value(mark.get('age_seconds') if mark else None)} "
+            f"fresh_mark_source="
+            f"{_position_review_value(mark.get('source') if mark else None)} "
+            f"mark_directional_return_pct="
+            f"{_position_review_value(_mark_directional_return_pct(position, mark))} "
+            f"persisted_current={_position_review_value(position.get('current_price'))} "
+            f"persisted_upnl={_position_review_value(position.get('unrealized_pnl'))} "
+            f"stop={_position_review_value(position.get('stop_price'))} "
+            f"target={_position_review_value(position.get('take_profit_price'))} "
+            f"opened_at={_position_review_value(position.get('opened_at'))} "
+            f"holding_age_hours="
+            f"{_position_review_value(_position_holding_age_hours(position))} "
+            f"expected_horizon_hours="
+            f"{_position_review_value(position.get('expected_horizon_hours'))}"
+        )
+    pos_summary = "\n".join(position_lines)
     total_unrealized_text = (
         f"{total_unrealized_pnl:.2f} USDT"
         if unrealized_pnl_available
@@ -3055,7 +3150,7 @@ async def review_portfolio_state(params: dict) -> dict:
     system = "You are a portfolio risk reviewer for an autonomous paper trading system."
     user = f"""Global portfolio context:
   Total open positions: {len(all_open_positions)}
-  Global unrealized PnL: {total_unrealized_text}
+  Persisted global unrealized PnL: {total_unrealized_text}
 
 Positions in this review scope ({len(open_positions)} of {len(all_open_positions)} total open positions):
 {pos_summary}
@@ -3123,6 +3218,7 @@ Return JSON: {_json.dumps(schema)}"""
                     "wake_batches": wake_batches,
                     "target_position_id": target.get("id") if target else None,
                     "portfolio_context": portfolio_context,
+                    "review_marks": review_mark_evidence,
                     "error_code": review_error_code,
                     "effect": {"status": "unavailable"},
                 }
@@ -3184,6 +3280,23 @@ Return JSON: {_json.dumps(schema)}"""
     target = matching[0] if matching else (
         open_positions[0] if len(open_positions) == 1 else None
     )
+    target_mark_available = bool(
+        target and review_marks.get(str(target.get("id") or "")) is not None
+    )
+    time_authorized_horizon_close = bool(
+        action == "close_one"
+        and target
+        and str(target.get("id") or "") in horizon_due_position_ids
+    )
+    if action == "adjust_position" and matching and not target_mark_available:
+        result["adjust_position_error"] = "fresh_review_mark_unavailable"
+    if (
+        action == "close_one"
+        and matching
+        and not target_mark_available
+        and not time_authorized_horizon_close
+    ):
+        result["close_one_error"] = "fresh_review_mark_unavailable"
 
     def _effect(*, pending: bool = False) -> dict:
         if pending:
@@ -3210,6 +3323,7 @@ Return JSON: {_json.dumps(schema)}"""
                 "wake_batches": wake_batches,
                 "target_position_id": target.get("id") if target else None,
                 "portfolio_context": portfolio_context,
+                "review_marks": review_mark_evidence,
                 "effect": _effect(pending=pending),
             }
         }
@@ -3221,7 +3335,10 @@ Return JSON: {_json.dumps(schema)}"""
     from aletheia.storage.models import PiDecision
     from aletheia.storage.repositories import insert_pi_decision, update_pi_decision
 
-    mutating = mutating_action and bool(matching)
+    mutation_blocked = bool(
+        result.get("adjust_position_error") or result.get("close_one_error")
+    )
+    mutating = mutating_action and bool(matching) and not mutation_blocked
     persisted = PiDecision(
         symbol=target.get("symbol") if target else None,
         direction=target.get("direction") if target else None,
@@ -3242,7 +3359,7 @@ Return JSON: {_json.dumps(schema)}"""
     result["position_review_decision_id"] = persisted.id
     result["wake_fingerprint"] = wake_fingerprint
 
-    if action == "adjust_position" and matching:
+    if action == "adjust_position" and matching and not mutation_blocked:
         from aletheia.portfolio.position_manager import apply_operator_adjustment
 
         target = matching[0]
@@ -3262,23 +3379,27 @@ Return JSON: {_json.dumps(schema)}"""
 
     closed_count = 0
     if action == "close_one" and matching:
-        for pos in matching[:1]:
-            try:
-                from aletheia.portfolio.position_manager import close_position_routed
+        if not mutation_blocked:
+            for pos in matching[:1]:
+                try:
+                    from aletheia.portfolio.position_manager import close_position_routed
 
-                close_result = close_position_routed(
-                    pos["id"],
-                    reason="pi_agent_portfolio_review",
-                    fallback_exit_price=None,
-                    decision_reasoning=reasoning,
-                    decision_actor="system_operator",
-                    decision_source="portfolio_review",
-                )
-                result["close"] = close_result
-                if isinstance(close_result, dict) and close_result.get("closed") is True:
-                    closed_count += 1
-            except Exception as exc:
-                result["close_error"] = str(exc)[:100]
+                    close_result = close_position_routed(
+                        pos["id"],
+                        reason="pi_agent_portfolio_review",
+                        fallback_exit_price=None,
+                        decision_reasoning=reasoning,
+                        decision_actor="system_operator",
+                        decision_source="portfolio_review",
+                    )
+                    result["close"] = close_result
+                    if (
+                        isinstance(close_result, dict)
+                        and close_result.get("closed") is True
+                    ):
+                        closed_count += 1
+                except Exception as exc:
+                    result["close_error"] = str(exc)[:100]
         result["positions_closed"] = closed_count
 
     # A wake is complete only when the requested effect has an authoritative
