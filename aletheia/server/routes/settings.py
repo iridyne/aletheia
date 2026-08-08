@@ -539,7 +539,8 @@ async def update_runtime_config(req: RuntimeConfigUpdate):
             raise HTTPException(400, "runtime_continuity_shadow_port_offset must be between 1 and 10000")
         setattr(cfg.runtime, field, value)
     save_config(cfg)
-    # Notify APScheduler if scheduler_enabled changed
+    # Notify APScheduler if scheduler_enabled changed. The public resume entry
+    # owns the durable pause-owner check, so Settings cannot bypass a gate lease.
     if "scheduler_enabled" in updates:
         try:
             from aletheia.agent_runtime.scheduler import pause_scheduler, resume_scheduler

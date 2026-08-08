@@ -156,7 +156,8 @@ def release_pauses(
             from aletheia.agent_runtime.scheduler import resume_scheduler
 
             try:
-                resume_scheduler()
+                if resume_scheduler() is False:
+                    raise RuntimeError("scheduler_resume_blocked_by_pause_owner")
                 resumed = True
             except Exception:
                 # Persistence already recorded the release. Restore the exact
