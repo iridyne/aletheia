@@ -3054,9 +3054,10 @@ Be conservative. Global portfolio context is read-only. For adjust_position or
 close_one, target_position_id must identify one listed review-scope position. Never
 act on a position outside the supplied wake evidence.
 
-For a horizon_due wake, "hold" acknowledges this one-time horizon review and does
-not schedule another horizon wake. The next automatic time-based action is the
-existing hard backstop. To request another time-based review, choose
+For horizon_due wakes, "hold" acknowledges the one-time horizon review for every
+supplied horizon-due position and does not schedule another horizon wake. The next
+automatic time-based action is the existing hard backstop. To request another
+time-based review, choose
 "adjust_position" and set new_horizon_hours to an absolute age from opened_at that
 is greater than the current age reported in the wake evidence. Do not claim a later
 horizon review will occur after "hold".
@@ -3282,14 +3283,21 @@ Return JSON: {_json.dumps(schema)}"""
         from aletheia.agent_runtime.wake_events import HORIZON_DUE
         from aletheia.portfolio.position_manager import acknowledge_horizon_review
 
-        horizon_position_ids = [
+        horizon_position_ids = list(dict.fromkeys(
             str(batch["position_id"])
             for batch in wake_batches
             if any(
                 isinstance(event, dict) and event.get("kind") == HORIZON_DUE
                 for event in (batch.get("events") or [])
             )
-        ]
+        ))
+        if action in {"adjust_position", "close_one"}:
+            effective_target_id = str(matching[0]["id"]) if matching else None
+            horizon_position_ids = [
+                position_id
+                for position_id in horizon_position_ids
+                if position_id == effective_target_id
+            ]
         if horizon_position_ids:
             result["horizon_reviews_acknowledged"] = acknowledge_horizon_review(
                 horizon_position_ids
