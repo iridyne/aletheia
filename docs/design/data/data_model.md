@@ -53,9 +53,9 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `orders` | Execution orders; native exchange entry `pending` is an unresolved Risk reservation, not zero exposure | symbol, side, quantity, order_type, status | execution gateway |
 | `fills` | Order fill confirmations | order_id, fill_price, fill_quantity, fee | broker adapter |
 | `positions` | Open/closed positions; a closed future may keep net economics unavailable. Delayed local funding materialization stores its versioned evidence fingerprint in reconciliation evidence. Market-aware evaluation remains advisory: its structured evidence records the exact venue/symbol/physical-market identity and source rows used for an Operator wake. | symbol, direction, entry_price, quantity, status, nullable realized_pnl, funding_cost, funding_source, **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence), **exit_limit_source** ('human'|'system_operator'; author of a resting limit exit — selects human_limit_exit vs operator_limit_exit in close_reason for attribution honesty), **exit_plan_effective_at** (nullable projection to the current immutable ExitPlan; NULL means the dormant barrier has not been activated), **last_market_signal_evidence** (versioned JSON; exact position/signal identities, Opportunity/member/asset/Feature provenance, evaluation and delivery result) | position_manager / outcome closure / paper funding settler |
-| `position_exit_plan_versions` | Retained, append-only resolved ExitPlan history. `(position_id, version)` is contiguous and immutable; insert atomically advances the nullable Position projection. | position_id, version, effective_at, resolved stop/take-profit/exit-limit, plan_json, plan_hash, provenance, created_at | protection storage repository (not yet runtime-wired) |
-| `position_protection_state` | One retained row per Position for a future 1-minute protective barrier. It freezes exact instrument identity and monotonic cursors, preserves gap history, and projects the first-trigger identity plus exact close linkage. | position_id, venue, canonical symbol, physical market_type, timeframe=1m, activated_at, cursor/gap/status, trigger_id, close Order/Fill linkage | protection storage repository (not yet runtime-wired) |
-| `position_protection_triggers` | Append-only first-barrier evidence. One immutable row per protected Position contains the exact 1-minute bar, resolved ExitPlan and deterministic collision policy. | trigger_id, position_id, exact instrument/bar/provider/hash, ExitPlan identity/barriers, hit flags/reason | protection storage repository (not yet runtime-wired) |
+| `position_exit_plan_versions` | Retained, append-only resolved ExitPlan history. `(position_id, version)` is contiguous and immutable; insert atomically advances the nullable Position projection. | position_id, version, effective_at, resolved stop/take-profit/exit-limit, plan_json, plan_hash, provenance, created_at | protection repository + new-paper runtime |
+| `position_protection_state` | One retained row per newly protected local-paper Position. It freezes exact instrument identity and monotonic cursors, preserves gap history, and projects first-trigger plus exact close linkage. | position_id, venue, canonical symbol, physical market_type, timeframe=1m, activated_at, cursor/gap/status, trigger_id, close Order/Fill linkage | protection repository + protective scheduler |
+| `position_protection_triggers` | Append-only first-barrier evidence. One immutable row per protected Position contains the exact 1-minute bar, resolved ExitPlan and deterministic collision policy. | trigger_id, position_id, exact instrument/bar/provider/hash, ExitPlan identity/barriers, hit flags/reason | protective scheduler + native paper close |
 | `position_close_events` | **Per-close economic ledger** (exit-intent R1) — one row per close EVENT (full close = 1 row; partial reduce = 1 row per reduction) so realized PnL sums from close events, unifying full + partial closes. Delayed funding finalization atomically converges the unique full-close projection with Position and paper cash. The daily-loss breaker adds partial-close realized via this ledger (`is_partial=1`) on top of the verified full-close read | position_id, close_reason, exit_price, closed_qty, realized_pnl, entry_fee, exit_fee, is_partial, closed_at | `pnl.close_position` / `pnl.reduce_position` / paper account service |
 | `outcome_hook_jobs` | Durable eligible-close feedback outbox; one row per Position and hook, with leased replay after failure | position_id, hook_type, status, attempts, next_attempt_at, claim_token, last_error | outcome close transaction / outcome_hook_replay |
 | `position_disappearance_candidates` | Durable account-scoped position-disappearance confirmation state; never authorizes close by itself | position_id, identity_key, broker_id, account_environment, non-secret account_fingerprint, instrument identity, confirmation_count, direct_query_state, semantics_version | position reconciler (OI-B01 target) |
@@ -678,13 +678,16 @@ rows even when no NULL-PnL close remains.
 
 Every paper cash delta and resulting cash balance must be finite. The HTTP
 
-## 11. Protective Barrier Storage Contract (schema v9, dormant)
+## 11. Protective Barrier Contract (schema v9 storage; new paper runtime active)
 
-Schema v9 provides only the durable substrate for a later protective-barrier
-consumer. It is deliberately dormant: migration does not initialize existing
-paper Positions, backdate a cursor, schedule market-data reads, evaluate OHLCV,
-or submit/close an Order. Those behaviors require separately reviewed follow-up
-changes.
+Schema v9 provides the durable substrate. The runtime consumer activates it only
+inside the transaction that opens a new `paper_internal` Position with at least
+one resolved protective level. A level-less Paper entry does not fabricate an
+ExitPlan or cursor. Migration and
+restart never backfill historical Positions or backdate a cursor. The protective
+scheduler evaluates only the frozen exact instrument's completed 1-minute bar;
+missing data remains a visible gap and a bar bisected by an ExitPlan change is
+skipped as `exit_plan_boundary_unordered` rather than assigned to either plan.
 
 The storage invariants are:
 
@@ -714,10 +717,13 @@ The storage invariants are:
    trigger bar must be fully covered by one authoritative ExitPlan: a stale
    version, a plan effective after bar open, or a later plan effective before
    bar close is rejected instead of retroactively applying either plan.
-6. Close linkage is storage evidence only. `close_order_id`, then the exact
+6. `close_order_id`, then the exact
    `close_fill_id`/price/time/final state, are write-once and must resolve to the
-   same Position and native close chain. These APIs do not create an Order,
-   execute a close, or grant Risk/Execution/Live authority.
+   same Position and native close chain. Trigger evidence authorizes only a call
+   to the existing `paper_internal` routed close: the close re-reads a fresh mark,
+   applies adverse slippage and writes its normal Order/Fill. Barrier prices are
+   never fabricated as fills. This consumer grants no Risk, external Execution,
+   or Live authority.
 
 Status is restricted to `active`, `gap`, `triggered`, `materialized`,
 `superseded`, or `integrity_blocked`; terminal and triggered states cannot

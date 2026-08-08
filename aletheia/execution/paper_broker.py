@@ -198,7 +198,22 @@ def _materialize_paper_entry(
             update_kwargs["slippage_cost"] = round(
                 (existing.get("slippage_cost") or 0.0) + new_slippage_cost, 8
             )
-            update_position(existing["id"], **update_kwargs)
+            if execution_mode == "paper_internal" and "stop_price" in update_kwargs:
+                from aletheia.portfolio.exit_plan import load_exit_plan
+                from aletheia.portfolio.protective_barrier import (
+                    persist_position_exit_plan,
+                )
+
+                updated_plan = load_exit_plan(existing)
+                updated_plan.stop_price = float(update_kwargs.pop("stop_price"))
+                persist_position_exit_plan(
+                    existing["id"],
+                    updated_plan,
+                    provenance="paper_position_addition_v1",
+                    extra_position_updates=update_kwargs,
+                )
+            else:
+                update_position(existing["id"], **update_kwargs)
             position_id = existing["id"]
         else:
             # Protection belongs to the immutable Proposal/Risk authority. The
@@ -250,8 +265,16 @@ def _materialize_paper_entry(
             insert_position(position)
             position_id = position.id
             if execution_mode == "paper_internal":
+                from aletheia.portfolio.protective_barrier import (
+                    activate_new_paper_position,
+                )
                 from aletheia.portfolio.paper_account import record_position_opened
 
+                # When the approved entry has a resolved protective level, the
+                # Position, first immutable ExitPlan, protection cursor and paper
+                # cash reservation share this outer transaction. Level-less Paper
+                # entries retain their existing contract without fabricated state.
+                activate_new_paper_position(position_id)
                 record_position_opened(position_id)
         # Every entry leg, including an averaging leg, retains a direct backlink
         # to the Position it materialized. The Position.order_id remains the

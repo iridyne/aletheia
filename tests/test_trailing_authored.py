@@ -80,9 +80,19 @@ def test_authored_spec_runs_even_when_requires_authoring():
 # ── _maybe_update_trailing_stop behavior ─────────────────────────────────────
 
 def _capture_writes(monkeypatch):
+    import aletheia.portfolio.protective_barrier as barrier
     import aletheia.storage.repositories as repo
+
     calls = []
     monkeypatch.setattr(repo, "update_position", lambda pid, **kw: calls.append((pid, kw)))
+
+    def _capture_plan(pid, plan, *, extra_position_updates=None, **_kwargs):
+        updates = dict(extra_position_updates or {})
+        updates["stop_price"] = plan.stop_price
+        calls.append((pid, updates))
+        return plan
+
+    monkeypatch.setattr(barrier, "persist_position_exit_plan", _capture_plan)
     return calls
 
 

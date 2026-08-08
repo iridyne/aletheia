@@ -7,9 +7,11 @@ and selected policy/learning state. These stores survive a normal process
 restart. This Contract does not claim automatic Gateway recovery, exchange
 reconciliation before startup, or `SAFE_FREEZE` enforcement.
 
-Schema v9 also retains the dormant protective-barrier substrate defined by
-[`data_model` §11](../data/data_model.md#11-protective-barrier-storage-contract-schema-v9-dormant).
-Persistence is not a claim that its runtime consumer is wired.
+Schema v9 also retains the protective-barrier substrate defined by
+[`data_model` §11](../data/data_model.md#11-protective-barrier-contract-schema-v9-storage-new-paper-runtime-active).
+The consumer is wired only for newly opened `paper_internal` Positions that have
+a resolved protective level; storage does not claim historical backfill,
+protection for level-less entries, or external-exchange protection.
 
 The future safety design is
 [`gateway_recovery.md`](../proposals/gateway_recovery.md).
@@ -31,7 +33,7 @@ The future safety design is
 | Append-only event log | reconciliation and learning/policy readers |
 | Artifact store | lessons, skills, policies, and operator-facing readers |
 | Deterministic client order ids | supported exchange adapter submission paths |
-| `position_exit_plan_versions` / `position_protection_state` / `position_protection_triggers` | storage repositories only; no scheduler/evaluator/close consumer yet |
+| `position_exit_plan_versions` / `position_protection_state` / `position_protection_triggers` | new local-paper activation, exact-1m protective scheduler, existing native local close |
 
 An in-memory object is never promoted to durable fact merely because a class or
 test exists.
@@ -64,11 +66,12 @@ into a successful write. Current startup does not enter a mandatory
 `RECOVERY_MODE`, does not guarantee exchange reconciliation before new work,
 and does not enforce `SAFE_FREEZE` from the dormant recovery state machine.
 
-Likewise, schema v9 does not initialize old Positions, fetch or inspect OHLCV,
-resume a barrier evaluator, create a close Order, or close a Position. A future
-recovery consumer must resume from the stored exact 1-minute cursor and fail
-closed on a gap or unknown physical market; it must not backdate activation or
-reinterpret a missing trigger as proof that no barrier was crossed.
+Schema v9 still does not initialize old Positions. The wired consumer resumes
+only rows explicitly activated when a protected new local-paper Position committed, from
+their stored exact 1-minute cursor. It fails closed on a gap or unknown physical
+market and never reinterprets missing trigger evidence as proof that no barrier
+was crossed. A recorded trigger may retry the existing native local close after
+restart; mismatched close evidence becomes `integrity_blocked`.
 
 Those absent guarantees are a product gap, not current Contract behavior. Their
 approved target and rollback boundary are recorded in the Gateway Recovery
@@ -124,7 +127,7 @@ recovery components from being presented as active runtime guarantees.
 closure, versioned manifest, row counts/checksums, explicit exclusion classes,
 redacted configuration, and the managed backup/restore pointer.
 
-`tests/test_position_protection_storage.py` and the v8-to-v9 migration checks in
-`tests/test_migration_fast_path.py` verify the dormant storage substrate,
-append/compare-and-set atomicity, retention, and first-trigger write-once rules;
-they do not constitute scheduler, market-data, close-path, or restart-soak proof.
+`tests/test_position_protection_storage.py`, `tests/test_protective_barrier_runtime.py`
+and the v8-to-v9 migration checks verify storage atomicity, exact-instrument
+evaluation, stop-first collision handling, native close linkage and explicit gap
+behavior. They do not constitute long-running restart-soak or profitability proof.

@@ -2787,6 +2787,89 @@ def get_position_protection_trigger(position_id: str) -> dict | None:
     return dict(row) if row is not None else None
 
 
+def list_position_protection_work(limit: int = 200) -> list[dict]:
+    """Return bounded active/triggered local-paper protection work."""
+
+    rows = get_db().execute(
+        "SELECT state.* FROM position_protection_state AS state "
+        "JOIN positions AS position ON position.id=state.position_id "
+        "WHERE position.execution_mode='paper_internal' "
+        "AND state.status IN ('active','gap','triggered') "
+        "ORDER BY CASE state.status WHEN 'triggered' THEN 0 ELSE 1 END, "
+        "state.next_bar_open_ms, state.position_id LIMIT ?",
+        (max(1, min(int(limit), 1000)),),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_exact_position_protection_bar(state: dict) -> dict | None:
+    """Read exactly the frozen 1m instrument/cursor; never select a fallback."""
+
+    row = get_db().execute(
+        "SELECT ts,open,high,low,close,volume,provider,exchange,market_type "
+        "FROM market_ohlcv WHERE exchange=? AND symbol=? AND market_type=? "
+        "AND timeframe='1m' AND ts=?",
+        (
+            state["venue"],
+            state["symbol"],
+            state["market_type"],
+            int(state["next_bar_open_ms"]),
+        ),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def get_position_exit_plan_for_bar(
+    position_id: str,
+    *,
+    bar_open_ms: int,
+    bar_close_ms: int,
+) -> tuple[dict | None, bool]:
+    """Return the plan at bar open and whether its successor bisects the bar."""
+
+    bar_open_at = datetime.fromtimestamp(bar_open_ms / 1000, timezone.utc).isoformat()
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM position_exit_plan_versions WHERE position_id=? "
+        "AND julianday(effective_at) <= julianday(?) "
+        "ORDER BY version DESC LIMIT 1",
+        (position_id, bar_open_at),
+    ).fetchone()
+    if row is None:
+        return None, False
+    plan = dict(row)
+    successor = db.execute(
+        "SELECT effective_at FROM position_exit_plan_versions "
+        "WHERE position_id=? AND version>? ORDER BY version ASC LIMIT 1",
+        (position_id, plan["version"]),
+    ).fetchone()
+    bisected = bool(
+        successor is not None
+        and _utc_timestamp_ms(successor["effective_at"], "next ExitPlan effective_at")
+        < bar_close_ms
+    )
+    return plan, bisected
+
+
+def get_local_paper_close_chain(position_id: str) -> tuple[dict | None, dict | None]:
+    """Return the first durable local close Order/Fill for crash recovery."""
+
+    db = get_db()
+    order = db.execute(
+        "SELECT * FROM orders WHERE position_id=? "
+        "AND execution_mode='paper_internal' AND close_reason IS NOT NULL "
+        "ORDER BY rowid ASC LIMIT 1",
+        (position_id,),
+    ).fetchone()
+    if order is None:
+        return None, None
+    fill = db.execute(
+        "SELECT * FROM fills WHERE order_id=? ORDER BY rowid ASC LIMIT 1",
+        (order["id"],),
+    ).fetchone()
+    return dict(order), dict(fill) if fill is not None else None
+
+
 def record_position_protection_gap(
     position_id: str,
     *,
@@ -2864,6 +2947,55 @@ def advance_position_protection_cursor(
             expected_next_bar_open_ms,
             evaluated_bar_open_ms,
         ),
+    )
+    return cursor.rowcount == 1
+
+
+def skip_position_protection_boundary_bar(
+    position_id: str,
+    *,
+    expected_next_bar_open_ms: int,
+    skipped_at: str,
+) -> bool:
+    """Advance one permanently ambiguous ExitPlan-boundary bar as an explicit gap."""
+
+    if expected_next_bar_open_ms % 60_000 != 0:
+        raise PositionProtectionConflict("boundary cursor must be 1m aligned")
+    if _utc_timestamp_ms(skipped_at, "skipped_at") < expected_next_bar_open_ms + 60_000:
+        raise PositionProtectionConflict("an incomplete boundary bar cannot be skipped")
+    cursor = execute_write(
+        "UPDATE position_protection_state SET last_inspected_bar_open_ms=?, "
+        "next_bar_open_ms=?, status='gap', gap_reason='exit_plan_boundary_unordered', "
+        "gap_detected_at=?, gap_count=gap_count+1, recent_error=NULL, updated_at=? "
+        "WHERE position_id=? AND status IN ('active','gap') AND trigger_id IS NULL "
+        "AND next_bar_open_ms=?",
+        (
+            expected_next_bar_open_ms,
+            expected_next_bar_open_ms + 60_000,
+            skipped_at,
+            skipped_at,
+            position_id,
+            expected_next_bar_open_ms,
+        ),
+    )
+    return cursor.rowcount == 1
+
+
+def block_position_protection_integrity(
+    position_id: str,
+    *,
+    reason: str,
+    blocked_at: str,
+) -> bool:
+    """CAS a non-materializable protection path into a terminal visible state."""
+
+    _required_protection_text(reason, "integrity block reason")
+    _utc_timestamp_ms(blocked_at, "blocked_at")
+    cursor = execute_write(
+        "UPDATE position_protection_state SET status='integrity_blocked', "
+        "final_state='integrity_blocked', recent_error=?, updated_at=? "
+        "WHERE position_id=? AND status IN ('active','gap','triggered')",
+        (reason[:1000], blocked_at, position_id),
     )
     return cursor.rowcount == 1
 

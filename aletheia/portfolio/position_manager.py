@@ -25,7 +25,7 @@ from aletheia.data.price_feed import (
     protective_price_venue,
 )
 from aletheia.storage.repositories import list_all_open_positions
-from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exit_plan, save_exit_plan
+from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exit_plan
 from aletheia.portfolio.pnl import close_position, _latest_price
 logger = logging.getLogger("aletheia.position_manager")
 
@@ -351,7 +351,7 @@ def _parse_dt(value: str | None) -> datetime | None:
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
         return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-    except ValueError:
+    except (ValueError, RuntimeError):
         return None
 
 
@@ -528,13 +528,14 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
     if tc["activation_profit_pct"] is not None and profit_pct < tc["activation_profit_pct"]:
         return
 
+    updates: dict = {}
+
     # 1. Breakeven move (opt-out via floor_at_breakeven): floor stop at entry when
     #    profit clears breakeven_trigger_pct.
     if tc["floor_at_breakeven"] and current_stop is not None and entry > 0:
         if profit_pct >= cfg.trading.breakeven_trigger_pct:
             if (is_long and current_stop < entry) or (not is_long and current_stop > entry):
-                from aletheia.storage.repositories import update_position
-                update_position(position["id"], stop_price=entry)
+                updates["stop_price"] = entry
                 position["stop_price"] = entry
                 current_stop = entry
 
@@ -548,7 +549,6 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
     else:
         trail_distance = price * (tc["pct"] / 100.0)
 
-    updates: dict = {}
     if is_long:
         new_hw = max(high_water, price)
         new_stop = new_hw - trail_distance
@@ -567,14 +567,31 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
             updates["trail_high_water"] = round(new_hw, 8)
 
     if updates:
-        from aletheia.storage.repositories import update_position
-        update_position(position["id"], **updates)
+        new_stop = updates.get("stop_price")
+        if new_stop is not None:
+            from aletheia.portfolio.protective_barrier import (
+                persist_position_exit_plan,
+            )
+
+            persisted_plan = load_exit_plan(position)
+            persisted_plan.stop_price = float(new_stop)
+            persist_position_exit_plan(
+                position["id"],
+                persisted_plan,
+                provenance="deterministic_trailing_v1",
+                extra_position_updates={
+                    key: value for key, value in updates.items() if key != "stop_price"
+                },
+            )
+        else:
+            from aletheia.storage.repositories import update_position
+
+            update_position(position["id"], **updates)
         # Sync the exchange TPSL bracket when the stop price changes.
         # #139 fix: dispatch broker-agnostically through execution.stops so OKX
         # and (eventually) Binance also honour the trailed stop, not just Bitget.
         # `replace_exchange_protective_stop` re-checks exchange_tpsl_enabled +
         # mode gating internally so the trail path stays honest per broker.
-        new_stop = updates.get("stop_price")
         if new_stop:
             try:
                 from aletheia.execution.stops import replace_exchange_protective_stop
@@ -1178,13 +1195,21 @@ def adjust_stop(position_id: str, new_stop_price: float) -> dict:
     DB via update_position and syncs the exchange TPSL bracket when applicable.
     Returns {"updated": True} on success, {"error": str} on failure.
     """
-    from aletheia.storage.repositories import get_position, update_position
+    from aletheia.storage.repositories import get_position
 
     pos = get_position(position_id)
     if pos is None or pos.get("status") != "open":
         return {"error": f"position {position_id} not found or not open"}
 
-    update_position(position_id, stop_price=round(float(new_stop_price), 8))
+    from aletheia.portfolio.protective_barrier import persist_position_exit_plan
+
+    plan = load_exit_plan(pos)
+    plan.stop_price = round(float(new_stop_price), 8)
+    persist_position_exit_plan(
+        position_id,
+        plan,
+        provenance="legacy_adjust_stop_v1",
+    )
     logger.info("adjust_stop: %s new_stop=%.6f", position_id, new_stop_price)
 
     try:
@@ -1415,7 +1440,7 @@ def apply_operator_adjustment(
     mark. Successful changes bump the ExitPlan version, re-mark provenance 'operator',
     re-arm a changed horizon, sync the exchange stop bracket, and write an audit event.
     """
-    from aletheia.storage.repositories import get_position, update_position
+    from aletheia.storage.repositories import get_position
 
     cfg = load_config()
     # Fetch by durable identity rather than scanning a capped list: the previous
@@ -1523,10 +1548,22 @@ def apply_operator_adjustment(
         provenance="operator",
         version=(plan.version or 0) + 1,
     )
-    save_exit_plan(position_id, new_plan)
-    if horizon_changed:
-        # A re-authored horizon should be allowed to wake the Operator again.
-        update_position(position_id, horizon_wake_sent_at=None)
+    from aletheia.portfolio.protective_barrier import persist_position_exit_plan
+
+    try:
+        new_plan = persist_position_exit_plan(
+            position_id,
+            new_plan,
+            provenance="system_operator_adjustment_v1",
+            extra_position_updates=(
+                {"horizon_wake_sent_at": None} if horizon_changed else None
+            ),
+        )
+    except ValueError:
+        return {
+            "error": "exit_plan_persistence_blocked",
+            "position_id": position_id,
+        }
 
     synced = False
     if new_stop is not None and (
@@ -1593,7 +1630,7 @@ def proactive_exit(
     ``analytics/exit_driver_comparison.py`` reads ``close_reason`` to judge whether
     AI-discretionary exits beat deterministic rules.
     """
-    from aletheia.storage.repositories import get_position, update_position
+    from aletheia.storage.repositories import get_position
 
     if actor not in ("system_operator", "human"):
         return {"error": "unsupported_exit_actor", "position_id": position_id, "actor": actor}
@@ -1634,11 +1671,21 @@ def proactive_exit(
         level = round(level, 8)
         # exit_limit_source is persisted with the level so the executor can pick the
         # honest close_reason later, when the original caller is long gone.
-        update_position(
-            position_id,
-            exit_limit_price=level,
-            exit_limit_source=actor,
-        )
+        from aletheia.portfolio.protective_barrier import persist_position_exit_plan
+
+        try:
+            persist_position_exit_plan(
+                position_id,
+                load_exit_plan(pos),
+                provenance=f"{actor}_limit_exit_v1",
+                exit_limit_price=level,
+                exit_limit_source=actor,
+            )
+        except (ValueError, RuntimeError):
+            return {
+                "error": "exit_plan_persistence_blocked",
+                "position_id": position_id,
+            }
         logger.info(
             "proactive_exit(limit): %s resting exit at %.6f actor=%s reason=%s",
             position_id, level, actor, (reason or "")[:80],
