@@ -415,7 +415,9 @@ Schema v9 提供保护屏障持久化契约；字段、身份、CAS 与 retentio
 具有已解析保护价位的新建 `paper_internal` Position 在原入场事务内冻结初始 ExitPlan、exact
 venue/symbol/physical-market 与首个非回溯 1m cursor；没有保护价位的既有合法 Paper 入场不伪造
 ExitPlan 或 cursor。protective executor 每 30 秒逐根读取已闭合的 exact
-1m bar；缺失数据不 fallback，同 bar 同触 stop/target 时固定 stop-first。bar 只授权触发，
+1m bar；若 durable cursor 所需 bar 尚未落库，同一 worker 会以该 cursor 作为 `since`
+从冻结 venue 增量刷新，绕过通用 OHLCV TTL cache，并在有界预算内按时间顺序追平积压。
+缺失数据不 fallback，同 bar 同触 stop/target 时固定 stop-first。bar 只授权触发，
 成交仍通过既有 `close_position_routed` 重新取得 fresh mark 并应用 adverse slippage，随后把
 真实 Order/Fill write-once 链回触发证据。迁移和重启不回填旧 Position；Risk、外部 Execution、
 Live 权限与配置默认值均保持不变。

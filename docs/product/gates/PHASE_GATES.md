@@ -8,7 +8,7 @@
 > Current ownership and progress live in GitHub. Historical strategy-phase gates
 > were retired when the RuleSet/DSL/backtest decision path was removed.
 >
-> Last aligned with code and contracts: 2026-08-06.
+> Last aligned with code and contracts: 2026-08-08.
 
 ## Gate A - Active paper mainline eligibility
 
@@ -95,10 +95,11 @@ shadow --explicit owner admission--> paper_10 -> paper_25 -> paper_50 -> paper_a
 ```
 
 After owner admission, automated progression is allowed only one stage at a time
-when the current stage has a positive, identity-matched, harm-safe measurement and
-all promotion gates remain enabled. Allocation is bounded to 10%, 25%, 50%, then
-the configured `paper_active_allocation_pct` (default 80%, maximum 90%) so a control
-holdout remains.
+when the current stage has an authority-eligible, identity-matched, harm-safe
+`confirmatory` verdict consumed exactly once from its prospective frozen cutoff and
+all promotion gates remain enabled. A recurring `monitoring` positive is descriptive
+and can never promote. Allocation is bounded to 10%, 25%, 50%, then the configured
+`paper_active_allocation_pct` (default 80%, maximum 90%) so a control holdout remains.
 
 The primary result remains randomized intent-to-treat: all qualified assigned
 treatment units, including baseline fallbacks, contribute their realized outcome to
@@ -120,7 +121,8 @@ continues to require positive ITT, clear-harm, and sufficient actual-interventio
 
 | Current evidence | Required lifecycle result |
 |---|---|
-| `positive` and all gates current | Promote one stage |
+| consumed fixed-look `positive` and all gates current | Promote one stage |
+| monitoring `positive` | Hold; descriptive only |
 | `neutral` or ordinary insufficient data | Hold |
 | `negative` or determinate harm breach | Refreeze/fail to static baseline |
 | `invalid` | Invalidate/fail to static baseline |

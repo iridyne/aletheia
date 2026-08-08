@@ -9,7 +9,7 @@
 > Round 1 protocol was terminated on 2026-06-27 and is historical Git evidence,
 > not a current active round.
 >
-> Last aligned with current Learning code/contracts: 2026-08-06.
+> Last aligned with current Learning code/contracts: 2026-08-08.
 
 ## 1. What an experiment must prove
 
@@ -127,8 +127,11 @@ every default-closed gate in [PHASE_GATES](../gates/PHASE_GATES.md). The schedul
 controller may recommend the action but may not perform it autonomously.
 
 Later progression is one stage at a time (`paper_10`, `paper_25`, `paper_50`,
-`paper_active`) on a current positive, harm-safe verdict. Neutral/insufficient holds;
-negative/harm refreezes; invalid evidence invalidates. A control holdout remains.
+`paper_active`) only on the current stage's authority-eligible positive confirmatory
+verdict consumed from its prospective fixed-look plan. Recurring monitoring-positive
+results are descriptive and hold. Neutral/insufficient holds; monitoring or
+confirmatory negative/harm refreezes; invalid evidence invalidates. A control
+holdout remains.
 
 After a valid owner admission or predecessor activation, an existing bounded Paper
 allocation may continue while the current verdict is `insufficient_data` and harm is
@@ -151,7 +154,8 @@ Compare only cohorts sharing the declared causal identity. Do not pool across:
 - pre/post B-class changes.
 
 Report treatment/control counts, exclusions, actual intervention count, effect and
-confidence interval, harm state, exact window bounds, and mismatch reasons. If any
+confidence interval, inference role/plan/cutoff/consumption state, harm state, exact
+window bounds, and mismatch reasons. If any
 required fact is unavailable, the result is unavailable/invalid/insufficient, never
 zero, healthy, or positive by inference.
 

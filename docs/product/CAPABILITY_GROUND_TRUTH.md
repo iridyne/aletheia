@@ -123,7 +123,7 @@ Outside these canonical tables, use the full capability name.
 | EX-05 | Order constraint normalization | E1+E2 | Supported | None in tested contract | Yes |
 | EX-06 | Exchange order materialization | E1+E2 | Implemented | No owner-selected external execution mode in supported profile | No |
 | EX-07 | Exchange-native TP/SL brackets | E1+E2 | Experimental | Broker/private-fill paths tested; external venue behavior outside supported surface | No |
-| EX-08 | Local protective exits | E1+E2 | Supported | None in tested paper contract | Yes |
+| EX-08 | Local protective exits | E1+E2+E3 | Supported | New protected native Paper positions use durable exact-instrument 1m barriers plus the existing point-mark layer; natural long-soak profitability is a separate question | Yes |
 | EX-09 | Market-aware position review | E1+E2 | Supported | Adverse wakes enter the existing Operator portfolio review with exact Position evidence; hold/adjust/close results and unavailable reviews are durable, while the evaluator retains no mutation authority | No |
 | EX-10 | Horizon and thesis review | E1+E2 | Supported | None in tested contract | Yes |
 | EX-11 | External demo-position adoption | E1+E2 | Experimental | Opt-in reconciliation path outside core | No |
@@ -160,10 +160,10 @@ Outside these canonical tables, use the full capability name.
 | LN-07 | Skill drafting and review | E1 | Experimental | Draft/review only; activation intentionally absent | No |
 | LN-08 | Learned guard generation and observation | E1+E2 | Supported | Learned guards are observe-only; seed/manual guards are a separate static safety class | No |
 | LN-09 | Confidence calibration | E1+E2 | Supported | Measurement/reporting only | No |
-| LN-10 | Shadow trades and counterfactual resolution | E1+E2 | Experimental | Observe-only by design | No |
+| LN-10 | Shadow trades and exit counterfactual resolution | E1+E2 | Experimental | Candidate shadows and the prospective entry-lock exit treatment are observe-only; a natural paired exit result is absent | No |
 | LN-11 | Filter controller observation | E1+E2 | Experimental | Consumer mutation intentionally absent | No |
-| LN-12 | Measured Learning contribution | E1+E2 | Experimental | A qualified natural cohort/verdict is absent | No |
-| LN-13 | Learning lifecycle automation | E1+E2 | Experimental | Policy-gated paper experiment; no E3 | No |
+| LN-12 | Measured Learning contribution | E1+E2 | Experimental | A qualified natural cohort and consumed confirmatory fixed-look verdict are absent | No |
+| LN-13 | Learning lifecycle automation | E1+E2 | Experimental | Owner-gated Paper stages and fixed-look progression are executable; no qualified natural promotion run | No |
 | LN-14 | Persona base sizing | E1+E2 | Supported | Notional/Kelly reach immutable Proposal quantity; other persona fields are explicitly outside this capability | No |
 | LN-15 | Persona regime learning | E1+E2 | Experimental | Bounded notional appetite only; default influence closed | No |
 | LN-16 | Persona progressive unlock | E1+E2 | Experimental | Default-off; active entry parameters only, but the gate uses lifetime eligible closes rather than a prospective Persona/policy cohort (#409) | No |

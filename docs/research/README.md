@@ -16,6 +16,12 @@ Research files are evidence, audits, and explorations. They can guide work but d
 | `explorations/` | Smaller exploratory reports and postmortems |
 | `tokenomics/` | LLM harness and cost-control research feeding the `tokenomics` branch |
 
+## Current audit entry points
+
+- [Minimum Profit Loop Convergence Evidence — 2026-08-08](audits/MINIMUM_PROFIT_LOOP_CONVERGENCE_2026-08-08.md)
+  records the merged PR chain and a dated Fedora checkpoint for the narrowed
+  scan-to-Learning loop. It is historical evidence, not current Runtime truth.
+
 ## Agent Rule
 
 Use research to find evidence and hypotheses. If a conclusion becomes authoritative, promote it into `design/`, `product/`, `governance/`, or `operations/`.

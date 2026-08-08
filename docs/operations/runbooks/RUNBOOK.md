@@ -115,23 +115,24 @@ uv run aletheia secrets set bitget.demo.passphrase
 uv run aletheia bitget test
 ```
 
-## 5. Turn on the autonomous paper loop
+## 5. Run the autonomous paper loop
 
-Both switches are **OFF by default**. Turn them on only when you want the system
-to trade paper autonomously:
+The current supported permission mode is `Paper` and is the default. There is no
+separate `autonomous_paper_trading` switch. Before expecting entries, verify the
+effective Settings/Doctor projection rather than editing `config.yaml` manually:
 
-1. **Permission mode** → `PaperAuto` (allows paper trades; `Research`/`ReadOnly`
-   never trade). Dashboard Settings → Permission Mode (primary), or CLI (deprecated):
+1. **Permission mode** → `Paper` (`Research`/`ReadOnly` never trade). Dashboard
+   Settings → Permission Mode (primary), or CLI:
    ```bash
-   uv run aletheia permission set PaperAuto
+   uv run aletheia permission set Paper
    ```
-2. **Autonomous paper trading** → `true`. Change Settings in the Web UI (persisted to `~/.aletheia/config.yaml`):
-   ```yaml
-   agent:
-     permission_mode: PaperAuto
-     autonomous_paper_trading: true   # default false
+2. Confirm the scheduler is enabled and not held by any durable pause owner:
+   ```bash
+   uv run aletheia inspect config
+   uv run aletheia gateway resume
    ```
-   then `uv run aletheia gateway restart`.
+   The centralized resume gate refuses to run non-essential jobs while any pause
+   owner remains; clear the owning condition instead of bypassing it.
 
 Once on, the active paper trading pipeline runs on a schedule with no dashboard clicks:
 
@@ -141,15 +142,26 @@ market data → market_observer / universe scanners → durable opportunity
   → System Operator: trade or evidenced skip
   → immutable Proposal → Risk Engine → Execution Gateway
   → paper Order + Fill + Position (one causal chain)
-  → position_manager: protective close or Operator horizon review
+  → position_manager: point mark + exact completed-1m protective barriers,
+     or Operator horizon review
   → close Order + Fill + net PnL + paper cash ledger + eligible Outcome
-  → post-trade review / cases / Learning measurement
+  → post-trade review / cases / counterfactuals / Learning measurement
+  → owner-gated bounded influence on a later Paper decision
 ```
 
 This proves lifecycle continuity, not profitability. Behavioural Learning influence
-is disabled by default; only a registry-declared, measurement-supported path may
-affect a later paper decision after prospective treatment/control evidence and the
-authority gate. Missing, harmful, or invalid evidence falls back to static behavior.
+is available by default only for the registry-declared measurement-supported path,
+but no experiment self-admits: a protected owner action, matching prospective
+treatment/control evidence, sufficient actual intervention, one consumed fixed-look
+confirmatory verdict, clear harm state, and every authority gate are still required.
+Missing, harmful, invalid, monitoring-only, or underpowered evidence falls back to
+or retains the declared static behavior.
+
+New protected native Paper positions also receive an immutable exact-instrument 1m
+cursor. Missing bars remain visible gaps; the protective worker refreshes only the
+frozen venue and never substitutes another venue. The separate entry-lock exit
+experiment is prospective and read-only: it records paired net-PnL evidence for new
+eligible positions and never changes their real stop or target.
 
 Watch it on the **Agent Runs**, **Opportunities**, **Proposals**, **Positions**,
 and **Charts** dashboard pages.
@@ -228,9 +240,10 @@ runtime probes are `/_infra/livez` (process liveness), `/_infra/readyz`
   Agent Runs, Positions, Charts, Reports, Knowledge Base.
 - **CLI (bootstrap):** `aletheia doctor` (full ground-truth probe), `aletheia doctor --verbose`
   or `--deep` (redacted log tails + recent failures + next-log pointers),
-  `aletheia doctor --bundle data/diagnostics/doctor.json` (redacted JSON bundle for AI/support),
+  `aletheia doctor --bundle ~/.aletheia/diagnostics/doctor.json` (redacted JSON bundle for AI/support),
   `aletheia gateway status`, `aletheia gateway logs` (multi-log redacted tails). (`aletheia risk status` still works but the Risk panel is primary.)
-- **Files** under `data/`:
+- **Files** under the effective Runtime root (`~/.aletheia/` unless an absolute
+  `ALETHEIA_DATA_DIR` is configured):
   - `logs/audit.jsonl` — every state transition (rotates at `retention.jsonl_max_mb`, default 50 MB, numeric generations)
   - `logs/errors.jsonl`, `logs/agent_runs.jsonl` — structured diagnostic streams, same JSONL rotation cap
   - `logs/gateway.log`, `logs/errors.log`, `logs/frontdoor-errors.log`, `logs/operator-shell-errors.log` — text logs split at 50 MB and kept for many generations during MVP/Round 1/Round 2 diagnosis
@@ -249,8 +262,8 @@ runtime probes are `/_infra/livez` (process liveness), `/_infra/readyz`
 [ ] aletheia gateway start  → dashboard opens
 [ ] Settings → Model Provider configured + Test passes
 [ ] (optional) Bitget demo creds + Test Connection
-[ ] permission_mode = PaperAuto
-[ ] autonomous_paper_trading = true ; gateway restart
+[ ] permission_mode = Paper
+[ ] Scheduler is enabled, Gateway is not paused, and no pause owner blocks resume
 [ ] Agent Runs shows market_observer producing opportunities
 [ ] Positions shows a paper position open, then close with a realized PnL
 [ ] (optional) Telegram configured for health alerts
