@@ -316,7 +316,7 @@ deterministic confidence, harm, source provenance, and exclusion details. Its `p
 signal, so it cannot enable a treatment or alter a multiplier.
 
 The evaluator uses metric version
-`universe_family_calibration_cluster_allocation_utility_v4`. Existing verdicts under older metric
+`universe_family_calibration_cluster_allocation_utility_v5`. Existing verdicts under older metric
 versions remain append-only history and cannot satisfy a current metric-identity gate. Verdict
 `created_at` records evaluation time; `window_start` and `window_end` continue to bound the
 observations used.
@@ -329,10 +329,12 @@ uninterrupted run must contain `min_market_days` dates. A UTC date with no eligi
 arm resets that run,
 and all pre-gap samples are excluded from the post-gap sample, economic, confidence and harm gates.
 Continuity is derived from durable exposure timestamps; transient scheduler health alone cannot
-reconstruct historical coverage. Planned and partial outages have no waiver representation in v5
+reconstruct historical coverage. Planned and partial outages have no waiver representation in v6
 and therefore fail closed. Bounded `market_day_coverage` metadata gives the owner the current run,
-missing-day counts and dates. Metric v4 and behavior contract v5 create a from-zero cohort; older
-experiments and verdicts remain immutable, non-authorizing history.
+missing-day counts and dates. Metric v4 and behavior contract v5 created the continuous-window
+cohort. Metric v5 and behavior contract v6 create a new from-zero identity for the stricter actual-
+intervention and complete-compliance qualification; older experiments and verdicts remain
+immutable, non-authorizing history.
 
 The current harm contract uses the experiment's 50 assignment units per arm as the minimum
 determinate sample. A smaller cohort persists `harm_state=indeterminate`, blocks authority, and

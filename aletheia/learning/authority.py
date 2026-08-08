@@ -166,6 +166,7 @@ def resolve_learning_authority(
     )
     if current is None:
         current = get_latest_measurement_verdict(experiment.experiment_id)
+    current_stage_underpowered = False
     if current is not None:
         identity_reason = measurement_identity_reason(
             current,
@@ -179,7 +180,13 @@ def resolve_learning_authority(
             return blocked(identity_reason, current)
         harm_reason = measurement_harm_block_reason(current)
         if harm_reason:
-            return blocked(harm_reason, current)
+            if (
+                harm_reason == "harm_gate_indeterminate"
+                and _underpowered_current_stage_authority_allowed(current)
+            ):
+                current_stage_underpowered = True
+            else:
+                return blocked(harm_reason, current)
     # A harmful current-stage result must fail closed even when an older
     # activation record is malformed or a controller has not run yet.
     if current is not None and str(current.get("verdict") or "") in {"negative", "invalid"}:
@@ -254,11 +261,17 @@ def resolve_learning_authority(
         current, experiment.stage, current_policy_epoch, expected_horizon=expected_horizon,
         expected_behavior_contract_hash=expected_behavior_contract_hash,
         expected_hypothesis_id=experiment.hypothesis_id,
-    ) or measurement_harm_block_reason(current)
+    )
     if identity_reason:
         return blocked(identity_reason, current)
     return AuthorityDecision(
-        True, "current_stage_measurement_healthy", experiment.stage, allocation,
+        True,
+        (
+            "current_stage_measurement_underpowered"
+            if current_stage_underpowered
+            else "current_stage_measurement_healthy"
+        ),
+        experiment.stage, allocation,
         experiment.activation_verdict_id, str(current.get("verdict_id") or "") or None,
     )
 
@@ -327,9 +340,9 @@ def measurement_intervention_block_reason(
 ) -> str | None:
     """Fail closed when a positive verdict lacks enough actual interventions.
 
-    ``unique_treatment_n`` is a causal count, not an assignment count.  The
-    manifest-derived metric is checked independently so legacy or malformed
-    verdicts cannot promote by relabeling baseline treatment rows as applied.
+    ``unique_treatment_n`` remains the randomized assigned-treatment count for
+    the ITT estimand. Manifest-derived actual/baseline counts are a separate
+    compliance gate, so fallback rows cannot help a positive result promote.
     """
     try:
         metrics = json.loads(verdict.get("harm_metrics_json") or "{}")
@@ -338,15 +351,61 @@ def measurement_intervention_block_reason(
         return "treatment_compliance_unavailable"
     if not isinstance(metrics, dict):
         return "treatment_compliance_unavailable"
+    assigned = _non_negative_int(metrics.get("assigned_treatment_n"))
     actual = _non_negative_int(metrics.get("authority_applied_treatment_n"))
+    baseline = _non_negative_int(metrics.get("baseline_treatment_n"))
     persisted = _non_negative_int(verdict.get("unique_treatment_n"))
-    if actual is None or persisted is None:
+    rejection_reasons = metrics.get("treatment_authority_rejection_reasons")
+    if (
+        assigned is None
+        or actual is None
+        or baseline is None
+        or persisted is None
+        or not isinstance(rejection_reasons, dict)
+        or any(_non_negative_int(value) is None for value in rejection_reasons.values())
+    ):
         return "treatment_compliance_unavailable"
+    if persisted != assigned or actual + baseline != assigned:
+        return "treatment_compliance_count_mismatch"
     if actual < required:
         return "insufficient_actual_intervention_samples"
-    if actual != persisted:
-        return "treatment_compliance_count_mismatch"
+    if (
+        baseline
+        or metrics.get("treatment_compliance_state") != "complete"
+        or any(value for value in rejection_reasons.values())
+    ):
+        return "incomplete_treatment_compliance"
     return None
+
+
+def _underpowered_current_stage_authority_allowed(verdict: dict[str, Any]) -> bool:
+    """Let a valid activated paper trial gather its predeclared evidence.
+
+    This is not a promotion waiver. It applies only to an insufficient current
+    verdict whose harm uncertainty is exactly sample underpower; activation,
+    identity, config, allocation, predecessor and global refreeze gates are still
+    evaluated normally by ``resolve_learning_authority``.
+    """
+    if str(verdict.get("verdict") or "") != "insufficient_data":
+        return False
+    if str(verdict.get("reason") or "") not in {
+        "insufficient unique prospective treatment/control samples",
+        "insufficient unique prospective treatment/control samples in continuous window",
+        "market_day_coverage_gap",
+        "no_actual_intervention",
+        "insufficient_actual_intervention_samples",
+    }:
+        return False
+    try:
+        metrics = json.loads(verdict.get("harm_metrics_json") or "{}")
+    except (TypeError, ValueError):
+        return False
+    return (
+        isinstance(metrics, dict)
+        and metrics.get("harm_state") == "indeterminate"
+        and metrics.get("harm_indeterminate_reason") == "insufficient_samples"
+        and not bool(metrics.get("breached"))
+    )
 
 
 def _non_negative_int(value: Any) -> int | None:

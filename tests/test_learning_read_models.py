@@ -217,6 +217,7 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
         "raw_exposures": 18,
         "treatment_assignment_units": 4,
         "assigned_treatment_units": 4,
+        "actual_intervention_treatment_units": 0,
         "baseline_treatment_units": 4,
         "control_assignment_units": 5,
         "required_per_arm": 10,
@@ -284,7 +285,13 @@ def test_lco_projection_holds_positive_with_insufficient_actual_interventions(
     metrics.update({
         "harm_state": "clear",
         "harm_indeterminate_reason": None,
+        "assigned_treatment_n": 10,
         "authority_applied_treatment_n": 1,
+        "baseline_treatment_n": 9,
+        "treatment_compliance_state": "partial",
+        "treatment_authority_rejection_reasons": {
+            "test_authority_rejection": 9,
+        },
     })
     db.execute(
         "UPDATE learning_experiments SET stage='paper_10' WHERE experiment_id=?",

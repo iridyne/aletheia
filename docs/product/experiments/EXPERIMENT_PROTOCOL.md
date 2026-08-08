@@ -130,6 +130,13 @@ Later progression is one stage at a time (`paper_10`, `paper_25`, `paper_50`,
 `paper_active`) on a current positive, harm-safe verdict. Neutral/insufficient holds;
 negative/harm refreezes; invalid evidence invalidates. A control holdout remains.
 
+After a valid owner admission or predecessor activation, an existing bounded Paper
+allocation may continue while the current verdict is `insufficient_data` and harm is
+indeterminate solely because the predeclared sample/continuity window is
+underpowered. This collection-liveness exception cannot promote, increase allocation,
+or survive negative/invalid evidence, determinate harm, identity/config failure, or a
+global refreeze.
+
 No result grants Risk, Execution, credential, live-unlock, or direct order authority.
 
 ## 6. Comparison and verdict rules
@@ -147,6 +154,13 @@ Report treatment/control counts, exclusions, actual intervention count, effect a
 confidence interval, harm state, exact window bounds, and mismatch reasons. If any
 required fact is unavailable, the result is unavailable/invalid/insufficient, never
 zero, healthy, or positive by inference.
+
+The current v5 Universe primary estimand is randomized intent-to-treat: every
+qualified assigned-treatment unit remains in the primary effect and harm comparison,
+including an authority-refused baseline fallback. Actual intervention count and
+complete treatment compliance are separate positive/promotion gates; filtering the
+primary treatment arm down to applied rows is prohibited because refusal can be
+correlated with market or risk state.
 
 ## 7. Stop and invalidation rules
 

@@ -78,6 +78,10 @@ def _measurement(
     breached: bool = False,
     authority_applied_treatment_n: int | None = None,
     assigned_treatment_n: int = 50,
+    unique_treatment_n: int | None = None,
+    unique_control_n: int = 50,
+    harm_state: str | None = None,
+    harm_indeterminate_reason: str | None = None,
 ):
     from aletheia.learning.behavior_contracts import build_behavior_contract_hash
     from aletheia.learning.ledger import insert_record
@@ -100,10 +104,19 @@ def _measurement(
     actual_treatment_n = (
         0
         if reason == "no_actual_intervention"
-        else 50
+        else assigned_treatment_n
         if authority_applied_treatment_n is None
         else authority_applied_treatment_n
     )
+    baseline_treatment_n = assigned_treatment_n - actual_treatment_n
+    compliance_state = (
+        "none"
+        if actual_treatment_n == 0
+        else "partial"
+        if baseline_treatment_n
+        else "complete"
+    )
+    resolved_harm_state = harm_state or ("breached" if breached else "clear")
     record = LearningContributionVerdict(
         verdict_id=identifier,
         experiment_id=experiment.experiment_id,
@@ -111,8 +124,11 @@ def _measurement(
         stage=stage or experiment.stage,
         window_start=_iso(-9),
         window_end=_iso(-1),
-        unique_treatment_n=50,
-        unique_control_n=50,
+        unique_treatment_n=(
+            assigned_treatment_n
+            if unique_treatment_n is None else unique_treatment_n
+        ),
+        unique_control_n=unique_control_n,
         baseline=0.0,
         observed=0.5,
         delta=0.5,
@@ -125,9 +141,25 @@ def _measurement(
             "metric_version": metric,
             "assigned_treatment_n": assigned_treatment_n,
             "authority_applied_treatment_n": actual_treatment_n,
-            "baseline_treatment_n": assigned_treatment_n - actual_treatment_n,
+            "baseline_treatment_n": baseline_treatment_n,
+            "treatment_compliance_state": compliance_state,
+            "treatment_compliance_reason": (
+                "no_actual_intervention"
+                if actual_treatment_n == 0
+                else "incomplete_treatment_compliance"
+                if baseline_treatment_n
+                else "complete_treatment_compliance"
+            ),
+            "treatment_authority_rejection_reasons": (
+                {"test_authority_rejection": baseline_treatment_n}
+                if baseline_treatment_n else {}
+            ),
             "breached": breached,
-            "harm_state": "breached" if breached else "clear",
+            "harm_state": resolved_harm_state,
+            **(
+                {"harm_indeterminate_reason": harm_indeterminate_reason}
+                if harm_indeterminate_reason is not None else {}
+            ),
             **({"breach_reasons": ["mae_p95_worsening"]} if breached else {}),
         }),
         verdict=verdict,
@@ -222,6 +254,37 @@ def test_positive_verdict_with_insufficient_actual_interventions_cannot_promote(
     assert result.action == "hold"
     assert result.recommended_action == "promote_stage"
     assert result.reason == "insufficient_actual_intervention_samples"
+    assert result.verdict_id == verdict.verdict_id
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM learning_lifecycle_events"
+    ).fetchone()[0] == 0
+
+
+def test_positive_verdict_with_partial_compliance_cannot_promote(monkeypatch):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    verdict = _measurement(
+        hypothesis,
+        experiment,
+        "positive",
+        authority_applied_treatment_n=50,
+        assigned_treatment_n=51,
+    )
+    _configure(monkeypatch, _settings(
+        automation=True,
+        paper=True,
+        paths=[hypothesis.path_id],
+    ))
+    from aletheia.learning.lifecycle import process_lifecycle
+    from aletheia.storage.sqlite import get_db
+
+    result = process_lifecycle(
+        experiment.experiment_id,
+        current_policy_epoch="epoch-a",
+    )
+
+    assert result.action == "hold"
+    assert result.recommended_action == "promote_stage"
+    assert result.reason == "incomplete_treatment_compliance"
     assert result.verdict_id == verdict.verdict_id
     assert get_db().execute(
         "SELECT COUNT(*) FROM learning_lifecycle_events"
@@ -930,6 +993,85 @@ def _promoted_successor(
     return hypothesis, experiment, activation, successor
 
 
+def test_owner_admitted_trial_keeps_authority_while_current_stage_is_underpowered(
+    monkeypatch,
+):
+    hypothesis, _parent, _activation, successor = _promoted_successor(monkeypatch)
+    current = _measurement(
+        hypothesis,
+        successor,
+        "insufficient_data",
+        reason="insufficient unique prospective treatment/control samples",
+        assigned_treatment_n=1,
+        authority_applied_treatment_n=1,
+        unique_control_n=1,
+        harm_state="indeterminate",
+        harm_indeterminate_reason="insufficient_samples",
+    )
+    from aletheia.learning.authority import resolve_learning_authority
+
+    decision = resolve_learning_authority(hypothesis.path_id, successor, "epoch-a")
+
+    assert decision.authorized is True
+    assert decision.reason == "current_stage_measurement_underpowered"
+    assert decision.current_verdict_id == current.verdict_id
+
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET created_at=? WHERE verdict_id=?",
+        (_iso(-1), current.verdict_id),
+    )
+    db.commit()
+    complete = _measurement(hypothesis, successor, "positive")
+    from aletheia.learning.lifecycle import process_lifecycle
+    from aletheia.learning.ledger import get_record
+
+    transition = process_lifecycle(
+        successor.experiment_id,
+        current_policy_epoch="epoch-a",
+    )
+    promoted = get_record("learning_experiments", transition.successor_experiment_id)
+
+    assert transition.action == "promote_stage"
+    assert transition.verdict_id == complete.verdict_id
+    assert promoted["stage"] == "paper_25"
+
+
+def test_owner_admitted_trial_still_withdraws_immediately_on_harm_breach(monkeypatch):
+    hypothesis, _parent, _activation, successor = _promoted_successor(monkeypatch)
+    current = _measurement(
+        hypothesis,
+        successor,
+        "negative",
+        reason="harm gate breached: mae_p95_worsening",
+        assigned_treatment_n=50,
+        authority_applied_treatment_n=50,
+        breached=True,
+    )
+    from aletheia.learning.authority import resolve_learning_authority
+
+    decision = resolve_learning_authority(hypothesis.path_id, successor, "epoch-a")
+
+    assert decision.authorized is False
+    assert decision.reason == "harm_gate_breached"
+    assert decision.current_verdict_id == current.verdict_id
+
+
+@pytest.mark.parametrize("verdict", ["negative", "invalid"])
+def test_owner_admitted_trial_withdraws_on_negative_or_invalid(monkeypatch, verdict):
+    hypothesis, _parent, _activation, successor = _promoted_successor(monkeypatch)
+    current = _measurement(hypothesis, successor, verdict)
+    from aletheia.learning.authority import resolve_learning_authority
+
+    decision = resolve_learning_authority(hypothesis.path_id, successor, "epoch-a")
+
+    assert decision.authorized is False
+    assert decision.reason == f"current_measurement_{verdict}"
+    assert decision.current_verdict_id == current.verdict_id
+
+
 def test_authority_rejects_activation_with_wrong_declared_horizon(monkeypatch):
     hypothesis, _parent, activation, successor = _promoted_successor(monkeypatch)
     from aletheia.learning.authority import resolve_learning_authority
@@ -1509,7 +1651,13 @@ def test_measurement_identity_reason_is_identity_only(monkeypatch):
         ("stale", "4h", "v1", "universe_family_calibration_net_return_v1", "stale_policy_epoch"),
         ("epoch-a", "1h", "v1", "universe_family_calibration_net_return_v1", "horizon_mismatch"),
         ("epoch-a", "4h", "unknown", "universe_family_calibration_net_return_v1", "outcome_contract_mismatch"),
-        ("epoch-a", "4h", "v1", "unknown", "metric_version_mismatch"),
+        (
+            "epoch-a",
+            "4h",
+            "v1",
+            "universe_family_calibration_cluster_allocation_utility_v4",
+            "metric_version_mismatch",
+        ),
     ],
 )
 def test_positive_with_stale_or_mismatched_cohort_cannot_promote(monkeypatch, epoch, horizon, contract, metric, reason):

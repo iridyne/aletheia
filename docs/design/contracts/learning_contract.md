@@ -131,19 +131,25 @@ loop contributes positively. Current behavior has these contract-relevant limita
   scanner-run plus feature-snapshot identity so change-suppressed features cannot merge distinct
   entry-price windows;
 - contribution metric version
-  `universe_family_calibration_cluster_allocation_utility_v4` applies only to new verdicts. Earlier
+  `universe_family_calibration_cluster_allocation_utility_v5` applies only to new verdicts. Earlier
   metric verdict rows remain immutable history. A verdict's `created_at` is evaluation time, while
   `window_start` and `window_end` remain observation bounds;
-- treatment assignment and treatment intervention remain distinct. Shadow assignment units still
-  satisfy the ordinary assignment/outcome/continuity readiness gates, but
-  `authority_applied=false` units never enter the causal treatment mean or persisted
-  `unique_treatment_n`. Paper verdicts and lifecycle promotion require the full per-arm minimum of
-  manifest-proven `authority_applied=true` treatment units. Baseline treatment fallbacks remain
-  auditable through assigned/baseline counts, compliance state, and bounded authority-reason
-  counts; missing or inconsistent compliance metadata fails promotion closed;
+- treatment assignment and treatment intervention remain distinct. The v5 primary estimand stays
+  randomized intent-to-treat: every qualified assigned-treatment unit, including a baseline
+  fallback, enters the treatment mean, confidence interval, harm calculation and persisted
+  `unique_treatment_n`. Selecting only `authority_applied=true` rows is forbidden because authority
+  refusal can correlate with market or risk state. Actual-intervention count and compliance are
+  independent qualification gates: Paper positive/promotion requires the full manifest-proven
+  actual-intervention minimum and complete compliance for the current window. Assigned baseline
+  fallbacks remain auditable through counts and bounded authority-reason counts, but cannot help a
+  positive result promote. Because this stricter qualification changes which evidence may be called
+  positive, metric v5 plus Universe behavior contract v6 starts a from-zero identity; v4/v5
+  identity evidence remains immutable history and is never mixed or implicitly migrated;
 - harm is determinate only after both arms reach the experiment's 50-assignment-unit gate. Before
-  that point the persisted state is `indeterminate`: it blocks authority but does not claim a
-  breach. Determinate loss-rate harm is an absolute increase above `0.15` (15 percentage points),
+  that point the persisted state is `indeterminate`: it blocks new authority and promotion but does
+  not claim a breach; the narrowly declared activated-trial collection exception below may retain
+  an existing bounded allocation. Determinate loss-rate harm is an absolute increase above `0.15`
+  (15 percentage points),
   and MAE p95 worsening is an absolute percentage-point difference above `0.25pp`; MAE fields use
   the `_pp` suffix rather than the ambiguous `_pct` suffix;
 - the current `min_market_days=7` gate means seven consecutive UTC dates, each containing at least
@@ -160,6 +166,13 @@ loop contributes positively. Current behavior has these contract-relevant limita
   may conservatively refreeze or invalidate, but can never grant authority. Stage/hypothesis
   mismatch or malformed identity remains wrong-subject evidence and cannot mutate the current
   experiment;
+- after valid owner admission or predecessor activation, a bounded Paper stage may retain its
+  already-approved allocation while its current verdict is `insufficient_data` and harm is
+  indeterminate solely because the predeclared sample/continuity window is underpowered. This is a
+  collection liveness rule, not a promotion waiver: negative/invalid evidence, a determinate harm
+  breach, identity/config/refreeze failure, or any non-underpower indeterminate reason still
+  withdraws authority. Incomplete compliance remains fail closed for positive/promotion, and
+  progression still requires positive, clear-harm, complete-compliance evidence;
 - experiment registration is not an observation start. The first durable exposure atomically and
   idempotently changes an open experiment from `registered` to `active`, and `started_at` is always
   repaired to the earliest durable exposure;

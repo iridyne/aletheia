@@ -18,7 +18,7 @@ _FAMILY = "momentum"
 _DIRECTION = "long"
 _MARKET_TYPE = "perp"
 _CALIBRATION_KEY = f"{_FAMILY}:{_DIRECTION}:{_MARKET_TYPE}"
-_METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v4"
+_METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v5"
 
 
 @pytest.mark.anyio
@@ -395,7 +395,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
         shadow_verdict.unique_treatment_n,
         shadow_verdict.unique_control_n,
     ) == (
-        0,
+        shadow_cluster_counts["treatment"],
         shadow_cluster_counts["control"],
     )
     assert shadow_harm["assigned_treatment_n"] == shadow_cluster_counts["treatment"]

@@ -21,7 +21,7 @@ The current measured path is `universe_family_calibration`. Its software evidenc
 unit is one complete assignment cluster. Selected members contribute fixed-horizon
 net return; dropped members contribute zero under intent-to-treat allocation
 utility. The current metric version is
-`universe_family_calibration_cluster_allocation_utility_v4`.
+`universe_family_calibration_cluster_allocation_utility_v5`.
 
 ## 2. Learning qualification metrics
 
@@ -30,7 +30,7 @@ utility. The current metric version is
 | Treatment/control assignment units | Complete, unique prospective clusters per arm | Learning cohort builder and `lco-v1` projection |
 | Minimum samples | 50 complete assignment units in each arm | `LearningExperiment.min_samples_per_arm` |
 | Continuous market days | At least 7 consecutive UTC dates with a complete eligible exposure unit from either arm; 50-per-arm sufficiency is independent and scoped to that run | `LearningExperiment.min_market_days` and verdict `market_day_coverage` |
-| Actual intervention | Treatment manifest proves `authority_applied=true` | Exposure manifest and cohort sample |
+| Actual intervention and compliance | At least the per-arm minimum proves `authority_applied=true`, with no treatment fallback in the qualifying window | Exposure manifest and cohort sample |
 | Contribution delta | Cost-aware treatment mean minus control mean | `learning/verdicts.py` |
 | Confidence interval | Deterministic bootstrap interval for the contribution delta | `learning/verdicts.py` |
 | Harm state | `indeterminate`, `clear`, or `breached`; underpowered evidence never claims safety | contribution verdict harm metrics |
@@ -42,18 +42,21 @@ UTC date with no eligible unit in either arm resets the current window; samples
 before that gap do not satisfy counts, economics, confidence, or harm gates
 afterward. Daily arm imbalance remains visible and is handled by the independent
 50-per-arm gate. Planned or partial outages have no implicit waiver when they leave
-a full UTC day uncovered. Metric v4 and UFC behavior contract v5 therefore start a
-from-zero cohort while v3/v4 evidence remains history.
+a full UTC day uncovered. Metric v4 and UFC behavior contract v5 started the
+continuous-window cohort. Metric v5 and UFC behavior contract v6 start another
+from-zero cohort because actual-intervention sufficiency and complete treatment
+compliance are now explicit positive/promotion qualifications; v4/v5 identity
+evidence remains immutable, non-authorizing history for the new contract.
 
 ### Verdict meaning
 
 | Verdict | Meaning |
 |---|---|
-| `insufficient_data` | Sample/time requirement is unmet, or the shadow cohort had no actual intervention |
+| `insufficient_data` | Sample/time/actual-intervention requirement is unmet, the shadow cohort had no actual intervention, or treatment compliance is incomplete |
 | `invalid` | Identity, provenance, or economic evidence cannot support comparison |
 | `negative` | Treatment trails control or breaches a determinate harm gate |
 | `neutral` | Effect is practically small or confidence remains inconclusive |
-| `positive` | Cost-aware treatment improvement clears the practical/confidence threshold with no harm breach |
+| `positive` | ITT cost-aware treatment improvement clears the practical/confidence threshold, actual-intervention minimum, complete compliance, and harm gate |
 
 A healthy evaluator or a large cohort count cannot substitute for one of these
 measurement states.

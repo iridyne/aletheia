@@ -21,10 +21,10 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
     ),
     SpecClaim(
         "LE-V03", "learning_evolution", "§7 actual intervention", "L2c",
-        "AT-01 carries exposure authority and its refusal reason into each cohort sample; only "
-        "authority_applied=true units enter the causal treatment count and effect. Baseline "
-        "treatment rows remain compliance evidence, and insufficient actual intervention cannot "
-        "produce or promote a causal verdict.",
+        "AT-01 preserves randomized intent-to-treat across all assigned treatment units while "
+        "carrying actual intervention and refusal reasons as an independent compliance gate. "
+        "Baseline fallback cannot help a result promote, and an activated underpowered paper "
+        "trial can continue gathering evidence without weakening harm or promotion gates.",
         status="implemented",
     ),
     SpecClaim(
@@ -48,10 +48,10 @@ def test_read_only_verdict_runtime_surface_exists():
     assert "authority_applied" in {field.name for field in fields(CohortSample)}
     assert "authority_reason" in {field.name for field in fields(CohortSample)}
     assert "assignment_unit_key" in {field.name for field in fields(CohortSample)}
-    assert METRIC_VERSION == "universe_family_calibration_cluster_allocation_utility_v4"
+    assert METRIC_VERSION == "universe_family_calibration_cluster_allocation_utility_v5"
     assert (
         get_learning_path("universe_family_calibration").behavior_contract_version
-        == "universe-family-calibration/v5"
+        == "universe-family-calibration/v6"
     )
 
 

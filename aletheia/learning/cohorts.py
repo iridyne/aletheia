@@ -179,8 +179,9 @@ class ContributionCohort:
                 self.source_code_commit_unknown_n == 0
             ),
             "raw_exposure_n": self.raw_exposure_n,
-            "unique_treatment_n": len(self.actual_treatment_samples),
+            "unique_treatment_n": len(self.treatment_samples),
             "assigned_treatment_n": len(self.treatment_samples),
+            "actual_intervention_treatment_n": len(self.actual_treatment_samples),
             "baseline_treatment_n": len(self.baseline_treatment_samples),
             "unique_control_n": len(self.control_samples),
             "duplicate_exposure_n": self.duplicate_exposure_n,

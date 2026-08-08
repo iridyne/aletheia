@@ -661,6 +661,69 @@ def test_different_behavior_contracts_stay_isolated_on_same_commit():
     }
 
 
+def test_v5_v6_identity_does_not_mix_v4_v5_evidence(monkeypatch):
+    from dataclasses import replace
+
+    from aletheia.learning import behavior_contracts
+    from aletheia.learning.cohorts import build_experiment_cohorts
+    from aletheia.learning.registry import get_learning_path
+    from aletheia.learning.verdicts import METRIC_VERSION
+
+    hypothesis, experiment = _experiment()
+    path = get_learning_path(hypothesis.path_id)
+    common = {
+        "path_id": hypothesis.path_id,
+        "policy_hash": "policy-hash:epoch-a",
+        "target_horizon": hypothesis.target_horizon,
+        "outcome_contract_version": "v1",
+    }
+    current_hash = behavior_contracts.build_behavior_contract_hash(
+        **common,
+        metric_version=METRIC_VERSION,
+    )
+    monkeypatch.setattr(
+        behavior_contracts,
+        "get_learning_path",
+        lambda _path_id: replace(
+            path,
+            behavior_contract_version="universe-family-calibration/v5",
+        ),
+    )
+    prior_hash = behavior_contracts.build_behavior_contract_hash(
+        **common,
+        metric_version="universe_family_calibration_cluster_allocation_utility_v4",
+    )
+    assert current_hash != prior_hash
+
+    _exposure(
+        experiment,
+        hypothesis,
+        candidate="prior-identity-treatment",
+        assignment="treatment",
+        behavior_contract_hash=prior_hash,
+    )
+    _outcome("prior-identity-treatment", net=9.0)
+    _exposure(
+        experiment,
+        hypothesis,
+        candidate="current-identity-control",
+        assignment="control",
+        behavior_contract_hash=current_hash,
+    )
+    _outcome("current-identity-control", net=0.0)
+
+    cohorts = {
+        cohort.key.behavior_contract_hash: cohort
+        for cohort in build_experiment_cohorts(experiment.experiment_id)
+    }
+
+    assert len(cohorts) == 2
+    assert len(cohorts[prior_hash].treatment_samples) == 1
+    assert len(cohorts[prior_hash].control_samples) == 0
+    assert len(cohorts[current_hash].treatment_samples) == 0
+    assert len(cohorts[current_hash].control_samples) == 1
+
+
 def test_policy_epoch_from_another_path_is_invalid_cohort_evidence():
     hypothesis, experiment = _experiment()
     _exposure(
@@ -1127,8 +1190,9 @@ def test_shadow_without_actual_intervention_is_not_a_causal_verdict(treatment_ne
 
     cohort = build_experiment_cohorts(experiment.experiment_id)[0]
     assert all(sample.authority_applied is False for sample in cohort.samples)
-    assert cohort.inspection()["unique_treatment_n"] == 0
+    assert cohort.inspection()["unique_treatment_n"] == 2
     assert cohort.inspection()["assigned_treatment_n"] == 2
+    assert cohort.inspection()["actual_intervention_treatment_n"] == 0
     assert cohort.inspection()["baseline_treatment_n"] == 2
     assert verdict.verdict == "insufficient_data"
     assert verdict.reason == "no_actual_intervention"
@@ -1174,9 +1238,9 @@ def test_baseline_treatment_units_do_not_satisfy_actual_intervention_gate():
 
     assert verdict.verdict == "insufficient_data"
     assert verdict.reason == "insufficient_actual_intervention_samples"
-    assert verdict.unique_treatment_n == 1
+    assert verdict.unique_treatment_n == 3
     assert verdict.unique_control_n == 2
-    assert verdict.observed == pytest.approx(1.0)
+    assert verdict.observed == pytest.approx(37.0)
     assert metrics["assigned_treatment_n"] == 3
     assert metrics["authority_applied_treatment_n"] == 1
     assert metrics["baseline_treatment_n"] == 2
@@ -1190,7 +1254,7 @@ def test_baseline_treatment_units_do_not_satisfy_actual_intervention_gate():
     }
 
 
-def test_sufficient_actual_treatments_exclude_baseline_rows_from_effect():
+def test_primary_effect_remains_intent_to_treat_with_baseline_fallback():
     hypothesis, experiment = _experiment(min_samples=2, stage="paper_10")
     for candidate, applied, net, reason in (
         ("applied-treatment-a", True, 1.0, "current_stage_measurement_healthy"),
@@ -1221,17 +1285,57 @@ def test_sufficient_actual_treatments_exclude_baseline_rows_from_effect():
     verdict = _run(experiment.experiment_id)[0]
     metrics = json.loads(verdict.harm_metrics_json)
 
-    assert verdict.verdict == "positive"
-    assert verdict.unique_treatment_n == 2
-    assert verdict.observed == pytest.approx(1.1)
-    assert verdict.delta == pytest.approx(1.1)
+    assert verdict.verdict == "negative"
+    assert verdict.unique_treatment_n == 3
+    assert verdict.observed == pytest.approx((1.0 + 1.2 - 100.0) / 3)
+    assert verdict.delta == pytest.approx((1.0 + 1.2 - 100.0) / 3)
     assert metrics["assigned_treatment_n"] == 3
     assert metrics["baseline_treatment_n"] == 1
     assert metrics["treatment_compliance_state"] == "partial"
-    assert metrics["treatment_compliance_reason"] == "sufficient_actual_intervention"
+    assert metrics["treatment_compliance_reason"] == "incomplete_treatment_compliance"
     assert metrics["treatment_authority_rejection_reasons"] == {
         "runtime_paused": 1,
     }
+
+
+def test_partial_compliance_cannot_produce_positive_verdict():
+    hypothesis, experiment = _experiment(min_samples=2, stage="paper_10")
+    for candidate, applied, net, reason in (
+        ("partial-applied-a", True, 1.0, "current_stage_measurement_healthy"),
+        ("partial-applied-b", True, 1.2, "current_stage_measurement_healthy"),
+        ("partial-baseline", False, 1.0, "runtime_paused"),
+    ):
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=candidate,
+            assignment="treatment",
+            authority_applied=applied,
+            authority_reason=reason,
+        )
+        _outcome(candidate, net=net)
+    for index in range(2):
+        candidate = f"partial-control-{index}"
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=candidate,
+            assignment="control",
+            authority_applied=False,
+            authority_reason="current_stage_measurement_healthy",
+        )
+        _outcome(candidate, net=0.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "insufficient_data"
+    assert verdict.reason == "incomplete_treatment_compliance"
+    assert verdict.unique_treatment_n == 3
+    assert verdict.observed == pytest.approx((1.0 + 1.2 + 1.0) / 3)
+    assert metrics["authority_applied_treatment_n"] == 2
+    assert metrics["baseline_treatment_n"] == 1
+    assert metrics["treatment_compliance_state"] == "partial"
 
 
 def test_real_shadow_flow_stays_shadow_after_at01_and_at02(monkeypatch):

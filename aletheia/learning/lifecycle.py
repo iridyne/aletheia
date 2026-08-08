@@ -709,11 +709,12 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
         "activation_verdict_id": experiment.activation_verdict_id,
         "current_verdict_id": authority.current_verdict_id,
         "treatment_control_progress": {
-            "treatment": sum(
-                len(cohort.actual_treatment_samples) for cohort in cohorts
-            ),
+            "treatment": sum(len(cohort.treatment_samples) for cohort in cohorts),
             "assigned_treatment": sum(
                 len(cohort.treatment_samples) for cohort in cohorts
+            ),
+            "actual_intervention_treatment": sum(
+                len(cohort.actual_treatment_samples) for cohort in cohorts
             ),
             "baseline_treatment": sum(
                 len(cohort.baseline_treatment_samples) for cohort in cohorts

@@ -79,7 +79,7 @@ surface look shipped.
 | --- | --- | --- |
 | Measured ledger | Seven permanent Learning tables exist | Read-only typed projection |
 | Measurable path | `universe_family_calibration` has a current causal cohort adapter; Operator remains consumer-wired but measurement-unsupported | Explicit `measurement_supported` per path |
-| Current metric | `universe_family_calibration_cluster_allocation_utility_v4` | Current identity plus append-only metric history |
+| Current metric | `universe_family_calibration_cluster_allocation_utility_v5` | Current identity plus append-only metric history |
 | Cohort inspection | Internal aggregate inspection exists | Bounded aggregate plus selected cluster detail |
 | Lifecycle inspection | Internal read function returns progress, recommendation and job health | Public sanitized projection |
 | Job health | Current and durable last-failure fields exist | Current, recovery and catch-up states remain separate |
@@ -306,7 +306,7 @@ Each item contains:
     "policy_epoch": "...",
     "target_horizon": "4h",
     "outcome_contract_version": "...",
-    "metric_version": "universe_family_calibration_cluster_allocation_utility_v4",
+    "metric_version": "universe_family_calibration_cluster_allocation_utility_v5",
     "behavior_contract_hash": "...",
     "code_commit": "...",
     "matches_running_cohort": true,

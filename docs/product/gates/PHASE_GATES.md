@@ -100,12 +100,21 @@ all promotion gates remain enabled. Allocation is bounded to 10%, 25%, 50%, then
 the configured `paper_active_allocation_pct` (default 80%, maximum 90%) so a control
 holdout remains.
 
-The treatment sample gate counts only assignment units whose exposure manifest
-records `authority_applied=true`. Assigned treatment units that fell back to the
-baseline remain visible as compliance/rejection evidence, but cannot contribute to
-the treatment mean, confidence interval, sample minimum, or promotion. Lifecycle
-rechecks this actual-intervention count so a legacy or malformed positive verdict
-cannot grant a successor stage.
+The primary result remains randomized intent-to-treat: all qualified assigned
+treatment units, including baseline fallbacks, contribute their realized outcome to
+the treatment mean, confidence interval and harm calculation. Actual intervention is
+a separate promotion gate. The full per-arm minimum must have
+`authority_applied=true`, and the current window must have complete treatment
+compliance; baseline fallbacks remain visible with their authority reasons but cannot
+help a positive result promote. Lifecycle rechecks these counts so a legacy or
+malformed positive verdict cannot grant a successor stage.
+
+A validly activated bounded Paper stage does not lose its existing allocation merely
+because its current `insufficient_data` verdict has an `indeterminate` harm state from
+sample/continuity underpower. It may continue collecting the predeclared window.
+Negative/invalid evidence, determinate harm, identity/config/refreeze failure, or a
+non-underpower indeterminate reason still withdraws authority immediately; promotion
+continues to require positive, clear-harm, complete-compliance evidence.
 
 | Current evidence | Required lifecycle result |
 |---|---|

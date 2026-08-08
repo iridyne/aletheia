@@ -261,10 +261,15 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
             metric_version=METRIC_VERSION,
             code_commit="older-build",
             behavior_contract_hash=behavior_contract_hash,
-            harm_metrics_json=(
-                '{"harm_state":"clear","breached":false,'
-                '"authority_applied_treatment_n":1}'
-            ),
+            harm_metrics_json=json.dumps({
+                "harm_state": "clear",
+                "breached": False,
+                "assigned_treatment_n": 1,
+                "authority_applied_treatment_n": 1,
+                "baseline_treatment_n": 0,
+                "treatment_compliance_state": "complete",
+                "treatment_authority_rejection_reasons": {},
+            }),
     )
     assert insert_record("learning_contribution_verdicts", activation)
     db = get_db()
@@ -316,10 +321,15 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
         stage="paper_10", target_horizon="4h", outcome_contract_version="v1",
             metric_version=METRIC_VERSION, code_commit="newer-build",
             behavior_contract_hash=behavior_contract_hash,
-            harm_metrics_json=(
-                '{"harm_state":"clear","breached":false,'
-                '"authority_applied_treatment_n":1}'
-            ),
+            harm_metrics_json=json.dumps({
+                "harm_state": "clear",
+                "breached": False,
+                "assigned_treatment_n": 1,
+                "authority_applied_treatment_n": 1,
+                "baseline_treatment_n": 0,
+                "treatment_compliance_state": "complete",
+                "treatment_authority_rejection_reasons": {},
+            }),
     )
     insert_record("learning_contribution_verdicts", positive)
     authorized_candidate = next(

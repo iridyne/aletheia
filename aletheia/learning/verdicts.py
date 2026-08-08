@@ -14,7 +14,7 @@ from typing import Any
 from aletheia.learning.cohorts import ContributionCohort, CohortSample
 
 
-METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v4"
+METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v5"
 BOOTSTRAP_SEED = 20260712
 BOOTSTRAP_RESAMPLES = 2000
 _PRACTICAL_NEUTRAL_DELTA_PCT = 0.10
@@ -44,32 +44,28 @@ def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
         assigned_treatment,
         raw_control,
     )
-    treatment = [
+    treatment = qualified_assigned_treatment
+    actual_treatment = [
         sample for sample in qualified_assigned_treatment
         if sample.authority_applied
     ]
-    coverage["qualified_actual_intervention_treatment_n"] = len(treatment)
+    coverage["qualified_actual_intervention_treatment_n"] = len(actual_treatment)
     treatment_values = [sample.net_return_pct for sample in treatment]
     control_values = [sample.net_return_pct for sample in control]
     observed = fmean(treatment_values) if treatment_values else None
     baseline = fmean(control_values) if control_values else None
     delta = observed - baseline if observed is not None and baseline is not None else None
     confidence_low, confidence_high = _bootstrap_interval(treatment_values, control_values)
-    # Shadow must complete the ordinary assignment/outcome/harm-integrity gates
-    # before owner admission even though it has no causal treatment effect yet.
-    # Once any intervention exists, harm is computed only from actually applied
-    # treatment units so baseline fallbacks cannot dilute observed damage.
-    harm_treatment = treatment or qualified_assigned_treatment
-    harm_metrics = _harm_metrics(cohort, harm_treatment, control, delta)
-    harm_metrics["harm_treatment_basis"] = (
-        "actual_intervention"
-        if treatment else "assigned_baseline_no_intervention"
-    )
+    # Preserve the randomized intent-to-treat estimand. Authority refusal can be
+    # correlated with market or risk state, so selecting only applied rows would
+    # turn the primary result into a biased post-assignment comparison.
+    harm_metrics = _harm_metrics(cohort, treatment, control, delta)
+    harm_metrics["harm_treatment_basis"] = "randomized_assignment_intent_to_treat"
     harm_metrics["market_day_coverage"] = coverage
     required = max(1, int(cohort.experiment.min_samples_per_arm))
     harm_metrics.update(_treatment_compliance_metrics(
         assigned_treatment=qualified_assigned_treatment,
-        actual_treatment=treatment,
+        actual_treatment=actual_treatment,
         required=required,
         raw_assigned_treatment_n=len(assigned_treatment),
     ))
@@ -102,18 +98,20 @@ def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
             "insufficient_data",
             "insufficient unique prospective treatment/control samples in continuous window",
         )
-    if not treatment:
+    assert delta is not None
+    if harm_metrics["breached"]:
+        return result("negative", _reason("harm gate breached", harm_metrics["breach_reasons"]))
+    if not actual_treatment:
         return result("insufficient_data", "no_actual_intervention")
-    if len(treatment) < required:
+    if delta < 0:
+        return result("negative", "treatment cost-aware mean trails control")
+    if len(actual_treatment) < required:
         return result(
             "insufficient_data",
             "insufficient_actual_intervention_samples",
         )
-    assert delta is not None
-    if harm_metrics["breached"]:
-        return result("negative", _reason("harm gate breached", harm_metrics["breach_reasons"]))
-    if delta < 0:
-        return result("negative", "treatment cost-aware mean trails control")
+    if len(actual_treatment) != len(treatment):
+        return result("insufficient_data", "incomplete_treatment_compliance")
     threshold = max(_PRACTICAL_NEUTRAL_DELTA_PCT, float(cohort.hypothesis.effect_threshold or 0.0))
     if delta < threshold or confidence_low is None or confidence_low <= 0:
         return result(
@@ -138,8 +136,10 @@ def _treatment_compliance_metrics(
         compliance_reason = "no_actual_intervention"
     elif len(actual_treatment) < required:
         compliance_reason = "insufficient_actual_intervention_samples"
+    elif baseline:
+        compliance_reason = "incomplete_treatment_compliance"
     else:
-        compliance_reason = "sufficient_actual_intervention"
+        compliance_reason = "complete_treatment_compliance"
     return {
         "raw_assigned_treatment_n": raw_assigned_treatment_n,
         "assigned_treatment_n": len(assigned_treatment),

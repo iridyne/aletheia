@@ -518,6 +518,9 @@ def _project_experiment(
             "assigned_treatment_units": _safe_int(
                 metrics.get("assigned_treatment_n")
             ),
+            "actual_intervention_treatment_units": _safe_int(
+                metrics.get("authority_applied_treatment_n")
+            ),
             "baseline_treatment_units": _safe_int(
                 metrics.get("baseline_treatment_n")
             ),
