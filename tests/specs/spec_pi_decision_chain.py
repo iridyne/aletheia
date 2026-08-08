@@ -19,6 +19,7 @@ against a regression that silently reverts either behavior.
 from __future__ import annotations
 
 import ast
+import json
 import pathlib
 
 import pytest
@@ -711,24 +712,23 @@ async def test_three_layer_context_injected_into_llm_prompt(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_operator_structured_calls_disable_provider_reasoning(monkeypatch):
-    """Bounded Operator JSON calls must reserve their budget for schema output."""
+    """Operator callers leave JSON schema rendering to the shared helper."""
     import aletheia.agents.helpers as helpers
     import aletheia.model_provider.router as router
     from aletheia.agent_shell import trading_decision
 
-    captured: dict[str, str | None] = {}
+    captured: dict[str, tuple[str, dict, str | None]] = {}
 
     async def _fake_llm(
         _system,
-        _user,
+        user,
         *,
         schema,
         caller,
         reasoning_effort=None,
         **_kwargs,
     ):
-        del schema
-        captured[caller] = reasoning_effort
+        captured[caller] = (user, schema.model_json_schema(), reasoning_effort)
         if caller == "system_operator.debate_bull":
             return {"confidence": 60, "thesis": "bull", "evidence": []}, None
         if caller == "system_operator.debate_bear":
@@ -753,12 +753,18 @@ async def test_operator_structured_calls_disable_provider_reasoning(monkeypatch)
     )
     await trading_decision._run_debate("BTC/USDT", "long", {})
 
-    assert captured == {
-        "system_operator.assess_opportunity": "none",
-        "system_operator.reassess_direct_skip": "none",
-        "system_operator.debate_bull": "none",
-        "system_operator.debate_bear": "none",
+    expected = {
+        "system_operator.assess_opportunity": trading_decision._DECISION_SCHEMA,
+        "system_operator.reassess_direct_skip": trading_decision._DECISION_SCHEMA,
+        "system_operator.debate_bull": trading_decision._BULL_SCHEMA,
+        "system_operator.debate_bear": trading_decision._BEAR_SCHEMA,
     }
+    assert set(captured) == set(expected)
+    for caller, schema_dict in expected.items():
+        user, received_schema, reasoning_effort = captured[caller]
+        assert received_schema == schema_dict
+        assert json.dumps(schema_dict) not in user
+        assert reasoning_effort == "none"
 
 
 @spec_claim(
