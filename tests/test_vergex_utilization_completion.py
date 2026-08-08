@@ -146,7 +146,9 @@ async def test_feature_collector_fetches_and_persists_15m_1h_4h(tmp_path, monkey
                 close = 100.0 + i * 0.1
                 high = close + 0.4
                 low = close - 0.4
-                if timeframe == "15m" and i == count - 1:
+                # The trailing exchange row is still forming and must not enter
+                # technical facts.  Put the event on the latest *closed* bar.
+                if timeframe == "15m" and i == count - 2:
                     high = close + 2.0
                     low = close - 2.0
                 rows.append([end - (count - 1 - i) * step, close - 0.1, high, low, close, 10.0 + i])
@@ -170,12 +172,17 @@ async def test_feature_collector_fetches_and_persists_15m_1h_4h(tmp_path, monkey
     assert feat["rsi_15m"] is not None and feat["rsi_4h"] is not None
     assert feat["last_candle_range_atr_15m"] > 1.5
     row = db.execute(
-        "SELECT rsi_15m, atr_15m_pct, rsi_4h, atr_4h_pct, bb_width_4h "
+        "SELECT rsi_15m, atr_15m_pct, rsi_4h, atr_4h_pct, bb_width_4h, "
+        "technical_algorithm_version, technical_snapshot_manifest "
         "FROM universe_feature_snapshots WHERE id=?",
         (feat["feature_snapshot_id"],),
     ).fetchone()
     assert row is not None
     assert all(row[key] is not None for key in row.keys())
+    assert row["technical_algorithm_version"] == "technical-analysis-v1"
+    manifest = json.loads(row["technical_snapshot_manifest"])
+    assert set(manifest) == {"15m", "1h", "4h"}
+    assert all(manifest[tf]["input_fingerprint"] for tf in manifest)
 
 
 def test_pi_decision_persists_exact_evidence_manifest():

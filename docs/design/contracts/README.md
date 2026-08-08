@@ -26,3 +26,6 @@ Current framework-wide contracts include the
 [LLM Inference Harness Contract](llm_inference_harness_contract.md), which owns
 logical model-call identity, prompt/context/tool/output policy, and its link to
 physical tokenomics attempts.
+
+Market-data computation and storage lifecycle are owned by the
+[Technical Analysis and OHLCV Tiering Contract](technical_analysis_contract.md).

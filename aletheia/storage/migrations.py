@@ -1214,6 +1214,8 @@ CREATE TABLE IF NOT EXISTS universe_feature_snapshots (
     bb_width_4h REAL,
     vol_ratio_4h REAL,
     bb_squeeze INTEGER,
+    technical_algorithm_version TEXT,
+    technical_snapshot_manifest TEXT NOT NULL DEFAULT '{}',
     raw TEXT DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_universe_features_asset_ts
@@ -2081,6 +2083,8 @@ _ADDITIVE_COLUMNS = [
     ("bb_width_4h", "universe_feature_snapshots", "REAL"),
     ("vol_ratio_4h", "universe_feature_snapshots", "REAL"),
     ("bb_squeeze", "universe_feature_snapshots", "INTEGER"),
+    ("technical_algorithm_version", "universe_feature_snapshots", "TEXT"),
+    ("technical_snapshot_manifest", "universe_feature_snapshots", "TEXT NOT NULL DEFAULT '{}'"),
     ("source_ref", "perp_structure_snapshots", "TEXT"),
     ("source_hash", "perp_structure_snapshots", "TEXT"),
     ("reference_price", "perp_structure_snapshots", "REAL"),

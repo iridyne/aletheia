@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from aletheia.trading.indicators import (
     sma, rsi, atr, bollinger, momentum_pct, zscore_last, relative_strength_rank,
 )
+from aletheia.trading.technical_snapshot_service import get_technical_snapshot_service
 
 logger = logging.getLogger("aletheia.market_context")
 
@@ -99,6 +100,25 @@ def _compute_snap(closes: list[float], highs: list[float], lows: list[float],
         volume_zscore_20=zscore_last(volumes, 20) if finite_volumes else None,
         timeframe=timeframe,
         bars_used=len(closes),
+    )
+
+
+def _indicator_snap_from_shared(snapshot) -> _IndicatorSnap:
+    """Adapt the versioned shared snapshot to the stable observer renderer."""
+    values = snapshot.values
+    return _IndicatorSnap(
+        last_close=values.get("last_close"),
+        sma_20=values.get("sma_20"),
+        sma_50=values.get("sma_50"),
+        rsi_14=values.get("rsi_14"),
+        atr_14=values.get("atr_14"),
+        bb_lower=values.get("bb_lower"),
+        bb_upper=values.get("bb_upper"),
+        bb_pct_b=values.get("bb_pct_b"),
+        momentum_10=values.get("momentum_10"),
+        volume_zscore_20=values.get("volume_zscore_20"),
+        timeframe=snapshot.timeframe,
+        bars_used=snapshot.bars_used,
     )
 
 
@@ -206,6 +226,7 @@ async def build_market_context(
     debug: dict = {"symbols": {}, "errors": []}
     sections: list[str] = []
     returns_24h: dict[str, float | None] = {}
+    technical_service = get_technical_snapshot_service()
 
     try:
         from aletheia.data.symbols import (
@@ -268,7 +289,14 @@ async def build_market_context(
                 highs = [c.high for c in closed_candles]
                 lows = [c.low for c in closed_candles]
                 volumes = [c.volume for c in closed_candles]
-                snap = _compute_snap(closes, highs, lows, volumes, tf)
+                technical_snapshot = technical_service.snapshot_from_bars(
+                    closed_candles,
+                    exchange=instrument.exchange,
+                    symbol=instrument.symbol,
+                    market_type=instrument.market_type,
+                    timeframe=tf,
+                )
+                snap = _indicator_snap_from_shared(technical_snapshot)
                 snaps.append(snap)
                 sym_debug[tf] = {
                     "bars": len(closed_candles), "last_close": snap.last_close,
@@ -283,6 +311,15 @@ async def build_market_context(
                         else None
                     ),
                     "momentum_10": snap.momentum_10,
+                    "technical_snapshot": {
+                        "algorithm_version": technical_snapshot.algorithm_version,
+                        "input_fingerprint": technical_snapshot.input_fingerprint,
+                        "bar_close_ts": technical_snapshot.bar_close_ts,
+                        "history_bars_retained": technical_snapshot.history_bars_retained,
+                        "warmup_complete": technical_snapshot.warmup_complete,
+                        "data_quality": technical_snapshot.data_quality,
+                        "quality_reasons": list(technical_snapshot.quality_reasons),
+                    },
                 }
                 if tf == "1h":
                     closes_1h = closes

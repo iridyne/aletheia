@@ -165,6 +165,10 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
             "market_type": identity[1],
             "asset_id": feature.get("asset_id"),
             "feature_snapshot_id": feature.get("feature_snapshot_id"),
+            "technical_algorithm_version": feature.get("technical_algorithm_version"),
+            "technical_1h_input_fingerprint": (
+                (feature.get("technical_snapshot_manifest") or {}).get("1h", {}).get("input_fingerprint")
+            ),
             **{
                 field: (
                     _score(feature.get(field))
@@ -242,6 +246,7 @@ _MATERIAL_FP_FEATURE_FIELDS: tuple[str, ...] = (
     "oi_delta_1h", "taker_buy_ratio", "vol_ratio",
     "relative_strength_24h", "oi_price_divergence", "rsi_4h",
     "bb_width_4h", "vol_ratio_4h", "bb_squeeze",
+    "technical_algorithm_version", "technical_1h_input_fingerprint",
 )
 
 # Per-field rounding precision. Default is coarse enough to absorb float noise
@@ -273,6 +278,8 @@ def _material_feature_value(features: dict[str, Any], field: str) -> Any:
     raw = features.get(field)
     if raw is None or isinstance(raw, bool):
         return raw
+    if field in ("technical_algorithm_version", "technical_1h_input_fingerprint"):
+        return str(raw)
     try:
         return round(
             float(raw),
@@ -1181,6 +1188,10 @@ def _feature_context_row(snapshot: dict[str, Any]) -> dict[str, Any]:
         fr is not None and oi_delta is not None
         and abs(fr) > 0.0005 and abs(oi_delta) > 5
     )
+    try:
+        technical_manifest = json.loads(snapshot.get("technical_snapshot_manifest") or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        technical_manifest = {}
     return {
         "asset_id": snapshot.get("asset_id"),
         "feature_snapshot_id": snapshot.get("id"),
@@ -1217,6 +1228,11 @@ def _feature_context_row(snapshot: dict[str, Any]) -> dict[str, Any]:
             if snapshot.get("bb_squeeze") is not None else None
         ),
         "crowding_signal": crowding_signal,
+        "technical_algorithm_version": snapshot.get("technical_algorithm_version"),
+        "technical_snapshot_manifest": technical_manifest,
+        "technical_1h_input_fingerprint": (
+            (technical_manifest.get("1h") or {}).get("input_fingerprint")
+        ),
     }
 
 
