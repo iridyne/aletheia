@@ -10,7 +10,7 @@ import threading
 import sqlite3
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from aletheia.storage.sqlite import (
     acquire_write_lock,
     execute_many_write,
@@ -4574,6 +4574,8 @@ from aletheia.storage.models import (
     UniverseSnapshot,
     UniverseMember,
     UniversePolicy,
+    UniverseTwinShadowBatch,
+    UniverseTwinShadowEvidence,
 )
 
 
@@ -4735,6 +4737,139 @@ def insert_universe_scanner_run(run: UniverseScannerRun) -> None:
 
 def update_universe_scanner_run(run_id: str, **kwargs) -> None:
     _update("universe_scanner_runs", run_id, kwargs)
+
+
+def _universe_twin_shadow_capture_due_from_latest(
+    captured_at: str,
+    latest_captured_at: str | None,
+    *,
+    min_interval_sec: int,
+) -> bool:
+    if latest_captured_at is None:
+        return True
+    candidate = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+    latest = datetime.fromisoformat(latest_captured_at.replace("Z", "+00:00"))
+    if candidate.tzinfo is None:
+        candidate = candidate.replace(tzinfo=timezone.utc)
+    if latest.tzinfo is None:
+        latest = latest.replace(tzinfo=timezone.utc)
+    return candidate - latest >= timedelta(seconds=max(0, min_interval_sec))
+
+
+def universe_twin_shadow_capture_due(
+    captured_at: str,
+    *,
+    min_interval_sec: int = 55 * 60,
+) -> bool:
+    """Return whether a compact diagnostic sample may be captured now."""
+
+    row = get_db().execute(
+        "SELECT captured_at FROM universe_twin_shadow_batches "
+        "ORDER BY captured_at DESC LIMIT 1"
+    ).fetchone()
+    latest = str(row["captured_at"]) if row else None
+    return _universe_twin_shadow_capture_due_from_latest(
+        captured_at,
+        latest,
+        min_interval_sec=min_interval_sec,
+    )
+
+
+def insert_universe_twin_shadow_bundle(
+    batch: UniverseTwinShadowBatch,
+    evidence: Sequence[UniverseTwinShadowEvidence],
+    *,
+    min_interval_sec: int = 55 * 60,
+) -> int:
+    """Atomically persist one immutable, cadence-bounded diagnostic batch.
+
+    An identical retry is idempotent.  Reusing an identity with different
+    canonical content is rejected so replay drift cannot be silently hidden.
+    A second scanner run inside the minimum interval is skipped in the same
+    writer transaction, preventing concurrent refreshes from bypassing cadence.
+    """
+
+    batch_data = batch.model_dump()
+    evidence_rows = [item.model_dump() for item in evidence]
+    if batch.candidate_count != len(evidence_rows):
+        raise ValueError("universe_twin_shadow_candidate_count_mismatch")
+    if any(item.scanner_run_id != batch.scanner_run_id for item in evidence):
+        raise ValueError("universe_twin_shadow_scanner_run_mismatch")
+    if sorted(item.candidate_index for item in evidence) != list(range(len(evidence))):
+        raise ValueError("universe_twin_shadow_candidate_index_not_contiguous")
+    if any(item.captured_at != batch.captured_at for item in evidence):
+        raise ValueError("universe_twin_shadow_capture_time_mismatch")
+    db = get_db()
+    with transaction(immediate=True):
+        stored_batch = db.execute(
+            "SELECT batch_hash FROM universe_twin_shadow_batches WHERE scanner_run_id=?",
+            (batch.scanner_run_id,),
+        ).fetchone()
+        if stored_batch is not None:
+            if stored_batch["batch_hash"] != batch.batch_hash:
+                raise ValueError("universe_twin_shadow_batch_identity_conflict")
+            return 0
+
+        latest = db.execute(
+            "SELECT captured_at FROM universe_twin_shadow_batches "
+            "ORDER BY captured_at DESC LIMIT 1"
+        ).fetchone()
+        if not _universe_twin_shadow_capture_due_from_latest(
+            batch.captured_at,
+            str(latest["captured_at"]) if latest else None,
+            min_interval_sec=min_interval_sec,
+        ):
+            return 0
+
+        columns = list(batch_data)
+        execute_write(
+            f"INSERT INTO universe_twin_shadow_batches "
+            f"({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})",
+            [batch_data[column] for column in columns],
+        )
+        stored_batch = db.execute(
+            "SELECT batch_hash FROM universe_twin_shadow_batches WHERE scanner_run_id=?",
+            (batch.scanner_run_id,),
+        ).fetchone()
+        if stored_batch is None or stored_batch["batch_hash"] != batch.batch_hash:
+            raise ValueError("universe_twin_shadow_batch_identity_conflict")
+
+        inserted_evidence = 0
+        if evidence_rows:
+            record_columns = list(evidence_rows[0])
+            before = db.total_changes
+            execute_many_write(
+                f"INSERT OR IGNORE INTO universe_twin_shadow_records "
+                f"({', '.join(record_columns)}) VALUES "
+                f"({', '.join('?' for _ in record_columns)})",
+                [[row[column] for column in record_columns] for row in evidence_rows],
+            )
+            inserted_evidence = db.total_changes - before
+            for item in evidence:
+                stored = db.execute(
+                    "SELECT record_hash FROM universe_twin_shadow_records WHERE id=?",
+                    (item.id,),
+                ).fetchone()
+                if stored is None or stored["record_hash"] != item.record_hash:
+                    raise ValueError("universe_twin_shadow_record_identity_conflict")
+    return inserted_evidence
+
+
+def get_universe_twin_shadow_batch(scanner_run_id: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM universe_twin_shadow_batches WHERE scanner_run_id=?",
+        (scanner_run_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_universe_twin_shadow_records(scanner_run_id: str) -> list[dict]:
+    rows = get_db().execute(
+        "SELECT * FROM universe_twin_shadow_records WHERE scanner_run_id=? "
+        "ORDER BY candidate_index",
+        (scanner_run_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def insert_universe_snapshot(snap: UniverseSnapshot) -> None:
@@ -6939,6 +7074,38 @@ def prune_universe_scanner_runs(days: int = 30) -> int:
     if not was_in_tx:
         db.commit()
     return cur.rowcount or 0
+
+
+def prune_universe_twin_shadow_evidence(
+    days: int = 30,
+) -> int:
+    """Prune sampled diagnostic evidence after its fixed retention window.
+
+    Records are deleted before their logical parent batch. Twin persistence
+    owns no fixed-horizon outcomes or Learning evidence, so open experiments
+    must not extend its lifetime.
+    """
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    with transaction(immediate=True):
+        run_rows = db.execute(
+            "SELECT scanner_run_id FROM universe_twin_shadow_batches WHERE captured_at < ?",
+            (cutoff,),
+        ).fetchall()
+        run_ids = [str(row[0]) for row in run_rows]
+        if not run_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in run_ids)
+        records = execute_write(
+            f"DELETE FROM universe_twin_shadow_records WHERE scanner_run_id IN ({placeholders})",
+            run_ids,
+        ).rowcount or 0
+        batches = execute_write(
+            f"DELETE FROM universe_twin_shadow_batches WHERE scanner_run_id IN ({placeholders})",
+            run_ids,
+        ).rowcount or 0
+    return records + batches
 
 
 def prune_agent_shell_commands(days: int = 14) -> int:

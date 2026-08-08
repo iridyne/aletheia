@@ -2,7 +2,7 @@
 
 > 一页俯瞰系统所有活动部件、数据流向、管道状态。
 > 断管道标记: ✅ 闭环 | ⚠️ 窄消费（仅API/CLI） | ❌ 断裂（写入无消费）
-> Last synced with code/design: 2026-07-19 (Learning Contribution Observability target)
+> Last synced with code/design: 2026-08-08 (Universe Twin Task 5)
 
 ---
 
@@ -26,7 +26,7 @@
 | `data_collector_context` | 10min | liquidation_events, macro_snapshots, volume ranking, cross-venue OI, CoinGecko/Hyperliquid/DefiLlama context | market_observer + universe/service | ⚠️ 独立 55s 时间盒；与主所 CCXT 串行，不让慢上下文继承核心预算 |
 | `exchange_sync` | 5min | positions(sync), portfolio_snapshots(side-effect) | risk_engine(exposure), position_manager, UI | ✅ |
 | `portfolio_snapshot` | 10min | portfolio_snapshots | risk_engine(drawdown scale), UI, Telegram | ✅ |
-| `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes，snapshot-scoped open Opportunities，Learning treatment/control exposures，filter_decision_batches/filter_decisions/filter_candidate_outcomes | paper_trader_ranker、System Operator exact-candidate hydration/family edge、filter controller、risk live-evidence、doctor、guard candidate；特征刷新同时 nudge Operator 重新处理因技术事实缺失而 defer 的 carrier | ✅ 新 snapshot supersede 只终结未认领 open generations；queued Operator carrier 保留原因果 id 并按自身 valid_until 继续 |
+| `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes，snapshot-scoped open Opportunities，Learning treatment/control exposures，filter_decision_batches/filter_decisions/filter_candidate_outcomes；每55分钟至多另写一批紧凑 `universe_twin_shadow_batches/records` 诊断证据 | paper_trader_ranker、System Operator exact-candidate hydration/family edge、filter controller、risk live-evidence、doctor、guard candidate；Twin 仅供 sampled complete-batch selected/dropped 重放，不写 outcome、不进入权威消费者 | ✅ step-v1 仍是唯一权威；Twin 写入失败不回滚 snapshot/Opportunity，且不能影响 Paper/Risk/Execution/Learning |
 | `outcome_settler` | 10min | 更新 universe_forward_outcomes + filter_candidate_outcomes；同步新 shadow 净结果 | 净收益校准、filter controller、alpha attribution、doctor | ✅ |
 | `outcome_hook_replay` | 1min | outcome_hook_jobs 状态、shadow_trades 结果、serenity_post_mortems | 合格平仓后反馈；每次重读 Position，缺价或部分失败留待重试 | ✅ |
 | `learning_contribution_evaluator` | `learning.evaluation_interval_minutes`（默认60min） | learning_contribution_verdicts, learning_job_health | paper lifecycle read model、operator inspection | ✅ 只测量：即使自主学习关闭或系统暂停也可运行；不改阶段、不启用影响 |

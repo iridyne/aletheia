@@ -259,12 +259,48 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert migrations._MIGRATIONS[0].schema_version == "aletheia-sqlite-v2"
-    assert migrations._MIGRATIONS[-5].schema_version == "aletheia-sqlite-v3"
-    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v4"
-    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v5"
-    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v6"
+    assert migrations._MIGRATIONS[-6].schema_version == "aletheia-sqlite-v3"
+    assert migrations._MIGRATIONS[-5].schema_version == "aletheia-sqlite-v4"
+    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v5"
+    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v6"
+    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v7"
     assert migrations._MIGRATIONS[-1].schema_version == migrations.SCHEMA_VERSION
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v7"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v8"
+    connection.close()
+
+
+def test_universe_twin_shadow_migration_is_additive_and_idempotent():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    migrations._apply_universe_twin_shadow_evidence_v8(connection)
+    migrations._apply_universe_twin_shadow_evidence_v8(connection)
+
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    assert "universe_twin_shadow_batches" in tables
+    assert "universe_twin_shadow_records" in tables
+    columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(universe_twin_shadow_records)"
+        )
+    }
+    assert {
+        "candidate_index",
+        "compact_output_json",
+        "input_json",
+        "record_hash",
+    } <= columns
+    assert {
+        "assignment_arm",
+        "propensity",
+        "authority_outcome_candidate_key",
+    }.isdisjoint(columns)
     connection.close()
 
 

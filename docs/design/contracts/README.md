@@ -26,3 +26,7 @@ Current framework-wide contracts include the
 [LLM Inference Harness Contract](llm_inference_harness_contract.md), which owns
 logical model-call identity, prompt/context/tool/output policy, and its link to
 physical tokenomics attempts.
+
+The [Universe Twin Shadow Evidence Contract](universe_twin_shadow_contract.md)
+owns the current non-authoritative continuous-score evidence, allocation replay,
+identity, persistence, and retention boundary.

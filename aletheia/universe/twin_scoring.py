@@ -129,6 +129,18 @@ class TwinShadowRecord:
             return None
         return self.shadow_pessimistic_rank - self.authority_rank
 
+    @property
+    def point_selection_changed(self) -> bool | None:
+        if self.authority_selected is None or self.shadow_point_selected is None:
+            return None
+        return self.authority_selected != self.shadow_point_selected
+
+    @property
+    def pessimistic_selection_changed(self) -> bool | None:
+        if self.authority_selected is None or self.shadow_pessimistic_selected is None:
+            return None
+        return self.authority_selected != self.shadow_pessimistic_selected
+
 
 @dataclass(frozen=True)
 class TwinShadowSummary:
@@ -146,6 +158,10 @@ class TwinShadowSummary:
     missingness_count: int
     interaction_residual_unavailable_count: int
     authority_selected_count: int
+    shadow_point_selected_count: int
+    shadow_pessimistic_selected_count: int
+    point_selection_change_count: int
+    pessimistic_selection_change_count: int
 
 
 def _invalid_candidate(reason: str) -> CandidateScore:
@@ -419,6 +435,91 @@ def annotate_authority_selection(
     )
 
 
+def build_shadow_allocation_candidates(
+    records: Sequence[TwinShadowRecord],
+    inputs: Sequence[TwinShadowInput],
+    *,
+    scanner_run_id: str,
+    score_kind: str,
+) -> list[dict[str, object]]:
+    """Build isolated allocator inputs without mutating authority collections."""
+
+    if score_kind not in {"point", "pessimistic"}:
+        raise ValueError("unsupported_shadow_score_kind")
+    by_key = {record.candidate_key: record for record in records}
+    candidates: list[dict[str, object]] = []
+    for item in inputs:
+        feature = dict(item.feature)
+        record = by_key.get(_candidate_key(scanner_run_id, feature))
+        if record is None or not record.shadow.valid:
+            continue
+        if "authority_no_chase_gate" in record.blocking_reasons:
+            continue
+        if score_kind == "point":
+            family = record.shadow.point_family
+            direction = record.shadow.point_direction
+            score = record.shadow.point_score
+        else:
+            family = record.shadow.pessimistic_family
+            direction = record.shadow.pessimistic_direction
+            score = record.shadow.pessimistic_score
+        if not family or direction not in {"long", "short"}:
+            continue
+        candidates.append(
+            {
+                **feature,
+                "scanner_family": family,
+                "scanner_direction": direction,
+                "direction": direction,
+                "total_score": score,
+            }
+        )
+    return candidates
+
+
+def annotate_shadow_selection(
+    records: Sequence[TwinShadowRecord],
+    *,
+    point_allocated: Sequence[Mapping[str, object]],
+    pessimistic_allocated: Sequence[Mapping[str, object]],
+) -> tuple[TwinShadowRecord, ...]:
+    point_identities = {_source_identity(item) for item in point_allocated}
+    pessimistic_identities = {_source_identity(item) for item in pessimistic_allocated}
+    return tuple(
+        replace(
+            record,
+            shadow_point_selected=(
+                record.feature_snapshot_id,
+                record.asset_id,
+                record.symbol,
+                record.market_type,
+            )
+            in point_identities,
+            shadow_pessimistic_selected=(
+                record.feature_snapshot_id,
+                record.asset_id,
+                record.symbol,
+                record.market_type,
+            )
+            in pessimistic_identities,
+        )
+        for record in records
+    )
+
+
+def mark_shadow_allocation_unavailable(
+    records: Sequence[TwinShadowRecord],
+    reason: str,
+) -> tuple[TwinShadowRecord, ...]:
+    return tuple(
+        replace(
+            record,
+            blocking_reasons=tuple(sorted({*record.blocking_reasons, reason})),
+        )
+        for record in records
+    )
+
+
 def summarize_twin_shadow_records(
     records: Sequence[TwinShadowRecord],
 ) -> TwinShadowSummary:
@@ -443,6 +544,10 @@ def summarize_twin_shadow_records(
             "interaction_residual_unavailable" in record.shadow.flags for record in records
         ),
         authority_selected_count=sum(record.authority_selected is True for record in records),
+        shadow_point_selected_count=sum(record.shadow_point_selected is True for record in records),
+        shadow_pessimistic_selected_count=sum(record.shadow_pessimistic_selected is True for record in records),
+        point_selection_change_count=sum(record.point_selection_changed is True for record in records),
+        pessimistic_selection_change_count=sum(record.pessimistic_selection_changed is True for record in records),
     )
 
 
@@ -453,8 +558,11 @@ __all__ = [
     "TwinShadowRecord",
     "TwinShadowSummary",
     "annotate_authority_selection",
+    "annotate_shadow_selection",
+    "build_shadow_allocation_candidates",
     "build_twin_shadow_batch",
     "build_twin_shadow_record",
     "rank_twin_shadow_records",
+    "mark_shadow_allocation_unavailable",
     "summarize_twin_shadow_records",
 ]

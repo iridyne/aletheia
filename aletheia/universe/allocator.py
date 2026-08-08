@@ -369,7 +369,13 @@ def resolve_family_quota(cfg: UniverseConfig, regime_state: str | None) -> dict[
 
 
 def allocate_universe(
-    scored: list[dict], cfg: UniverseConfig, regime_state: str | None = None,
+    scored: list[dict],
+    cfg: UniverseConfig,
+    regime_state: str | None = None,
+    *,
+    explore_sampler=None,
+    decorate_selected: bool = True,
+    log_result: bool = True,
 ) -> list[dict]:
     """Select final universe candidates with quota enforcement and explore/exploit.
 
@@ -442,7 +448,8 @@ def allocate_universe(
             # members from that family because every item was checked against the
             # same pre-sample count. Re-checking after each admission keeps the
             # documented quota invariant across exploit *and* explore.
-            randomized = random.sample(viable, len(viable))
+            sampler = explore_sampler or random.sample
+            randomized = sampler(viable, len(viable))
             for r in randomized:
                 if len(explore_selected) >= explore_count:
                     break
@@ -458,35 +465,37 @@ def allocate_universe(
     final = exploit_selected + explore_selected
     final = final[:max_total]
 
-    for item in final:
-        family = item.get("scanner_family", "momentum")
-        item["ttl_sec"] = _FAMILY_TTL.get(family, 3600)
+    if decorate_selected:
+        for item in final:
+            family = item.get("scanner_family", "momentum")
+            item["ttl_sec"] = _FAMILY_TTL.get(family, 3600)
 
-        # Guard: only mark execution_eligible if there is live price data within the
-        # last 2 hours. Symbols with zero snapshots (e.g. NATGAS/USDT) would otherwise
-        # reach PI Agent as tradeable but fail silently at proposal submission.
-        _sym = item.get("symbol", "")
-        _has_live_price = has_fresh_market_snapshot(_sym, item.get("market_type", "spot"))
+            # Guard: only mark execution_eligible if there is live price data within the
+            # last 2 hours. Symbols with zero snapshots (e.g. NATGAS/USDT) would otherwise
+            # reach PI Agent as tradeable but fail silently at proposal submission.
+            _sym = item.get("symbol", "")
+            _has_live_price = has_fresh_market_snapshot(_sym, item.get("market_type", "spot"))
 
-        if not _has_live_price:
-            logger.warning(
-                "no_live_price_for_symbol: %s — execution_eligible set to False", _sym
-            )
-        item["execution_eligible"] = _has_live_price
+            if not _has_live_price:
+                logger.warning(
+                    "no_live_price_for_symbol: %s — execution_eligible set to False", _sym
+                )
+            item["execution_eligible"] = _has_live_price
 
-        # Risk flags
-        risk_flags = []
-        if item.get("late_entry_penalty", 0) > 15:
-            risk_flags.append("late_entry")
-        if item.get("crowding_risk", 0) > 10:
-            risk_flags.append("crowded")
-        if (item.get("spread_bps") or 0) > 20:
-            risk_flags.append("wide_spread")
-        item["risk_flags"] = risk_flags
+            # Risk flags
+            risk_flags = []
+            if item.get("late_entry_penalty", 0) > 15:
+                risk_flags.append("late_entry")
+            if item.get("crowding_risk", 0) > 10:
+                risk_flags.append("crowded")
+            if (item.get("spread_bps") or 0) > 20:
+                risk_flags.append("wide_spread")
+            item["risk_flags"] = risk_flags
 
-    logger.info(
-        "Allocation: %d scored → %d exploit + %d explore = %d final (regime=%s)",
-        len(scored), len(exploit_selected), len(explore_selected), len(final),
-        regime_state or "static",
-    )
+    if log_result:
+        logger.info(
+            "Allocation: %d scored → %d exploit + %d explore = %d final (regime=%s)",
+            len(scored), len(exploit_selected), len(explore_selected), len(final),
+            regime_state or "static",
+        )
     return final
