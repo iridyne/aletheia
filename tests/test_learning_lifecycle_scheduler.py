@@ -302,6 +302,37 @@ def test_measurement_startup_catchup_only_claims_one_current_window(monkeypatch)
     assert calls == []
 
 
+def test_measurement_jobs_share_a_dedicated_serial_executor():
+    """Restart recovery must not queue behind the saturated general IO lane."""
+    import ast
+    import inspect
+    import textwrap
+
+    from aletheia.agent_runtime import scheduler
+
+    assert scheduler._EXECUTOR_WORKERS["learning_measurement"] == 1
+    tree = ast.parse(textwrap.dedent(inspect.getsource(scheduler.init_scheduler)))
+    executors: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Attribute) or node.func.attr != "add_job":
+            continue
+        keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+        job_id = keywords.get("id")
+        executor = keywords.get("executor")
+        if (
+            isinstance(job_id, ast.Constant)
+            and isinstance(job_id.value, str)
+            and isinstance(executor, ast.Constant)
+            and isinstance(executor.value, str)
+        ):
+            executors[job_id.value] = executor.value
+
+    assert executors["learning_contribution_evaluator"] == "learning_measurement"
+    assert executors["learning_measurement_startup_catchup"] == "learning_measurement"
+
+
 def _health(**updates):
     from aletheia.learning.models import LearningJobHealth
 
