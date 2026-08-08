@@ -1142,26 +1142,53 @@ def test_small_non_negative_effect_is_neutral_not_positive():
     assert _run(experiment.experiment_id)[0].verdict == "neutral"
 
 
-def test_positive_delta_records_reproducible_bootstrap_while_harm_is_indeterminate():
-    hypothesis, experiment = _experiment(min_samples=2, min_days=1)
-    for day, assignment, net in (
-        (0, "treatment", 1.0), (1, "treatment", 1.2),
-        (0, "control", 0.0), (1, "control", 0.1),
-    ):
-        candidate = f"positive-{assignment}-{day}"
-        _exposure(experiment, hypothesis, candidate=candidate, assignment=assignment, exposed_at=_iso(day))
-        _outcome(candidate, net=net, entry_at=_iso(day, 1), mae=-0.1)
+def test_positive_delta_uses_randomization_inference_while_harm_is_indeterminate():
+    hypothesis, experiment = _experiment(min_samples=10, min_days=1)
+    for index in range(10):
+        for assignment, net in (("treatment", 1.0), ("control", 0.0)):
+            candidate = f"positive-{assignment}-{index}"
+            _exposure(
+                experiment, hypothesis, candidate=candidate, assignment=assignment,
+                exposed_at=_iso(index // 5, index % 5),
+            )
+            _outcome(candidate, net=net, entry_at=_iso(index // 5, index % 5 + 1), mae=-0.1)
 
     verdict = _run(experiment.experiment_id)[0]
     metrics = json.loads(verdict.harm_metrics_json)
 
     assert verdict.verdict == "positive"
-    assert verdict.confidence_low is not None and verdict.confidence_low > 0
+    assert verdict.confidence_low is None
+    assert verdict.confidence_high is None
     assert metrics["metric_version"]
-    assert metrics["bootstrap_seed"] == 20260712
-    assert metrics["bootstrap_resamples"] == 2000
+    inference = metrics["randomization_inference"]
+    assert inference["contract_version"] == "conditional-randomization-itt/v1"
+    assert inference["iid_outcome_assumption"] is False
+    assert inference["p_value"] <= 0.10
+    assert inference["seed"] == 20260712
+    assert metrics["iid_bootstrap"] == "retired_overlapping_horizon_outcomes"
     assert metrics["harm_state"] == "indeterminate"
     assert metrics["breached"] is False
+
+
+def test_small_perfect_separation_cannot_impersonate_randomized_evidence():
+    hypothesis, experiment = _experiment(min_samples=2, min_days=1)
+    for index in range(2):
+        for assignment, net in (("treatment", 1.0), ("control", 0.0)):
+            candidate = f"small-separation-{assignment}-{index}"
+            _exposure(
+                experiment, hypothesis, candidate=candidate, assignment=assignment,
+                exposed_at=_iso(index),
+            )
+            _outcome(candidate, net=net, entry_at=_iso(index, 1), mae=-0.1)
+
+    verdict = _run(experiment.experiment_id)[0]
+    inference = json.loads(verdict.harm_metrics_json)["randomization_inference"]
+
+    assert verdict.delta == 1.0
+    assert verdict.verdict == "neutral"
+    assert inference["mode"] == "exact"
+    assert inference["assignment_space_size"] == 6
+    assert inference["p_value"] == pytest.approx(1 / 6)
 
 
 def test_negative_delta_or_harm_breach_is_negative():
@@ -1888,14 +1915,15 @@ def test_excluded_cohort_verdict_created_at_is_not_unix_epoch():
 
 
 def test_measurement_verdict_never_authorizes_or_changes_learning_lifecycle():
-    hypothesis, experiment = _experiment(min_samples=2, min_days=1)
-    for day, assignment, net in (
-        (0, "treatment", 1.0), (1, "treatment", 1.2),
-        (0, "control", 0.0), (1, "control", 0.1),
-    ):
-        candidate = f"baseline-{assignment}-{day}"
-        _exposure(experiment, hypothesis, candidate=candidate, assignment=assignment, exposed_at=_iso(day))
-        _outcome(candidate, net=net, entry_at=_iso(day, 1))
+    hypothesis, experiment = _experiment(min_samples=10, min_days=1)
+    for index in range(10):
+        for assignment, net in (("treatment", 1.0), ("control", 0.0)):
+            candidate = f"baseline-{assignment}-{index}"
+            _exposure(
+                experiment, hypothesis, candidate=candidate, assignment=assignment,
+                exposed_at=_iso(index // 5, index % 5),
+            )
+            _outcome(candidate, net=net, entry_at=_iso(index // 5, index % 5 + 1))
 
     verdict = _run(experiment.experiment_id)[0]
     from aletheia.learning.experiments import _verdict_authorizes

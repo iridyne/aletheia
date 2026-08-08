@@ -259,16 +259,17 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert migrations._MIGRATIONS[0].schema_version == "aletheia-sqlite-v2"
-    assert migrations._MIGRATIONS[-9].schema_version == "aletheia-sqlite-v3"
-    assert migrations._MIGRATIONS[-8].schema_version == "aletheia-sqlite-v4"
-    assert migrations._MIGRATIONS[-7].schema_version == "aletheia-sqlite-v5"
-    assert migrations._MIGRATIONS[-6].schema_version == "aletheia-sqlite-v6"
-    assert migrations._MIGRATIONS[-5].schema_version == "aletheia-sqlite-v7"
-    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v8"
-    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v9"
-    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v10"
+    assert migrations._MIGRATIONS[-10].schema_version == "aletheia-sqlite-v3"
+    assert migrations._MIGRATIONS[-9].schema_version == "aletheia-sqlite-v4"
+    assert migrations._MIGRATIONS[-8].schema_version == "aletheia-sqlite-v5"
+    assert migrations._MIGRATIONS[-7].schema_version == "aletheia-sqlite-v6"
+    assert migrations._MIGRATIONS[-6].schema_version == "aletheia-sqlite-v7"
+    assert migrations._MIGRATIONS[-5].schema_version == "aletheia-sqlite-v8"
+    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v9"
+    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v10"
+    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v11"
     assert migrations._MIGRATIONS[-1].schema_version == migrations.SCHEMA_VERSION
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v11"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v12"
     connection.close()
 
 
@@ -356,6 +357,107 @@ def test_learning_fixed_look_v10_migration_is_additive_and_idempotent():
     connection.close()
 
 
+def test_learning_randomization_inference_v12_preserves_v1_and_accepts_v2():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        """
+        CREATE TABLE learning_experiments (experiment_id TEXT PRIMARY KEY);
+        CREATE TABLE learning_contribution_verdicts (
+            verdict_id TEXT PRIMARY KEY,
+            experiment_id TEXT NOT NULL REFERENCES learning_experiments(experiment_id)
+        );
+        INSERT INTO learning_experiments VALUES ('legacy'), ('current');
+        """
+    )
+    migrations._apply_learning_fixed_look_v10(connection)
+    insert_sql = """
+        INSERT INTO learning_inference_decisions (
+            experiment_id, inference_family_id, inference_contract_version,
+            plan_json, plan_hash, status, authority_alpha, created_at, updated_at
+        ) VALUES (?, ?, ?, '{}', ?, 'collecting', 0.025, ?, ?)
+    """
+    timestamp = "2026-08-08T00:00:00+00:00"
+    connection.execute(
+        insert_sql,
+        ("legacy", "family-v1", "ufc-fixed-look/v1", "a" * 64, timestamp, timestamp),
+    )
+
+    migrations._apply_learning_randomization_inference_v12(connection)
+    migrations._apply_learning_randomization_inference_v12(connection)
+
+    assert connection.execute(
+        "SELECT inference_contract_version FROM learning_inference_decisions "
+        "WHERE experiment_id='legacy'"
+    ).fetchone()[0] == "ufc-fixed-look/v1"
+    objects = {
+        (str(row[0]), str(row[1]))
+        for row in connection.execute(
+            "SELECT type, name FROM sqlite_master "
+            "WHERE tbl_name='learning_inference_decisions' AND sql IS NOT NULL"
+        ).fetchall()
+    }
+    assert ("index", "idx_learning_inference_family") in objects
+    assert ("trigger", "trg_learning_inference_plan_immutable") in objects
+    assert ("trigger", "trg_learning_inference_decisions_no_delete") in objects
+    connection.execute(
+        insert_sql,
+        ("current", "family-v2", "ufc-fixed-look/v2", "b" * 64, timestamp, timestamp),
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "UPDATE learning_inference_decisions SET plan_hash=? "
+            "WHERE experiment_id='current'",
+            ("c" * 64,),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "DELETE FROM learning_inference_decisions WHERE experiment_id='current'"
+        )
+    connection.close()
+
+
+def test_learning_randomization_inference_v12_rolls_back_failed_rebuild(monkeypatch):
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        """
+        CREATE TABLE learning_experiments (experiment_id TEXT PRIMARY KEY);
+        CREATE TABLE learning_contribution_verdicts (
+            verdict_id TEXT PRIMARY KEY,
+            experiment_id TEXT NOT NULL REFERENCES learning_experiments(experiment_id)
+        );
+        INSERT INTO learning_experiments VALUES ('legacy');
+        """
+    )
+    migrations._apply_learning_fixed_look_v10(connection)
+    monkeypatch.setattr(
+        migrations,
+        "_LEARNING_RANDOMIZATION_INFERENCE_TABLE_SQL",
+        "CREATE TABLE learning_inference_decisions (",
+    )
+
+    with pytest.raises(sqlite3.OperationalError):
+        migrations._apply_learning_randomization_inference_v12(connection)
+
+    table_sql = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' "
+        "AND name='learning_inference_decisions'"
+    ).fetchone()[0]
+    assert "ufc-fixed-look/v1" in table_sql
+    assert connection.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
+        "AND name='learning_inference_decisions_v1'"
+    ).fetchone()[0] == 0
+    assert connection.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' "
+        "AND name='trg_learning_inference_plan_immutable'"
+    ).fetchone()[0] == 1
+    connection.close()
+
+
 def test_exit_breakeven_shadow_v11_migration_is_additive_and_idempotent():
     import aletheia.storage.migrations as migrations
 
@@ -390,7 +492,7 @@ def test_exit_breakeven_shadow_v11_migration_is_additive_and_idempotent():
     connection.close()
 
 
-def test_production_v10_ledger_advances_only_through_v11(tmp_path, monkeypatch):
+def test_production_v11_ledger_advances_only_through_v12(tmp_path, monkeypatch):
     import aletheia.storage.migrations as migrations
 
     connection = _connection(tmp_path / "v9.db")
@@ -432,8 +534,8 @@ def test_production_v10_ledger_advances_only_through_v11(tmp_path, monkeypatch):
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260808_0010_exit_breakeven_shadow_v11",
-        "aletheia-sqlite-v11",
+        "20260808_0011_learning_randomization_inference_v12",
+        "aletheia-sqlite-v12",
     )
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "

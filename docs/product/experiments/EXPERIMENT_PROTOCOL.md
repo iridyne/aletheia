@@ -112,6 +112,11 @@ The registry is the executable path inventory. Only
 - canonical/fallback outcome disagreement invalidates evidence;
 - all measurement identities must match the current cohort;
 - underpowered harm is `indeterminate` and cannot authorize;
+- monitoring and confirmatory efficacy use conditional randomization over the
+  prospectively assigned complete clusters. Adjacent 10-minute decisions may
+  share 1h/4h market paths; those outcomes are never resampled as IID evidence.
+  This inference also requires that one cluster's immutable full-arm outcome is
+  not changed by another cluster's assignment; a violated identity invalidates evidence;
 - because no treatment is applied in shadow, an integrity-ready cohort produces
   `insufficient_data/trial_integrity_ready_no_actual_intervention`; a cohort that
   also matures the full historical window remains

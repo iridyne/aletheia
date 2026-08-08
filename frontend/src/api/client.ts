@@ -96,6 +96,10 @@ export interface LearningContributionProjection {
 			delta: number | null;
 			confidence_low: number | null;
 			confidence_high: number | null;
+			randomization_contract_version: string | null;
+			randomization_p_value: number | null;
+			randomization_mode: "exact" | "monte_carlo" | "unavailable" | null;
+			iid_outcome_assumption: boolean | null;
 			evaluated_at: string | null;
 			window_start: string | null;
 			window_end: string | null;
