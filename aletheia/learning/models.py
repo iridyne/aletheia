@@ -117,6 +117,28 @@ class LearningContributionVerdict(BaseModel):
     metric_version: str | None = None
     code_commit: str | None = None
     behavior_contract_hash: str | None = None
+    inference_contract_version: str | None = None
+    inference_role: str = "monitoring"
+    authority_eligible: bool = False
+    inference_plan_hash: str | None = None
+    inference_cutoff_fingerprint: str | None = None
+
+
+class LearningInferenceDecision(BaseModel):
+    experiment_id: str
+    inference_family_id: str
+    inference_contract_version: str
+    plan_json: str
+    plan_hash: str
+    status: str = "collecting"
+    cutoff_json: str | None = None
+    cutoff_fingerprint: str | None = None
+    cutoff_frozen_at: str | None = None
+    consumed_verdict_id: str | None = None
+    consumed_at: str | None = None
+    authority_alpha: float
+    created_at: str = Field(default_factory=_now)
+    updated_at: str = Field(default_factory=_now)
 
 
 class LearningLifecycleEvent(BaseModel):

@@ -7647,7 +7647,7 @@ def prune_agent_shell_artifacts(
 # ---------------------------------------------------------------------------
 # Phase 3 (2026-07-17): new prune functions
 # All targets are telemetry / analytics — none are on the audit chain or the
-# 7 learning tables. Parent tables cascade-delete their children FIRST in the
+# 8 learning tables. Parent tables cascade-delete their children FIRST in the
 # same transaction, following the prune_agent_runs reference pattern.
 # ---------------------------------------------------------------------------
 

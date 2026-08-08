@@ -38,6 +38,12 @@ from aletheia.learning.models import (
 )
 from aletheia.learning.experiments import _policy_epoch, current_policy_epoch
 from aletheia.learning.verdicts import METRIC_VERSION
+from aletheia.learning.fixed_look import (
+    InferenceContractError,
+    get_consumed_fixed_look_verdict,
+    inference_authority_reason,
+    register_fixed_look_decision,
+)
 from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
 
@@ -143,11 +149,25 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
         outcome_contract_version="v1",
         metric_version=METRIC_VERSION,
         behavior_contract_hash=expected_behavior_contract_hash,
+        inference_role="monitoring",
     )
     if verdict is None:
-        verdict = get_latest_measurement_verdict(experiment.experiment_id)
+        verdict = get_latest_measurement_verdict(
+            experiment.experiment_id,
+            inference_role="monitoring",
+        )
     if verdict is None:
         return LifecycleResult("hold", "hold", "no_current_stage_measurement", experiment_id)
+    if experiment.stage.startswith("paper_"):
+        latest_harm_reason = measurement_harm_block_reason(verdict)
+        latest_measurement = str(verdict.get("verdict") or "")
+        if (
+            latest_measurement not in {"negative", "invalid"}
+            and latest_harm_reason is None
+        ):
+            consumed = get_consumed_fixed_look_verdict(experiment.experiment_id)
+            if consumed is not None:
+                verdict = consumed
     measurement = str(verdict.get("verdict") or "")
     if measurement not in MEASUREMENT_VERDICTS:
         return LifecycleResult("hold", "hold", "unknown_measurement_verdict", experiment_id)
@@ -224,6 +244,15 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
             "hold",
             "promote_stage",
             intervention_reason,
+            experiment_id,
+            verdict_id=verdict["verdict_id"],
+        )
+    inference_reason = inference_authority_reason(verdict)
+    if inference_reason:
+        return LifecycleResult(
+            "hold",
+            "promote_stage",
+            inference_reason,
             experiment_id,
             verdict_id=verdict["verdict_id"],
         )
@@ -339,6 +368,7 @@ def _execute_trial_admission(
         outcome_contract_version="v1",
         metric_version=METRIC_VERSION,
         behavior_contract_hash=expected_behavior_contract_hash,
+        inference_role="monitoring",
     )
     if verdict is None or str(verdict.get("verdict_id") or "") != verdict_id:
         return LifecycleResult("hold", "admit_trial", "verdict_not_found_or_mismatch", experiment_id, verdict_id=verdict_id)
@@ -390,20 +420,35 @@ def _execute_trial_admission(
         audit_source="dashboard",
         created_at=now,
     )
-    with transaction():
-        if not insert_lifecycle_event(event):
-            existing = get_lifecycle_event_by_dedup_key(dedup_key)
-            return LifecycleResult(
-                "admit_trial", "admit_trial", "already_transitioned", experiment.experiment_id,
-                (existing or {}).get("successor_experiment_id"), verdict_id,
+    try:
+        with transaction():
+            if not insert_lifecycle_event(event):
+                existing = get_lifecycle_event_by_dedup_key(dedup_key)
+                return LifecycleResult(
+                    "admit_trial", "admit_trial", "already_transitioned", experiment.experiment_id,
+                    (existing or {}).get("successor_experiment_id"), verdict_id,
+                )
+            db = get_db()
+            db.execute(
+                "UPDATE learning_experiments SET status='closed', ended_at=? "
+                "WHERE experiment_id=? AND ended_at IS NULL",
+                (now, experiment.experiment_id),
             )
-        db = get_db()
-        db.execute(
-            "UPDATE learning_experiments SET status='closed', ended_at=? "
-            "WHERE experiment_id=? AND ended_at IS NULL",
-            (now, experiment.experiment_id),
+            insert_experiment(successor)
+            register_fixed_look_decision(
+                successor,
+                hypothesis,
+                policy_epoch=current_policy_epoch,
+                behavior_contract_hash=expected_behavior_contract_hash,
+            )
+    except InferenceContractError:
+        return LifecycleResult(
+            "hold",
+            "admit_trial",
+            "inference_contract_registration_failed",
+            experiment_id,
+            verdict_id=verdict_id,
         )
-        insert_experiment(successor)
     _write_lifecycle_audit(event)
     return LifecycleResult(
         "admit_trial", "admit_trial", admitted_reason,
@@ -521,20 +566,35 @@ def _promote_one_stage(
         policy_epoch=policy_epoch,
         created_at=now,
     )
-    with transaction():
-        if not insert_lifecycle_event(event):
-            existing = get_lifecycle_event_by_dedup_key(dedup_key)
-            return LifecycleResult(
-                "promote_stage", "promote_stage", "already_transitioned", experiment.experiment_id,
-                (existing or {}).get("successor_experiment_id"), str(verdict["verdict_id"]),
+    try:
+        with transaction():
+            if not insert_lifecycle_event(event):
+                existing = get_lifecycle_event_by_dedup_key(dedup_key)
+                return LifecycleResult(
+                    "promote_stage", "promote_stage", "already_transitioned", experiment.experiment_id,
+                    (existing or {}).get("successor_experiment_id"), str(verdict["verdict_id"]),
+                )
+            db = get_db()
+            db.execute(
+                "UPDATE learning_experiments SET status='closed', ended_at=? "
+                "WHERE experiment_id=? AND ended_at IS NULL",
+                (now, experiment.experiment_id),
             )
-        db = get_db()
-        db.execute(
-            "UPDATE learning_experiments SET status='closed', ended_at=? "
-            "WHERE experiment_id=? AND ended_at IS NULL",
-            (now, experiment.experiment_id),
+            insert_experiment(successor)
+            register_fixed_look_decision(
+                successor,
+                hypothesis,
+                policy_epoch=policy_epoch,
+                behavior_contract_hash=str(verdict["behavior_contract_hash"]),
+            )
+    except InferenceContractError:
+        return LifecycleResult(
+            "hold",
+            "promote_stage",
+            "inference_contract_registration_failed",
+            experiment.experiment_id,
+            verdict_id=str(verdict["verdict_id"]),
         )
-        insert_experiment(successor)
     _write_lifecycle_audit(event)
     return LifecycleResult(
         "promote_stage", "promote_stage", "promoted_one_stage", experiment.experiment_id,
@@ -651,6 +711,7 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
         outcome_contract_version="v1",
         metric_version=METRIC_VERSION,
         behavior_contract_hash=expected_behavior_contract_hash,
+        inference_role="monitoring",
     )
     if verdict is not None and measurement_identity_reason(
         verdict,

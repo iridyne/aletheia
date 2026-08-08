@@ -33,7 +33,7 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
         "bounded paper opportunity-score multiplier", ("score_adjustment",),
         "universe", "fixed-horizon candidate net outcome", "neutral multiplier 1.0",
         measurement_supported=True,
-        behavior_contract_version="universe-family-calibration/v6",
+        behavior_contract_version="universe-family-calibration/v7",
     ),
     LearningPath(
         "observer_advisory_bundle", "knowledge router and trading memo", "market observer",

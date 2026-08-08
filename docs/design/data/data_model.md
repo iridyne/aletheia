@@ -1,7 +1,7 @@
 # Data Model Reference
 
 > Complete index of Aletheia Trading OS data layer.
-> ~99 SQLite table declarations, 62 Pydantic models, WAL mode, versioned additive migrations.
+> ~100 SQLite table declarations, 63 Pydantic models, WAL mode, versioned additive migrations.
 > Source of truth: `aletheia/storage/migrations.py` (DDL) + `models.py` (types).
 > Last updated: 2026-08-08
 
@@ -112,14 +112,15 @@ automatic close or stop change.
 | `news_items` | External news signals | source, headline, sentiment, symbols (JSON) |
 | `market_ohlcv` | Historical candlestick data; rows are isolated by full instrument identity. Explicit offline compact may cluster the composite PK as `WITHOUT ROWID`; the logical schema is unchanged. | exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume |
 
-### C-bis. Measured Learning Ledger (7 tables)
+### C-bis. Measured Learning Ledger (8 tables)
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `learning_hypotheses` | Canonical scoped Learning hypothesis | hypothesis_id, fingerprint, path_id, scope/action JSON, status, version |
 | `learning_experiments` | One isolated shadow or paper stage; a `registered` experiment's first exposure atomically/idempotently activates it and anchors `started_at` to earliest durable `exposed_at` | experiment_id, hypothesis_id, parent experiment, activation verdict, stage generation, assignment salt, allocation, status, started_at |
 | `learning_exposures` | Immutable record of one actual/control influence; `assignment_unit_key` persists the randomized cluster independently from member candidate identity | dedup_key, assignment, assignment_unit_key, entity ids, before/after/manifest, outcome_candidate_key, experiment stage, policy epoch, behavior_contract_hash, provenance code_commit |
-| `learning_contribution_verdicts` | Append-only measured verdict window; `created_at` is evaluation time while window fields are observation bounds, and prior metric/behavior versions remain history | stage, unique cluster-arm counts, delta/interval, harm metrics, metric_version, behavior_contract_hash, provenance code_commit, measurement verdict, created_at |
+| `learning_contribution_verdicts` | Append-only measured verdict window; recurring monitoring is descriptive and only a consumed confirmatory row may be authority-eligible | stage, unique cluster-arm counts, delta/interval, harm metrics, metric_version, behavior_contract_hash, inference role/plan/cutoff identity, measurement verdict, created_at |
+| `learning_inference_decisions` | Retained prospective fixed-look plan and once-only decision binding for each Paper experiment | inference family/contract, immutable plan/hash, frozen cutoff/fingerprint, authority alpha, consumed verdict id/time, status |
 | `learning_lifecycle_events` | Durable transition/blocked-promotion record and JSONL audit outbox; historical rows default mirrored, new rows remain pending until stable-id append acknowledgement | event_id, dedup key, experiment/successor/verdict ids, from/to stage, action, reason, policy epoch, audit actor/source/status/mirrored_at/failure reason |
 | `learning_job_health` | Durable expected-run/backlog health; current error may clear on recovery while last failure identity persists | schedule, watermarks, consecutive_failures, status, last_error, last_failed_at, last_failure_reason |
 | `learning_policy_epochs` | Non-sensitive effective-policy attribution boundary | effective-values hash/JSON, affected paths, safety flag, interval |
@@ -145,7 +146,7 @@ an assignment unit remain permanent and auditable but are excluded, never inferr
 
 ### C-ter. Learning Contribution projection boundary
 
-The current data model adds no `lco-v1` table, materialized projection, config
+The `lco-v1` projection itself adds no table, materialized projection, config
 field, data source, retention rule, or migration. `lco-v1` is a bounded
 read-only projection over the existing ledger and is implemented for summary
 and the default dashboard contribution tab. Any broader derived model is
@@ -158,7 +159,7 @@ stage, horizon, outcome-contract and code-build verdicts remain append-only hist
 classified as non-current by the read model.
 
 The current metric version is
-`universe_family_calibration_cluster_allocation_utility_v5`. Its existing `harm_metrics_json`
+`universe_family_calibration_cluster_allocation_utility_v6`. Its existing `harm_metrics_json`
 evaluation envelope also carries bounded `market_day_coverage` facts for the latest consecutive
 eligible UTC exposure-day window, its per-arm sample counts, separate treatment-permission and
 effective-intervention counts, and bounded non-intervention reasons. Effective intervention is
@@ -450,7 +451,7 @@ Automatic readers must use indexed, bounded keys or a declared retained evidence
 > **Authoritative retention contract**: see [`RETENTION_POLICY.md`](RETENTION_POLICY.md) for the
 > full per-table window, prune column, function name, cascade order, archive flag, write-guardrail
 > file:line references, VACUUM strategy, and open-questions resolution (Phase 3, 2026-07-17).
-> Two-class rule: **trust-bearing tables (audit chain + 7 learning tables) are NEVER pruned;
+> Two-class rule: **trust-bearing tables (audit chain + 8 learning tables) are NEVER pruned;
 > only telemetry/market-data tables are.**
 
 ### 7.1 Prunable tables (telemetry only, Phase 3 windows)
@@ -507,9 +508,9 @@ and absent from `_PRUNABLE`.
 
 `ps_positions`.
 
-Measured Learning Ledger (7): `learning_experiments` · `learning_exposures` ·
+Measured Learning Ledger (8): `learning_experiments` · `learning_exposures` ·
 `learning_hypotheses` · `learning_policy_epochs` · `learning_contribution_verdicts` ·
-`learning_lifecycle_events` · `learning_job_health`.
+`learning_inference_decisions` · `learning_lifecycle_events` · `learning_job_health`.
 
 > **Invariant**: the causal record chain (§2) + the learning ledger (§C-bis) are permanent.
 > Any new prune target MUST be added to `_PRUNABLE` explicitly and MUST NOT include a

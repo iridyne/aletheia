@@ -13,6 +13,7 @@ _TABLE_ID = {
     "learning_experiments": "experiment_id",
     "learning_exposures": "exposure_id",
     "learning_contribution_verdicts": "verdict_id",
+    "learning_inference_decisions": "experiment_id",
     "learning_lifecycle_events": "event_id",
     "learning_job_health": "job_id",
     "learning_policy_epochs": "epoch_id",
@@ -196,6 +197,7 @@ def get_latest_measurement_verdict(
     outcome_contract_version: str | None = None,
     metric_version: str | None = None,
     behavior_contract_hash: str | None = None,
+    inference_role: str | None = None,
 ) -> dict | None:
     """Return the newest exact-cohort measurement, never a legacy authority row.
 
@@ -221,6 +223,7 @@ def get_latest_measurement_verdict(
         ("outcome_contract_version", outcome_contract_version),
         ("metric_version", metric_version),
         ("behavior_contract_hash", behavior_contract_hash),
+        ("inference_role", inference_role),
     ):
         if value is not None:
             clauses.append(f"{column}=?")

@@ -12,6 +12,11 @@ from aletheia.learning.experiments import current_policy_epoch
 from aletheia.learning.ledger import get_latest_measurement_verdict
 from aletheia.learning.registry import LEARNING_PATHS
 from aletheia.learning.verdicts import METRIC_VERSION
+from aletheia.learning.fixed_look import (
+    get_consumed_fixed_look_verdict,
+    get_fixed_look_decision,
+    inference_authority_reason,
+)
 from aletheia.storage.sqlite import get_db
 
 
@@ -221,6 +226,11 @@ def _current_experiment_rows(
         "v.metric_version AS verdict_metric_version, "
         "v.code_commit AS verdict_code_commit, "
         "v.behavior_contract_hash AS verdict_behavior_contract_hash, "
+        "v.inference_contract_version AS verdict_inference_contract_version, "
+        "v.inference_role AS verdict_inference_role, "
+        "v.authority_eligible AS verdict_authority_eligible, "
+        "v.inference_plan_hash AS verdict_inference_plan_hash, "
+        "v.inference_cutoff_fingerprint AS verdict_inference_cutoff_fingerprint, "
         "v.hypothesis_id AS verdict_hypothesis_id "
         "FROM learning_experiments e "
         "JOIN learning_hypotheses h ON h.hypothesis_id=e.hypothesis_id "
@@ -338,6 +348,7 @@ def _project_experiment(
             outcome_contract_version=_OUTCOME_CONTRACT_VERSION,
             metric_version=METRIC_VERSION,
             behavior_contract_hash=behavior_contract_hash,
+            inference_role="monitoring",
         )
     historical_mismatch = identity_precondition_reason or _identity_mismatch(
         row,
@@ -369,19 +380,44 @@ def _project_experiment(
         if current
         else mismatch
     )
-    recommended = _recommended_action(
-        measurement_state,
-        measurement_reason,
-        stage=str(row.get("stage") or ""),
+    stage = str(row.get("stage") or "")
+    inference_decision = get_fixed_look_decision(str(row.get("experiment_id") or ""))
+    lifecycle_verdict = current_verdict
+    if stage.startswith("paper_") and current_verdict is not None:
+        from aletheia.learning.authority import measurement_harm_block_reason
+
+        current_harm_reason = measurement_harm_block_reason(current_verdict)
+        if (
+            str(current_verdict.get("verdict") or "")
+            not in {"negative", "invalid"}
+            and current_harm_reason is None
+        ):
+            lifecycle_verdict = (
+                get_consumed_fixed_look_verdict(str(row.get("experiment_id") or ""))
+                or current_verdict
+            )
+    lifecycle_state = str((lifecycle_verdict or {}).get("verdict") or measurement_state)
+    lifecycle_reason = (
+        str((lifecycle_verdict or {}).get("reason") or "") or measurement_reason
     )
+    recommended = _recommended_action(
+        lifecycle_state,
+        lifecycle_reason,
+        stage=stage,
+    )
+    inference_block_reason = None
+    if recommended == "promote_stage" and lifecycle_verdict is not None:
+        inference_block_reason = inference_authority_reason(lifecycle_verdict)
+        if inference_block_reason is not None:
+            recommended = "hold"
     intervention_block_reason = None
-    if recommended == "promote_stage" and current_verdict is not None:
+    if recommended == "promote_stage" and lifecycle_verdict is not None:
         from aletheia.learning.authority import (
             measurement_intervention_block_reason,
         )
 
         intervention_block_reason = measurement_intervention_block_reason(
-            current_verdict,
+            lifecycle_verdict,
             required_per_arm=_safe_int(row.get("min_samples_per_arm")),
         )
         if intervention_block_reason is not None:
@@ -508,6 +544,39 @@ def _project_experiment(
             "coverage": _coverage_projection(
                 metrics.get("market_day_coverage")
             ),
+            "inference_role": (
+                (current_verdict or {}).get("inference_role") if current else None
+            ),
+            "authority_eligible": bool(
+                (current_verdict or {}).get("authority_eligible")
+            ) if current else False,
+        },
+        "inference": {
+            "contract_version": (
+                inference_decision.inference_contract_version
+                if inference_decision is not None else None
+            ),
+            "status": (
+                inference_decision.status
+                if inference_decision is not None else "not_registered"
+            ),
+            "authority_alpha": (
+                inference_decision.authority_alpha
+                if inference_decision is not None else None
+            ),
+            "plan_hash": (
+                inference_decision.plan_hash
+                if inference_decision is not None else None
+            ),
+            "cutoff_fingerprint": (
+                inference_decision.cutoff_fingerprint
+                if inference_decision is not None else None
+            ),
+            "consumed_verdict_id": (
+                inference_decision.consumed_verdict_id
+                if inference_decision is not None else None
+            ),
+            "authority_block_reason": inference_block_reason,
         },
         "samples": {
             "raw_exposures": _safe_int(metrics.get("raw_exposure_n")),
@@ -588,7 +657,9 @@ def _project_experiment(
         "lifecycle": {
             "recommended_action": recommended,
             "recommendation_reason": (
-                intervention_block_reason or measurement_reason
+                inference_block_reason
+                or intervention_block_reason
+                or lifecycle_reason
             ),
             "authority_enabled": authority_enabled,
             "authority_block_reason": authority_block_reason,
@@ -610,6 +681,15 @@ def _project_experiment(
                 "verdict_behavior_contract_hash"
             ),
             "code_commit": row.get("verdict_code_commit"),
+            "inference_contract_version": row.get(
+                "verdict_inference_contract_version"
+            ),
+            "inference_role": row.get("verdict_inference_role"),
+            "authority_eligible": bool(row.get("verdict_authority_eligible")),
+            "inference_plan_hash": row.get("verdict_inference_plan_hash"),
+            "inference_cutoff_fingerprint": row.get(
+                "verdict_inference_cutoff_fingerprint"
+            ),
             "source_code_commits": [
                 str(value)
                 for value in verdict_metrics.get("source_code_commits", [])

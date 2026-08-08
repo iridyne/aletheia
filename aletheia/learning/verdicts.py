@@ -14,7 +14,7 @@ from typing import Any
 from aletheia.learning.cohorts import ContributionCohort, CohortSample
 
 
-METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v5"
+METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v6"
 BOOTSTRAP_SEED = 20260712
 BOOTSTRAP_RESAMPLES = 2000
 _PRACTICAL_NEUTRAL_DELTA_PCT = 0.10
@@ -35,7 +35,11 @@ class VerdictEvaluation:
     unique_control_n: int
 
 
-def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
+def evaluate_cohort(
+    cohort: ContributionCohort,
+    *,
+    authority_alpha: float | None = None,
+) -> VerdictEvaluation:
     """Classify one already-isolated cohort without changing any authority state."""
     assigned_treatment = cohort.treatment_samples
     raw_control = cohort.control_samples
@@ -62,11 +66,19 @@ def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
     observed = fmean(treatment_values) if treatment_values else None
     baseline = fmean(control_values) if control_values else None
     delta = observed - baseline if observed is not None and baseline is not None else None
-    confidence_low, confidence_high = _bootstrap_interval(treatment_values, control_values)
+    confidence_low, confidence_high = _bootstrap_interval(
+        treatment_values,
+        control_values,
+        tail_probability=(0.10 if authority_alpha is None else authority_alpha),
+    )
     # Preserve the randomized intent-to-treat estimand. Authority refusal can be
     # correlated with market or risk state, so selecting only applied rows would
     # turn the primary result into a biased post-assignment comparison.
     harm_metrics = _harm_metrics(cohort, treatment, control, delta)
+    harm_metrics["inference_role"] = (
+        "monitoring" if authority_alpha is None else "confirmatory"
+    )
+    harm_metrics["authority_alpha"] = authority_alpha
     harm_metrics["harm_treatment_basis"] = "randomized_assignment_intent_to_treat"
     harm_metrics["market_day_coverage"] = coverage
     required = max(1, int(cohort.experiment.min_samples_per_arm))
@@ -321,7 +333,12 @@ def _missing_days(
     return missing_n, missing
 
 
-def _bootstrap_interval(treatment: list[float], control: list[float]) -> tuple[float | None, float | None]:
+def _bootstrap_interval(
+    treatment: list[float],
+    control: list[float],
+    *,
+    tail_probability: float = 0.10,
+) -> tuple[float | None, float | None]:
     if not treatment or not control:
         return None, None
     rng = random.Random(BOOTSTRAP_SEED)
@@ -331,7 +348,10 @@ def _bootstrap_interval(treatment: list[float], control: list[float]) -> tuple[f
         baseline = fmean(control[rng.randrange(len(control))] for _ in control)
         deltas.append(treated - baseline)
     deltas.sort()
-    return _quantile(deltas, 0.10), _quantile(deltas, 0.90)
+    return (
+        _quantile(deltas, tail_probability),
+        _quantile(deltas, 1.0 - tail_probability),
+    )
 
 
 def _harm_metrics(

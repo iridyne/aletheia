@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v9"
+SCHEMA_VERSION = "aletheia-sqlite-v10"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3896,6 +3896,165 @@ _POSITION_PROTECTION_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+_LEARNING_FIXED_LOOK_COLUMNS = (
+    ("inference_contract_version", "learning_contribution_verdicts", "TEXT"),
+    (
+        "inference_role",
+        "learning_contribution_verdicts",
+        "TEXT NOT NULL DEFAULT 'monitoring' CHECK (inference_role IN ('monitoring', 'confirmatory'))",
+    ),
+    (
+        "authority_eligible",
+        "learning_contribution_verdicts",
+        "INTEGER NOT NULL DEFAULT 0 CHECK (authority_eligible IN (0, 1))",
+    ),
+    ("inference_plan_hash", "learning_contribution_verdicts", "TEXT"),
+    ("inference_cutoff_fingerprint", "learning_contribution_verdicts", "TEXT"),
+)
+_LEARNING_FIXED_LOOK_SQL = """
+CREATE TABLE IF NOT EXISTS learning_inference_decisions (
+    experiment_id TEXT PRIMARY KEY REFERENCES learning_experiments(experiment_id),
+    inference_family_id TEXT NOT NULL CHECK (length(trim(inference_family_id)) > 0),
+    inference_contract_version TEXT NOT NULL CHECK (
+        inference_contract_version = 'ufc-fixed-look/v1'
+    ),
+    plan_json TEXT NOT NULL CHECK (json_valid(plan_json)),
+    plan_hash TEXT NOT NULL CHECK (
+        length(plan_hash) = 64
+        AND plan_hash = lower(plan_hash)
+        AND plan_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    status TEXT NOT NULL CHECK (
+        status IN ('collecting', 'cutoff_frozen', 'consumed', 'invalidated')
+    ),
+    cutoff_json TEXT CHECK (cutoff_json IS NULL OR json_valid(cutoff_json)),
+    cutoff_fingerprint TEXT CHECK (
+        cutoff_fingerprint IS NULL
+        OR (
+            length(cutoff_fingerprint) = 64
+            AND cutoff_fingerprint = lower(cutoff_fingerprint)
+            AND cutoff_fingerprint NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    cutoff_frozen_at TEXT CHECK (
+        cutoff_frozen_at IS NULL OR julianday(cutoff_frozen_at) IS NOT NULL
+    ),
+    consumed_verdict_id TEXT REFERENCES learning_contribution_verdicts(verdict_id),
+    consumed_at TEXT CHECK (consumed_at IS NULL OR julianday(consumed_at) IS NOT NULL),
+    authority_alpha REAL NOT NULL CHECK (authority_alpha > 0 AND authority_alpha < 0.5),
+    created_at TEXT NOT NULL CHECK (julianday(created_at) IS NOT NULL),
+    updated_at TEXT NOT NULL CHECK (julianday(updated_at) IS NOT NULL),
+    CHECK (
+        (status = 'collecting' AND cutoff_json IS NULL AND cutoff_fingerprint IS NULL
+            AND cutoff_frozen_at IS NULL AND consumed_verdict_id IS NULL AND consumed_at IS NULL)
+        OR (status = 'cutoff_frozen' AND cutoff_json IS NOT NULL
+            AND cutoff_fingerprint IS NOT NULL AND cutoff_frozen_at IS NOT NULL
+            AND consumed_verdict_id IS NULL AND consumed_at IS NULL)
+        OR (status = 'consumed' AND cutoff_json IS NOT NULL
+            AND cutoff_fingerprint IS NOT NULL AND cutoff_frozen_at IS NOT NULL
+            AND consumed_verdict_id IS NOT NULL AND consumed_at IS NOT NULL)
+        OR status = 'invalidated'
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_learning_inference_family
+ON learning_inference_decisions(inference_family_id, status);
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_inference_decisions_no_delete
+BEFORE DELETE ON learning_inference_decisions
+BEGIN
+    SELECT RAISE(ABORT, 'Learning inference decisions are retained');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_inference_plan_immutable
+BEFORE UPDATE OF experiment_id, inference_family_id, inference_contract_version, plan_json,
+                 plan_hash, authority_alpha, created_at
+ON learning_inference_decisions
+BEGIN
+    SELECT RAISE(ABORT, 'Learning inference plan is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_inference_cutoff_write_once
+BEFORE UPDATE OF cutoff_json, cutoff_fingerprint, cutoff_frozen_at
+ON learning_inference_decisions
+WHEN (
+    OLD.status != 'collecting'
+    OR OLD.cutoff_fingerprint IS NOT NULL
+ ) AND (
+    NEW.cutoff_json IS NOT OLD.cutoff_json
+    OR NEW.cutoff_fingerprint IS NOT OLD.cutoff_fingerprint
+    OR NEW.cutoff_frozen_at IS NOT OLD.cutoff_frozen_at
+ )
+BEGIN
+    SELECT RAISE(ABORT, 'Learning inference cutoff is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_inference_consumption_write_once
+BEFORE UPDATE OF consumed_verdict_id, consumed_at
+ON learning_inference_decisions
+WHEN (
+    OLD.status != 'cutoff_frozen'
+    OR OLD.consumed_verdict_id IS NOT NULL
+ ) AND (
+    NEW.consumed_verdict_id IS NOT OLD.consumed_verdict_id
+    OR NEW.consumed_at IS NOT OLD.consumed_at
+ )
+BEGIN
+    SELECT RAISE(ABORT, 'Learning inference decision is already consumed');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_inference_status_monotonic
+BEFORE UPDATE OF status ON learning_inference_decisions
+WHEN NOT (
+    NEW.status = OLD.status
+    OR (OLD.status = 'collecting' AND NEW.status IN ('cutoff_frozen', 'invalidated'))
+    OR (OLD.status = 'cutoff_frozen' AND NEW.status IN ('consumed', 'invalidated'))
+)
+BEGIN
+    SELECT RAISE(ABORT, 'Learning inference status cannot regress');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_inference_consumed_verdict_exact
+BEFORE UPDATE OF consumed_verdict_id ON learning_inference_decisions
+WHEN NEW.consumed_verdict_id IS NOT NULL
+ AND NOT EXISTS (
+    SELECT 1
+    FROM learning_contribution_verdicts AS verdict
+    WHERE verdict.verdict_id = NEW.consumed_verdict_id
+      AND verdict.experiment_id = NEW.experiment_id
+      AND verdict.inference_contract_version = NEW.inference_contract_version
+      AND verdict.inference_role = 'confirmatory'
+      AND verdict.authority_eligible = 1
+      AND verdict.inference_plan_hash = NEW.plan_hash
+      AND verdict.inference_cutoff_fingerprint = NEW.cutoff_fingerprint
+ )
+BEGIN
+    SELECT RAISE(ABORT, 'consumed Learning verdict does not match frozen inference');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_authority_verdict_inference_immutable
+BEFORE UPDATE ON learning_contribution_verdicts
+WHEN OLD.authority_eligible = 1 OR NEW.authority_eligible = 1
+BEGIN
+    SELECT RAISE(ABORT, 'authority-eligible Learning verdict is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_authority_verdict_no_delete
+BEFORE DELETE ON learning_contribution_verdicts
+WHEN OLD.authority_eligible = 1
+BEGIN
+    SELECT RAISE(ABORT, 'authority-eligible Learning verdict is retained');
+END;
+"""
+_LEARNING_FIXED_LOOK_CHECKSUM = hashlib.sha256(
+    (
+        repr(_LEARNING_FIXED_LOOK_COLUMNS)
+        + "\n"
+        + _LEARNING_FIXED_LOOK_SQL
+        + "\nlearning_fixed_look_v1\nPRAGMA optimize"
+    ).encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -3950,6 +4109,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260808_0008_position_protection_state_v9": (
         "immutable ExitPlan history and dormant protective-barrier state"
+    ),
+    "20260808_0009_learning_fixed_look_v10": (
+        "prospective fixed-look Learning inference decisions"
     ),
 }
 
@@ -4072,6 +4234,19 @@ def _apply_position_protection_state_v9(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_learning_fixed_look_v10(db: sqlite3.Connection) -> None:
+    """Add prospective inference state without granting existing verdicts authority."""
+
+    for column, table, column_type in _LEARNING_FIXED_LOOK_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.executescript(_LEARNING_FIXED_LOOK_SQL)
+    db.execute("PRAGMA optimize")
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -4118,8 +4293,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260808_0008_position_protection_state_v9",
         checksum=_POSITION_PROTECTION_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v9",
         apply=_apply_position_protection_state_v9,
+    ),
+    MigrationStep(
+        migration_id="20260808_0009_learning_fixed_look_v10",
+        checksum=_LEARNING_FIXED_LOOK_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_learning_fixed_look_v10,
     ),
 )
 
