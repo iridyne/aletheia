@@ -83,6 +83,43 @@ def test_universe_refresh_reconciles_stale_runs_before_skip(monkeypatch):
     assert calls == ["cleanup"]
 
 
+def test_dreaming_daily_marks_lesson_extraction_contract_failure(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.agents import dreaming_agent
+
+    async def invalid_extraction(_run_id, _outputs, errors):
+        errors.append("lesson_extraction_invalid_output:structured_parse_error")
+
+    def run_async(_job_id, coroutine):
+        return asyncio.run(coroutine)
+
+    failures = []
+    monkeypatch.setattr(
+        scheduler,
+        "load_config",
+        lambda: SimpleNamespace(
+            runtime=SimpleNamespace(paused=False),
+            serenity=SimpleNamespace(enabled=False),
+        ),
+    )
+    monkeypatch.setattr(dreaming_agent, "_extract_lessons", invalid_extraction)
+    monkeypatch.setattr(scheduler, "_run_async_with_timeout", run_async)
+    monkeypatch.setattr(
+        scheduler,
+        "_record_job_failure",
+        lambda job_id, error: failures.append((job_id, error)),
+    )
+
+    scheduler._run_dreaming_agent()
+
+    assert failures == [
+        (
+            "dreaming_daily",
+            "lesson_extraction_invalid_output:structured_parse_error",
+        )
+    ]
+
+
 def _cfg(*, paused: bool = False):
     return SimpleNamespace(runtime=SimpleNamespace(paused=paused))
 

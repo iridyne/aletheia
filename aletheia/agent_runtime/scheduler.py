@@ -1909,6 +1909,7 @@ def _run_dreaming_agent():
             logger.info("dreaming_agent: lesson extraction outputs: %s", outputs)
         if errors:
             logger.warning("dreaming_agent: lesson extraction errors: %s", errors)
+            _record_job_failure("dreaming_daily", "; ".join(errors))
     except TimeoutError:
         logger.warning("dreaming_agent: lesson extraction timed out")
         _record_job_failure("dreaming_daily", "lesson extraction timed out")
