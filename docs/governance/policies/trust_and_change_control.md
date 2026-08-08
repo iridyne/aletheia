@@ -15,7 +15,7 @@ before editing code. Do not resolve safety or trading-state conflicts by guessin
 
 ### 1.1 Causal Record Chain
 
-The trading record chain is:
+The native entry record chain is:
 
 ```text
 trade_proposals.id
@@ -25,6 +25,22 @@ trade_proposals.id
   -> positions derived from executed orders/fills
 ```
 
+The native close record chain is deliberately different:
+
+```text
+open positions.id
+  -> orders.position_id + orders.close_reason
+  -> fills.order_id
+  -> the same position projected to closed
+```
+
+A close reduces an already-authorized open Position. It does not replay the
+entry RiskDecision or invent a second RiskDecision that pretends to approve the
+exit. Native close Orders therefore keep `risk_decision_id=NULL`; their durable
+authority is the matching open Position plus `position_id`, `close_reason`, and
+the close client identity. Adopted exchange observations remain explicitly
+`source='adopted'` rather than claiming native decision authority.
+
 Rules:
 
 - A `trade_proposals` row is created exactly once for a proposed trade.
@@ -32,8 +48,11 @@ Rules:
   create a second proposal row.
 - Every `risk_decisions.proposal_id` must reference the original proposal.
 - Every `orders.proposal_id` must reference the original proposal.
-- Every `orders.risk_decision_id` must reference the risk decision that approved
-  or rejected execution for that proposal.
+- Every native entry `orders.risk_decision_id` must reference the authoritative
+  risk decision that approved execution for that proposal.
+- Every native close Order must reference the open Position it reduces, match
+  that Position's immutable instrument/proposal identity and quantity, and must
+  not claim an entry `risk_decision_id` as close authority.
 - Every `fills.order_id` must reference the order that produced the fill.
 - A `positions` row is a portfolio-state projection from orders/fills, but the
   schema NOW carries direct causal back-links (2026-07-07 update, #30):

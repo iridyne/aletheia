@@ -2121,6 +2121,10 @@ def validate_native_order_authority(order: Order | Mapping[str, object]) -> None
             raise ValueError("native close Order requires an existing Position")
         if position.get("status") != "open":
             raise ValueError("native close Order requires an open Position")
+        if data.get("risk_decision_id") is not None:
+            raise ValueError(
+                "native close Order consumes Position authority, not a RiskDecision"
+            )
         for field in ("proposal_id", "symbol", "market_type", "direction", "execution_mode"):
             if data.get(field) != position.get(field):
                 raise ValueError(f"native close Order {field} does not match Position")
