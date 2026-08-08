@@ -62,6 +62,67 @@ def _learning_gate_reason() -> str | None:
     return learning_influence_gate_reason()
 
 
+def _enforce_shadow_authority_provenance(
+    *,
+    path_id: str,
+    experiment: LearningExperiment,
+    authorized: bool,
+    reason: str | None,
+) -> tuple[bool, str]:
+    """Keep every Shadow consumer on baseline and surface provenance drift.
+
+    The authority resolver is the primary gate.  This final consumer-side
+    invariant prevents a resolver regression or state race from granting Shadow
+    behavior and makes any unexpected rejection reason immediately visible in
+    the existing infra-event channel.  The normalized reason is also persisted
+    on the immutable exposure, so the cohort can never silently admit it.
+    """
+
+    normalized_reason = str(reason or "authority_reason_unavailable")
+    if experiment.stage != "shadow":
+        return bool(authorized), normalized_reason
+    if not authorized and normalized_reason == "experiment_stage_not_paper":
+        return False, normalized_reason
+
+    violation_reason = (
+        f"shadow_authority_invariant_violation:{normalized_reason}"
+    )
+    _log.critical(
+        "learning shadow authority invariant violated "
+        "path=%s experiment=%s status=%s authorized=%s reason=%s",
+        path_id,
+        experiment.experiment_id,
+        experiment.status,
+        bool(authorized),
+        normalized_reason,
+    )
+    try:
+        from aletheia.infra.events import emit_infra_event
+
+        emit_infra_event(
+            severity="critical",
+            source="learning_authority",
+            code="shadow_authority_provenance_invalid",
+            message=(
+                "A Shadow Learning exposure reached the consumer with "
+                "unexpected authority provenance and was forced to baseline."
+            ),
+            action="Inspect the experiment; do not admit or pool this cohort.",
+            entity_id=experiment.experiment_id,
+            metadata={
+                "path_id": path_id,
+                "experiment_stage": experiment.stage,
+                "experiment_status": experiment.status,
+                "authority_authorized": bool(authorized),
+                "authority_reason": normalized_reason,
+            },
+            dedupe_sec=600,
+        )
+    except Exception:  # pragma: no cover - visibility must not weaken the gate
+        _log.exception("failed to emit Shadow authority invariant event")
+    return False, violation_reason
+
+
 def _ensure_experiment(
     *, path_id: str, scope: dict, action: dict, source_cohort: str,
     target_horizon: str, consumer: str,
@@ -317,7 +378,12 @@ def apply_numeric_treatment(
     )
     from aletheia.learning.authority import resolve_learning_authority
     authority = resolve_learning_authority(path_id, experiment, policy_epoch)
-    authorized = authority.authorized
+    authorized, authority_reason = _enforce_shadow_authority_provenance(
+        path_id=path_id,
+        experiment=experiment,
+        authorized=authority.authorized,
+        reason=authority.reason,
+    )
     # Permission provenance and realized behavior are intentionally distinct:
     # a treatment assignment can be authorized yet produce no numeric delta.
     authority_applied = authorized and assignment == "treatment"
@@ -360,7 +426,7 @@ def apply_numeric_treatment(
             **(manifest or {}),
             "proposed_value": treatment_value,
             "authority_applied": authority_applied,
-            "authority_reason": authority.reason,
+            "authority_reason": authority_reason,
             "behavior_changed": behavior_changed,
             "behavior_change_reason": behavior_change_reason,
         }, sort_keys=True),
@@ -382,11 +448,11 @@ def apply_numeric_treatment(
     return InfluenceDecision(
         value, behavior_changed, assignment,
         (
-            authority.reason
+            authority_reason
             if behavior_changed
             else f"baseline:{behavior_change_reason}"
             if authority_applied
-            else f"baseline:{authority.reason}"
+            else f"baseline:{authority_reason}"
         ),
         hypothesis.hypothesis_id, experiment.experiment_id, exposure.exposure_id,
     )

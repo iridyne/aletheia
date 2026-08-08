@@ -556,6 +556,72 @@ def test_universe_calibration_is_neutral_shadow_before_authority(monkeypatch):
     }
 
 
+def test_shadow_consumer_forces_unexpected_authority_to_baseline_and_alerts(
+    monkeypatch,
+):
+    from aletheia.infra.events import clear_infra_events, list_infra_events
+    from aletheia.learning import authority, experiments
+    from aletheia.learning.authority import AuthorityDecision
+    from aletheia.storage.sqlite import get_db
+
+    clear_infra_events()
+    monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+    monkeypatch.setattr(experiments, "stable_assignment", lambda *_args: "treatment")
+    monkeypatch.setattr(
+        authority,
+        "resolve_learning_authority",
+        lambda *_args, **_kwargs: AuthorityDecision(
+            True,
+            "impossible_shadow_authorized",
+            "shadow",
+            0.5,
+            None,
+            None,
+        ),
+    )
+
+    decision = experiments.apply_numeric_treatment(
+        path_id="universe_family_calibration",
+        scope={"family": "momentum", "direction": "long", "market_type": "perp"},
+        action={"type": "opportunity_multiplier", "multiplier": 1.1},
+        source_cohort="universe_forward_outcomes:clean_net:v2",
+        target_horizon="1h",
+        candidate_key="candidate:shadow-invariant",
+        assignment_key="run:shadow-invariant",
+        baseline=1.0,
+        treatment=1.1,
+        consumer="universe_allocator",
+        consumer_stage="score",
+        outcome_candidate_key="candidate:shadow-invariant:1h",
+    )
+
+    assert decision.value == 1.0
+    assert decision.applied is False
+    assert decision.reason == (
+        "baseline:shadow_authority_invariant_violation:"
+        "impossible_shadow_authorized"
+    )
+    row = get_db().execute(
+        "SELECT manifest_json FROM learning_exposures WHERE exposure_id=?",
+        (decision.exposure_id,),
+    ).fetchone()
+    manifest = json.loads(row["manifest_json"])
+    assert manifest["authority_applied"] is False
+    assert manifest["behavior_changed"] is False
+    assert manifest["authority_reason"] == (
+        "shadow_authority_invariant_violation:impossible_shadow_authorized"
+    )
+    events = list_infra_events(min_severity="critical")
+    assert [(event["source"], event["code"], event["entity_id"]) for event in events] == [
+        (
+            "learning_authority",
+            "shadow_authority_provenance_invalid",
+            decision.experiment_id,
+        )
+    ]
+    clear_infra_events()
+
+
 @spec_claim(SpecClaim(
     "LE-B22", "learning_evolution", "§9.3 factor identity", "L2b",
     "Producer, ranker, and Operator context use factor_key as the same stable identity field.",

@@ -334,6 +334,21 @@ def build_experiment_cohorts(
         if assignment not in {"treatment", "control"}:
             cohort.invalid_reasons["invalid_assignment"] += 1
             continue
+        if experiment.stage == "shadow":
+            authority_applied, authority_reason = _manifest_authority(
+                exposure.get("manifest_json")
+            )
+            if (
+                authority_applied
+                or authority_reason != "experiment_stage_not_paper"
+            ):
+                # Validate both randomized arms before outcome settlement.  A
+                # control-row provenance violation must not disappear merely
+                # because treatment-only intervention metrics ignore it.
+                cohort.invalid_reasons[
+                    "shadow_authority_provenance_invalid"
+                ] += 1
+                continue
         outcome_key = str(exposure.get("outcome_candidate_key") or "")
         if not outcome_key:
             # A keyless exposure carries no identity to measure. Fail closed as a

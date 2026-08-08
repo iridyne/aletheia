@@ -82,7 +82,7 @@ def test_declared_behavior_version_rotates_the_policy_epoch(monkeypatch):
         experiments,
         "get_learning_path",
         lambda path_id: replace(
-            get_path(path_id), behavior_contract_version="universe-family-calibration/v10"
+            get_path(path_id), behavior_contract_version="universe-family-calibration/v11"
         ) if path_id == current_path.path_id else get_path(path_id),
     )
 

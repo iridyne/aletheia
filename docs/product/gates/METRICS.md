@@ -21,7 +21,7 @@ The current measured path is `universe_family_calibration`. Its software evidenc
 unit is one complete assignment cluster. Selected members contribute fixed-horizon
 net return; dropped members contribute zero under intent-to-treat allocation
 utility. The current metric version is
-`universe_family_calibration_cluster_allocation_utility_v8`.
+`universe_family_calibration_cluster_allocation_utility_v9`.
 
 ## 2. Learning qualification metrics
 
@@ -53,7 +53,7 @@ at outcomes, and exactly one matching confirmatory verdict may be consumed. Late
 samples cannot turn the same stage positive; current monitoring negative, invalid,
 or determinate harm remains an anytime safety withdrawal. Older identities remain
 immutable, non-authorizing history.
-Metric v8 and UFC behavior contract v9 separate the one-day/10-per-arm Shadow
+Metric v9 and UFC behavior contract v10 separate the one-day/10-per-arm Shadow
 integrity admission from those unchanged economic promotion gates. This starts a
 fresh cohort; the integrity verdict remains `insufficient_data` and grants no
 automatic authority or contribution claim.

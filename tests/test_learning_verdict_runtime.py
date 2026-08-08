@@ -1337,10 +1337,11 @@ def test_shadow_without_actual_intervention_is_not_a_causal_verdict(treatment_ne
             experiment,
             hypothesis,
             candidate=candidate,
-            assignment=assignment,
-            exposed_at=_iso(day),
-            authority_applied=False,
-        )
+                assignment=assignment,
+                exposed_at=_iso(day),
+                authority_applied=False,
+                authority_reason="experiment_stage_not_paper",
+            )
         _outcome(candidate, net=net, entry_at=_iso(day, 1))
 
     verdict = _run(experiment.experiment_id)[0]
@@ -1402,6 +1403,33 @@ def test_shadow_integrity_readiness_does_not_wait_for_promotion_window():
         "current_consecutive_market_days": 1,
         "status": "ready",
     }
+
+
+def test_shadow_control_provenance_violation_is_invalid_before_outcome_settlement():
+    hypothesis, experiment = _experiment(
+        min_samples=50, min_days=7, stage="shadow",
+    )
+    _exposure(
+        experiment,
+        hypothesis,
+        candidate="shadow-control-provenance-invalid",
+        assignment="control",
+        authority_applied=False,
+        behavior_changed=False,
+        authority_reason="experiment_not_active",
+    )
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "invalid"
+    assert verdict.reason == (
+        "invalid evidence: shadow_authority_provenance_invalid"
+    )
+    assert metrics["invalid_reasons"] == {
+        "shadow_authority_provenance_invalid": 1,
+    }
+    assert metrics["exclusion_reasons"] == {}
 
 
 def test_shadow_integrity_readiness_requires_ten_complete_units_per_arm():

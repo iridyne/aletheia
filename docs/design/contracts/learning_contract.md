@@ -131,7 +131,7 @@ loop contributes positively. Current behavior has these contract-relevant limita
   scanner-run plus feature-snapshot identity so change-suppressed features cannot merge distinct
   entry-price windows;
 - contribution metric version
-  `universe_family_calibration_cluster_allocation_utility_v8` applies only to new verdicts. Earlier
+  `universe_family_calibration_cluster_allocation_utility_v9` applies only to new verdicts. Earlier
   metric verdict rows remain immutable history. A verdict's `created_at` is evaluation time, while
   `window_start` and `window_end` remain observation bounds;
 - treatment assignment and treatment intervention remain distinct. The v6 primary estimand stays
@@ -145,9 +145,14 @@ loop contributes positively. Current behavior has these contract-relevant limita
   requires the full actual-intervention minimum, not 100% intervention compliance. Refused and
   all-no-op clusters remain in ITT and dilute the estimated policy effect; they cannot satisfy the
   actual-intervention count but do not deadlock an otherwise qualified window. Counts and bounded
-  non-intervention reasons remain auditable. Metric v8 plus Universe behavior contract v9 starts a
-  from-zero identity; v6/v7 identity evidence remains immutable history and is never mixed or
-  implicitly migrated;
+  non-intervention reasons remain auditable. Metric v9 plus Universe behavior contract v10 starts a
+  from-zero identity; older metric v6-v8 and behavior v7-v9 evidence remains immutable history
+  and is never mixed or implicitly migrated;
+- the final numeric-treatment consumer independently enforces the Shadow authority invariant:
+  Shadow may persist only `authorized=false` with `experiment_stage_not_paper`. Any other
+  authorization/reason combination is forced to the static baseline, persisted under
+  `shadow_authority_invariant_violation:*`, and emitted through the existing critical infra-event
+  channel. This is a detection and containment backstop, not a second authority framework;
 - harm is determinate only after both arms reach the experiment's 50-assignment-unit gate. Before
   that point the persisted state is `indeterminate`: it blocks new authority and promotion but does
   not claim a breach; the narrowly declared activated-trial collection exception below may retain
