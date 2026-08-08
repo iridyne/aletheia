@@ -51,6 +51,13 @@ _LLM_EVIDENCE_MIN_SAMPLE = 3
 # A working provider that still drops some calls is worth a warning.
 _LLM_DEGRADED_SUCCESS_RATE = 0.5
 
+# A managed Gateway creates its durable Runtime Session during application
+# startup, shortly after the supervisor/inner process starts.  Doctor may run in
+# a separate CLI process, so its in-memory ``current_session()`` is empty even
+# while that Gateway is healthy.  Keep the process/session join bounded: a wide
+# heuristic would turn a genuinely stale crash row into false current authority.
+_RUNTIME_SESSION_PROCESS_MATCH_SECONDS = 300
+
 
 @dataclass
 class Check:
@@ -2951,6 +2958,41 @@ def _probe_network(report: Report) -> None:
 
 
 
+def _external_gateway_runtime_session_id(open_sessions: list[dict]) -> str | None:
+    """Match an open DB session to the managed Gateway process tree.
+
+    This is only for out-of-process Doctor calls.  The supervisor PID is the
+    durable lifecycle identity; the ASGI child may restart underneath it, so
+    both the supervisor and its live descendants are eligible process starts.
+    """
+    try:
+        import psutil
+
+        from aletheia.gateway.pidfile import is_running, read_pid
+
+        pid = read_pid()
+        if not pid or not is_running():
+            return None
+        root = psutil.Process(pid)
+        processes = [root, *root.children(recursive=True)]
+        process_starts = [process.create_time() for process in processes]
+    except Exception:
+        return None
+
+    matches: list[tuple[float, float, str]] = []
+    for session in open_sessions:
+        started = _parse_iso_datetime(session.get("started_at"))
+        session_id = session.get("session_id")
+        if started is None or not session_id:
+            continue
+        started_ts = started.timestamp()
+        delta = min(abs(started_ts - process_start) for process_start in process_starts)
+        if delta <= _RUNTIME_SESSION_PROCESS_MATCH_SECONDS:
+            # Prefer the closest process start, then the newest session.
+            matches.append((delta, -started_ts, str(session_id)))
+    return min(matches)[2] if matches else None
+
+
 def _probe_runtime_session_provenance(report: Report) -> None:
     """Runtime Session provenance integrity — four distinct states surfaced explicitly.
 
@@ -2975,9 +3017,35 @@ def _probe_runtime_session_provenance(report: Report) -> None:
         from aletheia.storage.sqlite import get_db
 
         sess = current_session()
+        db = get_db()
+        open_sessions = [
+            dict(row)
+            for row in db.execute(
+                "SELECT session_id, runtime_id, boot_commit, behavior_fingerprint, "
+                "started_at FROM runtime_sessions WHERE ended_at IS NULL"
+            ).fetchall()
+        ]
+        external_id = (
+            _external_gateway_runtime_session_id(open_sessions)
+            if sess is None
+            else None
+        )
+        external_session = next(
+            (row for row in open_sessions if row["session_id"] == external_id),
+            None,
+        )
 
         # --- 1/2/3: current-process session state ---
-        if sess is None:
+        if external_session is not None:
+            report.add(
+                "trust.runtime_session.current",
+                "ok",
+                f"active durable external Gateway session "
+                f"{external_session['session_id'][:16]}… "
+                f"(commit={(external_session.get('boot_commit') or '-')[:12]}, "
+                f"fingerprint={(external_session.get('behavior_fingerprint') or '-')[:12]}…)",
+            )
+        elif sess is None:
             report.add(
                 "trust.runtime_session.current",
                 "info",
@@ -3004,13 +3072,7 @@ def _probe_runtime_session_provenance(report: Report) -> None:
 
         # --- 4: stale open sessions from prior crashes ---
         try:
-            db = get_db()
-            current_id = sess["session_id"] if sess else None
-            query = (
-                "SELECT session_id, started_at FROM runtime_sessions "
-                "WHERE ended_at IS NULL"
-            )
-            open_sessions = [dict(r) for r in db.execute(query).fetchall()]
+            current_id = sess["session_id"] if sess else external_id
             stale = [
                 s for s in open_sessions
                 if s["session_id"] != current_id
