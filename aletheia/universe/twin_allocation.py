@@ -17,7 +17,7 @@ from aletheia.universe.twin_scoring import (
 )
 
 
-TWIN_ALLOCATION_REPLAY_CONTRACT = "universe-twin-allocation-replay-v1"
+TWIN_ALLOCATION_REPLAY_CONTRACT = "universe-twin-allocation-diagnostic-v1"
 
 
 def _allocate_arm(
@@ -61,11 +61,12 @@ def replay_twin_shadow_allocations(
     allocator_random_state: object,
     dedupe: Callable[[list[dict], Any], list[dict]],
 ) -> tuple[TwinShadowRecord, ...]:
-    """Replay both continuous arms with the authority allocator's pre-call RNG state.
+    """Replay both continuous arms from a best-effort pre-authority RNG snapshot.
 
     The replay copies candidates, suppresses filter evidence writes, skips
     execution-eligibility decoration, and never returns data to the authority
-    allocation collection.
+    allocation collection. The process-global authority draw is not isolated,
+    so this is diagnostic parity rather than verified random-assignment lineage.
     """
 
     point_candidates = build_shadow_allocation_candidates(

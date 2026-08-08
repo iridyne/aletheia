@@ -12,8 +12,9 @@
 
 `UniverseService.refresh()` computes a continuous point and pessimistic twin for
 every coarse-filter survivor, replays both arms through the current fine filter,
-instrument deduplication, quota allocator, and the allocator's captured pre-call
-random state, then annotates the existing step selection facts.
+instrument deduplication and quota allocator. Explore sampling starts from a
+best-effort pre-authority process-global random snapshot, then the Twin annotates
+the existing step selection facts.
 
 Only the step path publishes `universe_members` and Opportunities. After that
 authority publication succeeds and the scanner run is marked completed, a
@@ -69,7 +70,9 @@ The following invariants are mandatory:
 - `policy_epoch_id=NULL`;
 - `availability_profile_id=NULL`;
 - blockers state that assignment, propensity, exact observation lineage, and
-  fixed-horizon outcome evidence are unavailable.
+  fixed-horizon outcome evidence are unavailable;
+- authority allocator random-draw lineage is unavailable: the pre-call global
+  snapshot does not prove that another thread did not advance the authority RNG.
 
 These rows cannot authorize Paper, Risk, Execution, Learning, scorer promotion,
 or scorer switching.
@@ -89,11 +92,11 @@ out worker may finish in the background, so transactional cadence, idempotency,
 and hash conflict checks remain required.
 
 Replay is read-only. It reconstructs the continuous policy and safe inputs,
-validates candidate order, reruns scoring and both allocations, and compares
-canonical candidate and batch hashes. The captured process-global random state
-is an integrity aid, not proof of an isolated randomized experiment: another
-concurrent random consumer can cause a replay mismatch, which blocks promotion
-rather than being silently normalized.
+validates candidate order, reruns scoring and both Shadow allocations, and
+compares canonical candidate and batch hashes. This proves reproducibility of
+the stored Shadow calculation only. The captured process-global random state is
+not verified lineage for the authority allocator and cannot support causal or
+randomized-experiment claims.
 
 ## 5. Capacity and retention
 
@@ -104,8 +107,8 @@ does not extend this fixed retention.
 
 Executable payload guards require representative candidate output to remain at
 most 4 KiB and replay input at most 2 KiB. The current representative payload is
-about 3.2 KiB total. At 240 candidates, 24 hourly captures, and 30 days, its
-JSON body projection is about 568 MB before SQLite/index overhead. Any cadence,
+about 3.3 KiB total. At 240 candidates, 24 hourly captures, and 30 days, its
+JSON body projection is about 583 MB before SQLite/index overhead. Any cadence,
 retention, or payload expansion requires a new capacity review.
 
 These diagnostic tables are not part of the permanent trade audit chain.

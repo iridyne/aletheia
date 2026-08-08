@@ -13,7 +13,8 @@
 Task 5 retains a sampled, replayable comparison of step authority against the
 continuous point and pessimistic paths. Both continuous paths replay the current
 fine filter, preferred-market deduplication, family quotas, regime context, and
-allocator mechanics. The change does not switch the scorer, alter a quota, emit
+allocator mechanics from a best-effort pre-authority RNG snapshot. The change
+does not switch the scorer, alter a quota, emit
 a continuous Opportunity, create a Learning treatment, or touch Risk/Execution
 authority.
 
@@ -55,9 +56,9 @@ The bounded design applies all of the following:
 6. Identical retries are idempotent; identity reuse with different content
    fails closed.
 
-The representative candidate now uses 2,442 bytes of compact output and 844
+The representative candidate now uses 2,530 bytes of compact output and 844
 bytes of replay input. At 240 candidates, 24 daily samples, and 30 days, the
-payload projection is 567,820,800 bytes before SQLite/index overhead. Automated
+payload projection is 583,027,200 bytes before SQLite/index overhead. Automated
 guards cap output at 4 KiB, input at 2 KiB, and that projection at 600 MB.
 
 ## 4. Experimental facts remain unavailable
@@ -66,6 +67,7 @@ guards cap output at 4 KiB, input at 2 KiB, and that projection at 600 MB.
 | --- | --- | --- |
 | policy epoch | `NULL` | no prospective continuous policy epoch |
 | availability profile | `NULL` | no frozen prospective availability cohort |
+| authority random-draw lineage | unavailable blocker | process-global RNG is not isolated |
 | exact observation lineage | unavailable blocker | feature rows lack complete provider lineage |
 | assignment arm | not collected | no randomized/admissible assignment |
 | propensity | not collected | no assignment or overlap probability |
@@ -78,12 +80,12 @@ Learning evidence or feeding a self-reinforcing score loop.
 
 ## 5. Random exploration evidence boundary
 
-The runtime captures the process-global allocator random state immediately
-before step allocation and uses it for Shadow replay. This is useful for
-integrity comparison, but it is not a prospective randomization contract.
-Concurrent global-random consumers could still advance state between capture
-and allocation. Such drift must surface as a replay mismatch; it cannot be
-silently relabeled as exact causal selection.
+The runtime captures process-global random state immediately before step
+allocation and uses that snapshot for both Shadow arms. This makes the stored
+Shadow calculation replayable, but it does not prove the authority allocator
+used that exact state: a concurrent global-random consumer can advance authority
+state after capture. The design therefore records random-draw lineage as
+unavailable and does not label explore differences as exact causal selection.
 
 A later experiment design should separate deterministic core ranking from
 exploration treatment and own a dedicated random source. That work is outside
@@ -95,8 +97,8 @@ Task 5 and requires owner approval.
 | --- | --- |
 | Persistence and migration focused suite | `28 passed` |
 | Ruff on touched runtime/storage/tests | passed |
-| Representative output/input | `2,442 B / 844 B` |
-| 30-day 240-candidate payload projection | `567,820,800 B` |
+| Representative output/input | `2,530 B / 844 B` |
+| 30-day 240-candidate payload projection | `583,027,200 B` |
 | Outcome rows written by Twin | `0` |
 | Fedora focused validation | pending |
 | Runtime deployment | not performed |

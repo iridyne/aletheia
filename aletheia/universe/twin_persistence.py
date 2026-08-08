@@ -64,6 +64,7 @@ _AUDIT_FIELDS = frozenset(
 )
 _TASK5_BLOCKERS = (
     "assignment_not_available",
+    "authority_allocator_random_lineage_not_available",
     "availability_profile_not_available",
     "feature_observation_lineage_not_available",
     "fixed_horizon_outcome_not_collected",
@@ -74,6 +75,7 @@ _TASK5_BLOCKERS = (
 _TASK5_UNAVAILABLE_IDENTITIES = (
     "policy_epoch",
     "availability_profile",
+    "authority_allocator_random_lineage",
     "feature_observation_lineage",
     "fixed_horizon_outcome",
     "assignment",

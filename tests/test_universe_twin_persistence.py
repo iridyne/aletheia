@@ -161,6 +161,7 @@ def test_bundle_is_complete_sanitized_and_explicitly_non_authoritative() -> None
     assert contract["unavailable_identities"] == [
         "policy_epoch",
         "availability_profile",
+        "authority_allocator_random_lineage",
         "feature_observation_lineage",
         "fixed_horizon_outcome",
         "assignment",
@@ -322,6 +323,7 @@ def test_task5_payload_does_not_invent_experiment_identity() -> None:
     blockers = json.loads(bundle.batch.blocking_reasons_json)
     assert {
         "assignment_not_available",
+        "authority_allocator_random_lineage_not_available",
         "availability_profile_not_available",
         "feature_observation_lineage_not_available",
         "policy_epoch_not_available",
