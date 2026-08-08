@@ -21,13 +21,14 @@ The current measured path is `universe_family_calibration`. Its software evidenc
 unit is one complete assignment cluster. Selected members contribute fixed-horizon
 net return; dropped members contribute zero under intent-to-treat allocation
 utility. The current metric version is
-`universe_family_calibration_cluster_allocation_utility_v6`.
+`universe_family_calibration_cluster_allocation_utility_v7`.
 
 ## 2. Learning qualification metrics
 
 | Metric | Meaning | Current source |
 |---|---|---|
 | Treatment/control assignment units | Complete, unique prospective clusters per arm | Learning cohort builder and `lco-v1` projection |
+| First Paper trial integrity | `ufc-shadow-trial-integrity/v1`: 10 complete units per arm in one current eligible UTC market day; no contribution claim | Shadow verdict and protected owner admission |
 | Minimum samples | 50 complete assignment units in each arm | `LearningExperiment.min_samples_per_arm` |
 | Continuous market days | At least 7 consecutive UTC dates with a complete eligible exposure unit from either arm; 50-per-arm sufficiency is independent and scoped to that run | `LearningExperiment.min_market_days` and verdict `market_day_coverage` |
 | Actual intervention | At least the per-arm minimum has consistent treatment permission and one or more members with a finite before/after behavior delta | Exposure manifest, before/after values, and cohort sample |
@@ -52,12 +53,16 @@ at outcomes, and exactly one matching confirmatory verdict may be consumed. Late
 samples cannot turn the same stage positive; current monitoring negative, invalid,
 or determinate harm remains an anytime safety withdrawal. Older identities remain
 immutable, non-authorizing history.
+Metric v7 and UFC behavior contract v8 separate the one-day/10-per-arm Shadow
+integrity admission from those unchanged economic promotion gates. This starts a
+fresh cohort; the integrity verdict remains `insufficient_data` and grants no
+automatic authority or contribution claim.
 
 ### Verdict meaning
 
 | Verdict | Meaning |
 |---|---|
-| `insufficient_data` | Sample/time/actual-intervention requirement is unmet, or the shadow cohort had no actual intervention |
+| `insufficient_data` | Sample/time/actual-intervention requirement is unmet, or Shadow has only integrity readiness and no actual intervention |
 | `invalid` | Identity, provenance, or economic evidence cannot support comparison |
 | `negative` | Treatment trails control or breaches a determinate harm gate |
 | `neutral` | Effect is practically small or confidence remains inconclusive |

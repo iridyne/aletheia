@@ -84,6 +84,8 @@ def _measurement(
     unique_control_n: int = 50,
     harm_state: str | None = None,
     harm_indeterminate_reason: str | None = None,
+    current_consecutive_market_days: int = 7,
+    authority_rejection_reasons: dict[str, int] | None = None,
     created_at: str | None = None,
 ):
     from aletheia.learning.behavior_contracts import build_behavior_contract_hash
@@ -106,7 +108,10 @@ def _measurement(
     )
     actual_treatment_n = (
         0
-        if reason == "no_actual_intervention"
+        if reason in {
+            "no_actual_intervention",
+            "trial_integrity_ready_no_actual_intervention",
+        }
         else assigned_treatment_n
         if actual_intervention_treatment_n is None
         else actual_intervention_treatment_n
@@ -161,7 +166,9 @@ def _measurement(
                 else "sufficient_actual_intervention_samples"
             ),
             "treatment_authority_rejection_reasons": (
-                {"test_authority_rejection": assigned_treatment_n - authority_treatment_n}
+                authority_rejection_reasons
+                if authority_rejection_reasons is not None
+                else {"test_authority_rejection": assigned_treatment_n - authority_treatment_n}
                 if assigned_treatment_n > authority_treatment_n else {}
             ),
             "treatment_non_intervention_reasons": ({
@@ -177,6 +184,32 @@ def _measurement(
             ),
             "breached": breached,
             "harm_state": resolved_harm_state,
+            "market_day_coverage": {
+                "current_consecutive_market_days": current_consecutive_market_days,
+            },
+            **(
+                {
+                    "trial_integrity_readiness": {
+                        "contract_version": "ufc-shadow-trial-integrity/v1",
+                        "required_per_arm": min(
+                            10,
+                            max(1, int(experiment.min_samples_per_arm)),
+                        ),
+                        "required_market_days": min(
+                            1,
+                            max(0, int(experiment.min_market_days)),
+                        ),
+                        "qualified_treatment_n": assigned_treatment_n,
+                        "qualified_control_n": unique_control_n,
+                        "current_consecutive_market_days": (
+                            current_consecutive_market_days
+                        ),
+                        "status": "ready",
+                    },
+                }
+                if reason == "trial_integrity_ready_no_actual_intervention"
+                else {}
+            ),
             **(
                 {"harm_indeterminate_reason": harm_indeterminate_reason}
                 if harm_indeterminate_reason is not None else {}
@@ -490,6 +523,36 @@ def test_shadow_no_intervention_only_recommends_owner_trial_with_all_gates_enabl
     assert get_record("learning_experiments", experiment.experiment_id)["status"] == "active"
     assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 0
     assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 1
+
+
+def test_shadow_integrity_ready_only_recommends_owner_trial(monkeypatch):
+    hypothesis, experiment = _experiment()
+    verdict = _measurement(
+        hypothesis,
+        experiment,
+        "insufficient_data",
+        reason="trial_integrity_ready_no_actual_intervention",
+        assigned_treatment_n=10,
+        unique_control_n=10,
+        harm_state="indeterminate",
+        harm_indeterminate_reason="insufficient_samples",
+        current_consecutive_market_days=1,
+        authority_rejection_reasons={"experiment_stage_not_paper": 10},
+    )
+    _configure(monkeypatch, _settings(
+        automation=True, paper=True, paths=[hypothesis.path_id],
+    ))
+    from aletheia.learning.lifecycle import process_lifecycle
+
+    result = process_lifecycle(
+        experiment.experiment_id,
+        current_policy_epoch="epoch-a",
+    )
+
+    assert result.action == "hold"
+    assert result.recommended_action == "admit_trial"
+    assert result.reason == "shadow_requires_explicit_trial_admission"
+    assert result.verdict_id == verdict.verdict_id
 
 
 def test_lifecycle_ignores_newer_stale_epoch_negative_measurement(monkeypatch):
@@ -968,6 +1031,124 @@ def test_protected_trial_admission_is_idempotent_and_audits_owner(monkeypatch):
     assert audits[0][0].audit_source == "dashboard"
     event = get_db().execute("SELECT * FROM learning_lifecycle_events").fetchone()
     assert "begin bounded paper trial" in event["reason"]
+
+
+def test_protected_trial_admission_accepts_integrity_ready_shadow(monkeypatch):
+    hypothesis, experiment = _experiment()
+    verdict = _measurement(
+        hypothesis,
+        experiment,
+        "insufficient_data",
+        reason="trial_integrity_ready_no_actual_intervention",
+        assigned_treatment_n=10,
+        unique_control_n=10,
+        harm_state="indeterminate",
+        harm_indeterminate_reason="insufficient_samples",
+        current_consecutive_market_days=1,
+        authority_rejection_reasons={"experiment_stage_not_paper": 10},
+    )
+    _configure(monkeypatch, _settings(
+        automation=True, paper=True, paths=[hypothesis.path_id],
+    ))
+    import aletheia.learning.lifecycle as lifecycle
+    from aletheia.learning.ledger import get_record
+
+    monkeypatch.setattr(lifecycle, "_policy_epoch", lambda _path_id: "epoch-a")
+    result = lifecycle._execute_trial_admission(
+        experiment.experiment_id,
+        verdict_id=verdict.verdict_id,
+        expected_policy_epoch="epoch-a",
+        reason="begin bounded integrity-qualified paper trial",
+    )
+
+    assert result.action == "admit_trial"
+    successor = get_record("learning_experiments", result.successor_experiment_id)
+    assert successor["stage"] == "paper_10"
+    assert successor["allocation_pct"] == pytest.approx(0.10)
+    assert successor["min_samples_per_arm"] == 50
+    assert successor["min_market_days"] == 7
+    from aletheia.learning.authority import resolve_learning_authority
+
+    authority = resolve_learning_authority(
+        hypothesis.path_id,
+        lifecycle.LearningExperiment.model_validate(successor),
+        "epoch-a",
+    )
+    assert authority.authorized is True
+    assert authority.reason == "admitted_shadow_trial"
+
+
+def test_protected_trial_admission_rejects_undersized_integrity_verdict(monkeypatch):
+    hypothesis, experiment = _experiment()
+    verdict = _measurement(
+        hypothesis,
+        experiment,
+        "insufficient_data",
+        reason="trial_integrity_ready_no_actual_intervention",
+        assigned_treatment_n=10,
+        unique_control_n=9,
+        harm_state="indeterminate",
+        harm_indeterminate_reason="insufficient_samples",
+        current_consecutive_market_days=1,
+        authority_rejection_reasons={"experiment_stage_not_paper": 10},
+    )
+    _configure(monkeypatch, _settings(
+        automation=True, paper=True, paths=[hypothesis.path_id],
+    ))
+    import aletheia.learning.lifecycle as lifecycle
+
+    monkeypatch.setattr(lifecycle, "_policy_epoch", lambda _path_id: "epoch-a")
+    result = lifecycle._execute_trial_admission(
+        experiment.experiment_id,
+        verdict_id=verdict.verdict_id,
+        expected_policy_epoch="epoch-a",
+        reason="attempt undersized trial",
+    )
+
+    assert result.action == "hold"
+    assert result.reason == "trial_integrity_samples_insufficient"
+
+
+def test_protected_trial_admission_rejects_missing_integrity_contract(monkeypatch):
+    hypothesis, experiment = _experiment()
+    verdict = _measurement(
+        hypothesis,
+        experiment,
+        "insufficient_data",
+        reason="trial_integrity_ready_no_actual_intervention",
+        assigned_treatment_n=10,
+        unique_control_n=10,
+        harm_state="indeterminate",
+        harm_indeterminate_reason="insufficient_samples",
+        current_consecutive_market_days=1,
+        authority_rejection_reasons={"experiment_stage_not_paper": 10},
+    )
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    metrics = json.loads(verdict.harm_metrics_json)
+    metrics.pop("trial_integrity_readiness")
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET harm_metrics_json=? "
+        "WHERE verdict_id=?",
+        (json.dumps(metrics), verdict.verdict_id),
+    )
+    db.commit()
+    _configure(monkeypatch, _settings(
+        automation=True, paper=True, paths=[hypothesis.path_id],
+    ))
+    import aletheia.learning.lifecycle as lifecycle
+
+    monkeypatch.setattr(lifecycle, "_policy_epoch", lambda _path_id: "epoch-a")
+    result = lifecycle._execute_trial_admission(
+        experiment.experiment_id,
+        verdict_id=verdict.verdict_id,
+        expected_policy_epoch="epoch-a",
+        reason="attempt malformed trial",
+    )
+
+    assert result.action == "hold"
+    assert result.reason == "trial_integrity_contract_invalid"
 
 
 def test_admission_retry_cannot_rebind_existing_verdict_to_another_experiment(

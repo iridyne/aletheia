@@ -320,7 +320,7 @@ deterministic confidence, harm, source provenance, and exclusion details. A recu
 confirmatory result can be considered by the separate lifecycle gates.
 
 The evaluator uses metric version
-`universe_family_calibration_cluster_allocation_utility_v6`. Existing verdicts under older metric
+`universe_family_calibration_cluster_allocation_utility_v7`. Existing verdicts under older metric
 versions remain append-only history and cannot satisfy a current metric-identity gate. Verdict
 `created_at` records evaluation time; `window_start` and `window_end` continue to bound the
 observations used.
@@ -333,13 +333,15 @@ uninterrupted run must contain `min_market_days` dates. A UTC date with no eligi
 arm resets that run,
 and all pre-gap samples are excluded from the post-gap sample, economic, confidence and harm gates.
 Continuity is derived from durable exposure timestamps; transient scheduler health alone cannot
-reconstruct historical coverage. Planned and partial outages have no waiver representation in v7
+reconstruct historical coverage. Planned and partial outages have no waiver representation in v8
 and therefore fail closed. Bounded `market_day_coverage` metadata gives the owner the current run,
 missing-day counts and dates. Metric v4 and behavior contract v5 created the continuous-window
 cohort. Metric v5 and behavior contract v6 created a from-zero identity for stricter actual-
-intervention provenance. Metric v6 and behavior contract v7 start another from-zero identity for
-prospective fixed-look authority: monitoring remains descriptive, the exposure-ordered cutoff is
-write-once, one confirmatory verdict is consumed, and each successor stage starts a fresh plan.
+intervention provenance. Metric v6 and behavior contract v7 started another from-zero identity for
+prospective fixed-look authority. Metric v7 and behavior contract v8 separate first-trial integrity
+readiness (one day, 10 complete units per arm) from the unchanged seven-day/50-per-arm Paper
+promotion evidence. Monitoring remains descriptive, the exposure-ordered cutoff is write-once, one
+confirmatory verdict is consumed, and each successor stage starts a fresh plan.
 Older experiments and verdicts remain immutable, non-authorizing history.
 
 The current harm contract uses the experiment's 50 assignment units per arm as the minimum
@@ -353,8 +355,9 @@ The evaluator reads permission from `authority_applied` and derives effective be
 before/after values. Mixed no-op and changed members remain one valid authorized cluster, which is
 an actual intervention when at least one member changed; an all-no-op cluster is not. When every
 treatment sample is still shadow, the cohort may prove that collection and settlement work, but it cannot
-produce a causal `positive` or `negative`; after the ordinary sample/time gates are met it returns
-`insufficient_data` with reason `no_actual_intervention`. Persisted verdicts carry the policy epoch,
+produce a causal `positive` or `negative`; after the integrity gate it returns `insufficient_data`
+with reason `trial_integrity_ready_no_actual_intervention`, while a fully mature legacy window uses
+`no_actual_intervention`. Persisted verdicts carry the policy epoch,
 stage, target horizon, outcome-contract version, metric version, and producing code commit.
 
 ### 7.1 Current paper lifecycle

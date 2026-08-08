@@ -14,11 +14,15 @@ from typing import Any
 from aletheia.learning.cohorts import ContributionCohort, CohortSample
 
 
-METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v6"
+METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v7"
 BOOTSTRAP_SEED = 20260712
 BOOTSTRAP_RESAMPLES = 2000
 _PRACTICAL_NEUTRAL_DELTA_PCT = 0.10
 _HARM_MIN_SAMPLES_PER_ARM = 50
+SHADOW_TRIAL_INTEGRITY_REASON = "trial_integrity_ready_no_actual_intervention"
+SHADOW_TRIAL_INTEGRITY_CONTRACT = "ufc-shadow-trial-integrity/v1"
+SHADOW_TRIAL_MIN_SAMPLES_PER_ARM = 10
+SHADOW_TRIAL_MIN_MARKET_DAYS = 1
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,56 @@ def evaluate_cohort(
 
     if cohort.invalid_reasons:
         return result("invalid", _reason("invalid evidence", cohort.invalid_reasons))
+    shadow_trial_required = min(SHADOW_TRIAL_MIN_SAMPLES_PER_ARM, required)
+    shadow_trial_days = min(
+        SHADOW_TRIAL_MIN_MARKET_DAYS,
+        max(0, int(cohort.experiment.min_market_days)),
+    )
+    rejection_reasons = harm_metrics["treatment_authority_rejection_reasons"]
+    full_measurement_ready = (
+        len(assigned_treatment) >= required
+        and len(raw_control) >= required
+        and coverage["status"] in {"qualified", "not_required"}
+        and len(qualified_assigned_treatment) >= required
+        and len(control) >= required
+    )
+    shadow_trial_integrity_ready = (
+        cohort.experiment.stage == "shadow"
+        and not full_measurement_ready
+        and not authority_applied_treatment
+        and not actual_treatment
+        and len(qualified_assigned_treatment) >= shadow_trial_required
+        and len(control) >= shadow_trial_required
+        and int(coverage["current_consecutive_market_days"]) >= shadow_trial_days
+        and not bool(harm_metrics["breached"])
+        and set(rejection_reasons) == {"experiment_stage_not_paper"}
+    )
+    harm_metrics["trial_integrity_readiness"] = {
+        "contract_version": SHADOW_TRIAL_INTEGRITY_CONTRACT,
+        "required_per_arm": shadow_trial_required,
+        "required_market_days": shadow_trial_days,
+        "qualified_treatment_n": len(qualified_assigned_treatment),
+        "qualified_control_n": len(control),
+        "current_consecutive_market_days": int(
+            coverage["current_consecutive_market_days"]
+        ),
+        "status": (
+            "not_applicable"
+            if cohort.experiment.stage != "shadow"
+            else "mature"
+            if full_measurement_ready
+            else "ready"
+            if shadow_trial_integrity_ready
+            else "collecting"
+        ),
+    }
+    if shadow_trial_integrity_ready:
+        # Shadow runs the static baseline in both arms, so waiting for the full
+        # confirmatory window cannot estimate treatment contribution.  This
+        # result says only that the prospective identity/outcome pipeline has
+        # exercised both arms enough for an owner to start a bounded Paper-10
+        # trial.  It is still insufficient_data and can never auto-promote.
+        return result("insufficient_data", SHADOW_TRIAL_INTEGRITY_REASON)
     if len(assigned_treatment) < required or len(raw_control) < required:
         return result(
             "insufficient_data",
