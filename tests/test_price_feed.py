@@ -77,6 +77,64 @@ class TestGetCachedPrice:
 
 
 class TestProtectiveClosePrice:
+    def test_exact_cache_returns_bounded_observation_provenance(self):
+        from aletheia.data import price_feed
+
+        observed_at = datetime.now(timezone.utc) - timedelta(seconds=3)
+        with _cache_lock:
+            price_feed._instrument_price_cache[("okx", "BTC/USDT", "perp")] = {
+                "price": 64_500.0,
+                "ts": observed_at,
+                "provider": "must-not-leak",
+            }
+
+        mark = price_feed.get_fresh_mark_for_protective_close(
+            "BTC/USDT", "usdt_futures", venue="okx",
+        )
+
+        assert mark is not None
+        assert mark["price"] == 64_500.0
+        assert mark["observed_at"] == observed_at.isoformat()
+        assert 2.0 <= mark["age_seconds"] <= 5.0
+        assert mark["source"] == "instrument_price_cache"
+        assert mark["venue"] == "okx"
+        assert mark["symbol"] == "BTC/USDT"
+        assert mark["market_type"] == "perp"
+        assert "provider" not in mark
+
+    def test_sqlite_fallback_returns_snapshot_observation_provenance(self, monkeypatch):
+        from aletheia.data import price_feed
+
+        observed_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+        monkeypatch.setattr(
+            "aletheia.storage.repositories.list_market_snapshots",
+            lambda **kwargs: [{
+                "price": 65_100.0,
+                "snapshot_at": observed_at.isoformat(),
+                "provider": "must-not-leak",
+            }]
+            if kwargs == {
+                "symbol": "BTC/USDT",
+                "exchange": "binance",
+                "market_type": "spot",
+                "limit": 1,
+            }
+            else [],
+        )
+
+        mark = price_feed.get_fresh_mark_for_protective_close(
+            "BTC/USDT", "spot", venue="binance",
+        )
+
+        assert mark is not None
+        assert mark["price"] == 65_100.0
+        assert mark["observed_at"] == observed_at.isoformat()
+        assert 9.0 <= mark["age_seconds"] <= 12.0
+        assert mark["source"] == "market_snapshot"
+        assert mark["venue"] == "binance"
+        assert mark["market_type"] == "spot"
+        assert "provider" not in mark
+
     def test_exact_cache_keeps_spot_and_perp_marks_separate(self):
         from aletheia.data import price_feed
 

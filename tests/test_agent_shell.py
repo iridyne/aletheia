@@ -54,6 +54,24 @@ def _init_agent_shell_db(tmp_path, monkeypatch):
     return conn
 
 
+def _review_mark(
+    *,
+    price: float = 100.0,
+    venue: str = "binance",
+    symbol: str = "BTC/USDT",
+    market_type: str = "perp",
+) -> dict:
+    return {
+        "price": price,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "age_seconds": 0.0,
+        "source": "instrument_price_cache",
+        "venue": venue,
+        "symbol": symbol,
+        "market_type": market_type,
+    }
+
+
 def test_operator_context_features_keep_registry_identity(tmp_path, monkeypatch):
     """Feature snapshots must not collapse into one blank-symbol PI feature."""
     conn = _init_agent_shell_db(tmp_path, monkeypatch)
@@ -231,7 +249,7 @@ async def test_wake_driven_portfolio_review_scopes_and_persists_hold(
         assert "adverse_signal" in user
         assert unrelated.id not in user
         assert "Positions in this review scope (1 of 2 total open positions)" in user
-        assert "Global unrealized PnL: 0.75 USDT" in user
+        assert "Persisted global unrealized PnL: 0.75 USDT" in user
         return ({"action": "hold", "reasoning": "signal is not yet decisive"}, None)
 
     monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_hold)
@@ -266,6 +284,151 @@ async def test_wake_driven_portfolio_review_scopes_and_persists_hold(
         "total_open_positions": 2,
         "total_unrealized_pnl_usdt": 0.75,
         "unrealized_pnl_available": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_portfolio_review_uses_fresh_exact_mark_and_persists_provenance(
+    tmp_path, monkeypatch
+):
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import insert_position
+
+    opened_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    target = Position(
+        id="review-fresh-mark-target",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.1,
+        entry_price=100.0,
+        current_price=999.0,
+        unrealized_pnl=777.0,
+        execution_mode="paper_internal",
+        stop_price=95.0,
+        take_profit_price=110.0,
+        opened_at=opened_at.isoformat(),
+    )
+    insert_position(target)
+    observed_at = datetime.now(timezone.utc) - timedelta(seconds=4)
+    calls = []
+
+    def fresh_mark(symbol, market_type, *, venue):
+        calls.append((symbol, market_type, venue))
+        return {
+            "price": 105.0,
+            "observed_at": observed_at.isoformat(),
+            "age_seconds": 4.0,
+            "source": "instrument_price_cache",
+            "venue": venue,
+            "symbol": symbol,
+            "market_type": "perp",
+        }
+
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_mark_for_protective_close",
+        fresh_mark,
+    )
+
+    async def choose_hold(_system, user, *, schema, **_kwargs):
+        assert "fresh_mark=105.0" in user
+        assert f"fresh_mark_observed_at={observed_at.isoformat()}" in user
+        assert "fresh_mark_age_seconds=4.0" in user
+        assert "fresh_mark_source=instrument_price_cache" in user
+        assert "mark_directional_return_pct=5.0" in user
+        assert "persisted_current=999.0" in user
+        assert "persisted_upnl=777.0" in user
+        assert "stop=95.0" in user
+        assert "target=110.0" in user
+        assert "holding_age_hours=2." in user
+        return ({"action": "hold", "reasoning": "fresh mark supports hold"}, None)
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_hold)
+    result = await review_portfolio_state({})
+
+    assert calls == [(target.symbol, target.market_type, "binance")]
+    row = conn.execute(
+        "SELECT evidence_manifest_json FROM pi_decisions WHERE id=?",
+        (result["position_review_decision_id"],),
+    ).fetchone()
+    review_marks = json.loads(row["evidence_manifest_json"])["position_review"][
+        "review_marks"
+    ]
+    assert review_marks == [{
+        "age_seconds": 4.0,
+        "market_type": "perp",
+        "observed_at": observed_at.isoformat(),
+        "position_id": target.id,
+        "price": 105.0,
+        "source": "instrument_price_cache",
+        "status": "available",
+        "symbol": target.symbol,
+        "venue": "binance",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_portfolio_review_missing_mark_rejects_adjustment_without_mutation(
+    tmp_path, monkeypatch
+):
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import _select_one, insert_position
+
+    target = Position(
+        id="review-missing-mark-adjust-target",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        stop_price=90.0,
+        execution_mode="paper_internal",
+    )
+    insert_position(target)
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_mark_for_protective_close",
+        lambda *_args, **_kwargs: None,
+    )
+
+    async def choose_adjust(_system, user, *, schema, **_kwargs):
+        assert "fresh_mark=not available" in user
+        return ({
+            "action": "adjust_position",
+            "target_position_id": target.id,
+            "new_stop_price": 95.0,
+            "reasoning": "tighten based on unavailable price",
+        }, None)
+
+    adjustment_calls = []
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_adjust)
+    monkeypatch.setattr(
+        "aletheia.portfolio.position_manager.apply_operator_adjustment",
+        lambda *args, **kwargs: adjustment_calls.append((args, kwargs)),
+    )
+    result = await review_portfolio_state({})
+
+    assert result["adjust_position_error"] == "fresh_review_mark_unavailable"
+    assert result["review_completed"] is False
+    assert adjustment_calls == []
+    assert _select_one("positions", target.id)["stop_price"] == 90.0
+    row = conn.execute(
+        "SELECT evidence_manifest_json FROM pi_decisions WHERE id=?",
+        (result["position_review_decision_id"],),
+    ).fetchone()
+    evidence = json.loads(row["evidence_manifest_json"])["position_review"]
+    assert evidence["review_marks"] == [{
+        "position_id": target.id,
+        "requested_market_type": "spot",
+        "requested_symbol": target.symbol,
+        "requested_venue": "binance",
+        "status": "unavailable",
+    }]
+    assert evidence["effect"] == {
+        "adjust_position_error": "fresh_review_mark_unavailable",
     }
 
 
@@ -356,7 +519,7 @@ async def test_portfolio_review_does_not_coerce_missing_global_pnl_to_zero(
     )
 
     async def choose_hold(_system, user, *, schema, **_kwargs):
-        assert "Global unrealized PnL: not available" in user
+        assert "Persisted global unrealized PnL: not available" in user
         return ({"action": "hold", "reasoning": "missing aggregate evidence"}, None)
 
     monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_hold)
@@ -406,6 +569,15 @@ async def test_wake_driven_portfolio_review_adjusts_exact_position(
     monkeypatch.setattr(
         "aletheia.portfolio.position_manager.get_fresh_price_for_protective_close",
         lambda symbol, market_type, *, venue: 100.0,
+    )
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_mark_for_protective_close",
+        lambda symbol, market_type, *, venue: _review_mark(
+            price=100.0,
+            venue=venue,
+            symbol=symbol,
+            market_type="perp",
+        ),
     )
 
     async def choose_adjust(_system, _user, *, schema, **_kwargs):
@@ -499,6 +671,14 @@ async def test_portfolio_review_persists_intent_before_close_submission(
         }
 
     monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_close)
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_mark_for_protective_close",
+        lambda symbol, market_type, *, venue: _review_mark(
+            venue=venue,
+            symbol=symbol,
+            market_type="perp",
+        ),
+    )
     monkeypatch.setattr(
         "aletheia.portfolio.position_manager.close_position_routed", submit_close
     )
@@ -717,8 +897,8 @@ async def test_horizon_hold_remains_incomplete_and_does_not_acknowledge_wake(
 
     async def choose_hold(_system, user, *, schema, **_kwargs):
         assert "entry=100.0" in user
-        assert "current=102.0" in user
-        assert "upnl=2.0" in user
+        assert "persisted_current=102.0" in user
+        assert "persisted_upnl=2.0" in user
         assert "stop=95.0" in user
         assert "target=110.0" in user
         assert "expected_horizon_hours=10.0" in user
@@ -799,6 +979,14 @@ async def test_horizon_extension_beyond_current_age_acknowledges_target(
 
     monkeypatch.setattr("aletheia.agents.helpers.llm_structured", extend)
     monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_mark_for_protective_close",
+        lambda symbol, market_type, *, venue: _review_mark(
+            venue=venue,
+            symbol=symbol,
+            market_type=market_type,
+        ),
+    )
+    monkeypatch.setattr(
         "aletheia.portfolio.position_manager.apply_operator_adjustment",
         lambda position_id, **kwargs: {
             "updated": position_id == target.id
@@ -871,6 +1059,14 @@ async def test_horizon_mutation_acknowledges_only_the_effective_target(
 
     monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_target)
     monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_mark_for_protective_close",
+        lambda symbol, market_type, *, venue: _review_mark(
+            venue=venue,
+            symbol=symbol,
+            market_type=market_type,
+        ),
+    )
+    monkeypatch.setattr(
         "aletheia.portfolio.position_manager.close_position_routed",
         lambda position_id, **_kwargs: {"closed": position_id == target.id},
     )
@@ -893,6 +1089,61 @@ async def test_horizon_mutation_acknowledges_only_the_effective_target(
     assert result["horizon_reviews_acknowledged"] == [target.id]
     assert _select_one("positions", target.id)["horizon_wake_sent_at"] is not None
     assert _select_one("positions", sibling.id)["horizon_wake_sent_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_horizon_due_close_can_reach_execution_when_review_mark_is_unavailable(
+    tmp_path, monkeypatch
+):
+    _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import insert_position
+
+    target = Position(
+        id="horizon-close-without-review-mark",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="paper_internal",
+    )
+    insert_position(target)
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_mark_for_protective_close",
+        lambda *_args, **_kwargs: None,
+    )
+
+    async def choose_close(_system, user, *, schema, **_kwargs):
+        assert "fresh_mark=not available" in user
+        return ({
+            "action": "close_one",
+            "target_position_id": target.id,
+            "reasoning": "the approved horizon has elapsed",
+        }, None)
+
+    close_calls = []
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_close)
+    monkeypatch.setattr(
+        "aletheia.portfolio.position_manager.close_position_routed",
+        lambda position_id, **kwargs: (
+            close_calls.append((position_id, kwargs)) or {"closed": True}
+        ),
+    )
+    result = await review_portfolio_state({
+        "trigger": "horizon_due",
+        "wake_batches": [{
+            "position_id": target.id,
+            "events": [{"kind": "horizon_due", "priority": 1, "payload": {}}],
+        }],
+    })
+
+    assert result["review_completed"] is True
+    assert result["positions_closed"] == 1
+    assert "close_one_error" not in result
+    assert close_calls[0][0] == target.id
+    assert close_calls[0][1]["fallback_exit_price"] is None
 
 
 @pytest.mark.asyncio
@@ -971,7 +1222,7 @@ async def test_portfolio_review_stale_mark_leaves_position_and_close_facts_untou
     result = await review_portfolio_state({})
 
     assert result["positions_closed"] == 0
-    assert "protective_mark_unavailable" in result["close_error"]
+    assert result["close_one_error"] == "fresh_review_mark_unavailable"
     assert result["review_completed"] is False
     assert _select_one("positions", target.id)["status"] == "open"
     assert conn.execute(

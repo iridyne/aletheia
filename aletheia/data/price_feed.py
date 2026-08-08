@@ -98,7 +98,15 @@ def protective_price_venue(
     return None
 
 
-def _valid_fresh_price(entry: dict | None, *, max_age_sec: float) -> float | None:
+def _valid_fresh_mark(
+    entry: dict | None,
+    *,
+    max_age_sec: float,
+    source: str,
+    venue: str,
+    symbol: str,
+    market_type: str,
+) -> dict | None:
     if not entry:
         return None
     try:
@@ -109,22 +117,24 @@ def _valid_fresh_price(entry: dict | None, *, max_age_sec: float) -> float | Non
         return None
     if not math.isfinite(price) or price <= 0 or age < 0 or age > max_age_sec:
         return None
-    return price
+    return {
+        "price": price,
+        "observed_at": ts.isoformat(),
+        "age_seconds": round(age, 3),
+        "source": source,
+        "venue": venue,
+        "symbol": symbol,
+        "market_type": market_type,
+    }
 
 
-def get_fresh_price_for_protective_close(
+def get_fresh_mark_for_protective_close(
     symbol: str,
     market_type: str,
     *,
     venue: str,
-) -> float | None:
-    """Return a fresh, exact-instrument mark suitable for creating a close Fill.
-
-    The in-memory mark must be younger than the normal 90-second cache limit.
-    The SQLite fallback is deliberately stricter than the display/PnL accessor:
-    it never falls back across venue or spot/perp and rejects rows older than
-    120 seconds.
-    """
+) -> dict | None:
+    """Return a fresh exact mark with bounded, non-secret provenance."""
     from aletheia.data.symbols import to_bitget, to_canonical
 
     canonical = to_canonical(symbol)
@@ -137,8 +147,13 @@ def get_fresh_price_for_protective_close(
         cache_entry = _instrument_price_cache.get(
             (exact_venue, canonical, physical_market)
         )
-        cached = _valid_fresh_price(
-            cache_entry, max_age_sec=_STALE_THRESHOLD_SEC,
+        cached = _valid_fresh_mark(
+            cache_entry,
+            max_age_sec=_STALE_THRESHOLD_SEC,
+            source="instrument_price_cache",
+            venue=exact_venue,
+            symbol=canonical,
+            market_type=physical_market,
         )
     if cached is not None:
         return cached
@@ -175,10 +190,35 @@ def get_fresh_price_for_protective_close(
             observed_at = observed_at.replace(tzinfo=timezone.utc)
     except (TypeError, ValueError):
         return None
-    return _valid_fresh_price(
+    return _valid_fresh_mark(
         {"price": row.get("price"), "ts": observed_at},
         max_age_sec=_PROTECTIVE_DB_MAX_AGE_SEC,
+        source="market_snapshot",
+        venue=exact_venue,
+        symbol=canonical,
+        market_type=physical_market,
     )
+
+
+def get_fresh_price_for_protective_close(
+    symbol: str,
+    market_type: str,
+    *,
+    venue: str,
+) -> float | None:
+    """Return a fresh, exact-instrument mark suitable for creating a close Fill.
+
+    The in-memory mark must be younger than the normal 90-second cache limit.
+    The SQLite fallback is deliberately stricter than the display/PnL accessor:
+    it never falls back across venue or spot/perp and rejects rows older than
+    120 seconds.
+    """
+    mark = get_fresh_mark_for_protective_close(
+        symbol,
+        market_type,
+        venue=venue,
+    )
+    return float(mark["price"]) if mark is not None else None
 
 
 def get_watched_instruments():
