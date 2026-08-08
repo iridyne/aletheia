@@ -589,6 +589,24 @@ def _build_record(db, opp: dict[str, Any], context: dict[str, Any]) -> dict[str,
     for decision in decisions:
         events.extend(_decision_events(decision))
 
+    for operator_event in _operator_defer_events_for_opportunity(db, opp_id):
+        payload = _json_object(operator_event.get("queue_snapshot_json"))
+        events.append(
+            _event(
+                "operator_deferred",
+                "deferred",
+                operator_event.get("created_at"),
+                str(payload.get("defer_reason") or operator_event.get("event_kind") or ""),
+                {
+                    "event_id": operator_event.get("id"),
+                    "event_kind": operator_event.get("event_kind"),
+                    "trigger": operator_event.get("trigger"),
+                    "defer_until": payload.get("defer_until"),
+                    "policy_epoch_id": operator_event.get("policy_epoch_id"),
+                },
+            )
+        )
+
     proposals = _proposals_for_opportunity(db, opp_id)
     proposal_ids = [p.get("id") for p in proposals if p.get("id")]
     for proposal in proposals:
@@ -840,6 +858,20 @@ def _decisions_for_opportunity(db, opp_id: str) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def _operator_defer_events_for_opportunity(db, opp_id: str) -> list[dict[str, Any]]:
+    if not _table_exists(db, "operator_evaluation_events"):
+        return []
+    rows = db.execute(
+        "SELECT * FROM operator_evaluation_events "
+        "WHERE event_kind LIKE 'operator_decision_deferred_%' "
+        "AND CASE WHEN json_valid(queue_snapshot_json) "
+        "THEN json_extract(queue_snapshot_json, '$.opportunity_id') END = ? "
+        "ORDER BY datetime(created_at) ASC,rowid ASC",
+        (opp_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def _decision_events(decision: dict[str, Any]) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     action = str(decision.get("action") or "").lower()
@@ -1021,6 +1053,7 @@ def _final_result(events: list[dict[str, Any]]) -> tuple[str, str, str]:
         ("snapshot_superseded", "superseded"),
         ("ttl_expired", "dropped"),
         ("lifecycle_expired", "dropped"),
+        ("operator_deferred", "pending"),
         ("signal_pending", "pending"),
         ("guard_blocked", "dropped"),
         ("ranker_excluded", "dropped"),
@@ -1041,6 +1074,7 @@ def _causal_stage_order(stage: Any) -> int:
         "ttl_expired": 2,
         "lifecycle_expired": 2,
         "signal_pending": 3,
+        "operator_deferred": 4,
         "operator_trade_intent": 4,
         "operator_skip": 4,
         "debate_recorded": 5,
@@ -1162,6 +1196,16 @@ def _json_list(raw: Any) -> list[Any]:
     except (TypeError, ValueError):
         return [str(raw)] if str(raw).strip() else []
     return parsed if isinstance(parsed, list) else [parsed]
+
+
+def _json_object(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    try:
+        parsed = json.loads(str(raw or ""))
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _to_float(value: Any) -> float | None:

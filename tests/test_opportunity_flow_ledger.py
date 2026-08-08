@@ -63,6 +63,31 @@ def _insert_decision(
     )
 
 
+def _insert_operator_defer(
+    db: sqlite3.Connection,
+    *,
+    opp_id: str = "opp-flow-1",
+    event_id: str = "operator-defer-flow-1",
+) -> None:
+    db.execute(
+        "INSERT INTO operator_evaluation_events "
+        "(id,dedup_key,event_kind,trigger,pending_unresolved_total,pending_visible_count,"
+        "queue_snapshot_json,data_health_json,policy_epoch_id,created_at) "
+        "VALUES (?,?,?,?,2,1,?,'{}','epoch-flow',datetime('now','-30 minutes'))",
+        (
+            event_id,
+            f"dedup-{event_id}",
+            "operator_decision_deferred_unchanged_context",
+            "event_trigger:signal_pending",
+            json.dumps({
+                "opportunity_id": opp_id,
+                "defer_reason": "direct_skip_not_confirmed:neutral_or_missing_skip_kind",
+                "defer_until": "2099-01-01T00:00:00+00:00",
+            }),
+        ),
+    )
+
+
 def _insert_forward(
     db: sqlite3.Connection,
     *,
@@ -360,6 +385,71 @@ def test_opportunity_flow_does_not_invent_ranker_rejection_without_ranker_eviden
     assert not any(event["stage"] == "ranker_excluded" for event in trace["timeline"])
     inferred = [event for event in trace["timeline"] if event["stage"] == "eligibility_inferred"]
     assert inferred and inferred[0]["status"] == "inferred"
+
+
+def test_opportunity_flow_surfaces_persisted_operator_defer_without_making_it_terminal():
+    from aletheia.analytics.opportunity_flow import trace_opportunity_flow
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, opp_id="opp-deferred")
+    _insert_decision(
+        db,
+        opp_id="opp-deferred",
+        action="signal_pending",
+        reasoning="queued for System Operator",
+        debate_ran=False,
+    )
+    _insert_operator_defer(db, opp_id="opp-deferred")
+    db.commit()
+
+    trace = trace_opportunity_flow("opp-deferred")
+
+    assert trace["final_state"] == "pending"
+    assert trace["final_stage"] == "operator_deferred"
+    deferred = [event for event in trace["timeline"] if event["stage"] == "operator_deferred"]
+    assert len(deferred) == 1
+    assert deferred[0]["status"] == "deferred"
+    assert deferred[0]["reason"] == "direct_skip_not_confirmed:neutral_or_missing_skip_kind"
+    assert deferred[0]["details"] == {
+        "event_id": "operator-defer-flow-1",
+        "event_kind": "operator_decision_deferred_unchanged_context",
+        "trigger": "event_trigger:signal_pending",
+        "defer_until": "2099-01-01T00:00:00+00:00",
+        "policy_epoch_id": "epoch-flow",
+    }
+    assert [event["stage"] for event in trace["timeline"]][:3] == [
+        "created",
+        "signal_pending",
+        "operator_deferred",
+    ]
+    assert not any(
+        event["stage"] in {"operator_skip", "operator_trade_intent", "proposal_created"}
+        for event in trace["timeline"]
+    )
+
+
+def test_opportunity_flow_ignores_unrelated_and_malformed_operator_event_payloads():
+    from aletheia.analytics.opportunity_flow import trace_opportunity_flow
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, opp_id="opp-clean")
+    _insert_operator_defer(db, opp_id="different-opportunity", event_id="unrelated-defer")
+    db.execute(
+        "INSERT INTO operator_evaluation_events "
+        "(id,dedup_key,event_kind,trigger,pending_unresolved_total,pending_visible_count,"
+        "queue_snapshot_json,data_health_json,created_at) "
+        "VALUES ('malformed-defer','malformed-defer',"
+        "'operator_decision_deferred_unchanged_context','event_trigger',0,0,'{','{}',datetime('now'))"
+    )
+    db.commit()
+
+    trace = trace_opportunity_flow("opp-clean")
+
+    assert trace["final_state"] == "pending"
+    assert trace["final_stage"] == "created"
+    assert not any(event["stage"] == "operator_deferred" for event in trace["timeline"])
 
 
 def test_opportunity_flow_does_not_mislabel_snapshot_supersede_as_ttl_expiry():
