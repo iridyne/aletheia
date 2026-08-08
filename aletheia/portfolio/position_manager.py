@@ -10,7 +10,7 @@ Governance:
 - LIVE positions (bitget_live_limited) are NEVER auto-closed (future + human-only).
 - The kill switch does NOT block closing — closing reduces risk.
 - No latest price → skip the position (never fabricate an exit).
-- The scheduler job that calls this still honors runtime.paused.
+- Layered pause keeps this scheduler job running so existing risk remains protected.
 """
 
 import hashlib
