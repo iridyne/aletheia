@@ -320,7 +320,7 @@ deterministic confidence, harm, source provenance, and exclusion details. A recu
 confirmatory result can be considered by the separate lifecycle gates.
 
 The evaluator uses metric version
-`universe_family_calibration_cluster_allocation_utility_v8`. Existing verdicts under older metric
+`universe_family_calibration_cluster_allocation_utility_v9`. Existing verdicts under older metric
 versions remain append-only history and cannot satisfy a current metric-identity gate. Verdict
 `created_at` records evaluation time; `window_start` and `window_end` continue to bound the
 observations used.
@@ -338,7 +338,7 @@ and therefore fail closed. Bounded `market_day_coverage` metadata gives the owne
 missing-day counts and dates. Metric v4 and behavior contract v5 created the continuous-window
 cohort. Metric v5 and behavior contract v6 created a from-zero identity for stricter actual-
 intervention provenance. Metric v6 and behavior contract v7 started another from-zero identity for
-prospective fixed-look authority. Metric v8 and behavior contract v9 separate first-trial integrity
+prospective fixed-look authority. Metric v9 and behavior contract v10 separate first-trial integrity
 readiness (one day, 10 complete units per arm) from the unchanged seven-day/50-per-arm Paper
 promotion evidence. Monitoring remains descriptive, the exposure-ordered cutoff is write-once, one
 confirmatory verdict is consumed, and each successor stage starts a fresh plan.
