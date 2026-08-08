@@ -1747,9 +1747,9 @@ def _record_no_evaluable_candidate_observation(
 
 
 # Buffer added to defer_until when extending Opportunity.valid_until forward.
-# 300s covers the paper_trader 180s scan cadence + one expire_stale sweep pass,
-# so a defer window is never race-consumed by the TTL expiry pass before the
-# re-evaluation the Operator promised.
+# The PI daemon now wakes from the durable defer deadline itself; these 300s are
+# bounded evaluation/queue slack so the expiry sweep cannot consume the carrier
+# while the promised second look is running.
 _DEFER_VALID_UNTIL_MARGIN_SEC = 300
 
 
@@ -2310,8 +2310,8 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             "model_invoked": False,
             "deferred_opportunity_ids": [row["opportunity_id"] for row in deferred_candidates],
             # All visible candidates are within their defer window — nothing actionable.
-            # Return 0 so pi_daemon does not immediately re-arm; it will retry on the
-            # next heartbeat (300 s) or when a new signal arrives from paper_trader.
+            # Return 0 so pi_daemon does not immediately spin.  Its durable deadline
+            # query wakes at defer_until; a genuinely new signal may wake it sooner.
             "pending_queue_remaining": 0,
             "pending_queue": queue,
         }
