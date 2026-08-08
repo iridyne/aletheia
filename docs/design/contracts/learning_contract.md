@@ -131,7 +131,7 @@ loop contributes positively. Current behavior has these contract-relevant limita
   scanner-run plus feature-snapshot identity so change-suppressed features cannot merge distinct
   entry-price windows;
 - contribution metric version
-  `universe_family_calibration_cluster_allocation_utility_v7` applies only to new verdicts. Earlier
+  `universe_family_calibration_cluster_allocation_utility_v8` applies only to new verdicts. Earlier
   metric verdict rows remain immutable history. A verdict's `created_at` is evaluation time, while
   `window_start` and `window_end` remain observation bounds;
 - treatment assignment and treatment intervention remain distinct. The v6 primary estimand stays
@@ -145,7 +145,7 @@ loop contributes positively. Current behavior has these contract-relevant limita
   requires the full actual-intervention minimum, not 100% intervention compliance. Refused and
   all-no-op clusters remain in ITT and dilute the estimated policy effect; they cannot satisfy the
   actual-intervention count but do not deadlock an otherwise qualified window. Counts and bounded
-  non-intervention reasons remain auditable. Metric v7 plus Universe behavior contract v8 starts a
+  non-intervention reasons remain auditable. Metric v8 plus Universe behavior contract v9 starts a
   from-zero identity; v6/v7 identity evidence remains immutable history and is never mixed or
   implicitly migrated;
 - harm is determinate only after both arms reach the experiment's 50-assignment-unit gate. Before
