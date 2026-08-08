@@ -129,6 +129,26 @@ def _analyze_path(row: dict, post_exit_bars: int) -> dict:
         _set_insufficient(result, candle_error or "invalid_ohlcv")
         return result
 
+    full_start_ts = _ceil_bar(entry_ts)
+    full_end_ts = _floor_bar(exit_ts)
+    full_holding_ts = list(range(full_start_ts, full_end_ts, _BAR_MS))
+    # Exact trigger/linkage evidence is independent of complete path coverage.
+    # Preserve its conservative pre-stop MFE lower bound even when an unrelated
+    # entry/exit boundary candle is unavailable.
+    available_full_holding = [
+        candle_by_ts[ts] for ts in full_holding_ts if ts in candle_by_ts
+    ]
+    _attach_first_stop_barrier_evidence(
+        result,
+        row=row,
+        identity=identity,
+        entry_ts=entry_ts,
+        exit_ts=exit_ts,
+        entry_price=entry_price,
+        direction=direction,
+        full_holding=available_full_holding,
+    )
+
     holding_ts = list(range(entry_bar_ts, holding_end_exclusive, _BAR_MS))
     missing_holding = [ts for ts in holding_ts if ts not in candle_by_ts]
     result["holding_bars_expected"] = len(holding_ts)
@@ -137,10 +157,7 @@ def _analyze_path(row: dict, post_exit_bars: int) -> dict:
         _set_insufficient(result, "holding_path_coverage_unavailable")
         return result
 
-    full_start_ts = _ceil_bar(entry_ts)
-    full_end_ts = _floor_bar(exit_ts)
-    full_holding_ts = list(range(full_start_ts, full_end_ts, _BAR_MS))
-    full_holding = [candle_by_ts[ts] for ts in full_holding_ts]
+    full_holding = available_full_holding
     overlapping_holding = [candle_by_ts[ts] for ts in holding_ts]
     result["bars_in_trade"] = len(full_holding)
     result["boundary_bars_excluded"] = len(holding_ts) - len(full_holding_ts)
@@ -168,17 +185,6 @@ def _analyze_path(row: dict, post_exit_bars: int) -> dict:
     result["mae_lower_bound_pct"] = round(mae_lower, 4)
     result["mae_upper_bound_pct"] = round(mae_upper, 4)
     result["realized_return_pct"] = round(realized_pnl_pct, 4)
-
-    _attach_first_stop_barrier_evidence(
-        result,
-        row=row,
-        identity=identity,
-        entry_ts=entry_ts,
-        exit_ts=exit_ts,
-        entry_price=entry_price,
-        direction=direction,
-        full_holding=full_holding,
-    )
 
     exact_boundaries = entry_ts % _BAR_MS == 0 and exit_ts % _BAR_MS == 0
     if exact_boundaries:

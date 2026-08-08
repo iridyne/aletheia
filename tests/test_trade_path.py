@@ -400,6 +400,76 @@ def test_protected_first_stop_proves_profit_giveback_before_trigger(monkeypatch)
     assert result["noncausal_path_observation"] is None
 
 
+def test_protected_stop_evidence_survives_missing_exit_boundary_bar(monkeypatch):
+    close_ts = _BASE_TS + 3 * _BAR_MS + 9_000
+    candles = [
+        _candle(_BASE_TS, high=100.5, low=99.5),
+        _candle(_BASE_TS + _BAR_MS, high=102.0, low=99.5),
+        _candle(_BASE_TS + 2 * _BAR_MS, high=100.2, low=97.0, close=98.0),
+        # The partial exit bar at base+3m is deliberately unavailable.
+    ]
+    monkeypatch.setattr(
+        "aletheia.analytics.trade_path.repo.get_ohlcv_candles",
+        lambda *args, **kwargs: candles,
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.trade_path.repo.get_position_protection_state",
+        lambda position_id: {
+            "position_id": position_id,
+            "venue": "okx",
+            "symbol": "BTC/USDT",
+            "market_type": "perp",
+            "timeframe": "1m",
+            "activated_at": _iso(_BASE_TS + 45_000),
+            "next_bar_open_ms": _BASE_TS + 3 * _BAR_MS,
+            "last_evaluated_bar_open_ms": _BASE_TS + 2 * _BAR_MS,
+            "last_inspected_bar_open_ms": _BASE_TS + 2 * _BAR_MS,
+            "status": "materialized",
+            "trigger_id": "trigger-boundary-gap",
+            "close_fill_id": "fill-boundary-gap",
+            "close_fill_price": 98.0,
+            "close_filled_at": _iso(close_ts),
+            "final_state": "materialized",
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.trade_path.repo.get_position_protection_trigger",
+        lambda position_id: {
+            "position_id": position_id,
+            "trigger_id": "trigger-boundary-gap",
+            "detected_at": _iso(_BASE_TS + 3 * _BAR_MS),
+            "venue": "okx",
+            "symbol": "BTC/USDT",
+            "market_type": "perp",
+            "timeframe": "1m",
+            "bar_open_ms": _BASE_TS + 2 * _BAR_MS,
+            "bar_close_ms": _BASE_TS + 3 * _BAR_MS,
+            "plan_version": 1,
+            "stop_hit": 1,
+            "target_hit": 0,
+            "reason": "stop_loss",
+        },
+    )
+    row = _row(
+        opened_at=_iso(_BASE_TS + 45_000),
+        closed_at=_iso(close_ts),
+        exit_price=98.0,
+        realized_pnl_pct=-2.0,
+        close_reason="stop_loss",
+    )
+
+    result = _analyze_path(row, post_exit_bars=0)
+
+    assert result["holding_bars_expected"] == 4
+    assert result["holding_bars_observed"] == 3
+    assert result["path_evidence_status"] == "unavailable"
+    assert result["path_bucket_reason"] == "holding_path_coverage_unavailable"
+    assert result["first_stop_barrier_status"] == "available"
+    assert result["first_stop_barrier_open_ms"] == _BASE_TS + 2 * _BAR_MS
+    assert result["pre_stop_mfe_lower_bound_pct"] == pytest.approx(2.0)
+    assert result["path_bucket"] == "insufficient_path_data"
+
+
 def test_protected_stop_with_changed_plan_remains_fail_closed(monkeypatch):
     candles = [
         _candle(_BASE_TS, high=102.0, low=99.5),
