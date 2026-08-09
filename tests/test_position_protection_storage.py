@@ -469,3 +469,111 @@ def test_close_order_and_fill_linkage_are_exact_and_write_once():
             "UPDATE position_protection_state SET close_fill_price=99 WHERE position_id=?",
             (position.id,),
         )
+
+
+def test_paper_close_timestamp_recovery_is_offline_bounded_and_idempotent(monkeypatch):
+    def seed(position_id: str, trigger_id: str, *, skew_us: int) -> tuple[Order, Fill]:
+        position = _prepare(position_id)
+        trigger = _trigger(position.id).model_copy(update={"trigger_id": trigger_id})
+        assert repo.record_position_protection_trigger(trigger)
+        filled_at = "2026-08-08T03:02:01.000000+00:00"
+        created_at = f"2026-08-08T03:02:01.{skew_us:06d}+00:00"
+        order = Order(
+            id=f"close-{position_id}",
+            proposal_id=position.proposal_id,
+            symbol=position.symbol,
+            market_type=position.market_type,
+            direction=position.direction,
+            order_type="market",
+            quantity=position.quantity,
+            price=105.0,
+            execution_mode="paper_internal",
+            client_order_id=f"close-{position.id}",
+            position_id=position.id,
+            close_reason="protective_barrier",
+            status="filled",
+            created_at=created_at,
+            filled_at=filled_at,
+        )
+        fill = Fill(
+            id=f"fill-{position_id}",
+            order_id=order.id,
+            fill_price=105.0,
+            fill_quantity=position.quantity,
+            filled_at=filled_at,
+        )
+        repo.insert_order(order)
+        repo.insert_fill(fill)
+        assert repo.link_position_protection_close_order(
+            position.id,
+            trigger_id=trigger.trigger_id,
+            close_order_id=order.id,
+        )
+        repo.update_position(position.id, status="closed")
+        return order, fill
+
+    eligible_order, eligible_fill = seed(
+        "recoverable-close",
+        "00000000-0000-4000-8000-000000000011",
+        skew_us=20,
+    )
+    blocked_order, _ = seed(
+        "out-of-scope-close",
+        "00000000-0000-4000-8000-000000000012",
+        skew_us=2000,
+    )
+
+    from aletheia.maintenance.paper_close_timestamp_recovery import (
+        apply_paper_close_timestamp_recovery,
+        inspect_paper_close_timestamp_recovery,
+    )
+
+    report = inspect_paper_close_timestamp_recovery()
+    assert report["summary"] == {
+        "already_consistent": 0,
+        "repairs_planned": 1,
+        "unavailable": 1,
+    }
+    assert repo.get_order(eligible_order.id)["created_at"] == eligible_order.created_at
+
+    monkeypatch.setattr("aletheia.gateway.pidfile.is_running", lambda: True)
+    with pytest.raises(RuntimeError, match="Gateway is running"):
+        apply_paper_close_timestamp_recovery(
+            expected_fingerprint=report["report_fingerprint"],
+        )
+
+    monkeypatch.setattr("aletheia.gateway.pidfile.is_running", lambda: False)
+    monkeypatch.setattr(
+        "aletheia.files.jsonl.write_audits_deduplicated",
+        lambda _events: set(),
+    )
+    applied = apply_paper_close_timestamp_recovery(
+        expected_fingerprint=report["report_fingerprint"],
+    )
+    assert applied["applied"] == 1
+    assert applied["audit_jsonl_complete"] is False
+    assert repo.get_order(eligible_order.id)["created_at"] == eligible_fill.filled_at
+    assert repo.get_order(blocked_order.id)["created_at"] == blocked_order.created_at
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM audit_events "
+        "WHERE event_type='paper_close_order_timestamp_repaired'"
+    ).fetchone()[0] == 1
+
+    retry = inspect_paper_close_timestamp_recovery()
+    assert retry["summary"] == {
+        "already_consistent": 1,
+        "repairs_planned": 0,
+        "unavailable": 1,
+    }
+    monkeypatch.undo()
+    retried = apply_paper_close_timestamp_recovery(
+        expected_fingerprint=retry["report_fingerprint"],
+    )
+    assert retried["applied"] == 0
+    assert retried["audit_jsonl_complete"] is True
+    assert repo.materialize_position_protection_close(
+        "recoverable-close",
+        trigger_id="00000000-0000-4000-8000-000000000011",
+        close_order_id=eligible_order.id,
+        close_fill_id=eligible_fill.id,
+    )
