@@ -206,8 +206,11 @@ async def _persist_twin_shadow_nonfatal(
         )
     except Exception as shadow_exc:
         logger.warning(
-            "Universe twin Shadow persistence unavailable without authority impact: %s",
+            "Universe twin Shadow persistence unavailable without authority impact: "
+            "%s: %s (scanner_run_id=%s)",
             type(shadow_exc).__name__,
+            shadow_exc,
+            kwargs.get("scanner_run_id", "not_available"),
         )
         return 0
 

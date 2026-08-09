@@ -7,6 +7,7 @@ import ast
 from datetime import datetime, timedelta, timezone
 import inspect
 import json
+import logging
 import random
 import textwrap
 from types import SimpleNamespace
@@ -249,7 +250,7 @@ def test_multi_candidate_replay_is_stable_across_database_row_order() -> None:
     assert report.candidate_count == 2
 
 
-def test_persistence_failure_is_nonfatal_to_authority() -> None:
+def test_persistence_failure_is_nonfatal_to_authority(caplog) -> None:
     bundle = _bundle()
 
     def fail(*_args: object, **_kwargs: object) -> object:
@@ -267,17 +268,21 @@ def test_persistence_failure_is_nonfatal_to_authority() -> None:
     )
     assert result == 0
 
-    result = asyncio.run(
-        service._persist_twin_shadow_nonfatal(
-            lambda *_args, **_kwargs: bundle,
-            fail,
-            (object(),),
-            (object(),),
-            policy_factory=ContinuousScoringPolicy,
-            policy_kwargs={},
+    with caplog.at_level(logging.WARNING, logger="aletheia.universe"):
+        result = asyncio.run(
+            service._persist_twin_shadow_nonfatal(
+                lambda *_args, **_kwargs: bundle,
+                fail,
+                (object(),),
+                (object(),),
+                policy_factory=ContinuousScoringPolicy,
+                policy_kwargs={},
+                scanner_run_id="run-log",
+            )
         )
-    )
     assert result == 0
+    assert "RuntimeError: sqlite unavailable" in caplog.text
+    assert "scanner_run_id=run-log" in caplog.text
 
 
 def test_capture_cadence_is_enforced_inside_repository_transaction() -> None:
