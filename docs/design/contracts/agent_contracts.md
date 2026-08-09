@@ -378,12 +378,16 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 - **Outcome precedence**: `filter_candidate_outcomes` is canonical full-arm truth;
   `universe_forward_outcomes` is a selected-member mirror/fallback and disagreement fails closed
 - **Outputs**: append-only monitoring and once-consumed confirmatory verdicts under
-  `universe_family_calibration_cluster_allocation_utility_v6`; old metric verdicts remain history
+  `universe_family_calibration_cluster_allocation_utility_v10`; old metric verdicts remain history
+- **Inference**: conditional randomization over the prospectively assigned complete clusters;
+  overlapping 1h/4h price paths are allowed and never resampled as IID outcomes
 - **Intervention provenance**: `authority_applied` records consistent treatment permission;
   finite before/after behavior change is separate, and an authorized cluster is an actual
   intervention only when at least one member changed
 - **Time semantics**: a market day is a UTC date with at least one complete eligible exposure unit
-  from either arm. Seven consecutive days plus 50 units in each arm inside that run are required;
+  from either arm. Shadow integrity readiness uses one day plus 10 units per arm only to permit an
+  owner-started Paper-10 trial. Seven consecutive days plus 50 units in each arm inside that run
+  remain required for economic promotion;
   a missing day resets the current window, planned outages receive no implicit waiver, and verdict
   `created_at` remains evaluation time
 - **Inference semantics**: recurring results are descriptive monitoring. A Paper stage registered

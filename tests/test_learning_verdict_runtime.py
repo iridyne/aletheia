@@ -1142,26 +1142,53 @@ def test_small_non_negative_effect_is_neutral_not_positive():
     assert _run(experiment.experiment_id)[0].verdict == "neutral"
 
 
-def test_positive_delta_records_reproducible_bootstrap_while_harm_is_indeterminate():
-    hypothesis, experiment = _experiment(min_samples=2, min_days=1)
-    for day, assignment, net in (
-        (0, "treatment", 1.0), (1, "treatment", 1.2),
-        (0, "control", 0.0), (1, "control", 0.1),
-    ):
-        candidate = f"positive-{assignment}-{day}"
-        _exposure(experiment, hypothesis, candidate=candidate, assignment=assignment, exposed_at=_iso(day))
-        _outcome(candidate, net=net, entry_at=_iso(day, 1), mae=-0.1)
+def test_positive_delta_uses_randomization_inference_while_harm_is_indeterminate():
+    hypothesis, experiment = _experiment(min_samples=10, min_days=1)
+    for index in range(10):
+        for assignment, net in (("treatment", 1.0), ("control", 0.0)):
+            candidate = f"positive-{assignment}-{index}"
+            _exposure(
+                experiment, hypothesis, candidate=candidate, assignment=assignment,
+                exposed_at=_iso(index // 5, index % 5),
+            )
+            _outcome(candidate, net=net, entry_at=_iso(index // 5, index % 5 + 1), mae=-0.1)
 
     verdict = _run(experiment.experiment_id)[0]
     metrics = json.loads(verdict.harm_metrics_json)
 
     assert verdict.verdict == "positive"
-    assert verdict.confidence_low is not None and verdict.confidence_low > 0
+    assert verdict.confidence_low is None
+    assert verdict.confidence_high is None
     assert metrics["metric_version"]
-    assert metrics["bootstrap_seed"] == 20260712
-    assert metrics["bootstrap_resamples"] == 2000
+    inference = metrics["randomization_inference"]
+    assert inference["contract_version"] == "conditional-randomization-itt/v1"
+    assert inference["iid_outcome_assumption"] is False
+    assert inference["p_value"] <= 0.10
+    assert inference["seed"] == 20260712
+    assert metrics["iid_bootstrap"] == "retired_overlapping_horizon_outcomes"
     assert metrics["harm_state"] == "indeterminate"
     assert metrics["breached"] is False
+
+
+def test_small_perfect_separation_cannot_impersonate_randomized_evidence():
+    hypothesis, experiment = _experiment(min_samples=2, min_days=1)
+    for index in range(2):
+        for assignment, net in (("treatment", 1.0), ("control", 0.0)):
+            candidate = f"small-separation-{assignment}-{index}"
+            _exposure(
+                experiment, hypothesis, candidate=candidate, assignment=assignment,
+                exposed_at=_iso(index),
+            )
+            _outcome(candidate, net=net, entry_at=_iso(index, 1), mae=-0.1)
+
+    verdict = _run(experiment.experiment_id)[0]
+    inference = json.loads(verdict.harm_metrics_json)["randomization_inference"]
+
+    assert verdict.delta == 1.0
+    assert verdict.verdict == "neutral"
+    assert inference["mode"] == "exact"
+    assert inference["assignment_space_size"] == 6
+    assert inference["p_value"] == pytest.approx(1 / 6)
 
 
 def test_negative_delta_or_harm_breach_is_negative():
@@ -1337,10 +1364,11 @@ def test_shadow_without_actual_intervention_is_not_a_causal_verdict(treatment_ne
             experiment,
             hypothesis,
             candidate=candidate,
-            assignment=assignment,
-            exposed_at=_iso(day),
-            authority_applied=False,
-        )
+                assignment=assignment,
+                exposed_at=_iso(day),
+                authority_applied=False,
+                authority_reason="experiment_stage_not_paper",
+            )
         _outcome(candidate, net=net, entry_at=_iso(day, 1))
 
     verdict = _run(experiment.experiment_id)[0]
@@ -1362,6 +1390,97 @@ def test_shadow_without_actual_intervention_is_not_a_causal_verdict(treatment_ne
     assert verdict.outcome_contract_version == "v1"
     assert verdict.metric_version == metrics["metric_version"]
     assert verdict.code_commit == "test-commit"
+
+
+def test_shadow_integrity_readiness_does_not_wait_for_promotion_window():
+    hypothesis, experiment = _experiment(
+        min_samples=50, min_days=7, stage="shadow",
+    )
+    for index in range(10):
+        for assignment in ("treatment", "control"):
+            candidate = f"integrity-{assignment}-{index}"
+            _exposure(
+                experiment,
+                hypothesis,
+                candidate=candidate,
+                assignment=assignment,
+                exposed_at=_iso(),
+                authority_applied=False,
+                authority_reason="experiment_stage_not_paper",
+            )
+            _outcome(candidate, net=0.1 if assignment == "treatment" else 0.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "insufficient_data"
+    assert verdict.reason == "trial_integrity_ready_no_actual_intervention"
+    assert verdict.unique_treatment_n == 10
+    assert verdict.unique_control_n == 10
+    assert metrics["market_day_coverage"]["current_consecutive_market_days"] == 1
+    assert metrics["market_day_coverage"]["status"] == "gap"
+    assert metrics["harm_state"] == "indeterminate"
+    assert metrics["actual_intervention_treatment_n"] == 0
+    assert metrics["trial_integrity_readiness"] == {
+        "contract_version": "ufc-shadow-trial-integrity/v1",
+        "required_per_arm": 10,
+        "required_market_days": 1,
+        "qualified_treatment_n": 10,
+        "qualified_control_n": 10,
+        "current_consecutive_market_days": 1,
+        "status": "ready",
+    }
+
+
+def test_shadow_control_provenance_violation_is_invalid_before_outcome_settlement():
+    hypothesis, experiment = _experiment(
+        min_samples=50, min_days=7, stage="shadow",
+    )
+    _exposure(
+        experiment,
+        hypothesis,
+        candidate="shadow-control-provenance-invalid",
+        assignment="control",
+        authority_applied=False,
+        behavior_changed=False,
+        authority_reason="experiment_not_active",
+    )
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "invalid"
+    assert verdict.reason == (
+        "invalid evidence: shadow_authority_provenance_invalid"
+    )
+    assert metrics["invalid_reasons"] == {
+        "shadow_authority_provenance_invalid": 1,
+    }
+    assert metrics["exclusion_reasons"] == {}
+
+
+def test_shadow_integrity_readiness_requires_ten_complete_units_per_arm():
+    hypothesis, experiment = _experiment(
+        min_samples=50, min_days=7, stage="shadow",
+    )
+    for assignment, count in (("treatment", 10), ("control", 9)):
+        for index in range(count):
+            candidate = f"underpowered-{assignment}-{index}"
+            _exposure(
+                experiment,
+                hypothesis,
+                candidate=candidate,
+                assignment=assignment,
+                exposed_at=_iso(),
+                authority_applied=False,
+                authority_reason="experiment_stage_not_paper",
+            )
+            _outcome(candidate, net=0.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+
+    assert verdict.verdict == "insufficient_data"
+    assert verdict.reason == "insufficient unique prospective treatment/control samples"
 
 
 def test_baseline_treatment_units_do_not_satisfy_actual_intervention_gate():
@@ -1796,14 +1915,15 @@ def test_excluded_cohort_verdict_created_at_is_not_unix_epoch():
 
 
 def test_measurement_verdict_never_authorizes_or_changes_learning_lifecycle():
-    hypothesis, experiment = _experiment(min_samples=2, min_days=1)
-    for day, assignment, net in (
-        (0, "treatment", 1.0), (1, "treatment", 1.2),
-        (0, "control", 0.0), (1, "control", 0.1),
-    ):
-        candidate = f"baseline-{assignment}-{day}"
-        _exposure(experiment, hypothesis, candidate=candidate, assignment=assignment, exposed_at=_iso(day))
-        _outcome(candidate, net=net, entry_at=_iso(day, 1))
+    hypothesis, experiment = _experiment(min_samples=10, min_days=1)
+    for index in range(10):
+        for assignment, net in (("treatment", 1.0), ("control", 0.0)):
+            candidate = f"baseline-{assignment}-{index}"
+            _exposure(
+                experiment, hypothesis, candidate=candidate, assignment=assignment,
+                exposed_at=_iso(index // 5, index % 5),
+            )
+            _outcome(candidate, net=net, entry_at=_iso(index // 5, index % 5 + 1))
 
     verdict = _run(experiment.experiment_id)[0]
     from aletheia.learning.experiments import _verdict_authorizes

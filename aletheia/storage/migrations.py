@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v11"
+SCHEMA_VERSION = "aletheia-sqlite-v12"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4158,6 +4158,59 @@ _EXIT_BREAKEVEN_SHADOW_CHECKSUM = hashlib.sha256(
     (_EXIT_BREAKEVEN_SHADOW_SQL + "\nexit_breakeven_shadow_v1\nPRAGMA optimize").encode("utf-8")
 ).hexdigest()
 
+_LEARNING_RANDOMIZATION_INFERENCE_TABLE_SQL = """
+CREATE TABLE learning_inference_decisions (
+    experiment_id TEXT PRIMARY KEY REFERENCES learning_experiments(experiment_id),
+    inference_family_id TEXT NOT NULL CHECK (length(trim(inference_family_id)) > 0),
+    inference_contract_version TEXT NOT NULL CHECK (
+        inference_contract_version IN ('ufc-fixed-look/v1', 'ufc-fixed-look/v2')
+    ),
+    plan_json TEXT NOT NULL CHECK (json_valid(plan_json)),
+    plan_hash TEXT NOT NULL CHECK (
+        length(plan_hash) = 64
+        AND plan_hash = lower(plan_hash)
+        AND plan_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    status TEXT NOT NULL CHECK (
+        status IN ('collecting', 'cutoff_frozen', 'consumed', 'invalidated')
+    ),
+    cutoff_json TEXT CHECK (cutoff_json IS NULL OR json_valid(cutoff_json)),
+    cutoff_fingerprint TEXT CHECK (
+        cutoff_fingerprint IS NULL
+        OR (
+            length(cutoff_fingerprint) = 64
+            AND cutoff_fingerprint = lower(cutoff_fingerprint)
+            AND cutoff_fingerprint NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    cutoff_frozen_at TEXT CHECK (
+        cutoff_frozen_at IS NULL OR julianday(cutoff_frozen_at) IS NOT NULL
+    ),
+    consumed_verdict_id TEXT REFERENCES learning_contribution_verdicts(verdict_id),
+    consumed_at TEXT CHECK (consumed_at IS NULL OR julianday(consumed_at) IS NOT NULL),
+    authority_alpha REAL NOT NULL CHECK (authority_alpha > 0 AND authority_alpha < 0.5),
+    created_at TEXT NOT NULL CHECK (julianday(created_at) IS NOT NULL),
+    updated_at TEXT NOT NULL CHECK (julianday(updated_at) IS NOT NULL),
+    CHECK (
+        (status = 'collecting' AND cutoff_json IS NULL AND cutoff_fingerprint IS NULL
+            AND cutoff_frozen_at IS NULL AND consumed_verdict_id IS NULL AND consumed_at IS NULL)
+        OR (status = 'cutoff_frozen' AND cutoff_json IS NOT NULL
+            AND cutoff_fingerprint IS NOT NULL AND cutoff_frozen_at IS NOT NULL
+            AND consumed_verdict_id IS NULL AND consumed_at IS NULL)
+        OR (status = 'consumed' AND cutoff_json IS NOT NULL
+            AND cutoff_fingerprint IS NOT NULL AND cutoff_frozen_at IS NOT NULL
+            AND consumed_verdict_id IS NOT NULL AND consumed_at IS NOT NULL)
+        OR status = 'invalidated'
+    )
+);
+"""
+_LEARNING_RANDOMIZATION_INFERENCE_CHECKSUM = hashlib.sha256(
+    (
+        _LEARNING_RANDOMIZATION_INFERENCE_TABLE_SQL
+        + "\nconditional_randomization_inference_v1\nPRAGMA optimize"
+    ).encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -4218,6 +4271,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260808_0010_exit_breakeven_shadow_v11": (
         "prospective read-only exit breakeven shadow evidence"
+    ),
+    "20260808_0011_learning_randomization_inference_v12": (
+        "conditional-randomization Learning inference contract"
     ),
 }
 
@@ -4360,6 +4416,108 @@ def _apply_exit_breakeven_shadow_v11(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_learning_randomization_inference_v12(db: sqlite3.Connection) -> None:
+    """Allow v2 plans while retaining every immutable v1 inference fact."""
+
+    expected_triggers = {
+        "trg_learning_inference_consumed_verdict_exact",
+        "trg_learning_inference_consumption_write_once",
+        "trg_learning_inference_cutoff_write_once",
+        "trg_learning_inference_decisions_no_delete",
+        "trg_learning_inference_plan_immutable",
+        "trg_learning_inference_status_monotonic",
+    }
+    row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' "
+        "AND name='learning_inference_decisions'"
+    ).fetchone()
+    if row is None:
+        raise MigrationStateError("learning inference decision table is missing")
+    table_sql = str(row[0] or "")
+    if "ufc-fixed-look/v2" in table_sql:
+        db.execute("PRAGMA optimize")
+        return
+    if "ufc-fixed-look/v1" not in table_sql:
+        raise MigrationStateError("unsupported Learning inference decision schema")
+
+    db.execute("SAVEPOINT learning_randomization_inference_v12")
+    try:
+        old_count = int(
+            db.execute(
+                "SELECT COUNT(*) FROM learning_inference_decisions"
+            ).fetchone()[0]
+        )
+        trigger_names = [
+            str(item[0])
+            for item in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger' "
+                "AND tbl_name='learning_inference_decisions'"
+            ).fetchall()
+        ]
+        if set(trigger_names) != expected_triggers:
+            raise MigrationStateError(
+                "Learning inference decision trigger contract drifted"
+            )
+        index_names = {
+            str(item[0])
+            for item in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' "
+                "AND tbl_name='learning_inference_decisions' AND sql IS NOT NULL"
+            ).fetchall()
+        }
+        if index_names != {"idx_learning_inference_family"}:
+            raise MigrationStateError(
+                "Learning inference decision index contract drifted"
+            )
+        for name in trigger_names:
+            quoted = name.replace('"', '""')
+            db.execute(f'DROP TRIGGER "{quoted}"')
+        db.execute("DROP INDEX IF EXISTS idx_learning_inference_family")
+        db.execute(
+            "ALTER TABLE learning_inference_decisions "
+            "RENAME TO learning_inference_decisions_v1"
+        )
+        db.execute(_LEARNING_RANDOMIZATION_INFERENCE_TABLE_SQL)
+        columns = (
+            "experiment_id, inference_family_id, inference_contract_version, plan_json, "
+            "plan_hash, status, cutoff_json, cutoff_fingerprint, cutoff_frozen_at, "
+            "consumed_verdict_id, consumed_at, authority_alpha, created_at, updated_at"
+        )
+        db.execute(
+            f"INSERT INTO learning_inference_decisions ({columns}) "
+            f"SELECT {columns} FROM learning_inference_decisions_v1"
+        )
+        new_count = int(
+            db.execute(
+                "SELECT COUNT(*) FROM learning_inference_decisions"
+            ).fetchone()[0]
+        )
+        if new_count != old_count:
+            raise MigrationStateError("learning inference decision row count changed")
+        db.execute("DROP TABLE learning_inference_decisions_v1")
+
+        # Reuse the immutable v10 object definitions without executescript:
+        # executescript commits implicitly and would break this savepoint.
+        pending_sql = ""
+        for line in _LEARNING_FIXED_LOOK_SQL.splitlines(keepends=True):
+            pending_sql += line
+            if not sqlite3.complete_statement(pending_sql):
+                continue
+            statement = pending_sql.strip()
+            pending_sql = ""
+            if statement.upper().startswith("CREATE TABLE"):
+                continue
+            db.execute(statement)
+        if pending_sql.strip():
+            raise MigrationStateError("incomplete Learning inference object DDL")
+        db.execute("PRAGMA optimize")
+        db.execute("RELEASE SAVEPOINT learning_randomization_inference_v12")
+    except (sqlite3.Error, MigrationStateError):
+        db.execute("ROLLBACK TO SAVEPOINT learning_randomization_inference_v12")
+        db.execute("RELEASE SAVEPOINT learning_randomization_inference_v12")
+        raise
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -4418,8 +4576,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260808_0010_exit_breakeven_shadow_v11",
         checksum=_EXIT_BREAKEVEN_SHADOW_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v11",
         apply=_apply_exit_breakeven_shadow_v11,
+    ),
+    MigrationStep(
+        migration_id="20260808_0011_learning_randomization_inference_v12",
+        checksum=_LEARNING_RANDOMIZATION_INFERENCE_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_learning_randomization_inference_v12,
     ),
 )
 

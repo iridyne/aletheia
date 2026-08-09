@@ -21,6 +21,11 @@ Assignment is best-effort and cannot block a valid Position open; settlement is
 replayed by the existing durable outcome-hook outbox after an eligible close.
 Neither table is a recovery command or trading authority.
 
+Schema v12 retains both immutable `ufc-fixed-look/v1` plans and the current
+`ufc-fixed-look/v2` conditional-randomization plans. The migration rebuilds only
+`learning_inference_decisions` under a savepoint, preserves its rows and storage
+guards, and grants no Learning or trading authority.
+
 The future safety design is
 [`gateway_recovery.md`](../proposals/gateway_recovery.md).
 

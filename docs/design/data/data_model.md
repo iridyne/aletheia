@@ -161,11 +161,15 @@ stage, horizon, outcome-contract and code-build verdicts remain append-only hist
 classified as non-current by the read model.
 
 The current metric version is
-`universe_family_calibration_cluster_allocation_utility_v6`. Its existing `harm_metrics_json`
+`universe_family_calibration_cluster_allocation_utility_v10`. Its existing `harm_metrics_json`
 evaluation envelope also carries bounded `market_day_coverage` facts for the latest consecutive
 eligible UTC exposure-day window, its per-arm sample counts, separate treatment-permission and
-effective-intervention counts, and bounded non-intervention reasons. Effective intervention is
+effective-intervention counts, bounded non-intervention reasons, and conditional-randomization
+inference provenance. Effective intervention is
 derived from finite exposure `before_json`/`after_json` values rather than inferred from permission.
+A Shadow-only integrity result additionally records that one current market day and 10 complete
+units per arm have exercised the prospective pipeline; it remains `insufficient_data` and is not a
+contribution verdict.
 A metric-version change appends new verdicts; it does not rewrite or delete older verdict history.
 
 ### D. Market Data Collection (11 tables)
@@ -443,6 +447,11 @@ All models in `aletheia/storage/models.py`. Key mapping:
 9. Dataset-size-sensitive repair is never an implicit read/startup side effect. Schema v3 rebuilds `knowledge_fts` once as migration `20260806_0002_startup_dataset_boundary_v3` and installs indexes for startup reconciliation and windowed telemetry reads. Normal knowledge writes maintain FTS incrementally; later full rebuilds require the explicit `knowledge reindex` maintenance command or a new versioned migration.
 12. Schema v9 adds `positions.exit_plan_effective_at`, immutable `position_exit_plan_versions`, retained `position_protection_state`, and append-only `position_protection_triggers` through migration `20260808_0008_position_protection_state_v9`. It performs no Position backfill or activation and does not install an evaluator or close consumer.
 13. Schema v11 adds retained `exit_breakeven_shadow_assignments` and `exit_breakeven_shadow_outcomes` through migration `20260808_0010_exit_breakeven_shadow_v11`. It performs no historical backfill and grants no trading or Learning authority.
+14. Schema v12 rebuilds only `learning_inference_decisions` to admit immutable
+    `ufc-fixed-look/v2` plans while retaining every v1 row, foreign key, index,
+    write-once trigger, and no-delete trigger. Migration
+    `20260808_0011_learning_randomization_inference_v12` changes no exposure,
+    verdict, trading, Risk, Execution, or Live fact.
 10. Physical packing is outside the migration ledger. In particular, `market_ohlcv` rowid-to-`WITHOUT ROWID` conversion runs only inside explicit offline `data compact --apply`, after a verified backup and with the Gateway stopped; fresh deploy and normal Gateway startup never perform it.
 11. Schema v6 adds the content-free `inference_call_id` linkage columns through migration `20260806_0005_llm_inference_linkage_v6`. The LLM inference harness does not edit the frozen legacy baseline; databases that already received the columns from pre-ledger code are accepted idempotently.
 

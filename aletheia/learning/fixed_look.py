@@ -27,7 +27,7 @@ from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
 
 
-INFERENCE_CONTRACT_VERSION = "ufc-fixed-look/v1"
+INFERENCE_CONTRACT_VERSION = "ufc-fixed-look/v2"
 AUTHORITY_ALPHA = 0.025
 _PAPER_STAGES = frozenset({"paper_10", "paper_25", "paper_50", "paper_active"})
 
@@ -94,6 +94,9 @@ def register_fixed_look_decision(
         ),
         "authority_alpha": AUTHORITY_ALPHA,
         "estimand": "randomized_assignment_intent_to_treat",
+        "inference_method": "conditional-randomization-itt/v1",
+        "outcome_dependence": "allowed_without_iid_assumption",
+        "interference_assumption": "assignment_unit_outcome_is_not_changed_by_other_assignments",
         "cutoff_order": ["exposed_at", "assignment_unit_key"],
         "decision_looks": 1,
         "post_cutoff_samples": "excluded",

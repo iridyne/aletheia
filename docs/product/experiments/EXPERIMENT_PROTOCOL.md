@@ -103,15 +103,24 @@ The registry is the executable path inventory. Only
 
 - assignment is stable at the complete candidate cluster;
 - treatment and control both run the static baseline while stage=`shadow`;
-- 50 complete assignment units per arm are required;
-- the software gate requires seven consecutive UTC dates with at least one
-  complete eligible exposure unit from either arm; 50-per-arm sufficiency is
-  checked independently inside that continuous run;
+- first-trial integrity readiness requires 10 complete assignment units per arm
+  inside at least one continuous eligible UTC market day, persisted under
+  `ufc-shadow-trial-integrity/v1`;
+- the 50-per-arm and seven-consecutive-market-day contract is retained for each
+  Paper stage's economic promotion evidence, not spent waiting on two identical
+  Shadow baselines;
 - canonical/fallback outcome disagreement invalidates evidence;
 - all measurement identities must match the current cohort;
 - underpowered harm is `indeterminate` and cannot authorize;
-- because no treatment is applied in shadow, a mature shadow cohort is expected
-  to produce `insufficient_data/no_actual_intervention`, not positive/negative.
+- monitoring and confirmatory efficacy use conditional randomization over the
+  prospectively assigned complete clusters. Adjacent 10-minute decisions may
+  share 1h/4h market paths; those outcomes are never resampled as IID evidence.
+  This inference also requires that one cluster's immutable full-arm outcome is
+  not changed by another cluster's assignment; a violated identity invalidates evidence;
+- because no treatment is applied in shadow, an integrity-ready cohort produces
+  `insufficient_data/trial_integrity_ready_no_actual_intervention`; a cohort that
+  also matures the full historical window remains
+  `insufficient_data/no_actual_intervention`. Neither is positive/negative.
 
 An unexplained, planned, or partial outage resets the current qualification run
 when it leaves a full UTC date with no complete eligible exposure in either arm;
@@ -125,6 +134,9 @@ The verdict exposes bounded `market_day_coverage` reasons.
 Crossing `shadow -> paper_10` requires the protected owner admission route and
 every default-closed gate in [PHASE_GATES](../gates/PHASE_GATES.md). The scheduled
 controller may recommend the action but may not perform it autonomously.
+The integrity verdict grants no economic claim: it exists only to let a human
+start 10% treatment with a 90% prospective control before spending the full
+confirmatory window.
 
 Later progression is one stage at a time (`paper_10`, `paper_25`, `paper_50`,
 `paper_active`) only on the current stage's authority-eligible positive confirmatory

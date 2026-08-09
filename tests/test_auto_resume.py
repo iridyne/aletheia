@@ -1,11 +1,9 @@
 """Integration tests for the auto-resume probe loop.
 
 The loop's whole job is to recover the system from a paused state: probe the LLM
-periodically and, on success, drive the REAL resume path (persist paused=False,
-resume scheduler, audit). These tests therefore mock ONLY the network boundary
-(`probe_llm_providers_at_startup`) and let `resume_if_llm_available` run for real,
-asserting on the PERSISTED config + audit log — the actual recovery behavior, not
-just that a mock was called.
+periodically and, on success, drive the real pause-owner persistence and audit
+path. These tests mock the network and scheduler process boundaries, then assert
+on the persisted config + audit log instead of merely checking mock calls.
 
 Pattern mirrors test_startup_gate.py (real config/DB, fake provider probe).
 """
@@ -20,8 +18,10 @@ from aletheia.config.schema import AletheiaConfig, ProviderConfig
 
 def setup_env(tmp_path, monkeypatch):
     """Point DATA_DIR/CONFIG_PATH at tmp and init the DB so write_audit/save_config work."""
+    import aletheia.agent_runtime.scheduler as scheduler
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
+    monkeypatch.setattr(scheduler, "resume_scheduler", lambda: True)
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)

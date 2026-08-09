@@ -131,12 +131,12 @@ loop contributes positively. Current behavior has these contract-relevant limita
   scanner-run plus feature-snapshot identity so change-suppressed features cannot merge distinct
   entry-price windows;
 - contribution metric version
-  `universe_family_calibration_cluster_allocation_utility_v6` applies only to new verdicts. Earlier
+  `universe_family_calibration_cluster_allocation_utility_v10` applies only to new verdicts. Earlier
   metric verdict rows remain immutable history. A verdict's `created_at` is evaluation time, while
   `window_start` and `window_end` remain observation bounds;
 - treatment assignment and treatment intervention remain distinct. The v6 primary estimand stays
   randomized intent-to-treat: every qualified assigned-treatment unit, including a baseline
-  fallback, enters the treatment mean, confidence interval, harm calculation and persisted
+  fallback, enters the treatment mean, randomization test, harm calculation and persisted
   `unique_treatment_n`. Selecting only effectively changed rows is forbidden because authority
   refusal or a no-op baseline can correlate with market state. Permission and behavior are separate
   provenance: `authority_applied` records a consistent authorized treatment assignment, while a
@@ -145,9 +145,14 @@ loop contributes positively. Current behavior has these contract-relevant limita
   requires the full actual-intervention minimum, not 100% intervention compliance. Refused and
   all-no-op clusters remain in ITT and dilute the estimated policy effect; they cannot satisfy the
   actual-intervention count but do not deadlock an otherwise qualified window. Counts and bounded
-  non-intervention reasons remain auditable. Metric v6 plus Universe behavior contract v7 starts a
-  from-zero identity; v5/v6 identity evidence remains immutable history and is never mixed or
-  implicitly migrated;
+  non-intervention reasons remain auditable. Metric v10 plus Universe behavior contract v11 starts a
+  from-zero identity; older metric v6-v9 and behavior v7-v10 evidence remains immutable history
+  and is never mixed or implicitly migrated;
+- the final numeric-treatment consumer independently enforces the Shadow authority invariant:
+  Shadow may persist only `authorized=false` with `experiment_stage_not_paper`. Any other
+  authorization/reason combination is forced to the static baseline, persisted under
+  `shadow_authority_invariant_violation:*`, and emitted through the existing critical infra-event
+  channel. This is a detection and containment backstop, not a second authority framework;
 - harm is determinate only after both arms reach the experiment's 50-assignment-unit gate. Before
   that point the persisted state is `indeterminate`: it blocks new authority and promotion but does
   not claim a breach; the narrowly declared activated-trial collection exception below may retain
@@ -164,10 +169,14 @@ loop contributes positively. Current behavior has these contract-relevant limita
   therefore fail closed with bounded `market_day_coverage` evidence;
 - recurring evaluator output is `monitoring` evidence only. Before any Paper exposure, owner
   admission or predecessor promotion atomically registers one immutable
-  `ufc-fixed-look/v1` plan. The plan uses exposure-time facts to freeze the earliest qualifying
+  `ufc-fixed-look/v2` plan. The plan uses exposure-time facts to freeze the earliest qualifying
   prefix ordered by `(exposed_at, assignment_unit_key)`, then waits for the exact cutoff units to
-  settle and consumes at most one `confirmatory` verdict with authority alpha `0.025`. Cutoff
+  settle and consumes at most one conditional-randomization `confirmatory` verdict with authority
+  alpha `0.025`. The test holds cluster outcomes fixed and reassigns the observed treatment count,
+  so overlapping 1h/4h market paths are not falsely treated as IID samples. Cutoff
   evidence is write-once and cutoff-external rows cannot change that stage's confirmatory result.
+  The inference assumes another cluster's assignment cannot rewrite the current cluster's
+  immutable full-arm outcome; identity disagreement continues to invalidate evidence.
   A neutral or negative consumed look cannot continue sampling in an attempt to become positive. Each
   successor stage registers a fresh prospective plan and no second active inference lineage may
   reuse the same family without a separately approved multiplicity contract;
@@ -176,6 +185,12 @@ loop contributes positively. Current behavior has these contract-relevant limita
   cannot be hidden by a later-written confirmatory row. Monitoring positive is descriptive and
   cannot promote. Only the exact durable consumed verdict whose plan hash and cutoff fingerprint
   match `learning_inference_decisions` is authority-eligible;
+- Shadow integrity readiness is deliberately separate from Paper efficacy. Ten complete current-
+  window assignment units per arm across one eligible UTC day may produce
+  `trial_integrity_ready_no_actual_intervention`; it proves only that both arms, exact identity and
+  fixed-horizon settlement are functioning. A protected owner may use that result to start one 10%
+  Paper trial while retaining 90% control. Seven days, 50 units per arm, sufficient actual
+  interventions and the consumed fixed look remain mandatory for every later promotion;
 - lifecycle, authority, and owner-facing progress consume only the exact current hypothesis, stage,
   policy epoch, horizon, outcome contract, metric version, and deterministic behavior-contract
   cohort. `code_commit` remains provenance and does not fragment behaviorally identical evidence.
@@ -229,9 +244,9 @@ loop contributes positively. Current behavior has these contract-relevant limita
 - hypothesis identity includes the path behavior-contract version. A refreeze remains durable for
   repeated calls under that version, while a version change creates a distinct shadow hypothesis
   and experiment; it never reopens or mutates the refrozen predecessor.
-- the current UFC contract is behavior version v7. It retains the v6
+- the current UFC contract is behavior version v8. It retains the v7 fixed-look, v6
   permission-versus-effective-behavior, v5 continuous-window, and v4 deterministic source-lineage
-  rules, and adds prospective fixed-look inference plus monitoring/confirmatory separation;
+  rules, and separates first-trial integrity readiness from economic promotion evidence;
   the v2 harm, v3 settlement-source, v4 source-lineage-only, and v5 continuity-only semantics are
   historical.
   Every path-version change rotates the policy epoch and starts a fresh from-zero window.

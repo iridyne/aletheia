@@ -133,6 +133,12 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
             "treatment_non_intervention_reasons": {
                 "authority:experiment_stage_not_paper": 4,
             },
+            "randomization_inference": {
+                "contract_version": "conditional-randomization-itt/v1",
+                "mode": "exact",
+                "p_value": 0.25,
+                "iid_outcome_assumption": False,
+            },
             "breached": False,
             "breach_reasons": [],
             "market_day_coverage": {
@@ -217,6 +223,12 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     assert item["measurement"]["coverage"]["missing_market_days"] == [
         "2026-07-18"
     ]
+    assert item["measurement"]["randomization_contract_version"] == (
+        "conditional-randomization-itt/v1"
+    )
+    assert item["measurement"]["randomization_p_value"] == 0.25
+    assert item["measurement"]["randomization_mode"] == "exact"
+    assert item["measurement"]["iid_outcome_assumption"] is False
     assert item["samples"] == {
         "raw_exposures": 18,
         "treatment_assignment_units": 4,
@@ -638,6 +650,67 @@ def test_lco_projection_reports_protected_admission_readiness(
     lifecycle_view = build_learning_contribution_projection()["items"][0]["lifecycle"]
     assert lifecycle_view["recommended_action"] == "admit_trial"
     assert lifecycle_view["authority_enabled"] is False
+    assert lifecycle_view["mutation_available"] is True
+    assert lifecycle_view["mutation_unavailable_reason"] is None
+
+
+def test_lco_projection_reports_integrity_ready_admission_with_underpowered_harm(
+    tmp_path,
+    monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    row = db.execute(
+        "SELECT harm_metrics_json FROM learning_contribution_verdicts "
+        "WHERE experiment_id=?",
+        (experiment_id,),
+    ).fetchone()
+    metrics = json.loads(row[0])
+    metrics.update({
+        "assigned_treatment_n": 10,
+        "baseline_treatment_n": 10,
+        "authority_applied_treatment_n": 0,
+        "actual_intervention_treatment_n": 0,
+        "treatment_authority_rejection_reasons": {
+            "experiment_stage_not_paper": 10,
+        },
+        "trial_integrity_readiness": {
+            "contract_version": "ufc-shadow-trial-integrity/v1",
+            "required_per_arm": 10,
+            "required_market_days": 1,
+            "qualified_treatment_n": 10,
+            "qualified_control_n": 10,
+            "current_consecutive_market_days": 1,
+            "status": "ready",
+        },
+    })
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET reason=?, "
+        "unique_treatment_n=10, unique_control_n=10, harm_metrics_json=? "
+        "WHERE experiment_id=?",
+        (
+            "trial_integrity_ready_no_actual_intervention",
+            json.dumps(metrics),
+            experiment_id,
+        ),
+    )
+    db.commit()
+
+    import aletheia.learning.lifecycle as lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "trial_admission_gate_reason",
+        lambda _path_id, **_kwargs: None,
+    )
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    lifecycle_view = build_learning_contribution_projection()["items"][0]["lifecycle"]
+
+    assert lifecycle_view["recommended_action"] == "admit_trial"
     assert lifecycle_view["mutation_available"] is True
     assert lifecycle_view["mutation_unavailable_reason"] is None
 

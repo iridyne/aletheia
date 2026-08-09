@@ -21,19 +21,20 @@ The current measured path is `universe_family_calibration`. Its software evidenc
 unit is one complete assignment cluster. Selected members contribute fixed-horizon
 net return; dropped members contribute zero under intent-to-treat allocation
 utility. The current metric version is
-`universe_family_calibration_cluster_allocation_utility_v6`.
+`universe_family_calibration_cluster_allocation_utility_v10`.
 
 ## 2. Learning qualification metrics
 
 | Metric | Meaning | Current source |
 |---|---|---|
 | Treatment/control assignment units | Complete, unique prospective clusters per arm | Learning cohort builder and `lco-v1` projection |
+| First Paper trial integrity | `ufc-shadow-trial-integrity/v1`: 10 complete units per arm in one current eligible UTC market day; no contribution claim | Shadow verdict and protected owner admission |
 | Minimum samples | 50 complete assignment units in each arm | `LearningExperiment.min_samples_per_arm` |
 | Continuous market days | At least 7 consecutive UTC dates with a complete eligible exposure unit from either arm; 50-per-arm sufficiency is independent and scoped to that run | `LearningExperiment.min_market_days` and verdict `market_day_coverage` |
 | Actual intervention | At least the per-arm minimum has consistent treatment permission and one or more members with a finite before/after behavior delta | Exposure manifest, before/after values, and cohort sample |
 | Contribution delta | Cost-aware treatment mean minus control mean | `learning/verdicts.py` |
-| Monitoring interval | Deterministic descriptive bootstrap interval for the contribution delta; never promotion authority | `learning/verdicts.py` |
-| Confirmatory decision | One prospective, outcome-blind frozen cutoff and one consumed fixed look at authority alpha `0.025` | `learning/fixed_look.py` and `learning_inference_decisions` |
+| Monitoring inference | Deterministic conditional randomization p-value for the randomized ITT delta; never promotion authority | `learning/verdicts.py` |
+| Confirmatory decision | One prospective, outcome-blind frozen cutoff and one consumed conditional-randomization look at authority alpha `0.025` | `learning/fixed_look.py` and `learning_inference_decisions` |
 | Harm state | `indeterminate`, `clear`, or `breached`; underpowered evidence never claims safety | contribution verdict harm metrics |
 | Measurement identity | Exact hypothesis, stage, epoch, horizon, outcome contract, metric version, and behavior-contract hash | Learning ledger/authority resolver |
 | Operational health | Evaluator/lifecycle freshness, failures, watermark, and catch-up state | `learning_job_health` and `lco-v1` |
@@ -52,12 +53,21 @@ at outcomes, and exactly one matching confirmatory verdict may be consumed. Late
 samples cannot turn the same stage positive; current monitoring negative, invalid,
 or determinate harm remains an anytime safety withdrawal. Older identities remain
 immutable, non-authorizing history.
+Metric v9 and UFC behavior contract v10 separate the one-day/10-per-arm Shadow
+integrity admission from those unchanged economic promotion gates. This starts a
+fresh cohort; the integrity verdict remains `insufficient_data` and grants no
+automatic authority or contribution claim.
+Metric v10 and UFC behavior contract v11 retire the IID outcome bootstrap. Adjacent
+10-minute scanner decisions may share most of a 1h/4h market path, so the current
+confirmatory contract conditions on the prospectively randomized assignment count
+and tests the sharp no-assignment-effect null without assuming independent outcomes.
+The legacy confidence fields remain empty rather than relabelling an invalid interval.
 
 ### Verdict meaning
 
 | Verdict | Meaning |
 |---|---|
-| `insufficient_data` | Sample/time/actual-intervention requirement is unmet, or the shadow cohort had no actual intervention |
+| `insufficient_data` | Sample/time/actual-intervention requirement is unmet, or Shadow has only integrity readiness and no actual intervention |
 | `invalid` | Identity, provenance, or economic evidence cannot support comparison |
 | `negative` | Treatment trails control or breaches a determinate harm gate |
 | `neutral` | Effect is practically small or confidence remains inconclusive |

@@ -18,7 +18,7 @@ _FAMILY = "momentum"
 _DIRECTION = "long"
 _MARKET_TYPE = "perp"
 _CALIBRATION_KEY = f"{_FAMILY}:{_DIRECTION}:{_MARKET_TYPE}"
-_METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v6"
+_METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v10"
 
 
 @pytest.mark.anyio
