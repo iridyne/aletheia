@@ -34,6 +34,10 @@ Research files are evidence, audits, and explorations. They can guide work but d
 - [TickFlow Wave A implementation evidence — 2026-08-09](explorations/TICKFLOW_WAVE_A_IMPLEMENTATION_EVIDENCE_2026-08-09.md)
   records the nine implemented small boundaries, schema-v15 retry identity,
   focused verification, preserved invariants, and explicit remaining ceilings.
+- [TickFlow Wave B-01 semantic data-state evidence — 2026-08-09](explorations/TICKFLOW_WAVE_B_01_SEMANTIC_DATA_STATE_EVIDENCE_2026-08-09.md)
+  records the shared dashboard presentation vocabulary, the first explicit
+  DataTable consumer, focused verification, and tables intentionally left for
+  endpoint-by-endpoint migration.
 
 ## Agent Rule
 

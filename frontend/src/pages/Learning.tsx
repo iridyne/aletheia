@@ -566,6 +566,7 @@ export function KnowledgeTab() {
   const isGuardCandidates = tab === 'guardCandidates'
   const isGuardRows = isGuards || isGuardCandidates
   const rows = isLessons ? (data as unknown as LessonRow[]) : isGuardRows ? (data as unknown as GuardRow[]) : (data as KnowledgeItem[])
+  const tableState = activeState === 'available' && rows.length === 0 ? 'empty' : activeState
 
   const q0 = useQuery({ queryKey: ['knowledge', KB_TABS[0].key], queryFn: KB_TABS[0].fn, staleTime: 60_000 })
   const q1 = useQuery({ queryKey: ['knowledge', KB_TABS[1].key], queryFn: KB_TABS[1].fn, staleTime: 60_000 })
@@ -623,20 +624,18 @@ export function KnowledgeTab() {
         ))}
       </div>
       <Card>
-        {activeState !== 'available' && <LearningReadMessage state={activeState} subject={active.label} />}
-        {activeState !== 'loading' && activeState !== 'unavailable' && (
-          isLessons ? (
-            <DataTable data={rows as LessonRow[]} columns={lessonColumns} onRowClick={setSelectedLesson} emptyMessage="No lessons yet." />
-          ) : isGuardRows ? (
-            <DataTable
-              data={rows as GuardRow[]}
-              columns={guardColumns}
-              onRowClick={setSelectedGuard}
-              emptyMessage={isGuardCandidates ? 'No guard candidates awaiting review.' : 'No active guards yet.'}
-            />
-          ) : (
-            <DataTable data={rows as KnowledgeItem[]} columns={kbColumns} onRowClick={setSelected} emptyMessage={`No ${active.label.toLowerCase()} yet.`} />
-          )
+        {isLessons ? (
+          <DataTable state={tableState} data={rows as LessonRow[]} columns={lessonColumns} onRowClick={setSelectedLesson} emptyMessage="No lessons yet." />
+        ) : isGuardRows ? (
+          <DataTable
+            state={tableState}
+            data={rows as GuardRow[]}
+            columns={guardColumns}
+            onRowClick={setSelectedGuard}
+            emptyMessage={isGuardCandidates ? 'No guard candidates awaiting review.' : 'No active guards yet.'}
+          />
+        ) : (
+          <DataTable state={tableState} data={rows as KnowledgeItem[]} columns={kbColumns} onRowClick={setSelected} emptyMessage={`No ${active.label.toLowerCase()} yet.`} />
         )}
       </Card>
 

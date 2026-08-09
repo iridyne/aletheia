@@ -30,6 +30,10 @@ physical tokenomics attempts.
 Market-data computation and storage lifecycle are owned by the
 [Technical Analysis and OHLCV Tiering Contract](technical_analysis_contract.md).
 
+Dashboard empty, stale, partial, unavailable, configuration, and permission
+presentation semantics are owned by the
+[Dashboard Data Presentation Contract](dashboard_data_presentation_contract.md).
+
 The [Universe Twin Shadow Evidence Contract](universe_twin_shadow_contract.md)
 owns the current non-authoritative continuous-score evidence, allocation replay,
 identity, persistence, and retention boundary.

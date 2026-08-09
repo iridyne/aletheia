@@ -11,6 +11,7 @@ import {
 } from '@tanstack/react-table'
 import { useEffect, useState } from 'react'
 import { humanize } from '../lib/format'
+import { DataStateMessage, type DataState } from './DataState'
 
 interface DataTableProps<T> {
   data: T[]
@@ -24,6 +25,10 @@ interface DataTableProps<T> {
   tableId?: string
   /** Force true horizontal scroll (cells never wrap) — for wide, many-column tables. */
   noWrap?: boolean
+  /** Explicit presentation truth. Stale/partial retain rows; blocking states do not. */
+  state?: DataState
+  /** State-specific copy supplied by the caller when the default is not precise enough. */
+  stateMessage?: string
 }
 
 function loadVisibility(tableId?: string): VisibilityState {
@@ -38,7 +43,7 @@ function loadVisibility(tableId?: string): VisibilityState {
 
 export function DataTable<T>({
   data, columns, onRowClick, pageSize = 25, emptyMessage = 'No data.',
-  columnToggle = false, tableId, noWrap = true,
+  columnToggle = false, tableId, noWrap = true, state, stateMessage,
 }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([])
   const [globalFilter, setGlobalFilter] = useState('')
@@ -67,9 +72,14 @@ export function DataTable<T>({
     initialState: { pagination: { pageSize } },
   })
 
-  if (data.length === 0) {
-    return <p className="text-muted">{emptyMessage}</p>
-  }
+  const resolvedState: DataState = state ?? (data.length === 0 ? 'empty' : 'available')
+  const visibleState = resolvedState === 'available' && data.length === 0 ? 'empty' : resolvedState
+  const stateNotice = visibleState === 'available'
+    ? null
+    : <DataStateMessage state={visibleState} message={stateMessage ?? (visibleState === 'empty' ? emptyMessage : undefined)} />
+  const showTable = data.length > 0 && ['available', 'stale', 'partial'].includes(visibleState)
+
+  if (!showTable) return stateNotice
 
   const pageCount = table.getPageCount()
   const currentPage = table.getState().pagination.pageIndex
@@ -77,6 +87,7 @@ export function DataTable<T>({
 
   return (
     <div>
+      {stateNotice}
       {showToolbar && (
         <div className="dt-toolbar">
           {data.length > pageSize ? (
