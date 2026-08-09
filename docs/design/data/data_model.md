@@ -243,8 +243,8 @@ and spec `AR-S08`.
 | `universe_members` | Assets in a universe snapshot | snapshot_id, symbol, market_type, rank, score, scanner_direction |
 | `universe_forward_outcomes` | Fixed-horizon selected-Universe-member economics; legacy mirror/fallback for contribution measurement, not the canonical full-arm source | outcome_candidate_key, venue, symbol, market_type, direction, horizon, gross_return_pct, directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, min_tradable_edge_pct, mfe_pct, mae_pct, settlement_price_source, cost_model_version |
 | `universe_policies` | Universe selection rules | policy_name, filters (JSON), priority |
-| `universe_twin_shadow_batches` | Non-authoritative continuous-score replay identity, sampled at most once per 55min | scanner_run_id, behavior/policy/source/metric identities, allocator random state, blockers, batch_hash |
-| `universe_twin_shadow_records` | Compact complete-batch step/point/pessimistic comparison | scanner_run_id, candidate_index, candidate/feature/asset/instrument ids, ranks, selections, compact output JSON, allowlisted replay input JSON, record_hash |
+| `universe_twin_shadow_batches` | Non-authoritative prospective continuous-score comparison, sampled at most once per 55min | scanner_run_id, experiment/policy epoch/behavior/source/metric identities, scanner-run assignment arm/propensity/coefficient, control/treatment policy, 4h outcome contract, allocator replay state, blockers, batch_hash |
+| `universe_twin_shadow_records` | Compact complete-batch step/point/pessimistic comparison and exact outcome linkage | scanner_run_id, candidate_index, candidate/feature/asset/instrument ids, ranks, all three selections, assignment identity, assigned-policy selection, outcome_candidate_key, compact output JSON, allowlisted replay input JSON, record_hash |
 
 ### G-bis. Opportunity Filter Evidence (6 tables)
 
@@ -445,15 +445,13 @@ All models in `aletheia/storage/models.py`. Key mapping:
 7. Production apply holds the process and cross-process SQLite writer permit across ledger recheck, migration execution, and success recording. This is an upgrade-only critical section; the Gateway must not be serving normal writers during it.
 8. Pytest retains the in-memory blueprint optimization and records the same ledger rows in the cloned schema; test fixtures may continue to call the compatibility `run_migrations()` helper.
 9. Dataset-size-sensitive repair is never an implicit read/startup side effect. Schema v3 rebuilds `knowledge_fts` once as migration `20260806_0002_startup_dataset_boundary_v3` and installs indexes for startup reconciliation and windowed telemetry reads. Normal knowledge writes maintain FTS incrementally; later full rebuilds require the explicit `knowledge reindex` maintenance command or a new versioned migration.
-12. Schema v9 adds `positions.exit_plan_effective_at`, immutable `position_exit_plan_versions`, retained `position_protection_state`, and append-only `position_protection_triggers` through migration `20260808_0008_position_protection_state_v9`. It performs no Position backfill or activation and does not install an evaluator or close consumer.
-13. Schema v11 adds retained `exit_breakeven_shadow_assignments` and `exit_breakeven_shadow_outcomes` through migration `20260808_0010_exit_breakeven_shadow_v11`. It performs no historical backfill and grants no trading or Learning authority.
-14. Schema v12 rebuilds only `learning_inference_decisions` to admit immutable
-    `ufc-fixed-look/v2` plans while retaining every v1 row, foreign key, index,
-    write-once trigger, and no-delete trigger. Migration
-    `20260808_0011_learning_randomization_inference_v12` changes no exposure,
-    verdict, trading, Risk, Execution, or Live fact.
 10. Physical packing is outside the migration ledger. In particular, `market_ohlcv` rowid-to-`WITHOUT ROWID` conversion runs only inside explicit offline `data compact --apply`, after a verified backup and with the Gateway stopped; fresh deploy and normal Gateway startup never perform it.
 11. Schema v6 adds the content-free `inference_call_id` linkage columns through migration `20260806_0005_llm_inference_linkage_v6`. The LLM inference harness does not edit the frozen legacy baseline; databases that already received the columns from pre-ledger code are accepted idempotently.
+12. Schema v9 adds `positions.exit_plan_effective_at`, immutable `position_exit_plan_versions`, retained `position_protection_state`, and append-only `position_protection_triggers` through migration `20260808_0008_position_protection_state_v9`. It performs no Position backfill or activation and does not install an evaluator or close consumer.
+13. Schema v10 adds prospective fixed-look Learning inference decisions through migration `20260808_0009_learning_fixed_look_v10` without granting existing verdicts authority.
+14. Schema v11 adds retained `exit_breakeven_shadow_assignments` and `exit_breakeven_shadow_outcomes` through migration `20260808_0010_exit_breakeven_shadow_v11`. It performs no historical backfill and grants no trading or Learning authority.
+15. Schema v12 rebuilds only `learning_inference_decisions` to admit immutable `ufc-fixed-look/v2` plans while retaining every v1 row, foreign key, index, write-once trigger, and no-delete trigger. Migration `20260808_0011_learning_randomization_inference_v12` changes no exposure, verdict, trading, Risk, Execution, or Live fact.
+16. Schema v13 adds prospective Universe Twin experiment, assignment, and canonical outcome-linkage columns through migration `20260809_0012_universe_twin_prospective_v13`. It preserves step-v1 authority, records no Learning exposure or verdict, and installs no Paper, Risk, Execution, or Live consumer.
 
 Automatic readers must use indexed, bounded keys or a declared retained evidence window. User-requested export/backup may traverse a complete dataset, but it must stream through a cursor/disk-backed archive rather than materialize a table or archive in process memory.
 
@@ -490,7 +488,7 @@ current defaults; see `RETENTION_POLICY.md` for rationale and cascade details.
 | `universe_forward_outcomes` | 30d + earliest-exposure guard for active open experiments | `prune_universe_forward_outcomes` |
 | `universe_snapshots` / `universe_members` | 30d + protected fallback-outcome guard | `prune_universe_snapshots` (cascade) |
 | `universe_scanner_runs` | 30d | `prune_universe_scanner_runs` |
-| `universe_twin_shadow_batches` / `universe_twin_shadow_records` | fixed 30d via `universe_scanner_runs_days`; ≤1 batch/55min, records before batches, no Twin-owned outcomes or Learning clean-window extension | `prune_universe_twin_shadow_evidence` |
+| `universe_twin_shadow_batches` / `universe_twin_shadow_records` | fixed 30d via `universe_scanner_runs_days`; ≤1 batch/55min, records before batches, prospective 4h outcomes live in canonical `filter_candidate_outcomes`, no Learning clean-window extension | `prune_universe_twin_shadow_evidence` |
 | `market_ohlcv` | 1m=2d / 5m=7d / 15m=30d / 1h=90d / 4h=180d / 1d=730d + hard drop `exchange='legacy_unknown'` | `prune_market_ohlcv` (new) |
 | `market_regimes` | 60d + skip-if-unchanged dedup | `prune_market_regimes` (new) |
 | `filter_decision_batches` | 30d (contract) | `prune_filter_decision_batches` |

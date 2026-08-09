@@ -111,6 +111,12 @@ async def settle_due_filter_outcomes(
         ("universe_family_calibration",),
         behavior_contract_hash=current_behavior_contract_hash,
     ) if current_behavior_contract_hash else set()
+    # The prospective continuous-score comparison is not a Learning treatment,
+    # but its exact 4h rows must not starve behind the historical canonical
+    # backlog. This changes queue order only; it does not change settlement
+    # economics, experiment assignment, or scorer authority.
+    twin_shadow_keys = repo.list_open_universe_twin_outcome_candidate_keys()
+    current_behavior_keys |= twin_shadow_keys
     priority_pending, priority_truncated = repo.list_pending_filter_candidate_outcomes_for_keys(
         now_iso,
         current_behavior_keys,
@@ -119,7 +125,7 @@ async def settle_due_filter_outcomes(
     )
     all_priority_keys = repo.list_open_learning_outcome_candidate_keys(
         ("universe_family_calibration",),
-    )
+    ) | twin_shadow_keys
     older_behavior_keys = all_priority_keys - current_behavior_keys
     remaining_priority_rows = max(0, max_rows - len(priority_pending))
     if remaining_priority_rows and older_behavior_keys:

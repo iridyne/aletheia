@@ -18,12 +18,14 @@ def setup_env(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
     from aletheia.storage.migrations import run_migrations
+    from aletheia.update import git_ops
     sq.reset_db()
     sq._db_conn = None
     conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
+    monkeypatch.setattr(git_ops, "current_branch", lambda: "master")
 
 
 class _FakeProc:
@@ -103,6 +105,24 @@ def test_apply_refuses_dirty_worktree(tmp_path, monkeypatch):
 
     from aletheia.files.jsonl import read_jsonl
     assert any(e.get("event_type") == "update_blocked" for e in read_jsonl("audit.jsonl"))
+
+
+def test_apply_refuses_source_checkout_on_wrong_branch(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier, git_ops
+
+    monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
+    monkeypatch.setattr(git_ops, "current_branch", lambda: "feature/experiment")
+    pulled = {"called": False}
+    monkeypatch.setattr(
+        git_ops, "pull", lambda branch="master": pulled.__setitem__("called", True)
+    )
+
+    result = applier.apply_update()
+
+    assert result["applied"] is False
+    assert result["reason"] == "wrong_branch"
+    assert pulled["called"] is False
 
 
 def test_apply_skips_deps_when_pyproject_unchanged(tmp_path, monkeypatch):
@@ -295,6 +315,26 @@ def test_apply_restart_builds_changed_frontend_and_restarts(tmp_path, monkeypatc
     assert result["frontend_built"] is True
     assert result["restart_completed"] is True
     assert calls == ["build", "activate", "restart"]
+
+
+def test_apply_restart_discards_consumed_dashboard_backup(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier
+
+    _stub_clean_pull(monkeypatch)
+    monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
+    backup = tmp_path / ".dashboard_static-previous"
+    backup.mkdir()
+    (backup / "old.html").write_text("old dashboard")
+    monkeypatch.setattr(applier, "_PREVIOUS_DASHBOARD_STATIC", backup)
+    monkeypatch.setattr(applier, "_build_frontend", lambda: {"ok": True})
+    monkeypatch.setattr(applier, "_activate_frontend_build", lambda: True)
+    monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": True})
+
+    result = applier.apply_update(restart=True)
+
+    assert result["applied"] is True
+    assert not backup.exists()
 
 
 def test_apply_restart_restores_old_release_on_restart_failure(tmp_path, monkeypatch):

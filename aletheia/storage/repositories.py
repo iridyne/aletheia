@@ -5959,10 +5959,96 @@ def universe_twin_shadow_capture_due(
     )
 
 
+def _validate_universe_twin_prospective_bundle(
+    batch: UniverseTwinShadowBatch,
+    evidence: Sequence[UniverseTwinShadowEvidence],
+    outcome_rows: Sequence[Mapping],
+) -> None:
+    """Reject partial or internally inconsistent prospective identities."""
+
+    prospective_markers = (
+        "experiment_id",
+        "policy_epoch_id",
+        "behavior_contract_hash",
+        "assignment_unit_key",
+        "assignment_contract_version",
+        "assignment_arm",
+        "assignment_propensity",
+        "treatment_coefficient",
+        "treatment_policy",
+        "control_policy",
+        "primary_horizon",
+        "outcome_contract_version",
+    )
+    prospective = bool(outcome_rows) or any(
+        getattr(batch, field) is not None for field in prospective_markers
+    )
+    if not prospective:
+        return
+    required_batch_fields = (
+        "experiment_id",
+        "policy_epoch_id",
+        "behavior_contract_hash",
+        "assignment_unit_key",
+        "assignment_contract_version",
+        "assignment_arm",
+        "assignment_propensity",
+        "treatment_coefficient",
+        "treatment_policy",
+        "control_policy",
+        "primary_horizon",
+        "outcome_contract_version",
+        "metric_version",
+    )
+    if any(getattr(batch, field) is None for field in required_batch_fields):
+        raise ValueError("universe_twin_shadow_experiment_identity_incomplete")
+    if batch.assignment_unit_key != batch.scanner_run_id:
+        raise ValueError("universe_twin_shadow_assignment_unit_mismatch")
+    if batch.assignment_arm not in {"treatment", "control"}:
+        raise ValueError("universe_twin_shadow_assignment_arm_invalid")
+    if (
+        batch.assignment_propensity is None
+        or not 0 < batch.assignment_propensity <= 1
+    ):
+        raise ValueError("universe_twin_shadow_assignment_propensity_invalid")
+    expected_coefficient = 1.0 if batch.assignment_arm == "treatment" else 0.0
+    if batch.treatment_coefficient != expected_coefficient:
+        raise ValueError("universe_twin_shadow_treatment_coefficient_mismatch")
+    if batch.promotion_eligible:
+        raise ValueError("universe_twin_shadow_promotion_not_allowed")
+    if len(outcome_rows) != len(evidence):
+        raise ValueError("universe_twin_shadow_outcome_count_mismatch")
+
+    record_identity_fields = (
+        "experiment_id",
+        "policy_epoch_id",
+        "behavior_contract_hash",
+        "availability_profile_id",
+        "assignment_unit_key",
+        "assignment_arm",
+        "assignment_propensity",
+        "treatment_coefficient",
+        "primary_horizon",
+        "outcome_contract_version",
+        "metric_version",
+    )
+    for item in evidence:
+        if any(
+            getattr(item, field) != getattr(batch, field)
+            for field in record_identity_fields
+        ):
+            raise ValueError("universe_twin_shadow_record_experiment_identity_mismatch")
+        if item.shadow_authority_applied:
+            raise ValueError("universe_twin_shadow_authority_not_allowed")
+        if item.promotion_eligible:
+            raise ValueError("universe_twin_shadow_promotion_not_allowed")
+
+
 def insert_universe_twin_shadow_bundle(
     batch: UniverseTwinShadowBatch,
     evidence: Sequence[UniverseTwinShadowEvidence],
     *,
+    outcomes: Sequence | None = None,
     min_interval_sec: int = 55 * 60,
 ) -> int:
     """Atomically persist one immutable, cadence-bounded diagnostic batch.
@@ -5975,6 +6061,7 @@ def insert_universe_twin_shadow_bundle(
 
     batch_data = batch.model_dump()
     evidence_rows = [item.model_dump() for item in evidence]
+    outcome_rows = [item.model_dump() for item in (outcomes or ())]
     if batch.candidate_count != len(evidence_rows):
         raise ValueError("universe_twin_shadow_candidate_count_mismatch")
     if any(item.scanner_run_id != batch.scanner_run_id for item in evidence):
@@ -5983,6 +6070,30 @@ def insert_universe_twin_shadow_bundle(
         raise ValueError("universe_twin_shadow_candidate_index_not_contiguous")
     if any(item.captured_at != batch.captured_at for item in evidence):
         raise ValueError("universe_twin_shadow_capture_time_mismatch")
+    _validate_universe_twin_prospective_bundle(batch, evidence, outcome_rows)
+    if outcome_rows:
+        outcome_by_key = {
+            str(row["outcome_candidate_key"]): row for row in outcome_rows
+        }
+        if len(outcome_by_key) != len(outcome_rows):
+            raise ValueError("universe_twin_shadow_duplicate_outcome_identity")
+        for item in evidence:
+            if not item.outcome_candidate_key:
+                raise ValueError("universe_twin_shadow_record_outcome_missing")
+            row = outcome_by_key.get(item.outcome_candidate_key)
+            if row is None:
+                raise ValueError("universe_twin_shadow_record_outcome_mismatch")
+            if row.get("horizon") != item.primary_horizon:
+                raise ValueError("universe_twin_shadow_outcome_horizon_mismatch")
+            if row.get("entry_ts") != batch.captured_at:
+                raise ValueError("universe_twin_shadow_outcome_entry_time_mismatch")
+            selected = row.get("allocation_selected")
+            if (
+                selected is None
+                or item.assigned_policy_selected is None
+                or bool(selected) != bool(item.assigned_policy_selected)
+            ):
+                raise ValueError("universe_twin_shadow_outcome_selection_mismatch")
     db = get_db()
     with transaction(immediate=True):
         stored_batch = db.execute(
@@ -5992,6 +6103,7 @@ def insert_universe_twin_shadow_bundle(
         if stored_batch is not None:
             if stored_batch["batch_hash"] != batch.batch_hash:
                 raise ValueError("universe_twin_shadow_batch_identity_conflict")
+            _assert_twin_outcomes_match(outcome_rows)
             return 0
 
         latest = db.execute(
@@ -6036,7 +6148,51 @@ def insert_universe_twin_shadow_bundle(
                 ).fetchone()
                 if stored is None or stored["record_hash"] != item.record_hash:
                     raise ValueError("universe_twin_shadow_record_identity_conflict")
+        if outcome_rows:
+            _assert_twin_outcomes_match(outcome_rows, allow_missing=True)
+            insert_filter_candidate_outcomes_batch(list(outcomes or ()))
+            _assert_twin_outcomes_match(outcome_rows)
     return inserted_evidence
+
+
+_TWIN_OUTCOME_IMMUTABLE_FIELDS = (
+    "id",
+    "outcome_candidate_key",
+    "venue",
+    "symbol",
+    "market_type",
+    "direction",
+    "scanner_family",
+    "regime_tag",
+    "horizon",
+    "allocation_selected",
+    "entry_price_usd",
+    "entry_spread_bps",
+    "funding_rate_at_entry",
+    "entry_ts",
+    "due_at",
+)
+
+
+def _assert_twin_outcomes_match(
+    expected_rows: Sequence[Mapping],
+    *,
+    allow_missing: bool = False,
+) -> None:
+    """Reject identity reuse while allowing legitimate later settlement fields."""
+
+    db = get_db()
+    for expected in expected_rows:
+        stored = db.execute(
+            "SELECT * FROM filter_candidate_outcomes WHERE id=?",
+            (expected["id"],),
+        ).fetchone()
+        if stored is None:
+            if allow_missing:
+                continue
+            raise ValueError("universe_twin_shadow_outcome_identity_conflict")
+        if any(stored[field] != expected.get(field) for field in _TWIN_OUTCOME_IMMUTABLE_FIELDS):
+            raise ValueError("universe_twin_shadow_outcome_identity_conflict")
 
 
 def get_universe_twin_shadow_batch(scanner_run_id: str) -> dict | None:
@@ -6541,6 +6697,35 @@ def list_open_learning_outcome_candidate_keys(
         str(row["outcome_candidate_key"])
         for row in rows
         if row["outcome_candidate_key"]
+    }
+
+
+def list_open_universe_twin_outcome_candidate_keys() -> set[str]:
+    """Return exact horizon-qualified keys for unsettled Task-6 outcomes.
+
+    Twin comparison outcomes are deliberately not Learning exposures, so the
+    ordinary experiment join cannot discover them. A policy rotation must not
+    strand the closing epoch's final 4h rows behind a historical canonical
+    backlog, so pending outcome state—not open-epoch state—is authoritative.
+    """
+
+    rows = get_db().execute(
+        "SELECT DISTINCT r.outcome_candidate_key, r.primary_horizon "
+        "FROM universe_twin_shadow_records r "
+        "JOIN universe_twin_shadow_batches b "
+        "  ON b.scanner_run_id=r.scanner_run_id "
+        "JOIN filter_candidate_outcomes o "
+        "  ON o.outcome_candidate_key=r.outcome_candidate_key "
+        " AND o.horizon=r.primary_horizon "
+        "WHERE b.experiment_id IS NOT NULL "
+        "AND b.policy_epoch_id IS NOT NULL "
+        "AND o.status='pending' "
+        "AND r.outcome_candidate_key IS NOT NULL "
+        "AND r.primary_horizon IS NOT NULL"
+    ).fetchall()
+    return {
+        f"{row['outcome_candidate_key']}:{row['primary_horizon']}"
+        for row in rows
     }
 
 
@@ -8265,9 +8450,10 @@ def prune_universe_twin_shadow_evidence(
 ) -> int:
     """Prune sampled diagnostic evidence after its fixed retention window.
 
-    Records are deleted before their logical parent batch. Twin persistence
-    owns no fixed-horizon outcomes or Learning evidence, so open experiments
-    must not extend its lifetime.
+    Records are deleted before their logical parent batch. Canonical
+    fixed-horizon outcomes follow their own retention, and Twin writes no
+    Learning exposure or verdict, so open experiments do not extend this
+    evidence lifetime.
     """
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()

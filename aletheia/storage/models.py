@@ -1407,11 +1407,22 @@ class UniversePolicy(BaseModel):
 class UniverseTwinShadowBatch(BaseModel):
     scanner_run_id: str
     authority_snapshot_id: str | None = None
+    experiment_id: str | None = None
     record_version: str
     authority_behavior_version: str
     shadow_behavior_version: str
     allocation_replay_contract: str
     policy_epoch_id: str | None = None
+    behavior_contract_hash: str | None = None
+    assignment_unit_key: str | None = None
+    assignment_contract_version: str | None = None
+    assignment_arm: str | None = None
+    assignment_propensity: float | None = None
+    treatment_coefficient: float | None = None
+    treatment_policy: str | None = None
+    control_policy: str | None = None
+    primary_horizon: str | None = None
+    outcome_contract_version: str | None = None
     feature_source_fingerprint: str
     availability_profile_id: str | None = None
     metric_version: str
@@ -1434,6 +1445,18 @@ class UniverseTwinShadowEvidence(BaseModel):
     asset_id: str | None = None
     symbol: str
     market_type: str
+    experiment_id: str | None = None
+    policy_epoch_id: str | None = None
+    behavior_contract_hash: str | None = None
+    availability_profile_id: str | None = None
+    assignment_unit_key: str | None = None
+    assignment_arm: str | None = None
+    assignment_propensity: float | None = None
+    treatment_coefficient: float | None = None
+    primary_horizon: str | None = None
+    outcome_contract_version: str | None = None
+    metric_version: str | None = None
+    outcome_candidate_key: str | None = None
     authority_total_score: float
     shadow_point_score: float | None = None
     shadow_pessimistic_score: float | None = None
@@ -1444,6 +1467,7 @@ class UniverseTwinShadowEvidence(BaseModel):
     authority_selected: bool | None = None
     shadow_point_selected: bool | None = None
     shadow_pessimistic_selected: bool | None = None
+    assigned_policy_selected: bool | None = None
     shadow_authority_applied: bool = False
     promotion_eligible: bool = False
     shadow_valid: bool = False

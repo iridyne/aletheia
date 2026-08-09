@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v12"
+SCHEMA_VERSION = "aletheia-sqlite-v13"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4212,6 +4212,39 @@ _LEARNING_RANDOMIZATION_INFERENCE_CHECKSUM = hashlib.sha256(
 ).hexdigest()
 
 
+_UNIVERSE_TWIN_PROSPECTIVE_COLUMNS = (
+    ("experiment_id", "universe_twin_shadow_batches", "TEXT"),
+    ("behavior_contract_hash", "universe_twin_shadow_batches", "TEXT"),
+    ("assignment_unit_key", "universe_twin_shadow_batches", "TEXT"),
+    ("assignment_contract_version", "universe_twin_shadow_batches", "TEXT"),
+    ("assignment_arm", "universe_twin_shadow_batches", "TEXT"),
+    ("assignment_propensity", "universe_twin_shadow_batches", "REAL"),
+    ("treatment_coefficient", "universe_twin_shadow_batches", "REAL"),
+    ("treatment_policy", "universe_twin_shadow_batches", "TEXT"),
+    ("control_policy", "universe_twin_shadow_batches", "TEXT"),
+    ("primary_horizon", "universe_twin_shadow_batches", "TEXT"),
+    ("outcome_contract_version", "universe_twin_shadow_batches", "TEXT"),
+    ("experiment_id", "universe_twin_shadow_records", "TEXT"),
+    ("policy_epoch_id", "universe_twin_shadow_records", "TEXT"),
+    ("behavior_contract_hash", "universe_twin_shadow_records", "TEXT"),
+    ("availability_profile_id", "universe_twin_shadow_records", "TEXT"),
+    ("assignment_unit_key", "universe_twin_shadow_records", "TEXT"),
+    ("assignment_arm", "universe_twin_shadow_records", "TEXT"),
+    ("assignment_propensity", "universe_twin_shadow_records", "REAL"),
+    ("treatment_coefficient", "universe_twin_shadow_records", "REAL"),
+    ("primary_horizon", "universe_twin_shadow_records", "TEXT"),
+    ("outcome_contract_version", "universe_twin_shadow_records", "TEXT"),
+    ("metric_version", "universe_twin_shadow_records", "TEXT"),
+    ("outcome_candidate_key", "universe_twin_shadow_records", "TEXT"),
+    ("assigned_policy_selected", "universe_twin_shadow_records", "INTEGER"),
+)
+_UNIVERSE_TWIN_PROSPECTIVE_CHECKSUM = hashlib.sha256(
+    (repr(_UNIVERSE_TWIN_PROSPECTIVE_COLUMNS) + "\nadditive_columns_and_indexes_v2_atomic").encode(
+        "utf-8"
+    )
+).hexdigest()
+
+
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
 
@@ -4274,6 +4307,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260808_0011_learning_randomization_inference_v12": (
         "conditional-randomization Learning inference contract"
+    ),
+    "20260809_0012_universe_twin_prospective_v13": (
+        "prospective Shadow policy identity, assignment, and outcome linkage"
     ),
 }
 
@@ -4518,6 +4554,36 @@ def _apply_learning_randomization_inference_v12(db: sqlite3.Connection) -> None:
         raise
 
 
+def _apply_universe_twin_prospective_v13(db: sqlite3.Connection) -> None:
+    """Add prospective identities without changing step-v1 authority."""
+
+    savepoint = "universe_twin_prospective_v13"
+    db.execute(f"SAVEPOINT {savepoint}")
+    try:
+        for column, table, column_type in _UNIVERSE_TWIN_PROSPECTIVE_COLUMNS:
+            existing = {
+                str(row[1])
+                for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if column not in existing:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_universe_twin_shadow_batches_epoch "
+            "ON universe_twin_shadow_batches(policy_epoch_id, captured_at)"
+        )
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_universe_twin_shadow_records_outcome "
+            "ON universe_twin_shadow_records(outcome_candidate_key) "
+            "WHERE outcome_candidate_key IS NOT NULL"
+        )
+        db.execute("PRAGMA optimize")
+        db.execute(f"RELEASE SAVEPOINT {savepoint}")
+    except sqlite3.Error:
+        db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+        db.execute(f"RELEASE SAVEPOINT {savepoint}")
+        raise
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -4582,8 +4648,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260808_0011_learning_randomization_inference_v12",
         checksum=_LEARNING_RANDOMIZATION_INFERENCE_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v12",
         apply=_apply_learning_randomization_inference_v12,
+    ),
+    MigrationStep(
+        migration_id="20260809_0012_universe_twin_prospective_v13",
+        checksum=_UNIVERSE_TWIN_PROSPECTIVE_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_universe_twin_prospective_v13,
     ),
 )
 

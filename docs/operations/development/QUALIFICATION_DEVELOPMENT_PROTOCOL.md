@@ -147,6 +147,38 @@ Preview 无权读取凭证，因此不参与该所有权竞争。
 - 普通 PR 可以继续合并，但正在观察的 Runtime 保持 pinned；
 - 不得让 autostart、update、Worktree hook 或 Agent 自动把 qualification host 推到最新 master。
 
+#### 6.3.1 稳定实例与实验 candidate 的代码身份
+
+- 没有正在进行的显式 Qualification 实验时，Stable Runtime 只部署受保护
+  `master` 上由 owner 选定的已审查 exact SHA。“跟随 master”表示人工提升到某个
+  checkpoint，不是自动追赶每一次提交。
+- 未合并分支、PR head 或 composite/cherry-pick commit 只能用于显式的实验
+  candidate；不得将其称为普通 Stable Runtime，也不得因分支名包含
+  `runtime`、`release` 或 `qualification` 就认定已获准入。
+- 部署非 `master` candidate 前，owner 必须在本地运行事实中记录：关联 PR/
+  commit 集合、实验假设、允许的 paper/shadow 权限、必需 CI 状态或明确 waiver、
+  observation start、成功/失败阈值与最迟结束时间。缺任一项就不部署。
+- candidate 的 PR 合并、关闭、被取代或观察窗口到期后，owner 必须显式选择：
+  提升对应 `master` SHA 并开启新窗口，或回滚到上一个已批准 `master` SHA。
+  不得让实验分支无期限承担默认稳定服务。
+- 每次切换 exact SHA 都是新的 build identity；按 §8.2 重建 Runtime/session provenance
+  和 observation window，不继承旧 build 的 cohort。
+
+### 6.4 Source checkout 的受控更新
+
+`uv run ato update apply --yes` 是 source checkout 的人类触发更新入口，默认会构建
+dashboard、smoke 校验并重启 Gateway。它不是 PR merge、也不是 Qualification admission。
+
+- 只能在 owner 的干净 source checkout 上运行，且当前分支必须等于配置的
+  `update.branch`；Worktree、feature branch、detached HEAD 都必须拒绝；
+- 更新仅允许 `origin/<update.branch>` 的 fast-forward。ahead、diverged 或本地 composite
+  commit 不是“可更新”状态：停止 `update apply`，由 owner 先选择并解决 Git 身份；
+- 成功输出的 commit 仍须以 Runtime 的 `boot_commit == current_commit`、Gateway status 和
+  doctor/provenance 复核。一次新 build 的观察窗口从首次 eligible exposure 起算，不能把
+  重启时间或旧 cohort 当作新证据；
+- source 更新临时替换 dashboard static assets；只有 Gateway readiness 成功后才清理旧静态
+  备份。不得把 source-checkout 临时物或 packaged-runtime rollback backup 混为一谈。
+
 ## 7. 高速开发流程
 
 ### 7.1 开始一个非平凡任务
