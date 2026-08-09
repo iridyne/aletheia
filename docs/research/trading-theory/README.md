@@ -26,6 +26,21 @@ name, persuasive chart, community example, or Paper result is not Alpha proof.
 4. [Evidence and AI Injection Policy](04_evidence_and_ai_injection_policy.md)
    defines evidence grades, time alignment, compact context design, and the
    observation-to-decision promotion path.
+5. [LLM Context and Tokenomics Alignment](05_llm_context_and_tokenomics_alignment.md)
+   maps technical facts onto the existing unified inference harness and its
+   content-free token, retry, fallback, and schema telemetry.
+6. [Quantitative Market-Structure Methods](06_quantitative_market_structure_methods.md)
+   identifies causal primitives that can be reused from academic work and
+   separates them from unstandardized ICT/SMC names.
+7. [Local OHLCV and Profile Feasibility](07_local_ohlcv_profile_feasibility.md)
+   audits the local candle lifecycle and states what kind of profile can and
+   cannot be derived from it.
+8. [Hyperliquid Public-Data Path](08_hyperliquid_public_data_path.md)
+   records current integration coverage and a bounded, zero-credential path to
+   trades, L2, and candles without changing execution authority.
+9. [Technical-Context Evaluation Protocol](09_technical_context_evaluation_protocol.md)
+   turns context selection into an offline paired evaluation followed, only if
+   admitted, by Shadow integrity and Paper economic stages.
 
 ## Shared vocabulary rule
 
