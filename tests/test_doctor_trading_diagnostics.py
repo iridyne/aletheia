@@ -49,6 +49,7 @@ def test_doctor_json_deep_includes_compact_trading_diagnostics():
     assert "main_bottleneck" in trading["alpha"]
     assert "exit_paired_evidence" in trading["alpha"]
     assert "risk_policy_evidence" in trading["alpha"]
+    assert "execution_cost_evidence" in trading["alpha"]
     assert "main_choke_point" in trading["funnel"]
     assert "main_sizing_bottleneck" in trading["sizing"]
     assert "missing_counts" in trading["thesis"]

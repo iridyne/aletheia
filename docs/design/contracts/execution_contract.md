@@ -3,7 +3,7 @@
 > **角色**:定义订单从 proposal 到交易所的完整通路,及其原子性/幂等/对账保证。
 > **基线**:代码为底(file:line),意图差距标 ⚠️;冲突时文档为准。
 > **不变式来源**:[trust_and_change_control §1, §6.3](../../governance/policies/trust_and_change_control.md)。
-> Last updated: 2026-08-08 · 维护者:Aletheia Dev
+> Last updated: 2026-08-09 · 维护者:Aletheia Dev
 
 ---
 
@@ -47,7 +47,7 @@ durable close client identity。入场 RiskDecision 不能被复制到平仓单�
 |----|------|--------|------|
 | Proposal | `TradeProposal(symbol, direction, quantity, price, execution_mode...)`; `agent_rationale.entry_parameters` carries the immutable final-value/source/reason snapshot for AI-originated entries | `pending/approved→executing→executed` / `→rejected` / `→error`; uncertain exchange submission uses `submission_unknown`, incomplete local paper materialization uses `materialization_missing` | `models.py:102` |
 | RiskDecision | 见 [risk_engine_contract §3](risk_engine_contract.md) | 不可变(一次写) | `models.py:125` |
-| Order | 入场：`Order(proposal_id, risk_decision_id, ...)`；平仓：`Order(proposal_id, position_id, close_reason, risk_decision_id=NULL, ...)` | `pending→submitted→filled` / `→error` | `models.py:136` |
+| Order | 入场：`Order(proposal_id, risk_decision_id, ...)`；平仓：`Order(proposal_id, position_id, close_reason, risk_decision_id=NULL, ...)`；新 Paper Order 另存 immutable `reference_price/source` 供只读成本配对 | `pending→submitted→filled` / `→error` | `models.py:136` |
 | Fill | `Fill(order_id, fill_price, fill_quantity, fee)` | 不可变 | `models.py:155` |
 | Position | `Position(symbol, direction, qty, entry_price, stop_price, take_profit_price, mode...)` + 入场环境(btc_entry_price/regime_tag) + `exit_reasoning` (actual close actor/source/trigger) | `open→closed` | `models.py:165` |
 
@@ -576,3 +576,22 @@ exchange-backed futures 仍只接受对应账户私有账单的 `broker_ledger`�
 关闭损益，也不得被解释为完整经济结果。Portfolio 的相关 realized 汇总同样返回 `NULL` 并附未完成
 数量，而不是用 0 提供一个看似完整的数字。spot 不产生 funding，关闭时明确写 `funding_cost=0`、
 `funding_source='not_applicable'`，不受此冻结影响。
+
+### 11.7 Native Paper paired execution-cost measurement（schema v16）
+
+新建 native `paper_internal` entry Order 在 slippage 前持久化
+`reference_price=Risk 已核验的 Proposal.price` 与来源
+`risk_verified_proposal_price`；close Order 在 slippage 前持久化 exact fresh
+mark 与来源 `paper_close_mark`。两个字段由数据库 trigger 禁止更新，不回填历史行，
+也不参与 broker 的提交价、Risk 判定或 Position 行为。
+
+`analytics.execution_contribution.build_execution_cost_contribution` 只读消费
+`eligible_strategy_outcomes`，并再次闭合 authoritative Risk、entry/close
+Order/Fill、Position、数量、费用、runtime/build/behavior provenance 与 funding。
+同一 Position 的 control 固定相同数量、方向、开平时点和 funding，但假设在两个
+reference price 零费用成交；treatment 使用真实 local Fill 与 fee。差值因此只归因于
+Paper 执行价格影响与费用，单位同时报告 `net_return_pct` 和 quote-currency PnL。
+
+该结果不证明当前 router 相对另一算法的正向价值，不覆盖 exchange/demo/live、legacy、
+partial close 或 adopted Position，不授权改变 slippage、fee、broker、Risk 或 Live 配置；
+任一身份/经济字段缺失均为 `insufficient_data`。

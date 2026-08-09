@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v15"
+SCHEMA_VERSION = "aletheia-sqlite-v16"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4259,6 +4259,28 @@ _TECHNICAL_SNAPSHOT_METADATA_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+_EXECUTION_REFERENCE_COLUMNS = (
+    ("reference_price", "orders", "REAL"),
+    ("reference_price_source", "orders", "TEXT"),
+)
+_EXECUTION_REFERENCE_SQL = """
+CREATE TRIGGER IF NOT EXISTS trg_orders_execution_reference_immutable
+BEFORE UPDATE OF reference_price, reference_price_source ON orders
+WHEN NEW.reference_price IS NOT OLD.reference_price
+  OR NEW.reference_price_source IS NOT OLD.reference_price_source
+BEGIN
+    SELECT RAISE(ABORT, 'Order execution reference is immutable');
+END;
+"""
+_EXECUTION_REFERENCE_CHECKSUM = hashlib.sha256(
+    (
+        repr(_EXECUTION_REFERENCE_COLUMNS)
+        + "\n"
+        + _EXECUTION_REFERENCE_SQL
+        + "\nadditive_execution_reference_v1"
+    ).encode("utf-8")
+).hexdigest()
+
 _SERENITY_RETRY_IDEMPOTENCY_SQL = (
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_serenity_retry_attempt_identity "
     "ON serenity_research_runs(parent_run_id, retry_count) "
@@ -4334,6 +4356,12 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260809_0012_universe_twin_prospective_v13": (
         "prospective Shadow policy identity, assignment, and outcome linkage"
+    ),
+    "20260809_0014_serenity_retry_idempotency_v15": (
+        "one newly-created Serenity retry per parent and retry count"
+    ),
+    "20260809_0015_execution_reference_v16": (
+        "immutable pre-fill reference prices for paired Paper execution accounting"
     ),
 }
 
@@ -4620,6 +4648,19 @@ def _apply_technical_snapshot_metadata_v14(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_execution_reference_v16(db: sqlite3.Connection) -> None:
+    """Persist immutable pre-fill references without changing order behavior."""
+
+    for column, table, column_type in _EXECUTION_REFERENCE_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.execute(_EXECUTION_REFERENCE_SQL)
+    db.execute("PRAGMA optimize")
+
+
 def _apply_serenity_retry_idempotency_v15(db: sqlite3.Connection) -> None:
     """Enforce one newly-created retry attempt per parent/count identity."""
 
@@ -4709,8 +4750,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260809_0014_serenity_retry_idempotency_v15",
         checksum=_SERENITY_RETRY_IDEMPOTENCY_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v15",
         apply=_apply_serenity_retry_idempotency_v15,
+    ),
+    MigrationStep(
+        migration_id="20260809_0015_execution_reference_v16",
+        checksum=_EXECUTION_REFERENCE_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_execution_reference_v16,
     ),
 )
 
