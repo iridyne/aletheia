@@ -4397,6 +4397,39 @@ def insert_serenity_research_run(r) -> None:
     _insert("serenity_research_runs", r.model_dump())
 
 
+def get_serenity_research_retry(parent_run_id: str, retry_count: int) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM serenity_research_runs "
+        "WHERE parent_run_id = ? AND retry_count = ? "
+        "ORDER BY created_at, id LIMIT 1",
+        (parent_run_id, retry_count),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def insert_serenity_research_retry(r) -> tuple[dict, bool]:
+    """Insert one durable retry identity, returning the winner on a race."""
+
+    retry_key = getattr(r, "idempotency_key", None)
+    if (
+        not r.parent_run_id
+        or not isinstance(retry_key, str)
+        or not retry_key.startswith("serenity-retry:")
+    ):
+        raise ValueError("Serenity retry identity is required")
+    try:
+        insert_serenity_research_run(r)
+    except sqlite3.IntegrityError:
+        existing = get_serenity_research_retry(r.parent_run_id, r.retry_count)
+        if existing is None:
+            raise
+        return existing, True
+    inserted = get_serenity_research_run(r.id)
+    if inserted is None:
+        raise RuntimeError("inserted Serenity retry is unavailable")
+    return inserted, False
+
+
 def get_serenity_research_run(run_id: str) -> dict | None:
     return _select_one("serenity_research_runs", run_id)
 

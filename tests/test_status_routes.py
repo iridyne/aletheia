@@ -117,7 +117,13 @@ async def test_status_reports_actual_scheduler_and_health(client, monkeypatch):
     monkeypatch.setattr(
         scheduler,
         "status_snapshot",
-        lambda: {"running": False, "state": "not_started", "job_count": 0},
+        lambda: {
+            "enabled": True,
+            "running": False,
+            "state": "not_started",
+            "job_count": 0,
+            "last_tick": "2026-08-09T00:00:00+00:00",
+        },
     )
     monkeypatch.setattr(
         health,
@@ -150,6 +156,13 @@ async def test_status_reports_actual_scheduler_and_health(client, monkeypatch):
     assert data["gateway_running"] is True
     assert data["scheduler_running"] is False
     assert data["scheduler_state"] == "not_started"
+    assert data["scheduler_enabled"] is True
+    assert data["scheduler_last_tick"] == "2026-08-09T00:00:00+00:00"
+    assert data["ohlcv_cache"]["max_entries"] == 256
+    assert any(
+        item["stage"] == "database_migration_verification"
+        for item in data["startup_failure_policy"]
+    )
     assert data["health_status"] == "degraded"
     assert data["health_issues"] == ["code_updated_pending_restart:old..new"]
     assert data["boot_commit"] == "old"

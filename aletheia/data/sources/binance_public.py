@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import logging
 
-from aletheia.data.providers import Candle, Ticker
+from aletheia.data.providers import (
+    OHLCVAttempt,
+    OHLCVResult,
+    Ticker,
+    classify_ohlcv_outcome,
+    parse_ohlcv_candle,
+)
 
 logger = logging.getLogger("aletheia.data.sources.binance_public")
 
@@ -73,7 +79,7 @@ class BinancePublicProvider:
         timeframe: str = "1h",
         limit: int = 100,
         since: int | None = None,
-    ) -> list[Candle]:
+    ) -> OHLCVResult:
         from aletheia.data.symbols import canonical_of, to_binance
         from aletheia.net import httpx_client
 
@@ -104,20 +110,29 @@ class BinancePublicProvider:
 
         record_venue_success(self.venue_name)
 
-        candles = [
-            Candle(
-                timestamp=int(row[0]),
-                open=float(row[1]),
-                high=float(row[2]),
-                low=float(row[3]),
-                close=float(row[4]),
-                volume=float(row[5]),
+        parsed = [
+            parse_ohlcv_candle(
+                row,
                 provider="binance_public",
                 exchange=self.venue_name,
             )
             for row in rows
         ]
-        return candles
+        candles = [candle for candle in parsed if candle is not None]
+        rejected = len(parsed) - len(candles)
+        attempt = OHLCVAttempt(
+            provider="binance_public",
+            outcome=classify_ohlcv_outcome(
+                accepted=len(candles), rejected=rejected, requested=limit,
+            ),
+            accepted=len(candles),
+            rejected=rejected,
+        )
+        if rejected:
+            logger.warning("ohlcv quality rejected %d/%d Binance row(s)", rejected, len(parsed))
+        return OHLCVResult(
+            candles, requested=limit, rejected=rejected, attempts=(attempt,),
+        )
 
     async def close(self) -> None:
         pass

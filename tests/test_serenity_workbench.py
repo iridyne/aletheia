@@ -239,6 +239,23 @@ async def test_retry_failed_run(client):
     data = resp.json()
     assert data["parentRunId"] == run.id
     assert data["status"] == "queued"
+    assert data["deduplicated"] is False
+
+
+@pytest.mark.anyio
+async def test_retry_failed_run_is_durable_and_idempotent(client):
+    run = SerenityResearchRun(status="failed", error_type="provider_rate_limit")
+    repo.insert_serenity_research_run(run)
+
+    with patch("aletheia.agents.research_worker.enqueue_research_run") as enqueue:
+        first = await client.post(f"/api/serenity/runs/{run.id}/retry")
+        second = await client.post(f"/api/serenity/runs/{run.id}/retry")
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["runId"] == second.json()["runId"]
+    assert second.json()["deduplicated"] is True
+    assert repo.get_serenity_research_retry(run.id, 1)["id"] == first.json()["runId"]
+    enqueue.assert_called_once_with(first.json()["runId"])
 
 
 @pytest.mark.anyio

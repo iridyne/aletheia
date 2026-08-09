@@ -42,7 +42,7 @@ export default function AccountEquityChart({ days }: Props) {
       timeScale: { timeVisible: true },
     })
     chartRef.current = chart
-    const series = chart.addLineSeries({ color: '#22d3ee', lineWidth: 2 })
+    const series = chart.addLineSeries({ color: chartTheme.accountEquityRaw, lineWidth: 2 })
     const seen = new Set<number>()
     series.setData(rows.filter(row => {
       const time = row.time as number
@@ -60,7 +60,7 @@ export default function AccountEquityChart({ days }: Props) {
         return {
           time: anchor.time,
           position: deposit ? 'belowBar' as const : 'aboveBar' as const,
-          color: deposit ? '#a3e635' : '#fb7185',
+          color: deposit ? chartTheme.capitalDeposit : chartTheme.capitalWithdrawal,
           shape: deposit ? 'arrowUp' as const : 'arrowDown' as const,
           text: `${deposit ? 'Deposit' : 'Withdrawal'} ${event.amount_usdt.toFixed(2)}`,
         }
@@ -68,7 +68,7 @@ export default function AccountEquityChart({ days }: Props) {
       .filter((marker): marker is NonNullable<typeof marker> => marker !== null)
     series.setMarkers(markers)
     if ((data?.capital_flow_markers?.length ?? 0) > 0) {
-      const adjustedSeries = chart.addLineSeries({ color: '#a3e635', lineWidth: 2 })
+      const adjustedSeries = chart.addLineSeries({ color: chartTheme.accountEquityAdjusted, lineWidth: 2 })
       const adjustedSeen = new Set<number>()
       adjustedSeries.setData(adjustedRows.filter(row => {
         const time = row.time as number
@@ -78,9 +78,12 @@ export default function AccountEquityChart({ days }: Props) {
       }))
     }
     chart.timeScale().fitContent()
-    const onResize = () => chart.applyOptions({ width: containerRef.current!.clientWidth })
-    window.addEventListener('resize', onResize)
-    return () => { window.removeEventListener('resize', onResize); chart.remove() }
+    const resizeObserver = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width
+      if (width) chart.applyOptions({ width })
+    })
+    resizeObserver.observe(containerRef.current)
+    return () => { resizeObserver.disconnect(); chart.remove() }
   }, [rows, adjustedRows, data?.capital_flow_markers?.length])
 
   if (isLoading) return <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.5 }}>Loading account equity...</div>

@@ -11,7 +11,9 @@ from pathlib import Path
 
 import pytest
 
+from aletheia.package_integrity import extract_archive, validate_release_dir
 from aletheia.packaged_process import translate_frozen_command
+from aletheia.update.packaged import PackagedUpdateError
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILDER_PATH = ROOT / "scripts" / "release" / "build_packaged_runtime.py"
@@ -84,6 +86,55 @@ def test_packaged_runtime_manifest_and_archive_are_deterministic(tmp_path):
         names = archive.getnames()
     assert any(name.endswith("/release-manifest.json") for name in names)
     assert not any("/.git/" in name or "/tests/" in name or "/.aletheia/" in name for name in names)
+
+    release_root = extract_archive(first.archive, tmp_path / "staging")
+    verified = validate_release_dir(
+        release_root,
+        expected_release_id="fixture-release",
+        expected_sha="a" * 40,
+    )
+    assert verified["release_id"] == "fixture-release"
+    assert verified["git_sha"] == "a" * 40
+
+    (release_root / "_internal" / "runtime.dat").write_bytes(b"tampered")
+    with pytest.raises(PackagedUpdateError) as exc_info:
+        validate_release_dir(
+            release_root,
+            expected_release_id="fixture-release",
+            expected_sha="a" * 40,
+        )
+    assert exc_info.value.reason in {
+        "update_manifest_file_size_mismatch",
+        "update_manifest_file_hash_mismatch",
+    }
+
+
+def test_packaged_runtime_rejects_secret_paths_and_private_key_material(tmp_path):
+    builder = _builder_module()
+    payload = _fake_payload(tmp_path / "input")
+    (payload / ".env.production").write_text("fixture only", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="forbidden secret path"):
+        builder.package_existing_payload(
+            payload,
+            tmp_path / "path-output",
+            git_sha="e" * 40,
+            version="0.5.0",
+            target=builder.platform_id(),
+        )
+
+    (payload / ".env.production").unlink()
+    (payload / "opaque.bin").write_bytes(
+        b"-----BEGIN " + b"PRIVATE KEY-----\nfixture only"
+    )
+    with pytest.raises(RuntimeError, match="private key material"):
+        builder.package_existing_payload(
+            payload,
+            tmp_path / "content-output",
+            git_sha="e" * 40,
+            version="0.5.0",
+            target=builder.platform_id(),
+        )
 
 
 def test_packaged_runtime_preserves_safe_internal_symlinks(tmp_path):

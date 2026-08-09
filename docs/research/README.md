@@ -28,6 +28,12 @@ Research files are evidence, audits, and explorations. They can guide work but d
 - [TickFlow first-batch implementation evidence — 2026-08-09](explorations/TICKFLOW_FIRST_BATCH_IMPLEMENTATION_EVIDENCE_2026-08-09.md)
   records the resulting design decisions, focused validation, observed bundle
   effect, and remaining ceilings after implementing the selected boundaries.
+- [TickFlow remaining merge candidate catalog — 2026-08-09](explorations/TICKFLOW_REMAINING_MERGE_CANDIDATE_CATALOG_2026-08-09.md)
+  classifies 60 post-first-batch candidates by domain, cost, dependency, and
+  merge readiness, with separate recommended merge waves and safety exclusions.
+- [TickFlow Wave A implementation evidence — 2026-08-09](explorations/TICKFLOW_WAVE_A_IMPLEMENTATION_EVIDENCE_2026-08-09.md)
+  records the nine implemented small boundaries, schema-v15 retry identity,
+  focused verification, preserved invariants, and explicit remaining ceilings.
 
 ## Agent Rule
 

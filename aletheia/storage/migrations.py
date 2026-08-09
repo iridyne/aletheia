@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v14"
+SCHEMA_VERSION = "aletheia-sqlite-v15"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4259,6 +4259,15 @@ _TECHNICAL_SNAPSHOT_METADATA_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+_SERENITY_RETRY_IDEMPOTENCY_SQL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_serenity_retry_attempt_identity "
+    "ON serenity_research_runs(parent_run_id, retry_count) "
+    "WHERE idempotency_key LIKE 'serenity-retry:%'"
+)
+_SERENITY_RETRY_IDEMPOTENCY_CHECKSUM = hashlib.sha256(
+    _SERENITY_RETRY_IDEMPOTENCY_SQL.encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -4611,6 +4620,13 @@ def _apply_technical_snapshot_metadata_v14(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_serenity_retry_idempotency_v15(db: sqlite3.Connection) -> None:
+    """Enforce one newly-created retry attempt per parent/count identity."""
+
+    db.execute(_SERENITY_RETRY_IDEMPOTENCY_SQL)
+    db.execute("PRAGMA optimize")
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -4687,8 +4703,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260809_0013_technical_snapshot_metadata_v14",
         checksum=_TECHNICAL_SNAPSHOT_METADATA_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v14",
         apply=_apply_technical_snapshot_metadata_v14,
+    ),
+    MigrationStep(
+        migration_id="20260809_0014_serenity_retry_idempotency_v15",
+        checksum=_SERENITY_RETRY_IDEMPOTENCY_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_serenity_retry_idempotency_v15,
     ),
 )
 

@@ -8,7 +8,8 @@ is the concrete implementation; tests supply lightweight fakes that satisfy the
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+import math
+from typing import Iterable, Literal, Protocol, runtime_checkable
 
 from aletheia.data.symbols import InstrumentId
 
@@ -50,6 +51,92 @@ class Candle:
     exchange: str | None = None
 
 
+OHLCVOutcome = Literal["complete", "partial", "empty", "failed", "unsupported"]
+
+
+@dataclass(frozen=True)
+class OHLCVAttempt:
+    provider: str
+    outcome: OHLCVOutcome
+    accepted: int = 0
+    rejected: int = 0
+    reason: str | None = None
+
+
+def classify_ohlcv_outcome(*, accepted: int, rejected: int, requested: int) -> OHLCVOutcome:
+    if accepted == 0:
+        return "empty"
+    if rejected or (requested > 0 and accepted < requested):
+        return "partial"
+    return "complete"
+
+
+class OHLCVResult(list[Candle]):
+    """List-compatible candles with request-scoped fallback and quality facts."""
+
+    def __init__(
+        self,
+        candles: Iterable[Candle] = (),
+        *,
+        requested: int,
+        rejected: int = 0,
+        attempts: Iterable[OHLCVAttempt] = (),
+    ) -> None:
+        super().__init__(candles)
+        self.requested = requested
+        self.accepted = len(self)
+        self.rejected = rejected
+        self.attempts = tuple(attempts)
+        self.outcome = classify_ohlcv_outcome(
+            accepted=self.accepted,
+            rejected=rejected,
+            requested=requested,
+        )
+
+
+def parse_ohlcv_candle(
+    row: object,
+    *,
+    provider: str,
+    exchange: str,
+    volume_index: int | None = 5,
+) -> Candle | None:
+    """Parse one provider row, rejecting non-finite or impossible OHLCV facts."""
+    if not isinstance(row, (list, tuple)):
+        return None
+    required = 5 if volume_index is None else volume_index + 1
+    if len(row) < required:
+        return None
+    try:
+        timestamp_value = float(row[0])
+        open_value = float(row[1])
+        high_value = float(row[2])
+        low_value = float(row[3])
+        close_value = float(row[4])
+        volume_value = 0.0 if volume_index is None else float(row[volume_index])
+    except (TypeError, ValueError, OverflowError):
+        return None
+    values = (timestamp_value, open_value, high_value, low_value, close_value, volume_value)
+    if not all(math.isfinite(value) for value in values):
+        return None
+    if timestamp_value <= 0 or not timestamp_value.is_integer():
+        return None
+    if min(open_value, high_value, low_value, close_value) <= 0 or volume_value < 0:
+        return None
+    if high_value < max(open_value, close_value) or low_value > min(open_value, close_value):
+        return None
+    return Candle(
+        timestamp=int(timestamp_value),
+        open=open_value,
+        high=high_value,
+        low=low_value,
+        close=close_value,
+        volume=volume_value,
+        provider=provider,
+        exchange=exchange,
+    )
+
+
 @runtime_checkable
 class MarketDataProvider(Protocol):
     """Structural interface every market-data source implements.
@@ -67,6 +154,6 @@ class MarketDataProvider(Protocol):
         timeframe: str = "1h",
         limit: int = 100,
         since: int | None = None,
-    ) -> list[Candle]: ...
+    ) -> OHLCVResult: ...
 
     async def close(self) -> None: ...
