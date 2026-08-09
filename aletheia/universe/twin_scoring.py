@@ -316,7 +316,11 @@ def build_twin_shadow_record(
     )
     feature_snapshot_id, asset_id, symbol, market_type = _source_identity(feature)
     authority_family = step.get("scanner_family")
-    authority_direction = step.get("scanner_direction") or step.get("direction")
+    authority_direction = (
+        step.get("scanner_direction")
+        or step.get("direction")
+        or step.get("proposed_direction")
+    )
     return TwinShadowRecord(
         record_version=TWIN_SHADOW_RECORD_VERSION,
         scanner_run_id=scanner_run_id,

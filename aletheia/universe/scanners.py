@@ -624,6 +624,11 @@ def run_all_scanners(feat: dict) -> dict:
         best_family = max(results, key=lambda k: results[k][0])
         best_score, best_reasons, best_dir = results[best_family]
 
+    # Preserve the scanner's proposed side for observation-only outcome identity.
+    # The no-chase gate below still clears scanner_direction, so this cannot make
+    # the candidate actionable or restore allocation authority.
+    proposed_direction = best_dir
+
     # VergeX-derived entry discipline: a candidate is not actionable when the
     # current 15m candle already travelled more than 1.5 ATR in the proposed
     # direction. The underlying family score remains in all_scores for shadow
@@ -658,6 +663,7 @@ def run_all_scanners(feat: dict) -> dict:
         "opportunity_score": best_score,
         "reasons": best_reasons,
         "scanner_direction": best_dir,
+        "proposed_direction": proposed_direction,
         "all_scores": {k: v[0] for k, v in results.items()},
         "is_proxy": is_proxy,
     }
