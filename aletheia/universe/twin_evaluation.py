@@ -1,8 +1,9 @@
 """Read-only evaluation of prospective Universe Shadow policy windows.
 
-The report compares allocation utility that can be reconstructed because every
-candidate receives the same fixed-horizon observation.  It never writes a
-Learning verdict and cannot authorize scorer, Paper, Risk, or Execution changes.
+The report compares observed-arm scanner-cluster allocation utility. Selected
+candidates receive a fixed-horizon net outcome and unselected candidates
+contribute zero. It never writes a Learning verdict and cannot authorize scorer,
+Paper, Risk, or Execution changes.
 """
 
 from __future__ import annotations
@@ -141,8 +142,10 @@ class _RecordAudit:
     records_by_run: dict[str, list[dict[str, Any]]]
     outcome_keys: list[str]
     expected_candidate_n: int = 0
+    expected_selected_candidate_n: int = 0
     missingness_candidate_n: int = 0
     concentrated_candidate_n: int = 0
+    shadow_invalid_candidate_n: int = 0
 
 
 def _identity(row: dict[str, Any]) -> tuple[object, ...]:
@@ -214,28 +217,47 @@ def _audit_records(
             if row.get("promotion_eligible"):
                 invalid.add("record_promotion_eligible")
             if not row.get("shadow_valid"):
-                invalid.add("shadow_policy_invalid")
-            expected_selected = (
-                row.get("shadow_pessimistic_selected")
-                if arm == "treatment"
-                else row.get("authority_selected")
-            )
+                audit.shadow_invalid_candidate_n += 1
+            if arm == "treatment":
+                expected_selected = row.get("shadow_pessimistic_selected")
+            elif arm == "control":
+                expected_selected = row.get("authority_selected")
+            else:
+                expected_selected = None
             if (
                 row.get("assigned_policy_selected") is None
                 or bool(row.get("assigned_policy_selected"))
                 != bool(expected_selected)
             ):
                 invalid.add("assigned_policy_selection_mismatch")
-            if not row.get("outcome_candidate_key"):
-                invalid.add("record_outcome_identity_missing")
-            else:
+            assigned_selected = row.get("assigned_policy_selected")
+            outcome_key = row.get("outcome_candidate_key")
+            if assigned_selected is None:
+                invalid.add("assigned_policy_selection_missing")
+            elif assigned_selected and not outcome_key:
+                invalid.add("selected_record_outcome_identity_missing")
+            elif not assigned_selected and outcome_key:
+                invalid.add("unselected_record_outcome_identity_present")
+            elif assigned_selected:
+                audit.expected_selected_candidate_n += 1
                 audit.outcome_keys.append(str(row["outcome_candidate_key"]))
+                if arm == "treatment" and not row.get("shadow_valid"):
+                    invalid.add("invalid_shadow_candidate_selected")
             try:
                 output = json.loads(str(row.get("compact_output_json") or "{}"))
             except (TypeError, ValueError):
                 invalid.add("compact_output_invalid")
                 continue
             shadow = output.get("shadow") if isinstance(output, dict) else None
+            contract = (
+                output.get("evidence_contract") if isinstance(output, dict) else None
+            )
+            if assigned_selected and (
+                not isinstance(contract, dict)
+                or contract.get("assigned_policy_direction") not in {"long", "short"}
+                or not contract.get("assigned_policy_family")
+            ):
+                invalid.add("assigned_policy_identity_missing")
             if isinstance(shadow, dict):
                 audit.missingness_candidate_n += bool(
                     shadow.get("missingness_feature_ids")
@@ -254,12 +276,16 @@ class _ClusterAudit:
     control_cluster_n: int = 0
     turnover_changes: int = 0
     turnover_denominator: int = 0
-    direct_effects: list[float] = field(default_factory=list)
-    point_effects: list[float] = field(default_factory=list)
+    treatment_candidate_n: int = 0
+    control_candidate_n: int = 0
+    treatment_selected_candidate_n: int = 0
+    control_selected_candidate_n: int = 0
+    treatment_zero_selection_cluster_n: int = 0
+    control_zero_selection_cluster_n: int = 0
+    treatment_cluster_utilities: list[float] = field(default_factory=list)
+    control_cluster_utilities: list[float] = field(default_factory=list)
     treatment_weights: list[float] = field(default_factory=list)
     control_weights: list[float] = field(default_factory=list)
-    treatment_returns: list[float] = field(default_factory=list)
-    control_returns: list[float] = field(default_factory=list)
     treatment_mae: list[float] = field(default_factory=list)
     control_mae: list[float] = field(default_factory=list)
     treatment_costs: list[float] = field(default_factory=list)
@@ -277,11 +303,19 @@ def _evaluate_clusters(
     audit = _ClusterAudit()
     for batch in batches:
         rows = records_by_run[str(batch["scanner_run_id"])]
-        nets: list[float] = []
-        maes: list[float | None] = []
-        costs: list[float] = []
+        if not rows:
+            invalid.add("empty_cluster")
+            continue
+        selected_n = 0
+        net_total = 0.0
+        absolute_mae_total = 0.0
+        mae_complete = True
+        cost_total = 0.0
         cluster_complete = True
         for row in rows:
+            if not row.get("assigned_policy_selected"):
+                continue
+            selected_n += 1
             outcome = outcomes.get(str(row.get("outcome_candidate_key") or ""))
             if outcome is None or outcome.get("_duplicate"):
                 cluster_complete = False
@@ -314,58 +348,46 @@ def _evaluate_clusters(
                 row.get("assigned_policy_selected")
             ):
                 invalid.add("outcome_selection_identity_mismatch")
-            nets.append(net)
+            try:
+                contract = json.loads(str(row["compact_output_json"]))[
+                    "evidence_contract"
+                ]
+                assigned_direction = contract["assigned_policy_direction"]
+                assigned_family = contract["assigned_policy_family"]
+            except (KeyError, TypeError, ValueError):
+                invalid.add("assigned_policy_identity_missing")
+                assigned_direction = None
+                assigned_family = None
+            if outcome.get("direction") != assigned_direction:
+                invalid.add("outcome_direction_mismatch")
+            if outcome.get("scanner_family") != assigned_family:
+                invalid.add("outcome_family_mismatch")
+            net_total += net
             mae = _finite(outcome.get("mae_pct"))
-            maes.append(abs(mae) if mae is not None else None)
-            costs.append(fee + spread + funding)
-        if not cluster_complete or len(nets) != len(rows):
+            if mae is None:
+                mae_complete = False
+            else:
+                absolute_mae_total += abs(mae)
+            cost_total += fee + spread + funding
+        if not cluster_complete:
             audit.incomplete_cluster_n += 1
-            continue
-        if not rows:
-            invalid.add("empty_cluster")
             continue
         audit.complete_candidate_n += len(rows)
         step_selected = [bool(row.get("authority_selected")) for row in rows]
         treatment_selected = [
             bool(row.get("shadow_pessimistic_selected")) for row in rows
         ]
-        point_selected = [bool(row.get("shadow_point_selected")) for row in rows]
-        step_utility = fmean(
-            net if selected else 0.0 for net, selected in zip(nets, step_selected)
+        cluster_utility = net_total / len(rows)
+        cluster_cost = cost_total / len(rows)
+        cluster_mae = (
+            absolute_mae_total / selected_n
+            if selected_n and mae_complete
+            else 0.0
+            if selected_n == 0
+            else None
         )
-        treatment_utility = fmean(
-            net if selected else 0.0
-            for net, selected in zip(nets, treatment_selected)
-        )
-        point_utility = fmean(
-            net if selected else 0.0 for net, selected in zip(nets, point_selected)
-        )
-        audit.direct_effects.append(treatment_utility - step_utility)
-        audit.point_effects.append(point_utility - step_utility)
         arm = str(batch["assignment_arm"])
         propensity = float(batch["assignment_propensity"])
-        selected_treatment = [
-            (net, mae, cost)
-            for net, mae, cost, selected in zip(
-                nets, maes, costs, treatment_selected
-            )
-            if selected
-        ]
-        selected_control = [
-            (net, mae, cost)
-            for net, mae, cost, selected in zip(nets, maes, costs, step_selected)
-            if selected
-        ]
-        audit.treatment_returns.extend(item[0] for item in selected_treatment)
-        audit.control_returns.extend(item[0] for item in selected_control)
-        audit.treatment_mae.extend(
-            item[1] for item in selected_treatment if item[1] is not None
-        )
-        audit.control_mae.extend(
-            item[1] for item in selected_control if item[1] is not None
-        )
-        audit.treatment_costs.extend(item[2] for item in selected_treatment)
-        audit.control_costs.extend(item[2] for item in selected_control)
         audit.turnover_changes += sum(
             left != right for left, right in zip(step_selected, treatment_selected)
         )
@@ -377,10 +399,24 @@ def _evaluate_clusters(
             audit.eligible_days.add(exposed.date())
         if arm == "treatment":
             audit.treatment_cluster_n += 1
+            audit.treatment_candidate_n += len(rows)
+            audit.treatment_selected_candidate_n += selected_n
+            audit.treatment_zero_selection_cluster_n += selected_n == 0
+            audit.treatment_cluster_utilities.append(cluster_utility)
             audit.treatment_weights.append(1.0 / propensity)
+            audit.treatment_costs.append(cluster_cost)
+            if cluster_mae is not None:
+                audit.treatment_mae.append(cluster_mae)
         else:
             audit.control_cluster_n += 1
+            audit.control_candidate_n += len(rows)
+            audit.control_selected_candidate_n += selected_n
+            audit.control_zero_selection_cluster_n += selected_n == 0
+            audit.control_cluster_utilities.append(cluster_utility)
             audit.control_weights.append(1.0 / propensity)
+            audit.control_costs.append(cluster_cost)
+            if cluster_mae is not None:
+                audit.control_mae.append(cluster_mae)
     return audit
 
 
@@ -391,7 +427,7 @@ def _validate_epoch_contract(
     first: Mapping[str, Any],
     invalid: set[str],
 ) -> None:
-    """Validate the frozen v1 identity instead of accepting self-consistency."""
+    """Validate the frozen identity instead of accepting self-consistency."""
 
     if not isinstance(epoch_values, dict):
         invalid.add("policy_epoch_values_invalid")
@@ -484,10 +520,13 @@ def evaluate_twin_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
         "treatment_ess": 0.0,
         "control_ess": 0.0,
         "consecutive_eligible_utc_days": 0,
+        "treatment_cluster_utility_mean": None,
+        "control_cluster_utility_mean": None,
+        "observed_cluster_utility_delta": None,
         "direct_replay_delta": None,
         "point_replay_delta": None,
         "propensity_aware_delta": None,
-        "propensity_estimator_status": "not_independent_full_potential_replay",
+        "propensity_estimator_status": "not_computed_observed_arm_itt_only",
         "estimator_sign_agreement": None,
         "harm_metrics": {},
         "diagnostics": {},
@@ -552,18 +591,21 @@ def evaluate_twin_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
     cluster_audit = _evaluate_clusters(
         batches, record_audit.records_by_run, outcomes, invalid
     )
-    direct = (
-        fmean(cluster_audit.direct_effects)
-        if cluster_audit.direct_effects
+    treatment_utility_mean = (
+        fmean(cluster_audit.treatment_cluster_utilities)
+        if cluster_audit.treatment_cluster_utilities
         else None
     )
-    point_direct = (
-        fmean(cluster_audit.point_effects) if cluster_audit.point_effects else None
+    control_utility_mean = (
+        fmean(cluster_audit.control_cluster_utilities)
+        if cluster_audit.control_cluster_utilities
+        else None
     )
-    # Full-candidate replay observes both policy utilities, so the residual in
-    # an augmented propensity expression is identically zero. Keep the legacy
-    # report field, but do not pretend it is independent corroboration.
-    propensity_aware = direct
+    observed_delta = (
+        treatment_utility_mean - control_utility_mean
+        if treatment_utility_mean is not None and control_utility_mean is not None
+        else None
+    )
     treatment_ess = _ess(cluster_audit.treatment_weights)
     control_ess = _ess(cluster_audit.control_weights)
     consecutive_days = _longest_consecutive_days(cluster_audit.eligible_days)
@@ -575,22 +617,26 @@ def evaluate_twin_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
         blockers.add("propensity_ess_not_met")
     if cluster_audit.treatment_cluster_n == 0 or cluster_audit.control_cluster_n == 0:
         blockers.add("assignment_overlap_not_available")
+    if (
+        cluster_audit.treatment_selected_candidate_n == 0
+        or cluster_audit.control_selected_candidate_n == 0
+    ):
+        blockers.add("assigned_policy_exposure_not_available")
     if consecutive_days < 7:
         blockers.add("consecutive_utc_dates_not_met")
-    sign_agreement = True if direct is not None else None
     if len(cluster_audit.cost_model_versions) > 1:
         invalid.add("mixed_cost_model_versions")
 
     treatment_loss_rate = (
-        sum(value < 0 for value in cluster_audit.treatment_returns)
-        / len(cluster_audit.treatment_returns)
-        if cluster_audit.treatment_returns
+        sum(value < 0 for value in cluster_audit.treatment_cluster_utilities)
+        / len(cluster_audit.treatment_cluster_utilities)
+        if cluster_audit.treatment_cluster_utilities
         else None
     )
     control_loss_rate = (
-        sum(value < 0 for value in cluster_audit.control_returns)
-        / len(cluster_audit.control_returns)
-        if cluster_audit.control_returns
+        sum(value < 0 for value in cluster_audit.control_cluster_utilities)
+        / len(cluster_audit.control_cluster_utilities)
+        if cluster_audit.control_cluster_utilities
         else None
     )
     harm_metrics = {
@@ -603,8 +649,12 @@ def evaluate_twin_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
         ),
         "treatment_mae_p95": _percentile(cluster_audit.treatment_mae, 0.95),
         "control_mae_p95": _percentile(cluster_audit.control_mae, 0.95),
-        "treatment_net_cvar_5": _cvar(cluster_audit.treatment_returns, 0.05),
-        "control_net_cvar_5": _cvar(cluster_audit.control_returns, 0.05),
+        "treatment_net_cvar_5": _cvar(
+            cluster_audit.treatment_cluster_utilities, 0.05
+        ),
+        "control_net_cvar_5": _cvar(
+            cluster_audit.control_cluster_utilities, 0.05
+        ),
         "treatment_mean_cost_pct": (
             fmean(cluster_audit.treatment_costs)
             if cluster_audit.treatment_costs
@@ -619,6 +669,24 @@ def evaluate_twin_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
             cluster_audit.turnover_changes / cluster_audit.turnover_denominator
             if cluster_audit.turnover_denominator
             else None
+        ),
+        "treatment_selection_rate": (
+            cluster_audit.treatment_selected_candidate_n
+            / cluster_audit.treatment_candidate_n
+            if cluster_audit.treatment_candidate_n
+            else None
+        ),
+        "control_selection_rate": (
+            cluster_audit.control_selected_candidate_n
+            / cluster_audit.control_candidate_n
+            if cluster_audit.control_candidate_n
+            else None
+        ),
+        "treatment_zero_selection_cluster_n": (
+            cluster_audit.treatment_zero_selection_cluster_n
+        ),
+        "control_zero_selection_cluster_n": (
+            cluster_audit.control_zero_selection_cluster_n
         ),
     }
     treatment_mae_p95 = harm_metrics["treatment_mae_p95"]
@@ -649,10 +717,16 @@ def evaluate_twin_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
         ),
         "missingness_candidate_n": record_audit.missingness_candidate_n,
         "concentrated_candidate_n": record_audit.concentrated_candidate_n,
+        "shadow_invalid_candidate_n": record_audit.shadow_invalid_candidate_n,
+        "expected_selected_candidate_n": record_audit.expected_selected_candidate_n,
+        "settled_selected_candidate_n": (
+            cluster_audit.treatment_selected_candidate_n
+            + cluster_audit.control_selected_candidate_n
+        ),
         "availability_profile_id": first.get("availability_profile_id"),
         "feature_observation_lineage": "not_available",
         "independent_dr_outcome_model": "not_available",
-        "propensity_estimator": "not_independent_full_potential_replay",
+        "propensity_estimator": "not_computed_observed_arm_itt_only",
         "anytime_valid_lower_bound": None,
         "noninferiority_margins": "not_configured",
     }
@@ -664,6 +738,7 @@ def evaluate_twin_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
             "minimum_cluster_units_not_met",
             "propensity_ess_not_met",
             "assignment_overlap_not_available",
+            "assigned_policy_exposure_not_available",
             "consecutive_utc_dates_not_met",
         }
     )
@@ -676,7 +751,9 @@ def evaluate_twin_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
     else:
         verdict = "not_available"
     base_report.update(
-        complete_cluster_n=len(cluster_audit.direct_effects),
+        complete_cluster_n=(
+            cluster_audit.treatment_cluster_n + cluster_audit.control_cluster_n
+        ),
         complete_candidate_n=cluster_audit.complete_candidate_n,
         expected_candidate_n=record_audit.expected_candidate_n,
         treatment_cluster_n=cluster_audit.treatment_cluster_n,
@@ -684,10 +761,9 @@ def evaluate_twin_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
         treatment_ess=treatment_ess,
         control_ess=control_ess,
         consecutive_eligible_utc_days=consecutive_days,
-        direct_replay_delta=direct,
-        point_replay_delta=point_direct,
-        propensity_aware_delta=propensity_aware,
-        estimator_sign_agreement=sign_agreement,
+        treatment_cluster_utility_mean=treatment_utility_mean,
+        control_cluster_utility_mean=control_utility_mean,
+        observed_cluster_utility_delta=observed_delta,
         harm_metrics=harm_metrics,
         diagnostics=diagnostics,
         blocking_reasons=sorted(blockers),

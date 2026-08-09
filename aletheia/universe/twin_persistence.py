@@ -224,6 +224,8 @@ def _compact_output_material(
     experiment: TwinExperimentContext | None = None,
     outcome_candidate_key: str | None = None,
     assigned_policy_selected: bool | None = None,
+    assigned_policy_direction: str | None = None,
+    assigned_policy_family: str | None = None,
 ) -> dict[str, object]:
     shadow = record.shadow
     top_sensitivities = sorted(
@@ -262,7 +264,7 @@ def _compact_output_material(
         "promotion_eligible": False,
         "unavailable_identities": unavailable_identities,
         "blocking_reasons": blockers,
-        "fixed_horizon_outcomes_collected": experiment is not None,
+        "fixed_horizon_outcomes_collected": outcome_candidate_key is not None,
     }
     if experiment is not None:
         evidence_contract.update(
@@ -280,6 +282,8 @@ def _compact_output_material(
                 "metric_version": experiment.metric_version,
                 "outcome_candidate_key": outcome_candidate_key,
                 "assigned_policy_selected": assigned_policy_selected,
+                "assigned_policy_direction": assigned_policy_direction,
+                "assigned_policy_family": assigned_policy_family,
             }
         )
     return {
@@ -395,55 +399,84 @@ def build_twin_shadow_bundle(
             raise ValueError(f"twin_input_not_available:{record.candidate_key}")
         outcome_key = None
         assigned_policy_selected = None
+        assigned_policy_direction = None
+        assigned_policy_family = None
         if experiment is not None:
             if experiment.assignment_arm == "treatment":
                 assigned_policy_selected = record.shadow_pessimistic_selected
+                assigned_policy_direction = (
+                    str(record.shadow.pessimistic_direction).lower()
+                    if record.shadow.pessimistic_direction
+                    else None
+                )
+                assigned_policy_family = record.shadow.pessimistic_family
             elif experiment.assignment_arm == "control":
                 assigned_policy_selected = record.authority_selected
+                assigned_policy_direction = (
+                    str(record.authority_direction).lower()
+                    if record.authority_direction
+                    else None
+                )
+                assigned_policy_family = record.authority_family
             else:
                 raise ValueError("twin_experiment_assignment_arm_invalid")
-            feature = safe_input["feature"]
-            direction = str(record.authority_direction or "").lower()
-            venue = str(feature.get("venue") or outcome_venue or "")
-            symbol = str(record.symbol or "")
-            entry_price = feature.get("last_price") or feature.get("price") or feature.get("close")
-            try:
-                price = float(entry_price)
-            except (TypeError, ValueError):
-                price = 0.0
-            if direction not in {"long", "short"} or not venue or not symbol or price <= 0:
-                raise ValueError(
-                    f"twin_experiment_outcome_identity_not_available:{record.candidate_key}"
+            if assigned_policy_selected:
+                feature = safe_input["feature"]
+                direction = str(assigned_policy_direction or "").lower()
+                venue = str(feature.get("venue") or outcome_venue or "")
+                symbol = str(record.symbol or "")
+                entry_price = (
+                    feature.get("last_price")
+                    or feature.get("price")
+                    or feature.get("close")
                 )
-            outcome_key = _outcome_candidate_key(record)
-            from aletheia.analytics.filter_evidence import build_candidate_outcomes
+                try:
+                    price = float(entry_price)
+                except (TypeError, ValueError):
+                    price = 0.0
+                if (
+                    direction not in {"long", "short"}
+                    or not assigned_policy_family
+                    or not venue
+                    or not symbol
+                    or price <= 0
+                ):
+                    raise ValueError(
+                        "twin_experiment_outcome_identity_not_available:"
+                        f"{record.candidate_key}"
+                    )
+                outcome_key = _outcome_candidate_key(record)
+                from aletheia.analytics.filter_evidence import build_candidate_outcomes
 
-            candidate_outcomes = build_candidate_outcomes(
-                outcome_candidate_key=outcome_key,
-                venue=venue,
-                symbol=symbol,
-                market_type=record.market_type,
-                direction=direction,
-                scanner_family=record.authority_family,
-                regime_tag=regime_state,
-                entry_price_usd=price,
-                entry_spread_bps=feature.get("spread_bps"),
-                funding_rate_at_entry=feature.get("funding_rate"),
-                entry_ts=captured,
-                allocation_selected=assigned_policy_selected,
-                horizons=(experiment.primary_horizon,),
-            )
-            if len(candidate_outcomes) != 1:
-                raise ValueError(
-                    f"twin_experiment_primary_outcome_not_available:{record.candidate_key}"
+                candidate_outcomes = build_candidate_outcomes(
+                    outcome_candidate_key=outcome_key,
+                    venue=venue,
+                    symbol=symbol,
+                    market_type=record.market_type,
+                    direction=direction,
+                    scanner_family=assigned_policy_family,
+                    regime_tag=regime_state,
+                    entry_price_usd=price,
+                    entry_spread_bps=feature.get("spread_bps"),
+                    funding_rate_at_entry=feature.get("funding_rate"),
+                    entry_ts=captured,
+                    allocation_selected=True,
+                    horizons=(experiment.primary_horizon,),
                 )
-            outcomes.extend(candidate_outcomes)
+                if len(candidate_outcomes) != 1:
+                    raise ValueError(
+                        "twin_experiment_primary_outcome_not_available:"
+                        f"{record.candidate_key}"
+                    )
+                outcomes.extend(candidate_outcomes)
         material = _compact_output_material(
             record,
             candidate_index=candidate_index,
             experiment=experiment,
             outcome_candidate_key=outcome_key,
             assigned_policy_selected=assigned_policy_selected,
+            assigned_policy_direction=assigned_policy_direction,
+            assigned_policy_family=assigned_policy_family,
         )
         compact_output_json = _canonical_json(material)
         input_json = _canonical_json(safe_input)
@@ -747,20 +780,39 @@ def replay_twin_shadow_bundle(
     record_hashes_by_key: dict[str, str] = {}
     for record in replayed:
         row = by_key[record.candidate_key]
+        assigned_policy_selected = None
+        assigned_policy_direction = None
+        assigned_policy_family = None
+        if experiment is not None and experiment.assignment_arm == "treatment":
+            assigned_policy_selected = record.shadow_pessimistic_selected
+            assigned_policy_direction = (
+                str(record.shadow.pessimistic_direction).lower()
+                if record.shadow.pessimistic_direction
+                else None
+            )
+            assigned_policy_family = record.shadow.pessimistic_family
+        elif experiment is not None and experiment.assignment_arm == "control":
+            assigned_policy_selected = record.authority_selected
+            assigned_policy_direction = (
+                str(record.authority_direction).lower()
+                if record.authority_direction
+                else None
+            )
+            assigned_policy_family = record.authority_family
+        elif experiment is not None:
+            raise ValueError("twin_experiment_assignment_arm_invalid")
         replay_material = _compact_output_material(
             record,
             candidate_index=int(row["candidate_index"]),
             experiment=experiment,
             outcome_candidate_key=(
-                _outcome_candidate_key(record) if experiment is not None else None
-            ),
-            assigned_policy_selected=(
-                record.shadow_pessimistic_selected
-                if experiment is not None and experiment.assignment_arm == "treatment"
-                else record.authority_selected
-                if experiment is not None
+                _outcome_candidate_key(record)
+                if experiment is not None and assigned_policy_selected
                 else None
             ),
+            assigned_policy_selected=assigned_policy_selected,
+            assigned_policy_direction=assigned_policy_direction,
+            assigned_policy_family=assigned_policy_family,
         )
         input_payload = json.loads(str(row["input_json"]))
         record_hash = _sha256({"output": replay_material, "input": input_payload})

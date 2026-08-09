@@ -6084,7 +6084,10 @@ def _validate_universe_twin_prospective_bundle(
         raise ValueError("universe_twin_shadow_treatment_coefficient_mismatch")
     if batch.promotion_eligible:
         raise ValueError("universe_twin_shadow_promotion_not_allowed")
-    if len(outcome_rows) != len(evidence):
+    if any(item.assigned_policy_selected is None for item in evidence):
+        raise ValueError("universe_twin_shadow_assigned_selection_missing")
+    selected_count = sum(bool(item.assigned_policy_selected) for item in evidence)
+    if len(outcome_rows) != selected_count:
         raise ValueError("universe_twin_shadow_outcome_count_mismatch")
 
     record_identity_fields = (
@@ -6139,13 +6142,17 @@ def insert_universe_twin_shadow_bundle(
     if any(item.captured_at != batch.captured_at for item in evidence):
         raise ValueError("universe_twin_shadow_capture_time_mismatch")
     _validate_universe_twin_prospective_bundle(batch, evidence, outcome_rows)
-    if outcome_rows:
+    if batch.experiment_id is not None:
         outcome_by_key = {
             str(row["outcome_candidate_key"]): row for row in outcome_rows
         }
         if len(outcome_by_key) != len(outcome_rows):
             raise ValueError("universe_twin_shadow_duplicate_outcome_identity")
         for item in evidence:
+            if not item.assigned_policy_selected:
+                if item.outcome_candidate_key:
+                    raise ValueError("universe_twin_shadow_unselected_outcome_not_allowed")
+                continue
             if not item.outcome_candidate_key:
                 raise ValueError("universe_twin_shadow_record_outcome_missing")
             row = outcome_by_key.get(item.outcome_candidate_key)
@@ -6162,6 +6169,18 @@ def insert_universe_twin_shadow_bundle(
                 or bool(selected) != bool(item.assigned_policy_selected)
             ):
                 raise ValueError("universe_twin_shadow_outcome_selection_mismatch")
+            try:
+                contract = json.loads(item.compact_output_json)["evidence_contract"]
+                assigned_direction = str(contract["assigned_policy_direction"])
+                assigned_family = contract["assigned_policy_family"]
+            except (KeyError, TypeError, ValueError):
+                raise ValueError(
+                    "universe_twin_shadow_assigned_direction_missing"
+                ) from None
+            if row.get("direction") != assigned_direction:
+                raise ValueError("universe_twin_shadow_outcome_direction_mismatch")
+            if row.get("scanner_family") != assigned_family:
+                raise ValueError("universe_twin_shadow_outcome_family_mismatch")
     db = get_db()
     with transaction(immediate=True):
         stored_batch = db.execute(
