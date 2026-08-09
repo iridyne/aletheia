@@ -258,19 +258,10 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_runtime_cost_events_normalized_started" in indexes
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
-    assert migrations._MIGRATIONS[0].schema_version == "aletheia-sqlite-v2"
-    assert migrations._MIGRATIONS[-11].schema_version == "aletheia-sqlite-v3"
-    assert migrations._MIGRATIONS[-10].schema_version == "aletheia-sqlite-v4"
-    assert migrations._MIGRATIONS[-9].schema_version == "aletheia-sqlite-v5"
-    assert migrations._MIGRATIONS[-8].schema_version == "aletheia-sqlite-v6"
-    assert migrations._MIGRATIONS[-7].schema_version == "aletheia-sqlite-v7"
-    assert migrations._MIGRATIONS[-6].schema_version == "aletheia-sqlite-v8"
-    assert migrations._MIGRATIONS[-5].schema_version == "aletheia-sqlite-v9"
-    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v10"
-    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v11"
-    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v12"
-    assert migrations._MIGRATIONS[-1].schema_version == migrations.SCHEMA_VERSION
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v13"
+    assert [step.schema_version for step in migrations._MIGRATIONS] == [
+        f"aletheia-sqlite-v{version}" for version in range(2, 15)
+    ]
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v14"
     connection.close()
 
 
@@ -493,7 +484,7 @@ def test_exit_breakeven_shadow_v11_migration_is_additive_and_idempotent():
     connection.close()
 
 
-def test_production_v11_ledger_advances_through_v13(tmp_path, monkeypatch):
+def test_production_v11_ledger_advances_through_v14(tmp_path, monkeypatch):
     import aletheia.storage.migrations as migrations
 
     connection = _connection(tmp_path / "v9.db")
@@ -504,6 +495,7 @@ def test_production_v11_ledger_advances_through_v13(tmp_path, monkeypatch):
             verdict_id TEXT PRIMARY KEY,
             experiment_id TEXT NOT NULL REFERENCES learning_experiments(experiment_id)
         );
+        CREATE TABLE universe_feature_snapshots (id TEXT PRIMARY KEY);
         INSERT INTO learning_experiments VALUES ('legacy-experiment');
         INSERT INTO learning_contribution_verdicts
         VALUES ('legacy-positive', 'legacy-experiment');
@@ -518,7 +510,7 @@ def test_production_v11_ledger_advances_through_v13(tmp_path, monkeypatch):
         "VALUES (?, ?, ?, '2026-08-08T00:00:00+00:00', 0)",
         [
             (step.migration_id, step.checksum, step.schema_version)
-            for step in migrations._MIGRATIONS[:-2]
+            for step in migrations._MIGRATIONS[:-3]
         ],
     )
     connection.commit()
@@ -536,8 +528,8 @@ def test_production_v11_ledger_advances_through_v13(tmp_path, monkeypatch):
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260809_0012_universe_twin_prospective_v13",
-        "aletheia-sqlite-v13",
+        "20260809_0013_technical_snapshot_metadata_v14",
+        "aletheia-sqlite-v14",
     )
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "
@@ -618,6 +610,29 @@ def test_universe_twin_prospective_migration_is_additive_and_idempotent():
         "outcome_candidate_key",
         "assigned_policy_selected",
     } <= record_columns
+    connection.close()
+
+
+def test_technical_snapshot_metadata_v14_is_additive_and_idempotent():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE universe_feature_snapshots (id TEXT PRIMARY KEY)"
+    )
+
+    migrations._apply_technical_snapshot_metadata_v14(connection)
+    migrations._apply_technical_snapshot_metadata_v14(connection)
+
+    columns = {
+        row[1]: row
+        for row in connection.execute(
+            "PRAGMA table_info(universe_feature_snapshots)"
+        )
+    }
+    assert "technical_algorithm_version" in columns
+    assert columns["technical_snapshot_manifest"][3] == 1
+    assert columns["technical_snapshot_manifest"][4] == "'{}'"
     connection.close()
 
 

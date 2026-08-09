@@ -1214,8 +1214,6 @@ CREATE TABLE IF NOT EXISTS universe_feature_snapshots (
     bb_width_4h REAL,
     vol_ratio_4h REAL,
     bb_squeeze INTEGER,
-    technical_algorithm_version TEXT,
-    technical_snapshot_manifest TEXT NOT NULL DEFAULT '{}',
     raw TEXT DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_universe_features_asset_ts
@@ -2083,8 +2081,6 @@ _ADDITIVE_COLUMNS = [
     ("bb_width_4h", "universe_feature_snapshots", "REAL"),
     ("vol_ratio_4h", "universe_feature_snapshots", "REAL"),
     ("bb_squeeze", "universe_feature_snapshots", "INTEGER"),
-    ("technical_algorithm_version", "universe_feature_snapshots", "TEXT"),
-    ("technical_snapshot_manifest", "universe_feature_snapshots", "TEXT NOT NULL DEFAULT '{}'"),
     ("source_ref", "perp_structure_snapshots", "TEXT"),
     ("source_hash", "perp_structure_snapshots", "TEXT"),
     ("reference_price", "perp_structure_snapshots", "REAL"),
@@ -3305,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v13"
+SCHEMA_VERSION = "aletheia-sqlite-v14"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4248,6 +4244,21 @@ _UNIVERSE_TWIN_PROSPECTIVE_CHECKSUM = hashlib.sha256(
     )
 ).hexdigest()
 
+_TECHNICAL_SNAPSHOT_METADATA_COLUMNS = (
+    ("technical_algorithm_version", "universe_feature_snapshots", "TEXT"),
+    (
+        "technical_snapshot_manifest",
+        "universe_feature_snapshots",
+        "TEXT NOT NULL DEFAULT '{}'",
+    ),
+)
+_TECHNICAL_SNAPSHOT_METADATA_CHECKSUM = hashlib.sha256(
+    (
+        repr(_TECHNICAL_SNAPSHOT_METADATA_COLUMNS)
+        + "\nadditive_columns_v1"
+    ).encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -4588,6 +4599,18 @@ def _apply_universe_twin_prospective_v13(db: sqlite3.Connection) -> None:
         raise
 
 
+def _apply_technical_snapshot_metadata_v14(db: sqlite3.Connection) -> None:
+    """Persist versioned technical-snapshot identity on Universe features."""
+
+    for column, table, column_type in _TECHNICAL_SNAPSHOT_METADATA_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.execute("PRAGMA optimize")
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -4658,8 +4681,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260809_0012_universe_twin_prospective_v13",
         checksum=_UNIVERSE_TWIN_PROSPECTIVE_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v13",
         apply=_apply_universe_twin_prospective_v13,
+    ),
+    MigrationStep(
+        migration_id="20260809_0013_technical_snapshot_metadata_v14",
+        checksum=_TECHNICAL_SNAPSHOT_METADATA_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_technical_snapshot_metadata_v14,
     ),
 )
 
