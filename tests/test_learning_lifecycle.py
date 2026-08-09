@@ -2070,6 +2070,7 @@ def test_read_only_inspection_reports_lifecycle_recommendation_and_authority(mon
     assert inspection["policy_epoch"] == "epoch-a"
     assert inspection["target_horizon"] == "4h"
     assert inspection["latest_measurement_verdict"] == "positive"
+    assert inspection["latest_measurement_verdict_id"] is not None
     assert inspection["recommended_lifecycle_action"] == "admit_trial"
     assert inspection["authority_enabled"] is False
     assert inspection["readiness"]["ready_for_paper_influence"] is False
