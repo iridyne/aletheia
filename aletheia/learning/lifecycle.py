@@ -790,6 +790,7 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
         "target_horizon": hypothesis.target_horizon,
         "allocation_pct": experiment.allocation_pct,
         "latest_measurement_verdict": (verdict or {}).get("verdict"),
+        "latest_measurement_verdict_id": (verdict or {}).get("verdict_id"),
         "recommended_lifecycle_action": recommended,
         "authority_enabled": authority.authorized,
         "authority_block_reason": None if authority.authorized else authority.reason,
