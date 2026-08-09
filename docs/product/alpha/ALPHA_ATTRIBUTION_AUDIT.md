@@ -238,12 +238,14 @@ Current implementation:
   incremental net PnL under the frozen cost model.
 - Includes only rows closed within the audit window; missing exact one-minute
   path, ordering, identity, or funding remains unavailable.
+- Joins the immutable paired result back to its Position solely to expose a
+  descriptive `close_reason` breakdown in the API and CLI.
 - Always reports `behavior_authority=false`, `promotion_eligible=false`, and
   `contribution_verdict=insufficient_data`.
 
 This is strong treatment-specific paired evidence, not a generic Exit layer
-estimand. The durable outcome does not carry `close_reason`, so the Audit also
-states that stop-loss-specific attribution is unavailable.
+estimand. The close-reason breakdown is post-outcome diagnostic context; it
+cannot authorize applying the treatment selectively by a future close reason.
 
 ### Risk Policy Evidence
 
@@ -371,8 +373,8 @@ This audit is read-only:
 - Generic Learning Alpha depends on structured evidence/tags. Unstructured
   narrative-only lessons cannot be judged, and unsupported paths remain
   directional even when they are consumer-wired.
-- Exit paired evidence covers one frozen treatment and does not yet attribute by
-  actual `close_reason`.
+- Exit paired evidence covers one frozen treatment; its actual `close_reason`
+  breakdown is descriptive and cannot define an ex-ante treatment policy.
 - Risk policy evidence uses a pass-all candidate control and does not model
   portfolio capacity, simultaneous exposures, or downstream Execution/Exit.
 - Execution cost evidence is limited to newly opened and closed native

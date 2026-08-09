@@ -107,7 +107,12 @@ def _assignment(position: dict, *, direction: str = "long") -> ExitBreakevenShad
     )
 
 
-def _close(position_id: str, *, realized_pnl: float = -1.0) -> dict:
+def _close(
+    position_id: str,
+    *,
+    realized_pnl: float = -1.0,
+    close_reason: str | None = None,
+) -> dict:
     repo.update_position(
         position_id,
         status="closed",
@@ -116,6 +121,7 @@ def _close(position_id: str, *, realized_pnl: float = -1.0) -> dict:
         closed_at=CLOSED,
         outcome_eligible=True,
         outcome_exclusion_reason="eligible",
+        close_reason=close_reason,
     )
     return repo.get_position(position_id)
 
@@ -176,7 +182,7 @@ def test_long_shadow_closes_only_after_later_bar_and_reports_incremental_net(mon
         (100.1, 100.3, 99.7, 99.9),
     ]))
 
-    outcome = settle_position_shadow(_close(position["id"]))
+    outcome = settle_position_shadow(_close(position["id"], close_reason="stop_loss"))
 
     assert outcome["status"] == "counterfactual_close"
     assert outcome["trigger_bar_open_ms"] == BASE_MS + 60_000
@@ -185,6 +191,15 @@ def test_long_shadow_closes_only_after_later_bar_and_reports_incremental_net(mon
     assert outcome["incremental_net_pnl"] > 0
     report = build_exit_breakeven_shadow_report()
     assert report["changed_count"] == 1
+    assert report["close_reason_attribution_available"] is True
+    assert report["close_reason_breakdown"] == [{
+        "close_reason": "stop_loss",
+        "outcome_count": 1,
+        "available_count": 1,
+        "changed_count": 1,
+        "incremental_net_pnl_total": pytest.approx(outcome["incremental_net_pnl"]),
+        "incremental_net_pnl_mean": pytest.approx(outcome["incremental_net_pnl"]),
+    }]
     assert report["promotion_eligible"] is False
 
     import aletheia.analytics.alpha_attribution as alpha_attribution
@@ -201,6 +216,9 @@ def test_long_shadow_closes_only_after_later_bar_and_reports_incremental_net(mon
     assert paired["incremental_net_pnl_mean"] == pytest.approx(outcome["incremental_net_pnl"])
     assert paired["behavior_authority"] is False
     assert paired["contribution_verdict"] == "insufficient_data"
+    assert "stop_loss: available=1 changed=1" in alpha_attribution.render_alpha_audit(
+        alpha_attribution.build_alpha_attribution_audit(days=30)
+    )
 
 
 def test_same_bar_trigger_and_stop_is_not_retrospectively_activated():

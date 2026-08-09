@@ -428,6 +428,26 @@ def build_exit_breakeven_shadow_report(
     available = [row for row in rows if row["status"] != "unavailable"]
     changed = [row for row in available if bool(row["treatment_changed"])]
     deltas = [float(row["incremental_net_pnl"]) for row in available]
+    by_close_reason = []
+    for close_reason in sorted({str(row.get("close_reason") or "unknown") for row in rows}):
+        reason_rows = [
+            row for row in rows
+            if str(row.get("close_reason") or "unknown") == close_reason
+        ]
+        reason_available = [row for row in reason_rows if row["status"] != "unavailable"]
+        reason_deltas = [float(row["incremental_net_pnl"]) for row in reason_available]
+        by_close_reason.append({
+            "close_reason": close_reason,
+            "outcome_count": len(reason_rows),
+            "available_count": len(reason_available),
+            "changed_count": sum(
+                1 for row in reason_available if bool(row["treatment_changed"])
+            ),
+            "incremental_net_pnl_total": sum(reason_deltas) if reason_deltas else None,
+            "incremental_net_pnl_mean": (
+                sum(reason_deltas) / len(reason_deltas) if reason_deltas else None
+            ),
+        })
     return {
         "experiment_version": EXPERIMENT_VERSION,
         "treatment_id": TREATMENT_ID,
@@ -440,5 +460,9 @@ def build_exit_breakeven_shadow_report(
         "incremental_net_pnl_total": sum(deltas) if deltas else None,
         "incremental_net_pnl_mean": (sum(deltas) / len(deltas)) if deltas else None,
         "positive_increment_count": sum(1 for value in deltas if value > 0),
+        "close_reason_breakdown": by_close_reason,
+        "close_reason_attribution_available": any(
+            item["close_reason"] != "unknown" for item in by_close_reason
+        ),
         "promotion_eligible": False,
     }

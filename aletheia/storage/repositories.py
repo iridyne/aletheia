@@ -3569,10 +3569,11 @@ def list_exit_breakeven_shadow_outcomes(limit: int = 1000) -> list[dict]:
         raise ValueError("limit must be between 1 and 10000")
     rows = get_db().execute(
         "SELECT outcome.*, assignment.direction, assignment.market_type, "
-        "assignment.treatment_id, assignment.code_commit "
+        "assignment.treatment_id, assignment.code_commit, position.close_reason "
         "FROM exit_breakeven_shadow_outcomes AS outcome "
         "JOIN exit_breakeven_shadow_assignments AS assignment "
         "ON assignment.position_id=outcome.position_id "
+        "LEFT JOIN positions AS position ON position.id=outcome.position_id "
         "ORDER BY outcome.settled_at DESC LIMIT ?",
         (limit,),
     ).fetchall()
