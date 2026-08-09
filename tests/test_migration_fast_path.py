@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 15)
+        f"aletheia-sqlite-v{version}" for version in range(2, 16)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v14"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v15"
     connection.close()
 
 
@@ -484,7 +484,7 @@ def test_exit_breakeven_shadow_v11_migration_is_additive_and_idempotent():
     connection.close()
 
 
-def test_production_v11_ledger_advances_through_v14(tmp_path, monkeypatch):
+def test_production_ledger_advances_through_v15(tmp_path, monkeypatch):
     import aletheia.storage.migrations as migrations
 
     connection = _connection(tmp_path / "v9.db")
@@ -495,7 +495,13 @@ def test_production_v11_ledger_advances_through_v14(tmp_path, monkeypatch):
             verdict_id TEXT PRIMARY KEY,
             experiment_id TEXT NOT NULL REFERENCES learning_experiments(experiment_id)
         );
-        CREATE TABLE universe_feature_snapshots (id TEXT PRIMARY KEY);
+            CREATE TABLE universe_feature_snapshots (id TEXT PRIMARY KEY);
+            CREATE TABLE serenity_research_runs (
+                id TEXT PRIMARY KEY,
+                parent_run_id TEXT,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                idempotency_key TEXT
+            );
         INSERT INTO learning_experiments VALUES ('legacy-experiment');
         INSERT INTO learning_contribution_verdicts
         VALUES ('legacy-positive', 'legacy-experiment');
@@ -528,8 +534,8 @@ def test_production_v11_ledger_advances_through_v14(tmp_path, monkeypatch):
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260809_0013_technical_snapshot_metadata_v14",
-        "aletheia-sqlite-v14",
+        "20260809_0014_serenity_retry_idempotency_v15",
+        "aletheia-sqlite-v15",
     )
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "
@@ -633,6 +639,34 @@ def test_technical_snapshot_metadata_v14_is_additive_and_idempotent():
     assert "technical_algorithm_version" in columns
     assert columns["technical_snapshot_manifest"][3] == 1
     assert columns["technical_snapshot_manifest"][4] == "'{}'"
+    connection.close()
+
+
+def test_serenity_retry_idempotency_v15_protects_new_attempts_without_rewriting_legacy():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE serenity_research_runs ("
+        "id TEXT PRIMARY KEY, parent_run_id TEXT, retry_count INTEGER NOT NULL, "
+        "idempotency_key TEXT)"
+    )
+    connection.executemany(
+        "INSERT INTO serenity_research_runs VALUES (?, 'parent', 1, NULL)",
+        [("legacy-a",), ("legacy-b",)],
+    )
+
+    migrations._apply_serenity_retry_idempotency_v15(connection)
+    migrations._apply_serenity_retry_idempotency_v15(connection)
+    connection.execute(
+        "INSERT INTO serenity_research_runs VALUES "
+        "('new-a', 'parent', 2, 'serenity-retry:parent:2')"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "INSERT INTO serenity_research_runs VALUES "
+            "('new-b', 'parent', 2, 'serenity-retry:parent:2')"
+        )
     connection.close()
 
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from aletheia.data.providers import Candle, Ticker
+from aletheia.data.providers import OHLCVAttempt, OHLCVResult, Ticker
 from aletheia.data.symbols import InstrumentId, MARKET_SPOT
 
 logger = logging.getLogger("aletheia.data.sources.chain")
@@ -136,17 +136,50 @@ class FallbackChainProvider:
         timeframe: str = "1h",
         limit: int = 100,
         since: int | None = None,
-    ) -> list[Candle]:
+    ) -> OHLCVResult:
         last_err: Exception | None = None
+        attempts: list[OHLCVAttempt] = []
         for provider in self._eligible_providers(symbol):
+            declared_name = getattr(type(provider), "venue_name", None)
+            provider_name = declared_name if isinstance(declared_name, str) else type(provider).__name__
             try:
-                return await provider.get_ohlcv(
+                candles = await provider.get_ohlcv(
                     symbol, timeframe=timeframe, limit=limit, since=since
                 )
+                if isinstance(candles, OHLCVResult):
+                    if candles.attempts:
+                        attempts.extend(candles.attempts)
+                    else:
+                        attempts.append(OHLCVAttempt(
+                            provider=provider_name,
+                            outcome=candles.outcome,
+                            accepted=candles.accepted,
+                            rejected=candles.rejected,
+                        ))
+                else:
+                    attempts.append(OHLCVAttempt(
+                        provider=provider_name,
+                        outcome="complete" if len(candles) >= limit else "partial" if candles else "empty",
+                        accepted=len(candles),
+                    ))
+                if not candles:
+                    continue
+                return OHLCVResult(
+                    candles,
+                    requested=limit,
+                    rejected=sum(attempt.rejected for attempt in attempts),
+                    attempts=attempts,
+                )
             except NotImplementedError:
+                attempts.append(OHLCVAttempt(provider=provider_name, outcome="unsupported"))
                 continue
             except Exception as e:  # noqa: BLE001
                 last_err = e
+                attempts.append(OHLCVAttempt(
+                    provider=provider_name,
+                    outcome="failed",
+                    reason=type(e).__name__,
+                ))
                 logger.debug(
                     "ohlcv fallback: %s failed for %s/%s: %s",
                     type(provider).__name__,
@@ -155,7 +188,10 @@ class FallbackChainProvider:
                     e,
                 )
         if last_err:
+            last_err.ohlcv_attempts = tuple(attempts)  # type: ignore[attr-defined]
             raise last_err
+        if any(attempt.outcome == "empty" for attempt in attempts):
+            return OHLCVResult(requested=limit, attempts=attempts)
         raise RuntimeError(f"no provider supports {timeframe} candles for {symbol}")
 
     async def close(self) -> None:

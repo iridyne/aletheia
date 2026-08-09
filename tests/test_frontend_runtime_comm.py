@@ -53,12 +53,18 @@ def test_realtime_updates_expose_degraded_state_and_bounded_diagnostics():
 def test_chart_lifecycle_tracks_market_identity_and_container_size():
     price = _read("charts/PriceChart.tsx")
     pnl = _read("charts/PnLChart.tsx")
+    account = _read("charts/AccountEquityChart.tsx")
+    theme = _read("charts/theme.ts")
 
     assert "}, [symbol, timeframe, marketType])" in price
     assert "markerClickRef.current = onMarkerClick" in price
     assert "chart.unsubscribeClick(handleClick)" in price
     assert "resizeObserver.disconnect()" in price
     assert "resizeObserver.disconnect()" in pnl
+    assert "resizeObserver.observe(containerRef.current)" in account
+    assert "window.addEventListener('resize'" not in account
+    assert "chartTheme.accountEquityAdjusted" in account
+    assert "accountEquityAdjusted" in theme
 
 
 def test_routes_recover_inside_shell_and_redirect_legacy_paths():
@@ -66,6 +72,7 @@ def test_routes_recover_inside_shell_and_redirect_legacy_paths():
 
     assert "const Overview = lazy(() => import('./pages/Overview'))" in src
     assert '<Suspense fallback=' in src
+    assert '<RouteErrorBoundary key={location.pathname}' in src
     assert '<Route path="/agent-runs" element={<Navigate to="/agent-activity" replace />} />' in src
     assert '<Route path="/positions" element={<Navigate to="/trades" replace />} />' in src
     assert '<Route path="*" element={<NotFound />} />' in src

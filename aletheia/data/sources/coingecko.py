@@ -13,7 +13,13 @@ import asyncio
 import logging
 import time
 
-from aletheia.data.providers import Candle, Ticker
+from aletheia.data.providers import (
+    OHLCVAttempt,
+    OHLCVResult,
+    Ticker,
+    classify_ohlcv_outcome,
+    parse_ohlcv_candle,
+)
 
 logger = logging.getLogger("aletheia.data.sources.coingecko")
 
@@ -100,7 +106,7 @@ class CoinGeckoProvider:
         timeframe: str = "1h",
         limit: int = 100,
         since: int | None = None,
-    ) -> list[Candle]:
+    ) -> OHLCVResult:
         from aletheia.data.symbols import canonical_of
         from aletheia.net import httpx_client
 
@@ -128,23 +134,32 @@ class CoinGeckoProvider:
             resp.raise_for_status()
             rows = resp.json()
 
-        candles = [
-            Candle(
-                timestamp=int(row[0]),
-                open=float(row[1]),
-                high=float(row[2]),
-                low=float(row[3]),
-                close=float(row[4]),
-                volume=0.0,
+        parsed = [
+            parse_ohlcv_candle(
+                row,
                 provider="coingecko",
                 exchange=self.venue_name,
+                volume_index=None,
             )
             for row in rows
-            if isinstance(row, (list, tuple)) and len(row) >= 5
         ]
+        candles = [candle for candle in parsed if candle is not None]
+        rejected = len(parsed) - len(candles)
         if limit and len(candles) > limit:
             candles = candles[-limit:]
-        return candles
+        attempt = OHLCVAttempt(
+            provider="coingecko",
+            outcome=classify_ohlcv_outcome(
+                accepted=len(candles), rejected=rejected, requested=limit,
+            ),
+            accepted=len(candles),
+            rejected=rejected,
+        )
+        if rejected:
+            logger.warning("ohlcv quality rejected %d/%d CoinGecko row(s)", rejected, len(parsed))
+        return OHLCVResult(
+            candles, requested=limit, rejected=rejected, attempts=(attempt,),
+        )
 
     async def close(self) -> None:
         pass

@@ -113,6 +113,39 @@ const CHANGE_MAP: Record<string, readonly unknown[][]> = {
 const WS_RETRY_BASE_MS = 3_000
 const WS_RETRY_MAX_MS = 30_000
 const DIAGNOSTIC_COUNT_MAX = 999
+const MAX_FRAME_BYTES = 64 * 1024
+const MAX_CHANGED_CATEGORIES = 256
+
+export interface RealtimeFrame {
+  type: 'update' | 'alert'
+  changed: string[]
+}
+
+export function parseRealtimeFrame(raw: unknown): RealtimeFrame | null {
+  if (typeof raw !== 'string' || raw.length > MAX_FRAME_BYTES) return null
+  try {
+    const message = JSON.parse(raw) as { type?: unknown; changed?: unknown } | null
+    if (!message
+      || (message.type !== 'update' && message.type !== 'alert')
+      || !Array.isArray(message.changed)
+      || message.changed.length > MAX_CHANGED_CATEGORIES
+      || message.changed.some(key => typeof key !== 'string')) return null
+    return { type: message.type, changed: message.changed }
+  } catch {
+    return null
+  }
+}
+
+export function queryKeysForChanged(changed: readonly string[]): unknown[][] {
+  const unique = new Map<string, unknown[]>()
+  for (const category of new Set(changed)) {
+    for (const queryKey of CHANGE_MAP[category] ?? []) {
+      const key = [...queryKey]
+      unique.set(JSON.stringify(key), key)
+    }
+  }
+  return [...unique.values()]
+}
 
 export type RealtimeTransportState = 'connecting' | 'connected' | 'reconnecting' | 'polling_only' | 'disconnected'
 
@@ -174,33 +207,22 @@ export function useRealtimeUpdates(): RealtimeStatus {
       }
 
       socket.onmessage = (e: MessageEvent) => {
-        try {
-          const msg = JSON.parse(e.data as string) as { type?: unknown; changed?: unknown }
-          if ((msg.type !== 'update' && msg.type !== 'alert')
-            || !Array.isArray(msg.changed)
-            || msg.changed.some(key => typeof key !== 'string')) {
-            updateStatus(current => ({
-              ...current,
-              malformedFrameCount: boundedAdd(current.malformedFrameCount),
-            }))
-            return
-          }
-          const unknownCount = msg.changed.filter(key => !(key in CHANGE_MAP)).length
-          updateStatus(current => ({
-            ...current,
-            lastFrameAt: Date.now(),
-            unknownCategoryCount: boundedAdd(current.unknownCategoryCount, unknownCount),
-          }))
-          for (const key of msg.changed) {
-            for (const queryKey of (CHANGE_MAP[key] ?? [])) {
-              queryClient.invalidateQueries({ queryKey: queryKey as unknown[] })
-            }
-          }
-        } catch {
+        const msg = parseRealtimeFrame(e.data)
+        if (!msg) {
           updateStatus(current => ({
             ...current,
             malformedFrameCount: boundedAdd(current.malformedFrameCount),
           }))
+          return
+        }
+        const unknownCount = msg.changed.filter(key => !(key in CHANGE_MAP)).length
+        updateStatus(current => ({
+          ...current,
+          lastFrameAt: Date.now(),
+          unknownCategoryCount: boundedAdd(current.unknownCategoryCount, unknownCount),
+        }))
+        for (const queryKey of queryKeysForChanged(msg.changed)) {
+          queryClient.invalidateQueries({ queryKey })
         }
       }
 

@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import OrderedDict
 
 _DEFAULT_TTL_MIN = 10
+_DEFAULT_MAX_ENTRIES = 256
 
 
 def _now() -> float:
@@ -33,8 +35,15 @@ def _ttl_seconds() -> float:
 class OHLCVCache:
     """Thread-safe TTL cache. Values are opaque (lists of Candle objects)."""
 
-    def __init__(self) -> None:
-        self._store: dict[tuple, tuple[float, object]] = {}
+    def __init__(self, max_entries: int = _DEFAULT_MAX_ENTRIES) -> None:
+        if max_entries < 1:
+            raise ValueError("max_entries must be positive")
+        self._store: OrderedDict[tuple, tuple[float, object]] = OrderedDict()
+        self._max_entries = max_entries
+        self._hits = 0
+        self._misses = 0
+        self._expired = 0
+        self._evicted = 0
         self._lock = threading.Lock()
 
     @staticmethod
@@ -53,12 +62,16 @@ class OHLCVCache:
         with self._lock:
             entry = self._store.get(key)
             if entry is None:
+                self._misses += 1
                 return None
             stored_at, value = entry
             if _now() - stored_at > _ttl_seconds():
-                # Expired — drop it so the store doesn't grow unbounded.
                 self._store.pop(key, None)
+                self._misses += 1
+                self._expired += 1
                 return None
+            self._hits += 1
+            self._store.move_to_end(key)
             return value
 
     def set(
@@ -68,6 +81,21 @@ class OHLCVCache:
         key = self._key(symbol, timeframe, limit, market_type, exchange)
         with self._lock:
             self._store[key] = (_now(), value)
+            self._store.move_to_end(key)
+            while len(self._store) > self._max_entries:
+                self._store.popitem(last=False)
+                self._evicted += 1
+
+    def stats(self) -> dict[str, int]:
+        with self._lock:
+            return {
+                "size": len(self._store),
+                "max_entries": self._max_entries,
+                "hits": self._hits,
+                "misses": self._misses,
+                "expired": self._expired,
+                "evicted": self._evicted,
+            }
 
     def invalidate(self) -> None:
         """Clear all entries (used by tests to reset shared state)."""

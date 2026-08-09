@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Awaitable
 from zoneinfo import ZoneInfo
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
+from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_MISSED
 from apscheduler.executors.pool import ThreadPoolExecutor as APSchedulerThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -21,6 +22,7 @@ from aletheia.config.loader import load_config
 logger = logging.getLogger("aletheia.scheduler")
 
 _scheduler: BackgroundScheduler | None = None
+_scheduler_last_tick: str | None = None
 _SCHEDULER_JOB_LOCK = threading.RLock()
 _JOB_RUN_STATE = threading.local()
 
@@ -942,7 +944,7 @@ def init_scheduler() -> BackgroundScheduler | None:
 
     Returns None if scheduler is disabled in config. Honors runtime.paused at boot.
     """
-    global _scheduler
+    global _scheduler, _scheduler_last_tick
     if _scheduler is not None:
         return _scheduler
 
@@ -968,6 +970,11 @@ def init_scheduler() -> BackgroundScheduler | None:
             for name, workers in _EXECUTOR_WORKERS.items()
         },
         job_defaults={"coalesce": True, "max_instances": 1},
+    )
+    _scheduler_last_tick = None
+    _scheduler.add_listener(
+        _record_scheduler_tick,
+        EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED,
     )
 
     _scheduler.add_job(
@@ -1802,6 +1809,11 @@ def is_running() -> bool:
     return _scheduler is not None and _scheduler.running
 
 
+def _record_scheduler_tick(_event) -> None:
+    global _scheduler_last_tick
+    _scheduler_last_tick = datetime.now(timezone.utc).isoformat()
+
+
 def status_snapshot() -> dict:
     """Return an honest, read-only snapshot of the in-process scheduler.
 
@@ -1809,8 +1821,18 @@ def status_snapshot() -> dict:
     This snapshot reports the actual APScheduler object state so the dashboard
     does not show "active" when init failed or the scheduler is paused.
     """
+    try:
+        enabled = bool(load_config().runtime.scheduler_enabled)
+    except Exception:
+        enabled = None
     if _scheduler is None:
-        return {"running": False, "state": "not_started", "job_count": 0}
+        return {
+            "enabled": enabled,
+            "running": False,
+            "state": "not_started",
+            "job_count": 0,
+            "last_tick": _scheduler_last_tick,
+        }
     state = getattr(_scheduler, "state", None)
     if state == STATE_RUNNING:
         label = "running"
@@ -1825,9 +1847,11 @@ def status_snapshot() -> dict:
     except Exception:
         job_count = 0
     return {
+        "enabled": enabled,
         "running": state == STATE_RUNNING,
         "state": label,
         "job_count": job_count,
+        "last_tick": _scheduler_last_tick,
     }
 
 

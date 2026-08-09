@@ -31,6 +31,12 @@ from aletheia.package_integrity import (
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MAX_MIB = 350
+_PRIVATE_KEY_MARKERS = (
+    b"-----BEGIN " + b"PRIVATE KEY-----",
+    b"-----BEGIN RSA " + b"PRIVATE KEY-----",
+    b"-----BEGIN EC " + b"PRIVATE KEY-----",
+    b"-----BEGIN OPENSSH " + b"PRIVATE KEY-----",
+)
 
 
 @dataclass(frozen=True)
@@ -94,6 +100,33 @@ def iter_payload_files(payload_dir: Path, *, exclude_manifest: bool = True) -> I
         if exclude_manifest and path.name == "release-manifest.json":
             continue
         yield path
+
+
+def assert_no_secret_material(payload_dir: Path) -> None:
+    """Fail closed on runtime-state paths and high-confidence private-key material."""
+    for path in iter_payload_files(payload_dir):
+        relative = path.relative_to(payload_dir)
+        lower_parts = tuple(part.lower() for part in relative.parts)
+        name = lower_parts[-1]
+        if (
+            ".aletheia" in lower_parts
+            or name == "secrets.enc"
+            or name == ".secret.key"
+            or name.startswith(".env")
+            or name.endswith((".key", ".p12", ".pfx"))
+        ):
+            raise RuntimeError(f"packaged runtime contains forbidden secret path: {relative}")
+        if path.is_symlink():
+            continue
+        tail = b""
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                material = tail + chunk
+                if any(marker in material for marker in _PRIVATE_KEY_MARKERS):
+                    raise RuntimeError(
+                        f"packaged runtime contains private key material: {relative}"
+                    )
+                tail = material[-64:]
 
 
 def write_manifest(payload_dir: Path, *, git_sha: str, version: str, target: str) -> Path:
@@ -169,6 +202,7 @@ def package_existing_payload(
         raise RuntimeError("packaged runtime root cannot be a symbolic link")
     payload_dir = payload_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    assert_no_secret_material(payload_dir)
     manifest = write_manifest(payload_dir, git_sha=git_sha, version=version, target=target)
     short_sha = git_sha[:12] if git_sha != "unknown" else "unknown"
     archive = output_dir / f"aletheia-runtime-{version}-{short_sha}-{target}.tar.gz"
