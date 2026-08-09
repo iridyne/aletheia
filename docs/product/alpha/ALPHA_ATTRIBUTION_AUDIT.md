@@ -56,11 +56,16 @@ Each verdict includes:
 - `suspected_modules`
 - `reason`
 
-The report also exposes `exit_paired_evidence` outside those five verdicts. It
-projects one existing prospective paired Exit treatment in quote-currency net
-PnL. It is intentionally not a sixth layer verdict: the treatment covers only
-eligible protected short-term Paper positions and cannot establish generic
-Exit-module contribution or authorize promotion.
+The report also exposes two module-specific projections outside those five
+verdicts:
+
+- `exit_paired_evidence` projects one existing prospective paired Exit treatment
+  in quote-currency net PnL.
+- `risk_policy_evidence` estimates the authoritative local-Paper Risk policy's
+  fixed-24h candidate value relative to a shadow pass-all policy.
+
+Neither is a sixth judging-layer verdict and neither grants behavior authority
+or promotion.
 
 These fields have different authority:
 
@@ -195,6 +200,37 @@ This is strong treatment-specific paired evidence, not a generic Exit layer
 estimand. The durable outcome does not carry `close_reason`, so the Audit also
 states that stop-loss-specific attribution is unavailable.
 
+### Risk Policy Evidence
+
+Question: on the exact native local-Paper proposals that reached authoritative
+Risk, how much 24h cost-aware candidate return did the current Risk policy add
+or remove relative to passing every candidate?
+
+Current implementation:
+
+- Uses persisted authoritative `RiskDecision` as the treatment assignment and
+  requires exact Proposal commit/quantity, Demo policy identity, and matching
+  Proposal-to-Risk runtime/build/behavior provenance plus its append-only Risk
+  filter trace.
+- Joins only the exact `proposal:<id>` canonical settled `24h`
+  `filter_candidate_outcomes` result and verifies instrument, entry, horizon,
+  settlement, cost-model identity, and net-return arithmetic.
+- Defines pass-all control value as each candidate's cost-aware net return.
+  Approved candidates have the same treatment value; rejected candidates are
+  actual Risk interventions whose treatment value is zero exposure.
+- Requires one policy/build/behavior/cost identity, enough candidates, and enough
+  actual rejections. Missing or mixed evidence fails closed.
+
+An audit window may span clean Gateway restarts. Runtime session is therefore
+validated on every Proposal-to-Risk lineage but is not a cohort-wide identity;
+policy, build, behavior, and cost model remain cohort-wide identities.
+
+The statistical unit is `proposal_id`; the economic unit is percentage points of
+candidate `net_return_pct`. This is a paired value estimate for the Risk gate,
+not realized Position PnL or a full portfolio simulation. It does not model
+capacity/interference, and `behavior_authority=false` plus
+`promotion_eligible=false` remain explicit.
+
 ### Serenity Alpha
 
 Question: do Serenity opportunities outperform observed same-period baselines?
@@ -233,6 +269,10 @@ This audit is read-only:
   treatment and an identity- and cost-complete paired shadow outcome. This grade
   is treatment-specific and does not by itself grant module contribution
   authority.
+- `strong_prospective_paired_policy`: every candidate has an ex-ante
+  authoritative policy action and exact fixed-horizon control outcome; actual
+  reject interventions produce paired policy-value deltas. This measures the
+  declared candidate-level policy estimand, not portfolio-wide profitability.
 - `moderate_quasi_causal`: difference-in-differences against contemporaneous
   controls is available, but there was no randomized holdout.
 - `weak_reconstructed`: the baseline was reconstructed after the fact from OHLCV.
@@ -248,6 +288,8 @@ This audit is read-only:
   directional even when they are consumer-wired.
 - Exit paired evidence covers one frozen treatment and does not yet attribute by
   actual `close_reason`.
+- Risk policy evidence uses a pass-all candidate control and does not model
+  portfolio capacity, simultaneous exposures, or downstream Execution/Exit.
 - Directional verdicts retain suspected-module metadata for diagnosis, but the
   CLI does not render that metadata as confirmed or prescriptive advice.
 - A negative Ranker or System Operator observational delta does not prove either
