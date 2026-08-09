@@ -194,10 +194,6 @@ Current implementation:
 
 - Preferentially consumes exactly one current, already-consumed fixed-look
   confirmatory verdict for a measurement-supported Learning path.
-- While a current Paper experiment is still collecting, reuses the existing
-  `lco-v1` read model to expose its exact experiment identity, raw samples,
-  intervention state, and exclusions instead of falling back to unrelated
-  lesson before/after diagnostics.
 - Requires the durable inference decision, authority eligibility, exact
   experiment/hypothesis/stage/policy epoch/horizon/outcome/metric/code/behavior
   identities, arm sample contract, and complete baseline/observed/delta.
@@ -215,9 +211,7 @@ Current implementation:
 Only the exact consumed confirmatory path can produce
 `strong_prospective_control` and measured contribution. Generic lesson/memo/guard
 fallbacks remain `moderate_quasi_causal` or `weak_before_after`; disabling active
-safety guards for random trades would be unsafe. A current Paper monitoring
-verdict remains non-authoritative even when its provisional delta is positive or
-negative.
+safety guards for random trades would be unsafe.
 
 ### Exit Paired Evidence
 
