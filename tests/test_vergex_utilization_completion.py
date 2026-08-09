@@ -48,6 +48,7 @@ def test_atr_chase_guard_removes_direction_but_keeps_shadow_scores():
     })
 
     assert result["scanner_direction"] is None
+    assert result["proposed_direction"] == "long"
     assert result["opportunity_score"] == 0.0
     assert result["all_scores"]["momentum"] > 0
     assert "15m candle >1.5 ATR; no chase" in result["reasons"]

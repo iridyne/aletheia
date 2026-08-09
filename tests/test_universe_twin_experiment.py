@@ -30,7 +30,13 @@ from aletheia.universe.twin_scoring import (
 )
 
 
-def _input(*, feature_id: str, symbol: str, direction: str = "long") -> TwinShadowInput:
+def _input(
+    *,
+    feature_id: str,
+    symbol: str,
+    direction: str = "long",
+    no_chase: bool = False,
+) -> TwinShadowInput:
     signed = 1.0 if direction == "long" else -1.0
     return TwinShadowInput(
         feature={
@@ -64,9 +70,14 @@ def _input(*, feature_id: str, symbol: str, direction: str = "long") -> TwinShad
         },
         authority_scanner_result={
             "scanner_family": "momentum" if direction == "long" else "short_bias",
-            "scanner_direction": direction,
+            "scanner_direction": None if no_chase else direction,
+            "proposed_direction": direction,
             "opportunity_score": 55.0,
-            "reasons": ["step evidence"],
+            "reasons": (
+                ["step evidence", "15m candle >1.5 ATR; no chase"]
+                if no_chase
+                else ["step evidence"]
+            ),
         },
         authority_total_score=50.0,
         authority_score_audit={
@@ -81,10 +92,16 @@ def _bundle(
     scanner_run_id: str,
     *,
     captured_at: str = "2026-08-08T00:00:00+00:00",
+    no_chase: bool = False,
 ):
     inputs = (
         _input(feature_id=f"{scanner_run_id}-1", symbol="BTC/USDT"),
-        _input(feature_id=f"{scanner_run_id}-2", symbol="ETH/USDT", direction="short"),
+        _input(
+            feature_id=f"{scanner_run_id}-2",
+            symbol="ETH/USDT",
+            direction="short",
+            no_chase=no_chase,
+        ),
     )
     policy = ContinuousScoringPolicy()
     universe_config = UniverseConfig(max_candidates=1, explore_ratio=0.0)
@@ -190,6 +207,21 @@ def test_task6_registers_one_outcome_for_every_candidate_and_no_authority() -> N
     assert get_learning_path("ranker_factor_filter").measurement_supported is False
     with pytest.raises(KeyError):
         get_learning_path(TWIN_EXPERIMENT_PATH_ID)
+
+
+def test_task6_keeps_no_chase_candidate_in_complete_cluster_outcomes() -> None:
+    bundle = _bundle("run-no-chase", no_chase=True)
+
+    assert len(bundle.evidence) == len(bundle.outcomes) == 2
+    assert bundle.batch.assignment_unit_key == "run-no-chase"
+    outcome = next(item for item in bundle.outcomes if item.symbol == "ETH/USDT")
+    evidence = next(item for item in bundle.evidence if item.symbol == "ETH/USDT")
+    assert outcome.direction == "short"
+    assert evidence.shadow_authority_applied is False
+    blockers = json.loads(evidence.compact_output_json)["evidence_contract"][
+        "blocking_reasons"
+    ]
+    assert "authority_no_chase_gate" in blockers
 
 
 def test_task6_bundle_persistence_is_atomic_with_outcome_registration() -> None:
