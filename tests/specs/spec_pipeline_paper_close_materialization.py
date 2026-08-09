@@ -218,6 +218,8 @@ def test_paper_entry_stamps_local_fill_authority(tmp_path, monkeypatch):
     assert position["entry_price_source"] == "local_fill"
     assert position["entry_fill_verified"] == 1
     assert order["position_id"] == position["id"]
+    assert order["reference_price"] == pytest.approx(100.0)
+    assert order["reference_price_source"] == "risk_verified_proposal_price"
 
 
 @spec_claim(
@@ -317,6 +319,8 @@ def test_committed_paper_close_survives_jsonl_audit_sink_failure(
     assert result["closed"] is True
     assert stored["status"] == "closed"
     assert close_order["status"] == "filled"
+    assert close_order["reference_price"] == pytest.approx(110.0)
+    assert close_order["reference_price_source"] == "paper_close_mark"
     assert close_fill is not None
     assert any(
         event["event_type"] == "position_closed"

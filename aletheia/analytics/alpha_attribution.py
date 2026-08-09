@@ -107,6 +107,9 @@ def build_alpha_attribution_audit(days: int = 30, min_sample_size: int = MIN_SAM
         "verdicts": verdicts,
         "exit_paired_evidence": _exit_paired_evidence(cutoff),
         "risk_policy_evidence": _risk_policy_evidence(db, cutoff, min_sample_size),
+        "execution_cost_evidence": _execution_cost_evidence(
+            db, cutoff, min_sample_size
+        ),
         "main_bottleneck": _main_bottleneck(verdicts),
     }
 
@@ -126,6 +129,7 @@ def _empty_report(generated_at: str, days: int, reason: str) -> dict:
         "verdicts": verdicts,
         "exit_paired_evidence": _empty_exit_paired_evidence(reason),
         "risk_policy_evidence": _empty_risk_policy_evidence(reason),
+        "execution_cost_evidence": _empty_execution_cost_evidence(reason),
         "main_bottleneck": _main_bottleneck(verdicts),
     }
 
@@ -237,6 +241,31 @@ def _risk_policy_evidence(db, cutoff: str, min_sample_size: int) -> dict:
         )
 
 
+def _empty_execution_cost_evidence(reason: str) -> dict:
+    from aletheia.analytics.execution_contribution import (
+        empty_execution_cost_contribution,
+    )
+
+    return empty_execution_cost_contribution(reason)
+
+
+def _execution_cost_evidence(db, cutoff: str, min_sample_size: int) -> dict:
+    from aletheia.analytics.execution_contribution import (
+        build_execution_cost_contribution,
+    )
+
+    try:
+        return build_execution_cost_contribution(
+            db,
+            cutoff=cutoff,
+            min_sample_size=min_sample_size,
+        )
+    except sqlite3.OperationalError as exc:
+        return _empty_execution_cost_evidence(
+            f"Required Execution cost evidence is unavailable: {exc}"
+        )
+
+
 def render_alpha_audit(report: dict) -> str:
     """Render the audit in the owner-facing CLI format."""
     lines = ["Alpha Attribution Audit", "", f"Window: {report.get('window_days')}d", ""]
@@ -288,6 +317,20 @@ def render_alpha_audit(report: dict) -> str:
         f"delta={_fmt_metric(risk.get('delta'))} "
         f"contribution={risk.get('contribution_verdict', 'insufficient_data')}",
         f"  {risk.get('reason', 'Risk policy evidence is unavailable.')}",
+    ])
+    execution = report.get("execution_cost_evidence") or {}
+    lines.extend([
+        "",
+        "Execution cost evidence: "
+        f"{execution.get('measurement_status', 'not_measured')}",
+        "  "
+        f"eligible={execution.get('eligible_count', 0)} "
+        f"delta={_fmt_metric(execution.get('delta'))} "
+        "quote_delta="
+        f"{_fmt_metric(execution.get('incremental_net_pnl_total'))} "
+        "contribution="
+        f"{execution.get('contribution_verdict', 'insufficient_data')}",
+        f"  {execution.get('reason', 'Execution cost evidence is unavailable.')}",
     ])
     bottleneck = report["main_bottleneck"]
     lines.extend([

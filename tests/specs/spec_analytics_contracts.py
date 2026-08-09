@@ -169,7 +169,9 @@ def test_resolve_stale_shadows_uses_historical_bar():
               "contribution is eligible for an actionable bottleneck; treatment-specific "
               "Exit paired evidence remains non-authoritative outside those five verdicts, "
               "and Risk policy evidence must fail closed unless its paired fixed-horizon "
-              "identity and actual-intervention contract is complete.",
+              "identity and actual-intervention contract is complete; Execution cost "
+              "evidence likewise requires prospective immutable reference prices and "
+              "exact paired Fill and Outcome economics.",
               status="implemented"),
 )
 def test_alpha_attribution_contract_shape_on_empty_db():
@@ -199,6 +201,12 @@ def test_alpha_attribution_contract_shape_on_empty_db():
     assert risk["behavior_authority"] is False
     assert risk["promotion_eligible"] is False
     assert risk["contribution_verdict"] == "insufficient_data"
+    execution = report["execution_cost_evidence"]
+    assert execution["contract_version"] == "execution-cost-pair/v1"
+    assert execution["baseline_policy"] == "frictionless-requested-fill/v1"
+    assert execution["behavior_authority"] is False
+    assert execution["promotion_eligible"] is False
+    assert execution["contribution_verdict"] == "insufficient_data"
     assert report["main_bottleneck"]["layer"] == "insufficient_data"
 
     weak_negative = {

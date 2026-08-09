@@ -56,13 +56,16 @@ Each verdict includes:
 - `suspected_modules`
 - `reason`
 
-The report also exposes two module-specific projections outside those five
+The report also exposes three module-specific projections outside those five
 verdicts:
 
 - `exit_paired_evidence` projects one existing prospective paired Exit treatment
   in quote-currency net PnL.
 - `risk_policy_evidence` estimates the authoritative local-Paper Risk policy's
   fixed-24h candidate value relative to a shadow pass-all policy.
+- `execution_cost_evidence` pairs each eligible native local-Paper Position with
+  immutable pre-fill entry/exit references to attribute actual fees and price
+  impact.
 
 Neither is a sixth judging-layer verdict and neither grants behavior authority
 or promotion.
@@ -231,6 +234,35 @@ not realized Position PnL or a full portfolio simulation. It does not model
 capacity/interference, and `behavior_authority=false` plus
 `promotion_eligible=false` remain explicit.
 
+### Execution Cost Evidence
+
+Question: for an exact native local-Paper Position, how much net return did its
+actual fills and fees add or remove relative to frictionless fills at the prices
+known immediately before execution?
+
+Current implementation:
+
+- Persists the Risk-verified Proposal price on each new Paper entry Order and the
+  exact fresh mark on each Paper close Order before adverse slippage is applied.
+  Schema v15 makes those reference fields immutable; historical rows stay NULL.
+- Reads only central `eligible_strategy_outcomes` and requires the complete
+  Proposal→authoritative RiskDecision→entry Order/Fill→Position→close Order/Fill
+  chain, exact quantity/instrument/provenance, matching Position fees and complete
+  funding economics.
+- Holds quantity, direction, entry/exit timing, and funding fixed. The control
+  uses the requested entry/exit prices with zero execution fees; the treatment
+  uses the actual local fills and fees.
+- Reports mean net-return delta plus quote-currency fee, price-impact, and total
+  incremental PnL. Missing references, mixed identities, partial/ambiguous chains,
+  or insufficient samples fail closed.
+
+The statistical unit is `position_id`. This is prospective paired accounting for
+Execution cost, not a randomized routing-policy experiment. It measures fees and
+fill-price impact exactly within the Paper simulator, but does not measure whether
+the current router avoided worse fills or outperformed an alternative algorithm.
+It remains read-only with `behavior_authority=false` and
+`promotion_eligible=false`.
+
 ### Serenity Alpha
 
 Question: do Serenity opportunities outperform observed same-period baselines?
@@ -273,6 +305,10 @@ This audit is read-only:
   authoritative policy action and exact fixed-horizon control outcome; actual
   reject interventions produce paired policy-value deltas. This measures the
   declared candidate-level policy estimand, not portfolio-wide profitability.
+- `strong_prospective_paired_accounting`: immutable pre-fill references and the
+  exact verified execution/outcome chain permit same-Position cost decomposition.
+  This is accounting authority for the declared cost estimand, not evidence that
+  one routing policy causally beats another.
 - `moderate_quasi_causal`: difference-in-differences against contemporaneous
   controls is available, but there was no randomized holdout.
 - `weak_reconstructed`: the baseline was reconstructed after the fact from OHLCV.
@@ -290,6 +326,9 @@ This audit is read-only:
   actual `close_reason`.
 - Risk policy evidence uses a pass-all candidate control and does not model
   portfolio capacity, simultaneous exposures, or downstream Execution/Exit.
+- Execution cost evidence is limited to newly opened and closed native
+  `paper_internal` Positions under schema v15. Exchange/demo/live rows, legacy
+  rows, partial closes, and routing-policy value remain unmeasured.
 - Directional verdicts retain suspected-module metadata for diagnosis, but the
   CLI does not render that metadata as confirmed or prescriptive advice.
 - A negative Ranker or System Operator observational delta does not prove either

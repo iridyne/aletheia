@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v14"
+SCHEMA_VERSION = "aletheia-sqlite-v15"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4259,6 +4259,28 @@ _TECHNICAL_SNAPSHOT_METADATA_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+_EXECUTION_REFERENCE_COLUMNS = (
+    ("reference_price", "orders", "REAL"),
+    ("reference_price_source", "orders", "TEXT"),
+)
+_EXECUTION_REFERENCE_SQL = """
+CREATE TRIGGER IF NOT EXISTS trg_orders_execution_reference_immutable
+BEFORE UPDATE OF reference_price, reference_price_source ON orders
+WHEN NEW.reference_price IS NOT OLD.reference_price
+  OR NEW.reference_price_source IS NOT OLD.reference_price_source
+BEGIN
+    SELECT RAISE(ABORT, 'Order execution reference is immutable');
+END;
+"""
+_EXECUTION_REFERENCE_CHECKSUM = hashlib.sha256(
+    (
+        repr(_EXECUTION_REFERENCE_COLUMNS)
+        + "\n"
+        + _EXECUTION_REFERENCE_SQL
+        + "\nadditive_execution_reference_v1"
+    ).encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -4325,6 +4347,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260809_0012_universe_twin_prospective_v13": (
         "prospective Shadow policy identity, assignment, and outcome linkage"
+    ),
+    "20260809_0014_execution_reference_v15": (
+        "immutable pre-fill reference prices for paired Paper execution accounting"
     ),
 }
 
@@ -4611,6 +4636,19 @@ def _apply_technical_snapshot_metadata_v14(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_execution_reference_v15(db: sqlite3.Connection) -> None:
+    """Persist immutable pre-fill references without changing order behavior."""
+
+    for column, table, column_type in _EXECUTION_REFERENCE_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.execute(_EXECUTION_REFERENCE_SQL)
+    db.execute("PRAGMA optimize")
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -4687,8 +4725,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260809_0013_technical_snapshot_metadata_v14",
         checksum=_TECHNICAL_SNAPSHOT_METADATA_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v14",
         apply=_apply_technical_snapshot_metadata_v14,
+    ),
+    MigrationStep(
+        migration_id="20260809_0014_execution_reference_v15",
+        checksum=_EXECUTION_REFERENCE_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_execution_reference_v15,
     ),
 )
 

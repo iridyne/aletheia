@@ -348,6 +348,10 @@ class Order(_Provenanced):
     order_type: str
     quantity: float
     price: float | None = None
+    # Pre-fill market/request anchor used only for paired execution-cost
+    # accounting. It never changes the submitted price or broker behavior.
+    reference_price: float | None = None
+    reference_price_source: str | None = None
     execution_mode: str
     exchange_order_id: str | None = None
     # Stable exchange-side idempotency/recovery key.  This is persisted before
