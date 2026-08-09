@@ -124,7 +124,10 @@ async def test_lesson_extraction_persists_schema_valid_lesson(
     from aletheia.agents import dreaming_agent
     from aletheia.storage.sqlite import get_db
 
-    async def _structured_success(*_args, **_kwargs):
+    call_options = {}
+
+    async def _structured_success(*_args, **kwargs):
+        call_options.update(kwargs)
         return {
             "lessons": [
                 {
@@ -144,6 +147,7 @@ async def test_lesson_extraction_persists_schema_valid_lesson(
     await dreaming_agent._extract_lessons(None, outputs, errors)
 
     assert errors == []
+    assert call_options["reasoning_effort"] == "none"
     assert len(outputs) == 1
     assert outputs[0].startswith("lesson:")
     row = get_db().execute(
