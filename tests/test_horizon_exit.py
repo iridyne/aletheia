@@ -74,9 +74,13 @@ def test_serenity_backstop_uses_days_school_max():
 
 # ── _maybe_wake_on_horizon (side-effecting, once per horizon) ────────────────
 
-def test_completed_horizon_review_is_acknowledged_then_guarded(monkeypatch):
+def test_extended_horizon_ack_waits_until_new_due_time_then_rearms(monkeypatch):
     from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import _select_one
+    from aletheia.storage.repositories import (
+        _select_one,
+        list_audit_events,
+        update_position,
+    )
     import aletheia.agent_runtime.pi_daemon as pd
 
     opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
@@ -102,13 +106,136 @@ def test_completed_horizon_review_is_acknowledged_then_guarded(monkeypatch):
     assert captured[0].position_id == "h1"
     assert _select_one("positions", "h1")["horizon_wake_sent_at"] is None
 
-    # A completed review owns the durable acknowledgement.
+    # A completed review extends the horizon into the future and owns the
+    # durable acknowledgement for the horizon that was just reviewed.
+    update_position("h1", expected_horizon_hours=24.0)
     assert pm.acknowledge_horizon_review(["h1"]) == ["h1"]
     assert _select_one("positions", "h1")["horizon_wake_sent_at"] is not None
 
-    # Acknowledged horizon → no duplicate review.
+    # The new horizon is not due yet, so the acknowledgement remains guarded.
     assert pm._maybe_wake_on_horizon(_select_one("positions", "h1")) is False
     assert len(captured) == 1
+
+    # Once the extended horizon itself becomes due, its older acknowledgement
+    # cannot permanently suppress the next mandatory review.
+    update_position(
+        "h1",
+        opened_at=(datetime.now(timezone.utc) - timedelta(hours=25)).isoformat(),
+    )
+    assert pm._maybe_wake_on_horizon(_select_one("positions", "h1")) is True
+    assert len(captured) == 2
+    assert _select_one("positions", "h1")["horizon_wake_sent_at"] is None
+
+    rearm_events = [
+        event for event in list_audit_events(limit=20)
+        if event["event_type"] == "horizon_review_rearmed"
+    ]
+    assert len(rearm_events) == 1
+    assert rearm_events[0]["entity_id"] == "h1"
+
+
+def test_legacy_due_ack_is_rearmed_once_and_redelivered(monkeypatch):
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.repositories import _select_one, list_audit_events
+    import aletheia.agent_runtime.pi_daemon as pd
+
+    opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
+    legacy_ack = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    get_db().execute(
+        "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
+        "execution_mode,status,expected_horizon_hours,opened_at,horizon_wake_sent_at) VALUES "
+        "('h-legacy','ADA/USDT','usdt_futures','long',1.0,100.0,'paper_internal','open',10.0,?,?)",
+        (opened, legacy_ack),
+    )
+    delivered = []
+    monkeypatch.setattr(
+        pd,
+        "notify_pi_daemon",
+        lambda source="unknown", event=None: delivered.append(event) or True,
+    )
+
+    assert pm._maybe_wake_on_horizon(
+        _select_one("positions", "h-legacy")
+    ) is True
+    assert _select_one("positions", "h-legacy")["horizon_wake_sent_at"] is None
+    assert len(delivered) == 1
+
+    # Delivery remains retryable until the new review reaches a terminal fact,
+    # but the forward-adoption audit is emitted once for the cleared marker.
+    assert pm._maybe_wake_on_horizon(
+        _select_one("positions", "h-legacy")
+    ) is True
+    assert len(delivered) == 2
+    assert len([
+        event for event in list_audit_events(limit=20)
+        if event["event_type"] == "horizon_review_rearmed"
+        and event["entity_id"] == "h-legacy"
+    ]) == 1
+
+
+def test_due_ack_with_durable_pending_close_claim_is_not_rearmed(monkeypatch):
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.repositories import _select_one, list_audit_events
+    import aletheia.agent_runtime.pi_daemon as pd
+
+    opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
+    acknowledged = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    get_db().execute(
+        "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
+        "execution_mode,status,expected_horizon_hours,opened_at,horizon_wake_sent_at,"
+        "pending_close_order_id,pending_close_status) VALUES "
+        "('h-pending','ETH/USDT','usdt_futures','short',1.0,100.0,'bitget_demo','open',"
+        "10.0,?,?,'close-order-1','submitted')",
+        (opened, acknowledged),
+    )
+    delivered = []
+    monkeypatch.setattr(
+        pd,
+        "notify_pi_daemon",
+        lambda source="unknown", event=None: delivered.append(event) or True,
+    )
+
+    assert pm._maybe_wake_on_horizon(
+        _select_one("positions", "h-pending")
+    ) is False
+    assert _select_one("positions", "h-pending")["horizon_wake_sent_at"] == acknowledged
+    assert delivered == []
+    assert not [
+        event for event in list_audit_events(limit=20)
+        if event["event_type"] == "horizon_review_rearmed"
+        and event["entity_id"] == "h-pending"
+    ]
+
+
+def test_concurrent_future_extension_wins_before_legacy_ack_rearm(monkeypatch):
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.repositories import _select_one, update_position
+    import aletheia.agent_runtime.pi_daemon as pd
+
+    opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
+    acknowledged = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    get_db().execute(
+        "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
+        "execution_mode,status,expected_horizon_hours,opened_at,horizon_wake_sent_at) VALUES "
+        "('h-race','SOL/USDT','spot','long',1.0,100.0,'paper_internal','open',10.0,?,?)",
+        (opened, acknowledged),
+    )
+    stale_due_row = _select_one("positions", "h-race")
+    update_position("h-race", expected_horizon_hours=24.0)
+    delivered = []
+    monkeypatch.setattr(
+        pd,
+        "notify_pi_daemon",
+        lambda source="unknown", event=None: delivered.append(event) or True,
+    )
+
+    # The passed row is due, but the transaction must re-read the concurrent
+    # extension and leave its acknowledgement untouched.
+    assert pm._maybe_wake_on_horizon(stale_due_row) is False
+    current = _select_one("positions", "h-race")
+    assert current["expected_horizon_hours"] == 24.0
+    assert current["horizon_wake_sent_at"] == acknowledged
+    assert delivered == []
 
 
 def test_failed_wake_is_not_stamped_and_can_retry(monkeypatch):

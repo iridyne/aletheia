@@ -855,14 +855,97 @@ def _maybe_wake_on_thesis(position: dict, cfg) -> bool:
     return delivered
 
 
+def _rearm_due_horizon_review(
+    position: dict,
+    *,
+    evaluated_at: datetime,
+) -> dict | None:
+    """Clear a completed marker once its current horizon is due again.
+
+    ``horizon_wake_sent_at`` acknowledges one completed review, not every future
+    review for the lifetime of the Position. Re-read under the writer lock so a
+    concurrent close claim or horizon extension wins before any marker is cleared.
+    The returned row is the only state the caller may use to emit a new wake.
+    """
+    marker = position.get("horizon_wake_sent_at")
+    if not marker:
+        return position
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
+
+    rearmed: dict | None = None
+    with repo.transaction(immediate=True):
+        current = repo.get_position(str(position["id"]))
+        if current is None or current.get("status") != "open":
+            return None
+        current_marker = current.get("horizon_wake_sent_at")
+        if not current_marker:
+            return None
+        if (
+            current.get("pending_close_order_id")
+            or current.get("pending_close_status") in _OPEN_CLOSE_STATES
+        ):
+            return None
+
+        horizon = current.get("expected_horizon_hours")
+        try:
+            horizon = float(horizon) if horizon is not None else None
+        except (TypeError, ValueError):
+            horizon = None
+        opened = _parse_dt(current.get("opened_at"))
+        if not horizon or horizon <= 0 or opened is None:
+            return None
+        age_hours = (evaluated_at - opened).total_seconds() / 3600.0
+        if age_hours < horizon:
+            return None
+
+        event_digest = hashlib.sha256(
+            (
+                f"{current['id']}\0{current_marker}\0"
+                f"{current.get('opened_at')}\0{horizon}"
+            ).encode()
+        ).hexdigest()
+        repo.update_position(current["id"], horizon_wake_sent_at=None)
+        repo.insert_audit_event_once(AuditEvent(
+            id=f"horizon-review-rearmed-{event_digest}",
+            actor="system",
+            source="position_manager",
+            event_type="horizon_review_rearmed",
+            entity_type="position",
+            entity_id=current["id"],
+            before_state=json.dumps({
+                "expected_horizon_hours": horizon,
+                "horizon_wake_sent_at": current_marker,
+            }, sort_keys=True, separators=(",", ":")),
+            after_state=json.dumps({
+                "expected_horizon_hours": horizon,
+                "horizon_wake_sent_at": None,
+            }, sort_keys=True, separators=(",", ":")),
+            message=(
+                "Re-armed the mandatory horizon review because the current "
+                "horizon is due and no durable close claim exists."
+            ),
+        ))
+        current["horizon_wake_sent_at"] = None
+        rearmed = current
+
+    logger.warning(
+        "horizon review re-armed: pos=%s prior_ack=%s",
+        position.get("id"),
+        marker,
+    )
+    return rearmed
+
+
 def _maybe_wake_on_horizon(position: dict) -> bool:
     """When a position passes its Operator-authored expected_horizon, wake the Operator
     ONCE for a must-answer decision (close / extend) instead of auto-closing (D3).
 
     Scheduling an in-memory WakeEvent is not durable completion.  The sent marker is
     therefore written only by :func:`acknowledge_horizon_review` after the Operator
-    returns a completed hold/adjust/close result.  Until then every position-manager
-    scan may re-deliver the idempotently coalesced event, including after restart.
+    returns an effective extension or close result. Once an extended horizon itself
+    becomes due, its earlier acknowledgement is atomically re-armed and audited.
     The far backstop in _decide_exit still auto-closes if the Operator never responds.
     """
     horizon = position.get("expected_horizon_hours")
@@ -872,14 +955,25 @@ def _maybe_wake_on_horizon(position: dict) -> bool:
         horizon = None
     if not horizon or horizon <= 0:
         return False
-    if position.get("horizon_wake_sent_at"):
-        return False  # already woke once for this horizon
     opened = _parse_dt(position.get("opened_at"))
     if opened is None:
         return False
-    age_hours = (datetime.now(timezone.utc) - opened).total_seconds() / 3600.0
+    evaluated_at = datetime.now(timezone.utc)
+    age_hours = (evaluated_at - opened).total_seconds() / 3600.0
     if age_hours < horizon:
         return False
+    if position.get("horizon_wake_sent_at"):
+        position = _rearm_due_horizon_review(
+            position,
+            evaluated_at=evaluated_at,
+        )
+        if position is None:
+            return False
+        horizon = float(position["expected_horizon_hours"])
+        opened = _parse_dt(position.get("opened_at"))
+        if opened is None:
+            return False
+        age_hours = (evaluated_at - opened).total_seconds() / 3600.0
 
     try:
         import time
@@ -919,7 +1013,9 @@ def acknowledge_horizon_review(position_ids: list[str]) -> list[str]:
 
     This marker is an acknowledgement, not a delivery receipt.  The caller filters
     the supplied ids to open HORIZON_DUE positions and invokes this only after an
-    effective future-horizon extension or a confirmed/durably claimed close.
+    effective future-horizon extension or a confirmed/durably claimed close. An
+    extension acknowledgement is scoped to the completed review and is re-armed
+    when the newly authored horizon becomes due.
     """
     from aletheia.storage.repositories import update_position
 
