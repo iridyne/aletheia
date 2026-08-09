@@ -180,6 +180,7 @@ def _empty_exit_paired_evidence(reason: str) -> dict:
         "incremental_net_pnl_total": None,
         "incremental_net_pnl_mean": None,
         "positive_increment_count": 0,
+        "close_reason_breakdown": [],
         "close_reason_attribution_available": False,
         "reason": reason,
     }
@@ -353,7 +354,6 @@ def _exit_paired_evidence(cutoff: str) -> dict:
         "causal_grade": "strong_prospective_paired_shadow",
         "statistical_unit": "position_id",
         "economic_unit": "net_pnl_quote_currency",
-        "close_reason_attribution_available": False,
         "reason": (
             "This estimates one frozen entry-lock treatment for eligible Paper positions; "
             "it does not establish generic Exit-module contribution or authorize behavior changes."
@@ -483,6 +483,13 @@ def render_alpha_audit(report: dict) -> str:
         f"mean_delta={_fmt_metric(paired.get('incremental_net_pnl_mean'))}",
         f"  {paired.get('reason', 'Exit paired evidence is unavailable.')}",
     ])
+    for item in paired.get("close_reason_breakdown") or []:
+        lines.append(
+            f"  {item['close_reason']}: available={item['available_count']} "
+            f"changed={item['changed_count']} "
+            f"total_delta={_fmt_metric(item['incremental_net_pnl_total'])} "
+            f"mean_delta={_fmt_metric(item['incremental_net_pnl_mean'])}"
+        )
     risk = report.get("risk_policy_evidence") or {}
     lines.extend([
         "",
