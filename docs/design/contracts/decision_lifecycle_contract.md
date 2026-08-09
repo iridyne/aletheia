@@ -169,7 +169,10 @@ rank ordering、账户权益或单笔近期亏损都没有 adverse authority。�
 每条 defer 的 `defer_until` 就是完整的 120 分钟窗口本身，Operator 判 defer 即隐式断言
 "候选在窗口末仍值得再看一次"——因此 defer 事件同一事务中把 Opportunity 的 `valid_until`
 CAS 前向延长到 `defer_until + 300s`（`extend_opportunity_valid_until_forward_only`），
-保证承诺的第二次评估落在 Opportunity 生命周期内。已延长的 `valid_until` 不得被后续 defer 缩短，
+PI daemon 必须把仍未兑现的耐久 `defer_until` 作为独立 wake deadline；持续的新 signal、heartbeat
+相位和进程重启都不得推迟或遗忘该 deadline，且新 Operator 观察、终局 PiDecision 或 Opportunity
+过期后不得重挂。额外 300 秒只提供评估与队列处理余量，从而保证承诺的第二次评估落在
+Opportunity 生命周期内。已延长的 `valid_until` 不得被后续 defer 缩短，
 也不得被 `expire_stale_queued_opportunities` 静默 `ttl_expired`。defer 不阻塞同批下一候选。每次模型调用只能暴露一个 pending carrier 及其技术/Opportunity/B2 证据，
 不得暴露 analysis-only preview 或另一 pending 候选作为判词依据。fingerprint 排除
 Opportunity id/时间戳等载体 churn，但包含 instrument、方向、scanner thesis、rank priority、B2 状态、

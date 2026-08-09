@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import logging
 import time
 from uuid import uuid4
@@ -31,6 +32,7 @@ logger = logging.getLogger("aletheia.pi_daemon")
 
 _PORTFOLIO_RETRY_BASE_SEC = 300.0
 _PORTFOLIO_RETRY_MAX_SEC = 1800.0
+_DEFER_GUARD_BACKOFF_MAX_SEC = 1.0
 
 
 @dataclass(frozen=True)
@@ -288,15 +290,26 @@ async def _pi_daemon_loop(
         logger.info("pi_daemon: rearmed durable pending queue at startup")
 
     while True:
-        # Wait for signal event OR heartbeat timeout
+        # Wait for a producer signal, portfolio retry, durable Operator defer
+        # deadline, or the heartbeat backstop.  A deadline is queried from
+        # SQLite every cycle so signal traffic and process restarts cannot reset
+        # or forget the promised re-evaluation time.
         loop = asyncio.get_running_loop()
         retry_delay = _next_retry_delay(loop.time())
+        defer_delay = _next_pending_signal_defer_delay()
         if retry_delay is not None and retry_delay <= 0:
             triggered_by = "retry"
+        elif defer_delay is not None and defer_delay <= 0:
+            triggered_by = "defer_deadline"
         else:
-            wait_timeout = min(
-                heartbeat_sec,
-                retry_delay if retry_delay is not None else heartbeat_sec,
+            timeout_options = [
+                (retry_delay, "retry"),
+                (defer_delay, "defer_deadline"),
+                (heartbeat_sec, "heartbeat"),
+            ]
+            wait_timeout, timeout_trigger = min(
+                (item for item in timeout_options if item[0] is not None),
+                key=lambda item: item[0],
             )
             try:
                 await asyncio.wait_for(
@@ -304,12 +317,7 @@ async def _pi_daemon_loop(
                 )
                 triggered_by = "signal"
             except asyncio.TimeoutError:
-                triggered_by = (
-                    "retry"
-                    if (_next_retry_delay(loop.time()) or 0.0) <= 0
-                    and _retry_wake_batches
-                    else "heartbeat"
-                )
+                triggered_by = timeout_trigger
 
         _signal_event.clear()
 
@@ -319,17 +327,26 @@ async def _pi_daemon_loop(
             _signal_event.clear()
 
         # Check runtime guards before acquiring lock
+        defer_guard_backoff = min(
+            max(heartbeat_sec, 0.05), _DEFER_GUARD_BACKOFF_MAX_SEC
+        )
         try:
             from aletheia.config.loader import load_config
             cfg = load_config()
             if cfg.runtime.paused:
                 logger.debug("pi_daemon: skipped (runtime.paused=True)")
+                if defer_delay is not None and defer_delay <= 0:
+                    await asyncio.sleep(defer_guard_backoff)
                 continue
             if cfg.agent.permission_mode not in ("Paper", "Full"):
                 logger.debug("pi_daemon: skipped (permission_mode=%s)", cfg.agent.permission_mode)
+                if defer_delay is not None and defer_delay <= 0:
+                    await asyncio.sleep(defer_guard_backoff)
                 continue
         except Exception as exc:
             logger.warning("pi_daemon: config load failed: %s", exc)
+            if defer_delay is not None and defer_delay <= 0:
+                await asyncio.sleep(defer_guard_backoff)
             continue
 
         # Skip if a prior evaluation is still running. Do this BEFORE draining the
@@ -337,6 +354,8 @@ async def _pi_daemon_loop(
         # being consumed and lost while an eval is mid-flight.
         if _eval_lock.locked():
             logger.debug("pi_daemon: evaluation already in progress, skipping")
+            if defer_delay is not None and defer_delay <= 0:
+                await asyncio.sleep(0.05)
             continue
 
         # Drain pending wake events into the coalescer and pull rate-limited,
@@ -358,7 +377,11 @@ async def _pi_daemon_loop(
         # Evaluate on: a legacy generic wake, a heartbeat, or at least one position
         # whose events passed the rate limit. Purely rate-limited/coalescing events
         # (no ready batch) do NOT wake the LLM this cycle.
-        if not (generic or triggered_by == "heartbeat" or wake_batches):
+        if not (
+            generic
+            or triggered_by in {"heartbeat", "defer_deadline"}
+            or wake_batches
+        ):
             continue
 
         wake_context = _build_wake_context(triggered_by, wake_batches)
@@ -399,6 +422,31 @@ def _has_pending_signal_work() -> bool:
     except Exception as exc:
         logger.debug("pi_daemon: startup pending probe unavailable: %s", exc)
         return False
+
+
+def _next_pending_signal_defer_delay() -> float | None:
+    """Seconds until the next still-owed durable Operator defer, or ``None``.
+
+    Overdue promises return ``0`` and are therefore evaluated immediately.  A
+    malformed or unavailable deadline fails closed to the ordinary heartbeat;
+    it never causes an early model call.
+    """
+    try:
+        from aletheia.storage.repositories import next_pending_signal_defer_deadline
+
+        raw = next_pending_signal_defer_deadline()
+        if not raw:
+            return None
+        deadline = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if deadline.tzinfo is None:
+            return None
+        return max(
+            (deadline.astimezone(timezone.utc) - datetime.now(timezone.utc)).total_seconds(),
+            0.0,
+        )
+    except Exception as exc:
+        logger.debug("pi_daemon: defer deadline unavailable: %s", exc)
+        return None
 
 
 def _build_wake_context(triggered_by: str, batches: list) -> dict:

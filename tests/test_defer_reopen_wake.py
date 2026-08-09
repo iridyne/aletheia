@@ -300,6 +300,92 @@ class TestFeatureSnapshotWake:
         assert calls == ["feature_snapshot_committed"]
 
 
+class TestDeferredDeadlineRecovery:
+    """A promised Operator re-evaluation remains discoverable after restart."""
+
+    def test_due_defer_is_returned_until_a_new_operator_observation(
+        self, tmp_path, monkeypatch
+    ):
+        conn = _setup_db(tmp_path, monkeypatch)
+        now = datetime.now(timezone.utc)
+        defer_until = (now - timedelta(seconds=1)).isoformat()
+        _seed_deferred_carrier(
+            conn,
+            opportunity_id="opp-due",
+            symbol="BTC/USDT",
+            asset_id="asset-btc-due",
+            defer_until_iso=defer_until,
+            deferred_at_iso=(now - timedelta(minutes=10)).isoformat(),
+            defer_reason="operator_low_conviction",
+        )
+        conn.execute(
+            "UPDATE opportunities SET valid_until=? WHERE id='opp-due'",
+            ((now + timedelta(minutes=5)).isoformat(),),
+        )
+        conn.commit()
+
+        from aletheia.storage.repositories import next_pending_signal_defer_deadline
+
+        assert next_pending_signal_defer_deadline(now_iso=now.isoformat()) == defer_until
+
+        observed_at = (now + timedelta(seconds=1)).isoformat()
+        conn.execute(
+            "INSERT INTO operator_evaluation_events "
+            "(id, dedup_key, event_kind, trigger, pending_unresolved_total, "
+            " pending_visible_count, pending_oldest_created_at, queue_snapshot_json, "
+            " data_health_json, policy_epoch_id, created_at) "
+            "VALUES ('ev-due-reviewed', 'dedup-due-reviewed', "
+            "        'operator_skip_validated', 'defer_deadline', 1, 1, ?, ?, '{}', "
+            "        'epoch-a', ?)",
+            (
+                observed_at,
+                json.dumps({"opportunity_id": "opp-due"}),
+                observed_at,
+            ),
+        )
+        conn.commit()
+
+        assert next_pending_signal_defer_deadline(now_iso=now.isoformat()) is None
+
+    def test_terminal_or_expired_candidate_is_not_rearmed(self, tmp_path, monkeypatch):
+        conn = _setup_db(tmp_path, monkeypatch)
+        now = datetime.now(timezone.utc)
+        defer_until = (now + timedelta(seconds=30)).isoformat()
+        _seed_deferred_carrier(
+            conn,
+            opportunity_id="opp-terminal",
+            symbol="ETH/USDT",
+            asset_id="asset-eth-terminal",
+            defer_until_iso=defer_until,
+            deferred_at_iso=(now - timedelta(minutes=5)).isoformat(),
+        )
+        conn.execute(
+            "UPDATE opportunities SET valid_until=? WHERE id='opp-terminal'",
+            ((now + timedelta(minutes=5)).isoformat(),),
+        )
+        conn.execute(
+            "INSERT INTO pi_decisions "
+            "(id, symbol, direction, market_type, action, opportunity_id, "
+            " signal_source, created_at) "
+            "VALUES ('pi-terminal-final', 'ETH/USDT', 'long', 'usdt_futures', "
+            "        'skip', 'opp-terminal', 'market_observer', ?)",
+            ((now + timedelta(seconds=1)).isoformat(),),
+        )
+        conn.commit()
+
+        from aletheia.storage.repositories import next_pending_signal_defer_deadline
+
+        assert next_pending_signal_defer_deadline(now_iso=now.isoformat()) is None
+
+        conn.execute("DELETE FROM pi_decisions WHERE id='pi-terminal-final'")
+        conn.execute(
+            "UPDATE opportunities SET valid_until=? WHERE id='opp-terminal'",
+            ((now - timedelta(seconds=1)).isoformat(),),
+        )
+        conn.commit()
+        assert next_pending_signal_defer_deadline(now_iso=now.isoformat()) is None
+
+
 class TestPendingQueueSort:
     """`_build_pending_signal_queue` demotes all active defers to the queue tail."""
 

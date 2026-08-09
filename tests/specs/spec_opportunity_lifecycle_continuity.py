@@ -5,8 +5,10 @@ module promotes those behaviors into the Conformance Matrix with stable, unique
 claim identities so the contract cannot silently drift behind green unit tests.
 """
 
+from tests import test_defer_reopen_wake as defer_regressions
 from tests import test_opportunity_flow_ledger as flow_regressions
 from tests import test_opportunity_funnel_integrity as lifecycle_regressions
+from tests import test_pi_daemon as daemon_regressions
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -102,6 +104,31 @@ def test_operator_defer_extends_carrier_lifecycle(tmp_path, monkeypatch):
     lifecycle_regressions.test_opportunity_funnel_explains_current_operator_defer(
         _case_dir(tmp_path, "read"), monkeypatch
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S74",
+        _DL,
+        "§2.3 durable defer deadline wake",
+        "L2b",
+        "A still-owed defer remains discoverable across process restart and wakes the "
+        "PI daemon at defer_until independently of heartbeat phase; terminal, expired "
+        "or newly observed carriers do not re-arm.",
+        status="implemented",
+    )
+)
+async def test_deferred_operator_promise_has_durable_deadline_wake(
+    tmp_path, monkeypatch
+):
+    cases = defer_regressions.TestDeferredDeadlineRecovery()
+    cases.test_due_defer_is_returned_until_a_new_operator_observation(
+        _case_dir(tmp_path, "deadline"), monkeypatch
+    )
+    cases.test_terminal_or_expired_candidate_is_not_rearmed(
+        _case_dir(tmp_path, "terminal"), monkeypatch
+    )
+    await daemon_regressions.test_defer_deadline_wakes_before_heartbeat_without_early_evaluation()
 
 
 @spec_claim(

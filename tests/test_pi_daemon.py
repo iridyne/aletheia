@@ -361,6 +361,85 @@ async def test_heartbeat_triggers_evaluation():
     assert eval_count >= 1, "Heartbeat should have triggered at least one evaluation"
 
 
+async def test_defer_deadline_wakes_before_heartbeat_without_early_evaluation():
+    """A durable defer deadline is an independent wake source, not a heartbeat hint."""
+    loop = asyncio.get_running_loop()
+    due_at = loop.time() + 0.08
+    triggers: list[tuple[str, float]] = []
+    completed = False
+
+    def fake_defer_delay():
+        if completed:
+            return None
+        return max(due_at - loop.time(), 0.0)
+
+    async def fake_run_evaluation(triggered_by, _wake_context=None):
+        nonlocal completed
+        triggers.append((triggered_by, loop.time()))
+        completed = True
+        return 0
+
+    with patch.object(pd, "_has_pending_signal_work", return_value=False), patch.object(
+        pd, "_next_pending_signal_defer_delay", side_effect=fake_defer_delay
+    ), patch.object(pd, "_run_evaluation", new=fake_run_evaluation), patch(
+        "aletheia.config.loader.load_config"
+    ) as mock_cfg:
+        mock_cfg.return_value.runtime.paused = False
+        mock_cfg.return_value.agent.permission_mode = "Paper"
+        task = start_pi_daemon(
+            loop=loop,
+            debounce_sec=0.0,
+            cooldown_sec=0.0,
+            heartbeat_sec=999.0,
+        )
+
+        await asyncio.sleep(0.03)
+        assert triggers == []
+        await asyncio.sleep(0.10)
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    assert len(triggers) == 1
+    assert triggers[0][0] == "defer_deadline"
+    assert triggers[0][1] >= due_at
+
+
+async def test_overdue_defer_does_not_spin_while_runtime_is_paused():
+    """A blocked behavior gate must not turn an overdue durable fact into a busy loop."""
+    delay_reads = 0
+
+    def overdue_defer():
+        nonlocal delay_reads
+        delay_reads += 1
+        return 0.0
+
+    with patch.object(pd, "_has_pending_signal_work", return_value=False), patch.object(
+        pd, "_next_pending_signal_defer_delay", side_effect=overdue_defer
+    ), patch.object(pd, "_run_evaluation") as evaluate, patch(
+        "aletheia.config.loader.load_config"
+    ) as mock_cfg:
+        mock_cfg.return_value.runtime.paused = True
+        mock_cfg.return_value.agent.permission_mode = "Paper"
+        task = start_pi_daemon(
+            loop=asyncio.get_running_loop(),
+            debounce_sec=0.0,
+            cooldown_sec=0.0,
+            heartbeat_sec=999.0,
+        )
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    evaluate.assert_not_called()
+    assert delay_reads == 1
+
+
 async def test_skips_when_paused():
     """Daemon must not call evaluate when runtime is paused."""
     eval_count = 0
