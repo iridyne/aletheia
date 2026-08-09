@@ -638,7 +638,8 @@ def test_learning_alpha_detects_same_pattern_improvement_after_lesson():
 def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monkeypatch):
     import aletheia.analytics.alpha_attribution as alpha_attribution
     import aletheia.learning.read_models as learning_read_models
-    from tests.test_learning_verdict_runtime import _experiment
+    from aletheia.storage.sqlite import get_db
+    from tests.test_learning_verdict_runtime import _experiment, _exposure
 
     monkeypatch.setattr(
         alpha_attribution,
@@ -646,6 +647,19 @@ def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monk
         lambda: datetime(2026, 8, 9, 10, tzinfo=timezone.utc),
     )
     hypothesis, experiment = _experiment(min_samples=50, min_days=7)
+    db = get_db()
+    db.execute(
+        "UPDATE learning_experiments SET created_at=?, started_at=? WHERE experiment_id=?",
+        ("2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00", experiment.experiment_id),
+    )
+    db.commit()
+    _exposure(
+        experiment,
+        hypothesis,
+        candidate="paper-monitoring-current",
+        assignment="control",
+        exposed_at="2026-08-09T09:00:00+00:00",
+    )
     item = {
         "path_id": hypothesis.path_id,
         "experiment_id": experiment.experiment_id,
@@ -659,6 +673,8 @@ def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monk
             "observed": None,
             "delta": None,
             "authority_eligible": False,
+            "window_start": "1970-01-01T00:00:00+00:00",
+            "window_end": "1970-01-01T00:00:00+00:00",
         },
         "samples": {
             "raw_exposures": 21,
@@ -672,10 +688,20 @@ def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monk
         },
         "inference": {"status": "collecting"},
     }
+    requested_limits = []
     monkeypatch.setattr(
         learning_read_models,
         "build_learning_contribution_projection",
-        lambda *, limit: {"items": [item]},
+        lambda *, limit: requested_limits.append(limit) or {
+            "items": [
+                {
+                    "path_id": hypothesis.path_id,
+                    "experiment_id": "newer-shadow-experiment",
+                    "stage": "shadow",
+                },
+                item,
+            ]
+        },
     )
 
     learning = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
@@ -687,14 +713,33 @@ def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monk
     assert learning["details"]["experiment_id"] == experiment.experiment_id
     assert learning["details"]["raw_exposures"] == 21
     assert learning["details"]["exclusion_reasons"] == {"unsettled": 21}
+    assert learning["details"]["window_start"] == "1970-01-01T00:00:00+00:00"
+    assert requested_limits == [100]
+    rendered = alpha_attribution.render_alpha_audit(
+        alpha_attribution.build_alpha_attribution_audit(days=30)
+    )
+    assert f"Learning experiment: id={experiment.experiment_id} stage=paper_10" in rendered
+    assert 'exclusions={"unsettled": 21}' in rendered
 
-    item["measurement"].update(state="positive", baseline=0.0, observed=1.0, delta=1.0)
+    item["measurement"].update(
+        state="positive",
+        baseline=0.0,
+        observed=1.0,
+        delta=1.0,
+        window_start="2026-08-09T09:00:00+00:00",
+        window_end="2026-08-09T09:10:00+00:00",
+    )
     item["samples"].update(treatment_assignment_units=50, control_assignment_units=50)
     monitoring_positive = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
 
     assert monitoring_positive["verdict"] == "positive"
     assert monitoring_positive["contribution_verdict"] == "insufficient_data"
     assert monitoring_positive["measurement_status"] == "directional_evidence_only"
+
+    item["measurement"]["window_start"] = None
+    missing_window = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+    assert missing_window["verdict"] == "insufficient_data"
+    assert missing_window["details"]["audit_window_compatible"] is False
 
     def unavailable_projection(*, limit):
         raise RuntimeError("projection failed")
