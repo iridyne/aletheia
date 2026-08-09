@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased] - 2026-08-08 — Versioned incremental technical analysis
+
+- Added a batch reference analyzer and append-fast incremental engine for
+  closed-bar SMA/EMA, RSI, ATR, Bollinger, momentum, volume, VWAP, Donchian, and
+  OBV facts. Revisions and gaps are explicit degraded-data events.
+- Market Observer and Universe feature collection now reuse a process-wide,
+  exact-instrument technical snapshot service. Persisted feature rows carry the
+  algorithm version, input fingerprints, warm-up state, and data-quality facts;
+  the Operator material fingerprint includes technical provenance.
+- Added a format-neutral hot/cold OHLCV tier manager with complete-chunk
+  planning, durable receipt validation, and read-back verification. SQLite
+  remains the hot authority; ZSTD and the BLOB-vs-file choice remain deferred.
+- Added a repeatable micro-benchmark and focused contract/integration coverage.
+
 ## [Unreleased] - 2026-07-17 — Cascade opportunity expiry when parent snapshot is superseded
 
 Fixes an unbounded-growth backlog exposed by the change-suppression valid_until

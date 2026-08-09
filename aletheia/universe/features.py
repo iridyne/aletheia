@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -12,6 +13,8 @@ from aletheia.data.freshness import fresh_row
 from aletheia.storage.models import UniverseFeatureSnapshot
 from aletheia.storage import repositories as repo
 from aletheia.trading.indicators import rsi, atr, sma, bollinger, volume_sma_ratio
+from aletheia.trading.technical_analysis import TechnicalBar, timeframe_milliseconds
+from aletheia.trading.technical_snapshot_service import get_technical_snapshot_service
 
 logger = logging.getLogger("aletheia.universe.features")
 
@@ -44,6 +47,7 @@ _FEATURE_EXACT_FIELDS = (
     "btc_beta", "taker_buy_ratio", "vol_ratio", "relative_strength_24h",
     "oi_price_divergence",
     "bb_squeeze",
+    "technical_algorithm_version", "technical_snapshot_manifest",
 )
 
 
@@ -481,43 +485,74 @@ async def _fetch_single_feature(
     except (asyncio.TimeoutError, Exception):
         pass
 
-    closes_15m = [float(c[4]) for c in ohlcv_15m] if ohlcv_15m else []
-    highs_15m = [float(c[2]) for c in ohlcv_15m] if ohlcv_15m else []
-    lows_15m = [float(c[3]) for c in ohlcv_15m] if ohlcv_15m else []
-    closes_1h = [float(c[4]) for c in ohlcv_1h] if ohlcv_1h else []
-    highs_1h = [float(c[2]) for c in ohlcv_1h] if ohlcv_1h else []
-    lows_1h = [float(c[3]) for c in ohlcv_1h] if ohlcv_1h else []
-    volumes_1h = [float(c[5]) for c in ohlcv_1h] if ohlcv_1h else []
+    now_ms = int(now.timestamp() * 1000)
 
-    closes_4h = [float(c[4]) for c in ohlcv_4h] if ohlcv_4h else []
-    highs_4h = [float(c[2]) for c in ohlcv_4h] if ohlcv_4h else []
-    lows_4h = [float(c[3]) for c in ohlcv_4h] if ohlcv_4h else []
-    volumes_4h = [float(c[5]) for c in ohlcv_4h] if ohlcv_4h else []
+    def _closed_rows(rows: list, timeframe: str) -> list:
+        interval = timeframe_milliseconds(timeframe)
+        if interval is None:
+            return rows
+        return [row for row in rows if int(row[0]) + interval <= now_ms]
 
-    rsi_15m = rsi(closes_15m, 14) if len(closes_15m) >= 15 else None
-    atr_15m_pct = _atr_pct(highs_15m, lows_15m, closes_15m) if len(closes_15m) >= 15 else None
+    ohlcv_15m = _closed_rows(ohlcv_15m, "15m")
+    ohlcv_1h = _closed_rows(ohlcv_1h, "1h")
+    ohlcv_4h = _closed_rows(ohlcv_4h, "4h")
+
+    def _technical_bars(rows: list) -> list[TechnicalBar]:
+        return [
+            TechnicalBar(
+                ts=int(c[0]), open=float(c[1]), high=float(c[2]), low=float(c[3]),
+                close=float(c[4]), volume=float(c[5]),
+            )
+            for c in rows
+        ]
+
+    venue = str(asset.get("venue") or getattr(exchange, "id", "unknown"))
+    market_type = str(asset.get("market_type") or "spot")
+    technical_service = get_technical_snapshot_service()
+    technical_15m = technical_service.snapshot_from_bars(
+        _technical_bars(ohlcv_15m), exchange=venue, symbol=symbol,
+        market_type=market_type, timeframe="15m",
+    )
+    technical_1h = technical_service.snapshot_from_bars(
+        _technical_bars(ohlcv_1h), exchange=venue, symbol=symbol,
+        market_type=market_type, timeframe="1h",
+    )
+    technical_4h = technical_service.snapshot_from_bars(
+        _technical_bars(ohlcv_4h), exchange=venue, symbol=symbol,
+        market_type=market_type, timeframe="4h",
+    )
+
+    closes_15m = [float(c[4]) for c in ohlcv_15m]
+    highs_15m = [float(c[2]) for c in ohlcv_15m]
+    lows_15m = [float(c[3]) for c in ohlcv_15m]
+    closes_1h = [float(c[4]) for c in ohlcv_1h]
+    highs_1h = [float(c[2]) for c in ohlcv_1h]
+    lows_1h = [float(c[3]) for c in ohlcv_1h]
+    volumes_1h = [float(c[5]) for c in ohlcv_1h]
+    closes_4h = [float(c[4]) for c in ohlcv_4h]
+    highs_4h = [float(c[2]) for c in ohlcv_4h]
+    lows_4h = [float(c[3]) for c in ohlcv_4h]
+    volumes_4h = [float(c[5]) for c in ohlcv_4h]
+
+    rsi_15m = technical_15m.values["rsi_14"]
+    atr_15m_pct = technical_15m.values["atr_pct"]
     return_15m = _pct_return(closes_15m, 1)
     last_candle_range_atr_15m = (
         _last_candle_range_atr(highs_15m, lows_15m, closes_15m)
         if len(closes_15m) >= 15 else None
     )
-    rsi_val = rsi(closes_1h, 14) if len(closes_1h) >= 15 else None
-    atr_val = _atr_pct(highs_1h, lows_1h, closes_1h) if len(closes_1h) >= 15 else None
+    rsi_val = technical_1h.values["rsi_14"]
+    atr_val = technical_1h.values["atr_pct"]
     return_1h = _pct_return(closes_1h, 1)
     return_4h = _pct_return(closes_1h, 4)
     return_24h = _pct_return(closes_1h, 24)
     volume_1h = volumes_1h[-1] * closes_1h[-1] if volumes_1h and closes_1h else None
 
     # P1b: 4h timeframe features (true 4h candles, not derived from 1h)
-    rsi_4h = rsi(closes_4h, 14) if len(closes_4h) >= 15 else None
-    atr_4h = _atr_pct(highs_4h, lows_4h, closes_4h) if len(closes_4h) >= 15 else None
-    bb_4h = bollinger(closes_4h, 20, 2.0) if len(closes_4h) >= 20 else None
-    bb_width_4h = None
-    if bb_4h:
-        l4, m4, u4 = bb_4h
-        if m4 > 0:
-            bb_width_4h = (u4 - l4) / m4 * 100
-    vol_ratio_4h = volume_sma_ratio(volumes_4h, 20) if len(volumes_4h) >= 20 else None
+    rsi_4h = technical_4h.values["rsi_14"]
+    atr_4h = technical_4h.values["atr_pct"]
+    bb_width_4h = technical_4h.values["bb_width_pct"]
+    vol_ratio_4h = technical_4h.values["volume_ratio_20"]
 
     # Phase 1+P0 features: vol_ratio, bb_width, bb_squeeze, relative_strength, beta
     vol_ratio = volume_sma_ratio(volumes_1h, 72) if len(volumes_1h) >= 72 else (
@@ -733,6 +768,25 @@ async def _fetch_single_feature(
         bb_width_4h=bb_width_4h,
         vol_ratio_4h=vol_ratio_4h,
         bb_squeeze=bb_squeeze,
+        technical_algorithm_version=technical_1h.algorithm_version,
+        technical_snapshot_manifest=json.dumps(
+            {
+                tf: {
+                    "bar_close_ts": snapshot.bar_close_ts,
+                    "bars_used": snapshot.bars_used,
+                    "history_bars_retained": snapshot.history_bars_retained,
+                    "warmup_complete": snapshot.warmup_complete,
+                    "input_fingerprint": snapshot.input_fingerprint,
+                    "data_quality": snapshot.data_quality,
+                    "quality_reasons": list(snapshot.quality_reasons),
+                }
+                for tf, snapshot in (
+                    ("15m", technical_15m), ("1h", technical_1h), ("4h", technical_4h)
+                )
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
     )
     feat["_computed_feature_snapshot"] = snap
     feat["feature_snapshot_id"] = snap.id

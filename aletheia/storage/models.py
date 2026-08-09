@@ -1291,6 +1291,8 @@ class UniverseFeatureSnapshot(BaseModel):
     bb_width_4h: float | None = None
     vol_ratio_4h: float | None = None
     bb_squeeze: bool | None = None
+    technical_algorithm_version: str | None = None
+    technical_snapshot_manifest: str = "{}"
     raw: str = "{}"
 
 

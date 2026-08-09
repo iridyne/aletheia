@@ -5749,6 +5749,41 @@ def get_ohlcv_candles(
     return [dict(r) for r in reversed(rows)]
 
 
+def plan_market_ohlcv_tiering(
+    *,
+    exchange: str,
+    symbol: str,
+    market_type: str,
+    timeframe: str,
+    hot_bars: int = 2_048,
+    cold_chunk_bars: int = 4_096,
+):
+    """Build a format-neutral hot/cold plan from one exact stored series.
+
+    This is read-only.  No rows are removed until a future configured cold
+    backend returns durable, read-back-verified receipts.
+    """
+    from aletheia.storage.market_ohlcv_tiering import (
+        OHLCVSeriesIdentity,
+        OHLCVTierManager,
+        OHLCVTieringPolicy,
+    )
+
+    db = get_db()
+    rows = db.execute(
+        "SELECT ts,open,high,low,close,volume,provider FROM market_ohlcv "
+        "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=? ORDER BY ts",
+        (exchange.lower(), symbol, market_type, timeframe),
+    ).fetchall()
+    manager = OHLCVTierManager(
+        OHLCVTieringPolicy(hot_bars=hot_bars, cold_chunk_bars=cold_chunk_bars)
+    )
+    return manager.plan(
+        OHLCVSeriesIdentity(exchange.lower(), symbol, market_type, timeframe),
+        rows,
+    )
+
+
 # --- Universe Generator ---
 
 from aletheia.storage.models import (

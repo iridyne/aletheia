@@ -27,6 +27,9 @@ Current framework-wide contracts include the
 logical model-call identity, prompt/context/tool/output policy, and its link to
 physical tokenomics attempts.
 
+Market-data computation and storage lifecycle are owned by the
+[Technical Analysis and OHLCV Tiering Contract](technical_analysis_contract.md).
+
 The [Universe Twin Shadow Evidence Contract](universe_twin_shadow_contract.md)
 owns the current non-authoritative continuous-score evidence, allocation replay,
 identity, persistence, and retention boundary.
