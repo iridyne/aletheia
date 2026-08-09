@@ -828,10 +828,19 @@ def _causal_control_alpha(db, layer: str, name: str, cutoff: str, min_sample_siz
         observed,
         delta,
         _confidence_label(len(selected), min_sample_size),
-        f"{name} selected observations {'beat' if delta > 0 else 'trailed' if delta < 0 else 'matched'} prospectively logged same-time controls.",
-        {"baseline_sample_size": len(controls), "horizons": _horizon_details(by_horizon)},
+        f"{name} selected observations {'beat' if delta > 0 else 'trailed' if delta < 0 else 'matched'} prospectively logged same-time controls; the cohort lacks a contribution-authority contract.",
+        {
+            "baseline_sample_size": len(controls),
+            "horizons": _horizon_details(by_horizon),
+            "authority_limitations": [
+                "no_policy_epoch_identity",
+                "no_behavior_contract_identity",
+                "no_declared_primary_horizon",
+                "no_cohort_level_inference_contract",
+            ],
+        },
         evidence_type="prospective_control_cohort",
-        causal_grade="strong_prospective_control",
+        causal_grade="weak_observational",
     )
 
 

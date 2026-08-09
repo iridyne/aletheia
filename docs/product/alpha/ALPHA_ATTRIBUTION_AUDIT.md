@@ -86,6 +86,9 @@ Current implementation:
 - Converts returns directionally: short signals benefit when raw forward return is negative.
 - Preferentially reads `alpha_control_observations`, which stores the selected
   members and same-refresh unselected candidates at Universe refresh time.
+- Treats that prospective cohort as directional evidence only. The current rows
+  do not freeze a policy epoch, behavior contract, primary horizon, or
+  cohort-level inference contract, so they cannot grant contribution authority.
 - Falls back to a deterministic reconstructed baseline from active universe registry
   symbols and available `market_ohlcv` symbols when prospective controls have not
   matured yet.
@@ -149,6 +152,9 @@ Current implementation:
 - Reads `serenity_opportunities`.
 - Preferentially reads `alpha_control_observations`, which stores the Serenity
   opportunity and contemporaneous observable controls when the opportunity is inserted.
+- Keeps that prospective comparison directional for the same missing authority
+  identities; logging controls before outcomes are known is not by itself a
+  causal contribution contract.
 - Falls back to recomputed `1d`, `3d`, and `7d` forward returns from `market_ohlcv`.
 - Equity-like symbols prefer other equity-like baseline symbols when available.
 
@@ -167,8 +173,10 @@ This audit is read-only:
 
 ## Causal Evidence Grades
 
-- `strong_prospective_control`: selected and control observations were logged at
-  decision time, before outcomes were known.
+- `strong_prospective_control`: a prospective treatment/control comparison also
+  has the declared policy, behavior, horizon, statistical-unit, outcome, cost,
+  and integrity identities required by its contribution contract. The current
+  `alpha_control_observations` producer does not meet this grade.
 - `moderate_quasi_causal`: difference-in-differences against contemporaneous
   controls is available, but there was no randomized holdout.
 - `weak_reconstructed`: the baseline was reconstructed after the fact from OHLCV.
