@@ -95,7 +95,9 @@ def build_alpha_attribution_audit(days: int = 30, min_sample_size: int = MIN_SAM
     verdicts = {
         "universe": _safe_layer("Universe Alpha", lambda: _universe_alpha(db, cutoff, min_sample_size)),
         "ranker": _safe_layer("Ranker Alpha", lambda: _ranker_alpha(db, cutoff, min_sample_size)),
-        "system_operator": _safe_layer("System Operator Alpha", lambda: _system_operator_alpha(db, cutoff, min_sample_size)),
+        "system_operator": _safe_layer(
+            "System Operator Alpha", lambda: _system_operator_alpha(db, cutoff, min_sample_size)
+        ),
         "learning": _safe_layer("Learning Alpha", lambda: _learning_alpha(db, cutoff, days, min_sample_size)),
         "serenity": _safe_layer("Serenity Alpha", lambda: _serenity_alpha(db, cutoff, min_sample_size)),
     }
@@ -108,9 +110,7 @@ def build_alpha_attribution_audit(days: int = 30, min_sample_size: int = MIN_SAM
         "universe_twin_evidence": _universe_twin_evidence(db, cutoff),
         "exit_paired_evidence": _exit_paired_evidence(cutoff),
         "risk_policy_evidence": _risk_policy_evidence(db, cutoff, min_sample_size),
-        "execution_cost_evidence": _execution_cost_evidence(
-            db, cutoff, min_sample_size
-        ),
+        "execution_cost_evidence": _execution_cost_evidence(db, cutoff, min_sample_size),
         "main_bottleneck": _main_bottleneck(verdicts),
     }
 
@@ -224,9 +224,7 @@ def _universe_twin_evidence(db, cutoff: str) -> dict:
             (cutoff,),
         ).fetchone()
     except sqlite3.DatabaseError as exc:
-        return _empty_universe_twin_evidence(
-            f"Universe Twin evidence storage is unavailable: {type(exc).__name__}."
-        )
+        return _empty_universe_twin_evidence(f"Universe Twin evidence storage is unavailable: {type(exc).__name__}.")
     if latest is None:
         return _empty_universe_twin_evidence(
             "No prospective Universe Twin policy epoch is available in the audit window."
@@ -241,9 +239,7 @@ def _universe_twin_evidence(db, cutoff: str) -> dict:
         ).fetchone()
     except sqlite3.DatabaseError as exc:
         return {
-            **_empty_universe_twin_evidence(
-                f"Universe Twin epoch bounds are unavailable: {type(exc).__name__}."
-            ),
+            **_empty_universe_twin_evidence(f"Universe Twin epoch bounds are unavailable: {type(exc).__name__}."),
             "policy_epoch_id": policy_epoch_id,
         }
     window_start = bounds["window_start"] if bounds else None
@@ -251,13 +247,7 @@ def _universe_twin_evidence(db, cutoff: str) -> dict:
     start_at = _parse_dt(window_start)
     end_at = _parse_dt(window_end)
     cutoff_at = _parse_dt(cutoff)
-    if (
-        start_at is None
-        or end_at is None
-        or cutoff_at is None
-        or start_at < cutoff_at
-        or end_at < start_at
-    ):
+    if start_at is None or end_at is None or cutoff_at is None or start_at < cutoff_at or end_at < start_at:
         return {
             **_empty_universe_twin_evidence(
                 "The exact Universe Twin epoch falls outside or violates the requested "
@@ -275,9 +265,7 @@ def _universe_twin_evidence(db, cutoff: str) -> dict:
         complete_cluster_n = int(report.get("complete_cluster_n") or 0)
     except Exception as exc:
         return {
-            **_empty_universe_twin_evidence(
-                f"Universe Twin evaluation is unavailable: {type(exc).__name__}."
-            ),
+            **_empty_universe_twin_evidence(f"Universe Twin evaluation is unavailable: {type(exc).__name__}."),
             "policy_epoch_id": policy_epoch_id,
             "window_start": window_start,
             "window_end": window_end,
@@ -287,10 +275,7 @@ def _universe_twin_evidence(db, cutoff: str) -> dict:
     if report.get("verdict") == "invalid":
         measurement_status = "invalid_evidence"
         causal_grade = "insufficient"
-        reason = (
-            "The exact Universe Twin epoch failed its integrity contract; it cannot "
-            "grant contribution authority."
-        )
+        reason = "The exact Universe Twin epoch failed its integrity contract; it cannot grant contribution authority."
     elif complete_cluster_n > 0:
         measurement_status = "prospective_shadow_diagnostic"
         causal_grade = "prospective_cluster_shadow_only"
@@ -303,8 +288,7 @@ def _universe_twin_evidence(db, cutoff: str) -> dict:
         measurement_status = "not_measured"
         causal_grade = "prospective_cluster_shadow_only"
         reason = (
-            "Prospective Universe Twin clusters exist, but no complete fixed-horizon "
-            "scanner cluster is available yet."
+            "Prospective Universe Twin clusters exist, but no complete fixed-horizon scanner cluster is available yet."
         )
     return {
         **report,
@@ -333,9 +317,7 @@ def _exit_paired_evidence(cutoff: str) -> dict:
     try:
         report = build_exit_breakeven_shadow_report(closed_after=cutoff)
     except sqlite3.OperationalError as exc:
-        return _empty_exit_paired_evidence(
-            f"Required Exit paired evidence table is unavailable: {exc}"
-        )
+        return _empty_exit_paired_evidence(f"Required Exit paired evidence table is unavailable: {exc}")
     if not report["available_count"]:
         return {
             **_empty_exit_paired_evidence(
@@ -379,9 +361,7 @@ def _risk_policy_evidence(db, cutoff: str, min_sample_size: int) -> dict:
             min_interventions=min_sample_size,
         )
     except sqlite3.OperationalError as exc:
-        return _empty_risk_policy_evidence(
-            f"Required Risk policy evidence table is unavailable: {exc}"
-        )
+        return _empty_risk_policy_evidence(f"Required Risk policy evidence table is unavailable: {exc}")
 
 
 def _empty_execution_cost_evidence(reason: str) -> dict:
@@ -404,9 +384,7 @@ def _execution_cost_evidence(db, cutoff: str, min_sample_size: int) -> dict:
             min_sample_size=min_sample_size,
         )
     except sqlite3.OperationalError as exc:
-        return _empty_execution_cost_evidence(
-            f"Required Execution cost evidence is unavailable: {exc}"
-        )
+        return _empty_execution_cost_evidence(f"Required Execution cost evidence is unavailable: {exc}")
 
 
 def render_alpha_audit(report: dict) -> str:
@@ -441,63 +419,71 @@ def render_alpha_audit(report: dict) -> str:
         ):
             lines.append(f"  Measured suspect modules: {', '.join(modules[:3])}")
     twin = report.get("universe_twin_evidence") or {}
-    lines.extend([
-        "",
-        "Universe Twin evidence: "
-        f"{twin.get('measurement_status', 'not_measured')}",
-        "  "
-        f"complete_clusters={twin.get('complete_cluster_n', 0)}/"
-        f"{twin.get('expected_cluster_n', 0)} "
-        f"treatment={twin.get('treatment_cluster_n', 0)} "
-        f"control={twin.get('control_cluster_n', 0)} "
-        f"delta={_fmt_metric(twin.get('observed_cluster_utility_delta'))} "
-        f"contribution={twin.get('contribution_verdict', 'insufficient_data')}",
-        f"  {twin.get('reason', 'Universe Twin evidence is unavailable.')}",
-    ])
+    lines.extend(
+        [
+            "",
+            f"Universe Twin evidence: {twin.get('measurement_status', 'not_measured')}",
+            "  "
+            f"complete_clusters={twin.get('complete_cluster_n', 0)}/"
+            f"{twin.get('expected_cluster_n', 0)} "
+            f"treatment={twin.get('treatment_cluster_n', 0)} "
+            f"control={twin.get('control_cluster_n', 0)} "
+            f"delta={_fmt_metric(twin.get('observed_cluster_utility_delta'))} "
+            f"contribution={twin.get('contribution_verdict', 'insufficient_data')}",
+            f"  {twin.get('reason', 'Universe Twin evidence is unavailable.')}",
+        ]
+    )
     paired = report.get("exit_paired_evidence") or {}
-    lines.extend([
-        "",
-        f"Exit paired evidence: {paired.get('measurement_status', 'not_measured')}",
-        "  "
-        f"available={paired.get('available_count', 0)} "
-        f"changed={paired.get('changed_count', 0)} "
-        f"mean_delta={_fmt_metric(paired.get('incremental_net_pnl_mean'))}",
-        f"  {paired.get('reason', 'Exit paired evidence is unavailable.')}",
-    ])
+    lines.extend(
+        [
+            "",
+            f"Exit paired evidence: {paired.get('measurement_status', 'not_measured')}",
+            "  "
+            f"available={paired.get('available_count', 0)} "
+            f"changed={paired.get('changed_count', 0)} "
+            f"mean_delta={_fmt_metric(paired.get('incremental_net_pnl_mean'))}",
+            f"  {paired.get('reason', 'Exit paired evidence is unavailable.')}",
+        ]
+    )
     risk = report.get("risk_policy_evidence") or {}
-    lines.extend([
-        "",
-        f"Risk policy evidence: {risk.get('measurement_status', 'not_measured')}",
-        "  "
-        f"eligible={risk.get('eligible_count', 0)} "
-        f"interventions={risk.get('actual_intervention_count', 0)} "
-        f"delta={_fmt_metric(risk.get('delta'))} "
-        f"contribution={risk.get('contribution_verdict', 'insufficient_data')}",
-        f"  {risk.get('reason', 'Risk policy evidence is unavailable.')}",
-    ])
+    lines.extend(
+        [
+            "",
+            f"Risk policy evidence: {risk.get('measurement_status', 'not_measured')}",
+            "  "
+            f"eligible={risk.get('eligible_count', 0)} "
+            f"interventions={risk.get('actual_intervention_count', 0)} "
+            f"delta={_fmt_metric(risk.get('delta'))} "
+            f"contribution={risk.get('contribution_verdict', 'insufficient_data')}",
+            f"  {risk.get('reason', 'Risk policy evidence is unavailable.')}",
+        ]
+    )
     execution = report.get("execution_cost_evidence") or {}
-    lines.extend([
-        "",
-        "Execution cost evidence: "
-        f"{execution.get('measurement_status', 'not_measured')}",
-        "  "
-        f"eligible={execution.get('eligible_count', 0)} "
-        f"delta={_fmt_metric(execution.get('delta'))} "
-        "quote_delta="
-        f"{_fmt_metric(execution.get('incremental_net_pnl_total'))} "
-        "contribution="
-        f"{execution.get('contribution_verdict', 'insufficient_data')}",
-        f"  {execution.get('reason', 'Execution cost evidence is unavailable.')}",
-    ])
+    lines.extend(
+        [
+            "",
+            f"Execution cost evidence: {execution.get('measurement_status', 'not_measured')}",
+            "  "
+            f"eligible={execution.get('eligible_count', 0)} "
+            f"delta={_fmt_metric(execution.get('delta'))} "
+            "quote_delta="
+            f"{_fmt_metric(execution.get('incremental_net_pnl_total'))} "
+            "contribution="
+            f"{execution.get('contribution_verdict', 'insufficient_data')}",
+            f"  {execution.get('reason', 'Execution cost evidence is unavailable.')}",
+        ]
+    )
     bottleneck = report["main_bottleneck"]
-    lines.extend([
-        "",
-        "Main bottleneck:",
-        bottleneck["summary"],
-        "",
-        "Next action:",
-        bottleneck["next_action"],
-    ])
+    lines.extend(
+        [
+            "",
+            "Main bottleneck:",
+            bottleneck["summary"],
+            "",
+            "Next action:",
+            bottleneck["next_action"],
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -845,6 +831,7 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
     placeholders = ",".join("?" for _ in path_ids)
     rows = db.execute(
         "SELECT e.experiment_id, e.hypothesis_id, e.stage, e.min_samples_per_arm, "
+        "e.started_at, e.created_at, "
         "h.path_id, h.target_horizon FROM learning_experiments e "
         "JOIN learning_hypotheses h ON h.hypothesis_id=e.hypothesis_id "
         f"WHERE e.ended_at IS NULL AND h.path_id IN ({placeholders}) "
@@ -882,8 +869,15 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
                     ("stage_mismatch", verdict.get("stage") == experiment["stage"]),
                     ("horizon_mismatch", verdict.get("target_horizon") == experiment["target_horizon"]),
                     ("identity_incomplete", all(verdict.get(field) not in {None, ""} for field in required_identity)),
-                    ("sample_contract_unmet", min(int(verdict.get("unique_treatment_n") or 0), int(verdict.get("unique_control_n") or 0)) >= int(experiment["min_samples_per_arm"] or min_sample_size)),
-                    ("economic_result_incomplete", all(verdict.get(field) is not None for field in ("baseline", "observed", "delta"))),
+                    (
+                        "sample_contract_unmet",
+                        min(int(verdict.get("unique_treatment_n") or 0), int(verdict.get("unique_control_n") or 0))
+                        >= int(experiment["min_samples_per_arm"] or min_sample_size),
+                    ),
+                    (
+                        "economic_result_incomplete",
+                        all(verdict.get(field) is not None for field in ("baseline", "observed", "delta")),
+                    ),
                 )
                 if not matches
             ),
@@ -929,7 +923,89 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
             causal_grade="insufficient",
         )
     if not valid:
-        return None
+        try:
+            from aletheia.learning.read_models import (
+                build_learning_contribution_projection,
+            )
+
+            projection = build_learning_contribution_projection(limit=len(path_ids))
+        except Exception:
+            return None
+        experiment_rows = {row["experiment_id"]: dict(row) for row in rows}
+        cutoff_at = _parse_dt(cutoff)
+        current_paper = []
+        for item in projection.get("items", []):
+            experiment = experiment_rows.get(item.get("experiment_id"))
+            started_at = _parse_dt((experiment or {}).get("started_at") or (experiment or {}).get("created_at"))
+            if (
+                experiment is not None
+                and str(item.get("stage") or "").startswith("paper_")
+                and cutoff_at is not None
+                and started_at is not None
+                and started_at >= cutoff_at
+            ):
+                current_paper.append(item)
+        if not current_paper:
+            return None
+        if len(current_paper) > 1:
+            return _verdict(
+                "Learning Alpha",
+                "insufficient_data",
+                0,
+                None,
+                None,
+                None,
+                "insufficient",
+                "Several current Paper Learning estimands are collecting and cannot be aggregated.",
+                {
+                    "experiment_ids": [row["experiment_id"] for row in current_paper],
+                    "path_ids": [row["path_id"] for row in current_paper],
+                },
+                evidence_type="dedicated_learning_contribution_monitoring",
+                causal_grade="insufficient",
+            )
+
+        item = current_paper[0]
+        measurement = item.get("measurement") or {}
+        samples = item.get("samples") or {}
+        integrity = item.get("integrity") or {}
+        state = str(measurement.get("state") or "not_measured")
+        status = state if state in {"positive", "neutral", "negative"} else "insufficient_data"
+        sample_size = min(
+            int(samples.get("treatment_assignment_units") or 0),
+            int(samples.get("control_assignment_units") or 0),
+        )
+        return _verdict(
+            "Learning Alpha",
+            status,
+            sample_size,
+            measurement.get("baseline"),
+            measurement.get("observed"),
+            measurement.get("delta") if status != "insufficient_data" else None,
+            _confidence_label(sample_size, min_sample_size),
+            (
+                f"Current Paper Learning monitoring verdict is {state}, but only a consumed "
+                "confirmatory verdict can establish contribution."
+            ),
+            {
+                "path_id": item.get("path_id"),
+                "experiment_id": item.get("experiment_id"),
+                "stage": item.get("stage"),
+                "allocation_pct": item.get("allocation_pct"),
+                "measurement_reason": measurement.get("reason"),
+                "measurement_authority_eligible": bool(measurement.get("authority_eligible")),
+                "raw_exposures": int(samples.get("raw_exposures") or 0),
+                "unique_treatment_n": int(samples.get("treatment_assignment_units") or 0),
+                "unique_control_n": int(samples.get("control_assignment_units") or 0),
+                "actual_intervention_treatment_units": int(samples.get("actual_intervention_treatment_units") or 0),
+                "actual_intervention_state": integrity.get("actual_intervention_state"),
+                "exclusion_reasons": integrity.get("exclusion_reasons") or {},
+                "current_identity": item.get("current_identity") or {},
+                "inference_status": (item.get("inference") or {}).get("status"),
+            },
+            evidence_type="dedicated_learning_contribution_monitoring",
+            causal_grade=("moderate_prospective_monitoring" if status != "insufficient_data" else "insufficient"),
+        )
 
     experiment, verdict = valid[0]
     status = str(verdict["verdict"])
@@ -1061,10 +1137,7 @@ def _learning_alpha(db, cutoff: str, days: int, min_sample_size: int) -> dict:
             causal_grade="insufficient",
         )
 
-    if (
-        len(unique_control_before) >= min_sample_size
-        and len(unique_control_after) >= min_sample_size
-    ):
+    if len(unique_control_before) >= min_sample_size and len(unique_control_after) >= min_sample_size:
         observed = mean(unique_after.values()) - mean(unique_before.values())
         base = mean(unique_control_after.values()) - mean(unique_control_before.values())
         reason_basis = "difference-in-differences against contemporaneous non-matching trade controls"
@@ -1188,15 +1261,17 @@ def _learning_events(db, cutoff: str) -> list[dict]:
     for row in lesson_rows:
         evidence = _parse_json(row["evidence_json"])
         recommendation = _parse_json(row["recommendation_json"])
-        events.append({
-            "id": row["id"],
-            "event_kind": "lesson",
-            "source_type": row["source_type"],
-            "source_id": row["source_id"],
-            "event_at": row["event_at"],
-            "group": _extract_learning_group(evidence, recommendation),
-            "action": recommendation.get("action"),
-        })
+        events.append(
+            {
+                "id": row["id"],
+                "event_kind": "lesson",
+                "source_type": row["source_type"],
+                "source_id": row["source_id"],
+                "event_at": row["event_at"],
+                "group": _extract_learning_group(evidence, recommendation),
+                "action": recommendation.get("action"),
+            }
+        )
 
     knowledge_rows = db.execute(
         "SELECT id, item_type, tags, created_at AS event_at FROM knowledge_items "
@@ -1206,15 +1281,17 @@ def _learning_events(db, cutoff: str) -> list[dict]:
     ).fetchall()
     for row in knowledge_rows:
         tags = _parse_json(row["tags"])
-        events.append({
-            "id": row["id"],
-            "event_kind": row["item_type"],
-            "source_type": row["item_type"],
-            "source_id": row["id"],
-            "event_at": row["event_at"],
-            "group": _extract_learning_group(tags),
-            "action": tags.get("action") if isinstance(tags, dict) else None,
-        })
+        events.append(
+            {
+                "id": row["id"],
+                "event_kind": row["item_type"],
+                "source_type": row["item_type"],
+                "source_id": row["id"],
+                "event_at": row["event_at"],
+                "group": _extract_learning_group(tags),
+                "action": tags.get("action") if isinstance(tags, dict) else None,
+            }
+        )
     return events
 
 
@@ -1240,7 +1317,9 @@ def _dedupe_learning_events(events: list[dict]) -> list[dict]:
     return sorted(by_fingerprint.values(), key=lambda row: str(row.get("event_at") or ""))
 
 
-def _trade_pnl_before_after(db, event_at: str, days: int, group: dict) -> tuple[dict[str, float], dict[str, float], dict[str, float], dict[str, float]]:
+def _trade_pnl_before_after(
+    db, event_at: str, days: int, group: dict
+) -> tuple[dict[str, float], dict[str, float], dict[str, float], dict[str, float]]:
     event_dt = _parse_dt(event_at)
     if event_dt is None:
         return {}, {}, {}, {}
@@ -1248,7 +1327,8 @@ def _trade_pnl_before_after(db, event_at: str, days: int, group: dict) -> tuple[
     after_end = _utcnow().isoformat()
     rows = []
     for position in eligible_strategy_outcomes(
-        closed_after=before_start, closed_before=after_end,
+        closed_after=before_start,
+        closed_before=after_end,
     ):
         scanner_family = None
         proposal_id = position.get("proposal_id")
@@ -1260,11 +1340,13 @@ def _trade_pnl_before_after(db, event_at: str, days: int, group: dict) -> tuple[
                 (proposal_id,),
             ).fetchone()
             scanner_family = metadata["scanner_family"] if metadata else None
-        rows.append({
-            **position,
-            "position_id": position["id"],
-            "scanner_family": scanner_family,
-        })
+        rows.append(
+            {
+                **position,
+                "position_id": position["id"],
+                "scanner_family": scanner_family,
+            }
+        )
 
     before: dict[str, float] = {}
     after: dict[str, float] = {}
@@ -1450,8 +1532,7 @@ def _exit_price_from_ohlcv(db, symbol: str, due_at: str) -> float | None:
         return None
     target_ms = int(due_dt.timestamp() * 1000)
     row = db.execute(
-        "SELECT close FROM market_ohlcv "
-        "WHERE symbol = ? AND ts >= ? ORDER BY ts ASC LIMIT 1",
+        "SELECT close FROM market_ohlcv WHERE symbol = ? AND ts >= ? ORDER BY ts ASC LIMIT 1",
         (symbol, target_ms),
     ).fetchone()
     return float(row["close"]) if row and row["close"] is not None else None
@@ -1459,8 +1540,7 @@ def _exit_price_from_ohlcv(db, symbol: str, due_at: str) -> float | None:
 
 def _baseline_symbols(db, *, exclude_symbol: str, equity_like: bool) -> list[str]:
     registry = db.execute(
-        "SELECT DISTINCT symbol FROM universe_registry "
-        "WHERE status = 'active' AND COALESCE(is_blacklisted, 0) = 0"
+        "SELECT DISTINCT symbol FROM universe_registry WHERE status = 'active' AND COALESCE(is_blacklisted, 0) = 0"
     ).fetchall()
     symbols = {r["symbol"] for r in registry if r["symbol"]}
     ohlcv = db.execute("SELECT DISTINCT symbol FROM market_ohlcv").fetchall()
@@ -1483,15 +1563,11 @@ def _forward_return_from_ohlcv(db, symbol: str, entry_at: str, horizon: str, dir
     timeframes = ("1h", "1d") if horizon in {"1h", "4h", "24h"} else ("1d", "1h")
     for timeframe in timeframes:
         entry = db.execute(
-            "SELECT close FROM market_ohlcv "
-            "WHERE symbol = ? AND timeframe = ? AND ts >= ? "
-            "ORDER BY ts ASC LIMIT 1",
+            "SELECT close FROM market_ohlcv WHERE symbol = ? AND timeframe = ? AND ts >= ? ORDER BY ts ASC LIMIT 1",
             (symbol, timeframe, entry_ms),
         ).fetchone()
         exit_row = db.execute(
-            "SELECT close FROM market_ohlcv "
-            "WHERE symbol = ? AND timeframe = ? AND ts >= ? "
-            "ORDER BY ts ASC LIMIT 1",
+            "SELECT close FROM market_ohlcv WHERE symbol = ? AND timeframe = ? AND ts >= ? ORDER BY ts ASC LIMIT 1",
             (symbol, timeframe, exit_ms),
         ).fetchone()
         if not entry or not exit_row:
@@ -1622,10 +1698,7 @@ def _horizon_details(groups: dict[str, dict[str, list[float]]]) -> dict:
             "baseline_sample_size": len(baseline),
             "observed": _round_or_none(_safe_mean(selected)),
             "baseline": _round_or_none(_safe_mean(baseline)),
-            "delta": _round_or_none(
-                (_safe_mean(selected) - _safe_mean(baseline))
-                if selected and baseline else None
-            ),
+            "delta": _round_or_none((_safe_mean(selected) - _safe_mean(baseline)) if selected and baseline else None),
         }
     return result
 

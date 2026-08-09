@@ -392,7 +392,12 @@ def test_universe_alpha_prefers_prospective_control_cohort():
                 "horizon, entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, status) "
                 "VALUES (?, ?, 'okx', ?, 'spot', 'long', '1h', 100, ?, ?, ?, ?, 'settled')",
                 (
-                    f"fco-{role}-{i}", outcome_key, sym, entry, due_at, due_at,
+                    f"fco-{role}-{i}",
+                    outcome_key,
+                    sym,
+                    entry,
+                    due_at,
+                    due_at,
                     3.0 if role == "selected" else 0.0,
                 ),
             )
@@ -453,7 +458,11 @@ def test_alpha_audit_twin_projection_fails_closed_without_storage():
     report = build_alpha_attribution_audit(days=30)
 
     assert set(report["verdicts"]) == {
-        "universe", "ranker", "system_operator", "learning", "serenity",
+        "universe",
+        "ranker",
+        "system_operator",
+        "learning",
+        "serenity",
     }
     twin = report["universe_twin_evidence"]
     assert twin["measurement_status"] == "not_measured"
@@ -591,16 +600,22 @@ def test_prospective_universe_and_ranker_negatives_remain_non_actionable():
 def test_two_measured_negative_layers_are_not_ranked_by_raw_delta():
     from aletheia.analytics.alpha_attribution import _main_bottleneck
 
-    bottleneck = _main_bottleneck({
-        "universe": {
-            "name": "Universe Alpha", "delta": -1.0,
-            "contribution_verdict": "negative", "measurement_status": "measured_contribution",
-        },
-        "serenity": {
-            "name": "Serenity Alpha", "delta": -5.0,
-            "contribution_verdict": "negative", "measurement_status": "measured_contribution",
-        },
-    })
+    bottleneck = _main_bottleneck(
+        {
+            "universe": {
+                "name": "Universe Alpha",
+                "delta": -1.0,
+                "contribution_verdict": "negative",
+                "measurement_status": "measured_contribution",
+            },
+            "serenity": {
+                "name": "Serenity Alpha",
+                "delta": -5.0,
+                "contribution_verdict": "negative",
+                "measurement_status": "measured_contribution",
+            },
+        }
+    )
 
     assert bottleneck["layer"] == "not_comparable"
     assert set(bottleneck["candidate_layers"]) == {"Universe Alpha", "Serenity Alpha"}
@@ -633,6 +648,80 @@ def test_learning_alpha_detects_same_pattern_improvement_after_lesson():
     assert learning["sample_size"] == 5
     assert learning["baseline"] == -2.0
     assert learning["observed"] == 2.0
+
+
+def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monkeypatch):
+    import aletheia.analytics.alpha_attribution as alpha_attribution
+    import aletheia.learning.read_models as learning_read_models
+    from tests.test_learning_verdict_runtime import _experiment
+
+    monkeypatch.setattr(
+        alpha_attribution,
+        "_utcnow",
+        lambda: datetime(2026, 8, 9, 10, tzinfo=timezone.utc),
+    )
+    hypothesis, experiment = _experiment(min_samples=50, min_days=7)
+    monkeypatch.setattr(
+        learning_read_models,
+        "build_learning_contribution_projection",
+        lambda *, limit: {
+            "items": [
+                {
+                    "path_id": hypothesis.path_id,
+                    "experiment_id": experiment.experiment_id,
+                    "stage": "paper_10",
+                    "allocation_pct": 0.1,
+                    "current_identity": {
+                        "policy_epoch": "epoch-a",
+                        "matches_running_cohort": True,
+                    },
+                    "measurement": {
+                        "state": "insufficient_data",
+                        "reason": "insufficient unique prospective treatment/control samples",
+                        "baseline": None,
+                        "observed": None,
+                        "delta": None,
+                        "authority_eligible": False,
+                    },
+                    "samples": {
+                        "raw_exposures": 21,
+                        "treatment_assignment_units": 0,
+                        "control_assignment_units": 0,
+                        "actual_intervention_treatment_units": 0,
+                    },
+                    "integrity": {
+                        "actual_intervention_state": "none",
+                        "exclusion_reasons": {"unsettled": 21},
+                    },
+                    "inference": {"status": "collecting"},
+                }
+            ]
+        },
+    )
+
+    learning = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+
+    assert learning["verdict"] == "insufficient_data"
+    assert learning["contribution_verdict"] == "insufficient_data"
+    assert learning["measurement_status"] == "not_measured"
+    assert learning["evidence_type"] == "dedicated_learning_contribution_monitoring"
+    assert learning["details"]["experiment_id"] == experiment.experiment_id
+    assert learning["details"]["raw_exposures"] == 21
+    assert learning["details"]["exclusion_reasons"] == {"unsettled": 21}
+
+    projection_item = learning_read_models.build_learning_contribution_projection(limit=1)["items"][0]
+    projection_item["measurement"].update(state="positive", baseline=0.0, observed=1.0, delta=1.0)
+    projection_item["samples"].update(treatment_assignment_units=50, control_assignment_units=50)
+    monkeypatch.setattr(
+        learning_read_models,
+        "build_learning_contribution_projection",
+        lambda *, limit: {"items": [projection_item]},
+    )
+    monitoring_positive = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+
+    assert monitoring_positive["verdict"] == "positive"
+    assert monitoring_positive["contribution_verdict"] == "insufficient_data"
+    assert monitoring_positive["measurement_status"] == "directional_evidence_only"
 
 
 def test_learning_alpha_consumes_exact_confirmatory_authority_verdict(monkeypatch):
@@ -716,9 +805,7 @@ def test_learning_alpha_rejects_authority_verdict_spanning_before_audit_window(m
         for assignment, net, offset in (("treatment", 1.0, 0), ("control", 0.0, 1)):
             candidate = f"old-alpha-{assignment}-{index:02d}"
             exposed_at = (
-                learning_iso(days=-1, minutes=offset)
-                if index == 0
-                else learning_iso(minutes=index * 2 + offset)
+                learning_iso(days=-1, minutes=offset) if index == 0 else learning_iso(minutes=index * 2 + offset)
             )
             _exposure(
                 experiment,
