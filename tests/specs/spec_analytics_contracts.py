@@ -167,7 +167,9 @@ def test_resolve_stale_shadows_uses_historical_bar():
               "insufficient_data instead of fake conclusions when samples are thin, "
               "and preserve directional evidence as diagnostic while only measured "
               "contribution is eligible for an actionable bottleneck; treatment-specific "
-              "Exit paired evidence remains non-authoritative outside those five verdicts.",
+              "Exit paired evidence remains non-authoritative outside those five verdicts, "
+              "and Risk policy evidence must fail closed unless its paired fixed-horizon "
+              "identity and actual-intervention contract is complete.",
               status="implemented"),
 )
 def test_alpha_attribution_contract_shape_on_empty_db():
@@ -191,6 +193,12 @@ def test_alpha_attribution_contract_shape_on_empty_db():
     assert paired["behavior_authority"] is False
     assert paired["promotion_eligible"] is False
     assert paired["contribution_verdict"] == "insufficient_data"
+    risk = report["risk_policy_evidence"]
+    assert risk["contract_version"] == "risk-policy-value/v1"
+    assert risk["baseline_policy"] == "pass-all-candidates/v1"
+    assert risk["behavior_authority"] is False
+    assert risk["promotion_eligible"] is False
+    assert risk["contribution_verdict"] == "insufficient_data"
     assert report["main_bottleneck"]["layer"] == "insufficient_data"
 
     weak_negative = {
