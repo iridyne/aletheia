@@ -265,11 +265,6 @@ async def build_market_context(
                         candles = await provider.get_ohlcv(
                             instrument, timeframe=tf, limit=limit,
                         )
-                        cache.set(
-                            instrument.symbol, tf, limit, candles,
-                            market_type=instrument.market_type,
-                            exchange=instrument.exchange,
-                        )
                 except Exception as e:
                     debug["errors"].append(f"{sym}/{tf}: {e}")
                     logger.warning("OHLCV fetch failed %s/%s: %s", sym, tf, e)

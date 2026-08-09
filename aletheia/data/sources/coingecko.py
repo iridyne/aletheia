@@ -59,6 +59,8 @@ async def _throttle() -> None:
 class CoinGeckoProvider:
     """MarketDataProvider backed by CoinGecko public API."""
 
+    venue_name = "coingecko"
+
     async def get_ticker(self, symbol) -> Ticker:
         from aletheia.data.symbols import canonical_of
         from aletheia.net import httpx_client
@@ -134,6 +136,8 @@ class CoinGeckoProvider:
                 low=float(row[3]),
                 close=float(row[4]),
                 volume=0.0,
+                provider="coingecko",
+                exchange=self.venue_name,
             )
             for row in rows
             if isinstance(row, (list, tuple)) and len(row) >= 5

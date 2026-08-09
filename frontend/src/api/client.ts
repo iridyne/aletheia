@@ -255,7 +255,7 @@ function formatErrorValue(value: unknown): string | null {
 	return null;
 }
 
-export function extractApiError(status: number, body: string): string {
+function formatApiErrorMessage(status: number, body: string): string {
 	try {
 		const obj = JSON.parse(body);
 		const detail = obj.detail;
@@ -266,6 +266,52 @@ export function extractApiError(status: number, body: string): string {
 	}
 	if (body.length > 80) return `${status} error`;
 	return body || `${status} error`;
+}
+
+export class ApiError extends Error {
+	status: number;
+	code?: string;
+	details?: unknown;
+	fieldErrors?: unknown;
+	retryAfter?: string;
+	correlationId?: string;
+
+	constructor(status: number, message: string) {
+		super(message);
+		this.name = "ApiError";
+		this.status = status;
+	}
+}
+
+function errorField(value: unknown): string | undefined {
+	if (typeof value !== "string" && typeof value !== "number") return undefined;
+	const text = String(value).trim();
+	return text || undefined;
+}
+
+export function parseApiError(status: number, body: string, headers?: Headers): ApiError {
+	const error = new ApiError(status, formatApiErrorMessage(status, body));
+	try {
+		const payload = JSON.parse(body) as Record<string, unknown>;
+		const detail = payload.detail;
+		const fields = detail && typeof detail === "object" && !Array.isArray(detail)
+			? detail as Record<string, unknown>
+			: payload;
+		error.code = errorField(fields.code ?? payload.code);
+		error.details = fields.details ?? (typeof detail === "object" ? detail : undefined);
+		error.fieldErrors = fields.field_errors ?? fields.fieldErrors ?? (Array.isArray(detail) ? detail : undefined);
+		error.retryAfter = errorField(fields.retry_after ?? fields.retryAfter)
+			?? headers?.get("Retry-After") ?? undefined;
+		error.correlationId = errorField(fields.correlation_id ?? fields.correlationId)
+			?? headers?.get("X-Correlation-ID") ?? headers?.get("X-Request-ID") ?? undefined;
+	} catch {
+		/* Non-JSON bodies still retain status and the bounded legacy message. */
+	}
+	return error;
+}
+
+export function extractApiError(status: number, body: string): string {
+	return formatApiErrorMessage(status, body);
 }
 
 // Hard cap on every API request. Prevents the top loading bar from staying
@@ -301,7 +347,7 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 			},
 			signal: timeoutCtrl.signal,
 		});
-		if (!res.ok) throw new Error(extractApiError(res.status, await res.text()));
+		if (!res.ok) throw parseApiError(res.status, await res.text(), res.headers);
 		return res.json();
 	} finally {
 		clearTimeout(timer);

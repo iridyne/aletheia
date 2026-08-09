@@ -1,5 +1,5 @@
-import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
-import { useState, useEffect, useRef } from 'react'
+import { Routes, Route, NavLink, Navigate, Link } from 'react-router-dom'
+import { lazy, Suspense, useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
@@ -23,20 +23,6 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { api } from './api/client'
-import Overview from './pages/Overview'
-import AgentActivity from './pages/AgentActivity'
-import Learning from './pages/Learning'
-import Blotter from './pages/Blotter'
-import TradesPositions from './pages/TradesPositions'
-import Charts from './pages/Charts'
-import Settings from './pages/Settings'
-import RiskControls from './pages/RiskControls'
-import NewsIntel from './pages/NewsIntel'
-import CommandCenter from './pages/CommandCenter'
-import SerenityLens from './pages/SerenityLens'
-import PredictionLens from './pages/PredictionLens'
-import Universe from './pages/Universe'
-import Usage from './pages/Usage'
 import CommandPalette from './components/CommandPalette'
 import MarketTicker from './components/MarketTicker'
 import BackendConnectionGuard from './components/BackendConnectionGuard'
@@ -45,7 +31,22 @@ import CollectorHealthDetails from './components/CollectorHealthDetails'
 import type { InfraEvent } from './types'
 import { deriveMasterState, getOperatorDisplayStatus } from './lib/systemState'
 import { devPreviewLabel } from './dev-preview'
-import { useRealtimeUpdates } from './lib/useRealtimeUpdates'
+import { useRealtimeUpdates, type RealtimeStatus } from './lib/useRealtimeUpdates'
+
+const Overview = lazy(() => import('./pages/Overview'))
+const AgentActivity = lazy(() => import('./pages/AgentActivity'))
+const Learning = lazy(() => import('./pages/Learning'))
+const Blotter = lazy(() => import('./pages/Blotter'))
+const TradesPositions = lazy(() => import('./pages/TradesPositions'))
+const Charts = lazy(() => import('./pages/Charts'))
+const Settings = lazy(() => import('./pages/Settings'))
+const RiskControls = lazy(() => import('./pages/RiskControls'))
+const NewsIntel = lazy(() => import('./pages/NewsIntel'))
+const CommandCenter = lazy(() => import('./pages/CommandCenter'))
+const SerenityLens = lazy(() => import('./pages/SerenityLens'))
+const PredictionLens = lazy(() => import('./pages/PredictionLens'))
+const Universe = lazy(() => import('./pages/Universe'))
+const Usage = lazy(() => import('./pages/Usage'))
 
 export type NavItem = { to: string; label: string; icon: LucideIcon }
 export type NavGroup = { group: string; items: NavItem[] }
@@ -101,6 +102,17 @@ export const NAV: NavGroup[] = [
 ]
 
 const RAIL_STORAGE_KEY = 'sidebar:collapsed'
+
+function NotFound() {
+  return (
+    <section className="route-state" aria-labelledby="not-found-title">
+      <p className="mono text-muted">404</p>
+      <h2 id="not-found-title">Page not found</h2>
+      <p className="text-muted">This route is not part of the current trading desk.</p>
+      <Link className="btn btn-secondary" to="/">Return to Overview</Link>
+    </section>
+  )
+}
 
 
 /**
@@ -164,7 +176,7 @@ function fmtEventTime(iso: string): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
 }
 
-function StatusBar() {
+function StatusBar({ realtime }: { realtime: RealtimeStatus }) {
   const qc = useQueryClient()
   const [restarting, setRestarting] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -296,7 +308,24 @@ function StatusBar() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }),
   })
 
-  if (!data) return <div className="topbar-status"><span className="dot dot-muted" />connecting…</div>
+  const realtimeTone = realtime.state === 'connected' ? 'green'
+    : realtime.state === 'polling_only' || realtime.state === 'reconnecting' ? 'yellow'
+    : 'muted'
+  const realtimeLabel = realtime.state === 'connected' ? 'push'
+    : realtime.state === 'polling_only' ? 'poll'
+    : realtime.state === 'reconnecting' ? 'retry'
+    : realtime.state === 'connecting' ? 'ws…'
+    : 'off'
+  const realtimeTitle = `Realtime transport: ${realtime.state}; ${realtime.malformedFrameCount} malformed; ${realtime.unknownCategoryCount} unknown categories`
+
+  if (!data) return (
+    <div className="topbar-status">
+      <span className="dot dot-muted" />connecting…
+      <span className="realtime-state mono" title={realtimeTitle}>
+        <span className={`dot dot-${realtimeTone}`} />{realtimeLabel}
+      </span>
+    </div>
+  )
 
   const running = !!data.gateway_running
   const paused = !!data.paused
@@ -375,6 +404,9 @@ function StatusBar() {
             <span className="dot dot-green heartbeat" />{heartbeatText}
           </span>
         )}
+        <span className="realtime-state mono" aria-label={`Realtime transport: ${realtime.state}`} title={realtimeTitle}>
+          <span className={`dot dot-${realtimeTone}`} />{realtimeLabel}
+        </span>
         <span className={`status-cluster-state status-cluster-${stateTone}`}>{stateWord}</span>
 
         {/* Hover/focus popover — full status detail, sectioned layout. */}
@@ -431,6 +463,16 @@ function StatusBar() {
               <span className={`dot dot-${connectivityLight}`} />
               <span className="sp-label">Connectivity</span>
               <span className="sp-value">{connectivityState}</span>
+            </div>
+            <div className="sp-row">
+              <span className={`dot dot-${realtimeTone}`} />
+              <span className="sp-label">Realtime transport</span>
+              <span className="sp-value">
+                {realtime.state}
+                {realtime.lastFrameAt && ` · last ${fmtEventTime(new Date(realtime.lastFrameAt).toISOString())}`}
+                {(realtime.malformedFrameCount > 0 || realtime.unknownCategoryCount > 0)
+                  && ` · ${realtime.malformedFrameCount} malformed · ${realtime.unknownCategoryCount} unknown`}
+              </span>
             </div>
             <div className="sp-row">
               <span className="sp-label">Exchange</span>
@@ -586,7 +628,7 @@ export default function App() {
   const toggle = (g: string) => setCollapsed(c => ({ ...c, [g]: !c[g] }))
   const previewLabel = devPreviewLabel()
 
-  useRealtimeUpdates()
+  const realtime = useRealtimeUpdates()
 
   return (
     <div className={`layout${railCollapsed ? ' rail' : ''}`}>
@@ -654,42 +696,37 @@ export default function App() {
               cover navigation context; the topbar now adds market-state context instead. */}
           <MarketTicker />
           {previewLabel && <span className="dev-preview-banner">{previewLabel}</span>}
-          <StatusBar />
+          <StatusBar realtime={realtime} />
         </header>
         <main className="main">
           <BackendConnectionGuard />
-          <Routes>
-            <Route path="/" element={<Overview />} />
-            <Route path="/agent-activity" element={<AgentActivity />} />
-            {/* Legacy paths kept as redirects so existing cross-links/bookmarks resolve. */}
-            <Route path="/agent-runs" element={<AgentActivity />} />
-            <Route path="/opportunities" element={<AgentActivity />} />
-            <Route path="/learning" element={<Learning />} />
-            <Route path="/dreaming" element={<Learning />} />
-            <Route path="/knowledge" element={<Learning />} />
-            <Route path="/reports" element={<Learning />} />
-            <Route path="/blotter" element={<Blotter />} />
-            {/* /proposals fully replaced by /blotter (2026-07-18). Legacy
-                external links, bookmarks, and any lingering in-app navigate()
-                calls redirect transparently. The old pages/Proposals.tsx has
-                been deleted; its only outward-facing export
-                (ProposalRationaleDetail) moved to
-                components/ProposalRationaleDetail.tsx. */}
-            <Route path="/proposals" element={<Navigate to="/blotter" replace />} />
-            <Route path="/trades" element={<TradesPositions />} />
-            {/* Legacy paths kept as redirects so existing cross-links/bookmarks resolve. */}
-            <Route path="/paper-trades" element={<TradesPositions />} />
-            <Route path="/positions" element={<TradesPositions />} />
-            <Route path="/charts" element={<Charts />} />
-            <Route path="/prediction-markets" element={<PredictionLens />} />
-            <Route path="/command-center" element={<CommandCenter />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/risk" element={<RiskControls />} />
-            <Route path="/news" element={<NewsIntel />} />
-            <Route path="/serenity-lens" element={<SerenityLens />} />
-            <Route path="/universe" element={<Universe />} />
-            <Route path="/usage" element={<Usage />} />
-          </Routes>
+          <Suspense fallback={<div className="route-state" role="status">Loading page…</div>}>
+            <Routes>
+              <Route path="/" element={<Overview />} />
+              <Route path="/agent-activity" element={<AgentActivity />} />
+              <Route path="/agent-runs" element={<Navigate to="/agent-activity" replace />} />
+              <Route path="/opportunities" element={<Navigate to="/agent-activity" replace />} />
+              <Route path="/learning" element={<Learning />} />
+              <Route path="/dreaming" element={<Navigate to="/learning" replace />} />
+              <Route path="/knowledge" element={<Navigate to="/learning" replace />} />
+              <Route path="/reports" element={<Navigate to="/learning" replace />} />
+              <Route path="/blotter" element={<Blotter />} />
+              <Route path="/proposals" element={<Navigate to="/blotter" replace />} />
+              <Route path="/trades" element={<TradesPositions />} />
+              <Route path="/paper-trades" element={<Navigate to="/trades" replace />} />
+              <Route path="/positions" element={<Navigate to="/trades" replace />} />
+              <Route path="/charts" element={<Charts />} />
+              <Route path="/prediction-markets" element={<PredictionLens />} />
+              <Route path="/command-center" element={<CommandCenter />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/risk" element={<RiskControls />} />
+              <Route path="/news" element={<NewsIntel />} />
+              <Route path="/serenity-lens" element={<SerenityLens />} />
+              <Route path="/universe" element={<Universe />} />
+              <Route path="/usage" element={<Usage />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Suspense>
         </main>
       </div>
     </div>

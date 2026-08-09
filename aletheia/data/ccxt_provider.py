@@ -217,6 +217,13 @@ class CCXTProvider:
             (self._primary_name, self._ensure_primary),
             (self._fallback_name, self._ensure_fallback),
         ):
+            if since is None and name != self._primary_name:
+                cached = cache.get(
+                    canon, timeframe, limit,
+                    market_type=mkt, exchange=name,
+                )
+                if cached is not None:
+                    return cached
             if not is_venue_available(name):
                 last_err = VenueCoolingDownError(f"market-data venue cooling down: {name}")
                 continue
@@ -233,6 +240,8 @@ class CCXTProvider:
                         low=float(row[3]),
                         close=float(row[4]),
                         volume=float(row[5]),
+                        provider="ccxt",
+                        exchange=name,
                     )
                     for row in raw
                 ]
@@ -259,7 +268,7 @@ class CCXTProvider:
                 if since is None and candles:
                     cache.set(
                         canon, timeframe, limit, candles,
-                        market_type=mkt, exchange=self._primary_name,
+                        market_type=mkt, exchange=name,
                     )
                 return candles
             except Exception as e:  # noqa: BLE001 — try fallback, then re-raise

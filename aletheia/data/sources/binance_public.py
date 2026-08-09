@@ -112,6 +112,8 @@ class BinancePublicProvider:
                 low=float(row[3]),
                 close=float(row[4]),
                 volume=float(row[5]),
+                provider="binance_public",
+                exchange=self.venue_name,
             )
             for row in rows
         ]

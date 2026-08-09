@@ -46,6 +46,8 @@ class Candle:
     close: float
     volume: float
     is_closed: bool = True
+    provider: str | None = None
+    exchange: str | None = None
 
 
 @runtime_checkable
