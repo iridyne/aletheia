@@ -259,17 +259,18 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert migrations._MIGRATIONS[0].schema_version == "aletheia-sqlite-v2"
-    assert migrations._MIGRATIONS[-10].schema_version == "aletheia-sqlite-v3"
-    assert migrations._MIGRATIONS[-9].schema_version == "aletheia-sqlite-v4"
-    assert migrations._MIGRATIONS[-8].schema_version == "aletheia-sqlite-v5"
-    assert migrations._MIGRATIONS[-7].schema_version == "aletheia-sqlite-v6"
-    assert migrations._MIGRATIONS[-6].schema_version == "aletheia-sqlite-v7"
-    assert migrations._MIGRATIONS[-5].schema_version == "aletheia-sqlite-v8"
-    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v9"
-    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v10"
-    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v11"
+    assert migrations._MIGRATIONS[-11].schema_version == "aletheia-sqlite-v3"
+    assert migrations._MIGRATIONS[-10].schema_version == "aletheia-sqlite-v4"
+    assert migrations._MIGRATIONS[-9].schema_version == "aletheia-sqlite-v5"
+    assert migrations._MIGRATIONS[-8].schema_version == "aletheia-sqlite-v6"
+    assert migrations._MIGRATIONS[-7].schema_version == "aletheia-sqlite-v7"
+    assert migrations._MIGRATIONS[-6].schema_version == "aletheia-sqlite-v8"
+    assert migrations._MIGRATIONS[-5].schema_version == "aletheia-sqlite-v9"
+    assert migrations._MIGRATIONS[-4].schema_version == "aletheia-sqlite-v10"
+    assert migrations._MIGRATIONS[-3].schema_version == "aletheia-sqlite-v11"
+    assert migrations._MIGRATIONS[-2].schema_version == "aletheia-sqlite-v12"
     assert migrations._MIGRATIONS[-1].schema_version == migrations.SCHEMA_VERSION
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v12"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v13"
     connection.close()
 
 
@@ -492,7 +493,7 @@ def test_exit_breakeven_shadow_v11_migration_is_additive_and_idempotent():
     connection.close()
 
 
-def test_production_v11_ledger_advances_only_through_v12(tmp_path, monkeypatch):
+def test_production_v11_ledger_advances_through_v13(tmp_path, monkeypatch):
     import aletheia.storage.migrations as migrations
 
     connection = _connection(tmp_path / "v9.db")
@@ -509,6 +510,7 @@ def test_production_v11_ledger_advances_only_through_v12(tmp_path, monkeypatch):
         """
     )
     migrations._apply_learning_fixed_look_v10(connection)
+    migrations._apply_universe_twin_shadow_evidence_v8(connection)
     connection.executescript(migrations._MIGRATION_LEDGER_DDL)
     connection.executemany(
         "INSERT INTO aletheia_schema_migrations "
@@ -516,7 +518,7 @@ def test_production_v11_ledger_advances_only_through_v12(tmp_path, monkeypatch):
         "VALUES (?, ?, ?, '2026-08-08T00:00:00+00:00', 0)",
         [
             (step.migration_id, step.checksum, step.schema_version)
-            for step in migrations._MIGRATIONS[:-1]
+            for step in migrations._MIGRATIONS[:-2]
         ],
     )
     connection.commit()
@@ -534,8 +536,8 @@ def test_production_v11_ledger_advances_only_through_v12(tmp_path, monkeypatch):
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260808_0011_learning_randomization_inference_v12",
-        "aletheia-sqlite-v12",
+        "20260809_0012_universe_twin_prospective_v13",
+        "aletheia-sqlite-v13",
     )
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "
@@ -577,6 +579,76 @@ def test_universe_twin_shadow_migration_is_additive_and_idempotent():
         "propensity",
         "authority_outcome_candidate_key",
     }.isdisjoint(columns)
+    connection.close()
+
+
+def test_universe_twin_prospective_migration_is_additive_and_idempotent():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    migrations._apply_universe_twin_shadow_evidence_v8(connection)
+    migrations._apply_universe_twin_prospective_v13(connection)
+    migrations._apply_universe_twin_prospective_v13(connection)
+
+    batch_columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(universe_twin_shadow_batches)"
+        )
+    }
+    record_columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(universe_twin_shadow_records)"
+        )
+    }
+    assert {
+        "experiment_id",
+        "behavior_contract_hash",
+        "assignment_arm",
+        "assignment_propensity",
+        "primary_horizon",
+        "outcome_contract_version",
+    } <= batch_columns
+    assert {
+        "policy_epoch_id",
+        "assignment_unit_key",
+        "treatment_coefficient",
+        "metric_version",
+        "outcome_candidate_key",
+        "assigned_policy_selected",
+    } <= record_columns
+    connection.close()
+
+
+def test_universe_twin_prospective_v13_rolls_back_partial_failure(monkeypatch):
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    migrations._apply_universe_twin_shadow_evidence_v8(connection)
+    before = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(universe_twin_shadow_batches)"
+        )
+    }
+    monkeypatch.setattr(
+        migrations,
+        "_UNIVERSE_TWIN_PROSPECTIVE_COLUMNS",
+        migrations._UNIVERSE_TWIN_PROSPECTIVE_COLUMNS
+        + (("forced_failure", "missing_twin_table", "TEXT"),),
+    )
+
+    with pytest.raises(sqlite3.OperationalError):
+        migrations._apply_universe_twin_prospective_v13(connection)
+
+    after = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(universe_twin_shadow_batches)"
+        )
+    }
+    assert after == before
     connection.close()
 
 

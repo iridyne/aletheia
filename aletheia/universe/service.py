@@ -195,6 +195,7 @@ async def _persist_twin_shadow_nonfatal(
         return persist(
             bundle.batch,
             bundle.evidence,
+            outcomes=bundle.outcomes,
             min_interval_sec=min_interval_sec,
         )
 
@@ -572,9 +573,9 @@ class UniverseService:
             summarize_twin_shadow_records,
         )
         from aletheia.universe.twin_allocation import replay_twin_shadow_allocations
-        from aletheia.universe.twin_persistence import (
-            TWIN_SHADOW_CAPTURE_INTERVAL_SEC,
-            build_twin_shadow_bundle,
+        from aletheia.universe.twin_persistence import TWIN_SHADOW_CAPTURE_INTERVAL_SEC
+        from aletheia.universe.twin_experiment import (
+            build_prospective_twin_shadow_bundle,
         )
         from aletheia.universe.signal_emitter import (
             emit_deterministic_opportunities,
@@ -892,7 +893,7 @@ class UniverseService:
                     snapshot_id=prev_snapshot_id,
                 )
                 await _persist_twin_shadow_nonfatal(
-                    build_twin_shadow_bundle,
+                    build_prospective_twin_shadow_bundle,
                     repo.insert_universe_twin_shadow_bundle,
                     twin_shadow_records,
                     tuple(twin_shadow_inputs),
@@ -914,6 +915,7 @@ class UniverseService:
                     provider_id=(
                         f"{cfg.market_data.provider}:{cfg.market_data.ccxt_exchange}"
                     ),
+                    outcome_venue=cfg.market_data.ccxt_exchange,
                     captured_at=entry_ts,
                 )
                 logger.info(
@@ -1080,7 +1082,7 @@ class UniverseService:
                 snapshot_id=snap.id,
             )
             await _persist_twin_shadow_nonfatal(
-                build_twin_shadow_bundle,
+                build_prospective_twin_shadow_bundle,
                 repo.insert_universe_twin_shadow_bundle,
                 twin_shadow_records,
                 tuple(twin_shadow_inputs),
@@ -1100,6 +1102,7 @@ class UniverseService:
                 family_tolerances=family_tolerances,
                 regime_state=regime_tag_for_fp,
                 provider_id=(f"{cfg.market_data.provider}:{cfg.market_data.ccxt_exchange}"),
+                outcome_venue=cfg.market_data.ccxt_exchange,
                 captured_at=entry_ts,
             )
             # Nudge paper_trader ranker to evaluate the newly-emitted carriers
