@@ -51,12 +51,27 @@ Each verdict includes:
 - `confidence_label`
 - `evidence_type`
 - `causal_grade`
+- `contribution_verdict`
+- `measurement_status`
 - `suspected_modules`
 - `reason`
 
-The final `main_bottleneck` chooses the most negative measured layer. If no layer
-has enough data, it tells the operator to collect more settled outcomes before
-changing scanner, ranker, prompt, or learning logic.
+These fields have different authority:
+
+- `verdict` classifies the observed or directional result. A weak result may
+  remain `negative` so the diagnostic signal is not lost.
+- `contribution_verdict` is the evidence-authorized contribution judgment.
+- `measurement_status` states whether the result is `measured_contribution`,
+  `directional_evidence_only`, or `not_measured`.
+
+`main_bottleneck` is authority-bearing and therefore has a stricter gate than an
+individual verdict. A layer is eligible only when its
+`contribution_verdict == negative` and
+`measurement_status == measured_contribution`. If exactly one layer qualifies,
+it may become actionable. If several qualify, the audit refuses to rank their
+raw percentage deltas until estimand, horizon, statistical unit, and economic
+unit are comparable. If none qualify, the report states that no actionable
+gradient is currently established.
 
 ## Layer Definitions
 
@@ -87,8 +102,8 @@ Current implementation:
 - Groups by `batch_id`.
 - Compares rank `1` PnL against ranks `2-5`.
 
-This is the cleanest current alpha read because shadow batches already preserve
-the ranker counterfactual set.
+This is directional evidence. Shadow batches preserve the candidate set, but do
+not constitute a prospective Ranker treatment/control experiment.
 
 ### System Operator Alpha
 
@@ -103,8 +118,8 @@ Current implementation:
 - Compares actual closed position PnL against unselected resolved shadows in the
   same batch.
 
-If this verdict is negative, the likely bottleneck is model, prompt, context, or
-decision logic rather than scanner selection.
+This comparison mixes downstream queue, Risk, Execution, and Exit effects, so it
+is directional and cannot by itself prescribe a prompt or model change.
 
 ### Learning Alpha
 
@@ -168,5 +183,7 @@ This audit is read-only:
   lessons cannot be judged by this v1 audit.
 - Learning causality is quasi-causal unless the project explicitly introduces
   randomized learning holdouts, which is not appropriate for active safety guards.
-- Verdicts are meant to locate the likely bottleneck and suspected modules, not to
-  replace full strategy research.
+- Directional verdicts retain suspected-module metadata for diagnosis, but the
+  CLI does not render that metadata as confirmed or prescriptive advice.
+- A negative Ranker or System Operator observational delta does not prove either
+  module is the causal bottleneck.

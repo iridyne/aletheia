@@ -69,6 +69,60 @@ def _insert_trade_chain(db, idx: int, pnl_pct: float, scanner: str = "momentum",
     )
 
 
+def _insert_prospective_control_cohort(
+    db,
+    *,
+    layer: str,
+    prefix: str,
+    selected_return: float,
+    control_return: float,
+) -> None:
+    import json
+
+    entry = _iso(days_ago=2)
+    due_at = _iso(days_ago=2, hours_after=1)
+    for i in range(5):
+        for role, net_return in (
+            ("selected", selected_return),
+            ("control", control_return),
+        ):
+            symbol = f"{prefix}-{role}-{i}/USDT"
+            outcome_key = f"{prefix}:{role}:{i}"
+            db.execute(
+                "INSERT INTO alpha_control_observations "
+                "(id, layer, cohort_id, treatment_id, role, symbol, direction, horizon, "
+                "entry_price, entry_ts, score, module_path, metadata, outcome_candidate_key) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'long', '1h', 100, ?, 50, ?, ?, ?)",
+                (
+                    f"aco-{prefix}-{role}-{i}",
+                    layer,
+                    f"cohort-{prefix}",
+                    f"treatment-{prefix}",
+                    role,
+                    symbol,
+                    entry,
+                    f"aletheia/{layer}.py",
+                    json.dumps({"due_at": due_at}),
+                    outcome_key,
+                ),
+            )
+            db.execute(
+                "INSERT INTO filter_candidate_outcomes "
+                "(id, outcome_candidate_key, venue, symbol, market_type, direction, "
+                "horizon, entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, status) "
+                "VALUES (?, ?, 'okx', ?, 'spot', 'long', '1h', 100, ?, ?, ?, ?, 'settled')",
+                (
+                    f"fco-{prefix}-{role}-{i}",
+                    outcome_key,
+                    symbol,
+                    entry,
+                    due_at,
+                    due_at,
+                    net_return,
+                ),
+            )
+
+
 def test_empty_alpha_audit_returns_five_insufficient_verdicts():
     from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
 
@@ -97,7 +151,8 @@ def test_ranker_alpha_detects_top1_underperforming_shadow_baseline():
     assert ranker["verdict"] == "negative"
     assert ranker["sample_size"] == 5
     assert ranker["baseline"] > ranker["observed"]
-    assert report["main_bottleneck"]["layer"] == "Ranker Alpha"
+    assert ranker["measurement_status"] == "directional_evidence_only"
+    assert report["main_bottleneck"]["layer"] == "insufficient_data"
 
 
 def test_system_operator_alpha_compares_executed_trade_to_same_batch_shadows():
@@ -120,6 +175,8 @@ def test_system_operator_alpha_compares_executed_trade_to_same_batch_shadows():
     assert operator["sample_size"] == 5
     assert operator["details"]["shadow_sample_size"] == 10
     assert operator["baseline"] > operator["observed"]
+    assert operator["measurement_status"] == "directional_evidence_only"
+    assert report["main_bottleneck"]["layer"] == "insufficient_data"
 
 
 def test_universe_alpha_uses_forward_outcomes_against_deterministic_baseline():
@@ -199,6 +256,87 @@ def test_universe_alpha_prefers_prospective_control_cohort():
     assert universe["evidence_type"] == "prospective_control_cohort"
     assert universe["baseline"] == 0.0
     assert universe["observed"] == 3.0
+    assert universe["measurement_status"] == "measured_contribution"
+    assert report["main_bottleneck"]["layer"] == "insufficient_data"
+
+
+def test_strong_prospective_universe_negative_is_actionable():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_prospective_control_cohort(
+        db,
+        layer="universe",
+        prefix="universe-negative",
+        selected_return=-3.0,
+        control_return=0.0,
+    )
+    db.commit()
+
+    report = build_alpha_attribution_audit(days=30)
+    universe = report["verdicts"]["universe"]
+
+    assert universe["contribution_verdict"] == "negative"
+    assert universe["measurement_status"] == "measured_contribution"
+    assert report["main_bottleneck"]["layer"] == "Universe Alpha"
+    assert "measured negative contribution" in report["main_bottleneck"]["summary"]
+
+
+def test_measured_universe_negative_beats_more_negative_weak_ranker():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_prospective_control_cohort(
+        db,
+        layer="universe",
+        prefix="universe-authority",
+        selected_return=-1.0,
+        control_return=0.0,
+    )
+    for i in range(5):
+        batch = f"weak-ranker-{i}"
+        _insert_shadow(db, batch, f"weak-top1-{i}", 1, -10.0, selected=1)
+        _insert_shadow(db, batch, f"weak-alt-{i}", 2, 1.0)
+    db.commit()
+
+    report = build_alpha_attribution_audit(days=30)
+
+    assert report["verdicts"]["ranker"]["delta"] < report["verdicts"]["universe"]["delta"]
+    assert report["verdicts"]["ranker"]["measurement_status"] == "directional_evidence_only"
+    assert report["main_bottleneck"]["layer"] == "Universe Alpha"
+
+
+def test_two_measured_negative_layers_are_not_ranked_by_raw_delta():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_prospective_control_cohort(
+        db,
+        layer="universe",
+        prefix="universe-multi",
+        selected_return=-1.0,
+        control_return=0.0,
+    )
+    _insert_prospective_control_cohort(
+        db,
+        layer="serenity",
+        prefix="serenity-multi",
+        selected_return=-5.0,
+        control_return=0.0,
+    )
+    db.commit()
+
+    report = build_alpha_attribution_audit(days=30)
+    bottleneck = report["main_bottleneck"]
+
+    assert report["verdicts"]["universe"]["contribution_verdict"] == "negative"
+    assert report["verdicts"]["serenity"]["contribution_verdict"] == "negative"
+    assert bottleneck["layer"] == "not_comparable"
+    assert set(bottleneck["candidate_layers"]) == {"Universe Alpha", "Serenity Alpha"}
+    assert bottleneck["suspected_modules"] == []
 
 
 def test_learning_alpha_detects_same_pattern_improvement_after_lesson():
@@ -229,8 +367,11 @@ def test_learning_alpha_detects_same_pattern_improvement_after_lesson():
     assert learning["observed"] == 2.0
 
 
-def test_negative_bottleneck_reports_suspected_modules():
-    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+def test_weak_negative_keeps_diagnostics_without_prescriptive_rendering():
+    from aletheia.analytics.alpha_attribution import (
+        build_alpha_attribution_audit,
+        render_alpha_audit,
+    )
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -245,7 +386,12 @@ def test_negative_bottleneck_reports_suspected_modules():
 
     assert ranker["verdict"] == "negative"
     assert "aletheia/agents/paper_trader_ranker.py" in ranker["suspected_modules"]
-    assert report["main_bottleneck"]["suspected_modules"]
+    assert report["main_bottleneck"]["layer"] == "insufficient_data"
+    assert report["main_bottleneck"]["suspected_modules"] == []
+    rendered = render_alpha_audit(report)
+    assert "Suspect modules:" not in rendered
+    assert "Inspect scoring weights" not in rendered
+    assert "No actionable gradient is currently established" in rendered
 
 
 def test_serenity_insert_records_prospective_alpha_controls():

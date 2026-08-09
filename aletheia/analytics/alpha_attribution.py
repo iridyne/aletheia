@@ -173,8 +173,12 @@ def render_alpha_audit(report: dict) -> str:
         )
         lines.append(f"  {item['reason']}")
         modules = item.get("suspected_modules") or []
-        if item["verdict"] == "negative" and modules:
-            lines.append(f"  Suspect modules: {', '.join(modules[:3])}")
+        if (
+            item.get("contribution_verdict") == "negative"
+            and item.get("measurement_status") == "measured_contribution"
+            and modules
+        ):
+            lines.append(f"  Measured suspect modules: {', '.join(modules[:3])}")
     bottleneck = report["main_bottleneck"]
     lines.extend([
         "",
@@ -921,32 +925,33 @@ def _directional_return(raw_return_pct: float, direction: str | None) -> float:
 
 
 def _main_bottleneck(verdicts: dict) -> dict:
-    candidates = [
+    negative = [
         (key, item)
         for key, item in verdicts.items()
-        if item["verdict"] != "insufficient_data" and item.get("delta") is not None
+        if item.get("contribution_verdict") == "negative"
+        and item.get("measurement_status") == "measured_contribution"
+        and item.get("delta") is not None
     ]
-    negative = [(key, item) for key, item in candidates if item["verdict"] == "negative"]
-    if negative:
-        key, item = min(negative, key=lambda kv: kv[1]["delta"])
+    if len(negative) == 1:
+        key, item = negative[0]
         return {
             "layer": item["name"],
-            "summary": f"{item['name']} is the most likely bottleneck: {item['reason']}",
+            "summary": f"{item['name']} has measured negative contribution: {item['reason']}",
             "next_action": _next_action(key),
             "suspected_modules": item.get("suspected_modules", []),
         }
-    if candidates:
-        key, item = min(candidates, key=lambda kv: kv[1]["delta"])
+    if len(negative) > 1:
         return {
-            "layer": item["name"],
-            "summary": f"No negative layer detected; weakest measured layer is {item['name']}: {item['reason']}",
-            "next_action": "Keep collecting data and inspect the weakest measured layer before changing trading behavior.",
-            "suspected_modules": item.get("suspected_modules", []),
+            "layer": "not_comparable",
+            "summary": "No single actionable gradient is established: several layers have measured negative contribution but use non-comparable estimands.",
+            "next_action": "Put the measured effects on one net economic basis before selecting a single bottleneck.",
+            "suspected_modules": [],
+            "candidate_layers": [item["name"] for _, item in negative],
         }
     return {
         "layer": "insufficient_data",
-        "summary": "No layer has enough measured data to identify a bottleneck.",
-        "next_action": "Collect more settled outcomes and resolved shadow trades before changing scanner, ranker, prompt, or learning logic.",
+        "summary": "No actionable gradient is currently established: no measured negative contribution is available.",
+        "next_action": "Continue collecting contribution-grade evidence; do not change trading behavior from directional results.",
         "suspected_modules": [],
     }
 
