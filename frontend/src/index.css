@@ -3116,6 +3116,32 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   .bl-cand-skeleton-footer { animation: none; }
 }
 
+/* Perf (Phase 4): route-level Suspense skeleton. Shown while a lazily-loaded
+   page chunk loads. Mirrors the existing bl-cand-skeleton shimmer style so
+   there's no visual discontinuity with the rest of the app. */
+.page-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  max-width: 960px;
+}
+.skeleton-block {
+  background: linear-gradient(90deg,
+    var(--surface-2) 0%,
+    color-mix(in oklab, var(--surface-2), var(--muted) 12%) 50%,
+    var(--surface-2) 100%);
+  background-size: 200% 100%;
+  animation: bl-shimmer 1.4s linear infinite;
+  border-radius: var(--r-sm);
+}
+.skeleton-title { height: 32px; width: 40%; margin-bottom: var(--space-3); }
+.skeleton-row  { height: 24px; width: 100%; }
+.skeleton-row.short { width: 60%; }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-block { animation: none; }
+}
+
 /* Awaiting Sign-off panel. */
 .bl-signoff-list {
   list-style: none; padding: 0; margin: 0;

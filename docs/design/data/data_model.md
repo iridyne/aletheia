@@ -343,6 +343,20 @@ production trading state and cannot authorize a parameter change.
 
 > **`trade_proposals.commit_hash` / `trade_proposals.parent_hash`** (both `TEXT`, both nullable on legacy rows) — TaG proposal hash chain (P0-1, 2026-06-29, borrow from OpenAlice `TradingGit`). `commit_hash` is the 16-hex-char SHA-256 prefix of the canonical-JSON dump of the proposal's **immutable** fields — i.e. `model_dump(exclude={"status", "commit_hash"})` — joined with `parent_hash`. `parent_hash` references the previous row's `commit_hash` (ordered by `rowid DESC, commit_hash NOT NULL`), forming a **global single chain** across all brokers / strategies / execution modes. Auto-filled by `repositories.insert_trade_proposal()` only when `p.commit_hash is None`; explicit hash on the model object is preserved (used by re-insert / replay paths). Indexed by `idx_proposals_commit_hash` for O(log n) single-node lookup; full-chain verification walks the table by `rowid`. Hash input deliberately excludes `status` because the lifecycle `pending → executed / rejected` is a normal state transition that **must not** invalidate the chain. The downstream `position_adopted` audit event copies both fields into `after_state` so the JSONL audit row is independently verifiable without a `SELECT trade_proposals WHERE id=?` round-trip — see `audit_chain_contract.md §6.4`. SDD anchors: `tests/specs/spec_data_model.py` DM-S08 / DM-S09 / DM-B06 / DM-C02; design reference `docs/research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md §五 P0-1`.
 
+### K-bis. Committee Explainability (1 table)
+
+| Table | Purpose | Key columns |
+|-------|---------|-------------|
+| `committee_reports` | Append-only AI Investment Committee evaluations (decision-level explainability audit) | opportunity_id, symbol, decision_id, direction, confidence, explainability_score, blocked, model_used, fallback_used, indicators_json, agent_opinions_json (reasoning + evidence) |
+
+> `committee_reports` is advisory audit data: every LLM committee evaluation is persisted so any
+> later decision can be traced back to the committee opinion that informed it (why the system
+> leaned a certain way, with what evidence). Read-only consumers: risk causal check
+> (`risk/causal.py`), decision report (`analytics/decision_report.py`), dashboard display. Rows
+> never feed back into trade selection, sizing, or risk semantics. Written fail-soft by
+> `agents/committee/integration.py`; a persistence failure never blocks candidate enrichment.
+> `decision_id` is the stable correlation key from `DecisionReport`.
+
 ### L. Extensions (2 tables)
 
 | Table | Purpose |
@@ -353,6 +367,7 @@ production trading state and cannot authorize a parameter change.
 ---
 
 ## 4. Pydantic Model Index (62 models)
+
 
 All models in `aletheia/storage/models.py`. Key mapping:
 
@@ -420,6 +435,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | UniversePolicy | universe_policies | Universe |
 | PiDecision | pi_decisions | System Operator |
 | OperatorEvaluationEvent | operator_evaluation_events | System Operator |
+| CommitteeReport | committee_reports | Committee explainability |
 
 ---
 
@@ -505,6 +521,7 @@ current defaults; see `RETENTION_POLICY.md` for rationale and cascade details.
 | `agent_shell_sessions` | 14d (30d if session has proposal/report/daily_summary artifact) | `prune_agent_shell_sessions` (new, cascade — children first) |
 | `agent_shell_commands` | 14d | `prune_agent_shell_commands` (new) |
 | `runtime_sessions` | 30d | `prune_runtime_sessions` (new) |
+| `committee_reports` | 90d; writer-side prune (every 6h, fail-soft) | `prune_committee_reports` (called from `committee/integration.py`) |
 | `serenity_evidence` / `serenity_run_events` | 60d | `prune_serenity_evidence` (new) / `prune_serenity_run_events` (new) |
 | `backtest_runs` / `backtest_trades` | 60d (parent cascade) | `prune_backtest_runs` (new, cascade) |
 | `opportunities` (open) | 48h → `expired` | existing |

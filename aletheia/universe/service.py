@@ -275,16 +275,32 @@ def _volume_ranked_instruments(rows: list, default_venue: str):
 
 
 def _dedupe_by_symbol_preferred_market(allocated: list[dict], cfg) -> list[dict]:
-    """Keep one market instrument per symbol, respecting configured market preference."""
+    """Keep one market instrument per symbol, respecting configured market preference.
+
+    Drop symbols that have NO instrument in the bot's effective trading mode.
+    The bot trades perps (preferred_market_type=auto resolves to perp), so a
+    spot-only symbol would be scored, proposed and sent as a perp order that
+    Bitget rejects ("Trading pair XXXXUSDT does not exist"). Excluding such
+    symbols at the scanner input prevents the whole propose->approve->reject loop.
+    """
     preferred = getattr(cfg.exchange, "preferred_market_type", "auto")
     spot_enabled = cfg.exchange.enabled_markets.get("spot", True)
     perp_enabled = cfg.exchange.enabled_markets.get("usdt_futures", False)
-    preferred_market = "spot" if preferred == "spot" else "perp"
+
+    # Resolve the effective trading market type.
+    if preferred == "spot":
+        effective = "spot"
+    else:  # "auto" or "perp" -> perp when perps are enabled
+        effective = "perp" if perp_enabled else "spot"
+    # Fall back if the effective market is not enabled at all.
+    if effective == "perp" and not perp_enabled:
+        effective = "spot" if spot_enabled else effective
+    if effective == "spot" and not spot_enabled:
+        effective = "perp" if perp_enabled else effective
 
     def market_rank(item: dict) -> int:
-        if spot_enabled and perp_enabled:
-            return 0 if item.get("market_type", "spot") == preferred_market else 1
-        return 0
+        # 0 = matches effective trading mode (preferred), 1 = other
+        return 0 if item.get("market_type", "spot") == effective else 1
 
     seen_symbols: dict[str, dict] = {}
     for item in allocated:
@@ -299,7 +315,12 @@ def _dedupe_by_symbol_preferred_market(allocated: list[dict], cfg) -> list[dict]
         if item_key < current_key:
             seen_symbols[sym] = item
 
-    return sorted(seen_symbols.values(), key=lambda x: x["total_score"], reverse=True)
+    # Drop symbols that have no instrument in the effective trading mode.
+    result = [
+        item for item in seen_symbols.values()
+        if item.get("market_type", "spot") == effective
+    ]
+    return sorted(result, key=lambda x: x["total_score"], reverse=True)
 
 
 def _member_fingerprint(allocated: list[dict], regime_tag: str | None) -> str:
@@ -597,6 +618,19 @@ class UniverseService:
         except Exception as e:
             logger.warning("Forward outcome settlement failed (non-fatal): %s", e)
 
+        # Self-healing: blacklist symbols whose orders recently failed with a
+        # "pair does not exist" class error so they stop being proposed/ordered.
+        try:
+            since = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
+            n = repo.auto_blacklist_failed_symbols(since)
+            if n:
+                logger.info(
+                    "Self-healed %d symbol(s) blacklisted (execution symbol-not-found)",
+                    n,
+                )
+        except Exception as e:
+            logger.debug("auto_blacklist_failed_symbols skipped: %s", e)
+
         # Detect market regime (non-fatal — falls back to sideways)
         current_regime = None
         try:
@@ -642,6 +676,18 @@ class UniverseService:
             assets = repo.list_universe_assets(
                 venue=cfg.market_data.ccxt_exchange, limit=1000,
             )
+            # Restrict the candidate universe to symbols actually executable on the
+            # demo exchange. Bitget demo UTA only supports a curated mainstream set;
+            # obscure coins (RAPLD/HYPE/MU/...) always reject at submission, so there
+            # is no point scanning or proposing them.
+            if getattr(cfg.exchange, "mode", None) == "demo" and getattr(cfg.exchange, "paper_execution_mode", None) == "bitget_demo":
+                from aletheia.universe.registry import BITGET_DEMO_WHITELIST
+                _wl = BITGET_DEMO_WHITELIST
+                assets = [
+                    a for a in assets
+                    if a.get("symbol") in _wl.get(a.get("market_type"), frozenset())
+                ]
+                logger.info("Demo whitelist applied: %d candidate assets remain", len(assets))
             repo.update_universe_scanner_run(run.id, assets_scanned=len(assets))
 
             # Inject volume-ranking symbols as additional candidates

@@ -160,6 +160,15 @@ def get_strategy_kpis():
     return {"strategies": build_strategy_kpis(), **build_outcome_cohort_summary()}
 
 
+# Perf (Phase 2): short-TTL cache for /equity-curve. The endpoint accumulates
+# raw_account_events over full history — cost grows linearly with trade count.
+# 5s TTL absorbs back-to-back polling without locking the response to a stale
+# PnL (closes are rare; 5s staleness is invisible on the chart).
+_equity_curve_cache: dict[tuple, tuple[float, dict]] = {}
+_equity_curve_cache_lock = RLock()
+_EQUITY_CURVE_CACHE_TTL_SEC = 5.0
+
+
 @router.get("/equity-curve")
 def get_equity_curve(
     execution_mode: str | None = None,
@@ -180,12 +189,24 @@ def get_equity_curve(
     )
     from aletheia.storage.sqlite import get_db
     from aletheia.config.loader import load_config
+
     db = get_db()
+
+    # Perf (Phase 2): cache key includes all params that change the payload.
+    cache_key = (execution_mode, days, limit)
+    now_mono = time.monotonic()
+    with _equity_curve_cache_lock:
+        cached = _equity_curve_cache.get(cache_key)
+        if cached is not None:
+            cached_at, payload = cached
+            if now_mono - cached_at < _EQUITY_CURVE_CACHE_TTL_SEC:
+                return payload
 
     mode = "full_cumulative"
     uses_external_exchange = False
     try:
-        config = load_config()
+        # deep_copy=False: read-only access to config.
+        config = load_config(deep_copy=False)
         mode = config.app.equity_curve_mode
         uses_external_exchange = config.exchange.paper_execution_mode != "paper_internal"
     except Exception:
@@ -280,7 +301,7 @@ def get_equity_curve(
             "cumulative_pnl": round(closed_raw_pnl + total_upnl, 4),
         }
 
-    return {
+    payload = {
         **cohort,
         "default_curve": "genuine_verified",
         "raw_curve_label": "raw_recorded_account_events",
@@ -294,6 +315,12 @@ def get_equity_curve(
         "total_realized": genuine_total,
         "raw_total_recorded_realized": raw_total,
     }
+
+    # Perf (Phase 2): write to the short-TTL cache.
+    with _equity_curve_cache_lock:
+        _equity_curve_cache[cache_key] = (time.monotonic(), payload)
+
+    return payload
 
 
 @router.get("/trade-insights")
@@ -575,6 +602,7 @@ def get_pipeline_funnel(hours: int = 24):
         db.execute(
             "SELECT id, status, created_at FROM opportunities "
             "WHERE julianday(created_at) >= julianday(?)",
+
             (cutoff,),
         )
     )
@@ -597,6 +625,7 @@ def get_pipeline_funnel(hours: int = 24):
             "AND fd.stage='paper_trader_enqueue' "
             "AND fd.decision='passed' "
             "AND fd.reason_code='signal_enqueued'",
+
             (cutoff,),
         )
     )
@@ -729,6 +758,7 @@ def get_pipeline_funnel(hours: int = 24):
     )
     fills = len(approved_entry_fills)
 
+
     risk_total = risk_approved + risk_rejected
     risk_approve_rate = round(risk_approved / risk_total * 100.0, 2) if risk_total else None
 
@@ -827,6 +857,7 @@ def get_pipeline_funnel(hours: int = 24):
 _current_snapshot_cache: dict[int, tuple[float, dict]] = {}
 _current_snapshot_cache_lock = RLock()
 _CURRENT_SNAPSHOT_CACHE_TTL_SEC = 5.0
+_CURRENT_SNAPSHOT_CACHE_MAX_SIZE = 64  # Bound cache so arbitrary query params can't bloat memory.
 
 
 # Perf item 5: Server-Timing helpers. Emit a machine-parseable phase-timing
@@ -904,7 +935,8 @@ def _compute_current_snapshot_payload(
             active_setup_count=inp["active_setup_count"],
             terminal_breakdown=inp["terminal_breakdown"],
         )
-    cfg = load_config()
+    # deep_copy=False: read-only access (only reads min_confidence_to_trade).
+    cfg = load_config(deep_copy=False)
     return {
         "window_hours": inp["hours_i"],
         "current": current,
@@ -943,6 +975,13 @@ def _cached_current_snapshot(
     payload = _compute_current_snapshot_payload(db, hours, phases=phases)
     with _current_snapshot_cache_lock:
         _current_snapshot_cache[hours] = (time.monotonic(), payload)
+        # Bound the cache: evict oldest entries beyond the max size.
+        if len(_current_snapshot_cache) > _CURRENT_SNAPSHOT_CACHE_MAX_SIZE:
+            oldest = sorted(
+                _current_snapshot_cache.items(), key=lambda kv: kv[1][0],
+            )
+            for k, _ in oldest[:len(_current_snapshot_cache) - _CURRENT_SNAPSHOT_CACHE_MAX_SIZE]:
+                _current_snapshot_cache.pop(k, None)
     return payload
 
 
@@ -969,9 +1008,11 @@ def _funnel_cohort_inputs(db, hours: int) -> dict:
     now = datetime.now(timezone.utc)
     window_end = now.isoformat()
 
+    # Perf (Phase 1): ISO-8601 UTC string comparison — see pipeline-funnel note
+    # above. window_start/window_end are UTC ISO from _rolling_cutoff + now().
     cohort_where = (
-        "julianday(created_at)>=julianday(?) "
-        "AND julianday(created_at)<=julianday(?)"
+        "created_at>=? "
+        "AND created_at<=?"
     )
     cohort_params = (window_start, window_end)
 
@@ -1022,9 +1063,9 @@ def _funnel_cohort_inputs(db, hours: int) -> dict:
     proposed = int(db.execute(
         "SELECT COUNT(DISTINCT tp.opportunity_id) FROM trade_proposals tp "
         "JOIN opportunities o ON o.id=tp.opportunity_id "
-        "WHERE julianday(o.created_at)>=julianday(?) "
-        "AND julianday(o.created_at)<=julianday(?) "
-        "AND julianday(tp.created_at)<=julianday(?)",
+        "WHERE o.created_at>=? "
+        "AND o.created_at<=? "
+        "AND tp.created_at<=?",
         (window_start, window_end, window_end),
     ).fetchone()[0] or 0)
 
@@ -1126,6 +1167,16 @@ def get_opportunity_funnel_current_snapshot(hours: int = 24, response: Response 
     return payload
 
 
+# Perf (Phase 2): process-local TTL cache for the full /opportunity-funnel
+# payload. The endpoint runs ~15 SQL + build_current_entry_status; the 12s
+# TTL serves back-to-back mounts + dashboard polling from one compute. Keyed
+# on window_hours (the only request param that changes the payload).
+_funnel_cache: dict[int, tuple[float, dict]] = {}
+_funnel_cache_lock = RLock()
+_FUNNEL_CACHE_TTL_SEC = 12.0
+_FUNNEL_CACHE_MAX_SIZE = 64
+
+
 @router.get("/opportunity-funnel")
 def get_opportunity_funnel(hours: int = 24, response: Response = None):
     """Market Observer → Operator funnel: exposes WHY opportunities don't reach the operator.
@@ -1159,11 +1210,23 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
     /opportunity-funnel/current-snapshot — it skips the extras below.
     """
     from aletheia.storage.sqlite import get_db
-    from aletheia.config.loader import load_config
-    from aletheia.universe.allocator import _FAMILY_TTL
 
     db = get_db()
     phases: dict[str, float] = {}
+
+    # Perf (Phase 2): TTL cache lookup. The Server-Timing header reports a
+    # `cache_hit;dur=0.0` entry when the payload is served from cache.
+    now_mono = time.monotonic()
+    with _funnel_cache_lock:
+        cached = _funnel_cache.get(hours)
+        if cached is not None:
+            cached_at, payload = cached
+            if now_mono - cached_at < _FUNNEL_CACHE_TTL_SEC:
+                phases["cache_hit"] = 0.0
+                if response is not None:
+                    response.headers["Server-Timing"] = _format_server_timing(phases)
+                return payload
+
     total_timer = _PhaseTimer(phases, "total")
     total_timer.__enter__()
 
@@ -1264,7 +1327,12 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
         except (TypeError, ValueError):
             candidate_snapshot_freshness = "unavailable"
 
-    cfg = load_config()
+    # Perf (Phase 2): deep_copy=False — this endpoint only reads config
+    # (never mutates it), so return the cached object directly and skip the
+    # per-request deep copy of the entire config tree.
+    from aletheia.config.loader import load_config
+    from aletheia.universe.allocator import _FAMILY_TTL
+    cfg = load_config(deep_copy=False)
     min_confidence = getattr(cfg.trading, "min_confidence_to_trade", "medium")
     from aletheia.analytics.opportunity_progress import build_current_entry_status
 
@@ -1285,7 +1353,7 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
     if response is not None:
         response.headers["Server-Timing"] = _format_server_timing(phases)
 
-    return {
+    payload = {
         "window_hours": hours_i,
         "emitted_count": emitted,
         "setup_count": setup_count,
@@ -1317,6 +1385,16 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
         "family_ttl_sec": dict(_FAMILY_TTL),
         "universe_snapshot_age_sec": snapshot_age_sec,
     }
+
+    # Perf (Phase 2): write the freshly computed payload to the TTL cache.
+    with _funnel_cache_lock:
+        _funnel_cache[hours] = (time.monotonic(), payload)
+        if len(_funnel_cache) > _FUNNEL_CACHE_MAX_SIZE:
+            oldest = sorted(_funnel_cache.items(), key=lambda kv: kv[1][0])
+            for k, _ in oldest[:len(_funnel_cache) - _FUNNEL_CACHE_MAX_SIZE]:
+                _funnel_cache.pop(k, None)
+
+    return payload
 
 
 _VALID_OUTCOMES: frozenset[str] = frozenset({

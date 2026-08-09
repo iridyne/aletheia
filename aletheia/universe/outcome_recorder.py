@@ -454,6 +454,19 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
             total_settled, total_processed,
         )
 
+    # --- PnL Attribution (XAlpha inspired) ---
+    # For each settled trade, compute factor + agent + regime attribution
+    # and update the factor effectiveness tracker.
+    if all_settled_rows:
+        try:
+            from aletheia.portfolio.pnl_attribution import attribute_trade, record_attribution
+
+            for settled in all_settled_rows:
+                attr = attribute_trade(settled)
+                record_attribution(attr)
+        except Exception as exc:
+            logger.debug("PnL attribution skipped: %s", exc)
+
     # Emit cost-aware cohort metrics for observability (§4.2).
     if total_settled:
         try:

@@ -127,6 +127,11 @@ _OHLCV_TIMEOUT = 12.0
 _OHLCV_1H_LIMIT = 168  # 7 days of 1h candles
 _OHLCV_15M_LIMIT = 100
 _TICKER_CHUNK_SIZE = 100
+# Perf (Phase 5): global semaphore bounding total OHLCV concurrency across all
+# assets. With inter-asset concurrency already in place (gather over assets)
+# and now intra-asset parallel timeframes (3 per asset), this caps the total
+# in-flight OHLCV requests at the provider's safe limit.
+_OHLCV_SEM = asyncio.Semaphore(_OHLCV_CONCURRENCY)
 # taker_buy_ratio is only consumed by the event family, which gates on a sharp
 # 1h move; fetch it lazily for movers above this |return_1h| % to keep the scan
 # cheap (the taker endpoint is a per-symbol call with no batch form).
@@ -457,33 +462,54 @@ async def _fetch_single_feature(
         float(ask) if ask else None,
     )
 
-    ohlcv_15m = []
-    ohlcv_1h = []
-    ohlcv_4h = []
-    try:
-        ohlcv_15m = await asyncio.wait_for(
-            exchange.fetch_ohlcv(ccxt_sym, timeframe="15m", limit=_OHLCV_15M_LIMIT),
-            timeout=_OHLCV_TIMEOUT,
-        )
-    except (asyncio.TimeoutError, Exception):
-        pass
+    # Perf (Phase 5): fetch the three OHLCV timeframes in parallel instead of
+    # serial awaits. Each fetch is an independent network round-trip; running
+    # them concurrently collapses ~3× latency into ~1×. The shared semaphore
+    # (_OHLCV_SEM, created below) bounds total concurrency across all assets
+    # so the provider's rate limit is not exceeded.
+    async def _fetch_15m() -> list:
+        try:
+            return await asyncio.wait_for(
+                exchange.fetch_ohlcv(ccxt_sym, timeframe="15m", limit=_OHLCV_15M_LIMIT),
+                timeout=_OHLCV_TIMEOUT,
+            )
+        except (asyncio.TimeoutError, Exception):
+            return []
 
-    try:
-        ohlcv_1h = await asyncio.wait_for(
-            exchange.fetch_ohlcv(ccxt_sym, timeframe="1h", limit=_OHLCV_1H_LIMIT),
-            timeout=_OHLCV_TIMEOUT,
-        )
-    except (asyncio.TimeoutError, Exception):
-        pass
+    async def _fetch_1h() -> list:
+        try:
+            return await asyncio.wait_for(
+                exchange.fetch_ohlcv(ccxt_sym, timeframe="1h", limit=_OHLCV_1H_LIMIT),
+                timeout=_OHLCV_TIMEOUT,
+            )
+        except (asyncio.TimeoutError, Exception):
+            return []
 
-    # P1b: 4h candles for multi-timeframe features
-    try:
-        ohlcv_4h = await asyncio.wait_for(
-            exchange.fetch_ohlcv(ccxt_sym, timeframe="4h", limit=50),
-            timeout=_OHLCV_TIMEOUT,
-        )
-    except (asyncio.TimeoutError, Exception):
-        pass
+    async def _fetch_4h() -> list:
+        # P1b: 4h candles for multi-timeframe features
+        try:
+            return await asyncio.wait_for(
+                exchange.fetch_ohlcv(ccxt_sym, timeframe="4h", limit=50),
+                timeout=_OHLCV_TIMEOUT,
+            )
+        except (asyncio.TimeoutError, Exception):
+            return []
+
+    async def _fetch_ohlcv_bounded(tf_fetch) -> list:
+        """Run one OHLCV fetch under the global semaphore."""
+        async with _OHLCV_SEM:
+            return await tf_fetch()
+
+    ohlcv_15m, ohlcv_1h, ohlcv_4h = await asyncio.gather(
+        _fetch_ohlcv_bounded(_fetch_15m),
+        _fetch_ohlcv_bounded(_fetch_1h),
+        _fetch_ohlcv_bounded(_fetch_4h),
+        return_exceptions=True,
+    )
+    # Normalize exceptions to empty lists (preserves original error isolation).
+    ohlcv_15m = [] if isinstance(ohlcv_15m, BaseException) else ohlcv_15m
+    ohlcv_1h = [] if isinstance(ohlcv_1h, BaseException) else ohlcv_1h
+    ohlcv_4h = [] if isinstance(ohlcv_4h, BaseException) else ohlcv_4h
 
     now_ms = int(now.timestamp() * 1000)
 

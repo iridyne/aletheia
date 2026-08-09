@@ -903,6 +903,56 @@ def list_events(
     return [_decode_event(row) for row in rows]
 
 
+def list_events_after_rowid(
+    after_rowid: int | None = None,
+    *,
+    limit: int = 100,
+) -> tuple[list[dict], int | None]:
+    """Fetch events newer than ``after_rowid``, oldest-first.
+
+    Why a rowid cursor instead of the previous ``seen_ids`` set: event ids are
+    ``uuid4`` (see ``record_event``), so they are random and cannot be compared
+    ordinally -- a "last seen id" comparison would silently drop or replay
+    events. SQLite's implicit ``rowid`` on this insert-only table *is*
+    monotonic, so one integer replaces a set that previously grew for the whole
+    process lifetime (the SSE memory leak).
+
+    Args:
+        after_rowid: Return only rows with a strictly greater rowid. ``None``
+            loads the most recent ``limit`` rows as the initial backlog.
+        limit: Maximum rows returned per call.
+
+    Returns:
+        ``(events, cursor)`` with events in ascending chronological order.
+        ``cursor`` is the value to pass on the next call; it falls back to the
+        incoming ``after_rowid`` when nothing new arrived.
+    """
+    db = get_db()
+    if after_rowid is None:
+        rows = db.execute(
+            "SELECT rowid AS _rowid, * FROM agent_shell_events "
+            "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        rows = list(reversed(rows))
+    else:
+        rows = db.execute(
+            "SELECT rowid AS _rowid, * FROM agent_shell_events "
+            "WHERE rowid > ? ORDER BY rowid ASC LIMIT ?",
+            (after_rowid, limit),
+        ).fetchall()
+    if not rows:
+        return [], after_rowid
+    cursor = max(int(row["_rowid"]) for row in rows)
+    events: list[dict] = []
+    for row in rows:
+        item = _decode_event(row)
+        # _rowid is a transport detail of the cursor, not part of the event API.
+        item.pop("_rowid", None)
+        events.append(item)
+    return events, cursor
+
+
 def create_extension_record(
     *,
     session_id: str | None,

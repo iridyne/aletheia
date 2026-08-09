@@ -1,7 +1,7 @@
 # Operator 自监管整合 — 让顶层管理者读自己的诊断面
 
 **状态**: 实施中(2026-06-28)。**owner 目标(/goal)**: 把 CLI/doctor 诊断面整合进金字塔顶层的管理者 agent,让它「自己监管自己」。
-**关联**: [`PI_OPERATOR_DESIGN_DECISIONS.md`](../../design/operator/PI_OPERATOR_DESIGN_DECISIONS.md)(权威契约)、[`ai_native_bugfix_path.md`](../engineering/ai_native_bugfix_path.md)(诊断面来源 = content.* 探针)、CLAUDE.md SDD + 信任边界。
+**关联**: [`PI_OPERATOR_DESIGN_DECISIONS.md`](../../../../design/operator/PI_OPERATOR_DESIGN_DECISIONS.md)(权威契约)、[`ai_native_bugfix_path.md`](../engineering/ai_native_bugfix_path.md)(诊断面来源 = content.* 探针)、CLAUDE.md SDD + 信任边界。
 
 ---
 

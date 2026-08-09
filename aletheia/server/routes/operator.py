@@ -1014,22 +1014,24 @@ async def operator_events(
 @router.get("/events/stream")
 async def operator_events_stream(limit: int = 50, once: bool = False):
     async def _stream():
-        seen_ids: set[str] = set()
+        # Cursor replaces the previous unbounded ``seen_ids`` set: a long-lived
+        # dashboard connection used to accumulate every event id string for the
+        # lifetime of the process. One integer is enough because rowid is
+        # monotonic on this insert-only table.
+        from aletheia.agent_shell.operator_store import list_events_after_rowid
+
         idle_poll_secs = 1.0
         max_idle_poll_secs = 8.0
-        backlog = list_events(limit=limit)
-        for event in reversed(backlog):
-            seen_ids.add(event["id"])
+        backlog, cursor = list_events_after_rowid(None, limit=limit)
+        for event in backlog:
             yield _sse_block("operator_event", event)
         if once:
             return
 
         while True:
             await asyncio.sleep(idle_poll_secs)
-            latest = list_events(limit=limit)
-            fresh = [event for event in reversed(latest) if event["id"] not in seen_ids]
+            fresh, cursor = list_events_after_rowid(cursor, limit=limit)
             for event in fresh:
-                seen_ids.add(event["id"])
                 yield _sse_block("operator_event", event)
             if not fresh:
                 idle_poll_secs = min(max_idle_poll_secs, idle_poll_secs * 2)

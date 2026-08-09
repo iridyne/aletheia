@@ -151,6 +151,34 @@ def test_bootstrap_seeded_config_stays_blank(tmp_path):
         assert seeded.health.require_llm_at_startup is False
 
 
+def test_load_config_deep_copy_false_returns_cached_object(tmp_path):
+    """deep_copy=False returns the cached object directly (identity), not a copy.
+
+    This is the Phase 2 perf win: read-only callers skip the per-request deep
+    copy of the entire config tree. The caller MUST treat the result as
+    immutable — mutating it would corrupt the shared cache."""
+    config_file = tmp_path / "config.yaml"
+    data_dir = tmp_path
+    with patch("aletheia.config.loader.DATA_DIR", data_dir), \
+         patch("aletheia.config.loader.CONFIG_PATH", config_file):
+        # Prime the cache (default deep_copy=True returns a copy — discard it).
+        load_config()
+        # deep_copy=False must return the cached object by identity, and two
+        # such calls must return the SAME object.
+        cfg_shared_1 = load_config(deep_copy=False)
+        cfg_shared_2 = load_config(deep_copy=False)
+        assert cfg_shared_1 is cfg_shared_2, (
+            "deep_copy=False should return the cached object by identity"
+        )
+        # deep_copy=True (default) must return a different object (a copy).
+        cfg_copied = load_config(deep_copy=True)
+        assert cfg_copied is not cfg_shared_1, (
+            "deep_copy=True should return a new object (deep copy)"
+        )
+        # But equal in value.
+        assert cfg_copied.agent.permission_mode == cfg_shared_1.agent.permission_mode
+
+
 def test_existing_config_yaml_is_not_overwritten(tmp_path):
     """If the operator already committed provider config, loader must preserve
     it verbatim across the schema-default change."""

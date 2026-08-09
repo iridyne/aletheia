@@ -26,6 +26,7 @@ _VENUES = {
     "binance_live_limited": "binance",
 }
 _CACHE_TTL_SECONDS = 300
+_CACHE_PRUNE_THRESHOLD = 200  # Active-prune expired entries beyond this size.
 _cache: dict[tuple[str, str, str], tuple["OrderConstraints", float]] = {}
 _cache_lock = threading.Lock()
 
@@ -186,14 +187,17 @@ async def _fetch_constraints(venue: str, symbol: str, market_type: str) -> Order
 
 
 def _run(coro):
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    # Gateway functions are synchronous and can be called by an async route.  The
-    # cold refresh must not freeze that route's event loop.
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+    """Run a coroutine to completion from sync code without blocking the event loop."""
+    from aletheia.agent_runtime.async_utils import run_coro_from_sync
+    return run_coro_from_sync(coro)
+
+
+def _prune_expired_constraints() -> None:
+    """Remove expired entries from the constraints cache. Caller holds _cache_lock."""
+    now = time.monotonic()
+    expired = [k for k, (_, ts) in _cache.items() if now - ts > _CACHE_TTL_SECONDS]
+    for k in expired:
+        _cache.pop(k, None)
 
 
 def get_order_constraints(execution_mode: str, symbol: str, market_type: str) -> OrderConstraints:
@@ -214,6 +218,10 @@ def get_order_constraints(execution_mode: str, symbol: str, market_type: str) ->
     constraints = _run(_fetch_constraints(venue, symbol, market_type))
     with _cache_lock:
         _cache[key] = (constraints, time.monotonic())
+        # Active prune: if the cache has grown beyond threshold, sweep
+        # expired entries so rotated-out symbols don't leak forever.
+        if len(_cache) > _CACHE_PRUNE_THRESHOLD:
+            _prune_expired_constraints()
     return constraints
 
 

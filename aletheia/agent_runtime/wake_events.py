@@ -183,17 +183,29 @@ class WakeCoalescer:
             batch = WakeBatch(pid, list(pending.events))
             if has_p0:
                 out.append(batch)
-                del self._pending[pid]
+                self._pending.pop(pid, None)
                 continue
 
             if self._bucket(pid).take(now):
                 out.append(batch)
-                del self._pending[pid]
+                self._pending.pop(pid, None)
             elif batch.max_priority > _MUST_NOT_DROP_MAX:
                 # P2/P3 under rate pressure → drop; heartbeat will re-scan.
-                del self._pending[pid]
+                self._pending.pop(pid, None)
             # else: P1 must-not-drop → keep buffered, retry when a token refills.
         return out
+
+    def remove_position(self, position_id: str) -> None:
+        """Drop all state for a closed/unknown position so buckets don't leak.
+
+        Call this when a position is closed (or removed from the universe) so
+        the per-position TokenBucket doesn't accumulate indefinitely.  Buckets
+        intentionally persist across batch emits/drops during normal operation —
+        they implement the rate limiter, and resetting them would let a closed
+        position's next event start with a full token allowance.
+        """
+        self._pending.pop(position_id, None)
+        self._buckets.pop(position_id, None)
 
     def pending_count(self) -> int:
         return len(self._pending)

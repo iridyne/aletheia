@@ -222,7 +222,7 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
     cmd = [
         real_python, "-m", "uvicorn", "aletheia.server.app:app",
         "--host", runtime_context["host"], "--port", str(runtime_context["port"]),
-        "--log-level", "debug",
+        "--log-level", "info",
         # loop=none → uvicorn uses the process WindowsSelectorEventLoopPolicy set
         # at the top of server/app.py instead of its hardcoded ProactorEventLoop
         # factory (§23/§24). See gateway/frontdoor.py cmd for the same rationale.

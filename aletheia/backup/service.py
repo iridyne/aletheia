@@ -222,11 +222,16 @@ class BackupService:
                     partial_path.unlink(missing_ok=True)
                 raise
 
-            # Rotate older archives
+            # Rotate older archives. Data-protection gate: when retention
+            # pruning is disabled no archive is ever deleted; when the config
+            # cannot be read we also keep everything (fail against deletion).
             try:
-                self.retain_recent(DEFAULT_KEEP_RECENT)
+                from aletheia.config.loader import load_config
+
+                if load_config().retention.pruning_enabled:
+                    self.retain_recent(DEFAULT_KEEP_RECENT)
             except Exception as exc:  # pragma: no cover - best effort
-                logger.warning("backup retain_recent after create failed: %s", exc)
+                logger.warning("backup retain_recent after create skipped: %s", exc)
 
             return archive_path
 

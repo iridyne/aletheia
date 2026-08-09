@@ -204,12 +204,60 @@ async def _regular_loop(hub: _RealtimeHub, loop: asyncio.AbstractEventLoop) -> N
             last = dict(current)
 
 
+def _tunnel_token_expected() -> str | None:
+    """Return the expected tunnel/remote-control token when auth is active, else None.
+
+    Mirrors the policy in _tunnel_auth_guard (app.py): tunnel.enabled OR
+    remote_control.require_token gates the WS handshake.  Returns None when no
+    auth is required so the WS endpoint stays open for local-first frictionless
+    access.  A configured-but-empty token returns "" and the caller's
+    ``not expected`` check fails closed, matching the HTTP guard which answers
+    401 when no token is configured.
+    """
+    try:
+        from aletheia.config.loader import load_config
+        cfg = load_config(persist_migrations=False)
+    except Exception:
+        return None
+    tunnel_enabled = bool(getattr(getattr(cfg, "tunnel", None), "enabled", False))
+    remote_control = getattr(cfg, "remote_control", None)
+    remote_token_required = bool(
+        getattr(remote_control, "enabled", False)
+        and getattr(remote_control, "require_token", False)
+    )
+    if not (tunnel_enabled or remote_token_required):
+        return None
+    try:
+        from aletheia.config.secrets import get_secret
+        return get_secret("remote_control_api_token") or get_secret("tunnel_api_token") or ""
+    except Exception:
+        return ""
+
+
 @router.websocket("/ws")
 async def ws_realtime(ws: WebSocket) -> None:
     """
-    Push-notification WebSocket.  Accepts any connection; pushes category
-    names only (no data payloads).  The frontend fetches actual data via REST.
+    Push-notification WebSocket.  Pushes category names only (no data payloads);
+    the frontend fetches actual data via REST.
+
+    When tunnel/remote-control auth is active, the handshake is gated the same
+    way as /api/* HTTP routes: a valid X-Aletheia-Token (passed as a `token`
+    query param, since browser WebSocket APIs cannot set headers) is required
+    before accept().  An invalid or missing token closes with code 4401.
     """
+    expected = _tunnel_token_expected()
+    if expected is not None:
+        # Fail closed exactly like _tunnel_auth_guard: auth active but no token
+        # configured means an empty expected value, and compare_digest("", "")
+        # is True — an anonymous client would pass without this explicit check.
+        if not expected:
+            await ws.close(code=4401)
+            return
+        import hmac as _hmac
+        provided = ws.query_params.get("token", "")
+        if not _hmac.compare_digest(provided, expected):
+            await ws.close(code=4401)
+            return
     await ws.accept()
     loop = asyncio.get_event_loop()
 

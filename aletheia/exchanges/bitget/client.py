@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+import logging
 import math
 from urllib.parse import urlencode
 
@@ -13,6 +14,8 @@ from aletheia.exchanges.submission_errors import (
 )
 from aletheia.config.secrets import get_secret, redact
 from aletheia.data.symbols import to_canonical
+
+logger = logging.getLogger("aletheia.exchanges.bitget")
 
 
 BASE_URL = "https://api.bitget.com"
@@ -129,9 +132,30 @@ def _bitget_int(value) -> int:
 
 
 def _bitget_float(value) -> float | None:
+    """Parse an exchange-supplied number, rejecting non-finite results.
+
+    Sibling helper ``_validated_preset_protection_price`` already guards with
+    ``math.isfinite``; this one did not, so the two disagreed on what counts as
+    a usable number. It matters because callers screen values with ``if not
+    price`` -- that rejects 0.0 but NOT NaN (``not float("nan")`` is False), so
+    a NaN price or quantity flowed straight into fill records and position
+    maths. ``inf`` has the same hole. Booleans are excluded too: ``float(True)``
+    is 1.0, which would silently become a price of 1.
+
+    Args:
+        value: Raw field from a Bitget JSON payload.
+
+    Returns:
+        The parsed float, or None when the value is missing, boolean,
+        non-numeric, NaN or infinite.
+    """
+    if isinstance(value, bool):
+        return None
     try:
         number = float(value)
     except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
         return None
     return number
 
@@ -193,6 +217,7 @@ class BitgetClient:
         self.mode = mode
         self.demo = mode == "demo"
         self._base = BASE_URL
+        self._unified = None  # lazy UTA detection
 
     def _cred_prefix(self) -> str:
         return f"bitget.{self.mode}"
@@ -252,11 +277,30 @@ class BitgetClient:
         else:
             raise RuntimeError(f"No ticker data for {symbol}")
 
+        # `t.get("lastPr", t.get("last", 0))` only falls back when the KEY is
+        # absent -- Bitget returning `"lastPr": ""` reached the bare float() and
+        # raised ValueError. Price is authoritative, so parse it defensively and
+        # fail loudly; volume/change are advisory and may degrade to 0.0.
+        last_price = _bitget_float(t.get("lastPr"))
+        if last_price is None:
+            last_price = _bitget_float(t.get("last"))
+        if last_price is None or last_price <= 0:
+            raise RuntimeError(
+                f"Invalid Bitget last price for {symbol}: "
+                f"lastPr={t.get('lastPr')!r} last={t.get('last')!r}"
+            )
+        volume_24h = _bitget_float(t.get("baseVolume"))
+        if volume_24h is None:
+            volume_24h = _bitget_float(t.get("vol24h"))
+        change_pct_24h = _bitget_float(t.get("change24h"))
+        if change_pct_24h is None:
+            change_pct_24h = _bitget_float(t.get("chgUtc"))
+
         return Ticker(
             symbol=symbol,
-            last_price=float(t.get("lastPr", t.get("last", 0))),
-            volume_24h=float(t.get("baseVolume", t.get("vol24h", 0))),
-            change_pct_24h=float(t.get("change24h", t.get("chgUtc", 0))),
+            last_price=last_price,
+            volume_24h=volume_24h if volume_24h is not None else 0.0,
+            change_pct_24h=change_pct_24h if change_pct_24h is not None else 0.0,
         )
 
     async def get_ohlcv(self, symbol: str, timeframe: str = "1H", limit: int = 100, market_type: str = "spot") -> list[Candle]:
@@ -277,15 +321,33 @@ class BitgetClient:
             raise RuntimeError(f"Bitget API error: {data.get('msg')}")
 
         candles = []
+        skipped = 0
         for c in data.get("data", []):
+            # Indexing c[0]..c[5] blind raised IndexError on any short row the
+            # exchange returned; a malformed row should cost one candle, not the
+            # whole request.
+            if not isinstance(c, (list, tuple)) or len(c) < 6:
+                skipped += 1
+                continue
+            timestamp = _bitget_int(c[0])
+            values = [_bitget_float(c[i]) for i in range(1, 6)]
+            if timestamp < 1 or any(v is None for v in values):
+                skipped += 1
+                continue
+            open_, high, low, close, volume = values
             candles.append(Candle(
-                timestamp=int(c[0]),
-                open=float(c[1]),
-                high=float(c[2]),
-                low=float(c[3]),
-                close=float(c[4]),
-                volume=float(c[5]),
+                timestamp=timestamp,
+                open=open_,
+                high=high,
+                low=low,
+                close=close,
+                volume=volume,
             ))
+        if skipped:
+            logger.warning(
+                "Bitget %s %s: skipped %d malformed candle row(s)",
+                symbol, timeframe, skipped,
+            )
         return candles
 
     async def get_balances(self) -> list[Balance]:
@@ -314,6 +376,9 @@ class BitgetClient:
         aborts the order rather than opening at the account-default leverage. Params
         per Bitget mix v2 /account/set-leverage — confirm against a live demo account.
         """
+        if await self._is_unified():
+            return await self._uta_set_leverage(exchange_symbol, leverage)
+
         import json
 
         path = "/api/v2/mix/account/set-leverage"
@@ -333,6 +398,9 @@ class BitgetClient:
 
     async def place_order(self, order: OrderRequest) -> OrderResponse:
         """Place an order — gated by execution mode externally."""
+        if await self._is_unified():
+            return await self._uta_place_order(order)
+
         import json
 
         # Validate before leverage setup or order submission so malformed
@@ -467,7 +535,7 @@ class BitgetClient:
         # status stays "submitted" and reconciliation/operator resolves it later.
         if order.market_type != "spot":
             try:
-                detail = await self._get_order_detail(order_id, order.symbol)
+                detail = await self._get_order_detail(order_id, order.symbol, order.market_type)
             except Exception:
                 detail = None
             if detail:
@@ -498,8 +566,10 @@ class BitgetClient:
         except (TypeError, ValueError):
             resp.filled_quantity = None
 
-    async def _get_order_detail(self, order_id: str, symbol: str) -> dict | None:
+    async def _get_order_detail(self, order_id: str, symbol: str, market_type: str = "usdt_futures") -> dict | None:
         """Fetch a single mix order's detail (fill state + priceAvg)."""
+        if await self._is_unified():
+            return await self._uta_order_detail(order_id, symbol, market_type)
         path = f"/api/v2/mix/order/detail?orderId={order_id}&symbol={symbol}&productType=USDT-FUTURES"
         headers = self._headers("GET", path)
         async with httpx_client(timeout=15) as client:
@@ -530,6 +600,8 @@ class BitgetClient:
 
     async def get_positions(self) -> list[Position]:
         """Get open USDT-futures positions (§19.3)."""
+        if await self._is_unified():
+            return await self._uta_positions()
         path = "/api/v2/mix/position/all-position?productType=USDT-FUTURES&marginCoin=USDT"
         headers = self._headers("GET", path)
         async with httpx_client(timeout=15) as client:
@@ -582,6 +654,10 @@ class BitgetClient:
 
     async def transfer(self, amount: float, coin: str = "USDT") -> dict | None:
         """Move `amount` of `coin` from unified/spot wallet into mix (USDT-FUTURES)."""
+        if await self._is_unified():
+            # Unified account: no separate mix wallet; margin is in the unified
+            # USDT wallet, so the spot->mix transfer is a no-op.
+            return None
         import json as _json
         try:
             mix = await self.get_mix_account("USDT-FUTURES")
@@ -623,8 +699,285 @@ class BitgetClient:
             raise RuntimeError(f"Bitget UTA API error: {data.get('msg')}")
         return data.get("data", {}) or {}
 
+    # ------------------------------------------------------------------
+    # UTA (Unified Trading Account) support
+    #
+    # Bitget unified accounts have NO separate "mix" (contracts) wallet:
+    # margin is drawn from the unified USDT wallet. The classic v2 mix
+    # endpoints read an (empty) legacy mix wallet and the spot->mix transfer
+    # endpoint is unsupported (40404), so they cannot be used for UTA. We
+    # detect UTA once per client and route the affected calls to the v3
+    # unified endpoints. Classic accounts keep the original v2 behaviour.
+    # ------------------------------------------------------------------
+    async def _is_unified(self) -> bool:
+        if self._unified is None:
+            try:
+                data = await self.get_uta_account()
+                assets = (data or {}).get("assets") or [] if isinstance(data, dict) else []
+                self._unified = any(float(a.get("available") or 0) > 0 for a in assets)
+            except Exception:
+                self._unified = False
+        return self._unified
+
+    async def get_account_balance(self) -> dict:
+        """Normalized USDT-Futures margin balance, UTA-aware.
+
+        Returns {available, equity, unrealized_pnl, unified}. For UTA the
+        available USDT of the unified wallet is the margin source.
+        """
+        if await self._is_unified():
+            data = await self.get_uta_account()
+            assets = (data or {}).get("assets") or [] if isinstance(data, dict) else []
+            usdt = next((a for a in assets if a.get("coin") == "USDT"), None)
+            avail = float(usdt.get("available") or 0) if usdt else 0.0
+            equity = float(data.get("usdtEquity") or avail) if isinstance(data, dict) else avail
+            return {"available": avail, "equity": equity, "unrealized_pnl": 0.0, "unified": True}
+        mix = await self.get_mix_account("USDT-FUTURES")
+        return {
+            "available": float(mix.get("available") or 0) if mix else 0.0,
+            "equity": float(mix.get("accountEquity") or 0) if mix else 0.0,
+            "unrealized_pnl": float(mix.get("unrealizedPL") or 0) if mix else 0.0,
+            "unified": False,
+        }
+
+    async def _uta_positions(self) -> list:
+        path = "/api/v3/position/current-position?category=USDT-FUTURES"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget UTA API error: {data.get('msg')}")
+        positions = []
+        for p in (data.get("data") or {}).get("list") or []:
+            positions.append(Position(
+                symbol=p.get("symbol", ""),
+                side=p.get("posSide", ""),
+                quantity=float(p.get("total") or 0),
+                entry_price=float(p.get("avgPrice") or 0),
+                unrealized_pnl=float(p.get("unrealisedPnl") or 0),
+                leverage=int(p.get("leverage") or 0) or None,
+                mark_price=float(p.get("markPrice") or 0),
+            ))
+        return positions
+
+    async def _uta_place_order(self, order: OrderRequest) -> OrderResponse:
+        import json as _json
+        preset_stop_loss = _validated_preset_protection_price(order.preset_stop_loss_price)
+        preset_take_profit = _validated_preset_protection_price(order.preset_take_profit_price)
+        if (order.market_type != "spot" and order.leverage and order.leverage > 1
+                and not order.hold_side):
+            await self.set_leverage(order.symbol, order.leverage)
+        if order.market_type == "spot":
+            category = "spot"
+            extra = {}
+        else:
+            category = "USDT-FUTURES"
+            extra = {"marginCoin": "USDT", "leverage": str(int(order.leverage)) if (order.leverage and order.leverage > 1) else "1", "marginMode": "crossed"}
+        body_data: dict = {
+            "category": category,
+            "symbol": order.symbol,
+            "side": order.side,
+            "orderType": order.order_type,
+            "qty": str(order.quantity),
+            "timeInForce": "gtc",
+        }
+        body_data.update(extra)
+        if order.market_type != "spot":
+            if order.hold_side:
+                body_data["posSide"] = order.hold_side
+                # UTA v3 API 需要 tradeSide="close" 来标识平仓操作。
+                # 缺失时默认是 "open"，导致出场订单变成开新仓（bug 根因）。
+                body_data["tradeSide"] = "close"
+                # UTA (v3) close requires `side` OPPOSITE the position (close
+                # long = sell, close short = buy) — verified empirically
+                # 2026-07-31 on bitget_demo: side SAME as the position +
+                # tradeSide="close" was resolved by the exchange as an OPEN
+                # (tradeSide=open_short/open_long), doubling the position
+                # instead of closing it. The non-UTA v2 mix path keeps side
+                # SAME as the open side (DECISIONS.md 2026-06-09).
+                body_data["side"] = "sell" if order.hold_side == "long" else "buy"
+            else:
+                body_data["posSide"] = "long" if order.side == "buy" else "short"
+        if order.order_type == "limit" and order.price:
+            body_data["price"] = str(order.price)
+        if order.client_oid:
+            body_data["clientOid"] = str(order.client_oid)
+        if preset_stop_loss is not None:
+            body_data["presetStopLossPrice"] = preset_stop_loss
+        if preset_take_profit is not None:
+            body_data["presetTakeProfitPrice"] = preset_take_profit
+        body = _json.dumps(body_data)
+        headers = self._headers("POST", "/api/v3/trade/place-order", body)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.post(f"{self._base}/api/v3/trade/place-order", content=body, headers=headers)
+            status_code = int(getattr(resp, "status_code", 200) or 0)
+            if status_code >= 500:
+                raise SubmissionResponseUnknownError("Bitget UTA create-order returned a server error")
+            try:
+                data = resp.json()
+            except (ValueError, UnicodeError) as exc:
+                raise SubmissionResponseUnknownError("Bitget UTA create-order acknowledgement was unreadable") from exc
+        if not isinstance(data, dict):
+            raise SubmissionResponseUnknownError("Bitget UTA create-order acknowledgement was not an object")
+        response_code = data.get("code")
+        if not isinstance(response_code, str) or not response_code.strip():
+            raise SubmissionResponseUnknownError("Bitget UTA create-order acknowledgement had no response code")
+        if response_code != "00000":
+            response_message = data.get("msg")
+            if not isinstance(response_message, str) or not response_message.strip():
+                raise SubmissionResponseUnknownError("Bitget UTA create-order acknowledgement was not a recognizable rejection")
+            raise RuntimeError(f"Bitget order error: {response_message}")
+        response_data = data.get("data")
+        if not isinstance(response_data, dict):
+            raise SubmissionResponseUnknownError("Bitget UTA create-order success acknowledgement had invalid data")
+        raw_order_id = response_data.get("orderId")
+        if not isinstance(raw_order_id, str) or not raw_order_id.strip():
+            raise SubmissionResponseUnknownError("Bitget UTA create-order success acknowledgement had no order id")
+        order_id = raw_order_id.strip()
+        resp_obj = OrderResponse(order_id=order_id, client_oid=response_data.get("clientOid"))
+        if order.market_type != "spot":
+            try:
+                detail = await self._uta_order_detail(order_id, order.symbol)
+            except Exception:
+                detail = None
+            if detail:
+                self._apply_fill_detail(resp_obj, detail)
+        return resp_obj
+
+    async def _uta_cancel_order(self, order_id, symbol, market_type):
+        import json as _json
+        body = _json.dumps({"orderId": order_id, "symbol": symbol, "category": "USDT-FUTURES", "marginCoin": "USDT"})
+        path = "/api/v3/trade/cancel-order"
+        headers = self._headers("POST", path, body)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            return {"cancelled": False, "order_id": order_id, "error": data.get("msg", "unknown")}
+        return {"cancelled": True, "order_id": order_id}
+
+    async def _uta_open_orders(self, market_type):
+        path = "/api/v3/trade/unfilled-orders?category=USDT-FUTURES&marginCoin=USDT"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget API error: {data.get('msg')}")
+        return (data.get("data") or {}).get("list") or []
+
+    async def _uta_fills(self, symbol, market_type):
+        category = "spot" if market_type == "spot" else "USDT-FUTURES"
+        path = f"/api/v3/trade/fills?category={category}"
+        if symbol:
+            path += f"&symbol={symbol}"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget API error: {data.get('msg')}")
+        return (data.get("data") or {}).get("list") or []
+
+    async def _uta_set_leverage(self, exchange_symbol, leverage):
+        import json as _json
+        path = "/api/v3/account/set-leverage"
+        body_data = {
+            "symbol": exchange_symbol,
+            "category": "USDT-FUTURES",
+            "marginCoin": "USDT",
+            "leverage": str(int(leverage)),
+            "posSide": "long",
+        }
+        body = _json.dumps(body_data)
+        headers = self._headers("POST", path, body)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget UTA set-leverage failed: {data.get('msg')}")
+
+    async def _uta_order_detail(self, order_id, symbol, market_type="usdt_futures"):
+        category = "spot" if market_type == "spot" else "USDT-FUTURES"
+        path = f"/api/v3/trade/fills?category={category}&orderId={order_id}"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            return None
+        lst = (data.get("data") or {}).get("list") or []
+        return lst[0] if lst else None
+
+    async def _uta_place_tpsl(self, symbol, plan_type, trigger_price, hold_side, size, execute_price, client_oid):
+        import json as _json
+        body_data: dict = {
+            "category": "USDT-FUTURES",
+            "symbol": symbol,
+            "posSide": hold_side,
+            "type": "tpsl",
+        }
+        if plan_type in ("pos_profit", "profit_plan"):
+            body_data["takeProfit"] = str(trigger_price)
+        else:
+            body_data["stopLoss"] = str(trigger_price)
+        if execute_price is not None:
+            body_data["slLimitPrice"] = str(execute_price)
+        if client_oid:
+            body_data["clientOid"] = client_oid
+        body = _json.dumps(body_data)
+        path = "/api/v3/trade/place-strategy-order"
+        headers = self._headers("POST", path, body)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget UTA place_tpsl_order error: {data.get('msg')}")
+        return data.get("data", {}).get("orderId", "")
+
+    async def _uta_cancel_plan(self, symbol, order_id):
+        import json as _json
+        body = _json.dumps({"orderId": order_id, "symbol": symbol, "category": "USDT-FUTURES", "marginCoin": "USDT"})
+        path = "/api/v3/trade/cancel-strategy-order"
+        headers = self._headers("POST", path, body)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            return {"cancelled": False, "order_id": order_id, "error": data.get("msg", "unknown")}
+        return {"cancelled": True, "order_id": order_id}
+
+    async def _uta_pending_plans(self, symbol):
+        path = "/api/v3/trade/orders-plan-pending?category=USDT-FUTURES"
+        if symbol:
+            path += f"&symbol={symbol}"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            return []
+        return (data.get("data") or {}).get("list") or []
+
+    async def _uta_plan_history(self, symbol, order_id):
+        path = "/api/v3/trade/orders-plan-history?category=USDT-FUTURES"
+        if symbol:
+            path += f"&symbol={symbol}"
+        if order_id:
+            path += f"&orderId={order_id}"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            return []
+        return (data.get("data") or {}).get("list") or []
+
     async def get_open_orders(self, market_type: str = "spot") -> list[dict]:
         """Get unfilled (open) orders (§19.3)."""
+        if await self._is_unified():
+            return await self._uta_open_orders(market_type)
         if market_type == "spot":
             path = "/api/v2/spot/trade/unfilled-orders"
         else:
@@ -639,6 +992,8 @@ class BitgetClient:
 
     async def cancel_order(self, order_id: str, symbol: str, market_type: str = "spot") -> dict:
         """Cancel an order (§19.3). Returns {cancelled, order_id, [error]}."""
+        if await self._is_unified():
+            return await self._uta_cancel_order(order_id, symbol, market_type)
         import json as _json
         if market_type == "spot":
             path = "/api/v2/spot/trade/cancel-order"
@@ -657,6 +1012,8 @@ class BitgetClient:
 
     async def get_fills(self, symbol: str | None = None, market_type: str = "spot") -> list[dict]:
         """Get trade fills (§19.3)."""
+        if await self._is_unified():
+            return await self._uta_fills(symbol, market_type)
         if market_type == "spot":
             path = "/api/v2/spot/trade/fills"
         else:
@@ -931,6 +1288,8 @@ class BitgetClient:
         plan_type: "pos_loss" (stop-loss) or "pos_profit" (take-profit).
         Returns the exchange plan order ID.
         """
+        if await self._is_unified():
+            return await self._uta_place_tpsl(symbol, plan_type, trigger_price, hold_side, size, execute_price, client_oid)
         import json as _json
         path = "/api/v2/mix/order/place-tpsl-order"
         body_data: dict = {
@@ -959,6 +1318,8 @@ class BitgetClient:
 
     async def cancel_plan_order(self, symbol: str, order_id: str) -> dict:
         """Cancel a pending TP/SL trigger order. Returns {cancelled, order_id}."""
+        if await self._is_unified():
+            return await self._uta_cancel_plan(symbol, order_id)
         import json as _json
         path = "/api/v2/mix/order/cancel-plan-order"
         body_data = {
@@ -977,6 +1338,8 @@ class BitgetClient:
 
     async def get_pending_plan_orders(self, symbol: str | None = None) -> list[dict]:
         """List pending TP/SL trigger orders for USDT-FUTURES."""
+        if await self._is_unified():
+            return await self._uta_pending_plans(symbol)
         path = "/api/v2/mix/order/orders-plan-pending?productType=USDT-FUTURES"
         if symbol:
             path += f"&symbol={symbol}"
@@ -995,6 +1358,8 @@ class BitgetClient:
         Exact executed rows expose ``planStatus`` plus ``executeOrderId``. Plan
         prices are trigger metadata, not private Fill economics.
         """
+        if await self._is_unified():
+            return await self._uta_plan_history(symbol, order_id)
         path = (
             "/api/v2/mix/order/orders-plan-history"
             "?productType=USDT-FUTURES&planType=profit_loss"

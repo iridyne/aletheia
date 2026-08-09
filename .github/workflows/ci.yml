@@ -27,9 +27,9 @@ jobs:
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          # Without an explicit version this resolves "latest" and downloads a
-          # fresh uv whenever upstream publishes one: six releases landed on the
-          # runners in nine days. Pinned, it hits the runner tool cache instead.
+          # Pinned to a full SHA, this hits the runner tool cache instead of
+          # resolving "latest" and downloading a fresh uv whenever upstream
+          # publishes one: six releases landed on the runners in nine days.
           # Bump deliberately alongside the lockfile.
           version: "0.12.0"
           python-version: "3.12"
@@ -155,9 +155,9 @@ jobs:
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          # Without an explicit version this resolves "latest" and downloads a
-          # fresh uv whenever upstream publishes one: six releases landed on the
-          # runners in nine days. Pinned, it hits the runner tool cache instead.
+          # Pinned to a full SHA, this hits the runner tool cache instead of
+          # resolving "latest" and downloading a fresh uv whenever upstream
+          # publishes one: six releases landed on the runners in nine days.
           # Bump deliberately alongside the lockfile.
           version: "0.12.0"
           python-version: "3.12"

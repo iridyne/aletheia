@@ -210,6 +210,12 @@ def test_regime_scoring_applies_without_strategy(monkeypatch):
     monkeypatch.setattr(r, "get_current_regime", lambda: bear)
     # Isolate the regime term: zero out the direction-dependent lesson penalty.
     monkeypatch.setattr(r, "_lesson_penalty", lambda *a, **k: 0.0)
+    # Isolate the regime term: suppress the family×direction bias nudge too
+    # (it is a SEPARATE scanner-family signal, independently covered by SP-S08
+    # and test_family_direction_bias_config_override_reaches_score). Returning
+    # {} makes `_family_direction_bias().get(...)` miss → `if _fdb:` skips the
+    # term, so the assertion measures the pure regime delta (bear_short − bear_long).
+    monkeypatch.setattr(r, "_family_direction_bias", lambda: {})
 
     opp = {"symbol": "X/USDT", "confidence_score": 50, "scanner_family": "momentum"}
     factor = {"status": "watch", "win_rate": None, "trade_count": 0}
@@ -225,3 +231,53 @@ def test_regime_scoring_applies_without_strategy(monkeypatch):
         f"regime delta not applied strategy-independently: short={s_short} long={s_long} "
         f"(expected diff 45.0 from bear_short − bear_long)"
     )
+
+
+# ---------------------------------------------------------------------------
+# SP-S08 — family_direction_bias config channel is declared + no-op by default
+# (B, 2026-08-01). The field was previously read via getattr on a schema that
+# did NOT declare it, so pydantic silently dropped every operator override and
+# the ranker always fell back to the hardcoded _FAMILY_DIRECTION_BIAS_DEFAULTS.
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("SP-S08", "strategy_pool", "§family direction bias config channel", "L2c",
+              "UniverseConfig declares family_direction_bias (dict[str,float], default {}). "
+              "The ranker reads it via getattr and merges it ON TOP OF the hardcoded "
+              "_FAMILY_DIRECTION_BIAS_DEFAULTS, so an unset key keeps its default nudge and "
+              "an empty dict is a verified no-op. The field is folded into the "
+              "universe_family_calibration policy epoch so an operator override rotates the "
+              "epoch rather than pooling outcomes across the change. This unlocks the "
+              "short-governance / negative-expectancy levers (optimization #1 and #3) "
+              "without touching the frozen ranker logic."),
+)
+def test_family_direction_bias_config_channel_declared_and_noop():
+    import pathlib
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    # Default MUST be an empty dict — non-empty would silently change ranker
+    # behavior on every fresh install (the merge only adds, never replaces).
+    assert cfg.universe.family_direction_bias == {}, (
+        f"family_direction_bias default must be empty (no-op), got {cfg.universe.family_direction_bias!r}"
+    )
+
+    ranker_src = (pathlib.Path(_project_root()) / "aletheia" / "agents" / "paper_trader_ranker.py").read_text(encoding="utf-8")
+    # The ranker must read the declared field (not re-hardcode) — else the
+    # config channel is inert, which was the pre-declaration bug.
+    assert "family_direction_bias" in ranker_src, (
+        "paper_trader_ranker must read cfg.universe.family_direction_bias"
+    )
+    # And it must merge onto the defaults (override semantics, not replace) so
+    # an operator can tune a single family×direction without redeclaring all 8.
+    assert "_FAMILY_DIRECTION_BIAS_DEFAULTS" in ranker_src and "family_direction_bias" in ranker_src
+
+    # The epoch path must fold this field in so a B-class override rotates the
+    # cohort (experiments.py _policy_epoch_definition, universe_family_calibration).
+    exp_src = (pathlib.Path(_project_root()) / "aletheia" / "learning" / "experiments.py").read_text(encoding="utf-8")
+    assert 'family_direction_bias' in exp_src, (
+        "experiments.py must fold universe.family_direction_bias into the "
+        "universe_family_calibration epoch values"
+    )
+

@@ -31,7 +31,7 @@ from aletheia.model_provider import router as provider_router
 
 logger = logging.getLogger("aletheia.model_provider.fallback")
 
-_TRANSIENT_STATUS_CODES = {429, 502, 503, 504}
+_TRANSIENT_STATUS_CODES = {400, 404, 429, 502, 503, 504}
 _TRANSIENT_TRANSPORT_ERRORS = (
     httpx.NetworkError,
     httpx.RemoteProtocolError,
@@ -109,6 +109,24 @@ def _clone_provider_with_model(provider: ModelProvider, model: str) -> ModelProv
     clone = copy.copy(provider)
     setattr(clone, "model", model)
     return clone
+
+
+def _parse_fallback_entry(entry: str, default_provider: str) -> tuple[str, str | None]:
+    """Parse a fallback candidate into (provider_name, model).
+
+    Plain entries (``"author/model"``) stay on the current provider.
+    Entries prefixed with ``@`` are cross-provider: ``"@provider:model"`` routes
+    the fallback to a different provider (e.g. ``"@anthropic_compatible:LongCat-2.0"``).
+    A bare ``"@provider"`` (no ``:model``) uses that provider's configured default model.
+    """
+    entry = str(entry).strip()
+    if entry.startswith("@"):
+        spec = entry[1:]
+        if ":" in spec:
+            prov, model = spec.split(":", 1)
+            return prov.strip(), model.strip()
+        return spec.strip(), None
+    return default_provider, entry
 
 
 def _state(provider_name: str, model: str) -> ModelHealthState:
@@ -307,16 +325,24 @@ async def _candidate_models(provider_name: str, provider: ModelProvider) -> list
     candidates: list[str] = []
     if primary:
         candidates.append(primary)
+    fb_models: list[str] = []
     if pcfg is not None:
-        candidates.extend(str(m).strip() for m in getattr(pcfg, "fallback_models", []) or [])
+        fb_models = [str(m).strip() for m in getattr(pcfg, "fallback_models", []) or []]
+        candidates.extend(fb_models)
 
-    # Best effort: reuse the existing endpoint/model discovery path so the
-    # runtime learns the live catalogue instead of relying only on static config.
-    try:
-        detected = await provider_router.list_models_cached(provider_name, provider)
-        candidates.extend(str(m.get("slug") or "").strip() for m in detected if isinstance(m, dict))
-    except Exception as exc:  # noqa: BLE001 - detection is advisory only
-        logger.debug("model fallback list_models failed for %s: %s", provider_name, exc)
+    # When explicit fallback models are configured we do NOT also append the
+    # provider's full live catalogue. For OpenRouter that catalogue includes
+    # paid and sibling-free models; the user constraint is "OpenRouter only ever
+    # calls free models", so explicit config must win and discovery must be
+    # suppressed to avoid injecting non-free models as fallback candidates.
+    if not fb_models:
+        # Best effort: reuse the existing endpoint/model discovery path so the
+        # runtime learns the live catalogue instead of relying only on static config.
+        try:
+            detected = await provider_router.list_models_cached(provider_name, provider)
+            candidates.extend(str(m.get("slug") or "").strip() for m in detected if isinstance(m, dict))
+        except Exception as exc:  # noqa: BLE001 - detection is advisory only
+            logger.debug("model fallback list_models failed for %s: %s", provider_name, exc)
 
     seen: set[str] = set()
     ordered: list[str] = []
@@ -443,7 +469,12 @@ async def complete_with_fallback(
     provider_name: str | None = None,
     provider: ModelProvider | None = None,
 ) -> ModelResponse:
-    """Complete with request-level model fallback on transient model errors."""
+    """Complete with request-level model fallback on transient model errors.
+
+    Fallback candidates may be cross-provider via the ``@provider:model`` syntax,
+    so e.g. an OpenRouter free model can fall back to a different provider (longcat)
+    instead of a paid sibling.
+    """
     cfg = load_config()
     resolved_provider_name = provider_name or cfg.models.default_provider
     provider = provider or provider_router.get_provider(resolved_provider_name)
@@ -466,14 +497,33 @@ async def complete_with_fallback(
             )
             raise
 
-    requested_model = models[0]
-    skipped_cooldown = [
-        model for model in models if _is_in_cooldown(resolved_provider_name, model)
-    ]
-    models_to_try = [
-        model for model in models if not _is_in_cooldown(resolved_provider_name, model)
-    ]
-    if not models_to_try:
+    # Resolve each candidate to (provider_name, model), honoring @provider:model.
+    parsed: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in models:
+        pn, md = _parse_fallback_entry(entry, resolved_provider_name)
+        if not md:
+            # bare @provider -> use its configured default model
+            try:
+                pn_provider = provider if pn == resolved_provider_name else provider_router.get_provider(pn)
+                md = str(getattr(pn_provider, "model", "") or "")
+            except Exception:  # noqa: BLE001
+                md = ""
+        if not md:
+            continue
+        key = (pn, md)
+        if key in seen:
+            continue
+        seen.add(key)
+        parsed.append(key)
+    if not parsed:
+        return await provider.complete(request)
+
+    requested = parsed[0]
+    requested_model = f"{requested[0]}/{requested[1]}"
+    skipped_cooldown = [k for k in parsed if _is_in_cooldown(*k)]
+    to_try = [k for k in parsed if not _is_in_cooldown(*k)]
+    if not to_try:
         emit_infra_event(
             severity="critical",
             source="llm",
@@ -481,45 +531,46 @@ async def complete_with_fallback(
             entity_id=resolved_provider_name,
             message=f"All candidate LLM models are cooling down for provider {resolved_provider_name}",
             action="wait_for_cooldown_or_change_provider",
-            metadata={
+metadata={
                 "provider": resolved_provider_name,
-                "models": models,
+                "models": [f"{p}/{m}" for p, m in parsed],
                 "attempted_models": [],
-                "skipped_cooldown_models": skipped_cooldown,
+                "skipped_cooldown_models": [f"{p}/{m}" for p, m in skipped_cooldown],
             },
             dedupe_sec=60,
         )
         raise RuntimeError(f"all LLM candidate models are cooling down for {resolved_provider_name}")
     attempted: list[str] = []
     last_exc: BaseException | None = None
-    for idx, model in enumerate(models_to_try):
-        attempted.append(model)
-        candidate = provider if model == str(getattr(provider, "model", "") or "") else _clone_provider_with_model(provider, model)
+    for idx, (pn, md) in enumerate(to_try):
+        attempted.append(f"{pn}/{md}")
+        cand_provider = provider if pn == resolved_provider_name else provider_router.get_provider(pn)
+        candidate = cand_provider if md == str(getattr(cand_provider, "model", "") or "") else _clone_provider_with_model(cand_provider, md)
         try:
             response = await brokered_complete(
                 resolved_provider_name,
                 candidate,
                 request,
             )
-            _record_model_success(resolved_provider_name, model)
+            _record_model_success(pn, md)
             if skipped_cooldown and isinstance(response.raw, dict):
                 response.raw = dict(response.raw)
-                response.raw["skipped_cooldown_models"] = skipped_cooldown
-            fallback_used = model != requested_model
+                response.raw["skipped_cooldown_models"] = [f"{p}/{m}" for p, m in skipped_cooldown]
+            fallback_used = (pn, md) != requested
             if fallback_used:
                 emit_infra_event(
                     severity="warning",
                     source="llm",
                     code="llm_model_fallback_used",
-                    entity_id=f"{resolved_provider_name}/{requested_model}",
-                    message=f"LLM request fell back from {requested_model} to {model}",
+                    entity_id=f"{pn}/{md}",
+                    message=f"LLM request fell back from {requested_model} to {pn}/{md}",
                     action="fallback_success",
                     metadata={
-                        "provider": resolved_provider_name,
+                        "provider": pn,
                         "requested_model": requested_model,
-                        "final_model": model,
+                        "final_model": md,
                         "attempted_models": attempted,
-                        "skipped_cooldown_models": skipped_cooldown,
+                        "skipped_cooldown_models": [f"{p}/{m}" for p, m in skipped_cooldown],
                     },
                     dedupe_sec=30,
                 )
@@ -543,22 +594,22 @@ async def complete_with_fallback(
                 raise
             transient = is_transient_model_error(exc)
             if transient:
-                _record_model_failure(resolved_provider_name, model, exc)
-            if not transient or idx == len(models_to_try) - 1:
+                _record_model_failure(pn, md, exc)
+            if not transient or idx == len(to_try) - 1:
                 _emit_terminal_failure(
                     exc,
                     provider_name=resolved_provider_name,
                     requested_model=requested_model,
                     attempted_models=attempted,
-                    skipped_cooldown_models=skipped_cooldown,
+                    skipped_cooldown_models=[f"{p}/{m}" for p, m in skipped_cooldown],
                 )
                 raise
             logger.warning(
                 "LLM model %s/%s transient failure on %s; trying fallback %s",
-                resolved_provider_name,
-                model,
+                pn,
+                md,
                 type(exc).__name__,
-                models_to_try[idx + 1],
+                "/".join(to_try[idx + 1]),
             )
     assert last_exc is not None
     raise last_exc

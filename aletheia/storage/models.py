@@ -1579,3 +1579,27 @@ class OnchainSnapshot(BaseModel):
     top_entries: str = "[]"              # JSON: list of top-N entries
     raw_summary: str = "{}"             # JSON: key scalar metrics
     observed_at: str = Field(default_factory=_utcnow)
+
+
+class CommitteeReport(_Provenanced):
+    """Persisted AI Investment Committee evaluation (explainability audit data).
+
+    Append-only decision-level record: every LLM committee evaluation is stored so
+    any later decision can be traced back to the committee opinion that informed
+    it (direction, confidence, explainability score, reasoning, evidence).
+    Advisory data only — nothing here changes trade or risk semantics.
+    """
+    id: str = Field(default_factory=new_id)
+    opportunity_id: str | None = None
+    symbol: str = ""
+    decision_id: str = ""  # stable correlation key from DecisionReport
+    direction: str = "neutral"
+    confidence: float = 0.0  # 0.0 - 1.0
+    explainability_score: float = 0.0  # 0.0 - 1.0
+    blocked: int = 0
+    model_used: str | None = None
+    fallback_used: int = 0
+    indicators_json: str = "{}"        # JSON: indicator names/values fed to the LLM
+    agent_opinions_json: str = "[]"    # JSON: AgentOpinion dicts (reasoning + evidence)
+    risks_json: str = "[]"             # JSON: LLM risk warnings (风险提示)
+    created_at: str = Field(default_factory=_utcnow)

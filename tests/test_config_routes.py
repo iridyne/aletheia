@@ -18,6 +18,14 @@ async def client(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
     monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
+    # The repo root ships a legacy data/ dir with primary state; load_config's
+    # assert_runtime_home_ready guard treats that as an unmigrated source and
+    # refuses to start against the test tmp_path. Setting ALETHEIA_DATA_DIR is
+    # the sanctioned override (same path production users take to pin a runtime
+    # home) — it flips override_active=True so the guard is skipped. DATA_DIR is
+    # already isolated to tmp_path above, so this only disables the cross-dir
+    # migration check, not any test isolation.
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
     clear_cache()
     transport = ASGITransport(app=app)
@@ -925,6 +933,68 @@ async def test_settings_rejects_mismatched_or_invalid_config_controls(client):
 
     resp = await client.post("/api/settings/market-data", json={"ccxt_exchange": "unknown"})
     assert resp.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_universe_scanner_score_delta_triad_is_editable_and_validated(client):
+    """scanner_weights / scanner_regime_scoring / family_direction_bias must be
+    settable via POST /api/settings/universe (they were previously read-only-
+    schema fields with no API edit path — operator overrides were impossible).
+    All three are score-delta dicts: non-empty, str→finite-float, no sum rule.
+    """
+    # 1. Valid override persists and is echoed back by GET /api/settings.
+    resp = await client.post(
+        "/api/settings/universe",
+        json={
+            "scanner_regime_scoring": {"bear_short": 8.0, "bear_long": -25.0},
+            "family_direction_bias": {"short_bias:short": -22.0, "momentum:long": 8.0},
+            "scanner_weights": {"derivatives": 0.7},
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()["universe"]
+    assert body["scanner_regime_scoring"]["bear_short"] == 8.0
+    assert body["family_direction_bias"]["short_bias:short"] == -22.0
+    assert body["scanner_weights"]["derivatives"] == 0.7
+
+    settings = (await client.get("/api/settings")).json()["universe"]
+    assert settings["scanner_regime_scoring"]["bear_short"] == 8.0
+    assert settings["family_direction_bias"]["short_bias:short"] == -22.0
+    assert settings["scanner_weights"]["derivatives"] == 0.7
+
+    # 2. Empty dict is rejected (a no-op write would silently rotate the epoch).
+    #    Pydantic accepts an empty dict[str,float], so this reaches the handler's
+    #    custom validation → 400.
+    resp = await client.post(
+        "/api/settings/universe", json={"family_direction_bias": {}},
+    )
+    assert resp.status_code == 400, resp.text
+
+    # 3. Non-numeric value is rejected by pydantic's body-type validation
+    #    (dict[str,float]) BEFORE the handler runs → 422 Unprocessable Entity.
+    #    This is the correct REST contract: type mismatches are 422, while the
+    #    semantic checks the handler owns (empty dict, non-finite, empty keys)
+    #    are 400. The handler's float(v) try/except is a defensive backstop for
+    #    programmatic callers that bypass the typed API model.
+    resp = await client.post(
+        "/api/settings/universe",
+        json={"scanner_weights": {"derivatives": "heavy"}},
+    )
+    assert resp.status_code == 422, resp.text
+
+    # 4. Non-finite value is rejected by the handler's custom validation. Pydantic
+    #    accepts inf/nan as valid floats, so only the handler's isfinite() check
+    #    catches it → 400. httpx's json= serializer refuses inf (allow_nan=False),
+    #    so send the raw JSON string — Starlette's json.loads accepts the
+    #    non-standard `Infinity` token, pydantic accepts it as a float, and the
+    #    handler's isfinite() then rejects it.
+    resp = await client.post(
+        "/api/settings/universe",
+        content='{"scanner_regime_scoring": {"bear_short": Infinity}}',
+        headers={"content-type": "application/json"},
+    )
+    assert resp.status_code == 400, resp.text
+
 
 
 @pytest.mark.anyio

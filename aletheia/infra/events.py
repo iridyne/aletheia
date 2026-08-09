@@ -14,6 +14,7 @@ import time
 from typing import Any
 
 _MAX_EVENTS = 100
+_MAX_LAST_EMIT = 2000  # Cap the dedupe dict so long-lived processes don't leak.
 _events: deque[dict[str, Any]] = deque(maxlen=_MAX_EVENTS)
 _last_emit: dict[str, float] = {}
 _lock = threading.Lock()
@@ -42,6 +43,13 @@ def emit_infra_event(
         if dedupe_sec > 0 and now - _last_emit.get(key, 0) < dedupe_sec:
             return None
         _last_emit[key] = now
+        # Bound the dedupe dict: when it grows beyond 2× the cap, evict the
+        # oldest half.  This keeps long-lived processes from accumulating a
+        # permanent entry per unique (source, code, entity_id) tuple.
+        if len(_last_emit) > _MAX_LAST_EMIT * 2:
+            sorted_items = sorted(_last_emit.items(), key=lambda kv: kv[1])
+            for k, _ in sorted_items[:_MAX_LAST_EMIT]:
+                _last_emit.pop(k, None)
         event = {
             "created_at": _now_iso(),
             "severity": sev,

@@ -643,8 +643,8 @@ class OKXClient:
         """
         from aletheia.net import make_ccxt
         exchange, session = make_ccxt("okx", options={"defaultType": "swap"})
-        exchange.set_sandbox_mode(True)
         try:
+            exchange.set_sandbox_mode(True)
             await exchange.load_markets()
             swap_symbols: set = set()
             spot_symbols: set = set()

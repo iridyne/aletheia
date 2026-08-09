@@ -213,22 +213,19 @@ async def runtime_events(limit: int = 100):
 @router.get("/events/stream")
 async def runtime_events_stream(limit: int = 100, once: bool = False):
     async def _stream():
-        seen_ids: set[str] = set()
+        # See operator.py: rowid cursor instead of an ever-growing seen_ids set.
         idle_poll_secs = 1.0
         max_idle_poll_secs = 8.0
-        backlog = _service().list_events(limit=limit)
-        for event in reversed(backlog):
-            seen_ids.add(event["id"])
+        backlog, cursor = _service().list_events_after_rowid(None, limit=limit)
+        for event in backlog:
             yield _sse_block("runtime_event", event)
         if once:
             return
 
         while True:
             await asyncio.sleep(idle_poll_secs)
-            latest = _service().list_events(limit=limit)
-            fresh = [event for event in reversed(latest) if event["id"] not in seen_ids]
+            fresh, cursor = _service().list_events_after_rowid(cursor, limit=limit)
             for event in fresh:
-                seen_ids.add(event["id"])
                 yield _sse_block("runtime_event", event)
             if not fresh:
                 idle_poll_secs = min(max_idle_poll_secs, idle_poll_secs * 2)

@@ -174,25 +174,9 @@ def _client_or_unconfigured() -> tuple[Optional[object], str]:
 
 
 def _run_async(coro, timeout: float = 10.0):
-    """Run a coroutine to completion from sync code, safe whether or not a loop runs.
-
-    Uses shutdown(wait=False) so that a hung asyncio.run() teardown (Windows
-    ProactorEventLoop IOCP drain) doesn't block the calling thread forever.
-    The outer _run_sync_with_timeout has a 75s budget; individual API calls
-    must finish well within that (default 10s each) to avoid the outer guard
-    abandoning this thread while inner pools still hold live sockets.
-    """
-    import asyncio
-    from concurrent.futures import ThreadPoolExecutor
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    pool = ThreadPoolExecutor(max_workers=1)
-    try:
-        return pool.submit(asyncio.run, coro).result(timeout=timeout)
-    finally:
-        pool.shutdown(wait=False)
+    """Run a coroutine to completion from sync code without blocking the event loop."""
+    from aletheia.agent_runtime.async_utils import run_coro_from_sync
+    return run_coro_from_sync(coro, timeout=timeout)
 
 
 

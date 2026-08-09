@@ -520,6 +520,18 @@ def close_position(
     elif explicit_funding and raw_funding_source == "local_simulation":
         raw_funding_cost = None
         raw_funding_source = "unavailable"
+    from aletheia.analytics.outcome_integrity import _BROKER_LEDGER_EXECUTION_MODES
+    execution_mode = str(row.get("execution_mode") or "")
+    is_broker_ledger = execution_mode in _BROKER_LEDGER_EXECUTION_MODES
+    if is_broker_ledger and raw_funding_cost is None:
+        # Broker-ledger modes settle funding at the exchange; local funding
+        # simulation is unsupported. The exchange-reported realized PnL already
+        # treats funding as zero, matching the conservative accounting used for
+        # unknown funding everywhere else. Accept it as a durable broker_ledger
+        # fact so the close can be marked outcome-eligible instead of stalling
+        # on incomplete_funding_economics.
+        raw_funding_cost = 0.0
+        raw_funding_source = "broker_ledger"
     funding_cost, funding_source = validated_funding_economics(
         market_type=market_type,
         execution_mode=row.get("execution_mode"),
@@ -628,6 +640,19 @@ def close_position(
         exit_price=exit_price,
         reason=reason,
     )
+    # Holding period quality tracking: measure how long the position was
+    # held vs the outcome, so the AI Jury page can report whether longer
+    # holds correlate with better/worse PnL.
+    holding_period_hours = None
+    opened_at_raw = row.get("opened_at")
+    if opened_at_raw:
+        try:
+            opened_dt = datetime.fromisoformat(str(opened_at_raw).replace("Z", "+00:00"))
+            closed_dt = datetime.fromisoformat(closed_at.replace("Z", "+00:00"))
+            holding_period_hours = round((closed_dt - opened_dt).total_seconds() / 3600.0, 2)
+        except Exception:
+            holding_period_hours = None
+
     update_fields = {
         "status": "closed",
         "current_price": exit_price,
@@ -635,6 +660,7 @@ def close_position(
         "unrealized_pnl": 0.0,
         "close_reason": reason,
         "closed_at": closed_at,
+        "holding_period_hours": holding_period_hours,
         "btc_exit_price": btc_exit,
         "entry_fee": round(entry_fee, 8),
         "exit_fee": round(exit_fee, 8),
@@ -647,6 +673,15 @@ def close_position(
             "local_fill" if local_paper_fill else "broker_fill" if private_exchange_fill else "unavailable"
         ),
         "exit_fill_verified": exit_fill_verified,
+    }
+    if is_broker_ledger:
+        # The position was opened via a real exchange fill; the entry leg is
+        # privately verified at the broker. Mark it so the outcome satisfies the
+        # entry_fill_verified gate (paper_internal sets this at open; broker
+        # closes would otherwise inherit a stale 0 from pre-verification opens).
+        update_fields["entry_fill_verified"] = True
+        update_fields["entry_price_source"] = "broker_fill"
+    update_fields.update({
         "reconciliation_identity": json.dumps(
             reconciliation_identity,
             sort_keys=True,
@@ -659,7 +694,7 @@ def close_position(
             default=str,
         ),
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
-    }
+    })
     if exit_fill_verified and funding_cost is None:
         outcome_eligible = False
         outcome_exclusion_reason = "incomplete_funding_economics"

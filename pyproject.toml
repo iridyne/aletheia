@@ -22,6 +22,8 @@ dependencies = [
     "aiohttp>=3.9",
     "aiohttp-socks>=0.9",   # SOCKS5 proxy connector for aiohttp/ccxt (net.aiohttp_session)
     "feedparser>=6.0",
+    "bcrypt>=5.0.0",
+    "itsdangerous>=2.2.0",
     "numpy>=2.4.6",
     "psutil>=7.2.2",
 ]

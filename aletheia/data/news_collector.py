@@ -100,7 +100,7 @@ async def fetch_news_feeds() -> dict:
     if not active_feeds:
         return {"fetched": 0, "new": 0}
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     total_fetched = 0
     total_new = 0
 

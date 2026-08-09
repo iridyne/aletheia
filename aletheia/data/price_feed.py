@@ -17,10 +17,11 @@ Design:
   within the scheduler's 45s timeout budget at large symbol counts.
 """
 
+import asyncio
 import logging
 import math
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger("aletheia.price_feed")
 
@@ -34,6 +35,7 @@ _cache_lock = threading.Lock()
 _STALE_THRESHOLD_SEC = 90.0
 _PROTECTIVE_DB_MAX_AGE_SEC = 120.0
 _UNIVERSE_TICK_EVERY = 3  # universe members refresh every N ticks
+_MARKET_DATA_MAX_CONCURRENCY = 8  # max concurrent CCXT ticker fetches
 _tick_counter = 0
 _tick_lock = threading.Lock()
 
@@ -201,6 +203,7 @@ def get_fresh_mark_for_protective_close(
 
 
 def get_fresh_price_for_protective_close(
+
     symbol: str,
     market_type: str,
     *,
@@ -219,6 +222,7 @@ def get_fresh_price_for_protective_close(
         venue=venue,
     )
     return float(mark["price"]) if mark is not None else None
+
 
 
 def get_watched_instruments():
@@ -303,7 +307,18 @@ def get_watched_instruments():
     except Exception as e:
         logger.warning("price_feed: failed to get position symbols: %s", e)
 
-    # Universe members — tick-gated
+    # Universe members — tick-gated.
+    # Perf (Phase 5): evaluated replacing this with a batch fetch_tickers call
+    # (single API round-trip for all universe members). Decision: KEEP the
+    # per-symbol concurrent fetch (refresh_watched_prices already uses a
+    # semaphore-bounded asyncio.gather). Rationale: (1) batch fetch_tickers
+    # reliability varies by venue — some exchanges silently truncate large
+    # symbol lists or return partial data without error; (2) the current
+    # concurrent-per-symbol approach with _MARKET_DATA_MAX_CONCURRENCY=8
+    # already fits within the scheduler's 45s timeout budget at observed
+    # symbol counts; (3) tick-gating to every 3rd tick (90s) is a cheap
+    # insurance against burst load when universe member count grows.
+    # Revisit if universe membership exceeds ~100 symbols.
     try:
         if cfg.event_triggers.enabled and cfg.event_triggers.watch_universe_members:
             with _tick_lock:
@@ -342,14 +357,13 @@ def get_watched_symbols() -> list[str]:
 
 
 async def refresh_watched_prices() -> dict:
-    """Fetch tickers for watched symbols (SERIALLY) and update in-memory cache.
+    """Fetch tickers for watched symbols and update in-memory cache.
 
     Uses a fresh CCXTProvider per call (CCXT binds aiohttp to the creating loop).
-    NOTE: fetches one symbol at a time — one network round-trip each, NOT a batch
-    fetch_tickers call (I1 docstring-honesty fix: the prior docstring claimed a
-    single batch round-trip, which the per-symbol loop below never did). The
-    watched set is small so serial is acceptable; switch to a provider batch call
-    if it grows. Never raises — errors are logged and cache entries left stale.
+    Fetches are CONCURRENT within each venue group (bounded by
+    ``_MARKET_DATA_MAX_CONCURRENCY``) so 60+ symbols don't exceed the
+    scheduler's timeout budget.  Never raises — errors are logged and cache
+    entries left stale.
     """
     instruments = get_watched_instruments()
     if not instruments:
@@ -373,6 +387,19 @@ async def refresh_watched_prices() -> dict:
         for instrument in instruments:
             groups[instrument.exchange].append(instrument)
 
+        sem = asyncio.Semaphore(_MARKET_DATA_MAX_CONCURRENCY)
+
+        async def _fetch_one(provider, instrument):
+            """Fetch one instrument under the semaphore; return (instrument, ticker_or_exc)."""
+            async with sem:
+                try:
+                    ticker = require_exact_ticker_venue(
+                        await provider.get_ticker(instrument), instrument.exchange,
+                    )
+                    return instrument, ticker, None
+                except Exception as e:
+                    return instrument, None, e
+
         for venue, group in groups.items():
             # Bitget stock tokens are venue-exclusive; never fall back to a crypto
             # provider that may interpret the same symbol as a different asset.
@@ -385,44 +412,47 @@ async def refresh_watched_prices() -> dict:
                     fallback_exchange=venue,
                 )
             try:
-                for instrument in group:
+                # Concurrent fetch for all instruments in this venue group.
+                results = await asyncio.gather(
+                    *(_fetch_one(provider, inst) for inst in group),
+                    return_exceptions=False,  # _fetch_one catches its own errors
+                )
+                for instrument, ticker, exc in results:
                     sym = instrument.symbol
-                    try:
-                        ticker = require_exact_ticker_venue(
-                            await provider.get_ticker(instrument), venue,
-                        )
-                        if ticker and ticker.last_price and ticker.last_price > 0:
-                            observed_at = datetime.now(timezone.utc)
-                            with _cache_lock:
-                                prev_entry = _price_cache.get(sym, {})
-                                prev_price = prev_entry.get("price")
-                                volume_24h = getattr(ticker, "volume_24h", None) or prev_entry.get("volume_24h")
-                                entry = {
-                                    "price": ticker.last_price,
-                                    "ts": observed_at,
-                                    "prev_price": prev_price,
-                                    "volume_24h": volume_24h,
-                                    "provider": getattr(ticker, "provider", None) or "unknown",
-                                    "symbol": sym,
-                                    "market_type": instrument.market_type,
-                                    "exchange": instrument.exchange,
-                                }
-                                _instrument_price_cache[
-                                    (
-                                        instrument.exchange,
-                                        sym,
-                                        instrument.market_type,
-                                    )
-                                ] = dict(entry)
-                                _price_cache[sym] = entry
+                    if exc is not None:
+                        errors.append(f"{sym}: {exc}")
+                        continue
+                    if not (ticker and ticker.last_price and ticker.last_price > 0):
+                        continue
+                    observed_at = datetime.now(timezone.utc)
+                    with _cache_lock:
+                        prev_entry = _price_cache.get(sym, {})
+                        prev_price = prev_entry.get("price")
+                        volume_24h = getattr(ticker, "volume_24h", None) or prev_entry.get("volume_24h")
+                        entry = {
+                            "price": ticker.last_price,
+                            "ts": observed_at,
+                            "prev_price": prev_price,
+                            "volume_24h": volume_24h,
+                            "provider": getattr(ticker, "provider", None) or "unknown",
+                            "symbol": sym,
+                            "market_type": instrument.market_type,
+                            "exchange": instrument.exchange,
+                        }
+                        _instrument_price_cache[
+                            (
+                                instrument.exchange,
+                                sym,
+                                instrument.market_type,
+                            )
+                        ] = dict(entry)
+                        _price_cache[sym] = entry
 
-                            if prev_price and prev_price > 0 and cfg.event_triggers.enabled:
-                                pct = (ticker.last_price - prev_price) / prev_price * 100
-                                _check_event_triggers(sym, pct, volume_24h, prev_entry.get("volume_24h"), cfg)
+                    if prev_price and prev_price > 0 and cfg.event_triggers.enabled:
+                        pct = (ticker.last_price - prev_price) / prev_price * 100
+                        _check_event_triggers(sym, pct, volume_24h, prev_entry.get("volume_24h"), cfg)
 
-                            refreshed.append(sym)
-                    except Exception as e:
-                        errors.append(f"{instrument}: {e}")
+                    refreshed.append(sym)
             finally:
                 await provider.close()
     except Exception as e:
@@ -434,7 +464,32 @@ async def refresh_watched_prices() -> dict:
     if errors:
         logger.warning("price_feed: %d errors: %s", len(errors), errors[:3])
 
+    # Prune stale entries (>10 min since last update) to prevent unbounded growth.
+    pruned = _prune_stale_price_entries(max_age_sec=600)
+    if pruned:
+        logger.debug("price_feed: pruned %d stale cache entries", pruned)
+
     return {"refreshed": len(refreshed), "symbols": refreshed, "errors": errors}
+
+
+def _prune_stale_price_entries(max_age_sec: float = 600.0) -> int:
+    """Remove cache entries not updated within the last ``max_age_sec`` seconds.
+
+    Without pruning, ``_price_cache`` and ``_instrument_price_cache`` grow
+    without bound as positions open/close and the universe rotates.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=max_age_sec)
+    pruned = 0
+    with _cache_lock:
+        for cache in (_price_cache, _instrument_price_cache):
+            stale_keys = [
+                k for k, v in cache.items()
+                if v.get("ts", datetime.min.replace(tzinfo=timezone.utc)) < cutoff
+            ]
+            for k in stale_keys:
+                del cache[k]
+                pruned += 1
+    return pruned
 
 
 def _check_event_triggers(

@@ -190,8 +190,8 @@ def _spent_in_window(
     where = [
         "cost_status != 'unknown'",
         "estimated_cost_usd IS NOT NULL",
-        "replace(started_at,' ','T') >= replace(?,' ','T')",
-        "replace(started_at,' ','T') <= replace(?,' ','T')",
+        "started_at >= ?",
+        "started_at <= ?",
     ]
     params: list[Any] = [window_start.isoformat(), now.isoformat()]
     if scope == "system":
@@ -369,7 +369,7 @@ def list_recent_would_block_events(
     db = _ensure()
     rows = db.execute(
         """SELECT * FROM runtime_cost_events
-           WHERE replace(started_at,' ','T') >= replace(?,' ','T')
+           WHERE started_at >= ?
              AND json_valid(metadata_json)
              AND json_extract(metadata_json,'$.would_block') IS NOT NULL
            ORDER BY started_at DESC

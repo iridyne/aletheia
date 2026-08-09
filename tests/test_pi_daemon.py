@@ -65,6 +65,9 @@ def test_notify_noop_when_not_started():
         "task_generation": 0,
         "started_at": None,
         "active_params": None,
+        "last_heartbeat_age_sec": None,
+        "consecutive_failures": 0,
+        "signal_pending_queue_depth": None,
         "last_error_summary": None,
     }
 

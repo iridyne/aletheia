@@ -179,3 +179,78 @@ def _lookup_atr_pct(symbol: str) -> float | None:
     except Exception:
         pass
     return None
+
+
+# --- Dynamic position sizing (QuantMuse inspired) ---
+
+def dynamic_size_multiplier(
+    *,
+    trend_strength: float | None = None,
+    confidence: float | None = None,
+    macro_alignment: float | None = None,
+    portfolio_heat: float | None = None,
+    historical_edge: float | None = None,
+    volatility_regime: str | None = None,
+) -> tuple[float, dict[str, float]]:
+    """Compute a dynamic multiplier that adjusts position size based on
+    multiple market context factors.
+
+    Returns (multiplier, breakdown) where breakdown maps factor names
+    to their contribution.  The multiplier is centered at 1.0 (no change)
+    and typically ranges from 0.3 (very unfavorable) to 1.5 (very favorable).
+
+    Factors:
+        trend_strength: 0-1, strength of the trend (stronger → larger)
+        confidence: 0-1, committee/agent confidence (higher → larger)
+        macro_alignment: 0-1, macro environment alignment (aligned → larger)
+        portfolio_heat: 0-1, current portfolio risk (hotter → smaller)
+        historical_edge: 0-1, historical win rate for this setup (higher → larger)
+        volatility_regime: "low" | "normal" | "high" (affects size)
+
+    Returns:
+        (multiplier, breakdown) where breakdown explains each factor's contribution.
+    """
+    breakdown: dict[str, float] = {}
+    multiplier = 1.0
+
+    # Trend strength: 0.7 at trend=0 → 1.0 at trend=0.5 → 1.3 at trend=1.0
+    if trend_strength is not None:
+        tf = 0.7 + 0.6 * max(0.0, min(1.0, trend_strength))
+        breakdown["trend_strength"] = tf
+        multiplier *= tf
+
+    # Confidence: 0.8 at conf=0 → 1.0 at conf=0.5 → 1.2 at conf=1.0
+    if confidence is not None:
+        cf = 0.8 + 0.4 * max(0.0, min(1.0, confidence))
+        breakdown["confidence"] = cf
+        multiplier *= cf
+
+    # Macro alignment: 0.85 at align=0 → 1.0 at align=0.5 → 1.15 at align=1.0
+    if macro_alignment is not None:
+        mf = 0.85 + 0.3 * max(0.0, min(1.0, macro_alignment))
+        breakdown["macro_alignment"] = mf
+        multiplier *= mf
+
+    # Portfolio heat: 1.2 at heat=0 → 1.0 at heat=0.5 → 0.6 at heat=1.0
+    if portfolio_heat is not None:
+        hf = 1.2 - 0.6 * max(0.0, min(1.0, portfolio_heat))
+        breakdown["portfolio_heat"] = hf
+        multiplier *= hf
+
+    # Historical edge: 0.9 at edge=0 → 1.0 at edge=0.5 → 1.1 at edge=1.0
+    if historical_edge is not None:
+        hf = 0.9 + 0.2 * max(0.0, min(1.0, historical_edge))
+        breakdown["historical_edge"] = hf
+        multiplier *= hf
+
+    # Volatility regime: high vol reduces size, low vol increases slightly
+    if volatility_regime:
+        vol_factors = {"low": 1.1, "normal": 1.0, "high": 0.7, "extreme": 0.4}
+        vf = vol_factors.get(volatility_regime, 1.0)
+        breakdown["volatility_regime"] = vf
+        multiplier *= vf
+
+    # Clamp to safe range
+    multiplier = max(0.3, min(1.5, multiplier))
+
+    return round(multiplier, 3), breakdown

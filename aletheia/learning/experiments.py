@@ -274,6 +274,14 @@ def _policy_epoch_definition(
                 "min_volume_24h_usdt": u.min_volume_24h_usdt,
                 "max_spread_bps": u.max_spread_bps,
                 "min_depth_10bps_usd": u.min_depth_10bps_usd,
+                # family_direction_bias is a per-family×direction ranker score
+                # delta that materially changes which candidates win the universe
+                # shortlist. Folded in here so an operator override (e.g. extra
+                # short suppression) rotates the epoch and does not pool its
+                # outcomes with the prior baseline. scanner_regime_scoring and
+                # scanner_weights are already in `values` above for the same
+                # reason; this completes the family-layer score-delta triad.
+                "family_direction_bias": u.family_direction_bias,
             }
         if path_id == "operator_learning_bundle":
             # Prompt-bundle contribution cannot pool observations across a

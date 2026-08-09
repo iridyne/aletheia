@@ -24,6 +24,12 @@ _IS_WINDOWS = platform.system() == "Windows"
 _DEDUP_WINDOW_SEC = 120.0
 _recent_messages: dict[str, float] = {}  # hash → monotonic timestamp
 _DEDUP_MAX_ENTRIES = 200
+# Unconditional periodic cleanup counter: every _DEDUP_CLEANUP_INTERVAL calls we
+# sweep all entries for expiry regardless of dict size.  This bounds memory even
+# during an alert storm where >200 unique messages arrive within the 120s window
+# (the old size-gated cleanup could never trigger in that case — M2 fix).
+_DEDUP_CLEANUP_INTERVAL = 50
+_dedup_call_count = 0
 
 
 def send_windows_toast(title: str, message: str) -> None:
@@ -75,10 +81,17 @@ def _is_dnd() -> bool:
 
 def _is_duplicate(message: str) -> bool:
     """Return True if this message was sent within the dedup window."""
+    global _dedup_call_count
     now = time.monotonic()
     key = hashlib.md5(message.encode(), usedforsecurity=False).hexdigest()
-    # Evict stale entries periodically
-    if len(_recent_messages) > _DEDUP_MAX_ENTRIES:
+    # Unconditional periodic cleanup: every _DEDUP_CLEANUP_INTERVAL calls, sweep
+    # ALL entries for expiry regardless of dict size.  This bounds memory even
+    # during an alert storm where >_DEDUP_MAX_ENTRIES unique messages arrive
+    # within the 120s window (the old size-gated cleanup could never trigger in
+    # that case).  The cheap counter increment costs nothing on the hot path.
+    _dedup_call_count += 1
+    if _dedup_call_count >= _DEDUP_CLEANUP_INTERVAL:
+        _dedup_call_count = 0
         stale = [k for k, ts in _recent_messages.items() if now - ts > _DEDUP_WINDOW_SEC]
         for k in stale:
             del _recent_messages[k]
@@ -131,12 +144,13 @@ def _send_telegram_alert(message: str, *, level: str = "warning",
                     pass
 
         try:
-            asyncio.get_running_loop()
+            loop = asyncio.get_running_loop()
         except RuntimeError:
             asyncio.run(_send_all())
         else:
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                pool.submit(asyncio.run, _send_all()).result()
+            # Non-blocking: schedule on the event loop without waiting.
+            # Telegram alerts are advisory — no need to block the caller.
+            asyncio.ensure_future(_send_all(), loop=loop)
     except Exception as e:
         logger.warning("Telegram notification failed (non-critical): %s", e)
 
@@ -177,8 +191,14 @@ def _send_webhook(payload: dict, *, event_type: str = "alert") -> None:
         timeout = cfg.webhook.timeout_sec or 10.0
         # Route through the managed proxy (aletheia.net) rather than a raw urlopen,
         # so the outbound webhook honours the configured proxy / enforce policy.
+        # Always read+close the response to avoid leaking sockets / file descriptors
+        # on every notification (trade fills, alerts, daily summary).
         from aletheia.net import build_urllib_opener
-        build_urllib_opener().open(req, timeout=timeout)
+        resp = build_urllib_opener().open(req, timeout=timeout)
+        try:
+            resp.read()
+        finally:
+            resp.close()
     except Exception as e:
         logger.debug("Webhook notification failed (non-critical): %s", e)
 

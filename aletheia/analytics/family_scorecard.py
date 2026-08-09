@@ -45,6 +45,21 @@ def compute_family_scorecard() -> list[dict]:
                 ).fetchone()
                 if opportunity and opportunity["scanner_family"]:
                     scanner_family = opportunity["scanner_family"]
+        # Fallback for broker-ledger closes (e.g. bitget_demo) where
+        # trade_proposals.opportunity_id is NULL: resolve family by symbol
+        # from the shadow_trades ledger (same COALESCE spirit as
+        # agent_shell/trading_context.py:574).
+        if scanner_family == "unknown":
+            sym = position.get("symbol")
+            if sym:
+                st = db.execute(
+                    "SELECT scanner_family FROM shadow_trades "
+                    "WHERE symbol=? AND scanner_family IS NOT NULL AND was_selected=1 "
+                    "ORDER BY datetime(created_at) DESC, rowid DESC LIMIT 1",
+                    (sym,),
+                ).fetchone()
+                if st and st["scanner_family"]:
+                    scanner_family = st["scanner_family"]
         rows.append({**position, "scanner_family": scanner_family})
 
     for r in rows:

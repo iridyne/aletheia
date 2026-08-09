@@ -71,6 +71,7 @@
 | System Operator 无候选观察 | PI daemon 的 explicit zero-pending queue summary（5 分钟去重） | `operator_evaluation_events` | doctor `loop.skip_halt`、运行诊断与后续只读 Skip report | 🟡 observation-only；30 天 retention（详见 [`RETENTION_POLICY.md`](RETENTION_POLICY.md)）；不是 PiDecision、不进 candidate outcome、不改配置或交易权限 |
 | Broker 私有仓位/成交历史 | Bitget/OKX/Binance execution adapter 按完整 account+instrument identity 直查 | 不保存原始响应；只返回标准化 `VerifiedExitResult` | `execution.verified_exit` → 后续 RG-T07 verified/admin close 分流 | ✅ 只读、按 venue 分页；网络/权限/游标/时间窗/歧义失败统一 `inconclusive`，不影响下单路径 |
 | Measured Learning ledger + canonical/fallback outcome provenance | Universe measurement-supported 路径与 evaluator 写入的内部事实；不是外部采集器 | 7 个永久 Learning 表 + `filter_candidate_outcomes` + selected-member `universe_forward_outcomes` mirror/fallback | evaluator/lifecycle/doctor + cached 有界只读 `lco-v1` summary/registry-backed dashboard selector | 🟠 Universe 测量闭环、owner projection、当前路由性能与响应式无障碍已实现；Operator bundle 因缺少 decision-utility causal outcome 保持 static fallback；明细/分页和完整 workbench 仍缺失；不需要新增采集 DU claim |
+| 委员会 LLM 评估报告（DU-S25） | AI Investment Committee（`agents/committee/integration.py`，内部生成，非外部采集器） | `committee_reports`（append-only，90d writer-side prune） | 风控因果检查（`risk/causal.py` 只读）、决策报告（`analytics/decision_report.py` 只读）、前端展示（只读） | ✅ 决策级可解释性审计数据；fail-soft 写入不阻塞候选流转；永不回流交易/风控语义；查无记录时渲染端如实显示 unavailable |
 
 ---
 

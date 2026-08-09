@@ -412,7 +412,9 @@ def test_no_open_adopted_position_has_null_stop(tmp_path, monkeypatch):
     from aletheia.portfolio.position_reconciler import adopt_position
     from aletheia.storage.sqlite import get_db
 
-    # Adopt a variety of positions: demo short, demo long, live short, live long
+    # Adopt a variety of positions: demo short, demo long, live short, live long.
+    # Sizes stay within max_per_symbol_notional_usdt (default 400) so the
+    # adoption notional guard does not refuse them.
     cases = [
         ("BNB/USDT", "short", 562.73, "demo"),
         ("BTC/USDT", "long", 68000.0, "demo"),
@@ -421,8 +423,9 @@ def test_no_open_adopted_position_has_null_stop(tmp_path, monkeypatch):
     ]
     adopted_ids = []
     for sym, side, entry, mode in cases:
+        qty = 0.005 if sym == "BTC/USDT" else 0.01  # 0.005 * 68000 = 340 < 400
         exchange_pos = _make_exchange_pos(
-            symbol=sym, side=side, quantity=0.01, entry_price=entry,
+            symbol=sym, side=side, quantity=qty, entry_price=entry,
         )
         ids = adopt_position(exchange_pos, account_mode=mode)
         adopted_ids.append(ids["position_id"])
@@ -987,7 +990,7 @@ def test_adopt_no_false_strategy_attribution(tmp_path, monkeypatch):
     ))
 
     ids = adopt_position(_make_exchange_pos(symbol="ETH/USDT", side="long",
-                                            quantity=1.0, entry_price=1600.0),
+                                            quantity=0.2, entry_price=1600.0),
                          account_mode="demo")
     row = conn.execute(
         "SELECT strategy_id FROM positions WHERE id=?", (ids["position_id"],)
@@ -1358,7 +1361,7 @@ def test_recovered_attribution_threads_to_proposal_and_order(tmp_path, monkeypat
 
     ids = adopt_position(
         _make_exchange_pos(symbol="ETH/USDT", side="long",
-                           quantity=0.5, entry_price=3200.0),
+                           quantity=0.1, entry_price=3200.0),
         account_mode="demo",
     )
     position_id = ids["position_id"]

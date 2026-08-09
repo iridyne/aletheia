@@ -277,6 +277,11 @@ class MarketRead(BaseModel):
          Empty list → the model is implicitly admitting "I had nothing concrete".
     """
 
+    # Chain-of-thought: LLM must reason through indicators BEFORE committing to a direction.
+    # This forces explicit reasoning instead of gut-feel guesses.
+    reasoning: str = Field(
+        "", description="2-4 sentences: work through the indicators step by step before deciding."
+    )
     direction_bias: Literal["long", "short", "neutral"] = "neutral"
     confidence: Literal["high", "medium", "speculative"] = "speculative"
     confidence_score: int = Field(50, ge=0, le=100, description="0=no idea, 50=balanced, 100=overwhelming evidence")
@@ -315,7 +320,14 @@ latest price, multi-timeframe technical indicators (SMA/RSI/ATR/Bollinger/
 momentum), recent close series. Use this snapshot as your single source of
 truth — do not invent numbers or claim levels not in the data.
 
-Output a structured market read. Calibration:
+Output a structured market read. IMPORTANT: think through the indicators STEP BY STEP
+before committing to a direction. Use the `reasoning` field to show your work.
+
+- reasoning (REQUIRED): 2-4 sentences working through the data.
+  Example: "Price 105200 > SMA50 102000 (uptrend). RSI 65 is bullish but not overbought.
+  Mom10 +2.3% confirms upward momentum. However BB% 0.92 near upper band suggests short-term
+  exhaustion. Net: bullish bias but wait for pullback."
+  This field MUST be filled — empty reasoning → rejected.
 
 - direction_bias:
   - "long" if multiple indicators across timeframes point up — e.g. price > SMA_50,
@@ -339,7 +351,7 @@ Output a structured market read. Calibration:
 
 CRITICAL: Output ONLY the raw JSON object. No markdown fences, no explanation
 before or after, no "Here is..." preamble. Just the JSON starting with { and
-ending with }.
+ending with }. The `reasoning` field goes FIRST in the JSON.
 
 Indicator meanings (single source of truth — do not invent rules):
 - SMA20/SMA50: simple moving averages. Price > SMA50 = uptrend; < SMA50 = downtrend.
@@ -1505,18 +1517,44 @@ async def _analyze_symbol(
     if isinstance(obs, list):
         observations = [str(o)[:200] for o in obs[:4] if o]
 
+    # Chain-of-thought validation: reject empty reasoning (forces the LLM to think).
+    _reasoning = str(read.get("reasoning", "")).strip()
+    if not _reasoning and direction != "neutral":
+        logger.info(
+            "market_read: %s %s rejected — empty reasoning (chain-of-thought required)",
+            symbol, direction,
+        )
+        direction = "neutral"
+        confidence = "speculative"
+        confidence_score = min(confidence_score or 50, 30)
+
+    # Evidence gate: non-neutral reads require ≥3 distinct indicator citations.
+    # This forces the LLM to ground its directional call in multiple data points
+    # instead of guessing from a single indicator.  Reads with <3 citations are
+    # downgraded to neutral (still logged, but not actionable).
+    if direction != "neutral" and len(observations) < 3:
+        logger.info(
+            "market_read: %s %s downgraded to neutral (only %d observations, need ≥3)",
+            symbol, direction, len(observations),
+        )
+        direction = "neutral"
+        confidence = "speculative"
+        confidence_score = min(confidence_score or 50, 40)
+
     record_step(
         run_id,
         f"market_read_output:{symbol}",
         input_data=None,
-        output_data=(f"direction={direction} confidence={confidence} score={confidence_score} obs={len(observations)}"),
+        output_data=(f"direction={direction} confidence={confidence} score={confidence_score} obs={len(observations)})"),
     )
 
     if not is_tool_permitted("create_opportunity", permission_mode):
         return None, llm_error
 
-    # Build thesis
+    # Build thesis (includes chain-of-thought reasoning for audit)
     thesis_parts = []
+    if _reasoning:
+        thesis_parts.append("Reasoning: " + _reasoning)
     if rationale:
         thesis_parts.append(rationale)
     if observations:
@@ -1688,6 +1726,9 @@ async def _analyze_symbol(
         opportunity_metadata["learning_candidate_key"] = learning_outcome_candidate_key
     if learning_manifest:
         opportunity_metadata["learning_manifest"] = learning_manifest
+    # Surface observation count to the ranker so it can weight evidence-backed
+    # reads (≥3 indicator citations) above thin LLM guesses (P0-1b).
+    opportunity_metadata["key_observations_count"] = len(observations)
     opportunity_metadata["evidence_manifest"] = _opportunity_evidence_manifest(
         metadata=opportunity_metadata,
         rendered_sources=rendered_sources,

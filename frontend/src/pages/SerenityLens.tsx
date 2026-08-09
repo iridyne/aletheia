@@ -82,7 +82,9 @@ function ResearchStatusCard() {
   const { data: status } = useQuery({
     queryKey: ['serenity-status'],
     queryFn: api.getSerenityStatus,
-    refetchInterval: 5000,
+    // Perf (Phase 4): 5s → 20s. Serenity status changes are infrequent
+    // (research pipeline runs take minutes); 20s is imperceptible.
+    refetchInterval: 20000,
   })
 
   if (!status) return <div className="lens-engine-status">Loading status…</div>
@@ -154,7 +156,8 @@ function OverviewTab() {
   const { data: status } = useQuery({
     queryKey: ['serenity-status'],
     queryFn: api.getSerenityStatus,
-    refetchInterval: 5000,
+    // Perf (Phase 4): 5s → 20s (matches ResearchStatusCard).
+    refetchInterval: 20000,
   })
 
   const hasActive = !!status?.currentRun
@@ -224,7 +227,9 @@ function RecentRunsList({ limit, onSelect }: { limit: number; onSelect?: (id: st
   const { data } = useQuery({
     queryKey: ['serenity-runs', limit],
     queryFn: () => api.getSerenityRuns({ limit }),
-    refetchInterval: 5000,
+    // Perf (Phase 4): 5s → 20s. serenity_runs is covered by the WS CHANGE_MAP
+    // (invalidated on push), so the poll is only a fallback.
+    refetchInterval: 20000,
   })
 
   const items = data?.items || []
@@ -278,7 +283,8 @@ function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }
   const { data } = useQuery({
     queryKey: ['serenity-run-detail', runId],
     queryFn: () => api.getSerenityRunDetail(runId),
-    refetchInterval: 3000,
+    // Perf (Phase 4): 3s → 15s. Detail view is read-only; changes are rare.
+    refetchInterval: 15000,
   })
 
   const { data: artifacts } = useQuery({

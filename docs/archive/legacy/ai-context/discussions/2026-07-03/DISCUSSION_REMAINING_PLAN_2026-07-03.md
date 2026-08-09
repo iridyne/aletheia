@@ -1,6 +1,6 @@
 # Discussion Remaining Plan 2026-07-03
 
-来源: 2026-07-03 owner 口述（现见 [Product Direction](../../../product/definition/DIRECTION.md)）、`docs/_ai/discussions/2026-07-03/DISCUSSION_ACTION_PLAN.md`, 以及已验证的
+来源: 2026-07-03 owner 口述（现见 [Product Direction](../../../../../product/definition/DIRECTION.md)）、`docs/_ai/discussions/2026-07-03/DISCUSSION_ACTION_PLAN.md`, 以及已验证的
 `integration/discussion-2026-07-03` 集成分支。
 
 > **Historical plan.** Its branch names and status labels are retained as

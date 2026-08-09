@@ -28,6 +28,7 @@ import time
 from typing import Any, TypeVar
 
 from aletheia.model_provider.base import ModelRequest, ModelResponse, StreamChunk
+from aletheia.observability.llm_metrics import record
 
 logger = logging.getLogger("aletheia.model_provider.broker")
 _DEFAULT_EXECUTOR_SHUTDOWN_TIMEOUT_SEC = 4.0
@@ -728,13 +729,34 @@ async def brokered_complete(
     priority: InferencePriority | None = None,
     timeout_sec: float | None = None,
 ) -> ModelResponse:
-    return await inference_broker.submit(
-        provider_name,
-        lambda: provider.complete(request),
-        reserved_tokens=estimate_request_tokens(request),
-        priority=priority,
-        timeout_sec=timeout_sec,
-    )
+    # Observability: count every real completion attempt per provider/model.
+    # provider.model is the exact model being requested (including cloned
+    # fallback models set by complete_with_fallback), so the key matches the
+    # "provider_name/model" identifiers already used in Aletheia's logs.
+    provider_id = f"{provider_name}/{getattr(provider, 'model', '') or 'unknown'}"
+    try:
+        response = await inference_broker.submit(
+            provider_name,
+            lambda: provider.complete(request),
+            reserved_tokens=estimate_request_tokens(request),
+            priority=priority,
+            timeout_sec=timeout_sec,
+        )
+    except BaseException:
+        # Record the failed attempt, then re-raise so callers (fallback,
+        # cooldown, startup gate) keep their original error semantics.
+        record(provider_id, False)
+        raise
+    record(provider_id, True)
+    return response
+
+
+# Caps in-flight stream chunks per brokered stream. 256 is far above a normal
+# consumer's lag while still bounding worst-case memory per connection.
+_STREAM_QUEUE_MAXSIZE = 256
+# A consumer that has not drained a single chunk for this long is treated as
+# gone; the producer errors out instead of blocking a broker slot forever.
+_STREAM_PUT_TIMEOUT_SEC = 120.0
 
 
 async def brokered_stream(
@@ -750,12 +772,25 @@ async def brokered_stream(
 
     target = broker or inference_broker
     caller_loop = asyncio.get_running_loop()
-    chunks: asyncio.Queue[StreamChunk | object] = asyncio.Queue()
+    # Previously an unbounded queue fed by put_nowait: a slow SSE consumer let
+    # the entire LLM response accumulate in memory with nothing to push back.
+    # _consume runs on the BROKER's loop/thread (submit() dispatches it via
+    # run_coroutine_threadsafe), so awaiting a cross-loop put blocks the
+    # producer rather than the consumer -- genuine backpressure, and no
+    # self-deadlock because the two loops are distinct.
+    chunks: asyncio.Queue[StreamChunk | object] = asyncio.Queue(
+        maxsize=_STREAM_QUEUE_MAXSIZE
+    )
     sentinel = object()
 
     async def _consume() -> None:
         async for chunk in provider.stream(request):
-            caller_loop.call_soon_threadsafe(chunks.put_nowait, chunk)
+            await asyncio.wait_for(
+                asyncio.wrap_future(
+                    asyncio.run_coroutine_threadsafe(chunks.put(chunk), caller_loop)
+                ),
+                timeout=_STREAM_PUT_TIMEOUT_SEC,
+            )
 
     task = asyncio.create_task(
         target.submit(
@@ -766,7 +801,24 @@ async def brokered_stream(
             timeout_sec=timeout_sec,
         )
     )
-    task.add_done_callback(lambda _task: chunks.put_nowait(sentinel))
+
+    def _signal_end(_task: "asyncio.Task") -> None:
+        """Deliver the terminator even when the queue is saturated.
+
+        Now that the queue is bounded, put_nowait can raise QueueFull -- and a
+        dropped sentinel would hang the consumer loop below forever. This
+        callback runs on caller_loop (the task was created there), so falling
+        back to a scheduled awaitable put is safe.
+
+        Args:
+            _task: The finished broker task (unused; only completion matters).
+        """
+        try:
+            chunks.put_nowait(sentinel)
+        except asyncio.QueueFull:
+            caller_loop.create_task(chunks.put(sentinel))
+
+    task.add_done_callback(_signal_end)
     try:
         while True:
             item = await chunks.get()

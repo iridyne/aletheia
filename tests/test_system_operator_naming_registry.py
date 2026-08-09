@@ -50,7 +50,13 @@ def test_pi_daemon_config_field_shape_unchanged():
     from aletheia.config.schema import PiDaemonConfig
 
     inst = PiDaemonConfig()
-    for field in ("enabled", "debounce_sec", "cooldown_sec", "heartbeat_sec"):
+    for field in (
+        "enabled",
+        "debounce_sec",
+        "cooldown_sec",
+        "heartbeat_sec",
+        "decision_interval_minutes",
+    ):
         assert hasattr(inst, field), (
             f"PiDaemonConfig lost expected legacy field {field!r} — "
             "removing fields silently breaks existing config.yaml files. "

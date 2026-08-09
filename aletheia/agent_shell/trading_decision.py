@@ -66,12 +66,13 @@ class _DummySchema:
 
 _MIN_CONVICTION_TO_TRADE = 55       # below this, skip (even after debate)
 _DEBATE_RANGE = (40, 80)            # conviction in this range triggers debate
+
 _MAX_CONVICTION_MULTIPLIER = 2.0    # cap: 2× base notional at 100% conviction
 _MIN_CONVICTION_MULTIPLIER = 0.5    # floor: 0.5× base notional at low conviction
 _BIAS_BRAKE_WINDOW_HOURS = 24
 _BIAS_BRAKE_MIN_PROPOSALS = 20
-_BIAS_BRAKE_MAX_DIRECTION_PCT = 0.90
-_BIAS_BRAKE_BYPASS_CONVICTION = 85
+_BIAS_BRAKE_MAX_DIRECTION_PCT = 0.95  # raised from 0.90 to allow more directional concentration
+_BIAS_BRAKE_BYPASS_CONVICTION = 80   # lowered from 85 so more proposals bypass the brake
 
 _ADVERSE_SKIP_REASON_CODES = {
     "signal_conflict",
@@ -1239,7 +1240,34 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
                     decision.symbol, guard_summary["details"])
 
     notional = decision.position_size_usdt or 25.0
-    quantity = round(notional / price, 6) or 0.000001
+    # `round(...) or 0.000001` used to substitute a dust quantity whenever the
+    # sizing rounded to zero (high-priced instrument vs a small notional). That
+    # was a risk bypass, not a fallback: the Risk Engine derives its notional as
+    # `proposal.quantity * proposal.price` (risk/engine.py), so a dust quantity
+    # collapses the evaluated notional to ~0 and sails past every capital cap,
+    # while `requested_notional` still records the intended size -- the audit
+    # trail and the actual order disagree. Refuse the trade instead.
+    quantity = round(notional / price, 6)
+    if quantity <= 0:
+        reason = "position_size_rounds_to_zero"
+        decision.filter_trace.append({
+            "filter_name": "proposal_quantity_sizing",
+            "stage": "proposal_submission",
+            "decision": "rejected",
+            "reason_code": reason,
+            "inputs": {
+                "symbol": decision.symbol,
+                "notional_usdt": notional,
+                "price": price,
+                "computed_quantity": quantity,
+            },
+            "parameters": {"quantity_precision": 6, "minimum_quantity": 0},
+        })
+        logger.warning(
+            "%s: %s notional=%s price=%s rounds to zero quantity",
+            reason, decision.symbol, notional, price,
+        )
+        raise DecisionUnavailable(reason, stage="proposal_preflight")
 
     # Phase 4 execution-school discriminator. Derived from the DECISION-level
     # signal_source (Phase 2): a 'serenity'-sourced decision opens a 'serenity'

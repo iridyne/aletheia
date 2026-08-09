@@ -2,16 +2,16 @@
 
 > ⚠️ **文档金字塔定位(2026-06-21):** 本文件**混合**两类内容,引用时务必区分:
 > - **长期有效(契约级)**:Design Philosophy、Red Lines、Phase 定义与 observation gate
->   —— 这部分是金标准,Phase 通过标准的权威版在 [PHASE_GATES](../../product/gates/PHASE_GATES.md)。
+>   —— 这部分是金标准,Phase 通过标准的权威版在 [PHASE_GATES](../../../../product/gates/PHASE_GATES.md)。
 > - **易腐(状态级)**:各 Track 的"已落地"清单、scheduler job 进度快照
 >   —— 会随实现过期,**不可当金标准**;现状真相源是 `aletheia doctor`,非本文。
 >
-> 上层愿景见 [VISION](../../product/definition/VISION.md);全局文档分层见 [DOC_SYSTEM_PLAN](../../product/documentation/DOC_SYSTEM_PLAN.md)。
+> 上层愿景见 [Product Direction](../../../../product/definition/DIRECTION.md);全局文档分层见 [DOC_SYSTEM_PLAN](../../../../product/documentation/DOC_SYSTEM_PLAN.md)。
 
 > Last updated: 2026-07-01 (Phase 2A closed + 2A+ status audited against code — see REMAINING_WORK_2026-07-01.md)
 > Sources: PIPELINE_STATUS.md + deep research (102 agents, 20 sources) + WORLD_MAP.md (full architecture vision)
->   + external Agent Framework Research Report 2025–2026 (validation only — see [agent_framework_research_2025_2026.md](../../references/papers-and-benchmarks/agent_framework_research_2025_2026.md))
->   + Round 1 experiment data (T+3d: 37 closed, PF=1.416, WR=40.5%) — see [ROUND1_JUDGMENT_PREVIEW](../../_ai/audits/ROUND1_JUDGMENT_PREVIEW.md)
+>   + external Agent Framework Research Report 2025–2026 (validation only — see [agent_framework_research_2025_2026.md](../../../../references/papers-and-benchmarks/agent_framework_research_2025_2026.md))
+>   + Round 1 experiment data (T+3d: 37 closed, PF=1.416, WR=40.5%) — see [ROUND1_JUDGMENT_PREVIEW](../../ai-context/audits/ROUND1_JUDGMENT_PREVIEW.md)
 >   + frozen_optimization_backlog (39+3 items) — see [frozen_optimization_backlog](../../plans/strategy-research/frozen_optimization_backlog.md)
 > Nature: **Guiding document, not automatic authorization** — each phase requires explicit confirmation before starting
 
@@ -77,7 +77,7 @@ explicit user authorization regardless of whether earlier gates are satisfied.
 
 > **正交于 Phase 0–7。** Phase 轴衡量*交易智能成熟度*;本 track 衡量*操作/控制面*
 > ——用户能否从 Command Center 问 "现在在干什么 / 为什么失败 / 帮我修这个低风险问题"。
-> 概念设计见 [OPERATOR_LAYER_DESIGN.md](OPERATOR_LAYER_DESIGN.md);
+> 概念设计见 [OPERATOR_LAYER_DESIGN.md](../../../../design/operator/operator_layer.md);
 > repo-specific 双进程详细蓝图见
 > [superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md](superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md);
 > 参考文件覆盖矩阵见
@@ -90,7 +90,7 @@ explicit user authorization regardless of whether earlier gates are satisfied.
 > 观察门;合并 / 上线由代码审查 + 测试基线 + trust 边界(不触 execution / 凭证 / live)
 > 把关。涉及 live 路径的能力仍需用户显式授权。
 
-本 track **拆两层**(见 [AI_HANDOFF.md](AI_HANDOFF.md) 2026-06-09 判断):
+本 track **拆两层**(见 [AI_HANDOFF.md](../../ai-context/session/AI_HANDOFF.md) 2026-06-09 判断):
 
 | 层 | 内容 | 状态 | 前置 |
 |---|---|---|---|

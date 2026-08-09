@@ -169,7 +169,7 @@ def _invalidate_config_cache() -> None:
     _config_cache = None
 
 
-def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
+def load_config(*, persist_migrations: bool = True, deep_copy: bool = True) -> AletheiaConfig:
     """Load config from disk or return defaults.  Hot path uses in-memory cache.
 
     #147 fix: return a DEEP COPY of the cached config, not the cached object
@@ -180,6 +180,12 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
     load_config call inside the 5s TTL sees the phantom mutation. Deep-copy
     on the read side makes mutations local to each caller; the cache stays
     the source of truth on disk.
+
+    Perf (Phase 2): ``deep_copy=False`` returns the cached object directly for
+    read-only callers (auth middleware, analytics endpoints) that never mutate
+    it. This eliminates a per-request deep copy of the entire config tree on
+    the hottest path. Callers that mutate the result MUST use ``deep_copy=True``
+    (the default) so the cache stays the source of truth.
     """
     global _config_cache
     if not is_preview_mode():
@@ -193,7 +199,7 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
     if _config_cache is not None:
         ts, cached_path, cfg = _config_cache
         if time.monotonic() - ts < _CONFIG_CACHE_TTL and cached_path == CONFIG_PATH:
-            return cfg.model_copy(deep=True)
+            return cfg.model_copy(deep=True) if deep_copy else cfg
     if CONFIG_PATH.exists():
         raw = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
         cfg = AletheiaConfig.model_validate(raw)
@@ -207,12 +213,12 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
         if changed and persist_migrations:
             save_config(cfg)
         if changed and not persist_migrations:
-            return cfg.model_copy(deep=True)
+            return cfg.model_copy(deep=True) if deep_copy else cfg
         _config_cache = (time.monotonic(), CONFIG_PATH, cfg)
-        return cfg.model_copy(deep=True)
+        return cfg.model_copy(deep=True) if deep_copy else cfg
     cfg = AletheiaConfig()
     _config_cache = (time.monotonic(), CONFIG_PATH, cfg)
-    return cfg.model_copy(deep=True)
+    return cfg.model_copy(deep=True) if deep_copy else cfg
 
 
 def save_config(cfg: AletheiaConfig) -> None:

@@ -19,11 +19,12 @@ remains explicitly unresolved until reconciliation creates the local Fill/Positi
 
 import asyncio
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from aletheia.data.symbols import to_bitget
-from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest
+from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest, DemoFundingUnavailable
 from aletheia.exchanges.submission_errors import (
     ClosePositionAbsentError,
     is_ambiguous_submission_error as _is_ambiguous_submission_error,
@@ -88,15 +89,9 @@ def _guard_unresolved_submission(proposal_id: str, execution_mode: str) -> None:
 
 
 def _run_coro(coro):
-    """Run a coroutine to completion from sync code, safe whether or not an event
-    loop is already running in this thread (FastAPI async route vs scheduler thread)."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)  # no loop in this thread
-    # A loop is already running here — run the coroutine in a worker thread.
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+    """Run a coroutine to completion from sync code without blocking the event loop."""
+    from aletheia.agent_runtime.async_utils import run_coro_from_sync
+    return run_coro_from_sync(coro)
 
 
 def _same_optional_price(left: float | None, right: object) -> bool:
@@ -134,16 +129,57 @@ def _approved_protection_prices(
 
 
 def _ensure_mix_margin(client, required_usd: float, dry_run: bool = False) -> None:
-    """Top up the mix (futures) wallet from UTA before a futures order."""
+    """Ensure margin is available before a futures order.
+
+    UTA (unified) accounts have no separate mix wallet: margin lives in the
+    unified USDT wallet, so the legacy spot->mix transfer is a no-op. We just
+    verify the unified wallet holds enough margin and let the order proceed.
+    Classic accounts keep the spot->mix top-up path.
+    """
     if required_usd <= 0 or dry_run:
         return
+    from aletheia.exchanges.bitget.client import DemoFundingUnavailable
+    if _run_coro(client._is_unified()):
+        bal = _run_coro(client.get_account_balance())
+        avail = float(bal.get("available") or 0)
+        if avail < required_usd:
+            raise DemoFundingUnavailable(
+                f"UTA unified USDT available ${avail:.2f} < required "
+                f"${required_usd:.2f}. Top up the Bitget demo unified account."
+            )
+        return
     try:
-        from aletheia.exchanges.bitget.client import DemoFundingUnavailable
         _run_coro(client.transfer(required_usd))
     except DemoFundingUnavailable:
         raise
     except Exception as e:
         logger.warning("mix margin precheck skipped: %s", type(e).__name__)
+
+
+_demo_funding_warned = False
+_demo_funding_lock = threading.Lock()
+
+
+def _warn_demo_funding_once(detail: str) -> None:
+    """Emit the demo-funding remediation warning exactly once per process.
+
+    When the Bitget demo futures (mix) wallet is empty, every order fails at
+    margin preparation. Logging this once (not per order) keeps the signal loud
+    without drowning the log, and points the operator at the real fix.
+    """
+    global _demo_funding_warned
+    with _demo_funding_lock:
+        if _demo_funding_warned:
+            return
+        _demo_funding_warned = True
+    logger.error(
+        "DEMO FUNDING UNAVAILABLE: Bitget demo futures (mix) wallet has no USDT and "
+        "cannot be auto-funded (transfer returned 40404). ACTION REQUIRED: log into "
+        "Bitget -> Demo Trading -> reset/claim demo funds so the futures wallet holds "
+        "USDT. Until then every futures order fails at margin preparation. (%s)",
+        detail,
+    )
+
 
 def execute_live_order(
     proposal_id: str,
@@ -236,6 +272,18 @@ def execute_live_order(
     if market_type != 'spot' and required_margin > 0:
         try:
             _ensure_mix_margin(client, required_margin)
+        except DemoFundingUnavailable as e:
+            # Demo futures (mix) wallet is empty and cannot be topped up
+            # automatically (Bitget returns 40404). This is an exchange-side
+            # account-state problem, not a transient margin-math error. Surface a
+            # distinct, actionable reason so it is not mistaken for a code regression.
+            _warn_demo_funding_once(str(e))
+            update_order(
+                order.id,
+                status="error",
+                error_reason="demo_funding_unavailable",
+            )
+            raise
         except Exception:
             # This happens before submission, so the outcome is known: no
             # exchange order exists.  Persist a stable, non-sensitive reason.

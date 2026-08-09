@@ -14,6 +14,12 @@ Read an archived file only when its dated evidence or provenance is needed. If a
 archived claim conflicts with a current authority or current runtime fact, the
 current authority and runtime fact win.
 
+Relative links inside archived files may be stale: collections were relocated
+under `archive/legacy/` and some referenced documents were since deleted or
+renamed. Treat a broken or misleading link in an archived file as historical
+noise, not as a pointer to current truth; locate the current authority via the
+table above instead.
+
 The plan collection was migrated only after every file was read individually.
 Durable principles were either already present in current contracts or rewritten
 there before migration. Plan completion markers, dated runtime counts, fixed

@@ -17,7 +17,7 @@
 
 - Record every finding locally. Do not keep important discoveries only in chat.
 - Move toward full project coverage. Do not repeatedly re-check already covered areas.
-- Use [Product Direction](../../product/definition/DIRECTION.md) as the high-value reference for durable product intent; use the relevant L2 contract for implementation detail.
+- Use [Product Direction](../../../../product/definition/DIRECTION.md) as the high-value reference for durable product intent; use the relevant L2 contract for implementation detail.
 - New bug records should be short, Markdown-structured, and fix-oriented:
   - title
   - domain

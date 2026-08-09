@@ -617,6 +617,65 @@ def update_open_opportunity(oid: str, **kwargs) -> bool:
     return cursor.rowcount == 1
 
 
+# --- AI Investment Committee reports (explainability audit data) ---
+
+
+def insert_committee_report(report) -> None:
+    """Persist one committee evaluation (append-only advisory record)."""
+    data = _to_payload_dict(report)
+    _insert("committee_reports", _stamp_provenance(data))
+
+
+def get_committee_report(rid: str) -> dict | None:
+    return _select_one("committee_reports", rid)
+
+
+def get_latest_committee_report_for_opportunity(opportunity_id: str) -> dict | None:
+    """Most recent committee evaluation recorded for an opportunity (or None)."""
+    if not opportunity_id:
+        return None
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM committee_reports WHERE opportunity_id = ? "
+        "ORDER BY created_at DESC LIMIT 1",
+        (opportunity_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_committee_reports(
+    opportunity_id: str | None = None,
+    symbol: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Recent committee reports, newest first, optionally filtered."""
+    db = get_db()
+    sql = "SELECT * FROM committee_reports"
+    clauses: list[str] = []
+    params: list = []
+    if opportunity_id:
+        clauses.append("opportunity_id = ?")
+        params.append(opportunity_id)
+    if symbol:
+        clauses.append("symbol = ?")
+        params.append(symbol)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params.append(max(1, min(int(limit), 200)))
+    rows = db.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def prune_committee_reports(older_than_iso: str) -> int:
+    """Delete committee reports older than the ISO cutoff (retention)."""
+    cursor = execute_write(
+        "DELETE FROM committee_reports WHERE created_at < ?",
+        [older_than_iso],
+    )
+    return cursor.rowcount or 0
+
+
 def transition_open_opportunity_to_queued(oid: str) -> bool:
     """Claim one still-open Opportunity for queue insertion without state regression."""
     cur = execute_write(
@@ -2137,6 +2196,41 @@ def has_order_for_proposal(proposal_id: str) -> bool:
         .fetchone()
         is not None
     )
+
+
+def list_stale_execution_claims(buffer_sec: float = 60.0) -> list[dict]:
+    """List execution claims whose lease expired before (now - buffer).
+
+    The buffer prevents racing a worker that is still actively executing:
+    only claims that expired at least ``buffer_sec`` ago are returned.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=buffer_sec)).isoformat()
+    rows = get_db().execute(
+        "SELECT proposal_id, owner_token, claimed_at, lease_expires_at "
+        "FROM proposal_execution_claims WHERE lease_expires_at < ? "
+        "ORDER BY lease_expires_at ASC",
+        (cutoff,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def release_expired_execution_claims(buffer_sec: float = 60.0) -> list[str]:
+    """Release execution claims whose lease expired before (now - buffer).
+
+    Returns the list of proposal_ids whose claims were released.  This is a
+    GC operation for crashed workers — it does NOT re-execute the proposal,
+    it only clears the claim so manual retry or reconciliation can proceed.
+    """
+    stale = list_stale_execution_claims(buffer_sec=buffer_sec)
+    released: list[str] = []
+    for claim in stale:
+        proposal_id = str(claim.get("proposal_id"))
+        owner_token = str(claim.get("owner_token") or "")
+        if not owner_token:
+            continue
+        release_proposal_execution_claim(proposal_id, owner_token)
+        released.append(proposal_id)
+    return released
 
 
 # --- Risk Decisions ---
@@ -5959,6 +6053,56 @@ def list_universe_assets(
     return [dict(r) for r in db.execute(sql, params).fetchall()]
 
 
+# Hints that indicate an order failed because the trading pair does not exist
+# on the venue (nothing to retry -- blacklist it from the universe).
+_SYMBOL_NOT_FOUND_HINTS = (
+    "does not exist", "not exist", "invalid symbol", "trading pair",
+    "symbol not found", "pair not found",
+)
+
+
+def blacklist_universe_asset(symbol: str, reason: str) -> int:
+    """Mark universe asset(s) blacklisted by canonical symbol (all venues/types).
+
+    Returns number of rows updated. Self-healing: symbols whose orders fail with a
+    "pair does not exist" class error are excluded from future universe snapshots.
+    """
+    db = get_db()
+    n = db.execute(
+        "UPDATE universe_registry SET is_blacklisted=1, blacklist_reason=? "
+        "WHERE symbol=? AND is_blacklisted=0",
+        (reason, symbol),
+    ).rowcount
+    return n
+
+
+def auto_blacklist_failed_symbols(since_iso: str) -> int:
+    """Scan recent failed orders for 'symbol does not exist' class errors and
+    blacklist those symbols. Self-healing, idempotent. Returns rows updated.
+    """
+    from aletheia.data.symbols import to_canonical
+
+    db = get_db()
+    rows = db.execute(
+        "SELECT DISTINCT symbol, error_reason FROM orders "
+        "WHERE created_at > ? AND error_reason IS NOT NULL AND error_reason != ''",
+        (since_iso,),
+    ).fetchall()
+    blacklisted = 0
+    for r in rows:
+        reason = (r["error_reason"] or "").lower()
+        if not any(h in reason for h in _SYMBOL_NOT_FOUND_HINTS):
+            continue
+        raw = (r["symbol"] or "").strip().upper()
+        if not raw:
+            continue
+        canon = to_canonical(raw)
+        if "/" not in canon:  # couldn't normalize -> skip to avoid mis-blacklisting
+            continue
+        blacklisted += blacklist_universe_asset(canon, "execution_symbol_not_found")
+    return blacklisted
+
+
 def get_universe_asset(asset_id: str) -> dict | None:
     return _select_one("universe_registry", asset_id)
 
@@ -6312,7 +6456,7 @@ def get_active_universe_snapshot(market_type: str = "crypto") -> dict | None:
     return dict(row) if row else None
 
 
-def expire_opportunities_from_superseded_snapshots(market_type: str = "crypto") -> int:
+def expire_opportunities_from_superseded_snapshots(market_type: str = "crypto", grace_period_minutes: int = 30) -> int:
     """Expire unclaimed generations from superseded snapshots with evidence.
 
     An ``open`` row is a per-snapshot analytical generation and ends when that
@@ -6321,17 +6465,25 @@ def expire_opportunities_from_superseded_snapshots(market_type: str = "crypto") 
     freshness. Reviewed/expired rows are preserved. A SAVEPOINT makes the
     lifecycle CAS and append-only fact all-or-nothing even when this helper joins
     Universe publication's transaction.
+
+    ``grace_period_minutes`` gives recently-created opportunities a window to be
+    processed by the paper trader before they are killed by snapshot rotation.
+    Without this, opportunities created just before a new universe snapshot is
+    published would be immediately expired before they can enter the decision
+    funnel.
     """
     db = get_db()
     evaluated_at = datetime.now(timezone.utc).isoformat()
+    grace_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=grace_period_minutes)).isoformat()
     with transaction(immediate=True):
         rows = db.execute(
             "SELECT o.* FROM opportunities o "
             "JOIN universe_snapshots s ON s.id=o.universe_snapshot_id "
             "WHERE o.status='open' "
             "AND s.market_type=? AND s.status='superseded' "
+            "AND o.created_at < ? "
             "ORDER BY o.created_at, o.rowid",
-            (market_type,),
+            (market_type, grace_cutoff),
         ).fetchall()
         savepoint = f"snapshot_cascade_{uuid.uuid4().hex}"
         db.execute(f"SAVEPOINT {savepoint}")

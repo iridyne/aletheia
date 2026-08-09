@@ -63,7 +63,24 @@ def _is_excluded(symbol_info: dict) -> bool:
     return False
 
 
-async def _load_demo_whitelist(paper_execution_mode: str) -> frozenset | None:
+# Verified Bitget demo (UTA) executable symbols, discovered empirically via
+# post-only order probes on 2026-07-22. Bitget demo does NOT support the full perp
+# list - obscure coins (RAPLD/DEXE/ONDO/KAITO/HYPE/ONE/...) are absent and always
+# reject at submission. Restrict the universe to these mainstream pairs so bot
+# proposals are actually executable. Keyed by market_type ("spot"/"perp").
+BITGET_DEMO_WHITELIST: dict[str, frozenset] = {
+    "spot": frozenset({
+        "BTC/USDT", "ETH/USDT", "SOL/USDT", "DOGE/USDT", "XLM/USDT", "CRV/USDT",
+    }),
+    "perp": frozenset({
+        "BTC/USDT", "ETH/USDT", "SOL/USDT", "DOGE/USDT",
+        "BCH/USDT", "LTC/USDT", "XRP/USDT", "ADA/USDT", "TRX/USDT", "LINK/USDT",
+        "AVAX/USDT", "DOT/USDT", "UNI/USDT", "NEAR/USDT", "BNB/USDT", "PEPE/USDT",
+    }),
+}
+
+
+async def _load_demo_whitelist(paper_execution_mode: str) -> dict[str, frozenset] | None:
     """Load the demo symbol whitelist for the active execution mode.
 
     Returns None if no demo filtering is needed (live mode or full-access demos).
@@ -76,8 +93,15 @@ async def _load_demo_whitelist(paper_execution_mode: str) -> frozenset | None:
         markets = await OKXClient.load_demo_markets()
         if markets is None:
             return None
-        return markets.get("swap", frozenset()) | markets.get("spot", frozenset())
-    # bitget_demo and binance_testnet support their full perp list — no extra filter
+        return {
+            "spot": markets.get("spot", frozenset()),
+            "perp": markets.get("swap", frozenset()),
+        }
+    if paper_execution_mode == "bitget_demo":
+        # Bitget demo UTA does NOT expose the full perp list. Only a curated set of
+        # mainstream symbols is executable; everything else rejects at submission.
+        return BITGET_DEMO_WHITELIST
+    # binance_testnet etc: full list, no extra filter
     return None
 
 
@@ -128,7 +152,7 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
         demo_whitelist = await _load_demo_whitelist(cfg.exchange.paper_execution_mode)
         if demo_whitelist is not None:
             logger.info("Demo whitelist active: %d symbols for %s",
-                        len(demo_whitelist), cfg.exchange.paper_execution_mode)
+                        sum(len(v) for v in demo_whitelist.values()), cfg.exchange.paper_execution_mode)
 
         exchange = provider._ensure_primary()
         # Don't set fetchMarkets — OKX rejects 'linear' (uses 'SWAP' internally).
@@ -162,12 +186,14 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
                 continue
             market_type = "perp" if is_perp else "spot"
 
-            # Demo whitelist filter: skip symbols not executable on demo
-            if demo_whitelist is not None and canonical not in demo_whitelist:
+            # Demo whitelist filter: skip symbols not executable on demo for this
+            # specific market_type (BCH is perp-only, XLM/CRV are spot-only, etc.)
+            wl = demo_whitelist.get(market_type, frozenset()) if demo_whitelist else frozenset()
+            if demo_whitelist is not None and canonical not in wl:
                 # US-14: was a silent continue. Debug-log so an unexpectedly empty
                 # demo universe (whitelist-format mismatch) is diagnosable.
-                logger.debug("demo_whitelist: skip %s (not executable on %s)",
-                             canonical, cfg.exchange.paper_execution_mode)
+                logger.debug("demo_whitelist: skip %s/%s (not executable on %s)",
+                             canonical, market_type, cfg.exchange.paper_execution_mode)
                 continue
 
             limits = info.get("limits") or {}

@@ -245,7 +245,7 @@ draft skill 的代码链路已打通，旧 trading memo 会按 7 天半衰期降
 人工审核后才可启用；后续不要把 draft skill 自动接入 risk/execution/live/credential/order
 路径。
 
-**SDD 文档对齐工作线（2026-07-03）**:Learning 范围已按 [Product Direction](../../product/definition/DIRECTION.md) 完成
+**SDD 文档对齐工作线（2026-07-03）**:Learning 范围已按 [Product Direction](../../../../product/definition/DIRECTION.md) 完成
 契约/API/spec 注释对齐。下一步才扩展到全项目 SDD 文档漂移扫描；不要把历史 plans/issues
 里的旧问题描述当成当前事实，先对照代码和现行 L2 契约。
 

@@ -255,14 +255,14 @@ SELECT
     CASE WHEN calls.permitted=0 THEN NULL ELSE (
         SELECT id FROM tool_cost_profiles
         WHERE tool_name=calls.tool_name
-          AND replace(effective_from,' ','T') <= replace(calls.created_at,' ','T')
-        ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1
+          AND effective_from <= replace(calls.created_at,' ','T')
+        ORDER BY effective_from DESC,rowid DESC LIMIT 1
     ) END,
     CASE WHEN calls.permitted=0 THEN 0.0 ELSE (
         SELECT usd_per_call FROM tool_cost_profiles
         WHERE tool_name=calls.tool_name
-          AND replace(effective_from,' ','T') <= replace(calls.created_at,' ','T')
-        ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1
+          AND effective_from <= replace(calls.created_at,' ','T')
+        ORDER BY effective_from DESC,rowid DESC LIMIT 1
     ) END,
     'USD',
     CASE
@@ -270,7 +270,7 @@ SELECT
         WHEN EXISTS (
             SELECT 1 FROM tool_cost_profiles
             WHERE tool_name=calls.tool_name
-              AND replace(effective_from,' ','T') <= replace(calls.created_at,' ','T')
+              AND effective_from <= replace(calls.created_at,' ','T')
         ) THEN 'estimated'
         ELSE 'unknown'
     END,
@@ -330,20 +330,20 @@ def _install_tool_trigger(db: sqlite3.Connection) -> None:
                 NEW.tool_name,
                 0,
                 CASE WHEN NEW.permitted=1 THEN 'recorded' ELSE 'denied' END,
-                NEW.created_at,
-                NEW.created_at,
+                replace(NEW.created_at,' ','T'),
+                replace(NEW.created_at,' ','T'),
                 '{}',
                 CASE WHEN NEW.permitted=0 THEN NULL ELSE (
                     SELECT id FROM tool_cost_profiles
                     WHERE tool_name=NEW.tool_name
-                      AND replace(effective_from,' ','T') <= replace(NEW.created_at,' ','T')
-                    ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1
+                      AND effective_from <= replace(NEW.created_at,' ','T')
+                    ORDER BY effective_from DESC,rowid DESC LIMIT 1
                 ) END,
                 CASE WHEN NEW.permitted=0 THEN 0.0 ELSE (
                     SELECT usd_per_call FROM tool_cost_profiles
                     WHERE tool_name=NEW.tool_name
-                      AND replace(effective_from,' ','T') <= replace(NEW.created_at,' ','T')
-                    ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1
+                      AND effective_from <= replace(NEW.created_at,' ','T')
+                    ORDER BY effective_from DESC,rowid DESC LIMIT 1
                 ) END,
                 'USD',
                 CASE
@@ -351,7 +351,7 @@ def _install_tool_trigger(db: sqlite3.Connection) -> None:
                     WHEN EXISTS (
                         SELECT 1 FROM tool_cost_profiles
                         WHERE tool_name=NEW.tool_name
-                          AND replace(effective_from,' ','T') <= replace(NEW.created_at,' ','T')
+                          AND effective_from <= replace(NEW.created_at,' ','T')
                     ) THEN 'estimated'
                     ELSE 'unknown'
                 END,

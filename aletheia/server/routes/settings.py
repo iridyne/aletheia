@@ -625,6 +625,7 @@ class PiDaemonConfigUpdate(SettingsRequest):
     debounce_sec: Optional[float] = None
     cooldown_sec: Optional[float] = None
     heartbeat_sec: Optional[float] = None
+    decision_interval_minutes: Optional[Literal[30, 60]] = None
 
 
 _PI_DAEMON_BOUNDS: dict[str, tuple[float, float]] = {
@@ -1953,6 +1954,17 @@ class UniverseConfigUpdate(SettingsRequest):
     market_type: Optional[str] = None
     family_quota: Optional[dict[str, float]] = None
     family_quota_by_regime: Optional[dict[str, dict[str, float]]] = None
+    # Scanner-family score-delta triad (B, 2026-08-01). These were previously
+    # read by the ranker via getattr but NOT exposed for dashboard/API editing,
+    # so operator overrides could only land via a Python script. Exposing them
+    # here routes changes through the same audited save_config + audit +
+    # _notify_ranker_config_change path as family_quota, and (because all three
+    # are folded into the universe_family_calibration epoch values) auto-rotates
+    # the epoch on change so outcomes are not pooled across the policy shift.
+    # Validation mirrors family_quota's dict rigor (non-empty, finite floats).
+    scanner_weights: Optional[dict[str, float]] = None
+    scanner_regime_scoring: Optional[dict[str, float]] = None
+    family_direction_bias: Optional[dict[str, float]] = None
 
 
 _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
@@ -2011,6 +2023,29 @@ async def update_universe_config(req: UniverseConfigUpdate):
                     raise HTTPException(400, f"family_quota_by_regime['{regime_state}'] must sum to 1.0 (got {total:.3f})")
                 cleaned[regime_state] = {k: round(float(v), 2) for k, v in quota.items()}
             value = cleaned
+        if field in {"scanner_weights", "scanner_regime_scoring", "family_direction_bias"}:
+            # All three are score-delta/weight dicts (no sum constraint like
+            # family_quota). Validate structure only: non-empty dict of
+            # str→finite float. An empty dict is rejected because it would be a
+            # no-op write (the ranker treats absent keys as default anyway) and
+            # silently rotating the epoch on a no-op is misleading; to reset an
+            # override, omit the field (the schema default {} applies).
+            import math as _math
+            if not isinstance(value, dict) or not value:
+                raise HTTPException(400, f"'{field}' must be a non-empty dict")
+            cleaned_sd: dict[str, float] = {}
+            for k, v in value.items():
+                ks = str(k).strip()
+                if not ks:
+                    raise HTTPException(400, f"'{field}' keys must be non-empty strings")
+                try:
+                    fv = float(v)
+                except (TypeError, ValueError):
+                    raise HTTPException(400, f"'{field}'['{k}'] must be a number")
+                if not _math.isfinite(fv):
+                    raise HTTPException(400, f"'{field}'['{k}'] must be finite")
+                cleaned_sd[ks] = fv
+            value = cleaned_sd
         setattr(cfg.universe, field, value)
 
     save_config(cfg)

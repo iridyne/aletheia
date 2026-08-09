@@ -738,7 +738,7 @@ config field.
 ## 9. Learning Contribution Observability Delivery
 
 This phase is fully specified in
-[`learning_observability_contract.md`](../../design/contracts/learning_observability_contract.md).
+[`learning_observability_contract.md`](../../../../design/proposals/learning_observability.md).
 The contract owns endpoint schemas, list/detail bounds, cache and event-loop rules, Learning page
 information architecture, responsive states, failure semantics, implementation slices, and the
 `LCO-*` acceptance matrix. This plan owns only ordering and delivery status.

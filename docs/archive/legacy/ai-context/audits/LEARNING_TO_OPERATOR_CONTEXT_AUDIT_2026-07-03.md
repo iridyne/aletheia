@@ -1,6 +1,6 @@
 # Learning To Operator Context Audit 2026-07-03
 
-来源: [Product Direction §3](../../product/definition/DIRECTION.md#3-learning-is-an-evidence-pipeline-not-a-page) 的 Learning / System Operator 要求。
+来源: [Product Direction §3](../../../../product/definition/DIRECTION.md#3-learning-is-an-evidence-pipeline-not-a-page) 的 Learning / System Operator 要求。
 
 边界: 本次只审计 Learning / Knowledge / analytics 如何进入 System Operator context 和
 prompt。未改 Risk Engine、Execution Gateway、live unlock、凭证、下单语义。

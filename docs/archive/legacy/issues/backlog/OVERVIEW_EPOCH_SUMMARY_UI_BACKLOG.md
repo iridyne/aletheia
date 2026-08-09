@@ -1,8 +1,8 @@
 # Overview UI 六桶可视化 —— backlog 卡片
 
 > **创建**: 2026-07-18 · **类型**: backlog（前端可选增强，非阻塞）
-> **上游历史证据**: [`docs/archive/legacy/plans/trading-pipeline/proposal_flow_defer_semantics_2026-07-18.md`](../../archive/legacy/plans/trading-pipeline/proposal_flow_defer_semantics_2026-07-18.md)
-> **相关契约**: [`decision_lifecycle_contract.md`](../../design/contracts/decision_lifecycle_contract.md) DL-INV-2 / DL-INV-24 / DL-S47..50
+> **上游历史证据**: [`docs/archive/legacy/plans/trading-pipeline/proposal_flow_defer_semantics_2026-07-18.md`](../../plans/trading-pipeline/proposal_flow_defer_semantics_2026-07-18.md)
+> **相关契约**: [`decision_lifecycle_contract.md`](../../../../design/contracts/decision_lifecycle_contract.md) DL-INV-2 / DL-INV-24 / DL-S47..50
 > **状态**: 后端已就绪；前端未接入；owner 决定何时做
 
 ---

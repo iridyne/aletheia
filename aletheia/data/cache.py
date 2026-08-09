@@ -44,6 +44,7 @@ class OHLCVCache:
         self._misses = 0
         self._expired = 0
         self._evicted = 0
+
         self._lock = threading.Lock()
 
     @staticmethod
@@ -96,6 +97,7 @@ class OHLCVCache:
                 "expired": self._expired,
                 "evicted": self._evicted,
             }
+
 
     def invalidate(self) -> None:
         """Clear all entries (used by tests to reset shared state)."""

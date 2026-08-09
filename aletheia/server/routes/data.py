@@ -60,6 +60,7 @@ _portfolio_cache: "tuple[float, dict] | None" = None
 
 _equity_history_cache_lock = threading.Lock()
 _equity_history_cache: "dict[tuple, tuple[float, dict]]" = {}
+_EQUITY_HISTORY_CACHE_MAX_SIZE = 128  # Bound cache so arbitrary query params can't bloat memory.
 
 
 def _ensure_db():
@@ -1555,6 +1556,13 @@ def get_account_equity_history(limit: int | None = None, days: int | None = None
     }
     with _equity_history_cache_lock:
         _equity_history_cache[cache_key] = (now, result)
+        # Bound the cache: evict oldest entries beyond the max size.
+        if len(_equity_history_cache) > _EQUITY_HISTORY_CACHE_MAX_SIZE:
+            oldest = sorted(
+                _equity_history_cache.items(), key=lambda kv: kv[1][0],
+            )
+            for k, _ in oldest[:len(_equity_history_cache) - _EQUITY_HISTORY_CACHE_MAX_SIZE]:
+                _equity_history_cache.pop(k, None)
     return result
 
 
@@ -2590,3 +2598,42 @@ def get_shadow_trades(
         resolved=resolved,
         limit=limit,
     )
+
+
+# ── Decision report: read-only "why did we buy" aggregation ───────────────────
+
+
+@router.get("/decision-report/{opportunity_id}")
+def get_decision_report(opportunity_id: str):
+    """Read-only decision explanation for one opportunity.
+
+    Thin route over analytics.decision_report.assemble_decision_report — joins
+    opportunity, PI decision, trade proposal, risk decision, filter decisions,
+    position/PnL outcome and audit events into one report. Missing evidence is
+    null/"not_recorded"; never-persisted artifacts (committee reports) report
+    "not_available". Performs no writes.
+    """
+    from aletheia.analytics.decision_report import assemble_decision_report
+
+    return assemble_decision_report(opportunity_id)
+
+
+# ── Committee workbench: read-only AI Jury overview ────────────────────────
+
+
+@router.get("/committee/reports")
+def get_committee_reports(
+    symbol: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=200),
+):
+    """Recent persisted AI Investment Committee evaluations (newest first).
+
+    Thin route over analytics.committee_overview.assemble_committee_overview —
+    parses the append-only committee_reports rows into structured opinions /
+    evidence / risks and adds a window summary. Advisory data only: performs
+    no writes and never influences trade or risk semantics. Read failures
+    degrade to status="read_failed" so the UI stays honest.
+    """
+    from aletheia.analytics.committee_overview import assemble_committee_overview
+
+    return assemble_committee_overview(symbol=symbol, limit=limit)

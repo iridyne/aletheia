@@ -92,13 +92,17 @@ async def run_agent(
         reset_current_agent_run_id(run_token)
 
     status = "completed" if not errors else "completed_with_errors"
-    end_run(run, status=status, outputs=outputs, errors=errors)
-    # Release the per-run step counter (helpers.log_tool / record_step keep one
-    # per run_id to assign monotonic step_numbers without SELECT-MAX).
     try:
-        from aletheia.agents.helpers import _release_run_counter
+        end_run(run, status=status, outputs=outputs, errors=errors)
+    finally:
+        # Release the per-run step counter (helpers.log_tool / record_step keep one
+        # per run_id to assign monotonic step_numbers without SELECT-MAX).  Must
+        # run even if end_run raises: otherwise a crash path leaks up to 256
+        # telemetry events + one counter entry per failed run (M4 fix).
+        try:
+            from aletheia.agents.helpers import _release_run_counter
 
-        _release_run_counter(run.id)
-    except Exception:
-        pass
+            _release_run_counter(run.id)
+        except Exception:
+            pass
     return {"run_id": run.id, "status": status, "outputs": outputs, "errors": errors}

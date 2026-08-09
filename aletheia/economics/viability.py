@@ -309,8 +309,8 @@ def _operator_incremental_cohort(
             """SELECT * FROM shadow_trades
                WHERE opportunity_id=? AND was_selected=1 AND batch_id IS NOT NULL
                  AND resolved_at IS NOT NULL AND net_pnl_pct IS NOT NULL
-                 AND replace(created_at,' ','T') <= replace(?,' ','T')
-               ORDER BY replace(created_at,' ','T') DESC,rowid DESC LIMIT 1""",
+                 AND created_at <= ?
+               ORDER BY created_at DESC,rowid DESC LIMIT 1""",
             (opportunity_id, proposal["created_at"]),
         ).fetchone()
         if selected is None:
@@ -404,8 +404,7 @@ def _operator_cost_rows(
     run_rows = db.execute(
         f"""SELECT id FROM agent_runs
             WHERE agent_name IN ({placeholders})
-              AND replace(started_at,' ','T') >= replace(?,' ','T')
-              AND replace(started_at,' ','T') <= replace(?,' ','T')""",
+              AND started_at >= ? AND started_at <= ?""",
         (*_OPERATOR_AGENT_NAMES, start_iso, end_iso),
     ).fetchall()
     run_ids = [str(row["id"]) for row in run_rows]
@@ -415,8 +414,8 @@ def _operator_cost_rows(
         f"AND json_extract(metadata_json,'$.logical_agent') IN ({placeholders}))"
     )
     conditions = [
-        "replace(started_at,' ','T') >= replace(?,' ','T')",
-        "replace(started_at,' ','T') <= replace(?,' ','T')",
+        "started_at >= ?",
+        "started_at <= ?",
     ]
     params: list[Any] = [start_iso, end_iso]
     identity_clauses = [logical_clause]
@@ -610,7 +609,7 @@ def list_viability_reports(
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     rows = db.execute(
         f"SELECT * FROM viability_reports {where_sql} "
-        f"ORDER BY replace(window_end,' ','T') DESC, generated_at DESC "
+        f"ORDER BY window_end DESC, generated_at DESC "
         f"LIMIT ? OFFSET ?",
         (*params, max(1, min(int(limit), 500)), max(0, int(offset))),
     ).fetchall()

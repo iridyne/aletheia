@@ -4,6 +4,7 @@ Health is computed from REAL backend data. Alerts fire only on transition into a
 unhealthy state (de-duped), and never fabricate a positive "healthy" push.
 """
 
+import asyncio
 import sqlite3
 
 from aletheia.storage.sqlite import reset_db
@@ -69,9 +70,11 @@ async def test_send_alert_delivers_from_running_loop(tmp_path, monkeypatch):
     monkeypatch.setattr(bot_mod, "TelegramBot", FakeBot)
 
     from aletheia.agent_runtime import health
-    # We are inside a running loop (async test). This previously scheduled an
-    # un-awaited task and delivered nothing; now it must complete synchronously.
+    # We are inside a running loop (async test).  _send_alert uses fire-and-forget
+    # (ensure_future) to avoid blocking the loop, so we yield control to let the
+    # scheduled coroutine run.
     health._send_alert("test issue")
+    await asyncio.sleep(0)
 
     assert len(sent) == 2
     assert all("test issue" in text for _, text in sent)

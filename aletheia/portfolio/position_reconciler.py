@@ -72,6 +72,20 @@ def _norm_direction(side: str) -> str:
     return s
 
 
+def _per_symbol_notional_cap_usdt(account_mode: str) -> float:
+    """Per-symbol notional cap from the risk policy for the account class.
+
+    Mirrors the CUM-ADD cap the risk engine enforces on native proposals
+    (check #19), so external adoption cannot accumulate past the same bound
+    that proposals already obey. 0/absent config means no adoption cap.
+    """
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
+    policy = cfg.risk.live if account_mode == "live" else cfg.risk.demo
+    return float(getattr(policy.capital, "max_per_symbol_notional_usdt", 0.0) or 0.0)
+
+
 def _normalize_market_type(market_type: object) -> str | None:
     value = str(market_type or "").strip().lower()
     if value == "spot":
@@ -1090,6 +1104,62 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         direction=direction,
     )
 
+    # Per-symbol notional guard (concentration fix): never let management absorb
+    # an external position that would push this symbol's open notional past the
+    # risk cap. Mirrors risk engine check #19 (CUM-ADD), so adoption cannot
+    # bypass a bound native proposals already obey. The exchange position stays
+    # in place — only the local adoption is refused — so the failure mode is an
+    # unmanaged external, never unbounded managed exposure.
+    cap = _per_symbol_notional_cap_usdt(account_mode)
+    if cap and cap > 0:
+        _class_is_live = execution_mode.endswith("_live_limited")
+        existing = 0.0
+        for p in list_all_open_positions():
+            if p.get("symbol") != symbol:
+                continue
+            if (p.get("execution_mode") or "").endswith("_live_limited") != _class_is_live:
+                continue
+            try:
+                q = float(p.get("quantity") or 0)
+                px = float(p.get("current_price") or p.get("entry_price") or 0)
+                existing += abs(q * px)
+            except (TypeError, ValueError):
+                continue
+        projected = existing + quantity * entry_price
+        if projected > cap:
+            try:
+                write_audit({
+                    "actor": "system",
+                    "source": "position_reconciler",
+                    "event_type": "adopt_refused_per_symbol_notional",
+                    "entity_type": "exchange_position",
+                    "entity_id": symbol,
+                    "message": (
+                        f"Refused adoption of {symbol} {direction} qty={quantity} "
+                        f"@ {entry_price}: projected per-symbol notional "
+                        f"{projected:.0f} > cap {cap:.0f}"
+                    ),
+                    "after": {
+                        "symbol": symbol, "direction": direction, "quantity": quantity,
+                        "entry_price": entry_price, "execution_mode": execution_mode,
+                        "existing_open_notional_usdt": round(existing, 2),
+                        "projected_notional_usdt": round(projected, 2),
+                        "cap_usdt": cap,
+                    },
+                })
+            except Exception:
+                # A failed audit must not mask the guard refusal itself.
+                logger.warning(
+                    "adopt refused %s %s qty=%s: audit write failed; projected "
+                    "per-symbol notional %.0f > cap %.0f",
+                    symbol, direction, quantity, projected, cap,
+                )
+            raise ValueError(
+                f"adopt_position: refusing {symbol} {direction} qty={quantity}: "
+                f"projected per-symbol notional {projected:.0f} > cap {cap:.0f} "
+                f"(existing open {existing:.0f})"
+            )
+
     # Attribution recovery (P2-2): if this external matches a position we just
     # thrash-closed (reconciled_gone), inherit its strategy_id/opportunity_id so a
     # transient orphan→re-adopt keeps trade attribution intact. Tight match only
@@ -1315,6 +1385,51 @@ def run_reconcile(mode: str | None = None) -> dict:
         "settlement": [],
         "errors": [],
     }
+
+    # Oversize adopted exposure alert (P2): the adoption-time notional guard
+    # blocks NEW oversize takeovers, but positions adopted before the guard can
+    # still exceed the per-symbol cap. Surface them in the summary, log, and
+    # audit so an operator decides on reduction — no automatic orders.
+    oversize = []
+    _cap = _per_symbol_notional_cap_usdt(account_mode)
+    if _cap and _cap > 0:
+        for p in list_all_open_positions():
+            if p.get("source") != "adopted":
+                continue
+            try:
+                _q = float(p.get("quantity") or 0)
+                _px = float(p.get("current_price") or p.get("entry_price") or 0)
+                _notional = abs(_q * _px)
+            except (TypeError, ValueError):
+                continue
+            if _notional > _cap:
+                oversize.append({
+                    "position_id": p.get("id"),
+                    "symbol": p.get("symbol"),
+                    "direction": p.get("direction"),
+                    "quantity": _q,
+                    "notional_usdt": round(_notional, 2),
+                    "cap_usdt": _cap,
+                })
+    summary["oversize_adopted"] = oversize
+    if oversize:
+        logger.warning("Oversize adopted exposure (cap %s USDT): %s", _cap, oversize)
+        try:
+            write_audit({
+                "actor": "system",
+                "source": "position_reconciler",
+                "event_type": "oversize_adopted_exposure",
+                "entity_type": "portfolio",
+                "entity_id": "open_positions",
+                "message": (
+                    f"{len(oversize)} adopted position(s) exceed the per-symbol "
+                    f"notional cap ({_cap:.0f} USDT); operator review required"
+                ),
+                "after": {"oversize": oversize},
+            })
+        except Exception:
+            # A failed audit must not fail the reconcile cycle.
+            logger.warning("oversize adopted audit write failed")
 
     # Persisted circuit breaker: a systemic administrative-close → reopen pattern
     # creates one durable incident.  A clean poll records recovery evidence but

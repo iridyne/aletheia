@@ -1,5 +1,6 @@
 import { Routes, Route, NavLink, Navigate, Link, useLocation } from 'react-router-dom'
 import { lazy, Suspense, useState, useEffect, useRef } from 'react'
+
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
@@ -15,6 +16,7 @@ import {
   Newspaper,
   PanelLeftClose,
   PanelLeftOpen,
+  Scale,
   Settings as SettingsIcon,
   ShieldAlert,
   Telescope,
@@ -23,6 +25,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { api } from './api/client'
+
 import CommandPalette from './components/CommandPalette'
 import MarketTicker from './components/MarketTicker'
 import BackendConnectionGuard from './components/BackendConnectionGuard'
@@ -51,6 +54,18 @@ const Usage = lazy(() => import('./pages/Usage'))
 
 export type NavItem = { to: string; label: string; icon: LucideIcon }
 export type NavGroup = { group: string; items: NavItem[] }
+
+/** Minimal skeleton shown while a lazily-loaded route chunk loads. */
+function PageSkeleton() {
+  return (
+    <div className="page-skeleton" aria-busy="true" aria-label="Loading page">
+      <div className="skeleton-block skeleton-title" />
+      <div className="skeleton-block skeleton-row" />
+      <div className="skeleton-block skeleton-row" />
+      <div className="skeleton-block skeleton-row short" />
+    </div>
+  )
+}
 
 // Nav follows the owner-approved trading-desk IA:
 // global entries -> Research -> Decision -> Portfolio -> global entries.
@@ -83,6 +98,10 @@ export const NAV: NavGroup[] = [
       // /proposals route is preserved below as a legacy redirect target.
       { to: '/blotter', label: 'Blotter', icon: ClipboardList },
       { to: '/agent-activity', label: 'Agent Activity', icon: Activity },
+      // AI Jury: standalone Investment Committee workbench (persisted
+      // committee_reports). Isolated page so upstream committee features
+      // land here without touching other surfaces.
+      { to: '/committee', label: 'AI Jury', icon: Scale },
     ],
   },
   {
@@ -131,13 +150,19 @@ function NotFound() {
  * Information density goal: same data as before, ~75px narrower, far less visual noise.
  */
 const PERMISSION_MODES = ['Observe', 'Paper', 'Full'] as const
-const STATUS_POLL_INTERVAL_ACTIVE_MS = 2000
-const STATUS_POLL_INTERVAL_IDLE_MS = 15000
+// Perf (Phase 4): StatusBar polling split into two tiers.
+//   - REAL_TIME: queries NOT covered by WS pushes — poll fast for live status.
+//   - WS_BACKED: queries covered by WS CHANGE_MAP (agent-runs, infra-events,
+//     collector-health) — poll slowly as a fallback only; WS invalidations
+//     keep them fresh in the common case.
+const STATUS_POLL_INTERVAL_REALTIME_ACTIVE_MS = 2000
+const STATUS_POLL_INTERVAL_REALTIME_IDLE_MS = 15000
+const STATUS_POLL_INTERVAL_WS_BACKED_MS = 60000
 const RISK_POLL_INTERVAL_ACTIVE_MS = 3000
 const RISK_POLL_INTERVAL_IDLE_MS = 30000
 
 function adaptiveStatusPollMs(isRestarting: boolean): number {
-  return isRestarting ? STATUS_POLL_INTERVAL_ACTIVE_MS : STATUS_POLL_INTERVAL_IDLE_MS
+  return isRestarting ? STATUS_POLL_INTERVAL_REALTIME_ACTIVE_MS : STATUS_POLL_INTERVAL_REALTIME_IDLE_MS
 }
 
 function adaptiveRiskPollMs(isRestarting: boolean): number {
@@ -178,6 +203,7 @@ function fmtEventTime(iso: string): string {
 }
 
 function StatusBar({ realtime }: { realtime: RealtimeStatus }) {
+
   const qc = useQueryClient()
   const [restarting, setRestarting] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -197,10 +223,14 @@ function StatusBar({ realtime }: { realtime: RealtimeStatus }) {
     queryFn: api.getKillSwitch,
     refetchInterval: () => adaptiveStatusPollMs(restarting),
   })
+  // Perf (Phase 4): agent-runs, infra-events, and collector-health are covered
+  // by the WS CHANGE_MAP (agent_runs, infra_events, collector_health events
+  // invalidate them on push). Poll at 60s as a fallback only — WS keeps them
+  // fresh in the common case.
   const { data: runs = [] } = useQuery({
     queryKey: ['agent-runs'],
     queryFn: api.getAgentRuns,
-    refetchInterval: () => adaptiveStatusPollMs(restarting),
+    refetchInterval: STATUS_POLL_INTERVAL_WS_BACKED_MS,
   })
   const { data: health } = useQuery({
     queryKey: ['health'],
@@ -210,12 +240,12 @@ function StatusBar({ realtime }: { realtime: RealtimeStatus }) {
   const { data: infraEvents } = useQuery({
     queryKey: ['infra-events'],
     queryFn: api.getInfraEvents,
-    refetchInterval: () => adaptiveStatusPollMs(restarting),
+    refetchInterval: STATUS_POLL_INTERVAL_WS_BACKED_MS,
   })
   const { data: collectorHealth } = useQuery({
     queryKey: ['collector-health'],
     queryFn: api.getCollectorHealth,
-    refetchInterval: () => adaptiveStatusPollMs(restarting),
+    refetchInterval: STATUS_POLL_INTERVAL_WS_BACKED_MS,
   })
   // #174 fix: /status doesn't carry risk_status — the topbar used to read
   // `data?.risk_status || data?.risk?.status` and always got '', so
@@ -613,7 +643,7 @@ function StatusBar({ realtime }: { realtime: RealtimeStatus }) {
       {pauseErr && <span className="topbar-err" title={pauseErr}>{pauseErr}</span>}
     </div>
   )
-}
+})
 
 export default function App() {
   const location = useLocation()
@@ -718,6 +748,7 @@ export default function App() {
               <Route path="/trades" element={<TradesPositions />} />
               <Route path="/paper-trades" element={<Navigate to="/trades" replace />} />
               <Route path="/positions" element={<Navigate to="/trades" replace />} />
+
               <Route path="/charts" element={<Charts />} />
               <Route path="/prediction-markets" element={<PredictionLens />} />
               <Route path="/command-center" element={<CommandCenter />} />
@@ -731,6 +762,7 @@ export default function App() {
               </Routes>
             </Suspense>
           </RouteErrorBoundary>
+
         </main>
       </div>
     </div>

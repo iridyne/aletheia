@@ -52,21 +52,19 @@ _OPEN_LOCAL_STATES = (
 # past the hard window will we cancel an Order we cannot verify at all (no
 # credentials / venue unreachable).  Hardcoded like the other _run_cleanup
 # thresholds (prune_*(7/30/90)); no config field, so no Config↔UI obligation.
-_STALE_ORDER_SOFT_HOURS = 48
-_STALE_ORDER_HARD_HOURS = 168  # 7 days
+# 24h soft window: enough to confirm order lifecycle on exchange (normal orders
+# fill or cancel within minutes). 72h hard window: accommodates weekends/holidays.
+_STALE_ORDER_SOFT_HOURS = 24
+_STALE_ORDER_HARD_HOURS = 72  # 3 days
 
 # Venues with a clean open-order reader we can use for evidence-based cancels.
 _BITGET_ACCOUNT_MODES = {"bitget_live_limited": "live", "bitget_demo": "demo"}
 
 
 def _run_coro(coro):
-    """Run an async broker call from this sync job (mirrors reconciliation)."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+    """Run an async broker call from this sync job without blocking the event loop."""
+    from aletheia.agent_runtime.async_utils import run_coro_from_sync
+    return run_coro_from_sync(coro)
 
 
 def _age_hours(created_at) -> float | None:

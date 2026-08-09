@@ -529,6 +529,13 @@ def test_run_reconcile_keeps_same_symbol_spot_disappearance_and_futures_adoption
     _stub_okx_unified(monkeypatch, [
         _ex("BTCUSDT", "long", 0.1, 60_000, leverage=3),
     ])
+    # _stub_okx_unified rewrites the config file, so disable the per-symbol
+    # notional adoption cap AFTER it: the 6000-USDT external must be judged on
+    # identity semantics, not refused by the concentration guard.
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.risk.demo.capital.max_per_symbol_notional_usdt = 0.0
+    save_config(cfg)
     monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         "aletheia.notifications.notify_operator",
@@ -715,6 +722,8 @@ def test_run_reconcile_demo_adopts_and_records_disappearance(tmp_path, monkeypat
     assert summary["adopted"][0]["symbol"] == "SOL/USDT"
     assert summary["adopted"][0]["execution_mode"] == "bitget_demo"
     assert summary["closed_orphans"] == []
+    # SOL 0.5 @ 150 = 75 USDT — under the default 400 cap.
+    assert summary["oversize_adopted"] == []
     assert summary["disappearance"]["created"] == 1
     assert summary["disappearance"]["observations"][0]["position_id"] == orphan.id
     assert summary["disappearance"]["observations"][0]["confirmation_count"] == 1
@@ -774,3 +783,80 @@ def test_run_reconcile_respects_auto_adopt_disabled(tmp_path, monkeypatch):
     # No adoption (disabled), but orphan close still runs
     assert summary["adopted"] == []
     assert summary["counts"]["external"] == 1
+
+
+def test_run_reconcile_refuses_oversized_external_adoption(tmp_path, monkeypatch):
+    """An external position over the per-symbol notional cap (UNI martingale
+    scenario) must NOT be adopted: the auto-adopt loop records the refusal in
+    summary['errors'] and the local positions table stays untouched."""
+    setup_env(tmp_path, monkeypatch)
+
+    import yaml
+    import aletheia.config.loader as loader
+    loader.CONFIG_PATH.write_text(yaml.safe_dump({
+        "exchange": {"mode": "demo", "paper_execution_mode": "bitget_demo"},
+        "trading": {"auto_adopt_enabled": True},
+    }), encoding="utf-8")
+    loader._cached_config = None
+
+    # 3072 UNI @ 4.45 ≈ 13.7k USDT — far above the default 400 cap.
+    _stub_cache(monkeypatch, [_ex("UNIUSDT", "long", 3072.0, 4.45, upnl=0.0)])
+
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *a, **kw: None)
+
+    from aletheia.portfolio.position_reconciler import run_reconcile
+    summary = run_reconcile()
+
+    assert summary["adopted"] == []
+    assert summary["counts"]["external"] == 1
+    assert len(summary["errors"]) == 1
+    assert "per-symbol notional" in summary["errors"][0]
+    assert repo.list_positions(status="open") == []
+
+
+def test_run_reconcile_flags_oversize_adopted_exposure(tmp_path, monkeypatch):
+    """Positions adopted before the notional guard must be surfaced as
+    summary['oversize_adopted'] (alert-only; no automatic orders), while
+    under-cap adopted positions stay out of the list."""
+    setup_env(tmp_path, monkeypatch)
+
+    import yaml
+    import aletheia.config.loader as loader
+    loader.CONFIG_PATH.write_text(yaml.safe_dump({
+        "exchange": {"mode": "demo", "paper_execution_mode": "bitget_demo"},
+        "trading": {"auto_adopt_enabled": True},
+    }), encoding="utf-8")
+    loader._cached_config = None
+
+    # Pre-guard legacy adoptions in the local book: UNI 3072 @ 4.4 ≈ 13.5k USDT
+    # (over the default 400 cap) and DOT 24 @ 0.75 = 18 USDT (under).
+    repo.insert_position(Position(
+        symbol="UNI/USDT", market_type="usdt_futures", direction="long",
+        quantity=3072.0, entry_price=4.4, current_price=4.4,
+        execution_mode="bitget_demo", source="adopted",
+    ))
+    repo.insert_position(Position(
+        symbol="DOT/USDT", market_type="usdt_futures", direction="long",
+        quantity=24.0, entry_price=0.75, current_price=0.75,
+        execution_mode="bitget_demo", source="adopted",
+    ))
+
+    _stub_cache(monkeypatch, [
+        _ex("UNIUSDT", "long", 3072.0, 4.4),
+        _ex("DOTUSDT", "long", 24.0, 0.75),
+    ])
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *a, **kw: None)
+
+    from aletheia.portfolio.position_reconciler import run_reconcile
+    summary = run_reconcile()
+
+    assert summary["counts"]["managed"] == 2
+    flags = summary["oversize_adopted"]
+    assert len(flags) == 1
+    assert flags[0]["symbol"] == "UNI/USDT"
+    assert flags[0]["direction"] == "long"
+    assert flags[0]["notional_usdt"] > 400
+    assert flags[0]["cap_usdt"] == 400
+    # Alert-only: no adoption or close activity triggered by the flag.
+    assert summary["adopted"] == []
+    assert summary["closed_orphans"] == []

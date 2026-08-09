@@ -9,6 +9,7 @@ WORKFLOW_DIR = Path(__file__).resolve().parents[1] / ".github" / "workflows"
 WORKFLOW_PATH = WORKFLOW_DIR / "ci.yml"
 AUTO_MERGE_WORKFLOW_PATH = WORKFLOW_DIR / "auto-merge.yml"
 DELETE_MERGED_WORKFLOW_PATH = WORKFLOW_DIR / "delete-merged-branch.yml"
+DCLS_NIGHTLY_WORKFLOW_PATH = WORKFLOW_DIR / "dcls-nightly.yml"
 PINNED_ACTION_SHA_LENGTH = 40
 GITHUB_SCRIPT_ACTION = "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
 
@@ -31,6 +32,13 @@ def _delete_merged_workflow() -> dict:
     )
 
 
+def _dcls_nightly_workflow() -> dict:
+    return yaml.load(
+        DCLS_NIGHTLY_WORKFLOW_PATH.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+
 def _run_commands(job: dict) -> str:
     return "\n".join(
         str(step.get("run") or "")
@@ -43,6 +51,7 @@ def test_only_expected_workflows_are_active() -> None:
     assert sorted(path.name for path in WORKFLOW_DIR.glob("*.yml")) == [
         "auto-merge.yml",
         "ci.yml",
+        "dcls-nightly.yml",
         "delete-merged-branch.yml",
     ]
 
@@ -91,16 +100,20 @@ def test_all_jobs_use_self_hosted_runners_and_read_only_permissions() -> None:
 
 def test_third_party_actions_are_pinned_to_full_commit_shas() -> None:
     failures: list[str] = []
-    for job_name, job in _workflow()["jobs"].items():
-        for step in job.get("steps", []):
-            uses = step.get("uses") if isinstance(step, dict) else None
-            if not uses or uses.startswith("./"):
-                continue
-            reference = uses.rsplit("@", 1)[-1]
-            if len(reference) != PINNED_ACTION_SHA_LENGTH or not all(
-                character in "0123456789abcdef" for character in reference
-            ):
-                failures.append(f"{job_name}: {uses}")
+    for workflow_name, workflow in [
+        ("ci", _workflow()),
+        ("dcls-nightly", _dcls_nightly_workflow()),
+    ]:
+        for job_name, job in workflow["jobs"].items():
+            for step in job.get("steps", []):
+                uses = step.get("uses") if isinstance(step, dict) else None
+                if not uses or uses.startswith("./"):
+                    continue
+                reference = uses.rsplit("@", 1)[-1]
+                if len(reference) != PINNED_ACTION_SHA_LENGTH or not all(
+                    character in "0123456789abcdef" for character in reference
+                ):
+                    failures.append(f"{workflow_name}/{job_name}: {uses}")
 
     assert not failures, "Actions must use full immutable commit SHAs:\n" + "\n".join(failures)
 
@@ -319,3 +332,20 @@ def test_delete_merged_branch_only_touches_merged_same_repo_head_refs() -> None:
     commands = _run_commands(job)
     assert "gh api -X DELETE" in commands
     assert "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH" in commands
+
+
+def test_dcls_nightly_uses_self_hosted_runner_and_reads_only_permissions() -> None:
+    workflow = _dcls_nightly_workflow()
+
+    assert workflow["permissions"] == {"contents": "read"}
+    for job in workflow["jobs"].values():
+        assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
+
+
+def test_dcls_nightly_does_not_checkout_untrusted_code_or_run_privileged_commands() -> None:
+    workflow = _dcls_nightly_workflow()
+
+    # The workflow must not use sudo or any privilege escalation.
+    for job in workflow["jobs"].values():
+        commands = _run_commands(job)
+        assert "sudo" not in commands

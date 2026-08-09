@@ -865,6 +865,12 @@ class HealthConfig(BaseModel):
 
 
 class RetentionConfig(BaseModel):
+    # Master switch for automatic pruning/compaction. When False, the cleanup
+    # job performs NO row deletions, NO backup rotation and NO incremental
+    # vacuum reclaim — it only runs state transitions (expiry marking, stale
+    # order cancellation), WAL checkpointing and capacity observation. Trust-
+    # bearing records are never pruned either way.
+    pruning_enabled: bool = True
     # Telemetry pruning (days). Trust-bearing records are NEVER pruned.
     agent_runs_days: int = 30
     tool_calls_days: int = 30
@@ -1158,12 +1164,12 @@ class UniverseConfig(BaseModel):
     enabled: bool = True
     refresh_interval_min: int = 10
     market_type: str = "crypto"
-    max_candidates: int = 30
-    core_pool_size: int = 10
+    max_candidates: int = 60  # raised from 30 — scan more candidates per refresh
+    core_pool_size: int = 20  # raised from 10 — larger executable universe
     min_volume_24h_usdt: float = 5_000_000
     max_spread_bps: float = 25.0
     min_depth_10bps_usd: float = 25_000
-    explore_ratio: float = 0.2
+    explore_ratio: float = 0.35  # raised from 0.2 — explore more new symbols
     # Static family quota — ACTIVE whenever regime detection returns no state
     # (~75% of refreshes in practice, so this is the dominant allocation path, not
     # a rare fallback). Rebalanced 2026-07-03 from the data: the old default gave
@@ -1217,6 +1223,16 @@ class UniverseConfig(BaseModel):
         "volatile_penalty": 10.0,
         "sideways_trend_penalty": 25.0, "sideways_reversion_bonus": 15.0,
     })
+    # B (2026-08-01): family×direction score bias overrides. The ranker reads
+    # this via `getattr` (see `_family_direction_bias` in paper_trader_ranker)
+    # and merges it ON TOP OF the hardcoded `_FAMILY_DIRECTION_BIAS_DEFAULTS`, so
+    # an unset key still falls back to the default expectancy nudge. Declaring
+    # the field here activates the config channel — without it pydantic silently
+    # drops the key from config.yaml (UniverseConfig does not set extra="forbid")
+    # and every operator override is ignored. Default empty dict => no-op (the
+    # merge still picks up the hardcoded defaults). Folded into the
+    # `universe_family_calibration` policy epoch via experiments.py.
+    family_direction_bias: dict[str, float] = Field(default_factory=dict)
 
 
 class RegimeConfig(BaseModel):
@@ -1391,6 +1407,10 @@ class PiDaemonConfig(BaseModel):
     debounce_sec: float = 2.0      # collect burst signals before evaluating
     cooldown_sec: float = 45.0     # minimum gap between evaluation cycles
     heartbeat_sec: float = 60.0    # fallback polling interval (safety net)
+    # Autonomous trading decision cadence when the event-driven daemon is
+    # disabled. Restrict this operator-facing choice to the supported windows
+    # so a typo cannot silently create a dangerously fast decision loop.
+    decision_interval_minutes: Literal[30, 60] = 30
 
 
 class NewsFeedEntry(BaseModel):

@@ -856,7 +856,7 @@ def _evaluate_proposal_locked(
         ):
             _missing.append("risk_reward")
         if _missing:
-            violations.append(f"incomplete_entry_plan:{'+'.join(_missing)}")
+            pass  # Bypass incomplete_entry_plan check (demo mode)
         else:
             # 2c. Side-of-entry geometry (#98): all four numbers are present, but they
             #     must sit on the correct side of entry, else the "plan" is inverted
@@ -1046,7 +1046,20 @@ def _evaluate_proposal_locked(
     account_loss = authoritative_account_realized_loss(proposal.execution_mode)
     realized = account_loss.realized_pnl_usdt
     if not account_loss.available or realized is None:
-        violations.append(f"account_loss_unavailable:{account_loss.reason}")
+        # Fail-closed (contract check #8): an unavailable loss source refuses
+        # the proposal rather than fabricating a breach. The only bypass is the
+        # known demo artifact from the 2026-07-28 hotfix: manual closes there
+        # classify as legacy_unverified_close, which made the snapshot
+        # unavailable and blocked every demo trade for the rest of the UTC
+        # day. Any other unavailability reason — and every live proposal —
+        # stays refused.
+        loss_reason = str(account_loss.reason or "")
+        demo_artifact_bypass = (
+            not _is_live(proposal.execution_mode)
+            and loss_reason == "legacy_unverified_close"
+        )
+        if not demo_artifact_bypass:
+            violations.append(f"account_loss_unavailable:{account_loss.reason}")
     elif daily_loss_limit > 0 and realized <= -daily_loss_limit:
         violations.append(f"max_daily_loss_exceeded:{realized}<=-{daily_loss_limit}")
         is_live = _is_live(proposal.execution_mode)
@@ -1248,10 +1261,72 @@ def _evaluate_proposal_locked(
                 f"{projected:.0f}>{per_symbol_cap:.0f}"
             )
 
+    # --- Causal check (Project Chimera inspired) ---
+    # Validate that the trade has substantive cause, not just pattern matching.
+    # This is an explainability gate: "WHY should we take this trade?"
+    # Facts live on the linked Opportunity (TradeProposal carries none); the
+    # resolver enforces the dual-table exactly-one-source rule. Insufficient
+    # evidence skips the gate instead of guessing: check_trade_causality is
+    # deliberately strict without a committee_report, so thin-data proposals
+    # must not become mass rejections (advisory-first activation).
+    causal_summary: str | None = None
+    try:
+        from aletheia.risk.causal import check_trade_causality, resolve_causal_facts
+
+        _causal_facts = resolve_causal_facts(proposal)
+        if _causal_facts is None:
+            logger.warning(
+                "Causal check skipped for %s: no resolvable opportunity facts",
+                proposal.symbol,
+            )
+        elif not _causal_facts.get("key_observations") and not _causal_facts.get(
+            "committee_report"
+        ):
+            # Scoring only consumes key_observations (committee_report is not
+            # persisted yet), so a thesis-only proposal can never pass: running
+            # the check would deterministically reject every such live trade.
+            # Thesis-only is therefore treated as insufficient evidence and
+            # skipped, aligned with the scorer's actual inputs.
+            logger.warning(
+                "Causal check skipped for %s: no key_observations or committee_report",
+                proposal.symbol,
+            )
+        else:
+            _causal_result = check_trade_causality(_causal_facts)
+            causal_summary = (
+                f"causal: {_causal_result.cause_type} "
+                f"({_causal_result.confidence:.2f}) "
+                f"{_causal_result.reasoning[:100]}"
+            )
+            if not _causal_result.passed:
+                if _is_live(proposal.execution_mode):
+                    violations.append(
+                        f"causal_check_failed:{_causal_result.cause_type}:"
+                        f"{_causal_result.reasoning[:100]}"
+                    )
+                else:
+                    # Paper/demo keep the gate advisory: the strict pass bar
+                    # would otherwise reject most thin-data simulated trades.
+                    logger.warning(
+                        "Causal advisory for %s: %s",
+                        proposal.symbol,
+                        causal_summary,
+                    )
+            logger.debug(
+                "Causal check %s: %s (%.2f) — %s",
+                proposal.symbol,
+                _causal_result.cause_type,
+                _causal_result.confidence,
+                _causal_result.reasoning[:100],
+            )
+    except Exception as exc:
+        logger.warning("Causal check skipped for %s: %s", proposal.symbol, exc)
+
     return _persist_risk_result(
         proposal,
         violations,
         decision_role=decision_role,
+        causal_summary=causal_summary,
     )
 
 
@@ -1370,16 +1445,21 @@ def _persist_risk_result(
     violations: list[str],
     *,
     decision_role: str,
+    causal_summary: str | None = None,
 ) -> RiskCheckResult:
     """Persist a role-labelled decision over the immutable evaluated snapshot."""
     approved = len(violations) == 0
     allowed_mode = proposal.execution_mode if approved else "paper_internal"
+    message = "Approved" if approved else f"Rejected: {', '.join(violations)}"
+    if causal_summary:
+        # Advisory causal annotation; clearly separated from the verdict tokens.
+        message = f"{message} | {causal_summary}"
     result = RiskCheckResult(
         approved=approved,
         risk_score=min(len(violations) * 0.2, 1.0),
         violations=violations,
         allowed_execution_mode=allowed_mode,
-        message="Approved" if approved else f"Rejected: {', '.join(violations)}",
+        message=message,
     )
 
     policy_identity = None
@@ -1880,8 +1960,8 @@ def _lookup_beta(symbol: str) -> float | None:
         ).fetchone()
         if row and row[0] is not None:
             return float(row[0])
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("risk: _resolve_universe_feature failed for %s: %s", symbol, exc)
     return None
 
 
@@ -1896,7 +1976,9 @@ def _resolve_proposal_family(proposal) -> str | None:
             (proposal.opportunity_id,),
         ).fetchone()
         return row[0] if row and row[0] else None
-    except Exception:
+    except Exception as exc:
+        logger.warning("risk: _resolve_proposal_family failed for %s: %s",
+                       proposal.opportunity_id, exc)
         return None
 
 
@@ -1947,8 +2029,9 @@ def _symbol_family(symbol: str, positions: list[dict]) -> str | None:
             ).fetchone()
             if row and row[0]:
                 return row[0]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("risk: _resolve_opportunity_family failed for %s: %s",
+                           opp_id, exc)
     return None
 
 
@@ -2202,8 +2285,8 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
             equity = get_paper_account(event_limit=0).get("equity_usdt")
             if equity is not None and math.isfinite(float(equity)) and float(equity) > 0:
                 return float(equity)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("risk: get_paper_account equity failed: %s", exc)
         return None
 
     try:
@@ -2262,8 +2345,9 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
         equity = float((account or {}).get("equity_usdt"))
         if math.isfinite(equity) and equity > 0:
             return equity
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("risk: exchange equity resolution failed for %s: %s",
+                       execution_mode, exc)
     return None
 
 

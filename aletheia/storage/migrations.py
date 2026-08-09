@@ -2611,6 +2611,12 @@ CREATE INDEX IF NOT EXISTS idx_filter_decisions_opportunity_evaluated
 ON filter_decisions(opportunity_id, evaluated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_filter_decisions_opportunity_run
 ON filter_decisions(opportunity_id, run_id, stage, sequence_no);
+-- Decision-report aggregation (GET /api/decision-report/{opportunity_id}): single-
+-- opportunity lookups on the join columns. Without these the multi-hundred-MB
+-- app.db falls back to full-table scans on every report request.
+CREATE INDEX IF NOT EXISTS idx_proposals_opportunity_id ON trade_proposals(opportunity_id);
+CREATE INDEX IF NOT EXISTS idx_positions_opportunity_id ON positions(opportunity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_entity_id ON audit_events(entity_id);
 """
 
 
@@ -3102,6 +3108,42 @@ CREATE TABLE IF NOT EXISTS learning_policy_epochs (
 """
 
 
+_COMMITTEE_REPORTS_DDL = """
+-- ====================================================================
+-- AI Investment Committee explainability records (advisory, append-only)
+-- ====================================================================
+-- Decision-level audit data: every LLM committee evaluation is persisted so a
+-- later decision can be traced back to the committee opinion that informed it.
+-- Read-only consumers: risk causal check, decision report, dashboard display.
+-- Never feeds back into trade or risk semantics.
+
+CREATE TABLE IF NOT EXISTS committee_reports (
+    id TEXT PRIMARY KEY,
+    opportunity_id TEXT,
+    symbol TEXT NOT NULL DEFAULT '',
+    decision_id TEXT NOT NULL DEFAULT '',
+    direction TEXT NOT NULL DEFAULT 'neutral',
+    confidence REAL NOT NULL DEFAULT 0,
+    explainability_score REAL NOT NULL DEFAULT 0,
+    blocked INTEGER NOT NULL DEFAULT 0,
+    model_used TEXT,
+    fallback_used INTEGER NOT NULL DEFAULT 0,
+    indicators_json TEXT NOT NULL DEFAULT '{}',
+    agent_opinions_json TEXT NOT NULL DEFAULT '[]',
+    risks_json TEXT NOT NULL DEFAULT '[]',
+    runtime_session_id TEXT,
+    producer_commit TEXT,
+    behavior_fingerprint TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_committee_reports_opportunity
+    ON committee_reports(opportunity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_committee_reports_symbol
+    ON committee_reports(symbol, created_at DESC);
+"""
+
+
 
 def _ensure_knowledge_fts_outcome_column(db) -> None:
     """Recreate knowledge_fts with outcome column if missing.
@@ -3270,6 +3312,12 @@ def _run_all_ddl(db) -> None:
     db.executescript(_CONTROLLER_RECOMMENDATIONS_DDL)
     db.executescript(_FILTER_SHADOW_EXPERIMENTS_DDL)
     db.executescript(_LEARNING_LEDGER_DDL)
+    db.executescript(_COMMITTEE_REPORTS_DDL)
+    # Additive: LLM risk warnings ("风险提示") captured alongside the opinion.
+    try:
+        db.execute("ALTER TABLE committee_reports ADD COLUMN risks_json TEXT NOT NULL DEFAULT '[]'")
+    except sqlite3.OperationalError:
+        pass  # column already exists
     _ensure_columns(db)
     # v2 authoritative identity includes the exact Risk Policy hash. The former
     # three-column unique index would incorrectly reuse/block a decision after a
@@ -3318,7 +3366,7 @@ _LEGACY_BASELINE_ID = "20260806_0001_legacy_schema_v2"
 # Filled from the normalized source preceding MIGRATION_LEDGER_START. The value is
 # deliberately stable: changing an applied migration is drift, not a reason to replay
 # it. Add a new MigrationStep for every future schema or data upgrade.
-_LEGACY_BASELINE_CHECKSUM = "b210b180fa4392a542a5275941ca15d1a443374b3e951055d8a4bbc12d32f8ee"
+_LEGACY_BASELINE_CHECKSUM = "f36418ac7fd56d70027bb5ee5e8939248bc787198f52daceb2db240e0aad6e73"
 _MIGRATION_LOCK_TIMEOUT_SEC = 120.0
 
 _STARTUP_HOT_PATH_INDEXES_SQL = """
@@ -4290,6 +4338,16 @@ _SERENITY_RETRY_IDEMPOTENCY_CHECKSUM = hashlib.sha256(
     _SERENITY_RETRY_IDEMPOTENCY_SQL.encode("utf-8")
 ).hexdigest()
 
+# Quality optimization: holding_period_hours tracks how long a position was
+# held so the AI Jury page can analyze whether holding time correlates with
+# outcome quality.
+_HOLDING_PERIOD_QUALITY_COLUMNS = (
+    ("holding_period_hours", "positions", "REAL"),
+)
+_HOLDING_PERIOD_QUALITY_CHECKSUM = hashlib.sha256(
+    (repr(_HOLDING_PERIOD_QUALITY_COLUMNS) + "\nadditive_columns_v1").encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -4362,6 +4420,12 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260809_0015_execution_reference_v16": (
         "immutable pre-fill reference prices for paired Paper execution accounting"
+    ),
+    "20260809_0017_holding_period_quality_v17": (
+        "holding_period_hours for quality-time correlation analysis"
+    ),
+    "20260809_0018_funnel_hot_path_indexes_v18": (
+        "funnel / pipeline-funnel hot-path indexes for sargable time predicates"
     ),
 }
 
@@ -4475,6 +4539,19 @@ def _apply_position_protection_state_v9(db: sqlite3.Connection) -> None:
     """Add dormant protection state without initializing or evaluating Positions."""
 
     for column, table, column_type in _POSITION_PROTECTION_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.executescript(_POSITION_PROTECTION_SQL)
+    db.execute("PRAGMA optimize")
+
+
+def _apply_holding_period_quality_v17(db: sqlite3.Connection) -> None:
+    """Add holding_period_hours for quality-time correlation analysis."""
+
+    for column, table, column_type in _HOLDING_PERIOD_QUALITY_COLUMNS:
         existing = {
             str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
         }
@@ -4665,6 +4742,42 @@ def _apply_serenity_retry_idempotency_v15(db: sqlite3.Connection) -> None:
     """Enforce one newly-created retry attempt per parent/count identity."""
 
     db.execute(_SERENITY_RETRY_IDEMPOTENCY_SQL)
+
+
+# Perf (Phase 1): hot-path indexes for the funnel / pipeline-funnel /
+# opportunity-funnel analytics endpoints. The sargable created_at >= ?
+# predicates (see analytics.py) turn into SEARCH only once these indexes exist;
+# without them the optimizer falls back to a covering-index SCAN.
+_FUNNEL_HOT_PATH_INDEXES_SQL = """
+CREATE INDEX IF NOT EXISTS idx_opportunities_created_at
+ON opportunities(created_at);
+CREATE INDEX IF NOT EXISTS idx_pi_decisions_created_at_action
+ON pi_decisions(created_at, action);
+CREATE INDEX IF NOT EXISTS idx_risk_decisions_created_at
+ON risk_decisions(created_at);
+CREATE INDEX IF NOT EXISTS idx_fills_filled_at
+ON fills(filled_at);
+CREATE INDEX IF NOT EXISTS idx_agent_shell_events_type_created
+ON agent_shell_events(event_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp
+ON audit_events(timestamp);
+CREATE INDEX IF NOT EXISTS idx_audit_events_actor_source
+ON audit_events(actor, source);
+"""
+_FUNNEL_HOT_PATH_INDEXES_CHECKSUM = hashlib.sha256(
+    (_FUNNEL_HOT_PATH_INDEXES_SQL + "\nPRAGMA optimize").encode("utf-8")
+).hexdigest()
+
+
+def _apply_funnel_hot_path_indexes_v18(db: sqlite3.Connection) -> None:
+    """Add funnel / pipeline-funnel hot-path indexes for sargable time predicates."""
+
+    # Connection.execute() handles only a single statement; split on ';' and
+    # execute each CREATE INDEX separately.
+    for statement in _FUNNEL_HOT_PATH_INDEXES_SQL.strip().split(";"):
+        statement = statement.strip()
+        if statement:
+            db.execute(statement)
     db.execute("PRAGMA optimize")
 
 
@@ -4758,6 +4871,18 @@ _MIGRATIONS = (
         checksum=_EXECUTION_REFERENCE_CHECKSUM,
         schema_version=SCHEMA_VERSION,
         apply=_apply_execution_reference_v16,
+    ),
+    MigrationStep(
+        migration_id="20260809_0017_holding_period_quality_v17",
+        checksum=_HOLDING_PERIOD_QUALITY_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_holding_period_quality_v17,
+    ),
+    MigrationStep(
+        migration_id="20260809_0018_funnel_hot_path_indexes_v18",
+        checksum=_FUNNEL_HOT_PATH_INDEXES_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_funnel_hot_path_indexes_v18,
     ),
 )
 

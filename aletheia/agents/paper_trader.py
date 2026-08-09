@@ -19,10 +19,12 @@ closes positions itself.
 """
 from __future__ import annotations
 
+import json
 import logging
 import dataclasses
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from uuid import uuid4
 
 from aletheia.agents import register_agent
@@ -45,9 +47,9 @@ logger = logging.getLogger("aletheia.agents.paper_trader")
 
 _BASE_NOTIONAL_USDT = 25.0  # legacy fallback; prefer cfg.trading.default_notional_usdt
 _ATR_TARGET_PCT = 1.5  # legacy fallback; prefer cfg.trading.vol_target_pct
-_RECENT_SIGNAL_COOLDOWN_MINUTES = 30
+_RECENT_SIGNAL_COOLDOWN_MINUTES = 15  # lowered from 30 to allow faster re-entry
 _PENDING_SIGNAL_MAX_AGE_MINUTES = 30
-_PENDING_SIGNAL_QUEUE_CAPACITY = 5
+_PENDING_SIGNAL_QUEUE_CAPACITY = 8  # raised from 5 to allow more concurrent carriers
 
 
 @dataclass
@@ -66,6 +68,66 @@ _EXCHANGE_CRED_KEYS: dict[str, str] = {
     "binance_testnet":   "binance.testnet",
     "binance_live_limited": "binance.live",
 }
+
+
+def _extract_opp_meta(candidate: dict) -> dict[str, Any]:
+    """Extract committee-agent inputs from an opportunity candidate.
+
+    Returns dict with keys: features, news, macro, risk.
+    Each value is a dict suitable for the corresponding committee agent.
+    """
+    meta: dict[str, Any] = {}
+    raw = candidate.get("metadata")
+    if raw:
+        try:
+            meta = json.loads(raw) if isinstance(raw, str) else {}
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # --- Trend Agent features ---
+    features = {
+        "last_price": meta.get("last_price"),
+        "sma20": meta.get("sma20"),
+        "sma50": meta.get("sma50"),
+        "rsi14": meta.get("rsi14"),
+        "mom10": meta.get("mom10"),
+        "bb_pct": meta.get("bb_pct"),
+        "volume_z": meta.get("volume_z"),
+        "atr_pct": meta.get("atr_pct"),
+    }
+    # Remove None values
+    features = {k: v for k, v in features.items() if v is not None}
+
+    # --- News Agent data ---
+    news_data = {
+        "headlines": meta.get("recent_headlines", []),
+        "macro_calendar": meta.get("macro_calendar", []),
+    }
+
+    # --- Macro Agent data ---
+    macro_data = {
+        "fear_greed": meta.get("fear_greed"),
+        "etf_flow_24h": meta.get("etf_flow_24h"),
+        "dxy_change": meta.get("dxy_change"),
+        "onchain_mvrv": meta.get("onchain_mvrv"),
+        "stablecoin_supply_change": meta.get("stablecoin_supply_change"),
+    }
+    macro_data = {k: v for k, v in macro_data.items() if v is not None}
+
+    # --- Risk Agent data ---
+    risk_data = {
+        "atr_pct": meta.get("atr_pct"),
+        "consecutive_losses": meta.get("consecutive_losses"),
+        "account_drawdown_pct": meta.get("account_drawdown_pct"),
+    }
+    risk_data = {k: v for k, v in risk_data.items() if v is not None}
+
+    return {
+        "features": features,
+        "news": news_data,
+        "macro": macro_data,
+        "risk": risk_data,
+    }
 
 
 def _has_credentials(execution_mode: str) -> bool:
@@ -366,6 +428,7 @@ def _plan_signal_batch(
     candidates: list[dict],
     *,
     open_symbols: set[str],
+    open_position_directions: dict[str, set[str]] | None = None,
     recent_signal_pairs: set[tuple[str, str]],
     active_signal_setups: set[tuple[str, str, str]] | None = None,
     operator_evaluated_opportunity_ids: set[str] | None = None,
@@ -407,7 +470,9 @@ def _plan_signal_batch(
             decisions[opp_id] = ("duplicate_symbol", "rejected")
             continue
         seen_symbols.add(symbol)
-        if symbol in open_symbols:
+        # Block only SAME-direction duplicates; allow opposing directions (hedge).
+        open_dirs = open_position_directions.get(symbol, set())
+        if direction in open_dirs:
             decisions[opp_id] = ("open_position_duplicate", "rejected")
             continue
         if symbol in active_symbols:
@@ -468,14 +533,27 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     except Exception as exc:
         logger.warning("pending opportunity expiry unavailable: %s", exc)
     try:
-        pruned_pending = prune_signal_pending_stale(_PENDING_SIGNAL_MAX_AGE_MINUTES)
-        if pruned_pending:
-            outputs.append(f"pruned_pending_carriers:{pruned_pending}")
+        # Data-protection gate: pruning disabled means terminal carrier rows
+        # are kept. Queue capacity stays healthy because
+        # count_unresolved_signal_pending applies its own age window.
+        if cfg.retention.pruning_enabled:
+            pruned_pending = prune_signal_pending_stale(_PENDING_SIGNAL_MAX_AGE_MINUTES)
+            if pruned_pending:
+                outputs.append(f"pruned_pending_carriers:{pruned_pending}")
     except Exception as exc:
         logger.warning("terminal pending carrier cleanup unavailable: %s", exc)
 
     # Snapshot of currently open symbols — used to skip redundant signal writes.
-    open_symbols: set[str] = {p["symbol"] for p in list_all_open_positions()}
+    _open_positions = list_all_open_positions()
+    open_symbols: set[str] = {p["symbol"] for p in _open_positions}
+    # Direction-aware map: symbol → set of open directions. Allows opposing-direction
+    # proposals (hedge) while still blocking same-direction duplicates.
+    open_position_directions: dict[str, set[str]] = {}
+    for p in _open_positions:
+        sym = p["symbol"]
+        d = p.get("direction")
+        if d:
+            open_position_directions.setdefault(sym, set()).add(d)
     recent_signal_pairs = _recent_signal_pairs()
     active_signal_setups = _active_signal_setups()
     # Position C (2026-07-02): Path A (RuleSet-driven signals) was removed with the
@@ -485,10 +563,39 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     # deterministic-rule entry/exit path.
 
     # ── Opportunity-driven (ranked) ───────────────────────────────────────────
-    workset = build_paper_candidate_workset(limit=50)
+    # limit=15 (was 50): fewer candidates per tick reduces LLM CPU load so the
+    # async worker thread does not starve API requests.  The 5-min scheduler
+    # cadence still sweeps the full queue over time.
+    workset = build_paper_candidate_workset(limit=15)
     # Selection may need to backfill below the display shortlist when higher
     # ranks are temporarily occupied/cooling down. Keep the complete working set.
     candidates = list(workset.scanned_candidates)
+
+    # ── AI Investment Committee enrichment (LLM-powered) ───────────────────
+    # Each candidate is evaluated by the LLM committee which reads market data
+    # and produces a structured recommendation with reasoning.
+    # Uses asyncio.gather for parallel LLM calls (max 10 concurrent).
+    try:
+        from aletheia.agents.committee.integration import enrich_candidates_parallel
+
+        _candidates_to_enrich = [c for c in candidates if not c.get("skip_reason")]
+        if _candidates_to_enrich:
+            # total_timeout MUST stay strictly below the scheduler's
+            # paper_trader job timeout (300s).  When the budget expires,
+            # enrich_candidates_parallel returns partial results instead of
+            # hanging the single-threaded async worker — see integration.py.
+            # max_concurrency=3 (was 10): fewer simultaneous LLM calls per tick
+            # keeps CPU headroom for API responses.
+            _enriched_llm = await enrich_candidates_parallel(
+                _candidates_to_enrich, max_concurrency=3, total_timeout=240.0,
+            )
+            # Rebuild candidates list preserving order and skipped ones
+            enriched_map = {c.get("opportunity_id"): c for c in _enriched_llm}
+            candidates = [
+                enriched_map.get(c.get("opportunity_id"), c) for c in candidates
+            ]
+    except Exception as exc:
+        logger.warning("LLM Committee enrichment skipped: %s", exc)
 
     _PERMANENT_SKIP_PREFIXES = (
         "neutral_bias", "confidence_below_", "paused_strategy:", "blocked_factor:",
@@ -590,6 +697,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     plan = _plan_signal_batch(
         eligible,
         open_symbols=open_symbols,
+        open_position_directions=open_position_directions,
         recent_signal_pairs=recent_signal_pairs,
         active_signal_setups=active_signal_setups,
         operator_evaluated_opportunity_ids=_operator_evaluated_opportunity_ids(),
@@ -684,17 +792,31 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             from aletheia.storage.models import PiDecision
             from aletheia.storage.repositories import insert_pi_decision, transaction
             _sig_conviction = min(int(candidate.get("trade_score", 0)), 95)
+            _reasoning = (
+                f"Ranker candidate: score={candidate.get('trade_score')} "
+                f"scanner={candidate.get('scanner_family')} "
+                f"factor={candidate.get('factor_status')}"
+            )
+            # Append the AI committee's opinion (when present) so the persisted
+            # decision carries the explainable WHY, not only the ranker score.
+            _committee_report = candidate.get("committee_report")
+            if isinstance(_committee_report, dict):
+                _conf = _committee_report.get("final_confidence")
+                _es = _committee_report.get("explainability_score")
+                _committee_dir = _committee_report.get("final_direction", "?")
+                _reasoning += (
+                    f" | committee={_committee_dir}"
+                    f"(conf={(_conf or 0) * 100:.0f}%, ES={(_es or 0):.2f})"
+                )
+                if _committee_report.get("blocked"):
+                    _reasoning += " [committee_blocked]"
             pi_dec = PiDecision(
                 symbol=candidate["symbol"],
                 direction=direction,
                 market_type=candidate.get("market_type") or candidate.get("market"),
                 action="signal_pending",
                 conviction=_sig_conviction,
-                reasoning=(
-                    f"Ranker candidate: score={candidate.get('trade_score')} "
-                    f"scanner={candidate.get('scanner_family')} "
-                    f"factor={candidate.get('factor_status')}"
-                ),
+                reasoning=_reasoning,
                 proposal_id=None,
                 opportunity_id=candidate.get("opportunity_id"),
                 debate_ran=False,

@@ -58,6 +58,8 @@ _generic_wake_pending: bool = False
 _task_generation: int = 0
 _started_at: float | None = None   # monotonic timestamp of last start
 _active_params: dict | None = None  # debounce/cooldown/heartbeat in effect
+_last_heartbeat: float = 0.0       # monotonic timestamp of last loop cycle start
+_consecutive_eval_failures: int = 0  # consecutive _run_evaluation failures
 _last_error_summary: str | None = None  # bounded, non-secret operator diagnostic
 
 # A negative value cannot collide with the non-negative queue depth returned by
@@ -85,6 +87,9 @@ def notify_pi_daemon(source: str = "unknown", event: WakeEvent | None = None) ->
     global _uvicorn_loop, _signal_event
     if _uvicorn_loop is None or _signal_event is None:
         return False
+    if _uvicorn_loop.is_closed():
+        logger.debug("pi_daemon: notify dropped (loop closed, source=%s)", source)
+        return False
 
     def _apply() -> None:
         # Runs on the loop thread → no lock needed for the shared wake state.
@@ -110,6 +115,11 @@ def is_daemon_running() -> bool:
 
 
 def daemon_status() -> dict:
+    from aletheia.storage.repositories import count_unresolved_signal_pending
+
+    hb_age = None
+    if _last_heartbeat > 0.0:
+        hb_age = time.monotonic() - _last_heartbeat
     return {
         "running": is_daemon_running(),
         "event_set": _signal_event.is_set() if _signal_event else False,
@@ -117,6 +127,11 @@ def daemon_status() -> dict:
         "task_generation": _task_generation,
         "started_at": _started_at,
         "active_params": _active_params,
+        "last_heartbeat_age_sec": hb_age,
+        "consecutive_failures": _consecutive_eval_failures,
+        "signal_pending_queue_depth": (
+            count_unresolved_signal_pending() if is_daemon_running() else None
+        ),
         "last_error_summary": _last_error_summary,
     }
 
@@ -214,8 +229,11 @@ async def reconfigure_pi_daemon(
         if not gate_allows_startup(cfg):
             logger.info("pi_daemon: enable blocked by startup_behavior_gate")
             return {"configured": True, "running": False, "blocker": "startup_behavior_gate"}
-    except Exception:
-        pass  # permissive on gate-check failure
+    except Exception as exc:
+        # Gate check failure = blocker.  A broken gate must not silently permit
+        # daemon startup (fail-closed for the safety gate).
+        logger.warning("pi_daemon: startup gate check failed: %s", exc)
+        return {"configured": True, "running": False, "blocker": f"startup_gate_error:{exc}"}
 
     if cfg.runtime.paused:
         return {"configured": True, "running": False, "blocker": "runtime_paused"}
@@ -269,7 +287,7 @@ async def _pi_daemon_loop(
     wake_capacity: float = 15,
     wake_refill_per_hour: float = 15.0,
 ) -> None:
-    global _signal_event, _eval_lock, _coalescer, _generic_wake_pending
+    global _signal_event, _eval_lock, _coalescer, _generic_wake_pending, _last_heartbeat
     _signal_event = asyncio.Event()
     _eval_lock = asyncio.Lock()
     _coalescer = WakeCoalescer(
@@ -318,6 +336,7 @@ async def _pi_daemon_loop(
                 triggered_by = "signal"
             except asyncio.TimeoutError:
                 triggered_by = timeout_trigger
+
 
         _signal_event.clear()
 
@@ -546,6 +565,7 @@ def _restore_wake_context(wake_context: dict | None, *, now: float | None = None
 
 
 async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -> int:
+    global _consecutive_eval_failures
     global _last_error_summary
     try:
         from aletheia.agent_runtime.run_context import bind_economic_attribution
@@ -611,6 +631,7 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
         if is_portfolio_review:
             _clear_retry_wake_context(wake_context)
         _record_job_success("pi_trading_decision")
+        _consecutive_eval_failures = 0
         _last_error_summary = None
         return max(int(remaining or 0), 0)
     except asyncio.TimeoutError:
@@ -619,6 +640,7 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
         _last_error_summary = "evaluation_timeout"
         _record_job_failure("pi_trading_decision", "daemon_evaluation_timeout")
         _restore_wake_context(wake_context)
+        _consecutive_eval_failures += 1
         return _EVALUATION_RETRY_PENDING
     except asyncio.CancelledError:
         raise  # propagate shutdown
@@ -628,6 +650,7 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
         _last_error_summary = f"{type(exc).__name__}"[:120]
         _record_job_failure("pi_trading_decision", "daemon_evaluation_failed")
         _restore_wake_context(wake_context)
+        _consecutive_eval_failures += 1
         return _EVALUATION_RETRY_PENDING
     finally:
         # Release thread-local SQLite connection to prevent WAL lock across cooldown

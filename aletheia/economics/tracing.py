@@ -6,12 +6,67 @@ import hashlib
 import json
 import math
 import os
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
 from aletheia.economics.agent_roles import role_for_logical_agent
 from aletheia.economics.schema import ensure_economics_schema
+
+# ── Server-side TTL cache for the Usage dashboard ───────────────────────────
+# Historical daily aggregates never change (the past is written); the current
+# UTC day accrues new rows as agents run.  We cache finished-day results for
+# 60s and the still-open day for 5s so the 8-polling-component dashboard does
+# not re-run the same SQL on every refetch.  The lock protects the shared dict
+# across the gateway worker threads; writes are infrequent (TTL expiry).
+_CACHE_LOCK = threading.Lock()
+_COST_CACHE: dict[str, tuple[float, Any]] = {}  # key → (expires_at, value)
+_CACHE_TTL_FINISHED_DAY = 60.0
+_CACHE_TTL_CURRENT_DAY = 5.0
+
+
+def _cache_get(key: str) -> Any | None:
+    """Return a cached value if it exists and has not expired."""
+    with _CACHE_LOCK:
+        entry = _COST_CACHE.get(key)
+        if entry is None:
+            return None
+        expires_at, value = entry
+        if time.monotonic() < expires_at:
+            return value
+        # Expired — drop it
+        del _COST_CACHE[key]
+        return None
+
+
+def _cache_set(key: str, value: Any, *, ttl: float) -> None:
+    """Store a value with an absolute TTL (seconds)."""
+    with _CACHE_LOCK:
+        _COST_CACHE[key] = (time.monotonic() + ttl, value)
+
+
+def _cache_invalidate() -> None:
+    """Flush all cached cost data — call after a write if ever needed."""
+    with _CACHE_LOCK:
+        _COST_CACHE.clear()
+
+
+def _window_end_is_today_utc(window_end: str) -> bool:
+    """True if the window's end falls on the current UTC day.
+
+    The Usage dashboard always passes ``window_end=now``; if ``window_end``
+    is already on a past day we can use the longer TTL safely.
+    """
+    try:
+        end_dt = datetime.fromisoformat(window_end)
+    except (ValueError, TypeError):
+        return True  # defensive: short TTL
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=timezone.utc)
+    now_utc = datetime.now(timezone.utc)
+    return end_dt.date() == now_utc.date()
 
 
 def _utcnow() -> str:
@@ -165,7 +220,7 @@ def list_pricing_snapshots(
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     rows = db.execute(
         f"SELECT * FROM pricing_snapshots {where_sql} "
-        f"ORDER BY provider, model, replace(effective_from,' ','T') DESC, created_at DESC "
+        f"ORDER BY provider, model, effective_from DESC, created_at DESC "
         f"LIMIT ?",
         (*params, _bounded_limit(limit)),
     ).fetchall()
@@ -251,7 +306,7 @@ def list_tool_cost_profiles(
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     rows = db.execute(
         f"SELECT * FROM tool_cost_profiles {where_sql} "
-        f"ORDER BY tool_name, replace(effective_from,' ','T') DESC, created_at DESC "
+        f"ORDER BY tool_name, effective_from DESC, created_at DESC "
         f"LIMIT ?",
         (*params, _bounded_limit(limit)),
     ).fetchall()
@@ -263,8 +318,8 @@ def resolve_tool_cost_profile(tool_name: str, at: str) -> dict[str, Any] | None:
     row = db.execute(
         """SELECT * FROM tool_cost_profiles
            WHERE tool_name=?
-             AND replace(effective_from,' ','T') <= replace(?,' ','T')
-           ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1""",
+             AND effective_from <= ?
+           ORDER BY effective_from DESC,rowid DESC LIMIT 1""",
         (tool_name, at),
     ).fetchone()
     return dict(row) if row else None
@@ -701,16 +756,14 @@ def list_token_summary(
         result = db.execute(
             "SELECT usage_json, metadata_json, provider, model_or_tool "
             "FROM runtime_cost_events WHERE event_type='llm' "
-            "AND replace(started_at,' ','T') >= replace(?,' ','T') "
-            "AND replace(started_at,' ','T') <= replace(?,' ','T') AND run_id=?",
+            "AND started_at >= ? AND started_at <= ? AND run_id=?",
             (window_start, window_end, run_id),
         )
     else:
         result = db.execute(
             "SELECT usage_json, metadata_json, provider, model_or_tool "
             "FROM runtime_cost_events WHERE event_type='llm' "
-            "AND replace(started_at,' ','T') >= replace(?,' ','T') "
-            "AND replace(started_at,' ','T') <= replace(?,' ','T')",
+            "AND started_at >= ? AND started_at <= ?",
             (window_start, window_end),
         )
     rows = [dict(row) for row in result.fetchall()]
@@ -792,16 +845,14 @@ def list_cost_summary(
     if run_id:
         result = db.execute(
             "SELECT * FROM runtime_cost_events "
-            "WHERE replace(started_at,' ','T') >= replace(?,' ','T') "
-            "AND replace(started_at,' ','T') <= replace(?,' ','T') "
+            "WHERE started_at >= ? AND started_at <= ? "
             "AND run_id=? ORDER BY started_at,id",
             (window_start, window_end, run_id),
         )
     else:
         result = db.execute(
             "SELECT * FROM runtime_cost_events "
-            "WHERE replace(started_at,' ','T') >= replace(?,' ','T') "
-            "AND replace(started_at,' ','T') <= replace(?,' ','T') "
+            "WHERE started_at >= ? AND started_at <= ? "
             "ORDER BY started_at,id",
             (window_start, window_end),
         )
@@ -876,6 +927,31 @@ def _date_only(iso_ts: str) -> str:
     return _normalize_iso(iso_ts)[:10]
 
 
+def _bucket_from_sql_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Convert a SQL GROUP BY output row into the dashboard bucket schema.
+
+    Shared by provider/model/daily aggregation so the output shape stays
+    consistent across the three nesting levels. ``latency_count`` /
+    ``known_cost_usd`` are finalized from the raw SQL aggregates.
+    """
+    latency_count = int(row["latency_count"])
+    known_cost = float(row["known_cost_usd"])
+    return {
+        "event_count": int(row["event_count"]),
+        "known_cost_usd": round(known_cost, 12),
+        "unknown_count": int(row["unknown_count"]),
+        "input_tokens": int(row["input_tokens"]),
+        "output_tokens": int(row["output_tokens"]),
+        "reasoning_tokens": int(row["reasoning_tokens"]),
+        "cached_input_tokens": int(row["cached_input_tokens"]),
+        "success_count": int(row["success_count"]),
+        "error_count": int(row["error_count"]),
+        "avg_latency_ms": round(float(row["latency_sum"]) / latency_count, 1)
+        if latency_count > 0
+        else None,
+    }
+
+
 def list_cost_breakdown_by_provider(
     *,
     window_start: str,
@@ -885,20 +961,27 @@ def list_cost_breakdown_by_provider(
 ) -> dict[str, Any]:
     """Per-provider/model token breakdown + daily time series for the Usage dashboard.
 
-    Unlike :func:`list_cost_summary` (which groups by ``event_type`` only), this
-    reads LLM-type rows, parses the persisted ``usage_json`` blob, and rolls the
-    normalized token fields up by ``provider`` and ``(provider, model)`` as well
-    as by UTC date. Each bucket also carries success/error counts and average
-    latency so the dashboard can show per-model call health without scanning raw
-    rows. The output is intentionally compact (no raw events returned) so the
-    dashboard can poll it at the same cadence as ``/api/economics/costs`` without
-    paying for a 5 KB row back per call.
+    Reads LLM-type rows and aggregates token fields, cost, latency, and
+    success/error counts in SQL (``GROUP BY`` + ``json_extract``) so the query
+    uses the ``idx_runtime_cost_events_window`` index for an efficient range
+    scan and returns only compact buckets — never the raw event rows. The
+    persisted ``usage_json`` blob stores ``{"raw":..., "normalized": {...}}``;
+    token fields are extracted via ``json_extract`` on the normalized block.
 
-    Rows whose ``usage_json`` cannot be parsed are still credited to the
-    provider's ``event_count`` and ``known_cost_usd`` totals (cost is always on
-    the row itself), but their token fields are skipped and surfaced via
-    ``parse_errors`` so an operator can see drift without an exception masking
-    the rest of the response.
+    Historical rows may predate the top-level ``cached_input_tokens`` mapping —
+    their normalized blob only carries ``provider_cache_read_input_tokens``.  The
+    SQL uses ``COALESCE(json_extract('$.normalized.cached_input_tokens'),
+    json_extract('$.normalized.provider_cache_read_input_tokens'))`` so cached
+
+    Results are cached server-side: finished UTC days for 60s, the still-open
+    day for 5s.  The cache key incorporates all query parameters.
+    tokens are not silently dropped.
+
+    Rows whose ``usage_json`` has no ``normalized`` block still count toward
+    ``event_count`` / ``known_cost_usd``; the ``parse_errors`` counter reflects
+    rows where the blob exists but cannot be parsed (detected by comparing rows
+    that have ``usage_json != '{}'`` against those where token extraction
+    succeeded).
     """
     db = ensure_economics_schema()
     if not tracing_enabled():
@@ -912,150 +995,128 @@ def list_cost_breakdown_by_provider(
             "parse_errors": 0,
             "event_count": 0,
         }
-    where = [
-        "event_type='llm'",
-        "replace(started_at,' ','T') >= replace(?,' ','T')",
-        "replace(started_at,' ','T') <= replace(?,' ','T')",
-    ]
+
+    # Cache lookup — key includes all parameters that affect the result
+    cache_key = f"cbp:{window_start}:{window_end}:{run_id}:{event_limit}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    where = ["event_type='llm'", "started_at >= ?", "started_at <= ?"]
     params: list[Any] = [window_start, window_end]
     if run_id:
         where.append("run_id=?")
         params.append(run_id)
-    rows = [
-        dict(row)
-        for row in db.execute(
-            "SELECT provider, model_or_tool, started_at, latency_ms, status, "
-            "estimated_cost_usd, cost_status, usage_json "
-            "FROM runtime_cost_events WHERE "
-            + " AND ".join(where)
-            + " ORDER BY started_at LIMIT ?",
-            (*params, int(event_limit)),
-        ).fetchall()
-    ]
+    where_sql = " AND ".join(where)
+
+    # Token extraction: pull from the normalized block inside usage_json.
+    # Cache fallback: prefer cached_input_tokens, fall back to
+    # provider_cache_read_input_tokens for historical rows.
+    token_expr = (
+        "COALESCE(json_extract(usage_json,'$.normalized.%s'),0)"
+    )
+    cached_expr = (
+        "COALESCE("
+        "json_extract(usage_json,'$.normalized.cached_input_tokens'),"
+        "json_extract(usage_json,'$.normalized.provider_cache_read_input_tokens'),"
+        "0)"
+    )
+
+    group_sql = (
+        "SELECT {dim_cols},"
+        "COUNT(*) AS event_count,"
+        "SUM(CASE WHEN estimated_cost_usd IS NOT NULL AND cost_status != 'unknown'"
+        "    THEN estimated_cost_usd ELSE 0 END) AS known_cost_usd,"
+        "SUM(CASE WHEN estimated_cost_usd IS NULL OR cost_status = 'unknown'"
+        "    THEN 1 ELSE 0 END) AS unknown_count,"
+        f"SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS success_count,"
+        f"SUM(CASE WHEN status!='success' THEN 1 ELSE 0 END) AS error_count,"
+        "SUM(CASE WHEN latency_ms IS NOT NULL THEN latency_ms ELSE 0 END) AS latency_sum,"
+        "SUM(CASE WHEN latency_ms IS NOT NULL THEN 1 ELSE 0 END) AS latency_count,"
+        f"SUM(CASE WHEN {token_expr % 'input_tokens'} IS NOT NULL AND {token_expr % 'input_tokens'} > 0"
+        f"    THEN CAST({token_expr % 'input_tokens'} AS INTEGER) ELSE 0 END) AS input_tokens,"
+        f"SUM(CASE WHEN {token_expr % 'output_tokens'} IS NOT NULL AND {token_expr % 'output_tokens'} > 0"
+        f"    THEN CAST({token_expr % 'output_tokens'} AS INTEGER) ELSE 0 END) AS output_tokens,"
+        f"SUM(CASE WHEN {token_expr % 'reasoning_tokens'} IS NOT NULL AND {token_expr % 'reasoning_tokens'} > 0"
+        f"    THEN CAST({token_expr % 'reasoning_tokens'} AS INTEGER) ELSE 0 END) AS reasoning_tokens,"
+        f"SUM(CASE WHEN {cached_expr} IS NOT NULL AND {cached_expr} > 0"
+        f"    THEN CAST({cached_expr} AS INTEGER) ELSE 0 END) AS cached_input_tokens "
+        "FROM runtime_cost_events "
+        f"WHERE {where_sql} "
+        "GROUP BY {group_cols}"
+    )
 
     providers: dict[str, dict[str, Any]] = {}
     models: dict[str, dict[str, dict[str, Any]]] = {}
     daily_map: dict[tuple[str, str], dict[str, Any]] = {}
-    parse_errors = 0
+    total_events = 0
 
-    def _new_bucket() -> dict[str, Any]:
-        return {
-            "event_count": 0,
-            "known_cost_usd": 0.0,
-            "unknown_count": 0,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "reasoning_tokens": 0,
-            "cached_input_tokens": 0,
-            "success_count": 0,
-            "error_count": 0,
-            "avg_latency_ms": None,
-            "latency_ms_sum": 0.0,
-            "latency_count": 0,
-        }
+    # Provider-level aggregation
+    for row in db.execute(
+        group_sql.format(
+            dim_cols="provider",
+            group_cols="provider",
+        ),
+        params,
+    ):
+        d = dict(row)
+        total_events += int(d["event_count"])
+        provider = d["provider"] or "unknown"
+        providers[provider] = _bucket_from_sql_row(d)
 
-    def _apply(
-        bucket: dict[str, Any],
-        *,
-        is_unknown: bool,
-        expense: Any,
-        usage: dict[str, Any] | None,
-        status: str,
-        latency_ms: Any,
-    ) -> None:
-        bucket["event_count"] += 1
-        if is_unknown:
-            bucket["unknown_count"] += 1
-        else:
-            bucket["known_cost_usd"] += float(expense)
-        if status == "success":
-            bucket["success_count"] += 1
-        else:
-            bucket["error_count"] += 1
-        if latency_ms is not None:
-            try:
-                bucket["latency_ms_sum"] += float(latency_ms)
-                bucket["latency_count"] += 1
-            except (TypeError, ValueError):
-                pass
-        if usage is not None:
-            for field in ("input_tokens", "output_tokens", "reasoning_tokens"):
-                value = usage.get(field)
-                if isinstance(value, (int, float)) and value > 0:
-                    bucket[field] += int(value)
-            cached = usage.get("cached_input_tokens")
-            if cached is None:
-                # Historical rows may predate the top-level cache_read mapping:
-                # their normalized blob only carries
-                # provider_cache_read_input_tokens. Fall back so cached tokens
-                # are not silently dropped from the dashboard.
-                cached = usage.get("provider_cache_read_input_tokens")
-            if isinstance(cached, (int, float)) and cached > 0:
-                bucket["cached_input_tokens"] += int(cached)
+    # (provider, model)-level aggregation
+    for row in db.execute(
+        group_sql.format(
+            dim_cols="provider, model_or_tool AS model",
+            group_cols="provider, model_or_tool",
+        ),
+        params,
+    ):
+        d = dict(row)
+        provider = d["provider"] or "unknown"
+        model = d["model"] or "unknown"
+        models.setdefault(provider, {})[model] = _bucket_from_sql_row(d)
 
-    def _finalize_bucket(bucket: dict[str, Any]) -> None:
-        bucket["known_cost_usd"] = round(bucket["known_cost_usd"], 12)
-        if bucket["latency_count"]:
-            bucket["avg_latency_ms"] = round(
-                bucket["latency_ms_sum"] / bucket["latency_count"], 1
-            )
-        else:
-            bucket["avg_latency_ms"] = None
-        bucket.pop("latency_ms_sum", None)
-        bucket.pop("latency_count", None)
+    # Daily series: (date, provider)-level aggregation
+    daily_sql = (
+        "SELECT substr(started_at,1,10) AS date, provider,"
+        "COUNT(*) AS event_count,"
+        "SUM(CASE WHEN estimated_cost_usd IS NOT NULL AND cost_status != 'unknown'"
+        "    THEN estimated_cost_usd ELSE 0 END) AS known_cost_usd,"
+        "SUM(CASE WHEN estimated_cost_usd IS NULL OR cost_status = 'unknown'"
+        "    THEN 1 ELSE 0 END) AS unknown_count,"
+        "SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS success_count,"
+        "SUM(CASE WHEN status!='success' THEN 1 ELSE 0 END) AS error_count,"
+        "SUM(CASE WHEN latency_ms IS NOT NULL THEN latency_ms ELSE 0 END) AS latency_sum,"
+        "SUM(CASE WHEN latency_ms IS NOT NULL THEN 1 ELSE 0 END) AS latency_count,"
+        f"SUM(CASE WHEN {token_expr % 'input_tokens'} IS NOT NULL AND {token_expr % 'input_tokens'} > 0"
+        f"    THEN CAST({token_expr % 'input_tokens'} AS INTEGER) ELSE 0 END) AS input_tokens,"
+        f"SUM(CASE WHEN {token_expr % 'output_tokens'} IS NOT NULL AND {token_expr % 'output_tokens'} > 0"
+        f"    THEN CAST({token_expr % 'output_tokens'} AS INTEGER) ELSE 0 END) AS output_tokens,"
+        f"SUM(CASE WHEN {token_expr % 'reasoning_tokens'} IS NOT NULL AND {token_expr % 'reasoning_tokens'} > 0"
+        f"    THEN CAST({token_expr % 'reasoning_tokens'} AS INTEGER) ELSE 0 END) AS reasoning_tokens,"
+        f"SUM(CASE WHEN {cached_expr} IS NOT NULL AND {cached_expr} > 0"
+        f"    THEN CAST({cached_expr} AS INTEGER) ELSE 0 END) AS cached_input_tokens "
+        f"FROM runtime_cost_events "
+        f"WHERE {where_sql} "
+        f"GROUP BY substr(started_at,1,10), provider "
+        f"ORDER BY substr(started_at,1,10), provider"
+    )
+    for row in db.execute(daily_sql, params):
+        d = dict(row)
+        day = d["date"]
+        provider = d["provider"] or "unknown"
+        daily_map[(day, provider)] = _bucket_from_sql_row(d)
 
-    for row in rows:
-        provider = row.get("provider") or "unknown"
-        model = row.get("model_or_tool") or "unknown"
-        started_at = row.get("started_at") or _utcnow()
-        usage = _extract_usage(row.get("usage_json") or "")
-        expense = row.get("estimated_cost_usd")
-        status = row.get("status") or "error"
-        latency_ms = row.get("latency_ms")
-        is_unknown = expense is None or row.get("cost_status") == "unknown"
-
-        if usage is None and row.get("usage_json"):
-            parse_errors += 1
-
-        prov_bucket = providers.setdefault(provider, _new_bucket())
-        _apply(
-            prov_bucket,
-            is_unknown=is_unknown,
-            expense=expense,
-            usage=usage,
-            status=status,
-            latency_ms=latency_ms,
-        )
-
-        model_bucket = models.setdefault(provider, {}).setdefault(model, _new_bucket())
-        _apply(
-            model_bucket,
-            is_unknown=is_unknown,
-            expense=expense,
-            usage=usage,
-            status=status,
-            latency_ms=latency_ms,
-        )
-
-        day = _date_only(started_at)
-        day_key = (day, provider)
-        day_bucket = daily_map.setdefault(day_key, _new_bucket())
-        _apply(
-            day_bucket,
-            is_unknown=is_unknown,
-            expense=expense,
-            usage=usage,
-            status=status,
-            latency_ms=latency_ms,
-        )
-
-    for prov_bucket in providers.values():
-        _finalize_bucket(prov_bucket)
-    for provider_models in models.values():
-        for model_bucket in provider_models.values():
-            _finalize_bucket(model_bucket)
-    for day_bucket in daily_map.values():
-        _finalize_bucket(day_bucket)
+    # parse_errors: count rows where usage_json has content but no normalized block
+    # We detect this by comparing total LLM events vs events with parseable usage
+    parse_errors = db.execute(
+        f"SELECT COUNT(*) FROM runtime_cost_events "
+        f"WHERE {where_sql} "
+        f"  AND usage_json IS NOT NULL AND usage_json != '{{}}' "
+        f"  AND json_extract(usage_json,'$.normalized') IS NULL",
+        params,
+    ).fetchone()[0]
 
     daily_series = [
         {
@@ -1069,16 +1130,24 @@ def list_cost_breakdown_by_provider(
         )
     ]
 
-    return {
+    result = {
         "window_start": window_start,
         "window_end": window_end,
         "tracing_enabled": True,
-        "event_count": len(rows),
-        "parse_errors": parse_errors,
+        "event_count": total_events,
+        "parse_errors": parse_errors or 0,
         "providers": providers,
         "models": models,
         "daily_series": daily_series,
     }
+
+    ttl = (
+        _CACHE_TTL_CURRENT_DAY
+        if _window_end_is_today_utc(window_end)
+        else _CACHE_TTL_FINISHED_DAY
+    )
+    _cache_set(cache_key, result, ttl=ttl)
+    return result
 
 
 def list_cost_breakdown_by_tool(
@@ -1099,6 +1168,10 @@ def list_cost_breakdown_by_tool(
 
     Costs come from ``tool_cost_profiles`` via ``cost_profile_id``; rows without
     a profile stay ``unknown`` and are counted, never dropped.
+
+    Aggregation runs in SQL (``GROUP BY model_or_tool``) so the
+    ``idx_runtime_cost_events_window`` index covers the range scan and only
+    compact buckets cross the wire — never the raw rows.
     """
     db = ensure_economics_schema()
     if not tracing_enabled():
@@ -1109,57 +1182,64 @@ def list_cost_breakdown_by_tool(
             "tools": {},
             "event_count": 0,
         }
-    where = [
-        "event_type='tool'",
-        "replace(started_at,' ','T') >= replace(?,' ','T')",
-        "replace(started_at,' ','T') <= replace(?,' ','T')",
-    ]
+
+    # Cache lookup
+    cache_key = f"cbt:{window_start}:{window_end}:{run_id}:{event_limit}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    where = ["event_type='tool'", "started_at >= ?", "started_at <= ?"]
     params: list[Any] = [window_start, window_end]
     if run_id:
         where.append("run_id=?")
         params.append(run_id)
+    where_sql = " AND ".join(where)
+
     rows = [
         dict(row)
         for row in db.execute(
-            "SELECT model_or_tool, status, estimated_cost_usd, cost_status "
-            "FROM runtime_cost_events WHERE "
-            + " AND ".join(where)
-            + " ORDER BY started_at LIMIT ?",
+            "SELECT model_or_tool AS tool_name, "
+            "COUNT(*) AS event_count, "
+            "SUM(CASE WHEN estimated_cost_usd IS NOT NULL AND cost_status != 'unknown' "
+            "    THEN estimated_cost_usd ELSE 0 END) AS known_cost_usd, "
+            "SUM(CASE WHEN estimated_cost_usd IS NULL OR cost_status = 'unknown' "
+            "    THEN 1 ELSE 0 END) AS unknown_count, "
+            "SUM(CASE WHEN status != 'denied' THEN 1 ELSE 0 END) AS recorded_count, "
+            "SUM(CASE WHEN status = 'denied' THEN 1 ELSE 0 END) AS denied_count "
+            "FROM runtime_cost_events "
+            f"WHERE {where_sql} "
+            "GROUP BY model_or_tool "
+            "LIMIT ?",
             (*params, int(event_limit)),
         ).fetchall()
     ]
 
-    def _new_tool_bucket() -> dict[str, Any]:
-        return {
-            "event_count": 0,
-            "known_cost_usd": 0.0,
-            "unknown_count": 0,
-            "recorded_count": 0,
-            "denied_count": 0,
+    tools: dict[str, dict[str, Any]] = {}
+    total_events = 0
+    for row in rows:
+        name = row["tool_name"] or "unknown"
+        total_events += row["event_count"]
+        tools[name] = {
+            "event_count": int(row["event_count"]),
+            "known_cost_usd": round(float(row["known_cost_usd"]), 12),
+            "unknown_count": int(row["unknown_count"]),
+            "recorded_count": int(row["recorded_count"]),
+            "denied_count": int(row["denied_count"]),
         }
 
-    tools: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        name = row.get("model_or_tool") or "unknown"
-        bucket = tools.setdefault(name, _new_tool_bucket())
-        bucket["event_count"] += 1
-        if (row.get("status") or "recorded") == "denied":
-            bucket["denied_count"] += 1
-        else:
-            bucket["recorded_count"] += 1
-        expense = row.get("estimated_cost_usd")
-        if expense is None or row.get("cost_status") == "unknown":
-            bucket["unknown_count"] += 1
-        else:
-            bucket["known_cost_usd"] += float(expense)
-
-    for bucket in tools.values():
-        bucket["known_cost_usd"] = round(bucket["known_cost_usd"], 12)
-
-    return {
+    result = {
         "window_start": window_start,
         "window_end": window_end,
         "tracing_enabled": True,
-        "event_count": len(rows),
+        "event_count": total_events,
         "tools": tools,
     }
+
+    ttl = (
+        _CACHE_TTL_CURRENT_DAY
+        if _window_end_is_today_utc(window_end)
+        else _CACHE_TTL_FINISHED_DAY
+    )
+    _cache_set(cache_key, result, ttl=ttl)
+    return result

@@ -42,9 +42,9 @@ def _src(rel: str) -> str:
 )
 def test_pi_trading_decision_fallback_decoupled_from_heartbeat():
     src = _src("aletheia/agent_runtime/scheduler.py")
-    # The fallback interval must be a fixed ~15min, not derived from heartbeat_sec.
-    assert "_pi_fallback_min = 15" in src, (
-        "pi_trading_decision fallback interval is not the fixed ~15min safety-net (A5)"
+    # The scheduler interval must use the explicit decision cadence, not heartbeat.
+    assert "_pi_decision_interval_min = cfg.pi_daemon.decision_interval_minutes" in src, (
+        "pi_trading_decision does not use the explicit 30/60 minute cadence"
     )
     # The old coupling (heartbeat_sec / 60) must be gone from the job-interval computation.
     assert "cfg.pi_daemon.heartbeat_sec / 60" not in src, (

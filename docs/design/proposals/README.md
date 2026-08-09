@@ -43,3 +43,9 @@ Proposal as stable decision history.
 - [Model provider profiles and access methods](model_provider_profiles_and_access_methods.md):
   API profile instances, CLI harness integrations, OAuth connections, and the
   staged retirement of the legacy model-settings mutation path.
+- [Explainable AI quant design](explainable_ai_quant_design.md): draft design
+  for upgrading black-box LLM decisions into an explainable, auditable AI
+  investment committee.
+- [Component optimization roadmap](component_optimization_roadmap.md): draft
+  mapping of per-component optimization opportunities borrowed from open
+  quant/agent projects.

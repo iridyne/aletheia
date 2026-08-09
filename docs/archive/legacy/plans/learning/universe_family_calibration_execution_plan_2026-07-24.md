@@ -5,9 +5,9 @@
 > 范围：仅 `universe_family_calibration` 的测量、owner 可观测性、准入与 paper 实验
 > 分类：测量/契约漂移修复为 A 类；任何改变候选分配的 paper treatment 为 B 类
 > 上位契约：
-> [`learning_contract`](../../design/contracts/learning_contract.md)、
-> [`learning_evolution_contract`](../../design/contracts/learning_evolution_contract.md)、
-> [`learning_observability_contract`](../../design/contracts/learning_observability_contract.md)
+> [`learning_contract`](../../../../design/contracts/learning_contract.md)、
+> [`learning_evolution_contract`](../../../../design/proposals/learning_evolution.md)、
+> [`learning_observability_contract`](../../../../design/proposals/learning_observability.md)
 > 总体交付序列：
 > [`learning_positive_contribution_implementation_plan_2026-07-12`](learning_positive_contribution_implementation_plan_2026-07-12.md)
 
@@ -38,7 +38,7 @@ Universe 候选族群
    Learning 对赚钱产生了可验证贡献。
 
 `paper_internal` 足以验证 Level 1 的因果账本和系统闭环，但不能替代
-[`EXPERIMENT_PROTOCOL`](../../product/experiments/EXPERIMENT_PROTOCOL.md) 要求的
+[`EXPERIMENT_PROTOCOL`](../../../../product/experiments/EXPERIMENT_PROTOCOL.md) 要求的
 `bitget_demo` 来证明 Level 2。当前缺少 demo credentials，因此 Level 2 是明确的
 外部前置条件，不以模拟结果冒充完成。
 

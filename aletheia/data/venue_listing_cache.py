@@ -67,6 +67,11 @@ def invalidate_all() -> None:
     """Expire all cached listings. Called on startup or full config reset."""
     with _CACHE_LOCK:
         _CACHE.clear()
+    # Also drop locks for venues no longer needed so the lock dict doesn't
+    # grow one permanent entry per unique venue name seen during the process
+    # lifetime.
+    with _LOAD_LOCKS_GUARD:
+        _LOAD_LOCKS.clear()
     logger.debug("venue_listing_cache: all entries invalidated")
 
 

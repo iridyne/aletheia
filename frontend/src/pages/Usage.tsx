@@ -87,30 +87,34 @@ function fmtTokens(tokens: number): string {
 export default function Usage() {
   const [days, setDays] = useState(7)
 
+  // Polling intervals are relaxed from 30s→60s: the cost endpoints now run
+  // SQL GROUP BY aggregation with index-backed range scans (~50ms) instead of
+  // full row scans in Python (~1.4s), so less frequent polling keeps the same
+  // freshness with lower background load.
   const { data: status } = useQuery({
     queryKey: ['economics-status'],
     queryFn: api.getEconomicsStatus,
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   })
   const { data: costs } = useQuery({
     queryKey: ['economics-costs', days],
     queryFn: () => api.getEconomicsCosts({ days }),
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   })
   const { data: byProvider } = useQuery({
     queryKey: ['economics-costs-by-provider', days],
-    // The provider aggregation is row-scan capped by event_limit (SQL LIMIT),
-    // so pass a window-appropriate cap — the default 1_000 would silently
-    // truncate a busy 7d window to its earliest rows only.
+    // The provider aggregation is now a SQL GROUP BY (no row-scan LIMIT);
+    // event_limit is kept for backward compatibility but no longer caps the
+    // aggregation result.
     queryFn: () => api.getEconomicsCostsByProvider({ days, event_limit: days >= 30 ? 100_000 : 50_000 }),
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   })
   const { data: byTool } = useQuery({
     queryKey: ['economics-costs-by-tool', days],
-    // Same row-scan cap reasoning as by-provider; tool events outnumber LLM
-    // events on a busy window (they mirror every agent_tool_call).
+    // Same as by-provider: SQL GROUP BY aggregation, event_limit kept for API
+    // compatibility but no longer bounds the output.
     queryFn: () => api.getEconomicsCostsByTool({ days, event_limit: days >= 30 ? 100_000 : 50_000 }),
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   })
   // All-time totals: the cost ledger's full history (starts 2026-07-11), via
   // the widest window the endpoint allows (365d) — no backend change needed.
@@ -138,7 +142,7 @@ export default function Usage() {
   const { data: wouldBlock } = useQuery({
     queryKey: ['economics-would-block'],
     queryFn: () => api.getEconomicsBudgetsWouldBlock({ days: 7, limit: 50 }),
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   })
   const { data: modelHealth } = useQuery({
     queryKey: ['economics-model-health'],

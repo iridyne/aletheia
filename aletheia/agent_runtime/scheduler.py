@@ -57,6 +57,31 @@ _ESSENTIAL_JOBS: set[str] = {
     "learning_lifecycle_audit_reconciler",
 }
 
+# Jobs deferred under memory pressure. Everything NOT in _ESSENTIAL_JOBS is
+# considered non-essential from a trading-integrity standpoint: agent runs,
+# learning lifecycle, dreaming, observers, post-trade review. The memory
+# pressure gate in _run_job_guarded skips these when RAM is scarce.
+NON_ESSENTIAL_JOBS: set[str] = {
+    "market_observer",
+    "dreaming_agent",
+    "paper_trader",
+    "pi_trading_decision",
+    "equity_observer",
+    "prediction_observer",
+    "post_trade_reviewer",
+    "risk_critic",
+    "universe_refresh",
+    "daily_summary",
+    "pi_operator_loop",
+    "insight_synthesizer",
+    "confidence_calibration",
+    "reasoning_feedback",
+    "news_analyze",
+    "lesson_reviewer",
+    "guard_promotion",
+    "learning_lifecycle_controller",
+}
+
 # Market snapshot collection cadence. Exposed as a module constant so consumers
 # whose semantics depend on the freshness bound of a snapshot (e.g. the
 # counterfactual close-time price lookup in aletheia.counterfactual.trades)
@@ -68,6 +93,12 @@ MARKET_DATA_INTERVAL_MINUTES = 5
 # ready, but before the legacy two-minute startup catch-up.  The latter remains
 # as a retry if this direct evaluator run fails before recording its watermark.
 _LEARNING_EVALUATOR_RESTART_DELAY_SEC = 60
+
+# PI Daemon watchdog: heartbeat age (seconds) beyond which the daemon is
+# considered stalled and the watchdog triggers a restart.  Well above the
+# normal cycle time (heartbeat_sec default 60s + cooldown_sec default 45s +
+# eval time) so transient load does not trigger a false restart.
+_PI_DAEMON_HEARTBEAT_STALE_SEC = 180  # 3 minutes
 
 # Track which jobs were selectively paused (for targeted resume).
 _selectively_paused_jobs: set[str] = set()
@@ -94,7 +125,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "data_collector_context": 60.0,
     "exchange_sync": 60.0,
     "portfolio_snapshot": 45.0,
-    "price_feed": 45.0,
+    "price_feed": 90.0,
     "daily_summary": 60.0,
     "ohlcv_nightly_backfill": 3600.0,
     "ohlcv_active_backfill": 300.0,
@@ -431,10 +462,32 @@ class _AsyncJobDeadline(TimeoutError):
 # at threshold so failures surface in the dashboard status popover.
 _consecutive_failures: dict[str, int] = {}
 _FAILURE_ALERT_THRESHOLD = 3
+# Beyond this size, prune entries whose counter is 0 (healthy jobs that may
+# have been removed from the scheduler).
+_CONSECUTIVE_FAILURES_PRUNE_THRESHOLD = 500
+
+
+def _prune_consecutive_failures(active_job_ids: set[str]) -> None:
+    """Remove failure counters for jobs no longer in the active set.
+
+    Counters that have reached 0 (healthy) but belong to a removed job would
+    otherwise persist forever.  We also drop entries for job_ids not in the
+    active scheduler set to handle dynamic job removal gracefully.
+    """
+    stale = [jid for jid, cnt in _consecutive_failures.items() if cnt == 0 or jid not in active_job_ids]
+    for jid in stale:
+        _consecutive_failures.pop(jid, None)
 
 
 def _record_job_success(job_id: str) -> None:
     _consecutive_failures[job_id] = 0
+    # Opportunistic prune: if the dict has grown beyond threshold, sweep.
+    # We only prune zero-count entries here to avoid mutating the dict
+    # during failure recording (which may be iterating in a different context).
+    if len(_consecutive_failures) > _CONSECUTIVE_FAILURES_PRUNE_THRESHOLD:
+        zero_count = [jid for jid, cnt in _consecutive_failures.items() if cnt == 0]
+        for jid in zero_count:
+            _consecutive_failures.pop(jid, None)
 
 
 def _record_job_failure(job_id: str, error: str) -> None:
@@ -504,7 +557,41 @@ _EXECUTOR_WORKERS = {
     # LLM-backed jobs also write run logs/artifacts. Keep them serial so a slow
     # model call cannot make two agent jobs compete for SQLite at once.
     "agents": 1,
+    # Perf (Phase 7): universe_refresh runs a full 4-layer pipeline that can
+    # take minutes. Isolating it on its own executor prevents it from blocking
+    # the 2-min reconciliation / data_collectors jobs that share the "io" lane.
+    "universe": 1,
 }
+
+
+def _system_memory_pressure() -> float:
+    """Return current system memory used fraction (0.0–1.0) from /proc/meminfo.
+
+    Read-only, no allocation, safe to call from any thread. Returns 0.0 if
+    /proc/meminfo is unavailable (non-Linux).
+    """
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            mem_total = 0
+            mem_available = 0
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    mem_total = int(line.split()[1])
+                elif line.startswith("MemAvailable:"):
+                    mem_available = int(line.split()[1])
+                if mem_total and mem_available:
+                    break
+        if mem_total > 0:
+            return (mem_total - mem_available) / mem_total
+    except OSError:
+        pass
+    return 0.0
+
+
+# Memory fraction above which non-essential jobs are skipped. Below this the
+# scheduler runs every job; at or above this, jobs in NON_ESSENTIAL_JOBS are
+# deferred until memory drops. Essential data/market collection always runs.
+_MEMORY_PRESSURE_SKIP_LEVEL = 0.80
 
 
 def _run_job_guarded(job_id: str, fn):
@@ -521,6 +608,16 @@ def _run_job_guarded(job_id: str, fn):
     the executor thread held the RLock forever, starving every other job.
     """
     from aletheia.storage.sqlite import close_db, rollback_if_in_transaction
+
+    # Memory pressure gate: skip non-essential jobs when the system is low on
+    # RAM. Essential jobs (market data, collectors, price feed, reconciliation)
+    # always run so trading integrity is never compromised by transient pressure.
+    if job_id in NON_ESSENTIAL_JOBS and _system_memory_pressure() >= _MEMORY_PRESSURE_SKIP_LEVEL:
+        logger.warning(
+            "Job %s skipped: system memory pressure %.0f%% >= %.0f%%",
+            job_id, _system_memory_pressure() * 100, _MEMORY_PRESSURE_SKIP_LEVEL * 100,
+        )
+        return None
 
     with _SCHEDULER_JOB_LOCK:
         if rollback_if_in_transaction():
@@ -1042,16 +1139,27 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("paper_trader", _run_paper_trader), "interval", minutes=3, id="paper_trader",
         misfire_grace_time=60, executor="agents",
     )
-    # pi_trading_decision is the ~15min safety-net fallback (agent_contracts.md row 6).
-    # When the daemon is enabled it is the primary path; this scheduled job is only a
-    # backstop, so it stays at ~15min. It must NOT be coupled to pi_daemon.heartbeat_sec
-    # (that is the daemon's internal fallback-poll timeout, default 60s) — doing so made
-    # this job fire every 1min, far more often than the contract's ~15min (A5 fix).
-    _pi_fallback_min = 15
+    # pi_trading_decision is the configurable safety-net fallback job
+    # (agent_contracts.md row 6 / PI-S01). When the daemon is enabled it is
+    # the primary path; this scheduled job is a backstop controlled by an
+    # explicit 30/60-minute decision_interval_minutes setting. It must NOT be
+    # coupled to pi_daemon.heartbeat_sec (the daemon's internal fallback-poll
+    # timeout, default 60s) — doing so made this job fire every 1min (A5 fix).
+    # The guard name `pi_trading_heartbeat` is separate from the job id
+    # `pi_trading_decision` so daemon-notify failures and evaluation failures
+    # are tracked independently (PI-S07).
+    _pi_decision_interval_min = cfg.pi_daemon.decision_interval_minutes
     _scheduler.add_job(
-        _guarded("pi_trading_heartbeat", _run_pi_trading_decision), "interval", minutes=_pi_fallback_min,
+        _guarded("pi_trading_heartbeat", _run_pi_trading_decision), "interval",
+        minutes=_pi_decision_interval_min,
         id="pi_trading_decision", misfire_grace_time=120,
-        next_run_time=datetime.now() + timedelta(minutes=7), executor="agents",
+        next_run_time=datetime.now() + timedelta(minutes=_pi_decision_interval_min),
+        executor="agents",
+    )
+    _scheduler.add_job(
+        _guarded("pi_daemon_watchdog", _run_pi_daemon_watchdog),
+        "interval", seconds=60, id="pi_daemon_watchdog",
+        misfire_grace_time=15, executor="fast_io",
     )
     _scheduler.add_job(
         _guarded("price_feed", _run_price_feed), "interval", seconds=30, id="price_feed",
@@ -1092,6 +1200,11 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("cleanup", _run_cleanup), "cron", hour=3, minute=17, id="cleanup",
         misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
         **({"next_run_time": cleanup_initial_run} if cleanup_initial_run else {}),
+    )
+    _scheduler.add_job(
+        _guarded("execution_claim_sweeper", _run_execution_claim_sweeper),
+        "interval", seconds=120, id="execution_claim_sweeper",
+        misfire_grace_time=30, executor="io",
     )
     # Forward catch-up for shadow trades that the event-driven resolver missed
     # (parent positions with no opportunity_id). DB-only; cheap; bounded per run.
@@ -1139,7 +1252,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
     _scheduler.add_job(
         _guarded("news_analyze", _run_news_analyze), "interval",
-        minutes=5, id="news_analyze",
+        minutes=3, id="news_analyze",
         misfire_grace_time=120, executor="agents",
         next_run_time=datetime.now() + timedelta(seconds=90),
     )
@@ -1172,9 +1285,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         next_run_time=datetime.now() + timedelta(minutes=10), executor="agents",
     )
     # Universe Generator — dynamic asset pool refresh.
+    # Perf (Phase 7): executor="universe" (isolated 1-worker pool). Previously
+    # shared "io" with reconciliation/data_collectors (2-min cadence) — a slow
+    # 4-layer pipeline run could delay those latency-sensitive jobs by minutes.
     _scheduler.add_job(
         _guarded("universe_refresh", _run_universe_refresh), "interval", minutes=10,
-        id="universe_refresh", misfire_grace_time=120, max_instances=1, executor="io",
+        id="universe_refresh", misfire_grace_time=120, max_instances=1, executor="universe",
         next_run_time=datetime.now() + timedelta(seconds=90),
     )
     # Independent outcome settler — settles overdue forward-outcome rows that feed
@@ -2110,6 +2226,10 @@ def _run_portfolio_snapshot():
 
 
 def _run_paper_trader():
+    # Ensure tool registry is initialized (gateway process may not call server startup)
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    init_tool_registry()
+
     cfg = load_config()
     runtime = getattr(cfg, "runtime", None)
     if getattr(runtime, "paused", False):
@@ -2154,11 +2274,12 @@ def _run_paper_trader():
 
 
 def _run_pi_trading_decision():
-    """System Operator heartbeat — notifies the event-driven daemon or runs inline as fallback.
+    """System Operator decision tick — notify the daemon or run inline.
 
     When pi_daemon is enabled and running, this job simply wakes the daemon
     (which handles debounce, cooldown, and the actual LLM evaluation). The daemon
-    provides sub-second response to signal events; this job is the 15-min safety net.
+    provides immediate response to signal events; this job remains a periodic
+    safety net at the configured decision interval.
 
     When pi_daemon is disabled or not running, runs the evaluation inline (legacy path).
     """
@@ -2200,6 +2321,117 @@ def _run_pi_trading_decision():
     except Exception as e:
         logger.warning("pi_trading_decision job failed: %s", e)
         _record_job_failure("pi_trading_decision", str(e))
+
+
+def _run_pi_daemon_watchdog() -> None:
+    """Watchdog: restart the PI Daemon if it has died or its heartbeat is stale.
+
+    The PI Daemon is the System Operator's event-driven decision loop.  If it
+    dies silently (unhandled exception) or stalls (heartbeat not updated for
+    ``_PI_DAEMON_HEARTBEAT_STALE_SEC``), trade decisions stop until the next
+    gateway restart.  This watchdog detects both conditions and schedules an
+    asynchronous ``reconfigure_pi_daemon()`` on the uvicorn event loop via
+    ``asyncio.run_coroutine_threadsafe`` (this job runs on a scheduler thread,
+    not the event loop).
+    """
+    import asyncio as _asyncio
+
+    cfg = load_config()
+    if not cfg.pi_daemon.enabled:
+        return
+
+    try:
+        from aletheia.agent_runtime.pi_daemon import (
+            _uvicorn_loop,
+            daemon_status,
+            is_daemon_running,
+            reconfigure_pi_daemon,
+        )
+    except Exception:
+        return
+
+    restart_reason = None
+    if not is_daemon_running():
+        restart_reason = "dead"
+    else:
+        hb_age = daemon_status().get("last_heartbeat_age_sec")
+        if hb_age is not None and hb_age > _PI_DAEMON_HEARTBEAT_STALE_SEC:
+            restart_reason = "stale"
+
+    if restart_reason is None:
+        return
+
+    logger.warning("pi_daemon_watchdog: %s, restarting", restart_reason)
+    _record_job_failure("pi_daemon", f"watchdog_restart_{restart_reason}")
+
+    loop = _uvicorn_loop
+    if loop is None or loop.is_closed():
+        logger.warning("pi_daemon_watchdog: loop closed, skipping restart")
+        return
+    _asyncio.run_coroutine_threadsafe(
+        reconfigure_pi_daemon(
+            enabled=True,
+            debounce_sec=cfg.pi_daemon.debounce_sec,
+            cooldown_sec=cfg.pi_daemon.cooldown_sec,
+            heartbeat_sec=cfg.pi_daemon.heartbeat_sec,
+            loop=loop,
+        ),
+        loop,
+    )
+
+
+def _run_execution_claim_sweeper() -> None:
+    """GC expired execution claims from crashed workers.
+
+    A worker that crashes during exchange-side execution leaves a
+    ``proposal_execution_claims`` row.  After the lease self-expires, the
+    proposal enters a permanent ``submission_unknown`` state that blocks
+    resubmission.  This sweeper releases claims whose lease expired at least
+    ``buffer_sec`` ago — but ONLY for proposals in a terminal stuck state
+    (submission_unknown) with no durable Order.  It does NOT re-execute;
+    it only clears the claim so manual retry or reconciliation can proceed.
+    """
+    cfg = load_config()
+    if not getattr(cfg, "execution_claim_sweep_enabled", True):
+        return
+
+    try:
+        from aletheia.storage.repositories import (
+            get_trade_proposal,
+            has_order_for_proposal,
+            list_stale_execution_claims,
+            release_proposal_execution_claim,
+        )
+    except Exception:
+        return
+
+    buffer_sec = 60.0  # avoid racing a still-active worker
+    for claim in list_stale_execution_claims(buffer_sec=buffer_sec):
+        proposal_id = str(claim.get("proposal_id"))
+        owner_token = str(claim.get("owner_token") or "")
+        if not owner_token:
+            continue
+
+        # Only sweep claims for proposals in a terminal stuck state.
+        row = get_trade_proposal(proposal_id)
+        if row is None:
+            continue
+        status = row.get("status") if isinstance(row, dict) else getattr(row, "status", None)
+        if status != "submission_unknown":
+            continue
+
+        # Never touch a proposal that already has a durable Order.
+        try:
+            if has_order_for_proposal(proposal_id):
+                continue
+        except Exception:
+            continue
+
+        logger.info(
+            "execution_claim_sweeper: releasing expired claim for %s (owner=%s...)",
+            proposal_id, owner_token[:8],
+        )
+        release_proposal_execution_claim(proposal_id, owner_token)
 
 
 def _run_operator_loop():
@@ -2629,176 +2861,183 @@ def _run_cleanup():
         from aletheia.files.jsonl import write_audit
         from aletheia.execution.stale_order_cleanup import cleanup_stale_orphan_orders
         r = cfg.retention
+        counts: dict = {}
         # ------------------------------------------------------------------
-        # FK cascade ordering (Phase 3 retention) — the agent_shell hierarchy
-        # forms a tree:
-        #     agent_shell_sessions
-        #       ├── agent_shell_messages    (FK: session_id)
-        #       ├── agent_shell_events      (FK: session_id, task_id)
-        #       ├── agent_shell_artifacts   (FK: session_id, task_id)
-        #       ├── agent_shell_commands    (FK: session_id)
-        #       ├── agent_shell_tasks       (FK: session_id)
-        #       └── agent_shell_heartbeats  (FK: session_id)
-        # Child rows MUST be deleted before parent rows in the same batch:
-        #   1. Each child prune honors its own (shorter or equal) retention
-        #      window on its own timestamp column.
-        #   2. The parent prune (agent_shell_sessions) then cascades any
-        #      leftover child rows younger than the child cutoff but older
-        #      than the parent cutoff. Per Agent 2, the parent function
-        #      cascade-deletes inside a single transaction, so this ordering
-        #      is a defense-in-depth safety belt rather than a strict
-        #      correctness requirement — it also keeps `counts` readable so
-        #      the audit trail shows what each window took out.
-        # A parallel rule applies to agent_shell_tasks (child of sessions,
-        # parent of events/artifacts) — task-scoped children are pruned by
-        # their own function before agent_shell_tasks fires. See
-        # repositories.prune_agent_shell_sessions for the cascade impl.
+        # Data-protection gate (operator directive 2026-08-09): when
+        # retention.pruning_enabled is False the cleanup job performs NO row
+        # deletions, NO backup rotation and NO incremental vacuum reclaim.
+        # Only state transitions (expiry marking, stale order cancellation),
+        # WAL checkpointing and capacity observation run below. Re-enable by
+        # setting retention.pruning_enabled: true in config.yaml.
         # ------------------------------------------------------------------
-        min_open_exp_at = repo.min_open_experiment_exposure_at()
-        counts = {
-            "run_steps": repo.prune_run_steps(r.agent_run_steps_days),
-            "tool_calls": repo.prune_tool_calls(r.tool_calls_days),
-            "agent_runs": repo.prune_agent_runs(r.agent_runs_days),
-            "market_snapshots": repo.prune_market_snapshots(r.market_snapshots_days),
-            "portfolio_snapshots": repo.prune_portfolio_snapshots(r.portfolio_snapshots_days),
-            "orderbook_snapshots": repo.prune_orderbook_snapshots(7),
-            "perp_structure_shadow_outcomes": repo.prune_perp_structure_shadow_outcomes(30),
-            "perp_structure_snapshots": repo.prune_perp_structure_snapshots(30),
-            "liquidation_events": repo.prune_liquidation_events(7),
-            "funding_rate_snapshots": repo.prune_funding_rate_snapshots(r.funding_rate_snapshots_days),
-            "open_interest_snapshots": repo.prune_open_interest_snapshots(r.open_interest_snapshots_days),
-            "macro_snapshots": repo.prune_macro_snapshots(90),
-            "coingecko_top_snapshots": repo.prune_coingecko_top_snapshots(r.coingecko_top_snapshots_days),
-            # #149/#150: these had a prune fn but no cleanup-job wiring (onchain) or no
-            # prune at all (prediction), so they grew unbounded.
-            "onchain_snapshots": repo.prune_onchain_snapshots(30),
-            "prediction_probability_snapshots": repo.prune_prediction_probability_snapshots(90),
-            "universe_feature_snapshots": repo.prune_universe_feature_snapshots(r.universe_feature_snapshots_days),
-            "ohlcv_backfill_state": repo.prune_ohlcv_backfill_state(90),
-            "universe_forward_outcomes": repo.prune_universe_forward_outcomes(
-                30, min_experiment_started_at=min_open_exp_at,
-            ),
-            "serenity_claims": repo.prune_serenity_claims(90),
-            "shadow_trades": repo.prune_shadow_trades(90),
-            "filter_decision_batches": repo.prune_filter_decision_batches(r.filter_decision_batches_days),
-            # Filter-family clean_window_cutoff guard: pass the oldest still-
-            # open learning experiment start so rows any open experiment
-            # might still cite are preserved even when their timestamp is
-            # older than the plain retention window.
-            "filter_decisions": repo.prune_filter_decisions(
-                r.filter_decisions_days,
-                min_experiment_started_at=min_open_exp_at,
-            ),
-            "filter_candidate_outcomes": repo.prune_filter_candidate_outcomes(
-                r.filter_candidate_outcomes_days,
-                min_experiment_started_at=min_open_exp_at,
-            ),
-            "filter_shadow_experiments": repo.prune_filter_shadow_experiments(r.filter_shadow_experiments_days),
-            "operator_evaluation_events": repo.prune_operator_evaluation_events(30),
-            "pi_decisions_transient": repo.prune_pi_decisions(7),
-            "signal_pending_stale": repo.prune_signal_pending_stale(30),
-            "system_actions": repo.prune_system_actions(7),
-            # Market OHLCV per-timeframe TTL + legacy_unknown hard drop.
-            "market_ohlcv": repo.prune_market_ohlcv(ttl_days={
-                "1m": r.market_ohlcv_1m_days,
-                "5m": r.market_ohlcv_5m_days,
-                "15m": r.market_ohlcv_15m_days,
-                "1h": r.market_ohlcv_1h_days,
-                "4h": r.market_ohlcv_4h_days,
-                "1d": r.market_ohlcv_1d_days,
-            }),
-            "alpha_control_observations": repo.prune_alpha_control_observations(r.alpha_control_observations_days),
-            "controller_recommendations": repo.prune_controller_recommendations(r.controller_recommendations_days),
-            "market_regimes": repo.prune_market_regimes(r.market_regimes_days),
-            "serenity_evidence": repo.prune_serenity_evidence(r.serenity_evidence_days),
-            "serenity_run_events": repo.prune_serenity_run_events(r.serenity_run_events_days),
-            "runtime_sessions": repo.prune_runtime_sessions(r.runtime_sessions_days),
-            "backtest_runs": repo.prune_backtest_runs(r.backtest_runs_days),
-            # Twin Shadow evidence is a logical child of scanner runs (no FK so
-            # retention remains safe across legacy databases). It is not
-            # experiment evidence, so its fixed retention must not be extended
-            # by a Learning clean window.
-            "universe_twin_shadow_evidence": repo.prune_universe_twin_shadow_evidence(
-                r.universe_scanner_runs_days,
-            ),
-            # Universe: scanner_runs next, then snapshots which cascade-delete
-            # universe_members inside its own transaction.
-            "universe_scanner_runs": repo.prune_universe_scanner_runs(r.universe_scanner_runs_days),
-            "universe_snapshots": repo.prune_universe_snapshots(
-                r.universe_snapshots_days,
-                min_experiment_started_at=min_open_exp_at,
-            ),
-            # Operator-shell telemetry (DB-SIZE-1): heartbeats are the dominant
-            # bloat — pure liveness, read latest-row-only, so a short window.
-            # Children BEFORE parents (agent_shell_sessions) — see FK cascade
-            # ordering comment above.
-            "agent_shell_heartbeats": repo.prune_agent_shell_heartbeats(r.agent_shell_heartbeats_days),
-            "agent_shell_messages": repo.prune_agent_shell_messages(
-                days_context=r.agent_shell_messages_context_days,
-                days_other=r.agent_shell_messages_other_days,
-            ),
-            "agent_shell_events": repo.prune_agent_shell_events(r.agent_shell_events_days),
-            "agent_shell_artifacts": repo.prune_agent_shell_artifacts(
-                days_strategy=r.agent_shell_artifacts_strategy_days,
-                days_proposal=r.agent_shell_artifacts_proposal_days,
-                days_other=r.agent_shell_artifacts_other_days,
-            ),
-            "agent_shell_commands": repo.prune_agent_shell_commands(r.agent_shell_commands_days),
-            "agent_shell_tasks": repo.prune_agent_shell_tasks(
-                days_completed=r.agent_shell_tasks_completed_days,
-                days_failed=r.agent_shell_tasks_failed_days,
-            ),
-            "agent_shell_sessions": repo.prune_agent_shell_sessions(r.agent_shell_sessions_days),
-            # Per-session JSONL transcripts on disk (not a DB table): high file
-            # COUNT, low bytes, pure working-memory telemetry never read by the
-            # learning/PI chain. Had no cleanup path — ~175 files/day, 2.6k in 15
-            # days. 14d matches agent_shell_events (the DB form of this stream).
-            "agent_shell_session_logs": _prune_session_logs(cfg),
-            "agent_shell_task_notes": _prune_task_notes(cfg),
-            # Filesystem retention (backups, diagnostics, pre-migration
-            # backup) — dispatched to helpers in
-            # aletheia.maintenance.filesystem_retention (Agent 4).
-            "backups_rotated": _prune_backups(r.backups_keep_recent),
-            "diagnostics": _prune_diagnostics(r.diagnostics_days),
-            "pre_migration_backup": _prune_pre_migration_backup(r.pre_migration_backup_days),
-            # Secondary SQLite file (~/.aletheia/tasks.db) — holds
-            # agent_task_claims used for cross-process task fanout. Not part
-            # of app.db so it needs its own DELETE cycle.
-            "agent_task_claims": _prune_agent_task_claims_tasks_db(),
-            "opportunities_expired": repo.expire_stale_opportunities(r.opportunity_ttl_hours),
-            "serenity_themes_expired": repo.expire_stale_serenity_themes(),
-            "news_items": _prune_news(cfg),
-            # Cancel abandoned unresolved Orders reconciliation can never resolve
-            # (no credentials / venue dropped them) so they stop failing every
-            # reconciliation cycle. Bookkeeping-only: never touches an Order with a
-            # Fill or open Position. Returns a summary dict, not a bare count.
-            "stale_orders": cleanup_stale_orphan_orders(),
-        }
-        # Reclaim a bounded amount of freed space. Normal operation caps this
-        # maintenance write at 16 MiB; capacity pressure raises it to 64 MiB.
-        # This changes file allocation only, never retained rows.
-        try:
-            from aletheia.maintenance.database_capacity import (
-                reclaim_incremental_freelist,
-            )
-            from aletheia.storage.sqlite import db_path
+        # ------------------------------------------------------------------
+        # Data-protection gate (operator directive 2026-08-09): when
+        # retention.pruning_enabled is False the cleanup job performs NO row
+        # deletions, NO backup rotation and NO incremental vacuum reclaim.
+        # Only state transitions (expiry marking, stale order cancellation),
+        # WAL checkpointing and capacity observation run below. Re-enable by
+        # setting retention.pruning_enabled: true in config.yaml.
+        # ------------------------------------------------------------------
+        if not r.pruning_enabled:
+            logger.info("retention pruning disabled — cleanup skips all deletions")
+        else:
+            min_open_exp_at = repo.min_open_experiment_exposure_at()
+            counts = {
+                "run_steps": repo.prune_run_steps(r.agent_run_steps_days),
+                "tool_calls": repo.prune_tool_calls(r.tool_calls_days),
+                "agent_runs": repo.prune_agent_runs(r.agent_runs_days),
+                "market_snapshots": repo.prune_market_snapshots(r.market_snapshots_days),
+                "portfolio_snapshots": repo.prune_portfolio_snapshots(r.portfolio_snapshots_days),
+                "orderbook_snapshots": repo.prune_orderbook_snapshots(7),
+                "perp_structure_shadow_outcomes": repo.prune_perp_structure_shadow_outcomes(30),
+                "perp_structure_snapshots": repo.prune_perp_structure_snapshots(30),
+                "liquidation_events": repo.prune_liquidation_events(7),
+                "funding_rate_snapshots": repo.prune_funding_rate_snapshots(r.funding_rate_snapshots_days),
+                "open_interest_snapshots": repo.prune_open_interest_snapshots(r.open_interest_snapshots_days),
+                "macro_snapshots": repo.prune_macro_snapshots(90),
+                "coingecko_top_snapshots": repo.prune_coingecko_top_snapshots(r.coingecko_top_snapshots_days),
+                # #149/#150: these had a prune fn but no cleanup-job wiring (onchain) or no
+                # prune at all (prediction), so they grew unbounded.
+                "onchain_snapshots": repo.prune_onchain_snapshots(30),
+                "prediction_probability_snapshots": repo.prune_prediction_probability_snapshots(90),
+                "universe_feature_snapshots": repo.prune_universe_feature_snapshots(r.universe_feature_snapshots_days),
+                "ohlcv_backfill_state": repo.prune_ohlcv_backfill_state(90),
+                "universe_forward_outcomes": repo.prune_universe_forward_outcomes(
+                    30, min_experiment_started_at=min_open_exp_at,
+                ),
+                "serenity_claims": repo.prune_serenity_claims(90),
+                "shadow_trades": repo.prune_shadow_trades(90),
+                "filter_decision_batches": repo.prune_filter_decision_batches(r.filter_decision_batches_days),
+                # Filter-family clean_window_cutoff guard: pass the oldest still-
+                # open learning experiment start so rows any open experiment
+                # might still cite are preserved even when their timestamp is
+                # older than the plain retention window.
+                "filter_decisions": repo.prune_filter_decisions(
+                    r.filter_decisions_days,
+                    min_experiment_started_at=min_open_exp_at,
+                ),
+                "filter_candidate_outcomes": repo.prune_filter_candidate_outcomes(
+                    r.filter_candidate_outcomes_days,
+                    min_experiment_started_at=min_open_exp_at,
+                ),
+                "filter_shadow_experiments": repo.prune_filter_shadow_experiments(r.filter_shadow_experiments_days),
+                "operator_evaluation_events": repo.prune_operator_evaluation_events(30),
+                "pi_decisions_transient": repo.prune_pi_decisions(7),
+                "signal_pending_stale": repo.prune_signal_pending_stale(30),
+                "system_actions": repo.prune_system_actions(7),
+                # Market OHLCV per-timeframe TTL + legacy_unknown hard drop.
+                "market_ohlcv": repo.prune_market_ohlcv(ttl_days={
+                    "1m": r.market_ohlcv_1m_days,
+                    "5m": r.market_ohlcv_5m_days,
+                    "15m": r.market_ohlcv_15m_days,
+                    "1h": r.market_ohlcv_1h_days,
+                    "4h": r.market_ohlcv_4h_days,
+                    "1d": r.market_ohlcv_1d_days,
+                }),
+                "alpha_control_observations": repo.prune_alpha_control_observations(r.alpha_control_observations_days),
+                "controller_recommendations": repo.prune_controller_recommendations(r.controller_recommendations_days),
+                "market_regimes": repo.prune_market_regimes(r.market_regimes_days),
+                "serenity_evidence": repo.prune_serenity_evidence(r.serenity_evidence_days),
+                "serenity_run_events": repo.prune_serenity_run_events(r.serenity_run_events_days),
+                "runtime_sessions": repo.prune_runtime_sessions(r.runtime_sessions_days),
+                "backtest_runs": repo.prune_backtest_runs(r.backtest_runs_days),
+                # Twin Shadow evidence is a logical child of scanner runs (no FK so
+                # retention remains safe across legacy databases). It is not
+                # experiment evidence, so its fixed retention must not be extended
+                # by a Learning clean window.
+                "universe_twin_shadow_evidence": repo.prune_universe_twin_shadow_evidence(
+                    r.universe_scanner_runs_days,
+                ),
+                # Universe: scanner_runs next, then snapshots which cascade-delete
+                # universe_members inside its own transaction.
+                "universe_scanner_runs": repo.prune_universe_scanner_runs(r.universe_scanner_runs_days),
+                "universe_snapshots": repo.prune_universe_snapshots(
+                    r.universe_snapshots_days,
+                    min_experiment_started_at=min_open_exp_at,
+                ),
+                # Operator-shell telemetry (DB-SIZE-1): heartbeats are the dominant
+                # bloat — pure liveness, read latest-row-only, so a short window.
+                # Children BEFORE parents (agent_shell_sessions) — see FK cascade
+                # ordering comment above.
+                "agent_shell_heartbeats": repo.prune_agent_shell_heartbeats(r.agent_shell_heartbeats_days),
+                "agent_shell_messages": repo.prune_agent_shell_messages(
+                    days_context=r.agent_shell_messages_context_days,
+                    days_other=r.agent_shell_messages_other_days,
+                ),
+                "agent_shell_events": repo.prune_agent_shell_events(r.agent_shell_events_days),
+                "agent_shell_artifacts": repo.prune_agent_shell_artifacts(
+                    days_strategy=r.agent_shell_artifacts_strategy_days,
+                    days_proposal=r.agent_shell_artifacts_proposal_days,
+                    days_other=r.agent_shell_artifacts_other_days,
+                ),
+                "agent_shell_commands": repo.prune_agent_shell_commands(r.agent_shell_commands_days),
+                "agent_shell_tasks": repo.prune_agent_shell_tasks(
+                    days_completed=r.agent_shell_tasks_completed_days,
+                    days_failed=r.agent_shell_tasks_failed_days,
+                ),
+                "agent_shell_sessions": repo.prune_agent_shell_sessions(r.agent_shell_sessions_days),
+                # Per-session JSONL transcripts on disk (not a DB table): high file
+                # COUNT, low bytes, pure working-memory telemetry never read by the
+                # learning/PI chain. Had no cleanup path — ~175 files/day, 2.6k in 15
+                # days. 14d matches agent_shell_events (the DB form of this stream).
+                "agent_shell_session_logs": _prune_session_logs(cfg),
+                "agent_shell_task_notes": _prune_task_notes(cfg),
+                # Filesystem retention (backups, diagnostics, pre-migration
+                # backup) — dispatched to helpers in
+                # aletheia.maintenance.filesystem_retention (Agent 4).
+                "backups_rotated": _prune_backups(r.backups_keep_recent),
+                "diagnostics": _prune_diagnostics(r.diagnostics_days),
+                "pre_migration_backup": _prune_pre_migration_backup(r.pre_migration_backup_days),
+                # Secondary SQLite file (~/.aletheia/tasks.db) — holds
+                # agent_task_claims used for cross-process task fanout. Not part
+                # of app.db so it needs its own DELETE cycle.
+                "agent_task_claims": _prune_agent_task_claims_tasks_db(),
+                "opportunities_expired": repo.expire_stale_opportunities(r.opportunity_ttl_hours),
+                "serenity_themes_expired": repo.expire_stale_serenity_themes(),
+                "news_items": _prune_news(cfg),
+                # Cancel abandoned unresolved Orders reconciliation can never resolve
+                # (no credentials / venue dropped them) so they stop failing every
+                # reconciliation cycle. Bookkeeping-only: never touches an Order with a
+                # Fill or open Position. Returns a summary dict, not a bare count.
+                "stale_orders": cleanup_stale_orphan_orders(),
+            }
+            # Reclaim a bounded amount of freed space. Normal operation caps this
+            # maintenance write at 16 MiB; capacity pressure raises it to 64 MiB.
+            # This changes file allocation only, never retained rows.
+            try:
+                from aletheia.maintenance.database_capacity import (
+                    reclaim_incremental_freelist,
+                )
+                from aletheia.storage.sqlite import db_path
 
-            database_file = db_path()
-            wal_file = database_file.with_name(database_file.name + "-wal")
-            physical_bytes = (
-                (database_file.stat().st_size if database_file.exists() else 0)
-                + (wal_file.stat().st_size if wal_file.exists() else 0)
-            )
-            budget_bytes = int(r.app_db_capacity_mb) * 1024 * 1024
-            reclaim_max_mb = (
-                64 if budget_bytes > 0 and physical_bytes >= 0.8 * budget_bytes else 16
-            )
-            counts["incremental_vacuum"] = reclaim_incremental_freelist(
-                get_db(),
-                max_mb=reclaim_max_mb,
-            )
-        except Exception as vac_err:  # noqa: BLE001 — best-effort reclaim
-            logger.debug("incremental_vacuum skipped: %s", vac_err)
+
+                database_file = db_path()
+                wal_file = database_file.with_name(database_file.name + "-wal")
+                physical_bytes = (
+                    (database_file.stat().st_size if database_file.exists() else 0)
+                    + (wal_file.stat().st_size if wal_file.exists() else 0)
+                )
+                budget_bytes = int(r.app_db_capacity_mb) * 1024 * 1024
+                reclaim_max_mb = (
+                    64 if budget_bytes > 0 and physical_bytes >= 0.8 * budget_bytes else 16
+                )
+                counts["incremental_vacuum"] = reclaim_incremental_freelist(
+                    get_db(),
+                    max_mb=reclaim_max_mb,
+                )
+            except Exception as vac_err:  # noqa: BLE001 — best-effort reclaim
+                logger.debug("incremental_vacuum skipped: %s", vac_err)
+        # State transitions only — UPDATE, never DELETE. These run regardless of
+        # the pruning gate: expired opportunities are marked 'expired' and
+        # abandoned orphan orders are cancelled so the trading state machine
+        # cannot wedge on stale rows.
+        counts["opportunities_expired"] = repo.expire_stale_opportunities(r.opportunity_ttl_hours)
+        counts["serenity_themes_expired"] = repo.expire_stale_serenity_themes()
+        # Cancel abandoned unresolved Orders reconciliation can never resolve
+        # (no credentials / venue dropped them) so they stop failing every
+        # reconciliation cycle. Bookkeeping-only: never touches an Order with a
+        # Fill or open Position. Returns a summary dict, not a bare count.
+        counts["stale_orders"] = cleanup_stale_orphan_orders()
         # WAL checkpoint: copy eligible frames back and expose reader-pinned
         # backlog without blocking runtime. Later WAL resets apply the
         # per-connection 64 MiB retention limit.
@@ -2864,7 +3103,14 @@ def _run_cleanup():
         write_audit({
             "actor": "system", "source": "scheduler",
             "event_type": "data_pruned", "entity_type": "telemetry",
-            "message": f"Pruned old telemetry: {counts}",
+            "message": (
+                f"Pruned old telemetry: {counts}"
+                if r.pruning_enabled
+                else (
+                    "Retention pruning disabled — no rows deleted, no archives "
+                    f"rotated, no vacuum reclaim. State transitions only: {counts}"
+                )
+            ),
         })
     except Exception as e:
         logger.warning("cleanup job failed: %s", e)
@@ -3319,12 +3565,20 @@ def _run_outcome_settler():
 
 
 async def _async_paper_funding_settler():
-    from aletheia.portfolio.paper_account import settle_unsettled_paper_closes
+    from aletheia.portfolio.paper_account import (
+        settle_unsettled_paper_closes,
+        settle_unsettled_bitget_demo_closes,
+    )
     result = await settle_unsettled_paper_closes()
     logger.debug(
         "paper_funding_settler: settled=%d revived=%d still_pending=%d errors=%d",
         result["settled"], result.get("revived", 0),
         result["still_pending"], len(result["errors"]),
+    )
+    demo_result = await settle_unsettled_bitget_demo_closes()
+    logger.debug(
+        "broker_outcome_settler: settled=%d skipped=%d errors=%d",
+        demo_result["settled"], demo_result["skipped"], len(demo_result["errors"]),
     )
 
 

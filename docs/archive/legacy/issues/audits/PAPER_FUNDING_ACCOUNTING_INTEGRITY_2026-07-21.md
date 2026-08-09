@@ -10,7 +10,7 @@ Severity: P0 for persisted PnL correctness, P1 for unavailable outcomes and
 operational account blocking
 
 Repair plan:
-[`paper_funding_accounting_integrity_repair_2026-07-21.md`](../../archive/legacy/plans/trading-pipeline/paper_funding_accounting_integrity_repair_2026-07-21.md)
+[`paper_funding_accounting_integrity_repair_2026-07-21.md`](../../plans/trading-pipeline/paper_funding_accounting_integrity_repair_2026-07-21.md)
 
 ## Owner Outcome
 

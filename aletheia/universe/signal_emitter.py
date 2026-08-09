@@ -53,7 +53,9 @@ def _find_live_universe_signal(symbol: str, direction: str, db_market: str) -> d
 
 
 # Only emit for members that scored high enough to be worth trading
-_MIN_SCORE = 45.0
+# Lowered from 45.0 to 35.0 to increase opportunity flow — more candidates
+# reach the decision funnel instead of being rejected at emission.
+_MIN_SCORE = 35.0
 # total_score threshold for "high" vs "medium" confidence label.
 # The allocator's score ceiling is ~68.5 (opportunity 0.35×100 + tradability
 # 0.25×100 + liquidity 0.15×90 − min cost 5.0), so a 70 threshold made "high"

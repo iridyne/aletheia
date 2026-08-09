@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from typing import Any
 
@@ -184,11 +185,28 @@ class CCXTProvider:
                         else:
                             exchange.options["defaultType"] = _prev_type
                 record_venue_success(name)
+                # `... or 0.0` used to turn a missing price into a real-looking
+                # 0.0 that was then persisted as an authoritative snapshot,
+                # poisoning valuation and reconciliation. A ticker without a
+                # usable price is a failed fetch: raise so the loop falls back
+                # to the next venue instead of inventing data.
+                last_price = _opt_float(raw.get("last"))
+                if last_price is None or last_price <= 0:
+                    last_price = _opt_float(raw.get("close"))
+                if last_price is None or last_price <= 0:
+                    raise ValueError(
+                        f"{name} returned no usable price for {ccxt_symbol}: "
+                        f"last={raw.get('last')!r} close={raw.get('close')!r}"
+                    )
+                volume_24h = _opt_float(raw.get("quoteVolume"))
+                if volume_24h is None:
+                    volume_24h = _opt_float(raw.get("baseVolume"))
+                change_pct_24h = _opt_float(raw.get("percentage"))
                 return Ticker(
                     symbol=canon,
-                    last_price=float(raw.get("last") or raw.get("close") or 0.0),
-                    volume_24h=float(raw.get("quoteVolume") or raw.get("baseVolume") or 0.0),
-                    change_pct_24h=float(raw.get("percentage") or 0.0),
+                    last_price=last_price,
+                    volume_24h=volume_24h if volume_24h is not None else 0.0,
+                    change_pct_24h=change_pct_24h if change_pct_24h is not None else 0.0,
                     high_24h=_opt_float(raw.get("high")),
                     low_24h=_opt_float(raw.get("low")),
                     provider=name,
@@ -269,6 +287,7 @@ class CCXTProvider:
                     )
                 if not candles:
                     continue
+
                 # Mark the trailing bar as open when its close time is still in
                 # the future. CCXT always returns the currently-forming bar as
                 # the last element; treat it as unconfirmed so callers can
@@ -374,12 +393,28 @@ class CCXTProvider:
 
 
 def _opt_float(value) -> float | None:
-    if value is None:
+    """Parse an optional exchange number, rejecting non-finite values.
+
+    NaN previously survived this helper and callers screen with `if not x`,
+    which does not catch NaN (`not float("nan")` is False). Booleans are
+    rejected too, since `float(True)` would quietly become 1.0.
+
+    Args:
+        value: Raw field from a CCXT payload.
+
+    Returns:
+        The parsed float, or None when missing, boolean, non-numeric, NaN or
+        infinite.
+    """
+    if value is None or isinstance(value, bool):
         return None
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return None
+    if not math.isfinite(number):
+        return None
+    return number
 
 
 def require_exact_ticker_venue(ticker: Ticker, venue: str) -> Ticker:

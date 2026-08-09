@@ -166,13 +166,9 @@ def refresh_okx_demo_symbols() -> int:
 # ---------------------------------------------------------------------------
 
 def _run_coro(coro):
-    """Run a coroutine to completion from sync code."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+    """Run a coroutine to completion from sync code without blocking the event loop."""
+    from aletheia.agent_runtime.async_utils import run_coro_from_sync
+    return run_coro_from_sync(coro)
 
 
 def _created_at_ms(value) -> int:

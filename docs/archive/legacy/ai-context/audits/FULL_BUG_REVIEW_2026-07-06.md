@@ -295,7 +295,7 @@ Fixes land on branch `fix/bug-review-fixes` (off `iridite/bug_fix` HEAD), one co
 
 Covered or substantially covered:
 
-- [Product Direction](../../product/definition/DIRECTION.md) and its linked gold-standard expectations.
+- [Product Direction](../../../../product/definition/DIRECTION.md) and its linked gold-standard expectations.
 - SDD/spec conformance tests and conformance matrix.
 - API reference and scheduler documentation drift.
 - Settings/config UI coverage.
@@ -2855,8 +2855,8 @@ Expected direction: re-review the lessons that actually influence the system: `s
 - `rg -n "promote_strategy\\(|create_strategy\\(|check_promotion_gates\\(|check_live_limited_gates\\(" aletheia tests frontend/src -S` found the old strategy FSM functions only inside `strategy_lifecycle.py`, while docs mark strategy tables read-only; `operator_recommendations.py` still references deleted `strategy_designer`.
 - Manual read of `frontend/src/api/client.ts`, `aletheia/server/routes/data.py`, and `tests/test_frontend_navigation_ia.py` found stale `setStrategyVenue()` frontend API client code for a deleted backend endpoint, while the IA regression test only scans `.tsx` files.
 - Manual read of `aletheia/analytics/trade_insights.py`, `frontend/src/api/client.ts`, and `frontend/src/charts/TradeInsightsPanel.tsx` found the symbol-direction analytics matrix groups by symbol+direction without `market_type`, returns no `market_type`, and renders the row by stripping `/USDT`.
-- Manual read of [Product Direction](../../product/definition/DIRECTION.md), `frontend/src/pages/Settings.tsx`, `frontend/src/api/client.ts`, `aletheia/server/routes/settings.py`, and `aletheia/config/schema.py` found the System Operator visible label has partly moved, but active config/API/audit contracts still use `pi_daemon`/`PI daemon`.
-- Manual read of [Product Direction](../../product/definition/DIRECTION.md), `storage/models.py`, `risk/engine.py`, `agent_shell/trading_decision.py`, and `spec_pi_decision_chain.py`, plus a temporary `uv run python -` reproduction with risk-decision persistence monkeypatched out, found wrong-side stop/TP geometry passes the native limit entry-plan gate.
+- Manual read of [Product Direction](../../../../product/definition/DIRECTION.md), `frontend/src/pages/Settings.tsx`, `frontend/src/api/client.ts`, `aletheia/server/routes/settings.py`, and `aletheia/config/schema.py` found the System Operator visible label has partly moved, but active config/API/audit contracts still use `pi_daemon`/`PI daemon`.
+- Manual read of [Product Direction](../../../../product/definition/DIRECTION.md), `storage/models.py`, `risk/engine.py`, `agent_shell/trading_decision.py`, and `spec_pi_decision_chain.py`, plus a temporary `uv run python -` reproduction with risk-decision persistence monkeypatched out, found wrong-side stop/TP geometry passes the native limit entry-plan gate.
 - Manual read of `docs/design/contracts/learning_contract.md`, `agents/dreaming_agent.py`, `agents/lesson_reviewer.py`, `storage/migrations.py`, `storage/repositories.py`, and `tests/specs/spec_learning_pipeline.py` found `block_scanner` lessons can be promoted using only global/symbol evidence, even though scanner-family outcome data exists.
 - Manual read of `docs/design/contracts/serenity_contract.md`, `aletheia/trading/serenity_evidence.py`, `aletheia/agents/research_worker.py`, `aletheia/server/routes/data.py`, `tests/test_serenity_routes.py`, and `tests/specs/spec_serenity_evidence.py`, plus a temporary `uv run python -` scoring reproduction, found manual Serenity opportunity creation can turn a submitted self/proposed `evidence_tier` into authoritative `assessed_tier` without evidence-derived assessment.
 - Manual read of `frontend/src/api/client.ts`, `frontend/src/pages/SerenityLens.tsx`, and `aletheia/server/routes/data.py` found the Serenity opportunity detail UI types and renders proposed `evidence_tier` as "Tier" instead of the authoritative `assessed_tier`.

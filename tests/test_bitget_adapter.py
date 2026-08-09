@@ -4,6 +4,8 @@ Covers: get_account, get_positions, get_open_orders, cancel_order, get_fills.
 HTTP is faked (no network); auth/creds are stubbed.
 """
 
+import json
+
 import pytest
 
 from aletheia.exchanges.bitget import client as bg
@@ -185,3 +187,73 @@ async def test_get_funding_ledger_uses_private_contract_bills(fake_http):
         and "businessType=contract_settle_fee" in call[1]
         for call in fake_http.calls
     )
+
+
+# --- UTA (unified account) close direction regression (2026-07-31) ---
+# Empirically verified on bitget_demo: a UTA (v3) close requires `side` OPPOSITE
+# the position (close long = sell, close short = buy) together with
+# tradeSide="close" and posSide. Sending side SAME as the position made the
+# exchange resolve the order as an OPEN (tradeSide=open_short/open_long),
+# doubling the position instead of closing it — the root cause of the UNI
+# exposure doubling incident. The non-UTA v2 mix path keeps side SAME as the
+# open side (DECISIONS.md 2026-06-09).
+
+_UTA_ROUTES = {
+    "/api/v3/account/assets": {
+        "code": "00000",
+        "data": {"assets": [{"coin": "USDT", "available": "1000"}]},
+    },
+    "/api/v3/trade/place-order": {
+        "code": "00000",
+        "data": {"orderId": "ord-uta-1", "clientOid": "c1"},
+    },
+    "/api/v3/trade/fills": {"code": "00000", "data": {"list": []}},
+}
+
+
+@pytest.mark.anyio
+@pytest.mark.real_place_order
+async def test_uta_close_short_order_uses_opposite_side(fake_http):
+    """UTA close of a SHORT must submit side='buy' (opposite), not the open side."""
+    fake_http.routes = dict(_UTA_ROUTES)
+    client = bg.BitgetClient(mode="demo")
+    await client.place_order(bg.OrderRequest(
+        symbol="UNIUSDT", market_type="usdt_futures", side="sell",
+        order_type="market", quantity=6144.0, hold_side="short",
+    ))
+    body = json.loads(next(c[2] for c in fake_http.calls if c[0] == "POST"))
+    assert body["side"] == "buy"
+    assert body["tradeSide"] == "close"
+    assert body["posSide"] == "short"
+
+
+@pytest.mark.anyio
+@pytest.mark.real_place_order
+async def test_uta_close_long_order_uses_opposite_side(fake_http):
+    """UTA close of a LONG must submit side='sell' (opposite), not the open side."""
+    fake_http.routes = dict(_UTA_ROUTES)
+    client = bg.BitgetClient(mode="demo")
+    await client.place_order(bg.OrderRequest(
+        symbol="UNIUSDT", market_type="usdt_futures", side="buy",
+        order_type="market", quantity=6144.0, hold_side="long",
+    ))
+    body = json.loads(next(c[2] for c in fake_http.calls if c[0] == "POST"))
+    assert body["side"] == "sell"
+    assert body["tradeSide"] == "close"
+    assert body["posSide"] == "long"
+
+
+@pytest.mark.anyio
+@pytest.mark.real_place_order
+async def test_uta_open_order_keeps_requested_side(fake_http):
+    """UTA OPEN orders must keep their requested side (no inversion)."""
+    fake_http.routes = dict(_UTA_ROUTES)
+    client = bg.BitgetClient(mode="demo")
+    await client.place_order(bg.OrderRequest(
+        symbol="UNIUSDT", market_type="usdt_futures", side="buy",
+        order_type="market", quantity=10.0,
+    ))
+    body = json.loads(next(c[2] for c in fake_http.calls if c[0] == "POST"))
+    assert body["side"] == "buy"
+    assert body["posSide"] == "long"
+    assert "tradeSide" not in body or body["tradeSide"] == "open"

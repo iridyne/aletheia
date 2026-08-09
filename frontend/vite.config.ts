@@ -60,6 +60,10 @@ export default defineConfig(() => {
         output: {
           manualChunks: {
             recharts: ['recharts'],
+            // Perf (Phase 4): split heavy/independent libs into their own chunks
+            // so the main bundle stays small and pages load only what they need.
+            'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+            'lightweight-charts': ['lightweight-charts'],
           },
         },
       },

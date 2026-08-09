@@ -65,7 +65,7 @@ verdict。实施分 `LCO-BE1/BE2`，需要 direct `:8788` 冷/热延迟和无写
 当前 LLM entry point、Provider 请求放大、跨入口并发、FastAPI event loop、SQLite
 事务/索引和 retention 的静态核对见：
 
-- [`PERFORMANCE_CONCURRENCY_SQLITE_AUDIT_2026-07-17.md`](../../research/audits/PERFORMANCE_CONCURRENCY_SQLITE_AUDIT_2026-07-17.md)
+- [`PERFORMANCE_CONCURRENCY_SQLITE_AUDIT_2026-07-17.md`](../../../../research/audits/PERFORMANCE_CONCURRENCY_SQLITE_AUDIT_2026-07-17.md)
 
 该报告登记 PERF-01～PERF-10，并给出固定整改顺序和统一测量指标。报告当前实施状态表已
 将十项全部标记为“已实现”；本节旧的“待实施”描述不再是 live backlog。只有当前回归证据
@@ -91,8 +91,8 @@ verdict。实施分 `LCO-BE1/BE2`，需要 direct `:8788` 冷/热延迟和无写
 
 当前源码和历史数据的重新核实见：
 
-- [`OPPORTUNITY_LIFECYCLE_PROFITABILITY_REVIEW_2026-07-10.md`](../../research/audits/OPPORTUNITY_LIFECYCLE_PROFITABILITY_REVIEW_2026-07-10.md)：从资产发现到结果/负反馈的完整评审，含 P0/P1/P2 问题和多资产能力矩阵。
-- [`opportunity_lifecycle_profitability_repair_plan_2026-07-10.md`](../../archive/legacy/plans/trading-pipeline/opportunity_lifecycle_profitability_repair_plan_2026-07-10.md)：按“先修断路和统计真相，再做策略实验”排列的历史施工计划。
+- [`OPPORTUNITY_LIFECYCLE_PROFITABILITY_REVIEW_2026-07-10.md`](../../../../research/audits/OPPORTUNITY_LIFECYCLE_PROFITABILITY_REVIEW_2026-07-10.md)：从资产发现到结果/负反馈的完整评审，含 P0/P1/P2 问题和多资产能力矩阵。
+- [`opportunity_lifecycle_profitability_repair_plan_2026-07-10.md`](../../plans/trading-pipeline/opportunity_lifecycle_profitability_repair_plan_2026-07-10.md)：按“先修断路和统计真相，再做策略实验”排列的历史施工计划。
 
 本次确认的最高优先问题：OKX 永续成交额被当 0、`short_bias` 资金费率经济含义相反、同币种现货/永续分配后才去重、漏斗用独立时间窗伪造转化、PI 的 `bear_case` 只声明未接通、提案取价未按最终 market type、pending shadow 被标成 resolved。旧条目和旧审计有大量已修/过时结论，后续以专项报告中的当前源码核实为准。
 
@@ -485,21 +485,21 @@ verdict。实施分 `LCO-BE1/BE2`，需要 direct `:8788` 冷/热延迟和无写
   - 佐证:`engine.py:324` `logger.warning(...)`、`:481` `logger.debug(...)`,但全文件无 `import logging` / `logger = getLogger`(已 grep 确认)
   - 影响:🔴-adjacent(在 trust 边界 risk engine 内)。正常路径不触发;一旦 `_check_lesson_constraints`(324)或 `_check_correlation_exposure`(481)的 `except` 块被触发,`NameError: name 'logger' is not defined` 会**掩盖原始异常**,真实风控检查失败原因丢失
   - 最小修复:文件顶部加 `import logging` + `logger = logging.getLogger(__name__)`;补一个让该 except 触发的回归测试断言不抛 NameError
-  - 契约:[risk_engine_contract §7](../../design/contracts/risk_engine_contract.md)
+  - 契约:[risk_engine_contract §7](../../../../design/contracts/risk_engine_contract.md)
 
 - **晋级门"高频放松规则"代码有、trust §5.2 意图未记录**
-  - 佐证:`strategy_lifecycle.py:228-241`——`paper_trade_count≥30` 时 runtime 门槛从 14d 放松到 3d;[trust §5.2](../../governance/policies/trust_and_change_control.md) 只写 14d 无放松条款
-  - 影响:🟡 文档↔代码偏差。契约已采纳此规则为金标准([promotion_gates_contract §4](../../design/contracts/promotion_gates_contract.md) 偏差1),trust §5.2 待补注一行说明放松条件
+  - 佐证:`strategy_lifecycle.py:228-241`——`paper_trade_count≥30` 时 runtime 门槛从 14d 放松到 3d;[trust §5.2](../../../../governance/policies/trust_and_change_control.md) 只写 14d 无放松条款
+  - 影响:🟡 文档↔代码偏差。契约已采纳此规则为金标准([promotion_gates_contract §4](../../../../design/history/promotion_gates_contract.md) 偏差1),trust §5.2 待补注一行说明放松条件
   - 最小修复:trust_and_change_control §5.2 补"若 trade_count≥min_paper_trades 则 runtime 门槛降至 3d"
 
 - **`paper_candidate→paper_running` 无 PI 批准门(意图领先代码)**
-  - 佐证:`strategy_lifecycle.py:142-189` `promote_strategy()` 可直接推进到 paper_running,门检查只在 paper_passed/live_candidate;但 [VISION/ARCH_GUIDE 第八章](../../design/architecture/SYSTEM_ARCHITECTURE_GUIDE.md) 称"激活需 PI Agent 确认"
+  - 佐证:`strategy_lifecycle.py:142-189` `promote_strategy()` 可直接推进到 paper_running,门检查只在 paper_passed/live_candidate;但 [VISION/ARCH_GUIDE 第八章](../../../../design/architecture/SYSTEM_ARCHITECTURE_GUIDE.md) 称"激活需 PI Agent 确认"
   - 影响:🟡 目标态差距。PI 当前是异步推荐(`operator_loop.py:299-358` recommend_*),无单点批准卡口
-  - 最小修复:或补 PI 批准门(对齐意图),或修正 ARCH_GUIDE 措辞(对齐代码)。需用户定夺方向。详见 [promotion_gates_contract §4](../../design/contracts/promotion_gates_contract.md) 偏差2
+  - 最小修复:或补 PI 批准门(对齐意图),或修正 ARCH_GUIDE 措辞(对齐代码)。需用户定夺方向。详见 [promotion_gates_contract §4](../../../../design/history/promotion_gates_contract.md) 偏差2
 
 - **两套 permissions.py 并存,trust §6.1 只列其一**
   - 佐证:`aletheia/agent_runtime/permissions.py`(trust §6.1 列为控制模块)**与** `aletheia/agent_shell/permissions.py`(agent shell 双面 permission + `registry.py:415` FORBIDDEN_INTENTS)**两者都存在**
-  - 影响:🟡 不是路径过时,是职责未澄清——哪个是 worker-surface 权威、哪个是 operator-surface?是否有重叠/冲突的权限判定?[live_unlock_contract §6](../../design/contracts/live_unlock_contract.md) 已标此偏差
+  - 影响:🟡 不是路径过时,是职责未澄清——哪个是 worker-surface 权威、哪个是 operator-surface?是否有重叠/冲突的权限判定?[live_unlock_contract §6](../../../../design/contracts/live_unlock_contract.md) 已标此偏差
   - 最小修复:核对两文件职责边界,在 trust §6.1 同时列出并注明各自管辖面;若有重叠判定需澄清优先级
 
 - **`paper_trader` 死导入 `llm_complete` + `get_trade_proposal`**

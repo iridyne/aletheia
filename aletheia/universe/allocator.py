@@ -25,7 +25,7 @@ _CALIBRATION_REF_NET_PCT = 1.0
 _CALIBRATION_HARM_FLOOR_PCT = -15.0
 # US-13: explore candidates below this total_score are too weak to promote into the
 # executable universe (they would be flagged execution_eligible with a near-zero score).
-_EXPLORE_MIN_SCORE = 20.0
+_EXPLORE_MIN_SCORE = 15.0  # lowered from 20.0 — allow weaker explore candidates
 # Per-family calibration horizon (matches typical holding period)
 _FAMILY_CALIBRATION_HORIZON = {
     "momentum": "4h",

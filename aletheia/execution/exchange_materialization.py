@@ -454,10 +454,16 @@ def materialize_bitget_entry(
 
         repo.validate_native_order_authority(order)
 
+        # A native Order is a real exchange action that must be materialised, even
+        # when it references an adopted Proposal (e.g. a native close Order for an
+        # adopted position — the close Order is real, only the original entry
+        # Proposal was synthetic).  Rejecting on proposal.source would strand those
+        # native Orders in materialization_missing forever.
+        if order.get("source") != "native":
+            return MaterializationResult(state="authority_missing")
+
         proposal_id = order.get("proposal_id")
         proposal = repo.get_trade_proposal(proposal_id) if proposal_id else None
-        if proposal is None or proposal.get("source") != "native":
-            return MaterializationResult(state="authority_missing")
 
         exchange_order_id, evidence = evidence_for_order(order, rows)
         if exchange_order_id is None or not evidence:
@@ -820,6 +826,23 @@ def _materialize_complete_private_close(
     if position is None:
         return None
     if position.get("status") == "closed" and order.get("status") == "filled":
+        return MaterializationResult(
+            state="filled",
+            position_id=position["id"],
+            exchange_order_id=order.get("exchange_order_id"),
+        )
+    # The Position may already be closed by another path (e.g. the adopted
+    # close flow that observed the exchange close directly).  In that case the
+    # close already happened — just converge the native Order to filled instead
+    # of raising and stranding it in materialization_missing forever.
+    if position.get("status") == "closed":
+        if order.get("status") != "filled":
+            repo.update_order(
+                order_id,
+                status="filled",
+                filled_at=position.get("closed_at"),
+                error_reason=None,
+            )
         return MaterializationResult(
             state="filled",
             position_id=position["id"],

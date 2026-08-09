@@ -15,7 +15,11 @@ class EventLoopLagMonitor:
     def __init__(self, *, interval_sec: float = 0.1, window_sec: float = 60.0):
         self.interval_sec = interval_sec
         self.window_sec = window_sec
-        self._samples: deque[tuple[float, float]] = deque()
+        # Hard ceiling as a backstop: at 10 Hz sampling + 60 s window the
+        # active-popleft sweep in record() keeps ~600 entries; maxlen=700
+        # guarantees bounded memory even if sampling jitter or a window_sec
+        # reconfiguration lets the soft sweep lag (L1 fix).
+        self._samples: deque[tuple[float, float]] = deque(maxlen=700)
         self._last_sample_at: float | None = None
 
     async def run(self) -> None:

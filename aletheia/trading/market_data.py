@@ -6,6 +6,8 @@ Degrades gracefully if the exchange is unreachable.
 
 import asyncio
 import logging
+import math
+from typing import Optional
 
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import InstrumentId, MARKET_SPOT, MARKET_PERP, to_canonical, to_bitget
@@ -60,6 +62,20 @@ def _instrument_market_from_row(mt: str | None) -> str:
 # Triggers infra_event after XSTOCK_FAILURE_THRESHOLD consecutive failures.
 _xstock_failure_counts: dict[str, int] = {}
 _XSTOCK_FAILURE_THRESHOLD = 3
+
+
+def _prune_xstock_failure_counts(active_symbols: set[str]) -> None:
+    """Remove failure-count entries for symbols no longer in the active set.
+
+    Without this, a symbol that is removed from the xStock universe leaves a
+    stale entry that never gets cleaned up (success and auto-remove paths only
+    fire for symbols still being iterated).
+    """
+    stale = [s for s in _xstock_failure_counts if s not in active_symbols]
+    for s in stale:
+        _xstock_failure_counts.pop(s, None)
+
+
 _XSTOCK_LISTING_TIMEOUT_SEC = 10.0
 
 
@@ -331,6 +347,12 @@ async def collect_market_snapshots() -> dict:
     # causing N write transactions per cycle (N = watched instrument count).
     _pending_snaps: list[MarketSnapshot] = []
 
+    # Perf (Phase 5): concurrency bound for ticker fetches. Each fetch is one
+    # CCXT network round-trip; a semaphore of 12 keeps the provider's rate limit
+    # headroom intact while turning the O(N) serial loop into bounded-parallel
+    # execution. Tuned below the typical CCXT-per-IP concurrency cap (~15-20).
+    _fetch_sem = asyncio.Semaphore(12)
+
     async def _fetch_snap(instrument, prov) -> MarketSnapshot:
         """Fetch one ticker and return a MarketSnapshot; does NOT write to DB.
 
@@ -338,9 +360,26 @@ async def collect_market_snapshots() -> dict:
         and flush them in a single batch transaction (one write-lock acquisition
         per cycle instead of one per ticker).
         """
-        ticker = require_exact_ticker_venue(
-            await prov.get_ticker(instrument), instrument.exchange,
-        )
+        async with _fetch_sem:
+            ticker = require_exact_ticker_venue(
+                await prov.get_ticker(instrument), instrument.exchange,
+            )
+        # Reject non-positive prices: a 0.0 price used to be written as an
+        # authoritative snapshot and then read back by valuation and
+        # reconciliation as fact. Raising here routes the instrument into the
+        # caller's existing per-instrument error list instead of persisting
+        # a poisoned row.
+        _price = ticker.last_price
+        if (
+            _price is None
+            or isinstance(_price, bool)
+            or not math.isfinite(float(_price))
+            or float(_price) <= 0
+        ):
+            raise ValueError(
+                f"refusing snapshot for {instrument}: non-positive price {_price!r} "
+                f"from {ticker.provider or 'unknown'}"
+            )
         # NOTE: the DB row (market_snapshots) is the canonical, queried record.
         # The former append_jsonl("market_snapshots.jsonl", ...) write was
         # write-only — no reader anywhere in the codebase — so it only grew
@@ -359,15 +398,28 @@ async def collect_market_snapshots() -> dict:
             provider=ticker.provider or None,
         )
 
+    async def _fetch_snap_isolated(instrument, prov) -> None:
+        """Fetch one ticker with per-instrument failure isolation.
+
+        Appends the snapshot to _pending_snaps on success, or records the error
+        on failure — one failure never aborts the whole batch."""
+        try:
+            snap = await _fetch_snap(instrument, prov)
+            _pending_snaps.append(snap)
+            collected.append(str(instrument))
+        except Exception as e:
+            errors.append(f"{instrument}: {e}")
+            logger.warning("Failed to fetch ticker %s: %s", instrument, e)
+
+    # Perf (Phase 5): bounded-parallel fetch via asyncio.gather instead of a
+    # serial await loop. The semaphore inside _fetch_snap caps concurrency; the
+    # try/except inside _fetch_snap_isolated preserves the original per-instrument
+    # failure isolation (one failure does not abort others).
     try:
-        for instrument in instruments:
-            try:
-                snap = await _fetch_snap(instrument, provider)
-                _pending_snaps.append(snap)
-                collected.append(str(instrument))
-            except Exception as e:
-                errors.append(f"{instrument}: {e}")
-                logger.warning("Failed to fetch ticker %s: %s", instrument, e)
+        await asyncio.gather(
+            *(_fetch_snap_isolated(inst, provider) for inst in instruments),
+            return_exceptions=True,
+        )
     finally:
         await provider.close()
 
@@ -378,39 +430,42 @@ async def collect_market_snapshots() -> dict:
     # Note: xstocks has already been filtered by the venue listing cache above;
     # the listing_cache below is the post-failure auto-remove path (kept as belt-and-suspenders).
     if xstocks:
+        # Prune stale failure-count entries for symbols no longer configured.
+        _prune_xstock_failure_counts({inst.symbol for inst in xstocks})
         xprovider = CCXTProvider(exchange="bitget", fallback_exchange="bitget")
-        listing_cache: dict[str, frozenset[str] | None] = {}
-        try:
-            for instrument in xstocks:
-                try:
-                    snap = await _fetch_snap(instrument, xprovider)
-                    _pending_snaps.append(snap)
-                    collected.append(str(instrument))
-                    _xstock_failure_counts[instrument.symbol] = 0  # reset on success
-                except Exception as e:
-                    errors.append(f"{instrument}: {e}")
-                    logger.warning("Failed to fetch xStocks ticker %s: %s", instrument, e)
-                    sym = instrument.symbol
-                    _xstock_failure_counts[sym] = _xstock_failure_counts.get(sym, 0) + 1
-                    consecutive = _xstock_failure_counts[sym]
-                    # Emit once when this failure window crosses the threshold.
-                    # Per-cycle warning logs continue below/above the threshold;
-                    # repeating the durable audit forever only amplifies writes.
-                    if consecutive == _XSTOCK_FAILURE_THRESHOLD:
-                        from aletheia.files.jsonl import write_audit
-                        write_audit({
-                            "actor": "system",
-                            "source": "market_data",
-                            "event_type": "infra_event",
-                            "entity_id": sym,
-                            "message": (
-                                f"xStock {sym} fetch failed {consecutive} "
-                                "consecutive times — provider may be degraded"
-                            ),
-                            "severity": "warning",
-                            "consecutive_failures": consecutive,
-                            "last_error": str(e)[:200],
-                        })
+        listing_cache: dict[str, Optional[frozenset[str]]] = {}
+
+        async def _fetch_xstock_isolated(instrument) -> None:
+            """Fetch one xStocks ticker with failure isolation + audit trail."""
+            try:
+                snap = await _fetch_snap(instrument, xprovider)
+                _pending_snaps.append(snap)
+                collected.append(str(instrument))
+                _xstock_failure_counts[instrument.symbol] = 0  # reset on success
+            except Exception as e:
+                errors.append(f"{instrument}: {e}")
+                logger.warning("Failed to fetch xStocks ticker %s: %s", instrument, e)
+                sym = instrument.symbol
+                _xstock_failure_counts[sym] = _xstock_failure_counts.get(sym, 0) + 1
+                consecutive = _xstock_failure_counts[sym]
+                # Emit once when this failure window crosses the threshold.
+                # Per-cycle warning logs continue below/above the threshold;
+                # repeating the durable audit forever only amplifies writes.
+                if consecutive == _XSTOCK_FAILURE_THRESHOLD:
+                    from aletheia.files.jsonl import write_audit
+                    write_audit({
+                        "actor": "system",
+                        "source": "market_data",
+                        "event_type": "infra_event",
+                        "entity_id": sym,
+                        "message": (
+                            f"xStock {sym} fetch failed {consecutive} "
+                            "consecutive times — provider may be degraded"
+                        ),
+                        "severity": "warning",
+                        "consecutive_failures": consecutive,
+                        "last_error": str(e)[:200],
+                    })
                     # Load each responsible venue once per collection cycle. None means
                     # indeterminate and fails open by preserving configured intent.
                     exchange_name = instrument.exchange
@@ -422,6 +477,15 @@ async def collect_market_snapshots() -> dict:
                     if listed is not None and to_canonical(sym) not in listed:
                         if _auto_remove_xstock(sym, exchange_name, consecutive):
                             _xstock_failure_counts.pop(sym, None)
+
+        try:
+            # Perf (Phase 5): bounded-parallel xStocks fetch. The semaphore is
+            # shared with the main loop (_fetch_snap), so total concurrency across
+            # both instrument sets stays bounded at 12.
+            await asyncio.gather(
+                *(_fetch_xstock_isolated(inst) for inst in xstocks),
+                return_exceptions=True,
+            )
         finally:
             await xprovider.close()
 

@@ -23,13 +23,24 @@ from typing import AsyncIterator, Iterable
 
 import httpx
 from fastapi import FastAPI, Request, WebSocket
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from aletheia import __version__
+from aletheia.config.loader import load_config
 from aletheia.gateway.frontdoor_route import read_frontdoor_route, resolve_backend_base_url
+from aletheia.gateway.dashboard_auth import (
+    SESSION_COOKIE_NAME,
+    SESSION_MAX_AGE,
+    SESSION_MAX_AGE_SHORT,
+    verify_credentials,
+    create_session_token,
+    verify_session_token,
+    load_login_page_html,
+)
 from aletheia.infra.events import emit_infra_event, list_infra_events
 
 _boot_time = time.time()
@@ -48,6 +59,13 @@ _HOP_BY_HOP_HEADERS = {
     "host",
     "content-length",
 }
+
+
+def _is_public_static(path: str) -> bool:
+    """Static assets that are safe to serve even before authentication."""
+    if path.startswith("/assets/"):
+        return True
+    return path in ("/favicon.svg", "/pwa-192.png", "/pwa-512.png")
 
 
 def dashboard_static_dir() -> Path:
@@ -246,6 +264,54 @@ def create_app(
     route_path: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Aletheia Local Front Door", version=__version__)
+
+    # Perf (Phase 3): GZipMiddleware compresses static dashboard assets (the
+    # ~1.1MB JS bundle -> ~600KB). Skips responses that already carry a
+    # Content-Encoding (e.g. proxied /api responses already gzipped by the
+    # backend). Added first so it wraps the auth middleware + static mount.
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+    # --- Application-layer dashboard auth (replaces Caddy basicauth popup) ---
+    LOGIN_PAGE_HTML = load_login_page_html()
+
+    @app.middleware("http")
+    async def _auth_middleware(request: Request, call_next):
+        """Gate the dashboard behind a web login page.
+
+        Unauthenticated HTML navigations get the login page; unauthenticated
+        /api requests get 401. All external traffic reaches the front door via
+        the reverse proxy over loopback, so there is no separate loopback bypass
+        (use the public URL and log in).
+
+        When neither tunnel nor remote_control is enabled (pure local-first
+        mode), auth is skipped entirely — the system binds to loopback and the
+        operator shell (a trusted local process) must reach every endpoint
+        without a browser session cookie.
+        """
+        cfg = load_config(persist_migrations=False)
+        tunnel_enabled = bool(getattr(getattr(cfg, "tunnel", None), "enabled", False))
+        remote_control = getattr(cfg, "remote_control", None)
+        remote_token_required = bool(
+            getattr(remote_control, "enabled", False) and getattr(remote_control, "require_token", False)
+        )
+        # Local-first mode: no tunnel, no remote control → no auth needed.
+        if not tunnel_enabled and not remote_token_required:
+            return await call_next(request)
+
+        path = request.url.path
+        if path.startswith(("/_infra/", "/api/auth/", "/login", "/api/operator/")) or path in ("/api/ready", "/api/status", "/api/health") or _is_public_static(path):
+            return await call_next(request)
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+        if token and verify_session_token(token):
+            return await call_next(request)
+        if path.startswith("/api/"):
+            return JSONResponse(
+                status_code=401,
+                content={"ok": False, "error": "unauthorized", "login": "/login"},
+                headers={"Cache-Control": "no-store"},
+            )
+        return HTMLResponse(content=LOGIN_PAGE_HTML, status_code=200)
+
     effective_static_dir = static_dir or dashboard_static_dir()
     configured_backend_url = backend_url.rstrip("/") if backend_url else None
     use_route_file = route_path is not None or configured_backend_url is None
@@ -306,6 +372,46 @@ def create_app(
             headers=response_headers,
             background=BackgroundTask(_close_proxy_response, upstream),
         )
+
+    @app.post("/api/auth/login")
+    async def auth_login(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        username = str(body.get("username", "")).strip()
+        password = str(body.get("password", ""))
+        remember = bool(body.get("remember", False))
+        if not verify_credentials(username, password):
+            return JSONResponse(
+                status_code=401,
+                content={"ok": False, "error": "unauthorized", "message": "invalid credentials"},
+                headers={"Cache-Control": "no-store"},
+            )
+        token = create_session_token(username or "aletheia")
+        resp = JSONResponse(status_code=200, content={"ok": True, "username": username or "aletheia"})
+        resp.set_cookie(
+            SESSION_COOKIE_NAME,
+            token,
+            max_age=SESSION_MAX_AGE if remember else SESSION_MAX_AGE_SHORT,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/",
+        )
+        return resp
+
+    @app.post("/api/auth/logout")
+    async def auth_logout():
+        resp = JSONResponse(status_code=200, content={"ok": True})
+        resp.delete_cookie(SESSION_COOKIE_NAME, path="/")
+        return resp
+
+    @app.get("/login")
+    async def login_page():
+        return HTMLResponse(content=LOGIN_PAGE_HTML, status_code=200)
 
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
     async def proxy_api(path: str, request: Request):

@@ -305,3 +305,43 @@ async def test_proxy_stream_interrupted_ends_cleanly(tmp_path, monkeypatch):
     # The interruption was recorded as a diagnostics event.
     codes = [e["code"] for e in list_infra_events()]
     assert "proxy_stream_interrupted" in codes
+
+
+@pytest.mark.anyio
+async def test_frontdoor_gzip_compresses_large_static_assets(tmp_path):
+    """GZipMiddleware must compress large static assets (Phase 3).
+
+    The dashboard's JS bundle is ~1.1MB; gzip should reduce it to ~600KB.
+    This test verifies the middleware is wired up and actually compresses."""
+    from aletheia.gateway.frontdoor import create_app
+
+    static_dir = tmp_path / "dashboard_static"
+    assets = static_dir / "assets"
+    assets.mkdir(parents=True)
+    (static_dir / "index.html").write_text(
+        "<!doctype html><html><body><div id='root'>ok</div></body></html>",
+        encoding="utf-8",
+    )
+    # Create a ~2KB JS payload (exceeds minimum_size=1024 threshold).
+    js_payload = "console.log('x' + " + repr("a" * 2048) + ")"
+    (assets / "index-bundle.js").write_text(js_payload, encoding="utf-8")
+
+    app = create_app(static_dir=static_dir, backend_url="http://127.0.0.1:9")
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://frontdoor"
+    ) as client:
+        resp = await client.get(
+            "/assets/index-bundle.js",
+            headers={"Accept-Encoding": "gzip"},
+        )
+
+    assert resp.status_code == 200
+    # GZipMiddleware sets Content-Encoding: gzip on compressed responses.
+    assert resp.headers.get("Content-Encoding") == "gzip", (
+        f"Expected Content-Encoding: gzip, got headers: {dict(resp.headers)}"
+    )
+    # Compressed size should be far smaller than the original 2KB+ payload.
+    compressed_bytes = resp.num_bytes_downloaded
+    assert compressed_bytes < 1024, (
+        f"Compressed size {compressed_bytes} bytes should be < 1024 (original ~2KB)"
+    )

@@ -113,12 +113,5 @@ async def _query_broker(broker: IBroker):
 
 def get_unified_state_sync() -> UnifiedState:
     """Sync wrapper — runs the async aggregation from any calling context."""
-    from concurrent.futures import ThreadPoolExecutor
-
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(get_unified_state())
-
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, get_unified_state()).result(timeout=30)
+    from aletheia.agent_runtime.async_utils import run_coro_from_sync
+    return run_coro_from_sync(get_unified_state(), timeout=30)

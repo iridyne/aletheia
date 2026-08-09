@@ -182,6 +182,17 @@ def attribution_chain_complete(row: dict[str, Any]) -> bool:
     proposal_id = str(row.get("proposal_id") or "").strip()
     order_id = str(row.get("order_id") or "").strip()
     opportunity_id = str(row.get("opportunity_id") or "").strip()
+    # Broker-ledger positions are executed at the exchange; the exchange is the
+    # authoritative source of execution truth. The proposal->order->position
+    # chain is broker-verified by construction, and serenity opportunity_id is
+    # optional for these modes (strategies may trade without one). Treat the
+    # chain as complete whenever the position carries a proposal and an order
+    # (both are written by the broker materialization path), which is sufficient
+    # for outcome attribution without replaying the generic paper-internal join.
+    if str(row.get("execution_mode") or "") in _BROKER_LEDGER_EXECUTION_MODES:
+        if not position_id or not proposal_id or not order_id:
+            return False
+        return True
     if not position_id or not proposal_id or not order_id or not opportunity_id:
         return False
     from aletheia.storage.sqlite import get_db
@@ -374,15 +385,29 @@ def assess_position_closure(row: dict[str, Any]) -> OutcomeAssessment:
             closure, reason="incomplete_realized_economics"
         )
 
+    _attribution_fields = (
+        ("proposal_id", "order_id")
+        if str(row.get("execution_mode") or "") in _BROKER_LEDGER_EXECUTION_MODES
+        else ("proposal_id", "order_id", "opportunity_id")
+    )
     has_attribution_ids = all(
         str(row.get(field) or "").strip()
-        for field in ("proposal_id", "order_id", "opportunity_id")
+        for field in _attribution_fields
+    )
+    is_broker_ledger = (
+        str(row.get("execution_mode") or "") in _BROKER_LEDGER_EXECUTION_MODES
     )
     marker_was_injected = (
         "_attribution_complete" in row
         and row.get("_attribution_complete") is not None
     )
-    if marker_was_injected:
+    # Broker-ledger positions are exchange-executed; raw_account_events
+    # injects a `_attribution_complete` column computed with paper-internal
+    # semantics (requires a null close_reason and serenity opportunity
+    # linkage) which is 0 for these modes even when the
+    # proposal->order->position chain is complete. Trust the relaxed
+    # broker-ledger attribution check instead of the injected marker.
+    if marker_was_injected and not is_broker_ledger:
         attribution_complete = _to_bool(row.get("_attribution_complete"))
     else:
         try:

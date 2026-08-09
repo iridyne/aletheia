@@ -8,7 +8,7 @@
 > `retrieval` / `jsonl` 全文。**与 §1-§3（2026-06-08 快照）不同**：这批是当前一手核实，
 > 且明确避开了已修复条目（如 §1.1 strategy_id 链已于 `feat/strategy-causal-chain` 真修、
 > §3 paper_trader 的 `llm_complete` 死导入已清——核实时均已不复存在）。
-> 完整论证见 [EXECUTION_PATH_HONESTY.md](EXECUTION_PATH_HONESTY.md)。
+> 完整论证见 [EXECUTION_PATH_HONESTY.md](../../../../../governance/policies/execution_path_honesty.md)。
 
 - ✅ **strategy 的 `entry_rule`/`exit_rule` 已标注为 advisory（语义诚实，零行为改动）**
   - 修复方案 A 已实施：

@@ -2,9 +2,9 @@
 
 > **创建**: 2026-06-29 / **类型**: backlog 索引(非 issues)
 > **触发**: owner 让深度研究 https://www.openalice.ai/blog/trading-as-git-intro 并把"能做、有必要做的"全部 plan + 实施。
-> **研究报告**: [`../research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md`](../../research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md)（13-agent workflow / 三层 ground truth / 5 镜头 / 5 轮对抗核查）
-> **决策记录**: [`../_ai/DECISIONS.md`](../../_ai/decisions/DECISIONS.md) 2026-06-29 条目（5 个设计取舍 + 拒绝清单）
-> **历史 review**: [`../references/openalice_prism_review.md`](../../references/external-systems/openalice_prism_review.md)（2026-06-10 一次性分析）+ [`../references/INDEX.md §4`](../../references/INDEX.md) 借鉴清单
+> **研究报告**: [`../research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md`](../../../../research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md)（13-agent workflow / 三层 ground truth / 5 镜头 / 5 轮对抗核查）
+> **决策记录**: [`../_ai/DECISIONS.md`](../../../../governance/decisions/DECISIONS.md) 2026-06-29 条目（5 个设计取舍 + 拒绝清单）
+> **历史 review**: [`../references/openalice_prism_review.md`](../../../../references/external-systems/openalice_prism_review.md)（2026-06-10 一次性分析）+ [`../references/INDEX.md §4`](../../../../references/INDEX.md) 借鉴清单
 
 > **✅ RECONCILED 2026-06-30**（见 [REMAINING_WORK_2026-06-30 §3](../../status/snapshots/REMAINING_WORK_2026-06-30.md)）：
 > **P0-1 + P1-2 已合并入 master**（`b8ed990` / `31eb1a9`，merge `b9a4ac5`；`git branch --no-merged master` 已无此分支）——下表"待 owner 审核 merge"为历史状态。

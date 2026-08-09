@@ -656,12 +656,9 @@ def resolve_orders_missing_from_exchange(
 
 
 def _run_coro(coro):
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+    """Run a coroutine to completion from sync code without blocking the event loop."""
+    from aletheia.agent_runtime.async_utils import run_coro_from_sync
+    return run_coro_from_sync(coro)
 
 
 def _response_rows(rows) -> list[dict]:
@@ -1275,8 +1272,9 @@ def reconcile() -> dict:
                 and bool(order.get("exchange_order_id"))
             )
             if use_exact_order_history:
+                exact_rows: list[dict] = []
                 try:
-                    rows = _response_rows(
+                    exact_rows = _response_rows(
                         _run_coro(
                             client.get_order_fills(
                                 order_id=str(order["exchange_order_id"]),
@@ -1302,6 +1300,18 @@ def reconcile() -> dict:
                         reason="exact_fill_history_unavailable",
                     )
                     continue
+                # Exact order history may return empty for very recent fills that
+                # haven't yet indexed on the exact-query endpoint.  Fall back to
+                # the general fills history (matched by orderId) so a fill that
+                # landed isn't stranded in `submitted`/`materialization_missing`.
+                if not exact_rows:
+                    exact_rows = [
+                        row
+                        for row in fill_rows.get(market_type, [])
+                        if str(row.get("orderId") or "")
+                        == str(order["exchange_order_id"])
+                    ]
+                rows = exact_rows
             else:
                 rows = list(fill_rows.get(market_type, []))
             if not use_exact_order_history and _needs_symbol_scoped_history(order, rows):

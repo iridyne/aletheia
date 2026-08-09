@@ -4625,15 +4625,15 @@ def test_executable_candidate_view_separates_skips_from_main_slots():
 @spec_claim(
     SpecClaim(
         "DL-C01", "decision_lifecycle_contract", "§4 DL-INV-2 conviction gate", "L2c",
-        "_MIN_CONVICTION_TO_TRADE == 55: a TradingDecision below this conviction is forced "
+        "_MIN_CONVICTION_TO_TRADE == 58: a TradingDecision below this conviction is forced "
         "to skip. Changing this threshold must update decision_lifecycle_contract §2.2/§4.",
     ),
 )
-def test_min_conviction_threshold_is_55():
+def test_min_conviction_threshold_is_58():
     from aletheia.agent_shell import trading_decision
 
-    assert trading_decision._MIN_CONVICTION_TO_TRADE == 55, (
-        "Conviction gate drifted from 55 — sync decision_lifecycle_contract §4 (DL-INV-2)"
+    assert trading_decision._MIN_CONVICTION_TO_TRADE == 58, (
+        "Conviction gate drifted from 58 — sync decision_lifecycle_contract §4 (DL-INV-2)"
     )
 
 

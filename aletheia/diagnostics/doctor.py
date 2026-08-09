@@ -2174,6 +2174,68 @@ def _probe_reconciled_ratio(report: Report) -> None:
         report.add("loop.reconciled_ratio", "info", f"probe error: {e}")
 
 
+def _probe_unresolved_orders(report: Report) -> None:
+    """Unresolved order backlog — orders that haven't converged to a terminal state.
+
+    Unresolved orders consume position slots and reserve notional exposure in the
+    risk engine.  A high count or aged orders signal reconciliation lag or a
+    stuck order that may need manual intervention.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        row = db.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'submission_unknown' THEN 1 ELSE 0 END) AS submission_unknown,
+                SUM(CASE WHEN status = 'materialization_missing' THEN 1 ELSE 0 END) AS materialization_missing,
+                SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) AS submitted,
+                MIN(created_at) AS oldest_at
+            FROM orders
+            WHERE status IN ('submitted', 'pending', 'partial', 'partially_filled',
+                             'submission_unknown', 'materialization_missing')
+            """
+        ).fetchone()
+        if row is None:
+            report.add("reconciliation.unresolved", "info", "could not query orders")
+            return
+
+        total = int(row["total"] or 0)
+        if total == 0:
+            report.add("reconciliation.unresolved", "ok", "no unresolved orders")
+            return
+
+        submission_unknown = int(row["submission_unknown"] or 0)
+        materialization_missing = int(row["materialization_missing"] or 0)
+        submitted = int(row["submitted"] or 0)
+
+        # Compute oldest age in hours
+        oldest_age_hours = 0.0
+        oldest_at = row["oldest_at"]
+        if oldest_at:
+            try:
+                oldest_dt = datetime.fromisoformat(str(oldest_at).replace("Z", "+00:00"))
+                if oldest_dt.tzinfo is None:
+                    oldest_dt = oldest_dt.replace(tzinfo=timezone.utc)
+                oldest_age_hours = (datetime.now(timezone.utc) - oldest_dt).total_seconds() / 3600.0
+            except (TypeError, ValueError):
+                pass
+
+        detail = (f"unresolved={total}(submitted={submitted}, "
+                  f"submission_unknown={submission_unknown}, "
+                  f"materialization_missing={materialization_missing}), "
+                  f"oldest={oldest_age_hours:.1f}h")
+
+        if oldest_age_hours > 6.0 or total > 5:
+            report.add("reconciliation.unresolved", "warn", detail,
+                       "unresolved orders block risk capacity; run reconciliation or review manually")
+        else:
+            report.add("reconciliation.unresolved", "info", detail)
+    except Exception as e:
+        report.add("reconciliation.unresolved", "info", f"probe error: {e}")
+
+
 def _probe_outcome_history_integrity(report: Report) -> None:
     """Read-only cleanup readiness for classified history and derived artifacts."""
     try:
@@ -2510,6 +2572,49 @@ def _probe_operator_shell(report: Report) -> None:
         report.add("operator.shell", "warn", detail, hint)
     except Exception as e:
         report.add("operator.shell", "info", f"probe error: {e}")
+
+
+def _probe_pi_daemon(report: Report) -> None:
+    """System Operator (PI Daemon) liveness — the event-driven trade decision loop."""
+    try:
+        from aletheia.agent_runtime.pi_daemon import daemon_status, is_daemon_running
+        from aletheia.config.loader import load_config
+
+        cfg = load_config()
+        if not cfg.pi_daemon.enabled:
+            report.add("pi_daemon", "info", "PI daemon disabled in config")
+            return
+
+        running = is_daemon_running()
+        status = daemon_status()
+        hb_age = status.get("last_heartbeat_age_sec")
+        failures = status.get("consecutive_failures", 0)
+        queue_depth = status.get("signal_pending_queue_depth")
+
+        if not running:
+            report.add("pi_daemon", "warn",
+                       "PI daemon not running — trade decisions stopped",
+                       "watchdog will auto-restart; if persistent, check gateway logs")
+            return
+
+        parts = [f"running (gen={status.get('task_generation', 0)})"]
+        if hb_age is not None:
+            parts.append(f"heartbeat {_fmt_age(hb_age)}")
+        if failures >= 3:
+            parts.append(f"{failures} consecutive eval failures")
+        if queue_depth is not None and queue_depth > 5:
+            parts.append(f"queue depth {queue_depth}")
+
+        # Heartbeat staleness: warn if >2min (watchdog threshold is 3min)
+        if hb_age is not None and hb_age > 120:
+            report.add("pi_daemon", "warn", ", ".join(parts),
+                       "daemon heartbeat stale — watchdog will restart if >3min")
+        elif failures >= 3:
+            report.add("pi_daemon", "warn", ", ".join(parts))
+        else:
+            report.add("pi_daemon", "ok", ", ".join(parts))
+    except Exception as e:
+        report.add("pi_daemon", "info", f"probe error: {e}")
 
 
 def _probe_webui_static(report: Report) -> None:
@@ -3395,8 +3500,8 @@ def _probe_ohlcv_coverage(report: Report) -> None:
                 f"OHLCV: {total} total bars, {symbols_covered} symbols, "
                 f"all {len(members)} active members ≥{min_bars} bars",
             )
-    except Exception:
-        pass
+    except Exception as e:
+        report.add("data.ohlcv", "info", f"probe error: {e}")
 
 
 def _probe_signal_effectiveness(report: Report) -> None:
@@ -3446,8 +3551,8 @@ def _probe_signal_effectiveness(report: Report) -> None:
         else:
             report.add("data.signal", "info",
                        f"24h net signal win_rate {win_rate:.1f}% ({total} settled, avg_net={avg_str}) — near-random")
-    except Exception:
-        pass
+    except Exception as e:
+        report.add("data.signal", "info", f"probe error: {e}")
 
 
 def _probe_outcome_economics(report: Report) -> None:
@@ -3494,8 +3599,8 @@ def _probe_outcome_economics(report: Report) -> None:
             report.add("data.outcome_economics", "ok", detail)
         else:
             report.add("data.outcome_economics", "info", detail)
-    except Exception:
-        pass
+    except Exception as e:
+        report.add("data.outcome_economics", "info", f"probe error: {e}")
 
 
 def _probe_filter_evidence(report: Report) -> None:
@@ -3631,8 +3736,8 @@ def _probe_filter_evidence(report: Report) -> None:
             )
         else:
             report.add("data.filter_evidence", "ok", detail)
-    except Exception:
-        pass
+    except Exception as e:
+        report.add("data.filter_evidence", "info", f"probe error: {e}")
 
 
 def _probe_serenity_pipeline(report: Report) -> None:
@@ -3642,8 +3747,9 @@ def _probe_serenity_pipeline(report: Report) -> None:
         if not getattr(_lcfg().serenity, "enabled", True):
             report.add("data.serenity_pipeline", "info", "Serenity research pipeline disabled in settings")
             return
-    except Exception:
-        pass
+    except Exception as e:
+        report.add("data.serenity_pipeline", "info", f"probe error: {e}")
+        return
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
@@ -3922,6 +4028,7 @@ def build_report(*, probe_llm: bool = False) -> Report:
         _probe_paper_funding_accounting,
         _probe_reconciled_ratio,
         _probe_reconcile_thrash,
+        _probe_unresolved_orders,
         _probe_sizing_policy,
         _probe_concentration,
         # content-quality (Phase 2): "is the AI's output garbage", not "is the loop alive"
@@ -3930,6 +4037,7 @@ def build_report(*, probe_llm: bool = False) -> Report:
         _probe_startup_behavior_gate,
         _probe_operator_shell,
         _probe_operator_loop,
+        _probe_pi_daemon,
         _probe_webui_static,
         _probe_git_hooks,
         _probe_network,

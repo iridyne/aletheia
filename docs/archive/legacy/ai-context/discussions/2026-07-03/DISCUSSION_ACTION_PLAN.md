@@ -1,6 +1,6 @@
 # Discussion Action Plan — Historical Decomposition
 > 来源：2026-07-03 owner 口述，已于 2026-07-12 整理为
-> [Product Direction](../../../product/definition/DIRECTION.md) 及其链接的 L2 契约、issue ledger 和运行手册。
+> [Product Direction](../../../../../product/definition/DIRECTION.md) 及其链接的 L2 契约、issue ledger 和运行手册。
 > 本文保留当时的拆解、优先级与判断过程，**不是**当前计划或当前系统事实；新工作从
 > `workflow bootstrap`、对应 L2 契约和 issue ledger 开始。
 

@@ -319,6 +319,49 @@ class RuntimeContinuityService:
         ).fetchall()
         return [_decode_row(row) for row in rows]
 
+    def list_events_after_rowid(
+        self,
+        after_rowid: int | None = None,
+        *,
+        limit: int = 100,
+    ) -> tuple[list[dict], int | None]:
+        """Fetch runtime events newer than ``after_rowid``, oldest-first.
+
+        Mirrors ``operator_store.list_events_after_rowid``; see that docstring
+        for why a rowid cursor replaces the previous unbounded ``seen_ids`` set.
+
+        Args:
+            after_rowid: Return only rows with a strictly greater rowid.
+                ``None`` loads the most recent ``limit`` rows as backlog.
+            limit: Maximum rows returned per call.
+
+        Returns:
+            ``(events, cursor)`` in ascending chronological order.
+        """
+        db = self._db()
+        if after_rowid is None:
+            rows = db.execute(
+                "SELECT rowid AS _rowid, * FROM runtime_events "
+                "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            rows = list(reversed(rows))
+        else:
+            rows = db.execute(
+                "SELECT rowid AS _rowid, * FROM runtime_events "
+                "WHERE rowid > ? ORDER BY rowid ASC LIMIT ?",
+                (after_rowid, limit),
+            ).fetchall()
+        if not rows:
+            return [], after_rowid
+        cursor = max(int(row["_rowid"]) for row in rows)
+        events: list[dict] = []
+        for row in rows:
+            item = _decode_row(row)
+            item.pop("_rowid", None)
+            events.append(item)
+        return events, cursor
+
     def status(self) -> dict:
         self._release_expired_locks()
         db = self._db()

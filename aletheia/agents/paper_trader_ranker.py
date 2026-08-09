@@ -24,11 +24,11 @@ from aletheia.data.symbols import to_canonical
 from aletheia.storage.repositories import (
     get_ohlcv_candles,
     get_universe_member,
+    list_all_open_positions,
     list_open_trade_opportunities,
 )
 from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation
 from aletheia.regime.detector import get_current_regime, MarketRegime
-from aletheia.trading.instruments import tradable_symbols_from_config
 # Position C (2026-07-02): strategy rules-engine deleted. The ranker no longer
 # resolves a StrategyRecord, evaluates a RuleSet, or reads backtest evidence.
 # linked_strategy_id is passed through as a pure attribution label; regime
@@ -120,15 +120,32 @@ def build_paper_candidate_workset(limit: int = 50) -> PaperCandidateWorkset:
     cfg = load_config()
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # Symbol filter setup
+    # Symbol filter setup — MUST mirror the risk engine's check #1 exactly.
+    # The authoritative gate reads cfg.risk.symbol_list + symbol_filter_mode;
+    # reading the exchange-level list instead silently disabled the whitelist
+    # (empty list => allow-all) and pushed every symbol_not_allowed rejection
+    # into the risk engine as noise.
     filter_mode = cfg.risk.symbol_filter_mode
-    filter_set = {to_canonical(s) for s in tradable_symbols_from_config(cfg)}
+    filter_set = {to_canonical(s) for s in cfg.risk.symbol_list}
     if filter_mode == "blacklist":
         def _symbol_allowed(sym: str) -> bool:
             return to_canonical(sym) not in filter_set
     else:
         def _symbol_allowed(sym: str) -> bool:
             return not filter_set or to_canonical(sym) in filter_set
+
+    # Portfolio pre-filter context (mirrors risk checks #6 and #6b): the risk
+    # engine rejects proposals at the demo position cap and on a same-symbol
+    # open. Pre-filtering here keeps doomed proposals from entering the
+    # pipeline as risk noise. Both remain read-only against the local book;
+    # the risk engine stays authoritative.
+    open_positions = list_all_open_positions()
+    try:
+        max_open_positions = int(
+            getattr(cfg.risk.demo.positions, "max_open_positions", 0) or 0
+        )
+    except Exception:
+        max_open_positions = 0
 
     global_venue = cfg.exchange.paper_execution_mode
 
@@ -153,6 +170,8 @@ def build_paper_candidate_workset(limit: int = 50) -> PaperCandidateWorkset:
             min_conf,
             global_venue,
             symbol_filter_mode=filter_mode,
+            open_positions=open_positions,
+            max_open_positions=max_open_positions,
         )
         if candidate is not None:
             candidates.append(candidate)
@@ -182,6 +201,8 @@ def _evaluate_candidate(
     global_venue: str = "bitget_demo",
     *,
     symbol_filter_mode: str = "whitelist",
+    open_positions: list[dict] | None = None,
+    max_open_positions: int = 0,
 ) -> dict | None:
     """Evaluate a single opportunity as a paper trade candidate.
 
@@ -254,6 +275,43 @@ def _evaluate_candidate(
             skip_reason=f"symbol_not_allowed:{symbol_filter_mode}",
             direction=direction,
             filter_trace=filter_trace,
+        )
+
+    # Hard filter: demo position capacity (mirrors risk check #6). The risk
+    # engine rejects once the demo pool is at max_open_positions_demo;
+    # pre-filtering here keeps doomed proposals out of the pipeline.
+    sym_canonical = to_canonical(symbol)
+    demo_open = [
+        p for p in (open_positions or [])
+        if not str(p.get("execution_mode") or "").endswith("_live_limited")
+    ]
+    if max_open_positions > 0 and len(demo_open) >= max_open_positions:
+        _filter_step(
+            filter_trace, "position_capacity", "rejected",
+            f"max_demo_positions_reached:{len(demo_open)}",
+            inputs={"open_demo_positions": len(demo_open)},
+            parameters={"max_open_positions_demo": max_open_positions},
+        )
+        return _make_candidate(
+            opp, skip_reason=f"max_demo_positions_reached:{len(demo_open)}",
+            direction=direction, filter_trace=filter_trace,
+        )
+
+    # Hard filter: no duplicate open position on the same symbol in the same
+    # pool (mirrors risk check #6b — symbol_already_open). This also covers
+    # per-symbol notional accumulation: any accumulation requires an open
+    # position on the symbol, so no separate CUM-ADD (#19) pre-filter is
+    # needed at this stage — the risk engine remains the final authority.
+    if any(p.get("symbol") == sym_canonical for p in demo_open):
+        _filter_step(
+            filter_trace, "symbol_already_open", "rejected",
+            f"symbol_already_open:{sym_canonical}",
+            inputs={"symbol": sym_canonical},
+            parameters={"pool": "demo"},
+        )
+        return _make_candidate(
+            opp, skip_reason=f"symbol_already_open:{sym_canonical}",
+            direction=direction, filter_trace=filter_trace,
         )
 
     # Direction gate
@@ -535,7 +593,7 @@ def _evaluate_candidate(
 
     # Compute trade score
     learning_trace: list[dict] = []
-    trade_score = _compute_trade_score(
+    trade_score, score_breakdown = _compute_trade_score(
         opp, universe_member, factor_signal, confidence, strategy_evidence,
         strategy_has_ruleset=strategy_has_ruleset, direction=direction,
         learning_trace=learning_trace,
@@ -544,6 +602,7 @@ def _evaluate_candidate(
     # Apply guard penalty
     if guard_eval:
         trade_score -= guard_eval.total_penalty
+        score_breakdown["guard_penalty"] = score_breakdown.get("guard_penalty", 0) - guard_eval.total_penalty
 
     # Apply soft-TTL penalty (multiplicative). Factor is 1.0 when carrier is
     # fresh, decays with half-life = family TTL when expired, and 0.0 past the
@@ -551,6 +610,7 @@ def _evaluate_candidate(
     # so a strong guard still dominates a mild TTL decay.
     if ttl_factor_opp < 1.0:
         trade_score = trade_score * ttl_factor_opp
+        score_breakdown["ttl_decay"] = score_breakdown.get("ttl_decay", 0) + (ttl_factor_opp - 1.0) * 100
 
     return _make_candidate(
         opp,
@@ -561,6 +621,7 @@ def _evaluate_candidate(
         universe_member=universe_member,
         factor_signal=factor_signal,
         trade_score=trade_score,
+        score_breakdown=score_breakdown,
         strategy_evidence=strategy_evidence,
         guard_eval=guard_eval,
         filter_trace=filter_trace,
@@ -610,6 +671,64 @@ def _scanner_regime_scoring() -> dict:
     return {**_SCANNER_REGIME_SCORING_DEFAULTS, **cfg_vals}
 
 
+# B (2026-07-31): static family×direction expectancy bias for the ranker.
+# Conservative, config-flavored (mirrors _scanner_regime_scoring). Deliberately
+# NOT live-DB-driven — the ranker intentionally avoids live per-family edge to
+# prevent feedback instability (see _compute_trade_score note). Defaults reflect
+# observed live scorecard expectancy: momentum(long) positive, short_bias /
+# derivatives (short) negative. Magnitudes kept well below the regime deltas
+# (±20-25) so this nudges rather than overrides regime steering.
+_FAMILY_DIRECTION_BIAS_DEFAULTS: dict[str, float] = {
+    "momentum:long": 8.0,
+    "momentum:short": -4.0,
+    "mean_reversion:long": 2.0,
+    "mean_reversion:short": -3.0,
+    "derivatives:long": -2.0,
+    "derivatives:short": -10.0,
+    "short_bias:long": 0.0,
+    "short_bias:short": -14.0,
+}
+
+
+def _family_direction_bias() -> dict[str, float]:
+    """Config-overridable family×direction score bias (B, 2026-07-31)."""
+    try:
+        from aletheia.config.loader import load_config
+        cfg_vals = getattr(load_config().universe, "family_direction_bias", None) or {}
+    except Exception:
+        cfg_vals = {}
+    return {**_FAMILY_DIRECTION_BIAS_DEFAULTS, **cfg_vals}
+
+
+def _symbol_edge_score(symbol: str, direction: str | None) -> float:
+    """Per-symbol historical edge: reward symbols with positive track record,
+    penalise symbols that bleed. Uses closed-position realized PnL.
+
+    Returns a score delta in [-30, +30]. Zero when sample is too small to judge
+    (never fabricate an edge from zero evidence).
+    """
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    # Closed positions for this symbol + direction
+    closed = db.execute(
+        "SELECT realized_pnl FROM positions "
+        "WHERE symbol=? AND direction=? AND status='closed'",
+        (symbol, direction or ""),
+    ).fetchall()
+    n = len(closed)
+    if n < 3:
+        return 0.0  # too small to judge
+    pnls = [float(r["realized_pnl"] or 0.0) for r in closed]
+    wins = sum(1 for p in pnls if p > 0)
+    win_rate = wins / n
+    avg_pnl = sum(pnls) / n
+    # Win-rate component: maps [0,1] → [-15,+15]
+    wr_delta = (win_rate - 0.5) * 30
+    # Expectancy component: capped at ±15
+    exp_delta = max(-15.0, min(15.0, avg_pnl * 10))
+    return round(wr_delta + exp_delta, 2)
+
+
 def _compute_trade_score(
     opp: dict,
     universe_member: dict | None,
@@ -620,44 +739,57 @@ def _compute_trade_score(
     strategy_has_ruleset: bool = False,
     direction: str | None = None,
     learning_trace: list[dict] | None = None,
-) -> float:
-    """Compute deterministic trade quality score."""
-    score = 0.0
+) -> tuple[float, dict[str, float]]:
+    """Compute deterministic trade quality score with breakdown.
 
-    # P0-1: Confidence contribution (clip-normalized: max 50 pts, was 100)
-    # Prevents raw 0-100 score from dominating regime/factor signals (Round 1 direction bias).
+    Returns (score, breakdown) where breakdown maps component names to
+    their signed contribution.  This enables explainable scoring:
+    "WHY is this score 45?" → "confidence +18, universe +15, regime +8, ..."
+    """
+    score = 0.0
+    breakdown: dict[str, float] = {}
+
+    def _add(component: str, value: float) -> None:
+        nonlocal score
+        score += value
+        breakdown[component] = breakdown.get(component, 0) + value
+
+    # P0-1: Confidence contribution (clip-normalized: max 30 pts, was 50/100).
+    # Reduced from 50→30 to lower LLM confidence weight relative to scanner signals.
+    # The LLM is a black-box reasoner; scanner families are deterministic and auditable.
     _clip_norm = lambda v, lo, hi: (min(max(float(v or 0), lo), hi) - lo) / (hi - lo + 1e-8)
 
     conf_score = opp.get("confidence_score")
     if conf_score is not None:
-        score += 50 * _clip_norm(conf_score, 0, 100)
+        _add("confidence", 30 * _clip_norm(conf_score, 0, 100))
     else:
-        score += _CONFIDENCE_SCORE_DEFAULT.get(confidence, 20)
+        _add("confidence", _CONFIDENCE_SCORE_DEFAULT.get(confidence, 12))
+
+    # P0-1b: Evidence quality multiplier.
+    # Candidates whose LLM key_observations cite ≥3 distinct indicators get a
+    # boost; thin reads (<3 citations) are penalized.  This shifts weight from
+    # raw LLM confidence toward evidence-backed reads.
+    _opp_meta = _json.loads(opp.get("metadata") or "{}")
+    _obs_count = int(_opp_meta.get("key_observations_count") or len(_json.loads(opp.get("key_observations") or "[]")))
+    if _obs_count >= 3:
+        score *= 1.15  # ≥3 citations: 15% score boost
+    else:
+        score *= 0.75  # <3 citations: 25% score penalty
 
     # Universe metadata (P0-1: clip-normalize universe scores)
     if universe_member:
-        score += 25 * _clip_norm(universe_member.get("total_score") or 0, 0, 100)
-        score += 10 * _clip_norm(universe_member.get("tradability_score") or 0, 0, 100)
-        score -= float(universe_member.get("late_entry_penalty") or 0)
-        score -= float(universe_member.get("crowding_risk") or 0)
+        _add("universe_total", 25 * _clip_norm(universe_member.get("total_score") or 0, 0, 100))
+        _add("tradability", 10 * _clip_norm(universe_member.get("tradability_score") or 0, 0, 100))
+        _add("late_entry_penalty", -float(universe_member.get("late_entry_penalty") or 0))
+        _add("crowding_risk", -float(universe_member.get("crowding_risk") or 0))
 
     # P0-3: Factor feedback — IC-proxy continuous weighting (replaces discrete ±5/±20 jumps)
     # Retrospective statistics are diagnostic. Only the prospective experiment
     # adapter may expose a bounded score delta after treatment/control evidence.
     if factor_signal.get("authority_applied"):
-        score += float(factor_signal.get("score_delta") or 0.0)
-
-    # Position C (2026-07-02): the strategy-evidence bonus/penalty (backtest +
-    # paper-drift scoring) was removed with the rules engine. Per-family live edge is
-    # surfaced to the PI via family_direction_edge (P1a); the deterministic ranker no
-    # longer scores on per-strategy backtest evidence.
+        _add("factor_feedback", float(factor_signal.get("score_delta") or 0.0))
 
     # P0-5: Regime-aware scoring with smooth confidence weighting (no 0.5 cliff).
-    # P0-2: Sideways branch added — trend-family scanners penalised in sideways (CTA lit.).
-    # P1b (2026-07-02): deltas are config-driven (cfg.universe.scanner_regime_scoring),
-    # defaults reproduce the prior hardcoded values EXACTLY. This is a SOFT, scanner-
-    # family-level signal applied to ALL candidates including strategy-less ones — NOT a
-    # hard block (owner directive: no low-dim hard interception). Locked by SP-S06/SP-S07.
     _srs = _scanner_regime_scoring()
     _BASE_REGIME_DELTA = {
         ("bear", "short"): _srs["bear_short"],
@@ -671,24 +803,30 @@ def _compute_trade_score(
     if regime.state in ("bear", "bull"):
         delta = _BASE_REGIME_DELTA.get((regime.state, direction), 0)
         weight = regime.confidence ** 1.5  # smooth: avoids hard cliff at 0.5
-        score += delta * weight
+        _add("regime", delta * weight)
     elif regime.state == "volatile":
-        score -= _srs["volatile_penalty"] * (regime.confidence ** 1.5)
+        _add("regime", -_srs["volatile_penalty"] * (regime.confidence ** 1.5))
     elif regime.state == "sideways" and regime.confidence > 0.6:
         scanner = (opp.get("scanner_family") or "").lower()
         if any(t in scanner for t in _TREND_FAMILIES):
-            score -= _srs["sideways_trend_penalty"]  # trend-following worst in sideways
+            _add("regime", -_srs["sideways_trend_penalty"])
         elif "reversion" in scanner or "arb" in scanner:
-            score += _srs["sideways_reversion_bonus"]  # mean-reversion benefits from sideways
+            _add("regime", _srs["sideways_reversion_bonus"])
 
-    # Position C (2026-07-02): the "+15 executable RuleSet bonus" was removed with
-    # the rules engine — there are no RuleSets to prefer.
+    # Per-symbol historical edge: penalise bleeding symbols (BTC 0% WR), reward winners.
+    sym_edge = _symbol_edge_score(opp.get("symbol"), direction)
+    _add("symbol_edge", sym_edge)
 
-    # Historical case/memo statistics are proposed treatments, not authority. They
-    # remain at the static zero-delta baseline until a prospective paper experiment
-    # has enough causally linked treatment/control outcomes and a positive verdict.
+    # B (2026-07-31): static family×direction expectancy bias.
+    _fdb = _family_direction_bias().get(
+        f"{(opp.get('scanner_family') or '').lower()}:{direction}"
+    )
+    if _fdb:
+        _add("family_bias", _fdb)
+
+    # Historical case/memo statistics are proposed treatments, not authority.
     case_delta = _lesson_penalty(opp.get("symbol"), direction, opp.get("scanner_family"))
-    score += _authorized_ranker_delta(
+    _add("lesson_case", _authorized_ranker_delta(
         path_id="ranker_case_score",
         proposed_delta=case_delta,
         opp=opp,
@@ -700,7 +838,7 @@ def _compute_trade_score(
         },
         source_cohort="trade_case_study:v1",
         learning_trace=learning_trace,
-    )
+    ))
 
     # Risk flag penalties
     risk_flags = []
@@ -725,7 +863,7 @@ def _compute_trade_score(
             score -= 5
 
     memo_delta = _memo_scoring(opp.get("symbol"), direction, regime)
-    score += _authorized_ranker_delta(
+    _add("memo", _authorized_ranker_delta(
         path_id="ranker_memo_score",
         proposed_delta=memo_delta,
         opp=opp,
@@ -737,9 +875,9 @@ def _compute_trade_score(
         },
         source_cohort="latest_trading_memo:v1",
         learning_trace=learning_trace,
-    )
+    ))
 
-    return round(score, 2)
+    return round(score, 2), {k: round(v, 2) for k, v in breakdown.items() if abs(v) > 0.01}
 
 
 def _authorized_ranker_delta(
@@ -1024,7 +1162,8 @@ def _make_candidate(
     universe_member: dict | None = None,
     factor_signal: dict | None = None,
     trade_score: float = -999.0,
-    strategy_evidence: dict | None = None,
+    score_breakdown: dict[str, float] | None = None,
+    strategy_evidence: dict[str, Any] | None = None,
     guard_eval=None,
     filter_trace: list[dict] | None = None,
     learning_trace: list[dict] | None = None,
@@ -1086,6 +1225,7 @@ def _make_candidate(
         "guard_reasons": [h.reason for h in guard_eval.hits] if guard_eval else [],
         # Scoring
         "trade_score": trade_score,
+        "score_breakdown": score_breakdown or {},
         "skip_reason": skip_reason,
         "filter_trace": list(filter_trace or []),
         "learning_score_trace": list(learning_trace or []),

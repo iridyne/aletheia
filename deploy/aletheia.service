@@ -1,0 +1,24 @@
+[Unit]
+Description=Aletheia Trading OS gateway
+Wants=network-online.target
+After=network-online.target
+# Bound repeated startup failures without disabling long-running recovery.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/aletheia
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/aletheia/.venv/bin/python /home/ubuntu/aletheia/aletheia/_gateway_runner.py --no-browser
+Restart=always
+RestartSec=10
+TimeoutStopSec=45
+KillMode=control-group
+StandardOutput=append:/home/ubuntu/aletheia/data/gateway_runner.log
+StandardError=append:/home/ubuntu/aletheia/data/gateway_runner.log
+
+[Install]
+WantedBy=multi-user.target

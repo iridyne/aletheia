@@ -186,11 +186,6 @@ def resume_if_llm_available_sync(
     cause: str = "manual_resume",
 ) -> dict[str, Any]:
     """Synchronous wrapper safe for CLI and rare event-loop callers."""
+    from aletheia.agent_runtime.async_utils import run_coro_from_sync
     coro = resume_if_llm_available(actor=actor, source=source, cause=cause)
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+    return run_coro_from_sync(coro)

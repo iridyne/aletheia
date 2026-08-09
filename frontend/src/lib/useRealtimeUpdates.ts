@@ -198,7 +198,19 @@ export function useRealtimeUpdates(): RealtimeStatus {
       if (dead || document.visibilityState === 'hidden' || ws) return
       updateStatus({ state: reconnecting ? 'reconnecting' : 'connecting' })
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const socket = new WebSocket(`${proto}//${window.location.host}/api/ws`)
+      // Browser WebSocket APIs cannot set custom headers, so the tunnel token
+      // (when remote-control auth is active) is passed as a query param.  The
+      // backend validates it with hmac.compare_digest before accept() — see
+      // aletheia/server/routes/ws.py.  No token → blank param → local-first
+      // frictionless access is preserved when no auth is configured.
+      let wsUrl = `${proto}//${window.location.host}/api/ws`
+      try {
+        const token = window.localStorage.getItem('aletheia.remoteControlToken')?.trim()
+        if (token) wsUrl += `?token=${encodeURIComponent(token)}`
+      } catch {
+        // storage disabled — connect without token
+      }
+      const socket = new WebSocket(wsUrl)
       ws = socket
 
       socket.onopen = () => {

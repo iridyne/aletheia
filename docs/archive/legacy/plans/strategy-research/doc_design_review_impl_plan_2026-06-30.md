@@ -1,6 +1,6 @@
 # 实施计划：文档定义 & 整体设计修复
 
-> 上游来源：[`docs/research/audits/PLATFORM_DOC_DESIGN_REVIEW_2026-06-30.md`](../../research/audits/PLATFORM_DOC_DESIGN_REVIEW_2026-06-30.md)（L4 审查报告）。
+> 上游来源：[`docs/research/audits/PLATFORM_DOC_DESIGN_REVIEW_2026-06-30.md`](../../../../research/audits/PLATFORM_DOC_DESIGN_REVIEW_2026-06-30.md)（L4 审查报告）。
 > 本文是 L3 计划：把报告的"该做什么"落成"具体怎么做"，文件级、带 spec claim id、排好批次与依赖。
 > Date: 2026-06-30 · 性质：L3 计划（执行前需 owner 批准触信任边界/改运行态行为的批次）
 
@@ -11,8 +11,8 @@
 ### 总原则（强制）
 1. **SDD spec-first**：每个改动先在对应 `spec_*.py` 声明 `SpecClaim(status="missing")`（必要时 `@pytest.mark.xfail(strict=True)` 当 RED tripwire）→ 跑 RED → 改文档/代码 → 翻 GREEN → 改 `status="implemented"`。
 2. **文档为准**：契约是"该是什么样"，代码追文档；本计划中"文档追代码"的几处（风控 16→20、guard 脱钩）是**让契约追平既成事实**，属诚实化，不是改设计。
-3. **触信任边界走 change-control**：改 `risk_engine_contract` / `execution_contract` / `live_unlock` 走 [`trust_and_change_control §6`](../../governance/policies/trust_and_change_control.md)；改 `scheduler.py` 运行态行为（批次 C）虽不在受控模块清单，但因影响持仓生命周期，**spec-first 强制 + 改后 `aletheia doctor` 验证**。
-4. **收集陷阱**：任何新 `spec_*.py` 必须加进 [`tests/test_spec_conformance.py:_import_all_specs()`](../../../tests/test_spec_conformance.py)，否则 pytest 收集 0 个（`spec_*.py` 不匹配 `python_files`）。新增 `REQUIRED_CONTRACTS` 条目必须 ≥1 个 L2a claim，否则 `test_every_required_contract_has_claims` / `test_all_levels_represented` 爆红。
+3. **触信任边界走 change-control**：改 `risk_engine_contract` / `execution_contract` / `live_unlock` 走 [`trust_and_change_control §6`](../../../../governance/policies/trust_and_change_control.md)；改 `scheduler.py` 运行态行为（批次 C）虽不在受控模块清单，但因影响持仓生命周期，**spec-first 强制 + 改后 `aletheia doctor` 验证**。
+4. **收集陷阱**：任何新 `spec_*.py` 必须加进 [`tests/test_spec_conformance.py:_import_all_specs()`](../../../../../tests/test_spec_conformance.py)，否则 pytest 收集 0 个（`spec_*.py` 不匹配 `python_files`）。新增 `REQUIRED_CONTRACTS` 条目必须 ≥1 个 L2a claim，否则 `test_every_required_contract_has_claims` / `test_all_levels_represented` 爆红。
 
 ### 非目标（明确不做 — 防过度工程化）
 - ❌ 真 DSL parser / rule evaluator（`execution_path_honesty §1.3` 死字符串）—— 只做命名诚实化锁定，不实现。

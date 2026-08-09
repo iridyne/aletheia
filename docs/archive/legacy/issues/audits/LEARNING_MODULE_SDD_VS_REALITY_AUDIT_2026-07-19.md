@@ -718,7 +718,7 @@ Lesson链:  GAP-04 → GAP-02 → GAP-11 → GAP-12
 - [Learning Loop Chain Audit](LEARNING_LOOP_CHAIN_AUDIT.md) — 链路追踪
 
 ### 实现计划
-- [Learning 正向贡献实现计划 2026-07-12](../../archive/legacy/plans/learning/learning_positive_contribution_implementation_plan_2026-07-12.md) — historical A1 delivery + addendum
+- [Learning 正向贡献实现计划 2026-07-12](../../plans/learning/learning_positive_contribution_implementation_plan_2026-07-12.md) — historical A1 delivery + addendum
 
 ### 核心代码文件（审计覆盖）
 - `aletheia/learning/authority.py` — PAPER_STAGES 门控，legacy adapter

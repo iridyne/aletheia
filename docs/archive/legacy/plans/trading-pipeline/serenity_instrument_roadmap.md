@@ -1,7 +1,7 @@
 # Serenity 标的扩展 Roadmap（Phase 6）
 
 > 2026-06-28 | 父计划：[`docs/archive/legacy/plans/trading-pipeline/serenity_execution_path.md`](serenity_execution_path.md) §7
-> 哲学源头：[`docs/research/audits/SERENITY_PHILOSOPHY_AND_INTEGRATION_ANALYSIS_2026-06-27.md`](../../research/audits/SERENITY_PHILOSOPHY_AND_INTEGRATION_ANALYSIS_2026-06-27.md) §5 / §8
+> 哲学源头：[`docs/research/audits/SERENITY_PHILOSOPHY_AND_INTEGRATION_ANALYSIS_2026-06-27.md`](../../../../research/audits/SERENITY_PHILOSOPHY_AND_INTEGRATION_ANALYSIS_2026-06-27.md) §5 / §8
 > Owner 拍板：D1 = 「长期 roadmap，现在不做」（记忆 `aletheia-serenity-integration-decisions`）
 > 状态：**纯文档**。不动 code、不动 schema、不动 spec、不动 Settings UI。
 
@@ -189,7 +189,7 @@ Owner 最终决定纳入哪些标的时,需要以下视角统一审视。**矩�
 ## 9. References
 
 - 父计划：[`docs/archive/legacy/plans/trading-pipeline/serenity_execution_path.md`](serenity_execution_path.md) §7
-- 哲学源头：[`docs/research/audits/SERENITY_PHILOSOPHY_AND_INTEGRATION_ANALYSIS_2026-06-27.md`](../../research/audits/SERENITY_PHILOSOPHY_AND_INTEGRATION_ANALYSIS_2026-06-27.md) §5, §8
+- 哲学源头：[`docs/research/audits/SERENITY_PHILOSOPHY_AND_INTEGRATION_ANALYSIS_2026-06-27.md`](../../../../research/audits/SERENITY_PHILOSOPHY_AND_INTEGRATION_ANALYSIS_2026-06-27.md) §5, §8
 - xStock 标的字典源：`aletheia/data/symbols.py:_XSTOCK_BASE_TO_TICKER` (line 116–127)
 - OBS-S04 spec（xStock 不可执行硬编码）：`tests/specs/spec_subsystem_observers.py`
 - 信任边界审查：`docs/governance/policies/trust_and_change_control.md` §6.1

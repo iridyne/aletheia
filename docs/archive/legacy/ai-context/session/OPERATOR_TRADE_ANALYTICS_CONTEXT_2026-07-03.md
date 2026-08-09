@@ -1,6 +1,6 @@
 # Operator Trade Analytics Context 2026-07-03
 
-来源: [Product Direction §2–§3](../../product/definition/DIRECTION.md) — System Operator should consume Learning plus Trades/Positions analytics.
+来源: [Product Direction §2–§3](../../../../product/definition/DIRECTION.md) — System Operator should consume Learning plus Trades/Positions analytics.
 
 边界: 只把现有 closed-position analytics 摘要注入 System Operator context/prompt。未改风险、
 执行、live、凭证、下单阈值或 proposal 提交流程。

@@ -21,7 +21,7 @@
 
 **分支** `feat/round2-macro-signals` / **commit** `ba03da1`(+ 后续 polish):零成本数据源
 扩展 market_observer 的 enriched_context,完整 plan 见
-[`docs/archive/legacy/plans/market-data/round2_immediate_data_integration_plan.md`](../../archive/legacy/plans/market-data/round2_immediate_data_integration_plan.md)。
+[`docs/archive/legacy/plans/market-data/round2_immediate_data_integration_plan.md`](../../plans/market-data/round2_immediate_data_integration_plan.md)。
 
 - **Step 1** LSR(Binance globalLongShortAccountRatio)— `derivatives.py` 新增
   `_BINANCE_LSR_URL` + `_fetch_lsr_binance_batch` + `_parse_oi(lsr=...)` 单 INSERT

@@ -14,7 +14,10 @@ import asyncio
 import json
 import logging
 import math
+import os
 import threading
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from aletheia.storage import repositories as repo
@@ -29,8 +32,54 @@ from aletheia.trading.serenity_evidence import (
 logger = logging.getLogger("aletheia.research_worker")
 
 _EXECUTOR_LOCK = threading.Lock()
+
+# Research runs used to get a bare ``threading.Thread`` each -- three of the five
+# ``enqueue_research_run`` call sites are HTTP routes, so a burst of requests
+# could spawn an unbounded number of threads, each carrying its own asyncio
+# event loop. A bounded pool queues the overflow instead of materialising it as
+# live threads.
+_RESEARCH_MAX_WORKERS = max(1, int(os.getenv("ALETHEIA_RESEARCH_MAX_WORKERS", "4")))
+_RESEARCH_POOL: ThreadPoolExecutor | None = None
+_RESEARCH_POOL_LOCK = threading.Lock()
+
+
+def _research_pool() -> ThreadPoolExecutor:
+    """Return the process-wide bounded pool for research runs.
+
+    Created lazily under a double-checked lock so importing this module does not
+    spin up threads in CLI paths that never enqueue anything.
+
+    Returns:
+        The shared ``ThreadPoolExecutor`` capped at ``_RESEARCH_MAX_WORKERS``.
+    """
+    global _RESEARCH_POOL
+    if _RESEARCH_POOL is None:
+        with _RESEARCH_POOL_LOCK:
+            if _RESEARCH_POOL is None:
+                _RESEARCH_POOL = ThreadPoolExecutor(
+                    max_workers=_RESEARCH_MAX_WORKERS,
+                    thread_name_prefix="research-run",
+                )
+    return _RESEARCH_POOL
+
+
+def _log_pool_failure(future: "Future") -> None:
+    """Surface anything that escaped the worker's own try/except.
+
+    A Future swallows exceptions until someone calls ``.result()``. Nobody does
+    here (fire-and-forget), so without this callback a BaseException-level
+    failure would vanish silently.
+
+    Args:
+        future: The completed future returned by ``ThreadPoolExecutor.submit``.
+    """
+    try:
+        future.result()
+    except Exception:
+        logger.exception("Research pool task failed outside its own handler")
 _AUTO_PROMOTE_NOTIFY_LOCK = threading.Lock()
-_AUTO_PROMOTE_NOTIFY_RETRIES: set[str] = set()
+_AUTO_PROMOTE_NOTIFY_RETRIES: dict[str, float] = {}  # theme_id → monotonic ts (first retry)
+_RETRY_RETENTION_SEC = 86400.0  # drop a theme's retry entry after 24h of sustained notify failure
 
 # Crypto-only allowlist: the quote currency must be one of these for a serenity
 # opportunity to be persisted.  Blocks LLM hallucinations like MSTR/USD, SPY,
@@ -134,8 +183,17 @@ def _auto_promote_serenity_opportunities(
         if queued_ids:
             newly_queued_themes.add(theme_id)
 
+    now = time.monotonic()
     with _AUTO_PROMOTE_NOTIFY_LOCK:
-        retry_themes = set(theme_ids) & _AUTO_PROMOTE_NOTIFY_RETRIES
+        # Prune entries older than _RETRY_RETENTION_SEC: a theme whose pi_daemon
+        # wake has failed for >24h is abandoned (with an infra_event below) so
+        # the dict cannot grow unboundedly under sustained notify failure (M3).
+        stale = [tid for tid, ts in _AUTO_PROMOTE_NOTIFY_RETRIES.items()
+                 if now - ts > _RETRY_RETENTION_SEC]
+        for tid in stale:
+            del _AUTO_PROMOTE_NOTIFY_RETRIES[tid]
+            logger.info("Abandoned serenity auto-promote retry for theme %s (>24h)", tid)
+        retry_themes = set(theme_ids) & set(_AUTO_PROMOTE_NOTIFY_RETRIES)
     notify_themes = newly_queued_themes | retry_themes
     if notify_themes:
         from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
@@ -144,11 +202,16 @@ def _auto_promote_serenity_opportunities(
             notify_pi_daemon(source="serenity_auto_promote")
         except Exception:
             with _AUTO_PROMOTE_NOTIFY_LOCK:
-                _AUTO_PROMOTE_NOTIFY_RETRIES.update(notify_themes)
+                for tid in notify_themes:
+                    # Record first-retry timestamp only; repeated failures keep
+                    # the original ts so the 24h TTL is measured from first failure.
+                    if tid not in _AUTO_PROMOTE_NOTIFY_RETRIES:
+                        _AUTO_PROMOTE_NOTIFY_RETRIES[tid] = now
             logger.warning("Serenity auto-promote wake failed; retry retained")
         else:
             with _AUTO_PROMOTE_NOTIFY_LOCK:
-                _AUTO_PROMOTE_NOTIFY_RETRIES.difference_update(notify_themes)
+                for tid in notify_themes:
+                    _AUTO_PROMOTE_NOTIFY_RETRIES.pop(tid, None)
     if promoted_count:
         if run_id is not None:
             _emit_event(
@@ -546,7 +609,16 @@ _ICT_METHODOLOGY_SYSTEM = (
 
 
 def enqueue_research_run(run_id: str) -> None:
-    """Enqueue a research run for background execution."""
+    """Submit a research run to the bounded background pool.
+
+    Signature is unchanged so the five existing call sites need no edit. The
+    only behavioural difference: when more than ``_RESEARCH_MAX_WORKERS`` runs
+    are in flight the extra ones wait in the pool queue rather than each getting
+    a live thread plus event loop.
+
+    Args:
+        run_id: Identifier of the serenity research run to execute.
+    """
     def _execute():
         try:
             asyncio.run(_process_research_run(run_id))
@@ -558,8 +630,8 @@ def enqueue_research_run(run_id: str) -> None:
             except Exception:
                 pass
 
-    t = threading.Thread(target=_execute, name=f"research-run-{run_id}", daemon=True)
-    t.start()
+    future = _research_pool().submit(_execute)
+    future.add_done_callback(_log_pool_failure)
 
 
 async def _process_research_run(run_id: str) -> None:

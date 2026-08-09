@@ -18,6 +18,14 @@ export function DecisionTraceDrawer({ opportunityId, onClose }: {
     queryFn: () => api.getOpportunityTrace(opportunityId!),
     enabled: !!opportunityId,
   })
+  // AI committee opinions: persisted explainability records for this
+  // opportunity. Absence renders as honest "not available" — never invented.
+  const { data: decisionReport, isError: committeeQueryFailed } = useQuery({
+    queryKey: ['decision-report', opportunityId],
+    queryFn: () => api.getDecisionReport(opportunityId!),
+    enabled: !!opportunityId,
+  })
+  const committee = decisionReport?.committee_report
   const title = data?.symbol
     ? `${fmtSymbol(data.symbol, data.market || undefined)}  ·  ${humanize(data.direction || '')}`
     : 'Decision trace'
@@ -35,6 +43,57 @@ export function DecisionTraceDrawer({ opportunityId, onClose }: {
             <DrawerField label="Final reason" value={data.final_reason || '—'} />
             <DrawerField label="Scanner family" value={data.scanner_family || '—'} />
             <DrawerField label="Emitted at" value={data.created_at ? fmtTimestamp(data.created_at) : '—'} />
+          </DrawerSection>
+          <DrawerSection label="Committee opinion">
+            {committeeQueryFailed && (
+              <p className="text-muted text-sm">Not available — committee data could not be read.</p>
+            )}
+            {!committee && !committeeQueryFailed && (
+              <p className="text-muted text-sm">Loading…</p>
+            )}
+            {committee && committee.status !== 'ok' && (
+              <p className="text-muted text-sm">
+                Not available{committee.reason ? ` — ${committee.reason}` : ''}
+              </p>
+            )}
+            {committee?.status === 'ok' && committee.evaluations?.map((ev, i) => (
+              <div key={i} className="drawer-field" style={{ display: 'block', marginBottom: 12 }}>
+                <div className="text-xs text-muted">
+                  {ev.created_at ? fmtTimestamp(ev.created_at) : '—'}
+                  {ev.model_used ? ` · ${ev.model_used}` : ''}
+                  {ev.fallback_used ? ' · fallback model' : ''}
+                  {ev.blocked ? ' · blocked by rules' : ''}
+                </div>
+                <DrawerField
+                  label="Direction"
+                  value={`${humanize(ev.direction)} · confidence ${(ev.confidence * 100).toFixed(0)}% · ES ${ev.explainability_score.toFixed(2)}`}
+                />
+                {ev.agent_opinions.map((op, j) => (
+                  <div key={j} style={{ marginTop: 6 }}>
+                    {op.reasoning && (
+                      <div className="text-sm" style={{ whiteSpace: 'pre-wrap' }}>{op.reasoning}</div>
+                    )}
+                    {op.evidence.length > 0 && (
+                      <ul className="text-xs text-muted" style={{ marginTop: 4 }}>
+                        {op.evidence.map((e, k) => (
+                          <li key={k}>{e.value || e.indicator}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+                {ev.risks && ev.risks.length > 0 && (
+                  <div style={{ marginTop: 6 }}>
+                    <div className="text-xs text-muted">Risk warnings</div>
+                    <ul className="text-xs" style={{ marginTop: 2 }}>
+                      {ev.risks.map((r, k) => (
+                        <li key={k}>{r}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ))}
           </DrawerSection>
           {data.timeline && data.timeline.length > 0 && (
             <DrawerSection label={`Timeline (${data.timeline.length})`}>

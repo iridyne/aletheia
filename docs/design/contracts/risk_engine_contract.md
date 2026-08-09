@@ -33,7 +33,7 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 
 ---
 
-## 2. 检查关卡(代码实际 20 个主关卡，另含本地纸面入场子关与 6b)
+## 2. 检查关卡(代码实际 20 个主关卡，另含本地纸面入场子关、6b 与因果门禁)
 
 > ⚠️ **偏差**:[SYSTEM_ARCHITECTURE_GUIDE](../architecture/SYSTEM_ARCHITECTURE_GUIDE.md) 第五章称"五关审批",代码实际是 20 关(0–16 + 6b/17/18/19)。
 > 以下 20 个主关卡及表内子关为金标准;ARCH_GUIDE 的"五关"是简化叙事,待该文档批次3标注。
@@ -72,8 +72,22 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 | 17 | Account Leverage Ratio | 期货:同一账户池的 Position + 未决 entry Order + pre-Order reservation 的 Σ(notional×lev)/同账户 equity ≤ 上限；不同 demo broker 不混算；外部 equity 必须来自新鲜健康的具名缓存；相关 Position 的 market type/数量/价格/杠杆非法时拒绝，不能当零敞口（spot 的 NULL leverage 按其结构语义计 1x，显式非 1x 反而拒绝）。Demo 默认 10x，设置 API 只保留正数下限；live 保持 1.5x | `risk.max_account_leverage_{live/demo}` + named local cache | `account_leverage_ratio:{r}x>{cap}x` / `account_equity_unavailable:{mode}` / `account_leverage_check_error:invalid_position_exposure:position={id}:field={category}` / `account_leverage_check_error:internal_failure` | engine.py check #17 (RE-B23~28) |
 | 18 | Liquidation Buffer | 期货(lev>1):估算爆仓价距入场 ≥ buffer% | `risk.min_liquidation_buffer_pct`(5.0) | `liquidation_too_close:{g}%<{b}%` | :695 (FL-S09) |
 | 19 | Per-symbol Cumulative Notional | 同标的同池累计名义(含本单)≤ 上限(CUM-ADD 均价合并会绕过 #5 单仓上限) | `risk.max_per_symbol_notional_usdt` | `exceeds_per_symbol_notional:{sym}:{proj}>{cap}` | :285 |
+| 20 | Causal Gate（因果门禁） | 经 proposal.opportunity_id 从 Opportunity 双表（恰好一表命中）解析 thesis/confidence/observations 事实后调用 `check_trade_causality`。**live-only 强制**：live 模式失败→拒绝；paper/demo 仅 advisory（不进 violations）；事实不足（无 opportunity、双表歧义、无 key_observations 且无 committee_report，thesis-only 视为证据不足）→ **skip**，不产生任何 causal_* 标签 | —（始终启用，无 config 字段） | `causal_check_failed:{cause_type}:{reasoning[:100]}`（仅 live）；摘要以 ` \| causal: ...` 附于 RiskDecision.message | engine.py causal block / `aletheia/risk/causal.py:resolve_causal_facts` |
 
 > ⚠️ 关卡 #11 的 `_MAX_DATA_AGE_SECONDS` 是模块常量,非 config 字段。若要 config 化需迁移 + 测试。
+>
+> **因果门禁的三态语义（2026-08-06 接线修复，同日 skip 条件对齐评审修正）**：历史上该关卡曾引用 TradeProposal 上不存在的字段
+> （thesis/confidence/scanner_family 等实际在 Opportunity 模型上），每次评估必抛 AttributeError 且被
+> 静默吞掉——门禁从未运行。修复后经 `resolve_causal_facts` 从 Opportunity 解析事实，并按三态处理：
+> **证据不足 skip**（无 opportunity_id、双表均未命中、双表同 ID 歧义、或无 key_observations 且无 committee_report）——
+> skip 条件必须与打分器的实际输入对齐：`check_trade_causality` 的得分只来自 key_observations（committee_report
+> 尚未持久化，恒为 None），**thesis 不参与打分**，因此 thesis-only（0 条 observations）提案进入检查必然失败
+> （cause_type="unknown"），若在 live 硬拦会造成薄数据提案的确定性批量误杀——故 thesis-only 一律视为证据不足而
+> 安全跳过；serenity 来源结构上没有 observations 列，因此恒被 skip，这是有意行为而非漏洞；**paper/demo advisory**——
+> 失败只写 `causal:` 摘要进 RiskDecision.message，不影响 approved；**live 强制**——仅当提案携带 observations
+> 且因果检查失败时追加 `causal_check_failed:*` 拒绝（trust §6.3 批准+拒绝双路径由 `tests/test_risk_causal_gate.py` 锁定）。
+> RE-S04 的 violation token 白名单不含 causal_ 前缀，本关卡不改变该 spec。committee_report 尚未持久化，
+> resolver 固定传 None，留待委员会输出获得持久化存储后再接入。
 >
 > **本地纸面入场不是“有一条新鲜行情就够了”**：Risk 会重新读取精确 venue+symbol+physical-market
 > mark，并核对 hash-covered Proposal.price。报价不一致、行情缺失/过期、两张 Opportunity 表发生同 ID
@@ -212,6 +226,10 @@ config:`trading.default_notional_usdt=25`, `vol_kelly_cap_fraction=0.25`, `vol_s
 ## 8. 目标态差距(意图领先代码)
 
 - [execution_path_honesty §1.2](../../governance/policies/execution_path_honesty.md):LLM 的 `direction_bias` 直接驱动下单方向,Risk Engine **不验证方向是否合理**——它只管账户/订单安全,不管"这个方向对不对"。这是有意的职责边界(risk 不依赖市场状态判断),但意味着"方向正确性"无硬约束。
+  - **与 §2 因果门禁（关卡 20）的兼容性**：因果门禁不评估"方向是否正确"——它只校验提案是否携带
+    可引用的事实依据（thesis/observations），即"有没有 WHY"，而不是"WHY 对不对"。它不读取实时行情、
+    不做市场状态判断，事实来源是已持久化的 Opportunity 行，失败判据完全由提案自带证据决定，因此不越过
+    本节的职责边界；"方向正确性"仍由 §8 所述策略层负责。
 - ⚠️ 不要把 market-state guard(如资金费率熔断)塞进 Risk Engine——见 [external systems comparison §10.6](../../references/external-systems/comparative_systems.md),那属策略层。
 
 ---

@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from aletheia.config.loader import load_config
 from aletheia.data.price_feed import (
     get_fresh_price_for_protective_close,
+    get_stale_price_for_emergency_close,
     protective_price_venue,
 )
 from aletheia.storage.repositories import list_all_open_positions
@@ -1140,12 +1141,30 @@ def evaluate_open_positions() -> dict:
             logger.warning("protective mark lookup failed %s: %s", p["id"], e)
             record_error(p, "protective_mark_lookup_failed", e)
             continue
+
+        # Degraded-price fallback: when the fresh mark is unavailable (price feed
+        # outage), try any stale-but-available price for emergency Layer-0 exits.
+        # Strategy exits are NOT run on degraded price — they need a fair mark.
+        price_degraded = False
         if price is None:
-            record_error(p, "protective_mark_unavailable")
-            continue
+            price = get_stale_price_for_emergency_close(
+                p["symbol"],
+                p.get("market_type") or "spot",
+                venue=price_venue or "",
+            )
+            if price is not None:
+                price_degraded = True
+                logger.warning(
+                    "protective_close_degraded: %s using stale price=%.6f for Layer-0 only",
+                    p["symbol"], price,
+                )
+            else:
+                record_error(p, "protective_mark_unavailable")
+                continue
 
         # Layer-0 hard safety (catastrophic stop, liquidation proximity) runs FIRST
         # and pre-empts trailing / strategy / market-aware. Not relaxable by intent.
+        # Runs even on degraded price — it is the safety backstop.
         decision = _layer0_safety_exit(p, float(price), cfg)
         if decision is not None:
             logger.warning(
@@ -1154,7 +1173,9 @@ def evaluate_open_positions() -> dict:
                 p.get("leverage"), p.get("trade_school"),
             )
             catastrophic_exits += 1
-        else:
+        elif not price_degraded:
+            # Strategy exits (trailing/SL/TP/max-hold/thesis) only on fresh price —
+            # a stale mark cannot fairly decide profit targets or thesis breaks.
             _maybe_update_trailing_stop(p, float(price), cfg)
             decision = _decide_exit(p, float(price), cfg)
             # Horizon reached but not yet at the hard backstop → wake the Operator
@@ -1162,6 +1183,10 @@ def evaluate_open_positions() -> dict:
             if decision is None:
                 _maybe_wake_on_horizon(p)
                 _maybe_wake_on_thesis(p, cfg)
+        else:
+            # Degraded price: Layer-0 already checked above.  Skip strategy exits
+            # and record for observability (doctor can surface degraded events).
+            record_error(p, "strategy_exit_skipped_degraded_price")
 
         # Market-aware (M5): a counter-signal now WAKES the Operator to decide (close /
         # adjust / hold) instead of auto-closing or auto-tightening the stop. The daemon

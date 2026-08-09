@@ -642,6 +642,57 @@ export interface SerenityThemeOverview {
 	};
 }
 
+/**
+ * One persisted AI Investment Committee evaluation (committee_reports row,
+ * parsed). Same field contract as the decision-report committee section used
+ * by DecisionTraceDrawer, extended with row identity (id/symbol/opportunity).
+ * Advisory data only — display surface, never trade/risk semantics.
+ */
+export interface CommitteeEvaluation {
+	id: string;
+	created_at: string | null;
+	opportunity_id: string | null;
+	symbol: string;
+	decision_id: string | null;
+	direction: string;
+	confidence: number;
+	explainability_score: number;
+	blocked: boolean;
+	model_used: string | null;
+	fallback_used: boolean;
+	indicators: Record<string, unknown>;
+	agent_opinions: {
+		agent?: string;
+		direction?: string;
+		confidence?: number;
+		reasoning?: string;
+		evidence?: { indicator?: string; value?: string; contribution?: number }[];
+	}[];
+	risks: string[];
+}
+
+export interface CommitteeOverviewResponse {
+	status: "ok" | "read_failed";
+	reason?: string;
+	window?: {
+		count: number;
+		limit: number;
+		symbol: string | null;
+	};
+	summary?: {
+		total: number;
+		direction_mix: Record<string, number>;
+		avg_confidence: number | null;
+		avg_explainability: number | null;
+		blocked_count: number;
+		fallback_count: number;
+		models: Record<string, number>;
+		symbol_count: number;
+		latest_at: string | null;
+	};
+	evaluations: CommitteeEvaluation[];
+}
+
 export const api = {
 	getHealth: () =>
 		fetchJson<{ status: string; issues: string[]; version: string }>("/health"),
@@ -1339,9 +1390,50 @@ export const api = {
 				shadow?: Record<string, unknown> | null;
 				forward?: Record<string, unknown> | null;
 			};
-		}>(`/analytics/opportunity-trace/${encodeURIComponent(opportunityId)}`),
+}>(`/analytics/opportunity-trace/${encodeURIComponent(opportunityId)}`),
 
-	// Market Observer → Operator funnel. Surfaces WHY opportunities don't reach
+		// AI committee explainability report for one opportunity.
+		getDecisionReport: (opportunityId: string) =>
+			fetchJson<{
+				opportunity_id: string;
+				found: boolean;
+				committee_report: {
+					status: 'ok' | 'not_available' | 'read_failed';
+					reason?: string;
+					evaluations?: {
+						created_at: string | null;
+						decision_id: string | null;
+						direction: string;
+						confidence: number;
+						explainability_score: number;
+						blocked: boolean;
+						model_used: string | null;
+						fallback_used: boolean;
+						indicators: Record<string, unknown>;
+						agent_opinions: {
+							agent: string;
+							direction: string;
+							confidence: number;
+							reasoning: string;
+							evidence: { indicator: string; value: string; contribution: number }[];
+						}[];
+						risks: string[];
+					}[];
+				};
+			}>(`/decision-report/${encodeURIComponent(opportunityId)}`),
+
+		// AI Jury workbench: recent persisted committee evaluations (newest
+		// first) + window summary. Read-only advisory surface.
+		getCommitteeReports: (params?: { symbol?: string; limit?: number }) => {
+			const qs = new URLSearchParams();
+			if (params?.symbol) qs.set("symbol", params.symbol);
+			qs.set("limit", String(params?.limit ?? 200));
+			return fetchJson<CommitteeOverviewResponse>(
+				`/committee/reports?${qs.toString()}`,
+			);
+		},
+
+		// Market Observer → Operator funnel. Surfaces WHY opportunities don't reach
 	// the operator (e.g. confidence gate, TTL expiry) — counterpart to the
 	// Blotter (formerly Approval Desk). Full-window response; see the compact
 	// /current-snapshot sibling for a faster subset when only `current.*` is

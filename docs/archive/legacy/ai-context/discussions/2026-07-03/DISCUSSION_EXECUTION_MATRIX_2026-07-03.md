@@ -1,6 +1,6 @@
 # Discussion Execution Matrix 2026-07-03
 
-来源: 2026-07-03 owner 口述（现已整理至 [Product Direction](../../../product/definition/DIRECTION.md)）+
+来源: 2026-07-03 owner 口述（现已整理至 [Product Direction](../../../../../product/definition/DIRECTION.md)）+
 `docs/_ai/discussions/2026-07-03/DISCUSSION_ACTION_PLAN.md` 初版拆解。
 
 > **Historical execution matrix.** It records the July 3 branches and evidence;

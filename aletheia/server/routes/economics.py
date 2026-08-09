@@ -74,6 +74,7 @@ def costs(
     return report
 
 
+
 @router.get("/tokens")
 def tokens(
     days: int = Query(7, ge=1, le=365),
@@ -87,6 +88,7 @@ def tokens(
         window_end=end.isoformat(),
         run_id=run_id,
     )
+
 
 
 @router.get("/costs/by-provider")

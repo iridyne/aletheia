@@ -96,6 +96,7 @@ export default function CommandPalette() {
     { id: 'nav-prediction', label: 'Go to Prediction Markets', group: 'Navigation', keywords: 'prediction polymarket probability events', action: () => navigate('/prediction-markets') },
     { id: 'nav-blotter', label: 'Go to Blotter', group: 'Navigation', keywords: 'blotter proposals approve sign-off candidates history', action: () => navigate('/blotter') },
     { id: 'nav-agent-activity', label: 'Go to Agent Activity', group: 'Navigation', keywords: 'agent runs opportunities transparency', action: () => navigate('/agent-activity') },
+    { id: 'nav-committee', label: 'Go to AI Jury', group: 'Navigation', keywords: 'committee jury opinions explainability verdicts', action: () => navigate('/committee') },
     // #125 fix: /universe was reachable via the NAV bar but missing from the
     // command palette — an operator using the keyboard shortcut couldn't
     // navigate to the Universe Board.

@@ -1,6 +1,6 @@
 # Discussion Final Status - 2026-07-03
 
-来源: 2026-07-03 owner 口述（现见 [Product Direction](../../../product/definition/DIRECTION.md)）、`docs/_ai/discussions/2026-07-03/DISCUSSION_ACTION_PLAN.md`, and the
+来源: 2026-07-03 owner 口述（现见 [Product Direction](../../../../../product/definition/DIRECTION.md)）、`docs/_ai/discussions/2026-07-03/DISCUSSION_ACTION_PLAN.md`, and the
 `integration/discussion-2026-07-03` branch.
 
 > **Historical snapshot.** It describes a July 3 integration state, not the

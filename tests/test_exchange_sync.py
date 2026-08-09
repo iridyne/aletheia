@@ -359,6 +359,12 @@ def test_adopted_positions_carry_synthetic_chain(tmp_path, monkeypatch):
 
 def test_adopt_preserves_exchange_open_time(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    # Disable the per-symbol notional adoption cap so this economics test is
+    # not refused by the concentration guard (0.1 x 60000 = 6000 USDT).
+    cfg.risk.demo.capital.max_per_symbol_notional_usdt = 0.0
+    save_config(cfg)
     from aletheia.portfolio.position_reconciler import adopt_position
 
     opened_at_ms = 1784044800000
@@ -389,7 +395,10 @@ def test_adopt_live_position_is_human_only_by_execution_mode(tmp_path, monkeypat
     from aletheia.portfolio.position_reconciler import adopt_position
     from aletheia.portfolio import position_manager as pm
 
-    ex = {"symbol": "ETHUSDT", "side": "long", "quantity": 0.5,
+    # quantity stays 0.08 (240 USDT notional): master's market_type/leverage
+    # fields are required by the adoption integrity checks, while the deploy
+    # branch's per-symbol notional cap (default 400 USDT) rejects 0.5x3000.
+    ex = {"symbol": "ETHUSDT", "side": "long", "quantity": 0.08,
           "entry_price": 3000.0, "unrealized_pnl": 5.0, "mark_price": 3010.0,
           "market_type": "usdt_futures", "leverage": 2,
           "leverage_source": "exchange_reported"}
@@ -411,3 +420,62 @@ def test_adopt_refuses_zero_entry_or_quantity(tmp_path, monkeypatch):
     with _pytest.raises(ValueError):
         adopt_position({"symbol": "BTCUSDT", "side": "short", "quantity": 0.0,
                         "entry_price": 60000.0}, "demo")
+
+
+# --- per-symbol notional adoption guard (UNI concentration fix) ---
+# Mirror of the risk engine CUM-ADD cap (#19): adoption must not push a symbol's
+# open notional past max_per_symbol_notional_usdt. The exchange position stays
+# in place; only the local adoption is refused.
+
+def test_adopt_refuses_external_position_over_per_symbol_notional_cap(tmp_path, monkeypatch):
+    """A single external position above the cap (e.g. the 3072-qty UNI martingale
+    legs) must be refused, and nothing may be written to the local positions
+    table — the exchange position stays unmanaged rather than unbounded."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    save_config(cfg)
+    from aletheia.portfolio.position_reconciler import adopt_position
+
+    # 3072 UNI @ 4.45 ≈ 13.7k USDT — far above the default 400 cap.
+    ex = {"symbol": "UNIUSDT", "side": "long", "quantity": 3072.0,
+          "entry_price": 4.45, "unrealized_pnl": 0.0, "mark_price": 4.45,
+          "market_type": "usdt_futures", "leverage": 2,
+          "leverage_source": "exchange_reported"}
+    with pytest.raises(ValueError, match="per-symbol notional"):
+        adopt_position(ex, "demo")
+    assert repo.list_positions() == []
+
+
+def test_adopt_refuses_when_existing_open_notional_would_breach_cap(tmp_path, monkeypatch):
+    """Same-symbol accumulation via adoption must be bounded: under-cap adoptions
+    are allowed, but one that would push the symbol's total open notional over
+    the cap is refused."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    save_config(cfg)
+    from aletheia.portfolio.position_reconciler import adopt_position
+
+    # 50 UNI @ 4.0 = 200 USDT — under the default 400 cap.
+    first = adopt_position({"symbol": "UNIUSDT", "side": "long", "quantity": 50.0,
+                            "entry_price": 4.0, "mark_price": 4.0,
+                            "market_type": "usdt_futures", "leverage": 2,
+                            "leverage_source": "exchange_reported"}, "demo")
+    assert first["position_id"]
+    # Opposite direction still counts toward the same per-symbol notional:
+    # 200 + 200 = 400, not over → allowed (cap is breached only above 400).
+    second = adopt_position({"symbol": "UNIUSDT", "side": "short", "quantity": 50.0,
+                             "entry_price": 4.0, "mark_price": 4.0,
+                             "market_type": "usdt_futures", "leverage": 2,
+                             "leverage_source": "exchange_reported"}, "demo")
+    assert second["position_id"]
+    # A third would project 600 > 400 → refused; the two earlier rows remain.
+    with pytest.raises(ValueError, match="per-symbol notional"):
+        adopt_position({"symbol": "UNIUSDT", "side": "long", "quantity": 50.0,
+                        "entry_price": 4.0, "mark_price": 4.0,
+                        "market_type": "usdt_futures", "leverage": 2,
+                        "leverage_source": "exchange_reported"}, "demo")
+    assert len(repo.list_positions(status="open")) == 2

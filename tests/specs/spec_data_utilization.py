@@ -949,3 +949,27 @@ def test_orderbook_identity_reaches_storage_and_consumers():
     assert 'venue = str(asset.get("venue")' in features
     assert 'market_type = str(asset.get("market_type")' in features
     assert "exchange=venue, market_type=market_type" in features
+
+
+@spec_claim(
+    SpecClaim(
+        "DU-S25", _CONTRACT, "§3 committee LLM evaluation reports", "L2a",
+        "Persisted committee_reports (decision-level explainability audit data) are "
+        "registered with declared read-only consumers (risk causal check, decision "
+        "report) and never feed back into trade or risk semantics.",
+        status="implemented",
+    ),
+)
+def test_committee_reports_registered_with_read_only_consumers():
+    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
+    writer = (_ROOT / "aletheia" / "agents" / "committee" / "integration.py").read_text(encoding="utf-8")
+    causal = (_ROOT / "aletheia" / "risk" / "causal.py").read_text(encoding="utf-8")
+    decision_report = (_ROOT / "aletheia" / "analytics" / "decision_report.py").read_text(encoding="utf-8")
+
+    assert "DU-S25" in doc and "committee_reports" in doc
+    assert "永不回流交易/风控语义" in doc
+    # writer persists fail-soft
+    assert "insert_committee_report" in writer
+    # declared read-only consumers actually read the table
+    assert "get_latest_committee_report_for_opportunity" in causal
+    assert "committee_reports" in decision_report

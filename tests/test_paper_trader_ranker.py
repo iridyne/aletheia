@@ -42,11 +42,18 @@ def _make_opp(
 def _mock_config():
     cfg = MagicMock()
     cfg.risk.symbol_filter_mode = "whitelist"
+    # The ranker's symbol filter must mirror the risk engine's check #1, which
+    # reads cfg.risk.symbol_list (NOT the exchange-level list).
+    cfg.risk.symbol_list = ["BTC/USDT", "ETH/USDT"]
+    cfg.risk.demo.positions.max_open_positions = 15
+    cfg.risk.demo.capital.max_per_symbol_notional_usdt = 400.0
+    cfg.risk.demo.capital.max_position_notional_usdt = 50.0
     cfg.trading.min_confidence_to_trade = "medium"
     return cfg
 
 
-def _patch_deps(opps, strategies=None, universe_member=None, factor_status="watch"):
+def _patch_deps(opps, strategies=None, universe_member=None, factor_status="watch",
+                open_positions=None):
     """Return a context manager that patches all ranker dependencies."""
     patches = {}
     # Position C (2026-07-02): the ranker no longer resolves StrategyRecords, so
@@ -54,7 +61,11 @@ def _patch_deps(opps, strategies=None, universe_member=None, factor_status="watc
     patches["aletheia.agents.paper_trader_ranker.load_config"] = MagicMock(return_value=_mock_config())
     patches["aletheia.agents.paper_trader_ranker.list_open_trade_opportunities"] = MagicMock(return_value=opps)
     patches["aletheia.agents.paper_trader_ranker.get_universe_member"] = MagicMock(return_value=universe_member)
-    patches["aletheia.agents.paper_trader_ranker.tradable_symbols_from_config"] = MagicMock(return_value=["BTC/USDT", "ETH/USDT"])
+    # Portfolio pre-filter context: an empty local book by default, overridable
+    # via open_positions for the capacity / same-symbol / notional tests.
+    patches["aletheia.agents.paper_trader_ranker.list_all_open_positions"] = MagicMock(
+        return_value=open_positions or []
+    )
     patches["aletheia.agents.paper_trader_ranker.lookup_factor_signal"] = MagicMock(return_value={
         "factor_key": "test", "status": factor_status,
         "expectancy": 0.5, "win_rate": 0.6, "trade_count": 5, "reason": "test",
@@ -300,7 +311,7 @@ def test_symbol_policy_rejection_is_durable_and_terminal(
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
     cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.exchange.symbol_list = configured_symbols
+    cfg.risk.symbol_list = configured_symbols
     cfg.risk.symbol_filter_mode = filter_mode
     save_config(cfg)
 
@@ -367,7 +378,7 @@ def test_symbol_policy_evidence_failure_leaves_opportunity_retryable(
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
     cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.exchange.symbol_list = ["BTC/USDT"]
+    cfg.risk.symbol_list = ["BTC/USDT"]
     cfg.risk.symbol_filter_mode = "whitelist"
     save_config(cfg)
 
@@ -427,7 +438,7 @@ def test_permanent_rejection_sweep_covers_complete_open_workset(
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
     cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.exchange.symbol_list = ["BTC/USDT"]
+    cfg.risk.symbol_list = ["BTC/USDT"]
     cfg.risk.symbol_filter_mode = "whitelist"
     save_config(cfg)
 
@@ -501,7 +512,7 @@ def test_prediction_observations_do_not_starve_trade_fifo_or_change_lifecycle(
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
     cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.exchange.symbol_list = ["BTC/USDT"]
+    cfg.risk.symbol_list = ["BTC/USDT"]
     cfg.risk.symbol_filter_mode = "whitelist"
     save_config(cfg)
 
@@ -586,7 +597,7 @@ def test_other_signal_source_with_same_bare_id_does_not_consume_market_opportuni
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
     cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.exchange.symbol_list = ["BTC/USDT"]
+    cfg.risk.symbol_list = ["BTC/USDT"]
     cfg.risk.symbol_filter_mode = "whitelist"
     save_config(cfg)
 
@@ -655,7 +666,7 @@ def test_retryable_prefix_rotates_in_bounded_batches_until_tail_is_reached(
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
     cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.exchange.symbol_list = ["HELD/USDT", "BTC/USDT"]
+    cfg.risk.symbol_list = ["HELD/USDT", "BTC/USDT"]
     cfg.risk.symbol_filter_mode = "whitelist"
     save_config(cfg)
 
@@ -778,7 +789,7 @@ def test_sustained_new_arrivals_cannot_starve_old_retryable_opportunity(
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
     cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.exchange.symbol_list = ["HELD/USDT"]
+    cfg.risk.symbol_list = ["HELD/USDT"]
     cfg.risk.symbol_filter_mode = "whitelist"
     save_config(cfg)
 
@@ -941,7 +952,7 @@ def test_accepted_candidate_evidence_failure_prevents_queue_transition(
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
     cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.exchange.symbol_list = ["BTC/USDT"]
+    cfg.risk.symbol_list = ["BTC/USDT"]
     cfg.risk.symbol_filter_mode = "whitelist"
     save_config(cfg)
 
@@ -1007,7 +1018,7 @@ def test_low_level_filter_evidence_failure_cannot_publish_pending_signal(
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
     cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.exchange.symbol_list = ["BTC/USDT"]
+    cfg.risk.symbol_list = ["BTC/USDT"]
     cfg.risk.symbol_filter_mode = "whitelist"
     save_config(cfg)
 
@@ -1095,7 +1106,7 @@ def test_historic_individual_evidence_cannot_replace_current_run_batch(
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
     cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.exchange.symbol_list = ["BTC/USDT"]
+    cfg.risk.symbol_list = ["BTC/USDT"]
     cfg.risk.symbol_filter_mode = "whitelist"
     save_config(cfg)
 
@@ -1263,7 +1274,7 @@ def test_candidate_builder_overfetches_past_skipped_front_page():
     with patch("aletheia.agents.paper_trader_ranker.load_config", return_value=cfg), \
          patch("aletheia.agents.paper_trader_ranker.list_open_trade_opportunities", side_effect=list_page) as list_mock, \
          patch("aletheia.agents.paper_trader_ranker.get_universe_member", return_value=None), \
-         patch("aletheia.agents.paper_trader_ranker.tradable_symbols_from_config", return_value=["BTC/USDT", "ETH/USDT"]), \
+         patch("aletheia.agents.paper_trader_ranker.list_all_open_positions", return_value=[]), \
          patch("aletheia.agents.paper_trader_ranker.lookup_factor_signal", return_value={
              "factor_key": "test", "status": "active",
              "expectancy": 0.5, "win_rate": 0.6, "trade_count": 5, "reason": "test",
@@ -1322,7 +1333,7 @@ def test_open_candidate_is_not_buried_by_reviewed_history(tmp_path, monkeypatch)
     from aletheia.agents.paper_trader_ranker import build_paper_candidates
 
     with patch("aletheia.agents.paper_trader_ranker.load_config", return_value=cfg), \
-         patch("aletheia.agents.paper_trader_ranker.tradable_symbols_from_config", return_value=["BTC/USDT"]), \
+         patch("aletheia.agents.paper_trader_ranker.list_all_open_positions", return_value=[]), \
          patch("aletheia.agents.paper_trader_ranker.lookup_factor_signal", return_value=factor), \
          patch("aletheia.agents.paper_trader_ranker._evaluate_guards_safe", return_value=None), \
          patch("aletheia.agents.paper_trader_ranker._lesson_penalty", return_value=0.0), \
@@ -1363,3 +1374,133 @@ def test_regime_scoring_is_direction_aware():
     # Bull: longs score higher than shorts (gap < old discrete 30pt but direction preserved)
     assert score_bull_long > score_bull_short
     assert score_bull_long - score_bull_short > 10
+
+
+def test_family_direction_bias_config_override_reaches_score():
+    """An operator override in cfg.universe.family_direction_bias must change the
+    ranker score (regression for the half-active config channel — declaring the
+    schema field is what unlocks the override; before that, pydantic silently
+    dropped the key and the ranker always used the hardcoded defaults).
+
+    short_bias:short default is -14.0; overriding to -25.0 must lower the score
+    by exactly 11.0 (the merge is override-on-default, additive in the delta).
+    """
+    from unittest.mock import patch
+    from aletheia.agents.paper_trader_ranker import _compute_trade_score
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.regime.detector import MarketRegime
+
+    # Neutral regime: sideways at confidence 0.3 (< 0.6 threshold) applies NO
+    # regime delta, isolating the family_direction_bias term. Both arms share
+    # this regime so any regime-derived term cancels in the subtraction.
+    neutral = MarketRegime(state="sideways", confidence=0.3, long_bias=0.5, short_bias=0.5)
+
+    # Symbol with no closed-position history → _symbol_edge_score returns 0.0
+    # (n < 3 guard). Same for both arms, so it cancels in the subtraction.
+    opp = {"symbol": "NOHIST/USDT", "confidence_score": 50, "scanner_family": "short_bias"}
+    factor = {"status": "watch"}
+
+    baseline_cfg = AletheiaConfig()
+    assert baseline_cfg.universe.family_direction_bias == {}  # no-op default
+
+    override_cfg = AletheiaConfig()
+    override_cfg.universe.family_direction_bias = {"short_bias:short": -25.0}
+
+    with patch("aletheia.agents.paper_trader_ranker.get_current_regime", return_value=neutral), \
+         patch("aletheia.agents.paper_trader_ranker._lesson_penalty", return_value=0.0), \
+         patch("aletheia.agents.paper_trader_ranker._memo_scoring", return_value=0.0):
+        # _family_direction_bias() and _scanner_regime_scoring() both do a local
+        # `from aletheia.config.loader import load_config`, so patch the source
+        # module to inject the config under test.
+        with patch("aletheia.config.loader.load_config", return_value=baseline_cfg):
+            s_baseline = _compute_trade_score(opp, None, factor, "medium", None, direction="short")
+        with patch("aletheia.config.loader.load_config", return_value=override_cfg):
+            s_override = _compute_trade_score(opp, None, factor, "medium", None, direction="short")
+
+    # Override is MORE negative by exactly the delta (default -14 → override -25 = -11).
+    assert abs((s_override - s_baseline) - (-11.0)) < 0.01, (
+        f"family_direction_bias override did not propagate to the score: "
+        f"baseline={s_baseline} override={s_override} "
+        f"(expected delta -11.0 from short_bias:short -14 → -25)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Risk-mirror pre-filters (patch 4, 2026-07-31): proposals that the risk engine
+# would reject are filtered at the ranker stage with a durable skip_reason —
+# symbol whitelist, demo position capacity, same-symbol open, per-symbol
+# notional accumulation.
+# ---------------------------------------------------------------------------
+
+def _pos(symbol, direction="long", qty=1.0, entry=100.0, mode="bitget_demo"):
+    return {
+        "symbol": symbol, "direction": direction, "quantity": qty,
+        "entry_price": entry, "current_price": entry, "execution_mode": mode,
+    }
+
+
+def test_symbol_filter_reads_risk_symbol_list():
+    """The ranker's whitelist must mirror the risk engine's check #1, which
+    reads cfg.risk.symbol_list — not the (empty) exchange-level list."""
+    from unittest.mock import patch
+    from aletheia.agents.paper_trader_ranker import build_paper_candidates, select_best_candidate
+
+    cfg = _mock_config()
+    cfg.risk.symbol_list = ["ETH/USDT"]  # BTC deliberately outside the whitelist
+
+    opps = [
+        _make_opp(oid="allowed-1", symbol="ETH/USDT", confidence="high", confidence_score=90),
+        _make_opp(oid="blocked-1", symbol="BTC/USDT", confidence="high", confidence_score=95),
+    ]
+    with patch("aletheia.agents.paper_trader_ranker.load_config", return_value=cfg), \
+         patch("aletheia.agents.paper_trader_ranker.list_open_trade_opportunities", return_value=opps), \
+         patch("aletheia.agents.paper_trader_ranker.get_universe_member", return_value=None), \
+         patch("aletheia.agents.paper_trader_ranker.list_all_open_positions", return_value=[]), \
+         patch("aletheia.agents.paper_trader_ranker.lookup_factor_signal", return_value={
+             "factor_key": "test", "status": "active",
+             "expectancy": 0.5, "win_rate": 0.6, "trade_count": 5, "reason": "test",
+         }):
+        candidates = build_paper_candidates(limit=50)
+    by_oid = {c["opportunity_id"]: c for c in candidates}
+    assert by_oid["allowed-1"]["skip_reason"] is None
+    assert by_oid["blocked-1"]["skip_reason"] == "symbol_not_allowed:whitelist"
+    assert select_best_candidate(candidates)["opportunity_id"] == "allowed-1"
+
+
+def test_position_capacity_prefilter_skips_when_demo_pool_full():
+    """Mirror of risk check #6: with the demo pool at max_open_positions, all
+    candidates get a durable max_demo_positions_reached skip instead of a risk
+    rejection."""
+    from aletheia.agents.paper_trader_ranker import build_paper_candidates
+
+    open_positions = [_pos(f"SYM{i}/USDT") for i in range(15)]  # 15 == demo cap
+    opps = [_make_opp(oid="opp-cap", symbol="ETH/USDT", confidence="high")]
+    with _patch_deps(opps, factor_status="active", open_positions=open_positions):
+        candidates = build_paper_candidates(limit=50)
+    assert candidates[0]["skip_reason"].startswith("max_demo_positions_reached:")
+
+
+def test_symbol_already_open_prefilter_skips_duplicate_symbol():
+    """Mirror of risk check #6b: a candidate on a symbol that already has an
+    open demo position is skipped at the ranker stage."""
+    from aletheia.agents.paper_trader_ranker import build_paper_candidates
+
+    open_positions = [_pos("ETH/USDT", qty=0.5, entry=3000.0)]
+    opps = [_make_opp(oid="opp-dup", symbol="ETH/USDT", confidence="high")]
+    with _patch_deps(opps, factor_status="active", open_positions=open_positions):
+        candidates = build_paper_candidates(limit=50)
+    assert candidates[0]["skip_reason"] == "symbol_already_open:ETH/USDT"
+
+
+def test_prefilters_pass_when_portfolio_has_room():
+    """With an empty-ish book the new pre-filters must not block candidates."""
+    from aletheia.agents.paper_trader_ranker import build_paper_candidates, select_best_candidate
+
+    open_positions = [_pos("SOL/USDT")]  # 1 open, under cap, different symbol
+    opps = [_make_opp(oid="opp-ok", symbol="ETH/USDT", confidence="high", confidence_score=90)]
+    with _patch_deps(opps, factor_status="active", open_positions=open_positions):
+        candidates = build_paper_candidates(limit=50)
+        best = select_best_candidate(candidates)
+    assert best is not None
+    assert best["opportunity_id"] == "opp-ok"
+    assert best["skip_reason"] is None

@@ -1752,6 +1752,20 @@ def _record_no_evaluable_candidate_observation(
 # while the promised second look is running.
 _DEFER_VALID_UNTIL_MARGIN_SEC = 300
 
+# Max low-conviction defers before a candidate is converted to a terminal skip.
+# A candidate the model consistently rates below _MIN_CONVICTION_TO_TRADE (58)
+# would otherwise be retried every wake cycle forever, burning LLM calls. After
+# this many defers, the Opportunity is marked 'reviewed' (removed from the
+# active queue) and valid_until is no longer extended.
+_MAX_DEFERRALS_BEFORE_TERMINAL = 5
+
+# Defer reasons that count toward the retry-limit threshold. Other defer reasons
+# (e.g. missing data, transient unavailability) are not counting.
+_RETRY_LIMITED_DEFER_REASONS = frozenset({
+    "operator_low_conviction",
+    "debate_not_confirmed",
+})
+
 
 def _deferred_context_dedup_key(
     context_fingerprint: str,
@@ -1785,6 +1799,41 @@ def _deferred_context_dedup_key(
         ).hexdigest(),
         window_start,
     )
+
+
+def _count_recent_defers_for_candidate(
+    symbol: str,
+    direction: str,
+    market_type: str,
+    *,
+    window_hours: int = 48,
+) -> int:
+    """Count retry-limited defer events for a symbol+direction+market_type.
+
+    Used by the retry-limit guard to decide whether a candidate has exhausted
+    its defer budget and should be converted to a terminal skip.
+    """
+    from aletheia.storage.sqlite import get_db
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
+    # Join events → opportunities on symbol/direction/market_type identity.
+    # The queue_snapshot_json carries normalized symbol/direction/market_type.
+    row = get_db().execute(
+        """
+        SELECT COUNT(*) FROM operator_evaluation_events e
+        WHERE e.created_at > ?
+          AND e.event_kind LIKE 'operator_decision_deferred_%'
+          AND (
+            json_extract(e.queue_snapshot_json, '$.defer_reason')
+            IN ('operator_low_conviction', 'debate_not_confirmed')
+          )
+          AND json_extract(e.queue_snapshot_json, '$.symbol') = ?
+          AND json_extract(e.queue_snapshot_json, '$.direction') = ?
+          AND json_extract(e.queue_snapshot_json, '$.market_type') = ?
+        """,
+        (cutoff, symbol, direction, market_type),
+    ).fetchone()
+    return int(row[0]) if row else 0
 
 
 def _existing_deferred_context_observation(
@@ -1995,6 +2044,45 @@ def _record_deferred_context_observation(
         "overflow_count": int(queue.get("overflow_count") or 0),
         "oldest_at": queue.get("oldest_at"),
     }
+
+    # Retry-limit guard: a candidate the model consistently rates below the
+    # trade threshold would be deferred forever, burning LLM calls. After
+    # _MAX_DEFERRALS_BEFORE_TERMINAL retry-limited defers, convert to a
+    # terminal skip: mark the Opportunity 'reviewed' and stop extending
+    # valid_until so it naturally expires out of the active queue.
+    if reason in _RETRY_LIMITED_DEFER_REASONS:
+        sel = selected or {}
+        defer_count = _count_recent_defers_for_candidate(
+            str(sel.get("symbol") or ""),
+            str(_normalize_direction(sel.get("direction") or sel.get("direction_bias")) or ""),
+            str(_normalize_market_type(sel.get("market_type") or sel.get("market")) or ""),
+        )
+        if defer_count >= _MAX_DEFERRALS_BEFORE_TERMINAL:
+            logger.warning(
+                "decision_retry_exhausted: %s %s %s defer_count=%d >= %d, terminal skip",
+                sel.get("symbol"), sel.get("direction"), sel.get("market_type"),
+                defer_count, _MAX_DEFERRALS_BEFORE_TERMINAL,
+            )
+            from aletheia.storage.repositories import transition_opportunity_to_reviewed
+            transition_opportunity_to_reviewed(opportunity_id)
+            # Record a terminal skip observation (not a defer).
+            record_operator_evaluation_event(OperatorEvaluationEvent(
+                dedup_key=f"retry_exhausted:{opportunity_id}:{defer_until}",
+                event_kind="operator_skip_validation",
+                trigger=str(trigger or "manual"),
+                pending_unresolved_total=snapshot["unresolved_total"],
+                pending_visible_count=snapshot["visible_count"],
+                pending_oldest_created_at=snapshot["oldest_at"],
+                queue_snapshot_json=json.dumps({
+                    **snapshot,
+                    "defer_reason": "retry_exhausted_terminal",
+                    "defer_count": defer_count,
+                }, sort_keys=True, separators=(",", ":")),
+                data_health_json="{}",
+                policy_epoch_id=policy_epoch_id,
+            ))
+            return {"status": "terminal_skip", "reason": "retry_exhausted", "defer_count": defer_count}
+
     # Extending valid_until FIRST inside the same transaction guarantees the
     # event insert observes the widened lifecycle. If either write fails the
     # whole defer record rolls back, avoiding a half-recorded state where the

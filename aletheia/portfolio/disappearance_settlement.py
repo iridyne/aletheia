@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from aletheia.execution.verified_exit import VerifiedExitRequest
@@ -50,14 +48,8 @@ def _run_query(client, request):
             if close is not None:
                 await close()
 
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-    if loop and loop.is_running():
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, query()).result(timeout=60)
-    return asyncio.run(query())
+    from aletheia.agent_runtime.async_utils import run_coro_from_sync
+    return run_coro_from_sync(query(), timeout=60)
 
 
 def _known_entry_order_ids(position: dict) -> tuple[str, ...]:

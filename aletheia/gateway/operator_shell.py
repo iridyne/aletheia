@@ -271,6 +271,27 @@ def _connect_host(host: str) -> str:
     return "127.0.0.1" if host in {"", "0.0.0.0", "::", "*"} else host
 
 
+def _gateway_backend_port(cfg) -> int:
+    """Internal backend worker port behind the front door (no session auth).
+
+    The operator shell and its supervising monitor talk to the backend worker
+    directly, NOT through the authenticated front door. Pointing these internal
+    loopback calls at dashboard_port (the front door) made every one of them
+    return HTTP 401 once the front door gained a mandatory session-auth
+    middleware, so the supervisor never considered the gateway ready (and thus
+    never spawned the operator), and the operator itself could never finish its
+    startup recovery (it kept getting 401 on /api/operator/status) and never
+    bound its own port.
+    """
+    raw = os.environ.get("ALETHEIA_BACKEND_PORT")
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return int(cfg.app.dashboard_port) + 1
+
+
 def _gateway_api_ready(cfg) -> bool:
     try:
         url = f"http://{_connect_host(local_frontdoor_host())}:{cfg.app.dashboard_port}/api/ready"

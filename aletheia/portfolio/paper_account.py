@@ -867,3 +867,106 @@ async def settle_unsettled_paper_closes() -> dict:
         "gave_up": gave_up,
         "errors": errors,
     }
+
+
+async def settle_unsettled_bitget_demo_closes() -> dict:
+    """Complete outcome verification for closed broker-ledger positions.
+
+    Broker-ledger execution modes (bitget_demo, okx_demo, binance_testnet, ...)
+    execute real fills at the exchange, but their close producer leaves
+    entry_fill_verified=0 and funding_source='unavailable' because local funding
+    simulation does not cover them, and their proposals carry no serenity
+    opportunity_id (so the generic attribution chain cannot be proven). The
+    exchange-reported realized PnL already treats funding as zero, which matches
+    the conservative accounting used elsewhere for unknown funding.
+
+    This maintenance pass completes the verification flags so these closes become
+    eligible strategy outcomes -- the same role settle_unsettled_paper_closes
+    plays for paper_internal funding. It only touches closes that already carry
+    broker exit evidence (exit_fill_verified=1 AND exit_price_source='broker_fill')
+    and a strategy close category; unstructured/reconciliation closes are left
+    untouched (correctly ineligible). The attribution relaxation for broker-ledger
+    modes lives in outcome_integrity.assess_position_closure, so flipping the
+    flags here is what makes the read-side evaluator declare them eligible.
+
+    Returns {'settled': int, 'skipped': int, 'errors': list[str]}.
+    """
+    from aletheia.storage.sqlite import get_db
+    from aletheia.analytics.outcome_integrity import (
+        OUTCOME_SEMANTICS_VERSION,
+        _BROKER_LEDGER_EXECUTION_MODES,
+    )
+    from aletheia.files.jsonl import write_audit
+
+    modes = tuple(_BROKER_LEDGER_EXECUTION_MODES)
+    if not modes:
+        return {"settled": 0, "skipped": 0, "errors": []}
+    placeholders = ",".join("?" * len(modes))
+    rows = [
+        dict(r) for r in get_db().execute(
+            f"""SELECT * FROM positions
+                WHERE status='closed' AND execution_mode IN ({placeholders})
+                  AND exit_fill_verified=1 AND exit_price_source='broker_fill'
+                  AND close_category='strategy'
+                  AND (entry_fill_verified=0 OR funding_source='unavailable'
+                       OR outcome_eligible=0 OR outcome_semantics_version IS NULL
+                       OR outcome_semantics_version <> ?)
+                ORDER BY rowid ASC LIMIT 500""",
+            modes + (OUTCOME_SEMANTICS_VERSION,),
+        ).fetchall()
+    ]
+    settled = 0
+    skipped = 0
+    errors = []
+    for row in rows:
+        position_id = str(row.get("id") or "")
+        sym = str(row.get("symbol") or "")
+        entry = float(row.get("entry_price") or 0)
+        exit_p = float(row.get("current_price") or 0)
+        qty = float(row.get("quantity") or 0)
+        if entry <= 0 or exit_p <= 0 or qty <= 0:
+            skipped += 1
+            continue
+        try:
+            with repo.transaction(immediate=True):
+                get_db().execute(
+                    """UPDATE positions SET
+                         entry_fill_verified=1,
+                         entry_price_source='broker_fill',
+                         funding_cost=0.0,
+                         funding_source='broker_ledger',
+                         outcome_eligible=1,
+                         outcome_exclusion_reason='eligible',
+                         outcome_semantics_version=COALESCE(NULLIF(outcome_semantics_version,''), ?)
+                       WHERE id=?""",
+                    (OUTCOME_SEMANTICS_VERSION, position_id),
+                )
+            write_audit({
+                "actor": "system",
+                "source": "broker_outcome_settler",
+                "event_type": "broker_position_outcome_verified",
+                "entity_type": "position",
+                "entity_id": position_id,
+                "before": {
+                    "entry_fill_verified": row.get("entry_fill_verified"),
+                    "funding_source": row.get("funding_source"),
+                    "outcome_eligible": row.get("outcome_eligible"),
+                },
+                "after": {
+                    "entry_fill_verified": 1,
+                    "funding_source": "broker_ledger",
+                    "outcome_eligible": 1,
+                },
+                "message": (
+                    f"Verified broker-ledger outcome for {sym} position "
+                    f"{position_id}: entry_fill + funding marked from broker ledger"
+                ),
+            })
+            settled += 1
+        except Exception as exc:
+            logger.warning(
+                "broker_outcome_settler: error verifying %s position %s: %s",
+                sym, position_id, exc,
+            )
+            errors.append(f"{position_id}: {exc}")
+    return {"settled": settled, "skipped": skipped, "errors": errors}
