@@ -121,6 +121,24 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
             "evidence_conflict_provenance_truncated": False,
             "harm_state": "indeterminate",
             "harm_indeterminate_reason": "insufficient_samples",
+            "assigned_treatment_n": 4,
+            "authority_applied_treatment_n": 0,
+            "actual_intervention_treatment_n": 0,
+            "baseline_treatment_n": 4,
+            "actual_intervention_state": "none",
+            "actual_intervention_reason": "no_actual_intervention",
+            "treatment_authority_rejection_reasons": {
+                "experiment_stage_not_paper": 4,
+            },
+            "treatment_non_intervention_reasons": {
+                "authority:experiment_stage_not_paper": 4,
+            },
+            "randomization_inference": {
+                "contract_version": "conditional-randomization-itt/v1",
+                "mode": "exact",
+                "p_value": 0.25,
+                "iid_outcome_assumption": False,
+            },
             "breached": False,
             "breach_reasons": [],
             "market_day_coverage": {
@@ -205,9 +223,19 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     assert item["measurement"]["coverage"]["missing_market_days"] == [
         "2026-07-18"
     ]
+    assert item["measurement"]["randomization_contract_version"] == (
+        "conditional-randomization-itt/v1"
+    )
+    assert item["measurement"]["randomization_p_value"] == 0.25
+    assert item["measurement"]["randomization_mode"] == "exact"
+    assert item["measurement"]["iid_outcome_assumption"] is False
     assert item["samples"] == {
         "raw_exposures": 18,
         "treatment_assignment_units": 4,
+        "assigned_treatment_units": 4,
+        "authority_applied_treatment_units": 0,
+        "actual_intervention_treatment_units": 0,
+        "baseline_treatment_units": 4,
         "control_assignment_units": 5,
         "required_per_arm": 10,
         "complete_assignment_units": 9,
@@ -219,9 +247,69 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     }
     assert item["integrity"]["harm_state"] == "indeterminate"
     assert item["integrity"]["harm_indeterminate_reason"] == "insufficient_samples"
+    assert item["integrity"]["actual_intervention_state"] == "none"
+    assert item["integrity"]["actual_intervention_reason"] == (
+        "no_actual_intervention"
+    )
+    assert item["integrity"]["treatment_authority_rejection_reasons"] == {
+        "experiment_stage_not_paper": 4,
+    }
+    assert item["integrity"]["treatment_non_intervention_reasons"] == {
+        "authority:experiment_stage_not_paper": 4,
+    }
     assert item["lifecycle"]["recommended_action"] == "admit_trial"
     assert item["lifecycle"]["mutation_available"] is False
     assert item["lifecycle"]["authority_enabled"] is False
+
+
+def test_lco_projection_never_recommends_promotion_from_monitoring_positive(
+    tmp_path,
+    monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+    from aletheia.learning.read_models import build_learning_contribution_projection
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "UPDATE learning_experiments SET stage='paper_10', allocation_pct=0.1 "
+        "WHERE experiment_id=?",
+        (experiment_id,),
+    )
+    row = db.execute(
+        "SELECT verdict_id,harm_metrics_json FROM learning_contribution_verdicts "
+        "WHERE experiment_id=?",
+        (experiment_id,),
+    ).fetchone()
+    metrics = json.loads(row["harm_metrics_json"])
+    metrics.update({
+        "harm_state": "clear",
+        "breached": False,
+        "assigned_treatment_n": 10,
+        "authority_applied_treatment_n": 10,
+        "actual_intervention_treatment_n": 10,
+        "baseline_treatment_n": 0,
+        "treatment_authority_rejection_reasons": {},
+        "treatment_non_intervention_reasons": {},
+    })
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET stage='paper_10', "
+        "verdict='positive', reason='descriptive positive', "
+        "unique_treatment_n=10, unique_control_n=10, harm_metrics_json=? "
+        "WHERE verdict_id=?",
+        (json.dumps(metrics), row["verdict_id"]),
+    )
+    db.commit()
+
+    item = build_learning_contribution_projection()["items"][0]
+    assert item["measurement"]["state"] == "positive"
+    assert item["measurement"]["inference_role"] == "monitoring"
+    assert item["lifecycle"]["recommended_action"] == "hold"
+    assert item["lifecycle"]["recommendation_reason"] == (
+        "inference_role_not_confirmatory"
+    )
+    assert item["inference"]["status"] == "not_registered"
 
 
 def test_lco_projection_reports_resolved_treatment_authority(tmp_path, monkeypatch):
@@ -248,6 +336,55 @@ def test_lco_projection_reports_resolved_treatment_authority(tmp_path, monkeypat
 
     assert lifecycle["authority_enabled"] is True
     assert lifecycle["authority_block_reason"] is None
+
+
+def test_lco_projection_holds_positive_with_insufficient_actual_interventions(
+    tmp_path,
+    monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    metrics = json.loads(db.execute(
+        "SELECT harm_metrics_json FROM learning_contribution_verdicts "
+        "WHERE experiment_id=?",
+        (experiment_id,),
+    ).fetchone()[0])
+    metrics.update({
+        "harm_state": "clear",
+        "harm_indeterminate_reason": None,
+        "assigned_treatment_n": 10,
+        "authority_applied_treatment_n": 1,
+        "actual_intervention_treatment_n": 1,
+        "baseline_treatment_n": 9,
+        "actual_intervention_state": "partial",
+        "treatment_authority_rejection_reasons": {
+            "test_authority_rejection": 9,
+        },
+        "treatment_non_intervention_reasons": {
+            "authority:test_authority_rejection": 9,
+        },
+    })
+    db.execute(
+        "UPDATE learning_experiments SET stage='paper_10' WHERE experiment_id=?",
+        (experiment_id,),
+    )
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET stage='paper_10', verdict='positive', "
+        "reason='apparent positive', unique_treatment_n=10, harm_metrics_json=? "
+        "WHERE experiment_id=?",
+        (json.dumps(metrics), experiment_id),
+    )
+    db.commit()
+
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    lifecycle = build_learning_contribution_projection()["items"][0]["lifecycle"]
+
+    assert lifecycle["recommended_action"] == "hold"
+    assert lifecycle["recommendation_reason"] == "inference_role_not_confirmatory"
 
 
 def test_lco_projection_marks_authority_read_failure_partial(tmp_path, monkeypatch):
@@ -300,7 +437,7 @@ def test_lco_projection_keeps_measurement_when_operations_read_fails(
     }
     assert result["operations"]["evaluator"] is None
     assert result["operations"]["lifecycle_audit"] is None
-    assert result["operations"]["config"]["paper_influence_enabled"] is False
+    assert result["operations"]["config"]["paper_influence_enabled"] is True
     assert result["data_freshness"]["state"] == "unavailable"
     assert result["items"]
     assert "private operations failure" not in str(result)
@@ -513,6 +650,67 @@ def test_lco_projection_reports_protected_admission_readiness(
     lifecycle_view = build_learning_contribution_projection()["items"][0]["lifecycle"]
     assert lifecycle_view["recommended_action"] == "admit_trial"
     assert lifecycle_view["authority_enabled"] is False
+    assert lifecycle_view["mutation_available"] is True
+    assert lifecycle_view["mutation_unavailable_reason"] is None
+
+
+def test_lco_projection_reports_integrity_ready_admission_with_underpowered_harm(
+    tmp_path,
+    monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    row = db.execute(
+        "SELECT harm_metrics_json FROM learning_contribution_verdicts "
+        "WHERE experiment_id=?",
+        (experiment_id,),
+    ).fetchone()
+    metrics = json.loads(row[0])
+    metrics.update({
+        "assigned_treatment_n": 10,
+        "baseline_treatment_n": 10,
+        "authority_applied_treatment_n": 0,
+        "actual_intervention_treatment_n": 0,
+        "treatment_authority_rejection_reasons": {
+            "experiment_stage_not_paper": 10,
+        },
+        "trial_integrity_readiness": {
+            "contract_version": "ufc-shadow-trial-integrity/v1",
+            "required_per_arm": 10,
+            "required_market_days": 1,
+            "qualified_treatment_n": 10,
+            "qualified_control_n": 10,
+            "current_consecutive_market_days": 1,
+            "status": "ready",
+        },
+    })
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET reason=?, "
+        "unique_treatment_n=10, unique_control_n=10, harm_metrics_json=? "
+        "WHERE experiment_id=?",
+        (
+            "trial_integrity_ready_no_actual_intervention",
+            json.dumps(metrics),
+            experiment_id,
+        ),
+    )
+    db.commit()
+
+    import aletheia.learning.lifecycle as lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "trial_admission_gate_reason",
+        lambda _path_id, **_kwargs: None,
+    )
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    lifecycle_view = build_learning_contribution_projection()["items"][0]["lifecycle"]
+
+    assert lifecycle_view["recommended_action"] == "admit_trial"
     assert lifecycle_view["mutation_available"] is True
     assert lifecycle_view["mutation_unavailable_reason"] is None
 
@@ -1005,7 +1203,7 @@ def test_lco_projection_excludes_unsupported_paths_when_window_is_full(
     import aletheia.config.loader as loader_mod
     from aletheia.config.schema import AletheiaConfig, LearningConfig
 
-    # Part A: empty paper_influence_paths — the deployed configuration.
+    # Part A: canonical defaults include the sole measurement-supported path.
     monkeypatch.setattr(
         loader_mod, "load_config", lambda **_kwargs: AletheiaConfig(),
     )
@@ -1015,12 +1213,12 @@ def test_lco_projection_excludes_unsupported_paths_when_window_is_full(
     result_default = build_learning_contribution_projection(limit=20)
     returned_ids_default = {item["experiment_id"] for item in result_default["items"]}
     assert ufc_experiment_id in returned_ids_default, (
-        "A measured experiment must stay visible with an empty influence allowlist"
+        "A measured experiment must stay visible with the default influence allowlist"
     )
     assert len(result_default["items"]) == 1
     assert all(item["path_id"] != "filler_path" for item in result_default["items"])
 
-    # Part B: authority configuration does not widen measurement eligibility.
+    # Part B: an explicit authority configuration does not widen measurement eligibility.
     influence_cfg = AletheiaConfig(
         learning=LearningConfig(paper_influence_paths=["universe_family_calibration"])
     )

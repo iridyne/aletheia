@@ -934,7 +934,7 @@ export class RecommendationEngine {
     }
     if (!snapshot.status.paused && dueRiskBoundaryChange) {
       recommendations.push({
-        id: `risk-boundary-proposal:${dueRiskBoundaryChange.boundary_key}`,
+        id: `risk-boundary-proposal:${dueRiskBoundaryChange.risk_mode}:${dueRiskBoundaryChange.policy_hash}:${dueRiskBoundaryChange.boundary_key}`,
         kind: 'risk_boundary_change_proposal_due',
         severity: 'medium',
         summary: dueRiskBoundaryChange.summary,
@@ -942,6 +942,10 @@ export class RecommendationEngine {
         metadata: {
           boundary_key: dueRiskBoundaryChange.boundary_key,
           violation_kind: dueRiskBoundaryChange.violation_kind,
+          risk_mode: dueRiskBoundaryChange.risk_mode,
+          policy_id: dueRiskBoundaryChange.policy_id,
+          policy_revision: dueRiskBoundaryChange.policy_revision,
+          policy_hash: dueRiskBoundaryChange.policy_hash,
           rejection_count: dueRiskBoundaryChange.rejection_count,
           changes: dueRiskBoundaryChange.changes,
           sample_violations: dueRiskBoundaryChange.sample_violations,

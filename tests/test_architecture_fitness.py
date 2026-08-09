@@ -159,8 +159,8 @@ def test_audit_chain_12_tables_not_in_prunable_whitelist():
     )
 
 
-def test_learning_7_tables_not_in_prunable_whitelist():
-    """AGENTS.md hard rule: the 7 learning tables must NEVER be prunable.
+def test_learning_8_tables_not_in_prunable_whitelist():
+    """AGENTS.md hard rule: the 8 learning tables must NEVER be prunable.
 
     They are the persistent record of every hypothesis, experiment, exposure,
     contribution verdict and policy epoch. Losing rows breaks paired-cohort
@@ -175,6 +175,7 @@ def test_learning_7_tables_not_in_prunable_whitelist():
         "learning_hypotheses",
         "learning_policy_epochs",
         "learning_contribution_verdicts",
+        "learning_inference_decisions",
         "learning_lifecycle_events",
         "learning_job_health",
     }

@@ -246,6 +246,9 @@ def test_account_leverage_counts_pre_order_and_unresolved_entries(
     conn = _setup_db(tmp_path, monkeypatch)
     cfg = _risk_config(monkeypatch, demo_slots=10)
     cfg.risk.max_account_leverage_demo = 3.0
+    # This test isolates the leverage-ratio boundary. Its deliberately large
+    # notional must not be rejected first by the independent total-exposure gate.
+    cfg.risk.demo.capital.max_total_exposure_pct = 1_000.0
     cfg.agent.permission_mode = "Full"
 
     import aletheia.risk.engine as engine

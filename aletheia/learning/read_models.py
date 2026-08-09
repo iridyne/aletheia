@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import math
 from typing import Any
 
 from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
@@ -12,6 +13,11 @@ from aletheia.learning.experiments import current_policy_epoch
 from aletheia.learning.ledger import get_latest_measurement_verdict
 from aletheia.learning.registry import LEARNING_PATHS
 from aletheia.learning.verdicts import METRIC_VERSION
+from aletheia.learning.fixed_look import (
+    get_consumed_fixed_look_verdict,
+    get_fixed_look_decision,
+    inference_authority_reason,
+)
 from aletheia.storage.sqlite import get_db
 
 
@@ -221,6 +227,11 @@ def _current_experiment_rows(
         "v.metric_version AS verdict_metric_version, "
         "v.code_commit AS verdict_code_commit, "
         "v.behavior_contract_hash AS verdict_behavior_contract_hash, "
+        "v.inference_contract_version AS verdict_inference_contract_version, "
+        "v.inference_role AS verdict_inference_role, "
+        "v.authority_eligible AS verdict_authority_eligible, "
+        "v.inference_plan_hash AS verdict_inference_plan_hash, "
+        "v.inference_cutoff_fingerprint AS verdict_inference_cutoff_fingerprint, "
         "v.hypothesis_id AS verdict_hypothesis_id "
         "FROM learning_experiments e "
         "JOIN learning_hypotheses h ON h.hypothesis_id=e.hypothesis_id "
@@ -338,6 +349,7 @@ def _project_experiment(
             outcome_contract_version=_OUTCOME_CONTRACT_VERSION,
             metric_version=METRIC_VERSION,
             behavior_contract_hash=behavior_contract_hash,
+            inference_role="monitoring",
         )
     historical_mismatch = identity_precondition_reason or _identity_mismatch(
         row,
@@ -359,6 +371,10 @@ def _project_experiment(
     # belonged to.  Nothing is dropped — the stale facts move to
     # ``latest_historical_measurement``, where they are labelled as not current.
     metrics = current_metrics if current else {}
+    randomization = _safe_object(metrics.get("randomization_inference"))
+    randomization_mode = randomization.get("mode")
+    if randomization_mode not in {"exact", "monte_carlo", "unavailable"}:
+        randomization_mode = None
     measurement_state = (
         str((current_verdict or {}).get("verdict"))
         if current and str((current_verdict or {}).get("verdict")) in _MEASUREMENT_STATES
@@ -369,17 +385,54 @@ def _project_experiment(
         if current
         else mismatch
     )
-    recommended = _recommended_action(
-        measurement_state,
-        measurement_reason,
-        stage=str(row.get("stage") or ""),
+    stage = str(row.get("stage") or "")
+    inference_decision = get_fixed_look_decision(str(row.get("experiment_id") or ""))
+    lifecycle_verdict = current_verdict
+    if stage.startswith("paper_") and current_verdict is not None:
+        from aletheia.learning.authority import measurement_harm_block_reason
+
+        current_harm_reason = measurement_harm_block_reason(current_verdict)
+        if (
+            str(current_verdict.get("verdict") or "")
+            not in {"negative", "invalid"}
+            and current_harm_reason is None
+        ):
+            lifecycle_verdict = (
+                get_consumed_fixed_look_verdict(str(row.get("experiment_id") or ""))
+                or current_verdict
+            )
+    lifecycle_state = str((lifecycle_verdict or {}).get("verdict") or measurement_state)
+    lifecycle_reason = (
+        str((lifecycle_verdict or {}).get("reason") or "") or measurement_reason
     )
+    recommended = _recommended_action(
+        lifecycle_state,
+        lifecycle_reason,
+        stage=stage,
+    )
+    inference_block_reason = None
+    if recommended == "promote_stage" and lifecycle_verdict is not None:
+        inference_block_reason = inference_authority_reason(lifecycle_verdict)
+        if inference_block_reason is not None:
+            recommended = "hold"
+    intervention_block_reason = None
+    if recommended == "promote_stage" and lifecycle_verdict is not None:
+        from aletheia.learning.authority import (
+            measurement_intervention_block_reason,
+        )
+
+        intervention_block_reason = measurement_intervention_block_reason(
+            lifecycle_verdict,
+            required_per_arm=_safe_int(row.get("min_samples_per_arm")),
+        )
+        if intervention_block_reason is not None:
+            recommended = "hold"
     mutation_reason = "admission_not_recommended"
     mutation_available = False
     if recommended == "admit_trial" and current_verdict is not None:
         from aletheia.learning.authority import (
-            measurement_harm_block_reason,
             measurement_identity_reason,
+            trial_admission_measurement_block_reason,
         )
         from aletheia.learning.lifecycle import trial_admission_gate_reason
 
@@ -395,7 +448,11 @@ def _project_experiment(
                 expected_horizon=str(row.get("target_horizon") or ""),
                 expected_behavior_contract_hash=behavior_contract_hash,
                 expected_hypothesis_id=str(row.get("hypothesis_id") or ""),
-            ) or measurement_harm_block_reason(current_verdict)
+            ) or trial_admission_measurement_block_reason(
+                current_verdict,
+                required_per_arm=_safe_int(row.get("min_samples_per_arm")) or 1,
+                required_market_days=_safe_int(row.get("min_market_days")) or 0,
+            )
         mutation_available = mutation_reason is None
 
     authority_enabled = False
@@ -484,6 +541,19 @@ def _project_experiment(
             "confidence_high": (
                 (current_verdict or {}).get("confidence_high") if current else None
             ),
+            "randomization_contract_version": (
+                randomization.get("contract_version") if current else None
+            ),
+            "randomization_p_value": (
+                _safe_float(randomization.get("p_value")) if current else None
+            ),
+            "randomization_mode": (
+                randomization_mode if current else None
+            ),
+            "iid_outcome_assumption": (
+                _safe_bool(randomization.get("iid_outcome_assumption"))
+                if current else None
+            ),
             "evaluated_at": (
                 (current_verdict or {}).get("created_at") if current else None
             ),
@@ -496,12 +566,57 @@ def _project_experiment(
             "coverage": _coverage_projection(
                 metrics.get("market_day_coverage")
             ),
+            "inference_role": (
+                (current_verdict or {}).get("inference_role") if current else None
+            ),
+            "authority_eligible": bool(
+                (current_verdict or {}).get("authority_eligible")
+            ) if current else False,
+        },
+        "inference": {
+            "contract_version": (
+                inference_decision.inference_contract_version
+                if inference_decision is not None else None
+            ),
+            "status": (
+                inference_decision.status
+                if inference_decision is not None else "not_registered"
+            ),
+            "authority_alpha": (
+                inference_decision.authority_alpha
+                if inference_decision is not None else None
+            ),
+            "plan_hash": (
+                inference_decision.plan_hash
+                if inference_decision is not None else None
+            ),
+            "cutoff_fingerprint": (
+                inference_decision.cutoff_fingerprint
+                if inference_decision is not None else None
+            ),
+            "consumed_verdict_id": (
+                inference_decision.consumed_verdict_id
+                if inference_decision is not None else None
+            ),
+            "authority_block_reason": inference_block_reason,
         },
         "samples": {
             "raw_exposures": _safe_int(metrics.get("raw_exposure_n")),
             "treatment_assignment_units": (
                 _safe_int((current_verdict or {}).get("unique_treatment_n"))
                 if current else 0
+            ),
+            "assigned_treatment_units": _safe_int(
+                metrics.get("assigned_treatment_n")
+            ),
+            "authority_applied_treatment_units": _safe_int(
+                metrics.get("authority_applied_treatment_n")
+            ),
+            "actual_intervention_treatment_units": _safe_int(
+                metrics.get("actual_intervention_treatment_n")
+            ),
+            "baseline_treatment_units": _safe_int(
+                metrics.get("baseline_treatment_n")
             ),
             "control_assignment_units": (
                 _safe_int((current_verdict or {}).get("unique_control_n"))
@@ -542,6 +657,18 @@ def _project_experiment(
             ),
             "harm_state": str(metrics.get("harm_state") or "unknown"),
             "harm_indeterminate_reason": metrics.get("harm_indeterminate_reason"),
+            "actual_intervention_state": str(
+                metrics.get("actual_intervention_state") or "unknown"
+            ),
+            "actual_intervention_reason": metrics.get(
+                "actual_intervention_reason"
+            ),
+            "treatment_authority_rejection_reasons": _safe_int_dict(
+                metrics.get("treatment_authority_rejection_reasons")
+            ),
+            "treatment_non_intervention_reasons": _safe_int_dict(
+                metrics.get("treatment_non_intervention_reasons")
+            ),
             "harm_breached": bool(metrics.get("breached")),
             "breach_reasons": [
                 str(value)
@@ -551,7 +678,11 @@ def _project_experiment(
         },
         "lifecycle": {
             "recommended_action": recommended,
-            "recommendation_reason": measurement_reason,
+            "recommendation_reason": (
+                inference_block_reason
+                or intervention_block_reason
+                or lifecycle_reason
+            ),
             "authority_enabled": authority_enabled,
             "authority_block_reason": authority_block_reason,
             "mutation_available": mutation_available,
@@ -572,6 +703,15 @@ def _project_experiment(
                 "verdict_behavior_contract_hash"
             ),
             "code_commit": row.get("verdict_code_commit"),
+            "inference_contract_version": row.get(
+                "verdict_inference_contract_version"
+            ),
+            "inference_role": row.get("verdict_inference_role"),
+            "authority_eligible": bool(row.get("verdict_authority_eligible")),
+            "inference_plan_hash": row.get("verdict_inference_plan_hash"),
+            "inference_cutoff_fingerprint": row.get(
+                "verdict_inference_cutoff_fingerprint"
+            ),
             "source_code_commits": [
                 str(value)
                 for value in verdict_metrics.get("source_code_commits", [])
@@ -676,7 +816,13 @@ def _identity_mismatch(
 
 
 def _recommended_action(state: str, reason: str | None, *, stage: str) -> str:
-    if stage == "shadow" and state == "insufficient_data" and reason == "no_actual_intervention":
+    from aletheia.learning.authority import TRIAL_ADMISSION_REASONS
+
+    if (
+        stage == "shadow"
+        and state == "insufficient_data"
+        and reason in TRIAL_ADMISSION_REASONS
+    ):
         return "admit_trial"
     return {
         "positive": "promote_stage" if stage != "shadow" else "admit_trial",
@@ -818,3 +964,17 @@ def _safe_int(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _safe_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _safe_bool(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None

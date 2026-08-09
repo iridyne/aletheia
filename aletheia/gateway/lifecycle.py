@@ -818,9 +818,14 @@ def _notify_gateway_problem(
 
 def do_pause() -> None:
     """Pause autonomous jobs."""
-    cfg = load_config()
-    cfg.runtime.paused = True
-    save_config(cfg)
+    from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, acquire_pause
+
+    acquire_pause(
+        MANUAL_OWNER,
+        reason="gateway_cli_pause",
+        actor="human",
+        source="cli",
+    )
     _echo_stdout_safe("Gateway paused. Autonomous jobs suspended.")
 
 

@@ -24,7 +24,9 @@
 
 **启动时暂停**：`init_scheduler()` 在 `_scheduler.start()` 后检查 `cfg.runtime.paused`。当 `layered_pause_enabled=true` 时，只暂停开仓、观察者和 LLM/决策任务；下列 `_ESSENTIAL_JOBS` 仍派发，以维持市场价格、账户视图、保护性退出、对账、健康检查和数据维护。只有 `layered_pause_enabled=false` 的 blanket pause 才暂停整个 APScheduler。集合内任务不得再在函数体中因 `runtime.paused` 提前返回，这一一致性由 `tests/test_layered_pause.py` 锁定。
 
-当前 essential 集合：`market_data`、`data_collectors`、`data_collector_context`、`connectivity_monitor`、`portfolio_snapshot`、`price_feed`、`ohlcv_nightly_backfill`、`ohlcv_active_backfill`、`exchange_sync`、`health_check`、`cleanup`、`news_fetch`、`okx_demo_symbols`、`reconciliation`、`position_reconcile`、`tpsl_fill_check`、`outcome_settler`、`paper_funding_settler`、`outcome_hook_replay`、`shadow_resolver`、`learning_contribution_evaluator`、`learning_measurement_startup_catchup`、`learning_lifecycle_audit_reconciler`。
+**暂停所有权**：`runtime.paused` 是 `runtime.pause_owners` 是否非空的兼容投影，不再是可由任一恢复循环独占清除的单一事实。人工操作、Exchange Connectivity、Startup Behavior Gate 与 LLM Startup Gate 各持有带 `reason`、`generation`、`acquired_at` 的 durable lease；一个恢复路径只能释放自身匹配 generation 的 lease。仅最后一个 owner 成功释放时才调用一次 `resume_scheduler()`；公开 `resume_scheduler()` 会在同一进程级 pause-transition `RLock` 内重新读取 durable owners，并在任一 owner 存在时拒绝修改 APScheduler，因此 Settings 的 `scheduler_enabled=true` 也不能旁路所有权。若调度器恢复调用失败，原 lease 会恢复到配置中并保持 fail-closed。旧配置中的 `paused_by_connectivity`/generation/timestamp 会迁移为 `exchange_connectivity` owner，无法归因的旧 `paused=true` 则诚实迁移为时间与 generation 均未知的 `manual` owner。`GET /api/status` 的 `pause_owners` 与 Doctor 的 `config.paused` 项是该状态的只读观测面。
+
+当前 essential 集合：`market_data`、`data_collectors`、`data_collector_context`、`connectivity_monitor`、`portfolio_snapshot`、`price_feed`、`position_manager`、`ohlcv_nightly_backfill`、`ohlcv_active_backfill`、`exchange_sync`、`health_check`、`cleanup`、`news_fetch`、`okx_demo_symbols`、`reconciliation`、`position_reconcile`、`tpsl_fill_check`、`outcome_settler`、`paper_funding_settler`、`outcome_hook_replay`、`shadow_resolver`、`learning_contribution_evaluator`、`learning_measurement_startup_catchup`、`learning_lifecycle_audit_reconciler`。
 
 ---
 
@@ -38,6 +40,8 @@ _EXECUTOR_WORKERS = {
     "default": 2,
     "io":      1,
     "fast_io": 1,
+    "protective": 1,
+    "learning_measurement": 1,
     "observer":1,
     "agents":  1,
 }
@@ -48,10 +52,12 @@ _EXECUTOR_WORKERS = {
 | `default` | 2 | 通用基础设施（portfolio_snapshot） |
 | `io` | 1 | 短时 read/write 基础任务（market_data、reconciliation、cleanup 等）；单写防 WAL 碰撞 |
 | `fast_io` | 1 | 延迟敏感的基础设施（price_feed，30s 周期） |
+| `protective` | 1 | Position 保护检查；不得排在长时数据/结算任务之后 |
+| `learning_measurement` | 1 | 串行执行 contribution evaluator 与 boot measurement catch-up；不与 31-job `io` 队列共享排队 |
 | `observer` | 1 | boot catch-up 市场观察者；独立隔离，防被 LLM job 饿死 |
 | `agents` | 1 | LLM/agent 密集型 job（paper_trader、post_trade_reviewer 等）；串行防 SQLite 竞争 |
 
-**总工人数**：2 + 1 + 1 + 1 + 1 = **6**。
+**总工人数**：2 + 1 + 1 + 1 + 1 + 1 + 1 = **8**。
 
 注：各池 `max_workers` 全部 ≤ 3，满足 spec AC-S01（`spec_agent_contracts.py:18–33`）。timeout 层不计入上述 APScheduler 命名池：`_run_async_with_timeout` 复用一条进程级常驻 event-loop lane，`_run_sync_with_timeout` 复用一条常驻 daemon lane；两者 outstanding 容量均固定为 16，不为每次调用创建新的 loop、executor 或替代线程（见 §4.3）。
 
@@ -114,16 +120,22 @@ not otherwise re-audited here.
 
 - `learning_contribution_evaluator` is the sole recurring contribution evaluator. It runs at
   `learning.evaluation_interval_minutes` (minimum 15, default 60), with `max_instances=1`,
-  `coalesce=True`, the `io` executor, and a 60-second timeout.
-- `learning_measurement_startup_catchup` is a one-shot at boot plus two minutes. The first regular
-  evaluator run is delayed by a full evaluation interval, so catch-up checks and, only when due,
-  invokes the same evaluator before regular cadence begins.
+  `coalesce=True`, the serial `learning_measurement` executor, and a 60-second timeout. Gateway restart preserves an earlier
+  future durable `next_due_at` instead of resetting the first run to boot plus a full interval; an
+  already-overdue deadline receives one bounded run after 60 seconds.
+- `learning_measurement_startup_catchup` remains a one-shot at boot plus two minutes. It checks and,
+  only when due, invokes the same evaluator; after an overdue direct recovery succeeds, its updated
+  watermark makes the one-shot a no-op, while a failed recovery leaves it available as a retry. It
+  shares the one-worker `learning_measurement` lane with the recurring evaluator, preserving mutual
+  serialization while avoiding starvation behind the general `io` queue.
+  Executable continuity claim: `LE-B31`.
 - `learning_verdict_runner` is not registered and has no timeout entry. Existing
   `learning_job_health` rows with that historical id are retained as history, not deleted or
   interpreted as an active schedule.
 - Measurement remains essential under layered pause and independent of autonomous Learning.
-  `learning_lifecycle_controller` is separate and default-closed; it cannot cross
-  `shadow -> paper_10`, and may only recommend explicit owner admission.
+  `learning_lifecycle_controller` is separate; its capability defaults on, but its
+  experiment authority remains owner-gated. It cannot cross `shadow -> paper_10`,
+  and may only recommend explicit owner admission.
 - A lifecycle-controller cycle with one or more isolated experiment failures completes the remaining
   experiments but persists `degraded`, advances only `next_due_at`, and does not record a successful
   watermark. A later fully successful cycle may recover current health while preserving durable

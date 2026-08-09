@@ -123,9 +123,14 @@ class TelegramBot:
         )
 
     def _cmd_pause(self) -> str:
-        cfg = load_config()
-        cfg.runtime.paused = True
-        save_config(cfg)
+        from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, acquire_pause
+
+        acquire_pause(
+            MANUAL_OWNER,
+            reason="telegram_pause",
+            actor="telegram",
+            source="telegram",
+        )
         write_audit({
             "actor": "telegram",
             "source": "telegram",

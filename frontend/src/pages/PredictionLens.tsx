@@ -9,7 +9,7 @@ import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDr
 import { StatusBadge } from '../components/DataTable'
 import { Badge, Button, Card, StatusText, TableWrap, useToast, type StatusTone } from '../components/ui'
 import ProbabilityChart from '../charts/ProbabilityChart'
-import { fmtTimestamp } from '../lib/format'
+import { fmtScore100, fmtTimestamp } from '../lib/format'
 
 type Tab = 'radar' | 'movers' | 'runs' | 'preferences'
 
@@ -388,7 +388,7 @@ function MarketDetailContent({ market }: { market: PredictionMarket }) {
         <DrawerField label="YES Probability" value={pctFmt(market.yes_probability)} />
         <DrawerField label="24h Change" value={deltaFmt(market.probability_change_24h)} />
         <DrawerField label="Signal" value={<DirectionBadge direction={market.direction_bias} />} />
-        <DrawerField label="Confidence" value={market.confidence_score != null ? `${market.confidence_score}%` : market.confidence ?? '—'} />
+        <DrawerField label="Confidence score" value={market.confidence_score != null ? fmtScore100(market.confidence_score) : market.confidence ?? '—'} />
       </DrawerSection>
 
       <DrawerSection label="Market Data">

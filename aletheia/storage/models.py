@@ -1,7 +1,9 @@
 """Pydantic models for storage entities."""
 
 from datetime import datetime, timezone
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 from uuid import uuid4
 
 
@@ -81,8 +83,10 @@ class Opportunity(_Provenanced):
     direction_bias: str | None = None
     thesis: str | None = None
     confidence: str = "speculative"
-    # Numeric calibration the LLM emits alongside the categorical `confidence`.
-    # 0..100; None when the model didn't supply one — keeps older rows valid.
+    # Source-relative 0..100 evidence score, never an implied probability.
+    # Observer agents use model confidence; universe_scanner uses its composite
+    # ranking score.  Consumers must preserve that source-specific distinction.
+    # None keeps older rows without a numeric score valid.
     confidence_score: int | None = None
     source_agent: str | None = None
     created_at: str = Field(default_factory=_utcnow)
@@ -413,6 +417,10 @@ class Position(_Provenanced):
     take_profit_price: float | None = None
     close_reason: str | None = None
     # JSON record written only after a close succeeds. It names the real actor
+    # Current immutable ExitPlan projection.  The timestamp resolves against
+    # position_exit_plan_versions; NULL means protection has not been activated.
+    # The v9 storage migration adds this field without backfilling old rows.
+    exit_plan_effective_at: str | None = None
     # and source (AI, automatic protection, manual, or reconciliation), avoiding
     # any retrospective invention of an AI rationale for a mechanical close.
     exit_reasoning: str | None = None
@@ -478,6 +486,152 @@ class Position(_Provenanced):
     last_market_signal_reason: str | None = None
     last_market_signal_at: str | None = None
     last_market_signal_evidence: str | None = None
+
+
+class PositionExitPlanVersion(BaseModel):
+    """One append-only resolved ExitPlan for a Position."""
+
+    model_config = ConfigDict(allow_inf_nan=False, extra="forbid", frozen=True)
+
+    position_id: str
+    version: int = Field(ge=1)
+    effective_at: str
+    stop_price: float | None = Field(default=None, gt=0)
+    take_profit_price: float | None = Field(default=None, gt=0)
+    exit_limit_price: float | None = Field(default=None, gt=0)
+    exit_limit_source: Literal["human", "system_operator"] | None = None
+    plan_json: str
+    plan_hash: str
+    provenance: str
+    created_at: str = Field(default_factory=_utcnow)
+
+
+class PositionProtectionState(BaseModel):
+    """Insert-only activation state for one exact physical Position instrument.
+
+    First-trigger evidence is stored separately as an immutable fact.  This
+    state retains only its write-once trigger projection and close linkage;
+    every mutation goes through a compare-and-set repository API.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    position_id: str
+    venue: str
+    symbol: str
+    market_type: Literal["spot", "perp"]
+    timeframe: Literal["1m"] = "1m"
+    activated_at: str
+    next_bar_open_ms: int = Field(ge=0)
+    last_evaluated_bar_open_ms: int | None = Field(default=None, ge=0)
+    last_inspected_bar_open_ms: int | None = Field(default=None, ge=0)
+    status: Literal[
+        "active",
+        "gap",
+        "triggered",
+        "materialized",
+        "superseded",
+        "integrity_blocked",
+    ] = "active"
+    gap_reason: str | None = None
+    gap_detected_at: str | None = None
+    gap_count: int = Field(default=0, ge=0)
+    recent_error: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+
+
+class PositionProtectionTrigger(BaseModel):
+    """Complete first-trigger evidence for one frozen 1-minute instrument."""
+
+    model_config = ConfigDict(allow_inf_nan=False, extra="forbid", frozen=True)
+
+    position_id: str
+    trigger_id: str
+    detected_at: str
+    venue: str
+    symbol: str
+    market_type: Literal["spot", "perp"]
+    timeframe: Literal["1m"] = "1m"
+    bar_open_ms: int = Field(ge=0)
+    bar_close_ms: int = Field(gt=0)
+    bar_open: float = Field(gt=0)
+    bar_high: float = Field(gt=0)
+    bar_low: float = Field(gt=0)
+    bar_close: float = Field(gt=0)
+    bar_volume: float = Field(ge=0)
+    provider: str
+    bar_hash: str
+    plan_version: int = Field(ge=1)
+    plan_effective_at: str
+    plan_hash: str
+    stop_price: float | None = Field(default=None, gt=0)
+    upside_price: float | None = Field(default=None, gt=0)
+    stop_hit: bool
+    target_hit: bool
+    reason: str
+    collision_policy: Literal["stop_first_v1"] = "stop_first_v1"
+
+
+class ExitBreakevenShadowAssignment(BaseModel):
+    """Prospective, immutable assignment for the read-only exit experiment."""
+
+    model_config = ConfigDict(allow_inf_nan=False, extra="forbid", frozen=True)
+
+    position_id: str
+    experiment_version: Literal["exit-breakeven-shadow/v1"] = "exit-breakeven-shadow/v1"
+    treatment_id: Literal["entry-lock-after-1.5pct/v1"] = "entry-lock-after-1.5pct/v1"
+    assigned_at: str
+    venue: str
+    symbol: str
+    market_type: Literal["spot", "perp"]
+    timeframe: Literal["1m"] = "1m"
+    direction: Literal["long", "short"]
+    entry_price: float = Field(gt=0)
+    quantity: float = Field(gt=0)
+    entry_fee: float = Field(ge=0)
+    exit_fee_rate: float = Field(ge=0)
+    slippage_bps: float = Field(ge=0)
+    trigger_return_pct: float = Field(gt=0)
+    trigger_price: float = Field(gt=0)
+    shadow_stop_price: float = Field(gt=0)
+    exit_plan_version: int = Field(ge=1)
+    exit_plan_effective_at: str
+    exit_plan_hash: str
+    rule_json: str
+    rule_hash: str
+    behavior_authority: Literal[False] = False
+    runtime_session_id: str | None = None
+    code_commit: str | None = None
+    behavior_fingerprint: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+
+
+class ExitBreakevenShadowOutcome(BaseModel):
+    """Immutable paired economic result for one assigned Position."""
+
+    model_config = ConfigDict(allow_inf_nan=False, extra="forbid", frozen=True)
+
+    position_id: str
+    status: Literal["unchanged", "counterfactual_close", "unavailable"]
+    reason: str
+    treatment_changed: bool
+    actual_closed_at: str
+    trigger_bar_open_ms: int | None = Field(default=None, ge=0)
+    shadow_exit_bar_open_ms: int | None = Field(default=None, ge=0)
+    shadow_exit_at: str | None = None
+    shadow_reference_price: float | None = Field(default=None, gt=0)
+    shadow_fill_price: float | None = Field(default=None, gt=0)
+    shadow_entry_fee: float | None = Field(default=None, ge=0)
+    shadow_exit_fee: float | None = Field(default=None, ge=0)
+    shadow_funding_cost: float | None = None
+    actual_net_pnl: float | None = None
+    shadow_net_pnl: float | None = None
+    incremental_net_pnl: float | None = None
+    cost_model_version: str | None = None
+    evidence_json: str
+    evidence_hash: str
+    settled_at: str = Field(default_factory=_utcnow)
 
 
 class PositionDisappearanceCandidate(BaseModel):
@@ -1250,6 +1404,79 @@ class UniversePolicy(BaseModel):
     max_weight_step: float = 0.15
     change_reason: str | None = None
     previous_policy_id: str | None = None
+
+
+class UniverseTwinShadowBatch(BaseModel):
+    scanner_run_id: str
+    authority_snapshot_id: str | None = None
+    experiment_id: str | None = None
+    record_version: str
+    authority_behavior_version: str
+    shadow_behavior_version: str
+    allocation_replay_contract: str
+    policy_epoch_id: str | None = None
+    behavior_contract_hash: str | None = None
+    assignment_unit_key: str | None = None
+    assignment_contract_version: str | None = None
+    assignment_arm: str | None = None
+    assignment_propensity: float | None = None
+    treatment_coefficient: float | None = None
+    treatment_policy: str | None = None
+    control_policy: str | None = None
+    primary_horizon: str | None = None
+    outcome_contract_version: str | None = None
+    feature_source_fingerprint: str
+    availability_profile_id: str | None = None
+    metric_version: str
+    allocator_random_state_json: str
+    policy_json: str
+    allocation_context_json: str
+    candidate_count: int
+    promotion_eligible: bool = False
+    blocking_reasons_json: str = "[]"
+    batch_hash: str
+    captured_at: str = Field(default_factory=_utcnow)
+
+
+class UniverseTwinShadowEvidence(BaseModel):
+    id: str = Field(default_factory=new_id)
+    scanner_run_id: str
+    candidate_key: str
+    candidate_index: int
+    feature_snapshot_id: str | None = None
+    asset_id: str | None = None
+    symbol: str
+    market_type: str
+    experiment_id: str | None = None
+    policy_epoch_id: str | None = None
+    behavior_contract_hash: str | None = None
+    availability_profile_id: str | None = None
+    assignment_unit_key: str | None = None
+    assignment_arm: str | None = None
+    assignment_propensity: float | None = None
+    treatment_coefficient: float | None = None
+    primary_horizon: str | None = None
+    outcome_contract_version: str | None = None
+    metric_version: str | None = None
+    outcome_candidate_key: str | None = None
+    authority_total_score: float
+    shadow_point_score: float | None = None
+    shadow_pessimistic_score: float | None = None
+    authority_rank: int | None = None
+    shadow_point_rank: int | None = None
+    shadow_pessimistic_rank: int | None = None
+    fine_filter_passed: bool | None = None
+    authority_selected: bool | None = None
+    shadow_point_selected: bool | None = None
+    shadow_pessimistic_selected: bool | None = None
+    assigned_policy_selected: bool | None = None
+    shadow_authority_applied: bool = False
+    promotion_eligible: bool = False
+    shadow_valid: bool = False
+    compact_output_json: str
+    input_json: str
+    record_hash: str
+    captured_at: str = Field(default_factory=_utcnow)
 
 
 class PiDecision(_Provenanced):

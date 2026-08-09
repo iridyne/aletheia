@@ -1,4 +1,5 @@
 """Unit tests for aletheia.analytics.exit_policy_advisor."""
+
 from __future__ import annotations
 
 from collections import Counter
@@ -15,7 +16,10 @@ def _make_bucket_counts(dominant: str, count: int, total: int) -> Counter:
 def test_diagnosis_entry_problem():
     diagnosis, suggested, confidence = _classify_exit_problem(
         rows=[],
-        avg_mfe=0.1, avg_mae=-2.0, avg_realized=-1.5, avg_capture=0.0,
+        avg_mfe=0.1,
+        avg_mae=-2.0,
+        avg_realized=-1.5,
+        avg_capture=0.0,
         common_close_reason="stop_loss",
         bucket_counts=Counter({"bad_entry": 5, "uncategorized": 2}),
         trade_count=7,
@@ -27,7 +31,10 @@ def test_diagnosis_entry_problem():
 def test_diagnosis_stop_too_tight_high_mfe():
     diagnosis, suggested, confidence = _classify_exit_problem(
         rows=[],
-        avg_mfe=1.5, avg_mae=-0.8, avg_realized=-0.5, avg_capture=0.2,
+        avg_mfe=1.5,
+        avg_mae=-0.8,
+        avg_realized=-0.5,
+        avg_capture=0.2,
         common_close_reason="stop_loss",
         bucket_counts=Counter({"stop_too_tight": 4, "clean_win": 1}),
         trade_count=5,
@@ -40,7 +47,10 @@ def test_diagnosis_stop_too_tight_high_mfe():
 def test_diagnosis_stop_too_tight_low_mfe():
     diagnosis, suggested, confidence = _classify_exit_problem(
         rows=[],
-        avg_mfe=0.5, avg_mae=-0.8, avg_realized=-0.5, avg_capture=0.2,
+        avg_mfe=0.5,
+        avg_mae=-0.8,
+        avg_realized=-0.5,
+        avg_capture=0.2,
         common_close_reason="stop_loss",
         bucket_counts=Counter({"stop_too_tight": 3, "clean_win": 2}),
         trade_count=5,
@@ -52,7 +62,10 @@ def test_diagnosis_stop_too_tight_low_mfe():
 def test_diagnosis_edge_lost():
     diagnosis, suggested, confidence = _classify_exit_problem(
         rows=[],
-        avg_mfe=2.5, avg_mae=-0.5, avg_realized=-0.2, avg_capture=0.1,
+        avg_mfe=2.5,
+        avg_mae=-0.5,
+        avg_realized=-0.2,
+        avg_capture=0.1,
         common_close_reason="manual",
         bucket_counts=Counter({"edge_lost": 4, "clean_win": 1}),
         trade_count=5,
@@ -61,14 +74,34 @@ def test_diagnosis_edge_lost():
     assert suggested == "add_trailing_stop_candidate"
 
 
+def test_diagnosis_profit_giveback_stays_shadow_only():
+    diagnosis, suggested, confidence = _classify_exit_problem(
+        rows=[],
+        avg_mfe=None,
+        avg_mae=None,
+        avg_realized=-1.0,
+        avg_capture=None,
+        common_close_reason="stop_loss",
+        bucket_counts=Counter({"profit_giveback_before_stop": 3, "bad_entry": 1}),
+        trade_count=4,
+    )
+
+    assert diagnosis == "profit_giveback_before_stop"
+    assert suggested == "evaluate_breakeven_or_trailing_shadow"
+    assert confidence == "medium"
+
+
 def test_diagnosis_time_decay_early_mfe():
-    rows = [
-        {"time_to_mfe_bars": 3, "bars_in_trade": 20} for _ in range(4)
-    ] + [{"time_to_mfe_bars": 15, "bars_in_trade": 20}]
+    rows = [{"time_to_mfe_bars": 3, "bars_in_trade": 20} for _ in range(4)] + [
+        {"time_to_mfe_bars": 15, "bars_in_trade": 20}
+    ]
 
     diagnosis, suggested, confidence = _classify_exit_problem(
         rows=rows,
-        avg_mfe=2.0, avg_mae=-0.5, avg_realized=0.3, avg_capture=0.15,
+        avg_mfe=2.0,
+        avg_mae=-0.5,
+        avg_realized=0.3,
+        avg_capture=0.15,
         common_close_reason="max_hold",
         bucket_counts=Counter({"time_exit_decay": 4, "clean_win": 1}),
         trade_count=5,
@@ -80,7 +113,10 @@ def test_diagnosis_time_decay_early_mfe():
 def test_diagnosis_exit_ok_signal_bad():
     diagnosis, suggested, confidence = _classify_exit_problem(
         rows=[],
-        avg_mfe=1.0, avg_mae=-1.5, avg_realized=-0.5, avg_capture=0.5,
+        avg_mfe=1.0,
+        avg_mae=-1.5,
+        avg_realized=-0.5,
+        avg_capture=0.5,
         common_close_reason="stop_loss",
         bucket_counts=Counter({"uncategorized": 5}),
         trade_count=5,
@@ -92,7 +128,10 @@ def test_diagnosis_exit_ok_signal_bad():
 def test_diagnosis_no_clear_issue():
     diagnosis, suggested, confidence = _classify_exit_problem(
         rows=[],
-        avg_mfe=1.5, avg_mae=-0.5, avg_realized=0.8, avg_capture=0.6,
+        avg_mfe=1.5,
+        avg_mae=-0.5,
+        avg_realized=0.8,
+        avg_capture=0.6,
         common_close_reason="take_profit",
         bucket_counts=Counter({"clean_win": 4, "uncategorized": 1}),
         trade_count=5,

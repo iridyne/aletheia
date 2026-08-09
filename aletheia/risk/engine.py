@@ -1032,15 +1032,16 @@ def _evaluate_proposal_locked(
     #    Respects kill_switch_enabled_live / kill_switch_enabled_demo toggles:
     #    the daily-loss violation is always recorded, but the kill switch only
     #    auto-trips when the matching toggle is enabled.
-    # Capital base is mode-specific (CR-RE-03): demo daily-loss must scale off the
-    # DEMO base (starting_capital_usdt), not the much smaller live cap. Using the
-    # live cap ($100) for a demo account meant a ~$1 daily-loss limit, so any small
-    # demo loss spuriously tripped the brake and rejected every subsequent demo
-    # trade for the rest of the UTC day. Mirrors check #13's demo/live base split.
-    if _is_live(proposal.execution_mode):
-        capital_base = risk.max_live_limited_cap_usdt or 0.0
-    else:
-        capital_base = risk.starting_capital_usdt or 0.0
+    # Capital base is mode/account-specific (CR-RE-03). The default follows the
+    # matching account equity; Custom uses only that mode's explicitly stored base.
+    capital_base, capital_base_reason = _resolve_capital_base(
+        proposal.execution_mode,
+        resolved_policy.policy,
+        cfg,
+    )
+    if capital_base is None:
+        violations.append(f"capital_base_unavailable:{capital_base_reason}")
+        capital_base = 0.0
     daily_loss_limit = capital_base * (risk.max_daily_loss_pct / 100.0)
     account_loss = authoritative_account_realized_loss(proposal.execution_mode)
     realized = account_loss.realized_pnl_usdt
@@ -1099,7 +1100,7 @@ def _evaluate_proposal_locked(
                 pre_order_entries,
             )
             projected = current_exposure + (proposal.price * proposal.quantity)
-            live_exposure_cap = risk.max_total_live_exposure_pct / 100.0 * risk.max_live_limited_cap_usdt
+            live_exposure_cap = risk.max_total_live_exposure_pct / 100.0 * capital_base
             if live_exposure_cap > 0 and projected > live_exposure_cap:
                 violations.append(f"max_total_live_exposure_exceeded:{projected}>{live_exposure_cap}")
 
@@ -1146,8 +1147,7 @@ def _evaluate_proposal_locked(
         # Distinct token keeps this out of the live-critical-violation count.
         if proposal.stop_price and proposal.price and proposal.quantity:
             demo_risk_amount = abs(proposal.price - proposal.stop_price) * proposal.quantity
-            demo_capital = risk.starting_capital_usdt or 0.0
-            demo_max_risk = demo_capital * (risk.max_demo_single_trade_risk_pct / 100.0)
+            demo_max_risk = capital_base * (risk.max_demo_single_trade_risk_pct / 100.0)
             if demo_max_risk > 0 and demo_risk_amount > demo_max_risk:
                 violations.append(f"exceeds_demo_single_trade_risk:{demo_risk_amount}>{demo_max_risk}")
 
@@ -1163,6 +1163,29 @@ def _evaluate_proposal_locked(
             demo_age = _market_data_age_seconds(proposal.symbol, market_type=proposal.market_type)
             if demo_age is None or demo_age > _MAX_DEMO_DATA_AGE_SECONDS:
                 violations.append(f"stale_market_data_demo:age={demo_age}")
+
+        # 12. Total Demo exposure uses the same mode policy as every other Demo
+        # percentage limit, but only exposure drawing on this proposal's account
+        # equity denominator. Existing Positions and both reservation layers must
+        # be counted before the proposed notional; otherwise sequential entries can
+        # each pass alone and exceed the configured portfolio boundary together.
+        if proposal.price and proposal.quantity:
+            current_exposure = _current_account_exposure(
+                proposal.execution_mode,
+                unresolved_entries,
+                pre_order_entries,
+            )
+            projected = current_exposure + (proposal.price * proposal.quantity)
+            demo_exposure_cap = (
+                resolved_policy.policy.capital.max_total_exposure_pct
+                / 100.0
+                * capital_base
+            )
+            if demo_exposure_cap > 0 and projected > demo_exposure_cap:
+                violations.append(
+                    "max_total_demo_exposure_exceeded:"
+                    f"{projected}>{demo_exposure_cap}"
+                )
 
     # 15. Lesson-based constraints — accepted lessons with actionable recommendations
     #     can impose symbol/direction blocks learned from past failures.
@@ -1638,14 +1661,18 @@ def _portfolio_drawdown_scale(execution_mode: str) -> float:
         return 1.0
 
 
-def _current_live_exposure(
+def _current_account_exposure(
+    execution_mode: str,
     unresolved_entries: list[_UnresolvedEntryReservation] | None = None,
     pre_order_entries: list[_PreOrderEntryReservation] | None = None,
 ) -> float:
-    """Sum live Positions plus every not-yet-represented entry allowance."""
+    """Sum notional exposure using one account-equity denominator."""
     total = 0.0
     for row in list_all_open_positions():
-        if not _is_live(row.get("execution_mode", "")):
+        if not _account_pool_matches(
+            str(row.get("execution_mode") or ""),
+            execution_mode,
+        ):
             continue
         try:
             quantity = float(row.get("quantity") or 0.0)
@@ -1656,7 +1683,7 @@ def _current_live_exposure(
     if unresolved_entries is None:
         unresolved_entries = _unresolved_entry_reservations()
     for entry in unresolved_entries:
-        if not _is_live(entry.execution_mode):
+        if not _account_pool_matches(entry.execution_mode, execution_mode):
             continue
         if entry.price is None or entry.reserved_quantity is None:
             # Evaluation already emits the stable invalid-data violation.  Never
@@ -1666,12 +1693,24 @@ def _current_live_exposure(
     if pre_order_entries is None:
         pre_order_entries = _pre_order_entry_reservations()
     for entry in pre_order_entries:
-        if not _is_live(entry.execution_mode):
+        if not _account_pool_matches(entry.execution_mode, execution_mode):
             continue
         if entry.price is None or entry.reserved_quantity is None:
             continue
         total += abs(entry.reserved_quantity * entry.price)
     return total
+
+
+def _current_live_exposure(
+    unresolved_entries: list[_UnresolvedEntryReservation] | None = None,
+    pre_order_entries: list[_PreOrderEntryReservation] | None = None,
+) -> float:
+    """Backward-compatible live-pool exposure projection."""
+    return _current_account_exposure(
+        "bitget_live_limited",
+        unresolved_entries,
+        pre_order_entries,
+    )
 
 
 def _check_correlation_exposure(
@@ -2226,6 +2265,28 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
     except Exception:
         pass
     return None
+
+
+def _resolve_capital_base(execution_mode: str, policy, cfg) -> tuple[float | None, str | None]:
+    """Resolve the one authoritative denominator for percentage risk limits.
+
+    Account equity is the shipped and migrated default.  It is deliberately
+    fail-closed: stale or unavailable account state never falls back to the
+    stored custom amount without an explicit operator policy change.
+    """
+    source = getattr(policy.capital, "base_source", "account_equity")
+    if source == "custom":
+        try:
+            value = float(policy.capital.base_usdt)
+        except (TypeError, ValueError):
+            return None, "invalid_custom_value"
+        if math.isfinite(value) and value > 0:
+            return value, None
+        return None, "invalid_custom_value"
+    equity = _account_equity(execution_mode, cfg)
+    if equity is None:
+        return None, f"account_equity_unavailable:{execution_mode}"
+    return equity, None
 
 
 def _config_active_execution_mode(cfg) -> str:

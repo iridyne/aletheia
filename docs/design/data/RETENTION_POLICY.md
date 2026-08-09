@@ -57,16 +57,17 @@ Enforced by:
 - Pre/post baseline row-count invariant captured by the backfill script;
   any mismatch aborts and restores from backup.
 
-### 2.2 Measured Learning Ledger (7 tables, permanent)
+### 2.2 Measured Learning Ledger (8 tables, permanent)
 
 `learning_experiments`, `learning_exposures`, `learning_hypotheses`,
 `learning_policy_epochs`, `learning_contribution_verdicts`,
-`learning_lifecycle_events`, `learning_job_health`.
+`learning_inference_decisions`, `learning_lifecycle_events`, `learning_job_health`.
 
-Deleting any supporting exposure silently mutates the verdict replay id at
-`contribution_runner.py:96`. `learning_lifecycle_events` are mirror-written
-to `audit_events` (`lifecycle.py:548-564`), so deletion breaks the audit
-invariant.
+Deleting any supporting exposure silently mutates verdict replay identity.
+Deleting a fixed-look plan or cutoff would also erase the proof that an
+authority-eligible verdict was prospective and consumed once.
+`learning_lifecycle_events` are mirror-written to `audit_events`, so deletion
+breaks the audit invariant.
 
 ---
 
@@ -111,6 +112,8 @@ Windows below are the Phase 3 defaults; each is wired through the new
 | `universe_snapshots` | 30d + protected-outcome guard | `created_at` | `prune_universe_snapshots` (NEW) | cascade `universe_members` | hard delete | A snapshot/member remains while an active experiment retains a referenced selected-member fallback outcome; otherwise write-guardrail #17 keeps volume bounded. |
 | `universe_members` | 30d + protected-outcome guard | via parent | `prune_universe_members` (NEW) | none | hard delete | FK parents cannot be deleted while guarded fallback evidence still references the member. |
 | `universe_scanner_runs` | 30d | `created_at` | `prune_universe_scanner_runs` (NEW) | none | hard delete | Aligns with parent-cohort granularity. |
+| `universe_twin_shadow_batches` | fixed 30d | `captured_at` | `prune_universe_twin_shadow_evidence` | logical parent; records deleted first | hard delete | Prospective Shadow scorer-run identity; repository enforces at most one capture per 55min. Policy epoch/assignment does not create Learning authority or clean-window extension. |
+| `universe_twin_shadow_records` | via fixed batch cutoff | parent batch `captured_at` | `prune_universe_twin_shadow_evidence` | deleted before batch | hard delete | Complete candidates within the sampled batch; exact one-horizon outcome key points to canonical `filter_candidate_outcomes`, which follows its own 30d/clean-window rules. No Learning exposure link is inferred. |
 | `universe_forward_outcomes` | 30d **+ clean_window_cutoff guard** | `entry_ts` | `prune_universe_forward_outcomes` | none | hard delete | Selected-member legacy fallback remains reproducible while an active open Learning experiment may still cite it. |
 | `alpha_control_observations` | 60d | `entry_ts` | `prune_alpha_control_observations` (NEW) | none | hard delete | Matches alpha_attribution default 30d reader window + 7d horizon + settlement lag + margin. Sample cadence reduced 6× (write-guardrail #16). |
 

@@ -135,6 +135,10 @@ export class RepairEngine {
         commandName: 'propose_risk_boundary_change',
         parameters: {
           changes,
+          risk_mode: actionable.metadata?.risk_mode,
+          policy_id: actionable.metadata?.policy_id,
+          policy_revision: actionable.metadata?.policy_revision,
+          policy_hash: actionable.metadata?.policy_hash,
           rationale: actionable.summary,
         },
       }

@@ -67,7 +67,7 @@ def test_active_runtime_scope_is_complete_and_narrow():
             "aletheia.portfolio.outcome_closure.close_position_verified"
         ),
         "learning_measurement": "enabled",
-        "learning_influence_default": "disabled",
+        "learning_influence_default": "enabled_owner_gated",
         "learning_authority_gate": (
             "aletheia.learning.experiments.apply_numeric_treatment"
         ),

@@ -198,17 +198,17 @@ export function AgentModelsTab({ status, settings, qc }: any) {
           <Toggle checked={bypassDistressGate} onChange={v => bypassDistressMut.mutate(v)} disabled={bypassDistressMut.isPending} />
         </Row>
         <Collapsible title="Paper Learning Experiments">
-          <p className="hint mb-2">Contribution measurement remains read-only. Lifecycle automation and paper influence are separately default-off, and never affect live trading.</p>
+          <p className="hint mb-2">Measured Paper Learning capability defaults on. A Shadow experiment still has no influence until explicit owner admission, and Learning never affects live trading.</p>
           <Row label="Contribution measurement" hint="Evaluate already-recorded shadow exposures and outcomes. This does not grant any influence.">
             <Toggle checked={contributionEvaluationEnabled} onChange={v => learningMut.mutate({ contribution_evaluation_enabled: v })} disabled={learningMut.isPending} />
           </Row>
-          <Row label="Lifecycle automation" hint="Allow stage recommendations to be recorded and, only with the gates below, move one paper experiment stage at a time. Default OFF.">
+          <Row label="Lifecycle automation" hint="Record stage recommendations and, only after owner admission and all safety gates, move one Paper experiment stage at a time. Default ON.">
             <Toggle checked={lifecycleAutomationEnabled} onChange={v => {
-              if (v && !confirm('Enable paper-experiment lifecycle automation? Paper influence remains separately disabled until you turn it on.')) return
+              if (v && !confirm('Enable Paper-experiment lifecycle automation? Experiment influence still requires owner admission and every safety gate.')) return
               learningMut.mutate({ lifecycle_automation_enabled: v })
             }} disabled={learningMut.isPending} />
           </Row>
-          <Row label="Paper influence" hint="Allow a fully gated paper experiment to use its treatment allocation. Default OFF; this never enables live trading.">
+          <Row label="Paper influence" hint="Make the measured Paper path available to an explicitly admitted, fully gated experiment. Default ON; this never enables live trading.">
             <Toggle checked={paperInfluenceEnabled} onChange={v => {
               if (v && !confirm('Enable paper Learning influence? Only explicitly allowlisted paths can use paper treatment.')) return
               learningMut.mutate({ paper_influence_enabled: v })

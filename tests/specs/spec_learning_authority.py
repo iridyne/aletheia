@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
+
+import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -194,6 +197,30 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
     assert exposure["candidate_key"] == applied_candidate
     assert '"value": 50.0' in exposure["before_json"]
     assert '"value": 40.0' in exposure["after_json"]
+    applied_manifest = json.loads(exposure["manifest_json"])
+    assert applied_manifest["authority_applied"] is True
+    assert applied_manifest["behavior_changed"] is True
+
+    noop_candidate = next(
+        f"noop:{i}" for i in range(1000)
+        if stable_assignment(experiment, f"noop:{i}") == "treatment"
+    )
+    noop = apply_numeric_treatment(
+        candidate_key=noop_candidate,
+        **{**common, "treatment": common["baseline"]},
+    )
+    noop_exposure = get_record("learning_exposures", noop.exposure_id)
+    noop_manifest = json.loads(noop_exposure["manifest_json"])
+
+    assert noop.assignment == "treatment"
+    assert noop.applied is False
+    assert noop.value == 50.0
+    assert noop.reason == "baseline:no_effective_treatment_delta"
+    assert noop_exposure["before_json"] == noop_exposure["after_json"]
+    assert noop_manifest["authority_applied"] is True
+    assert noop_manifest["authority_reason"] == "legacy_promote_compatibility"
+    assert noop_manifest["behavior_changed"] is False
+    assert noop_manifest["behavior_change_reason"] == "no_effective_treatment_delta"
 
     later_control = next(
         f"later-control:{i}" for i in range(1000)
@@ -201,6 +228,25 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
     )
     control = apply_numeric_treatment(candidate_key=later_control, **common)
     assert not control.applied and control.value == 50.0
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), float("-inf")])
+def test_numeric_treatment_rejects_non_finite_values(invalid):
+    from aletheia.learning.experiments import apply_numeric_treatment
+
+    with pytest.raises(ValueError, match="must be finite"):
+        apply_numeric_treatment(
+            path_id="universe_family_calibration",
+            scope={"family": "momentum", "direction": "long", "market_type": "perp"},
+            action={"type": "opportunity_multiplier", "multiplier": 1.1},
+            source_cohort="universe_forward_outcomes:clean_net:v2",
+            target_horizon="4h",
+            candidate_key="non-finite-candidate",
+            baseline=0.0,
+            treatment=invalid,
+            consumer="universe_allocator",
+            consumer_stage="opportunity_score",
+        )
 
 
 @spec_claim(
@@ -222,8 +268,19 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
 )
 def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
     from aletheia.learning.experiments import apply_numeric_treatment, stable_assignment
-    from aletheia.learning.ledger import get_record, insert_experiment, insert_record
-    from aletheia.learning.models import LearningContributionVerdict, LearningExperiment
+    from aletheia.learning.fixed_look import register_fixed_look_decision
+    from aletheia.learning.ledger import (
+        get_record,
+        insert_experiment,
+        insert_lifecycle_event,
+        insert_record,
+    )
+    from aletheia.learning.models import (
+        LearningContributionVerdict,
+        LearningExperiment,
+        LearningHypothesis,
+        LearningLifecycleEvent,
+    )
     from aletheia.learning.verdicts import METRIC_VERSION
     from aletheia.storage.sqlite import get_db
 
@@ -243,7 +300,7 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
     behavior_contract_hash = first_exposure["behavior_contract_hash"]
     now = datetime.now(timezone.utc)
     activation = LearningContributionVerdict(
-        verdict_id="paper-activation-positive",
+        verdict_id="paper-shadow-admission-evidence",
         experiment_id=parent.experiment_id,
         hypothesis_id=parent.hypothesis_id,
         stage="shadow",
@@ -251,8 +308,8 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
         window_end=now.isoformat(),
         unique_treatment_n=1,
         unique_control_n=1,
-        verdict="positive",
-        reason="positive shadow measurement",
+        verdict="insufficient_data",
+        reason="no_actual_intervention",
         created_at=now.isoformat(),
         policy_epoch=epoch,
         target_horizon="4h",
@@ -260,7 +317,16 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
             metric_version=METRIC_VERSION,
             code_commit="older-build",
             behavior_contract_hash=behavior_contract_hash,
-            harm_metrics_json='{"harm_state":"clear","breached":false}',
+            harm_metrics_json=json.dumps({
+                "harm_state": "clear",
+                "breached": False,
+                "assigned_treatment_n": 1,
+                "authority_applied_treatment_n": 0,
+                "actual_intervention_treatment_n": 0,
+                "baseline_treatment_n": 1,
+                "treatment_authority_rejection_reasons": {},
+                "treatment_non_intervention_reasons": {},
+            }),
     )
     assert insert_record("learning_contribution_verdicts", activation)
     db = get_db()
@@ -285,6 +351,27 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
         started_at=now.isoformat(),
     )
     assert insert_experiment(experiment)
+    assert insert_lifecycle_event(LearningLifecycleEvent(
+        dedup_key="paper-shadow-admission-evidence:shadow:admit_trial",
+        hypothesis_id=parent.hypothesis_id,
+        experiment_id=parent.experiment_id,
+        successor_experiment_id=experiment.experiment_id,
+        verdict_id=activation.verdict_id,
+        from_stage="shadow",
+        to_stage="paper_10",
+        action="admit_trial",
+        reason="owner_admitted:test",
+        policy_epoch=epoch,
+        audit_actor="human",
+        audit_source="test",
+        created_at=now.isoformat(),
+    ))
+    register_fixed_look_decision(
+        experiment,
+        LearningHypothesis(**get_record("learning_hypotheses", parent.hypothesis_id)),
+        policy_epoch=epoch,
+        behavior_contract_hash=behavior_contract_hash,
+    )
     if not was_in_tx:
         db.commit()
     treatment_candidate = next(
@@ -312,7 +399,16 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
         stage="paper_10", target_horizon="4h", outcome_contract_version="v1",
             metric_version=METRIC_VERSION, code_commit="newer-build",
             behavior_contract_hash=behavior_contract_hash,
-            harm_metrics_json='{"harm_state":"clear","breached":false}',
+            harm_metrics_json=json.dumps({
+                "harm_state": "clear",
+                "breached": False,
+                "assigned_treatment_n": 1,
+                "authority_applied_treatment_n": 1,
+                "actual_intervention_treatment_n": 1,
+                "baseline_treatment_n": 0,
+                "treatment_authority_rejection_reasons": {},
+                "treatment_non_intervention_reasons": {},
+            }),
     )
     insert_record("learning_contribution_verdicts", positive)
     authorized_candidate = next(
@@ -460,6 +556,72 @@ def test_universe_calibration_is_neutral_shadow_before_authority(monkeypatch):
     }
 
 
+def test_shadow_consumer_forces_unexpected_authority_to_baseline_and_alerts(
+    monkeypatch,
+):
+    from aletheia.infra.events import clear_infra_events, list_infra_events
+    from aletheia.learning import authority, experiments
+    from aletheia.learning.authority import AuthorityDecision
+    from aletheia.storage.sqlite import get_db
+
+    clear_infra_events()
+    monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+    monkeypatch.setattr(experiments, "stable_assignment", lambda *_args: "treatment")
+    monkeypatch.setattr(
+        authority,
+        "resolve_learning_authority",
+        lambda *_args, **_kwargs: AuthorityDecision(
+            True,
+            "impossible_shadow_authorized",
+            "shadow",
+            0.5,
+            None,
+            None,
+        ),
+    )
+
+    decision = experiments.apply_numeric_treatment(
+        path_id="universe_family_calibration",
+        scope={"family": "momentum", "direction": "long", "market_type": "perp"},
+        action={"type": "opportunity_multiplier", "multiplier": 1.1},
+        source_cohort="universe_forward_outcomes:clean_net:v2",
+        target_horizon="1h",
+        candidate_key="candidate:shadow-invariant",
+        assignment_key="run:shadow-invariant",
+        baseline=1.0,
+        treatment=1.1,
+        consumer="universe_allocator",
+        consumer_stage="score",
+        outcome_candidate_key="candidate:shadow-invariant:1h",
+    )
+
+    assert decision.value == 1.0
+    assert decision.applied is False
+    assert decision.reason == (
+        "baseline:shadow_authority_invariant_violation:"
+        "impossible_shadow_authorized"
+    )
+    row = get_db().execute(
+        "SELECT manifest_json FROM learning_exposures WHERE exposure_id=?",
+        (decision.exposure_id,),
+    ).fetchone()
+    manifest = json.loads(row["manifest_json"])
+    assert manifest["authority_applied"] is False
+    assert manifest["behavior_changed"] is False
+    assert manifest["authority_reason"] == (
+        "shadow_authority_invariant_violation:impossible_shadow_authorized"
+    )
+    events = list_infra_events(min_severity="critical")
+    assert [(event["source"], event["code"], event["entity_id"]) for event in events] == [
+        (
+            "learning_authority",
+            "shadow_authority_provenance_invalid",
+            decision.experiment_id,
+        )
+    ]
+    clear_infra_events()
+
+
 @spec_claim(SpecClaim(
     "LE-B22", "learning_evolution", "§9.3 factor identity", "L2b",
     "Producer, ranker, and Operator context use factor_key as the same stable identity field.",
@@ -525,6 +687,7 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
         assignment_salt="salt-p03",
         min_samples_per_arm=1,
         min_market_days=0,
+        stage="paper_10",
         status="active",
         started_at=(datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
     )
@@ -557,10 +720,23 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
             assignment_unit_key=ck,
             candidate_key=ck, outcome_candidate_key=f"{ck}:4h",
             outcome_source="fixed_horizon_candidate", concurrent_policy_epoch=epoch,
-                experiment_stage="shadow",
-                code_commit="test-commit",
-                behavior_contract_hash=behavior_contract_hash,
-            ))
+            before_json='{"value":100.0}',
+            after_json=(
+                '{"value":110.0}' if arm == "treatment" else '{"value":100.0}'
+            ),
+            manifest_json=json.dumps({
+                "authority_applied": arm == "treatment",
+                "authority_reason": "current_stage_measurement_healthy",
+                "behavior_changed": arm == "treatment",
+                "behavior_change_reason": (
+                    "effective_treatment_delta"
+                    if arm == "treatment" else "control_assignment"
+                ),
+            }),
+            experiment_stage="paper_10",
+            code_commit="test-commit",
+            behavior_contract_hash=behavior_contract_hash,
+        ))
 
     now = datetime.now(timezone.utc).isoformat()
     scored = [

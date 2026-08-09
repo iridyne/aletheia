@@ -534,12 +534,18 @@ def _build_pending_signal_queue(
     # its exact carrier visible so a wake after process death can recover the
     # already-stored Proposal. Once any non-submitting final exists, the carrier
     # is terminally consumed and disappears from the queue.
+    after_pending = (
+        "(julianday({alias}.created_at)>julianday(p.created_at) "
+        "OR (julianday({alias}.created_at)=julianday(p.created_at) "
+        "AND {alias}.rowid>p.rowid))"
+    )
     unique_entry_final = (
         "(SELECT COUNT(*) FROM pi_decisions all_f "
         " WHERE all_f.opportunity_id=p.opportunity_id "
         " AND COALESCE(all_f.signal_source, 'market_observer')="
         "     COALESCE(p.signal_source, 'market_observer') "
-        " AND all_f.action NOT IN ('signal_pending', 'close', 'reduce'))=1"
+        " AND all_f.action NOT IN ('signal_pending', 'close', 'reduce') "
+        f" AND {after_pending.format(alias='all_f')})=1"
     )
     exact_final_identity = (
         "f.symbol IS p.symbol AND f.direction IS p.direction "
@@ -552,6 +558,7 @@ def _build_pending_signal_queue(
         "  AND COALESCE(f.signal_source, 'market_observer') = "
         "      COALESCE(p.signal_source, 'market_observer') "
         f"  AND {exact_final_identity} "
+        f"  AND {after_pending.format(alias='f')} "
         "  AND f.proposal_status = 'submitting' "
         f"  AND {unique_entry_final}"
     )
@@ -562,6 +569,7 @@ def _build_pending_signal_queue(
         "  AND COALESCE(f.signal_source, 'market_observer') = "
         "      COALESCE(p.signal_source, 'market_observer') "
         f"  AND {exact_final_identity} "
+        f"  AND {after_pending.format(alias='f')} "
         "  AND COALESCE(f.proposal_status, '') != 'submitting' "
         f"  AND {unique_entry_final}"
     )

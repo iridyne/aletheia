@@ -115,6 +115,79 @@ def test_trade_proposal_to_order_flow(tmp_path):
     reset_db()
 
 
+def test_native_close_consumes_position_not_entry_risk_decision(tmp_path):
+    setup_test_db(tmp_path)
+    proposal = TradeProposal(
+        symbol="ETH/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        price=3000.0,
+    )
+    repo.insert_trade_proposal(proposal)
+    decision = RiskDecision(
+        proposal_id=proposal.id,
+        approved=True,
+        risk_score=0.5,
+        allowed_execution_mode="paper_internal",
+        proposal_execution_mode="paper_internal",
+        decision_role="authoritative",
+        evaluated_quantity=proposal.quantity,
+        proposal_commit_hash=proposal.commit_hash,
+    )
+    repo.insert_risk_decision(decision)
+    entry = Order(
+        proposal_id=proposal.id,
+        risk_decision_id=decision.id,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        direction=proposal.direction,
+        order_type=proposal.order_type,
+        quantity=proposal.quantity,
+        price=proposal.price,
+        execution_mode=proposal.execution_mode,
+        status="filled",
+    )
+    repo.insert_order(entry)
+    position = Position(
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        direction=proposal.direction,
+        quantity=proposal.quantity,
+        entry_price=proposal.price,
+        current_price=proposal.price,
+        execution_mode=proposal.execution_mode,
+        proposal_id=proposal.id,
+        order_id=entry.id,
+        status="open",
+    )
+    repo.insert_position(position)
+
+    close = Order(
+        proposal_id=proposal.id,
+        position_id=position.id,
+        close_reason="take_profit",
+        client_order_id=f"close-{position.id}",
+        symbol=position.symbol,
+        market_type=position.market_type,
+        direction=position.direction,
+        order_type="market",
+        quantity=position.quantity,
+        price=3100.0,
+        execution_mode=position.execution_mode,
+        status="filled",
+    )
+    repo.insert_order(close)
+    stored = repo.get_order(close.id)
+    assert stored["position_id"] == position.id
+    assert stored["risk_decision_id"] is None
+
+    forged = close.model_copy(update={"id": "forged-close", "risk_decision_id": decision.id})
+    with pytest.raises(ValueError, match="consumes Position authority"):
+        repo.insert_order(forged)
+    reset_db()
+
+
 def test_serenity_repo_crud(tmp_path):
     setup_test_db(tmp_path)
     theme = SerenityTheme(name="AI Supply Chain")

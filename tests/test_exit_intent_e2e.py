@@ -55,7 +55,7 @@ def test_default_provenance_when_no_operator_stop():
     assert eff.provenance == "default"
 
 
-def test_adjust_then_proactive_exit_lifecycle():
+def test_adjust_then_proactive_exit_lifecycle(monkeypatch):
     """Full managed lifecycle on a real position: authorize → adjust → proactive limit
     exit → executor fires it — all through the real components."""
     from aletheia.portfolio.position_manager import (
@@ -66,6 +66,11 @@ def test_adjust_then_proactive_exit_lifecycle():
     import aletheia.portfolio.position_manager as pm
 
     pid = _open_paper_position(stop_price=95.0, expected_horizon_hours=24.0, stop_source="operator")
+    monkeypatch.setattr(
+        pm,
+        "get_fresh_price_for_protective_close",
+        lambda symbol, market_type, *, venue="": 100.0,
+    )
 
     # 1. Operator tightens the stop + extends the horizon (adjust_position, M3).
     adj = apply_operator_adjustment(pid, new_stop=97.0, new_horizon=48.0, reason="run-up, protect + extend")
@@ -85,16 +90,11 @@ def test_adjust_then_proactive_exit_lifecycle():
     assert _select_one("positions", pid)["exit_limit_price"] == 110.0
 
     # 4. Price reaches the limit → the executor market-closes it (operator_limit_exit).
-    import types
-    monkeypatch = pytest.MonkeyPatch()
-    try:
-        monkeypatch.setattr(pm, "get_fresh_price_for_protective_close", lambda s, market_type, *, venue="": 111.0)
-        closes = []
-        monkeypatch.setattr(
-            pm, "close_position_routed",
-            lambda pid_, reason, **kw: closes.append((pid_, reason)) or {"closed": True},
-        )
-        evaluate_open_positions()
-        assert (pid, "operator_limit_exit") in closes
-    finally:
-        monkeypatch.undo()
+    monkeypatch.setattr(pm, "get_fresh_price_for_protective_close", lambda s, market_type, *, venue="": 111.0)
+    closes = []
+    monkeypatch.setattr(
+        pm, "close_position_routed",
+        lambda pid_, reason, **kw: closes.append((pid_, reason)) or {"closed": True},
+    )
+    evaluate_open_positions()
+    assert (pid, "operator_limit_exit") in closes

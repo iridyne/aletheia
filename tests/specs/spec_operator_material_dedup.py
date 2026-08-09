@@ -21,7 +21,11 @@ The safety contract is entirely carried by this fingerprint:
 These claims are pure/offline (no LLM): the fingerprint is a deterministic hash.
 """
 
+import json
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
+
+from aletheia.agent_shell import commands
 
 from aletheia.agent_shell.trading_context import (
     operator_decision_material_fingerprint,
@@ -174,3 +178,63 @@ def test_ctx_adapter_ignores_reasoning_and_rank():
 def test_ctx_adapter_fails_open_when_candidate_missing():
     ctx = {"layer1": {"feature_index": {}}, "layer2": {"pending_signals": []}}
     assert material_fingerprint_from_candidate_ctx(ctx, "nope") is None
+
+
+@spec_claim(
+    SpecClaim("MD-S06", "decision_lifecycle_contract", "DL-INV-23 material dedup consumer", "L2b",
+              "the pre-inference reader suppresses a fresh carrier only when its symbol, "
+              "direction, market type, and material fingerprint match an active defer; a "
+              "changed fingerprint reopens evaluation."),
+)
+def test_symbol_level_defer_reader_uses_material_fingerprint(tmp_path, monkeypatch):
+    """The existing B1.6 consumer, not a generic prompt cache, owns re-eval suppression."""
+    from tests.test_entry_logic import setup_env
+    from aletheia.storage.sqlite import get_db
+
+    setup_env(tmp_path, monkeypatch)
+    db = get_db()
+    now = "2999-01-01T00:00:00+00:00"
+    snapshot = {
+        "symbol": "CHZ/USDT",
+        "direction": "short",
+        "market_type": "perp",
+        "material_fingerprint": "same-material",
+        "defer_until": now,
+        "defer_reason": "operator_low_conviction",
+    }
+    db.execute(
+        "INSERT INTO operator_evaluation_events "
+        "(id,dedup_key,event_kind,trigger,pending_unresolved_total,"
+        "pending_visible_count,queue_snapshot_json,data_health_json,policy_epoch_id,created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            "dedup-fixture", "dedup-fixture-key",
+            "operator_decision_deferred_low_conviction", "test", 1, 1,
+            json.dumps(snapshot), "{}", "b1.6", now,
+        ),
+    )
+    db.commit()
+
+    hit = commands._existing_deferred_context_observation(
+        "different-context-fingerprint",
+        opportunity_id="fresh-carrier",
+        policy_epoch_id="b1.6",
+        window_minutes=120,
+        symbol="CHZ/USDT",
+        direction="short",
+        market_type="usdt_futures",
+        material_fingerprint="same-material",
+        symbol_level=True,
+    )
+    assert hit and hit["id"] == "dedup-fixture"
+    assert commands._existing_deferred_context_observation(
+        "different-context-fingerprint",
+        opportunity_id="fresh-carrier",
+        policy_epoch_id="b1.6",
+        window_minutes=120,
+        symbol="CHZ/USDT",
+        direction="short",
+        market_type="usdt_futures",
+        material_fingerprint="changed-material",
+        symbol_level=True,
+    ) is None

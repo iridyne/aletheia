@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import logging
+import math
 from uuid import uuid4
 
 _log = logging.getLogger(__name__)
@@ -59,6 +60,67 @@ def stable_assignment(experiment: LearningExperiment, candidate_key: str) -> str
 def _learning_gate_reason() -> str | None:
     from aletheia.learning.control import learning_influence_gate_reason
     return learning_influence_gate_reason()
+
+
+def _enforce_shadow_authority_provenance(
+    *,
+    path_id: str,
+    experiment: LearningExperiment,
+    authorized: bool,
+    reason: str | None,
+) -> tuple[bool, str]:
+    """Keep every Shadow consumer on baseline and surface provenance drift.
+
+    The authority resolver is the primary gate.  This final consumer-side
+    invariant prevents a resolver regression or state race from granting Shadow
+    behavior and makes any unexpected rejection reason immediately visible in
+    the existing infra-event channel.  The normalized reason is also persisted
+    on the immutable exposure, so the cohort can never silently admit it.
+    """
+
+    normalized_reason = str(reason or "authority_reason_unavailable")
+    if experiment.stage != "shadow":
+        return bool(authorized), normalized_reason
+    if not authorized and normalized_reason == "experiment_stage_not_paper":
+        return False, normalized_reason
+
+    violation_reason = (
+        f"shadow_authority_invariant_violation:{normalized_reason}"
+    )
+    _log.critical(
+        "learning shadow authority invariant violated "
+        "path=%s experiment=%s status=%s authorized=%s reason=%s",
+        path_id,
+        experiment.experiment_id,
+        experiment.status,
+        bool(authorized),
+        normalized_reason,
+    )
+    try:
+        from aletheia.infra.events import emit_infra_event
+
+        emit_infra_event(
+            severity="critical",
+            source="learning_authority",
+            code="shadow_authority_provenance_invalid",
+            message=(
+                "A Shadow Learning exposure reached the consumer with "
+                "unexpected authority provenance and was forced to baseline."
+            ),
+            action="Inspect the experiment; do not admit or pool this cohort.",
+            entity_id=experiment.experiment_id,
+            metadata={
+                "path_id": path_id,
+                "experiment_stage": experiment.stage,
+                "experiment_status": experiment.status,
+                "authority_authorized": bool(authorized),
+                "authority_reason": normalized_reason,
+            },
+            dedupe_sec=600,
+        )
+    except Exception:  # pragma: no cover - visibility must not weaken the gate
+        _log.exception("failed to emit Shadow authority invariant event")
+    return False, violation_reason
 
 
 def _ensure_experiment(
@@ -278,15 +340,19 @@ def apply_numeric_treatment(
     assignment_key: str | None = None,
 ) -> InfluenceDecision:
     """Record prospective exposure and apply only an authorized paper treatment."""
+    baseline_value = float(baseline)
+    treatment_value = float(treatment)
+    if not math.isfinite(baseline_value) or not math.isfinite(treatment_value):
+        raise ValueError("numeric Learning treatment values must be finite")
     gate_reason = _learning_gate_reason()
     if gate_reason is not None:
-        return InfluenceDecision(float(baseline), False, "disabled", gate_reason)
+        return InfluenceDecision(baseline_value, False, "disabled", gate_reason)
     if not get_learning_path(path_id).measurement_supported:
         return InfluenceDecision(
-            float(baseline), False, "disabled", "measurement_unsupported"
+            baseline_value, False, "disabled", "measurement_unsupported"
         )
     if not candidate_key:
-        return InfluenceDecision(float(baseline), False, "unassigned", "missing_candidate_key")
+        return InfluenceDecision(baseline_value, False, "unassigned", "missing_candidate_key")
 
     hypothesis, experiment = _ensure_experiment(
         path_id=path_id, scope=scope, action=action, source_cohort=source_cohort,
@@ -297,7 +363,7 @@ def apply_numeric_treatment(
         # nothing.  Accruing further samples here would rebuild the evidence
         # base for a hypothesis that has already been rejected.
         return InfluenceDecision(
-            float(baseline), False, "unassigned", "hypothesis_refrozen",
+            baseline_value, False, "unassigned", "hypothesis_refrozen",
             hypothesis_id=hypothesis.hypothesis_id,
         )
     assignment = stable_assignment(experiment, assignment_key or candidate_key)
@@ -312,9 +378,31 @@ def apply_numeric_treatment(
     )
     from aletheia.learning.authority import resolve_learning_authority
     authority = resolve_learning_authority(path_id, experiment, policy_epoch)
-    authorized = authority.authorized
-    applied = authorized and assignment == "treatment"
-    value = float(treatment if applied else baseline)
+    authorized, authority_reason = _enforce_shadow_authority_provenance(
+        path_id=path_id,
+        experiment=experiment,
+        authorized=authority.authorized,
+        reason=authority.reason,
+    )
+    # Permission provenance and realized behavior are intentionally distinct:
+    # a treatment assignment can be authorized yet produce no numeric delta.
+    authority_applied = authorized and assignment == "treatment"
+    delta = treatment_value - baseline_value
+    behavior_changed = (
+        authority_applied
+        and math.isfinite(delta)
+        and delta != 0.0
+    )
+    value = treatment_value if behavior_changed else baseline_value
+    behavior_change_reason = (
+        "effective_treatment_delta"
+        if behavior_changed
+        else "no_effective_treatment_delta"
+        if authority_applied
+        else "control_assignment"
+        if assignment == "control"
+        else "authority_not_applied"
+    )
     stage = experiment.stage if authorized else "shadow_refrozen"
     dedup_key = (
         f"{experiment.experiment_id}:{candidate_key}:{stage}:{policy_epoch}:"
@@ -332,13 +420,15 @@ def apply_numeric_treatment(
         assignment_unit_key=assignment_unit_key,
         candidate_key=candidate_key,
         opportunity_id=opportunity_id,
-        before_json=json.dumps({"value": float(baseline)}, sort_keys=True),
+        before_json=json.dumps({"value": baseline_value}, sort_keys=True),
         after_json=json.dumps({"value": value}, sort_keys=True),
         manifest_json=json.dumps({
             **(manifest or {}),
-            "proposed_value": float(treatment),
-            "authority_applied": applied,
-            "authority_reason": authority.reason,
+            "proposed_value": treatment_value,
+            "authority_applied": authority_applied,
+            "authority_reason": authority_reason,
+            "behavior_changed": behavior_changed,
+            "behavior_change_reason": behavior_change_reason,
         }, sort_keys=True),
         outcome_candidate_key=outcome_candidate_key,
         outcome_source="fixed_horizon_candidate" if outcome_candidate_key else None,
@@ -356,8 +446,14 @@ def apply_numeric_treatment(
         if stored:
             exposure = LearningExposure(**stored)
     return InfluenceDecision(
-        value, applied, assignment,
-        authority.reason if applied else f"baseline:{authority.reason}",
+        value, behavior_changed, assignment,
+        (
+            authority_reason
+            if behavior_changed
+            else f"baseline:{behavior_change_reason}"
+            if authority_applied
+            else f"baseline:{authority_reason}"
+        ),
         hypothesis.hypothesis_id, experiment.experiment_id, exposure.exposure_id,
     )
 

@@ -17,6 +17,175 @@ def _prepare_db(tmp_path, monkeypatch):
     run_migrations()
 
 
+@pytest.mark.asyncio
+async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
+    tmp_path, monkeypatch,
+):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.agents import market_observer as observer
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.repositories import get_opportunity, insert_opportunity
+
+    init_tool_registry()
+    original = Opportunity(
+        id="scanner-owned-opportunity",
+        symbol="SLX/USDT",
+        market="usdt_futures",
+        direction_bias="short",
+        thesis="[mean_reversion] overbought extension",
+        confidence="medium",
+        confidence_score=49,
+        source_agent="universe_scanner",
+        execution_eligible=True,
+        universe_snapshot_id="scanner-snapshot",
+        universe_member_id="scanner-member",
+        scanner_family="mean_reversion",
+        metadata=json.dumps({
+            "evidence_manifest": {
+                "version": "opportunity-information-integrity-v1",
+                "t0": {
+                    "status": "available",
+                    "trigger_type": "universe_scanner",
+                    "direction": "short",
+                    "total_score": 49.105,
+                },
+            },
+        }),
+    )
+    insert_opportunity(original)
+
+    async def contrary_read(*_args, **_kwargs):
+        return ({
+            "direction_bias": "long",
+            "confidence": "high",
+            "confidence_score": 70,
+            "rationale": "volume confirms a bullish breakout",
+            "key_observations": ["4h breakout above the upper band"],
+        }, None)
+
+    monkeypatch.setattr(observer, "llm_structured", contrary_read)
+    monkeypatch.setattr(observer, "record_step", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(observer, "log_tool", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "aletheia.learning.prompt_bundles.authorize_observer_learning_bundle",
+        lambda *_args, **_kwargs: ("", None),
+    )
+    prefetched = observer._SymbolPrefetch(
+        context_str="SLX/USDT technical context",
+        debug={},
+        pre_filter={
+            "passed": True,
+            "rsi": 75.0,
+            "atr_pct": 5.0,
+            "keyword_hits": [],
+            "matched_rules": ["rsi_deviation"],
+        },
+        signal_score=1.0,
+        funding_rate_val=0.01,
+        open_interest_val=1_000_000.0,
+        oi_delta_val=1.0,
+    )
+
+    opportunity_id, error = await observer._analyze_symbol(
+        symbol=original.symbol,
+        market_type="perp",
+        permission_mode="Observe",
+        run_id="observer-direction-conflict",
+        linked_strategy_id=None,
+        memory_block="",
+        universe_snapshot_id=original.universe_snapshot_id,
+        universe_member_id=original.universe_member_id,
+        scanner_family=original.scanner_family,
+        scanner_direction=original.direction_bias,
+        force_full=True,
+        _prefetched=prefetched,
+    )
+
+    assert error is None
+    assert opportunity_id == original.id
+    stored = get_opportunity(original.id)
+    assert stored["direction_bias"] == "short"
+    assert stored["confidence"] == "medium"
+    assert stored["confidence_score"] == 49
+    assert stored["thesis"].startswith(
+        "[observer_direction_conflict scanner=short observer=long]"
+    )
+    assessment = json.loads(stored["metadata"])["observer_assessment"]
+    assert assessment == {
+        "version": "market-observer-assessment/v1",
+        "direction_bias": "long",
+        "confidence": "high",
+        "confidence_score": 70,
+        "scanner_direction": "short",
+        "direction_conflict": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_proposal_preflight_rejects_scanner_t0_direction_conflict(
+    tmp_path, monkeypatch,
+):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.trading_decision import (
+        DecisionUnavailable,
+        TradingDecision,
+        prepare_decision_as_proposal,
+    )
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.repositories import insert_opportunity
+
+    opportunity = Opportunity(
+        id="corrupted-direction-carrier",
+        symbol="SLX/USDT",
+        market="usdt_futures",
+        direction_bias="long",
+        source_agent="universe_scanner",
+        scanner_family="mean_reversion",
+        metadata=json.dumps({
+            "evidence_manifest": {
+                "version": "opportunity-information-integrity-v1",
+                "t0": {
+                    "status": "available",
+                    "trigger_type": "universe_scanner",
+                    "direction": "short",
+                },
+            },
+        }),
+    )
+    insert_opportunity(opportunity)
+    decision = TradingDecision(
+        action="trade",
+        symbol=opportunity.symbol,
+        market_type=opportunity.market,
+        direction="long",
+        conviction=70,
+        reasoning="trade the corrupted long carrier",
+        opportunity_id=opportunity.id,
+        scanner_family=opportunity.scanner_family,
+    )
+
+    with pytest.raises(
+        DecisionUnavailable,
+        match="opportunity_direction_lineage_conflict",
+    ):
+        await prepare_decision_as_proposal(decision, "paper_internal")
+
+    assert decision.filter_trace[-1] == {
+        "filter_name": "opportunity_direction_lineage",
+        "stage": "proposal_submission",
+        "decision": "rejected",
+        "reason_code": "opportunity_direction_lineage_conflict",
+        "inputs": {
+            "opportunity_id": opportunity.id,
+            "source_agent": "universe_scanner",
+            "scanner_direction": "short",
+            "decision_direction": "long",
+        },
+        "parameters": {"direction_match_required": True},
+    }
+
+
 def test_universe_opportunity_metadata_has_bounded_exact_t0_trigger():
     from aletheia.universe.signal_emitter import emit_deterministic_opportunities
 

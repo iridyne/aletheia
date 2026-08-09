@@ -165,11 +165,15 @@ def test_resolve_stale_shadows_uses_historical_bar():
               "verdicts (Universe, Ranker, System Operator, Learning, Serenity), "
               "include baseline/sample/delta/confidence/causal-grade fields, use "
               "insufficient_data instead of fake conclusions when samples are thin, "
-              "and identify suspected code modules for bottleneck layers.",
+              "and preserve directional evidence as diagnostic while only measured "
+              "contribution is eligible for an actionable bottleneck.",
               status="implemented"),
 )
 def test_alpha_attribution_contract_shape_on_empty_db():
-    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.analytics.alpha_attribution import (
+        _main_bottleneck,
+        build_alpha_attribution_audit,
+    )
 
     report = build_alpha_attribution_audit(days=30)
     assert set(report["verdicts"]) == {
@@ -182,6 +186,30 @@ def test_alpha_attribution_contract_shape_on_empty_db():
                     "measurement_status", "suspected_modules", "reason"):
             assert key in item
     assert report["main_bottleneck"]["layer"] == "insufficient_data"
+
+    weak_negative = {
+        "name": "Ranker Alpha",
+        "verdict": "negative",
+        "delta": -10.0,
+        "contribution_verdict": "insufficient_data",
+        "measurement_status": "directional_evidence_only",
+        "suspected_modules": ["aletheia/agents/paper_trader_ranker.py"],
+        "reason": "directional only",
+    }
+    measured_negative = {
+        "name": "Universe Alpha",
+        "verdict": "negative",
+        "delta": -1.0,
+        "contribution_verdict": "negative",
+        "measurement_status": "measured_contribution",
+        "suspected_modules": ["aletheia/universe/allocator.py"],
+        "reason": "prospective control",
+    }
+    assert _main_bottleneck({"ranker": weak_negative})["layer"] == "insufficient_data"
+    assert _main_bottleneck({
+        "ranker": weak_negative,
+        "universe": measured_negative,
+    })["layer"] == "Universe Alpha"
 
 
 # ---------------------------------------------------------------------------

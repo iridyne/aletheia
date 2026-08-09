@@ -34,6 +34,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "connectivity_monitor",
     "portfolio_snapshot",
     "price_feed",
+    "position_manager",
     "ohlcv_nightly_backfill",
     "ohlcv_active_backfill",
     "exchange_sync",
@@ -60,6 +61,11 @@ _ESSENTIAL_JOBS: set[str] = {
 # can reference the same source of truth and stay in sync when the interval
 # changes here.
 MARKET_DATA_INTERVAL_MINUTES = 5
+
+# A persisted overdue Learning measurement should recover after the gateway is
+# ready, but before the legacy two-minute startup catch-up.  The latter remains
+# as a retry if this direct evaluator run fails before recording its watermark.
+_LEARNING_EVALUATOR_RESTART_DELAY_SEC = 60
 
 # Track which jobs were selectively paused (for targeted resume).
 _selectively_paused_jobs: set[str] = set()
@@ -484,6 +490,14 @@ _EXECUTOR_WORKERS = {
     # cascade into ``database is locked`` across unrelated jobs.
     "io": 1,
     "fast_io": 1,
+    # Protective lifecycle checks must not queue behind 60--300 second market,
+    # reconciliation, or settlement jobs.  The position manager is the only job
+    # in this lane and still uses SQLite's normal single-writer coordination.
+    "protective": 1,
+    # Contribution measurement and its one-shot restart recovery share one
+    # serial lane.  This preserves their mutual exclusion without letting the
+    # 31-job general IO queue postpone the current measurement window.
+    "learning_measurement": 1,
     "observer": 1,
     # LLM-backed jobs also write run logs/artifacts. Keep them serial so a slow
     # model call cannot make two agent jobs compete for SQLite at once.
@@ -876,6 +890,53 @@ def _operator_assessment_due(
         return True
 
 
+def _initial_learning_evaluator_run_time(
+    interval_minutes: int,
+    *,
+    now: datetime | None = None,
+) -> datetime:
+    """Preserve the durable measurement deadline across gateway restarts.
+
+    APScheduler's in-memory interval trigger otherwise restarts its cadence from
+    process boot. A restart just before ``next_due_at`` could postpone the sole
+    contribution evaluator by almost a full interval while its durable health
+    row correctly reports overdue. A past deadline gets one bounded post-boot
+    recovery attempt; the existing two-minute startup catch-up remains a retry.
+    """
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    else:
+        current = current.astimezone(timezone.utc)
+    default_run = current + timedelta(minutes=max(15, int(interval_minutes)))
+    try:
+        from aletheia.learning.control import get_learning_job_health
+
+        raw_due = get_learning_job_health(
+            "learning_contribution_evaluator"
+        ).next_due_at
+        if not raw_due:
+            return default_run
+        durable_due = datetime.fromisoformat(
+            str(raw_due).replace("Z", "+00:00")
+        )
+        if durable_due.tzinfo is None:
+            durable_due = durable_due.replace(tzinfo=timezone.utc)
+        else:
+            durable_due = durable_due.astimezone(timezone.utc)
+    except (AttributeError, TypeError, ValueError):
+        return default_run
+    except Exception:
+        logger.warning(
+            "Learning evaluator deadline unavailable during scheduler startup"
+        )
+        return default_run
+
+    if durable_due <= current:
+        return current + timedelta(seconds=_LEARNING_EVALUATOR_RESTART_DELAY_SEC)
+    return min(durable_due, default_run)
+
+
 def init_scheduler() -> BackgroundScheduler | None:
     """Initialize and start the background scheduler.
 
@@ -995,9 +1056,14 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=15, next_run_time=datetime.now() + timedelta(seconds=10),
         executor="fast_io",
     )
+    # Protective paper exits consume the exact-instrument cache refreshed above
+    # every 30 seconds.  A five-minute cadence left a four-and-a-half-minute blind
+    # window where a stop/target could be crossed and recover before the next
+    # sampled mark.  Match the available mark cadence; this remains sampled-paper
+    # semantics and does not claim exchange-native or tick-level triggering.
     _scheduler.add_job(
-        _guarded("position_manager", _run_position_manager), "interval", minutes=5, id="position_manager",
-        misfire_grace_time=60, executor="io",
+        _guarded("position_manager", _run_position_manager), "interval", seconds=30,
+        id="position_manager", misfire_grace_time=60, executor="protective",
     )
     _scheduler.add_job(
         _guarded("position_reconcile", _run_position_reconcile), "interval", minutes=5, id="position_reconcile",
@@ -1130,16 +1196,21 @@ def init_scheduler() -> BackgroundScheduler | None:
     # Learning is disabled or layered pause is active.  Lifecycle control is a
     # separate autonomous job and is stopped by the shared Learning gate.
     _learning_interval = max(15, int(cfg.learning.evaluation_interval_minutes))
+    _learning_evaluator_initial_run = _initial_learning_evaluator_run_time(
+        _learning_interval,
+    )
     _scheduler.add_job(
         _guarded("learning_contribution_evaluator", _run_learning_contribution_evaluator),
         "interval", minutes=_learning_interval, id="learning_contribution_evaluator",
-        misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
-        next_run_time=datetime.now() + timedelta(minutes=_learning_interval),
+        misfire_grace_time=300, max_instances=1, coalesce=True,
+        executor="learning_measurement",
+        next_run_time=_learning_evaluator_initial_run,
     )
     _scheduler.add_job(
         _guarded("learning_measurement_startup_catchup", _run_measurement_startup_catchup),
         "date", run_date=datetime.now() + timedelta(minutes=2),
-        id="learning_measurement_startup_catchup", misfire_grace_time=None, executor="io",
+        id="learning_measurement_startup_catchup", misfire_grace_time=None,
+        executor="learning_measurement",
     )
     _scheduler.add_job(
         _guarded("learning_lifecycle_controller", _run_learning_lifecycle_controller),
@@ -1285,27 +1356,57 @@ def pause_scheduler(layered: bool | None = None) -> None:
     )
 
 
-def resume_scheduler() -> None:
-    """Resume all paused jobs (whether blanket or selectively paused)."""
+def resume_scheduler() -> bool:
+    """Resume paused jobs only when no durable pause owner remains.
+
+    The owner check and APScheduler mutation share the pause-ownership transition
+    lock.  A concurrent gate therefore cannot acquire a durable owner between the
+    check and the resume action.  The final-owner release path re-enters this same
+    ``RLock`` after persisting the empty owner set.
+
+    Returns ``False`` only when an active owner blocks the request.  Otherwise the
+    request keeps the historical best-effort semantics, including the configured-
+    disabled/no-scheduler case.
+    """
+    # Lazy import avoids a module cycle: pause_ownership imports scheduler only
+    # inside acquire/release operations.
+    from aletheia.agent_runtime.pause_ownership import _pause_transition_lock
+
     global _scheduler
-    if _scheduler is None:
-        init_scheduler()
+    with _pause_transition_lock:
+        cfg = load_config()
+        active_owners = tuple(sorted(cfg.runtime.pause_owners))
+        if active_owners:
+            logger.warning(
+                "resume_scheduler: blocked by durable pause owner(s): %s",
+                ", ".join(active_owners),
+            )
+            return False
+
         if _scheduler is None:
-            logger.warning("resume_scheduler: scheduler unavailable (disabled or init failed)")
-        return
-    # If blanket-paused, resume the whole scheduler
-    if _scheduler.state == STATE_PAUSED:
-        _scheduler.resume()
-        logger.info("Scheduler resumed (from blanket pause)")
-    # Also resume any selectively-paused jobs
-    if _selectively_paused_jobs:
-        for job_id in list(_selectively_paused_jobs):
-            try:
-                _scheduler.resume_job(job_id)
-            except Exception:
-                pass
-        logger.info("Scheduler resumed %d selectively-paused jobs", len(_selectively_paused_jobs))
-        _selectively_paused_jobs.clear()
+            init_scheduler()
+            if _scheduler is None:
+                logger.warning(
+                    "resume_scheduler: scheduler unavailable (disabled or init failed)"
+                )
+            return True
+        # If blanket-paused, resume the whole scheduler
+        if _scheduler.state == STATE_PAUSED:
+            _scheduler.resume()
+            logger.info("Scheduler resumed (from blanket pause)")
+        # Also resume any selectively-paused jobs
+        if _selectively_paused_jobs:
+            for job_id in list(_selectively_paused_jobs):
+                try:
+                    _scheduler.resume_job(job_id)
+                except Exception:
+                    pass
+            logger.info(
+                "Scheduler resumed %d selectively-paused jobs",
+                len(_selectively_paused_jobs),
+            )
+            _selectively_paused_jobs.clear()
+        return True
 
 
 def get_pause_state() -> dict:
@@ -1853,6 +1954,7 @@ def _run_dreaming_agent():
             logger.info("dreaming_agent: lesson extraction outputs: %s", outputs)
         if errors:
             logger.warning("dreaming_agent: lesson extraction errors: %s", errors)
+            _record_job_failure("dreaming_daily", "; ".join(errors))
     except TimeoutError:
         logger.warning("dreaming_agent: lesson extraction timed out")
         _record_job_failure("dreaming_daily", "lesson extraction timed out")
@@ -2120,12 +2222,20 @@ def _run_position_manager():
     # `if cfg.runtime.paused: return` here is a safety regression.
     # Invariant: execution_contract §10 + spec PL-PM-07.
     try:
+        from aletheia.portfolio.protective_barrier import (
+            run_due_position_protection_cycle,
+        )
         from aletheia.portfolio.position_manager import evaluate_open_positions
+
+        barrier_summary = run_due_position_protection_cycle()
         summary = evaluate_open_positions()
-        if isinstance(summary, dict) and summary.get("errors"):
+        reported_errors = list(barrier_summary.get("errors") or [])
+        if isinstance(summary, dict):
+            reported_errors.extend(summary.get("errors") or [])
+        if reported_errors:
             logger.warning(
                 "position_manager completed with %d reported errors",
-                len(summary["errors"]),
+                len(reported_errors),
             )
             _record_job_failure(
                 "position_manager", "position_manager_reported_errors"
@@ -2580,8 +2690,15 @@ def _run_cleanup():
             "serenity_run_events": repo.prune_serenity_run_events(r.serenity_run_events_days),
             "runtime_sessions": repo.prune_runtime_sessions(r.runtime_sessions_days),
             "backtest_runs": repo.prune_backtest_runs(r.backtest_runs_days),
-            # Universe: scanner_runs first (child rows), then snapshots which
-            # cascade-deletes universe_members inside its own transaction.
+            # Twin Shadow evidence is a logical child of scanner runs (no FK so
+            # retention remains safe across legacy databases). It is not
+            # experiment evidence, so its fixed retention must not be extended
+            # by a Learning clean window.
+            "universe_twin_shadow_evidence": repo.prune_universe_twin_shadow_evidence(
+                r.universe_scanner_runs_days,
+            ),
+            # Universe: scanner_runs next, then snapshots which cascade-delete
+            # universe_members inside its own transaction.
             "universe_scanner_runs": repo.prune_universe_scanner_runs(r.universe_scanner_runs_days),
             "universe_snapshots": repo.prune_universe_snapshots(
                 r.universe_snapshots_days,

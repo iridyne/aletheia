@@ -24,6 +24,41 @@ def _bypass_candidate_technical_preflight(monkeypatch) -> None:
     )
 
 
+def _stub_tradable_exact_instrument(monkeypatch) -> None:
+    """Keep seam tests focused after the independent tradability preflight."""
+    def capture(symbol, *, exchange, market_type):
+        physical_market = (
+            "perp" if market_type in {"usdt_futures", "swap"} else market_type
+        )
+        return {
+            "btc_entry_price": 90_000.0,
+            "regime_tag": "neutral",
+            "market_context": {
+                "instrument": {
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "market_type": physical_market,
+                },
+                "data_completeness": 1.0,
+                "tradability": {
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "score": 82.0,
+                    "spread_bps": 2.0,
+                    "depth_10bps_usd": 100_000.0,
+                    "volume_24h_usd": 50_000_000.0,
+                    "is_tradable": True,
+                },
+                "leverage": {},
+            },
+        }
+
+    monkeypatch.setattr(
+        "aletheia.trading.entry_snapshot.capture_attribution_snapshot",
+        capture,
+    )
+
+
 # ---------------------------------------------------------------------------
 # L2a — Structural claims (carriers + their fields)
 # ---------------------------------------------------------------------------
@@ -1098,6 +1133,201 @@ def test_proposal_preflight_unavailable_does_not_claim_pending_source(
     assert [tuple(row) for row in price_trace] == [
         ("rejected", "market_price_unavailable")
     ]
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S72",
+        "decision_lifecycle_contract",
+        "§3 retryable proposal preflight",
+        "L2b",
+        "A parsed AI trade is deferred before Proposal creation when the fresh exact-instrument "
+        "tradability context is missing or explicitly non-tradable.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize(
+    ("tradability", "reason"),
+    [
+        ({}, "market_tradability_unavailable"),
+        ({
+            "symbol": "BTC/USDT",
+            "exchange": "binance",
+            "score": 26.0,
+            "spread_bps": 24.0,
+            "depth_10bps_usd": 2_000.0,
+            "volume_24h_usd": 5_000_000.0,
+            "execution_cost_estimate_bps": 15.0,
+            "is_tradable": False,
+            "observed_at": "2026-08-08T00:00:00+00:00",
+        }, "market_not_tradable"),
+    ],
+)
+def test_ai_proposal_preflight_defers_unusable_exact_tradability(
+    tmp_path, monkeypatch, tradability, reason
+):
+    import asyncio
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell import trading_decision
+    from aletheia.config.loader import load_config
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import MarketSnapshot
+
+    venue = load_config().market_data.ccxt_exchange or "binance"
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol="BTC/USDT",
+        market_type="spot",
+        exchange=venue,
+        price=100.0,
+    ))
+    monkeypatch.setattr(trading_decision, "_proposal_direction_overheated", lambda *_args: None)
+    monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda _ctx: [])
+    monkeypatch.setattr(
+        "aletheia.trust.guard_chain.summarize",
+        lambda _verdicts: {"blocks": [], "details": []},
+    )
+    monkeypatch.setattr(
+        "aletheia.trading.entry_snapshot.capture_attribution_snapshot",
+        lambda symbol, *, exchange, market_type: {
+            "btc_entry_price": 90_000.0,
+            "regime_tag": "neutral",
+            "market_context": {
+                "instrument": {
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "market_type": market_type,
+                },
+                "data_completeness": 1.0,
+                "tradability": tradability,
+                "leverage": {},
+            },
+        },
+    )
+    decision = trading_decision.TradingDecision(
+        action="trade",
+        symbol="BTC/USDT",
+        direction="long",
+        conviction=90,
+        reasoning="trade only when the exact instrument is executable",
+        market_type="spot",
+        stop_price=98.0,
+        take_profit=104.0,
+        parameter_rationale_required=True,
+        parameter_rationale={
+            key: f"reason for {key}"
+            for key in trading_decision._ENTRY_PARAMETER_KEYS
+        },
+    )
+
+    with pytest.raises(trading_decision.DecisionUnavailable, match=reason) as exc_info:
+        asyncio.run(
+            trading_decision.prepare_decision_as_proposal(decision, "paper_internal")
+        )
+
+    assert exc_info.value.stage == "operator_entry_plan"
+    assert decision.filter_trace[-1]["filter_name"] == "market_tradability_gate"
+    assert decision.filter_trace[-1]["reason_code"] == reason
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S73",
+        "decision_lifecycle_contract",
+        "§3 retryable proposal preflight",
+        "L2b",
+        "A parsed AI trade with fresh tradable exact-instrument context creates a Proposal "
+        "whose immutable attribution retains that venue and physical market identity.",
+        status="implemented",
+    ),
+)
+def test_ai_proposal_persists_tradable_exact_instrument_attribution(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    import json
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell import trading_decision
+    from aletheia.config.loader import load_config
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import MarketSnapshot
+
+    venue = load_config().market_data.ccxt_exchange or "binance"
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol="BTC/USDT",
+        market_type="perp",
+        exchange=venue,
+        price=100.0,
+    ))
+    monkeypatch.setattr(trading_decision, "_proposal_direction_overheated", lambda *_args: None)
+    monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda _ctx: [])
+    monkeypatch.setattr(
+        "aletheia.trust.guard_chain.summarize",
+        lambda _verdicts: {"blocks": [], "details": []},
+    )
+
+    tradability = {
+        "symbol": "BTC/USDT",
+        "exchange": venue,
+        "score": 82.0,
+        "spread_bps": 2.0,
+        "depth_10bps_usd": 100_000.0,
+        "volume_24h_usd": 50_000_000.0,
+        "execution_cost_estimate_bps": 2.0,
+        "is_tradable": True,
+        "observed_at": "2026-08-08T00:00:00+00:00",
+    }
+    monkeypatch.setattr(
+        "aletheia.trading.entry_snapshot.capture_attribution_snapshot",
+        lambda symbol, *, exchange, market_type: {
+            "btc_entry_price": 90_000.0,
+            "regime_tag": "neutral",
+            "market_context": {
+                "instrument": {
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "market_type": "perp",
+                },
+                "data_completeness": 1.0,
+                "tradability": tradability,
+                "leverage": {},
+            },
+        },
+    )
+    decision = trading_decision.TradingDecision(
+        action="trade",
+        symbol="BTC/USDT",
+        direction="long",
+        conviction=90,
+        reasoning="the exact perp instrument is executable",
+        market_type="usdt_futures",
+        stop_price=98.0,
+        take_profit=104.0,
+        parameter_rationale_required=True,
+        parameter_rationale={
+            key: f"reason for {key}"
+            for key in trading_decision._ENTRY_PARAMETER_KEYS
+        },
+    )
+
+    prepared = asyncio.run(
+        trading_decision.prepare_decision_as_proposal(decision, "paper_internal")
+    )
+
+    assert prepared["status"] == "prepared"
+    stored = json.loads(prepared["proposal"].attribution_snapshot)
+    assert stored["market_context"]["instrument"] == {
+        "symbol": "BTC/USDT",
+        "exchange": venue,
+        "market_type": "perp",
+    }
+    assert stored["market_context"]["tradability"]["is_tradable"] is True
+    assert decision.filter_trace[-1]["reason_code"] == "market_tradable"
 
 
 @spec_claim(
@@ -3339,6 +3569,7 @@ def test_submitting_claim_without_proposal_resumes_submission(tmp_path, monkeypa
             "reason": "test_blocks_execution_after_persistence",
         }
 
+    _stub_tradable_exact_instrument(monkeypatch)
     monkeypatch.setattr(trading_decision, "_assess_opportunity", repeat_same_intent)
     monkeypatch.setattr(gateway, "_execute_proposal", store_without_executing)
     monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json")
@@ -3708,6 +3939,7 @@ def test_claim_rechecks_source_after_early_authority_check(
             "reason": "test_blocks_execution_after_persistence",
         }
 
+    _stub_tradable_exact_instrument(monkeypatch)
     monkeypatch.setattr(
         trading_decision, "_assess_opportunity", choose_still_fresh_source
     )
@@ -4082,6 +4314,7 @@ def test_single_candidate_scope_requires_explicit_market_for_selected_carrier(
         )
         return {**prior, "stop_price": 98.0}
 
+    _stub_tradable_exact_instrument(monkeypatch)
     monkeypatch.setattr(trading_decision, "_assess_opportunity", choose_spot_market)
     monkeypatch.setattr(
         trading_decision, "_reassess_direct_skip", repair_spot_plan
@@ -5116,6 +5349,7 @@ def test_claim_rejects_pending_conflict_inserted_after_context(
             "reason": "test blocks execution after persistence",
         }
 
+    _stub_tradable_exact_instrument(monkeypatch)
     monkeypatch.setattr(trading_decision, "_assess_opportunity", choose_exact_pending)
     monkeypatch.setattr(
         reflection, "claim_decision", insert_conflict_immediately_before_claim

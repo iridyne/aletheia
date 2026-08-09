@@ -3,7 +3,7 @@
 > **角色**:定义订单从 proposal 到交易所的完整通路,及其原子性/幂等/对账保证。
 > **基线**:代码为底(file:line),意图差距标 ⚠️;冲突时文档为准。
 > **不变式来源**:[trust_and_change_control §1, §6.3](../../governance/policies/trust_and_change_control.md)。
-> Last updated: 2026-08-07 · 维护者:Aletheia Dev
+> Last updated: 2026-08-08 · 维护者:Aletheia Dev
 
 ---
 
@@ -14,7 +14,7 @@
 | 入口 | `submit_proposal(...) -> dict` | `aletheia/execution/gateway.py:16` |
 | 重执行 | `execute_existing_proposal(proposal_id, mode)` | `gateway.py:52` |
 
-**因果链(不可断,[trust §1.1](../../governance/policies/trust_and_change_control.md)):**
+**开仓因果链(不可断,[trust §1.1](../../governance/policies/trust_and_change_control.md)):**
 
 ```
 trade_proposals.id
@@ -23,6 +23,19 @@ trade_proposals.id
   → fills.order_id
   → positions (从 orders/fills 投影;schema 现直接携带 `proposal_id` + `order_id` + `opportunity_id`,新 position 开仓即写,adopt 也走同一路径 — #30/#50)
 ```
+
+**平仓因果链**不伪造第二个 RiskDecision：
+
+```
+open positions.id
+  → orders.position_id + orders.close_reason（risk_decision_id=NULL）
+  → fills.order_id
+  → 同一 positions.id 收敛为 closed
+```
+
+开仓 Order 消费 approved authoritative RiskDecision；平仓 Order 消费它所减少的
+open Position，并必须匹配 Position 的 proposal/instrument/execution mode/quantity 与
+durable close client identity。入场 RiskDecision 不能被复制到平仓单上冒充退出授权。
 
 **契约**:一个 proposed trade 只创建一次 `trade_proposals` 行。批准/拒绝/风控/执行**绝不**创建第二行。所有订单**必须**经 Execution Gateway——agent/dashboard/telegram 不得直接调交易所下单([trust §6.3](../../governance/policies/trust_and_change_control.md))。
 
@@ -34,7 +47,7 @@ trade_proposals.id
 |----|------|--------|------|
 | Proposal | `TradeProposal(symbol, direction, quantity, price, execution_mode...)`; `agent_rationale.entry_parameters` carries the immutable final-value/source/reason snapshot for AI-originated entries | `pending/approved→executing→executed` / `→rejected` / `→error`; uncertain exchange submission uses `submission_unknown`, incomplete local paper materialization uses `materialization_missing` | `models.py:102` |
 | RiskDecision | 见 [risk_engine_contract §3](risk_engine_contract.md) | 不可变(一次写) | `models.py:125` |
-| Order | `Order(proposal_id, risk_decision_id, symbol, direction, qty, price, mode, status)` | `pending→submitted→filled` / `→error` | `models.py:136` |
+| Order | 入场：`Order(proposal_id, risk_decision_id, ...)`；平仓：`Order(proposal_id, position_id, close_reason, risk_decision_id=NULL, ...)` | `pending→submitted→filled` / `→error` | `models.py:136` |
 | Fill | `Fill(order_id, fill_price, fill_quantity, fee)` | 不可变 | `models.py:155` |
 | Position | `Position(symbol, direction, qty, entry_price, stop_price, take_profit_price, mode...)` + 入场环境(btc_entry_price/regime_tag) + `exit_reasoning` (actual close actor/source/trigger) | `open→closed` | `models.py:165` |
 
@@ -309,7 +322,11 @@ exchange 调用必须留在 helper 外并保持原失败语义。close 的审计
 
 **System Operator 退出路径独立**:`review_portfolio_state()`(LLM 决策)暴露
 `hold / adjust_position / close_one`。Position wake 直接进入该命令，而不是复用
-entry-opportunity schema；提示只包含 wake 指向的完整 Position 和 adverse evidence。
+entry-opportunity schema；可操作列表只包含 wake 指向的完整 Position 和 adverse
+evidence，但必须同时给出全局 open-position 数量和完整可用时的全局 unrealized PnL，
+并明确区分全局只读上下文与本次 review scope。任何一个 Position 缺失合法 PnL 时，
+全局 PnL 必须显示 `not available`，不得把缺失值当零；其他 Position 的身份和参数不进入
+prompt，也不能成为本次动作目标。这些决策时事实同时写入 `pi_decisions` manifest。
 `adjust_position` 复用 `apply_operator_adjustment()`，`close_one` 按明确 Position
 经**同一** `close_position_routed()` 入口平仓，且不传调用方 fallback price；
 manager 必须重新取得精确新鲜 mark。最终结果和 wake fingerprint 写入
@@ -322,14 +339,22 @@ manager 必须重新取得精确新鲜 mark。最终结果和 wake fingerprint �
 退出时，重启后的下一轮 durable Position 扫描仍会恢复同一唤醒。daemon 遇到
 `review_unavailable`、超时、异常或未确认的 `close_one`，必须恢复原
 `position_id + wake batch` 后重试，不能降级成无持仓上下文的 entry evaluation，
-也不能记 job success。只有有效 `hold`、已完成 `adjust_position`、已确认本地平仓，
-或已有 durable pending-close claim 的交易所平仓才确认该 horizon；后者由既有
-reconciliation 路径收敛，复核重试不得创建替代 Close Order。
+也不能记 job success。非 horizon 的 adverse review 可用 `hold` 完成；仍开放的
+`HORIZON_DUE` Position 则只允许已确认平仓，或把 `new_horizon_hours` 明确延长到
+严格晚于当前持仓 age 的 `adjust_position` 完成。`hold`、空调整、只改 stop/target、
+以及未越过当前 age 的 horizon 都保持未完成并重试，不得确认原 horizon。混合批次中
+已关闭 Position 的陈旧 horizon wake 不得限制另一笔开放 Position 的 action schema，
+也不得被写入确认。交易所平仓已有 durable pending-close claim 时可确认，由既有
+reconciliation 路径收敛；复核重试不得创建替代 Close Order。
 
 ### 10.2 close_position_routed 路由契约(唯一平仓中枢)
 
 `close_position_routed(pos_id, reason, fallback_exit_price)` 是单仓**唯一**平仓出口，自动循环与 Operator 路径都经此；`fallback_exit_price` 仅保留调用兼容，不能授权 `paper_internal` 成交：
 
+- **平仓授权语义**：native close Order 消费正在减少的 open Position，不复用入场
+  RiskDecision。`risk_decision_id` 必须为 `NULL`；`position_id + close_reason +
+  close-{position_id}` 以及与 Position 完全一致的 proposal/instrument/mode/quantity
+  构成持久授权链。完整性扫描必须按 entry/close 分型，不能把合法平仓误报为缺失风控。
 - 按 `execution_mode` 分派:`bitget_demo→close_demo_position` / `okx_demo→close_okx_position` / `binance_testnet→close_testnet_position` / `paper_internal→本地 close`。
 - **live 守卫(不变式)**:`live_limited` 模式且 `allow_live=False` → `RaiseError`,阻止自动循环误平**真实资金**持仓(`position_manager.py:59`)。守卫在中枢层,不分散到各调用方。
 - 交易所腿不可跳过:demo 模式仍走真实交易所 close;`paper_internal` 本地撮合。
@@ -344,6 +369,9 @@ reconciliation 路径收敛，复核重试不得创建替代 Close Order。
   Outcome，超过 pending-close 时限仍走一次性 reconciliation-required escalation。当前 Bitget adapter
   已将 hedge-close 错误码 `22002`/`25227` 作上述分类；OKX/Binance adapter 尚无经权威 fixture 锁定的
   无仓位错误码，因此普通字符串拒单仍保持 `error`，不得靠文本猜测升级。可执行检查：`PL-RX-22`。
+  `PL-RX-24` 进一步锁定组合链路：原 typed rejection 经两次独立完整账户视图和只读 verified-exit
+  查询收敛为 administrative close 时，原 Close Order 保持唯一且被拒绝的事实，不新增 Fill、PnL、
+  Outcome hook 或 Learning 样本，也不再次触达交易所下单入口。
 - **启动准入必须读取权威 Position 主账**：Startup Behavior Gate 的 `pending_closes` 检查不能只读取
   遗留 `ps_positions.status=unknown` 投影；它还必须读取 open `positions.pending_close_status`。
   `submission_unknown`、`materialization_missing`、`position_absence_unverified`、`overfilled` 立即阻挡新的
@@ -381,6 +409,22 @@ Proposal 的这一权限边界。
 - ⚠️ **live 对账仍受 paused**:`_run_reconciliation`(live-only,`scheduler.py:822`)仍有 paused 门,本次未改(live 默认禁用,且仅做收敛检测,优先级低)。若未来 live 常开,应一并对齐本节语义。
 
 **Spec claims**:`PL-PM-01~06`(mark/stop/TP/max_hold/ATR/audit) + `PL-PM-07`(paused 不挡保护性平仓) + `PL-PM-10~13`(fresh exact venue/market mark / 逐仓 close 与 market-aware 失败可见) + `PL-PCM-05/11~15`(dashboard 全量枚举、mark 预检、单仓 fallback 隔离与部分失败诚实返回)。
+
+### 10.6 Protective Barrier（schema v9；仅新建 paper_internal）
+
+Schema v9 提供保护屏障持久化契约；字段、身份、CAS 与 retention
+不变量由 [data_model §11](../data/data_model.md#11-protective-barrier-contract-schema-v9-storage-new-paper-runtime-active)
+统一定义。
+
+具有已解析保护价位的新建 `paper_internal` Position 在原入场事务内冻结初始 ExitPlan、exact
+venue/symbol/physical-market 与首个非回溯 1m cursor；没有保护价位的既有合法 Paper 入场不伪造
+ExitPlan 或 cursor。protective executor 每 30 秒逐根读取已闭合的 exact
+1m bar；若 durable cursor 所需 bar 尚未落库，同一 worker 会以该 cursor 作为 `since`
+从冻结 venue 增量刷新，绕过通用 OHLCV TTL cache，并在有界预算内按时间顺序追平积压。
+缺失数据不 fallback，同 bar 同触 stop/target 时固定 stop-first。bar 只授权触发，
+成交仍通过既有 `close_position_routed` 重新取得 fresh mark 并应用 adverse slippage，随后把
+真实 Order/Fill write-once 链回触发证据。迁移和重启不回填旧 Position；Risk、外部 Execution、
+Live 权限与配置默认值均保持不变。
 
 ## 11. Position 关闭与结果完整性（OI-S01/S02、OI-B01～B05、OI-C01～C06 implemented；自然 Runtime soak 待补）
 

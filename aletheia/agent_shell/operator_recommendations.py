@@ -331,20 +331,45 @@ def _format_boundary_value(value):
     return str(value)
 
 
+def _risk_policy_identity(candidate: dict) -> tuple | None:
+    """Return an immutable mode-policy identity or None for legacy/partial evidence."""
+    risk_mode = str(candidate.get("risk_mode") or "")
+    policy_id = str(candidate.get("policy_id") or "")
+    policy_hash = str(candidate.get("policy_hash") or "")
+    try:
+        policy_revision = int(candidate.get("policy_revision"))
+    except (TypeError, ValueError):
+        return None
+    if risk_mode not in {"demo", "live"} or not policy_id or not policy_hash:
+        return None
+    return risk_mode, policy_id, policy_revision, policy_hash
+
+
+def _risk_boundary_scope(candidate: dict, boundary_key: str | None = None) -> tuple | None:
+    """Return the exact mode-policy boundary represented by a proposal candidate."""
+    identity = _risk_policy_identity(candidate)
+    key = str(boundary_key or candidate.get("boundary_key") or "")
+    if identity is None or not key:
+        return None
+    return (*identity, key)
+
+
 def _finalize_risk_boundary_summary(candidate: dict) -> dict:
     label = _risk_boundary_label(str(candidate.get("boundary_key") or "risk boundary"))
+    risk_mode = str(candidate.get("risk_mode") or "")
+    mode_label = f"{risk_mode} " if risk_mode else ""
     current_value = candidate.get("current_value")
     suggested_value = candidate.get("suggested_value")
     count = int(candidate.get("rejection_count") or 0)
     if isinstance(suggested_value, bool):
         action = "enable" if suggested_value else "change"
         candidate["summary"] = (
-            f"Recent risk rejections hit the {label} {count} times and should create a human-reviewed proposal to "
+            f"Recent {mode_label}risk rejections hit the {label} {count} times and should create a human-reviewed proposal to "
             f"{action} {candidate.get('boundary_key')}."
         )
     else:
         candidate["summary"] = (
-            f"Recent risk rejections hit the {label} {count} times and should create a human-reviewed proposal to "
+            f"Recent {mode_label}risk rejections hit the {label} {count} times and should create a human-reviewed proposal to "
             f"raise {candidate.get('boundary_key')} from {_format_boundary_value(current_value)} to "
             f"{_format_boundary_value(suggested_value)}."
         )
@@ -352,125 +377,169 @@ def _finalize_risk_boundary_summary(candidate: dict) -> dict:
 
 
 def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, cfg) -> dict | None:
-    risk = cfg.risk
     proposal_mode = str((proposal or {}).get("execution_mode") or "")
+    if not proposal_mode:
+        return None
+
+    try:
+        from aletheia.risk.policy import resolve_risk_policy
+
+        resolved = resolve_risk_policy(cfg, proposal_mode)
+    except Exception:
+        # A recommendation without an authoritative mode policy would point at
+        # an ambiguous legacy field.  Keep this proposal-only surface fail closed.
+        return None
+
+    risk = resolved.legacy_view(cfg.risk)
+
+    def candidate(
+        *,
+        boundary_key: str,
+        violation_kind: str,
+        current_value,
+        suggested_value,
+    ) -> dict:
+        return {
+            "boundary_key": boundary_key,
+            "violation_kind": violation_kind,
+            "risk_mode": resolved.mode,
+            "policy_id": resolved.policy.policy_id,
+            "policy_revision": resolved.policy.revision,
+            "policy_hash": resolved.policy_hash,
+            "current_value": current_value,
+            "suggested_value": suggested_value,
+            "changes": {boundary_key: suggested_value},
+        }
+
+    def effective_capital_base() -> float:
+        try:
+            from aletheia.risk.engine import _resolve_capital_base
+
+            value, _ = _resolve_capital_base(proposal_mode, resolved.policy, cfg)
+            return float(value or 0.0)
+        except Exception:
+            return 0.0
 
     parsed = _parse_numeric_threshold_violation(
         violation,
         "exceeds_demo_position_notional:",
     )
     if parsed is not None:
+        if resolved.mode != "demo":
+            return None
         actual, _ = parsed
         current = float(risk.max_demo_position_notional_usdt or 0.0)
         suggested = _round_up(max(actual, current), 2)
         if suggested <= current:
             return None
-        return {
-            "boundary_key": "max_demo_position_notional_usdt",
-            "violation_kind": "exceeds_demo_position_notional",
-            "current_value": current,
-            "suggested_value": suggested,
-            "changes": {"max_demo_position_notional_usdt": suggested},
-        }
+        return candidate(
+            boundary_key="max_demo_position_notional_usdt",
+            violation_kind="exceeds_demo_position_notional",
+            current_value=current,
+            suggested_value=suggested,
+        )
 
     parsed = _parse_numeric_threshold_violation(
         violation,
         "exceeds_max_position_notional:",
     )
     if parsed is not None:
+        if resolved.mode != "live":
+            return None
         actual, _ = parsed
         current = float(risk.max_live_position_notional_usdt or 0.0)
         suggested = _round_up(max(actual, current), 2)
         if suggested <= current:
             return None
-        return {
-            "boundary_key": "max_live_position_notional_usdt",
-            "violation_kind": "exceeds_max_position_notional",
-            "current_value": current,
-            "suggested_value": suggested,
-            "changes": {"max_live_position_notional_usdt": suggested},
-        }
+        return candidate(
+            boundary_key="max_live_position_notional_usdt",
+            violation_kind="exceeds_max_position_notional",
+            current_value=current,
+            suggested_value=suggested,
+        )
 
     parsed = _parse_numeric_threshold_violation(
         violation,
         "max_total_live_exposure_exceeded:",
     )
     if parsed is not None:
+        if resolved.mode != "live":
+            return None
         projected, _ = parsed
-        capital_base = float(risk.max_live_limited_cap_usdt or 0.0)
+        capital_base = effective_capital_base()
         current = float(risk.max_total_live_exposure_pct or 0.0)
         if capital_base <= 0:
             return None
         suggested = _round_up(max(current, projected / capital_base * 100.0), 2)
         if suggested <= current:
             return None
-        return {
-            "boundary_key": "max_total_live_exposure_pct",
-            "violation_kind": "max_total_live_exposure_exceeded",
-            "current_value": current,
-            "suggested_value": suggested,
-            "changes": {"max_total_live_exposure_pct": suggested},
-        }
+        return candidate(
+            boundary_key="max_total_live_exposure_pct",
+            violation_kind="max_total_live_exposure_exceeded",
+            current_value=current,
+            suggested_value=suggested,
+        )
 
     parsed = _parse_numeric_threshold_violation(
         violation,
         "exceeds_single_trade_risk:",
     )
     if parsed is not None:
+        if resolved.mode != "live":
+            return None
         risk_amount, _ = parsed
-        capital_base = float(risk.max_live_limited_cap_usdt or 0.0)
+        capital_base = effective_capital_base()
         current = float(risk.max_single_trade_risk_pct or 0.0)
         if capital_base <= 0:
             return None
         suggested = _round_up(max(current, risk_amount / capital_base * 100.0), 2)
         if suggested <= current:
             return None
-        return {
-            "boundary_key": "max_single_trade_risk_pct",
-            "violation_kind": "exceeds_single_trade_risk",
-            "current_value": current,
-            "suggested_value": suggested,
-            "changes": {"max_single_trade_risk_pct": suggested},
-        }
+        return candidate(
+            boundary_key="max_single_trade_risk_pct",
+            violation_kind="exceeds_single_trade_risk",
+            current_value=current,
+            suggested_value=suggested,
+        )
 
     parsed = _parse_numeric_threshold_violation(
         violation,
         "exceeds_demo_single_trade_risk:",
     )
     if parsed is not None:
+        if resolved.mode != "demo":
+            return None
         risk_amount, _ = parsed
-        capital_base = float(risk.starting_capital_usdt or 0.0)
+        capital_base = effective_capital_base()
         current = float(risk.max_demo_single_trade_risk_pct or 0.0)
         if capital_base <= 0:
             return None
         suggested = _round_up(max(current, risk_amount / capital_base * 100.0), 2)
         if suggested <= current:
             return None
-        return {
-            "boundary_key": "max_demo_single_trade_risk_pct",
-            "violation_kind": "exceeds_demo_single_trade_risk",
-            "current_value": current,
-            "suggested_value": suggested,
-            "changes": {"max_demo_single_trade_risk_pct": suggested},
-        }
+        return candidate(
+            boundary_key="max_demo_single_trade_risk_pct",
+            violation_kind="exceeds_demo_single_trade_risk",
+            current_value=current,
+            suggested_value=suggested,
+        )
 
     parsed = _parse_daily_loss_violation(violation)
     if parsed is not None:
         realized, _ = parsed
-        capital_base = float(risk.max_live_limited_cap_usdt or 0.0)
+        capital_base = effective_capital_base()
         current = float(risk.max_daily_loss_pct or 0.0)
         if capital_base <= 0:
             return None
         suggested = _round_up(max(current, abs(realized) / capital_base * 100.0), 2)
         if suggested <= current:
             return None
-        return {
-            "boundary_key": "max_daily_loss_pct",
-            "violation_kind": "max_daily_loss_exceeded",
-            "current_value": current,
-            "suggested_value": suggested,
-            "changes": {"max_daily_loss_pct": suggested},
-        }
+        return candidate(
+            boundary_key="max_daily_loss_pct",
+            violation_kind="max_daily_loss_exceeded",
+            current_value=current,
+            suggested_value=suggested,
+        )
 
     parsed = _parse_numeric_threshold_violation(
         violation,
@@ -478,7 +547,7 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
     )
     if parsed is not None:
         actual, _ = parsed
-        is_live = proposal_mode == "bitget_live_limited"
+        is_live = resolved.mode == "live"
         boundary_key = "max_futures_leverage_live" if is_live else "max_futures_leverage_demo"
         current = int(
             risk.max_futures_leverage_live if is_live else risk.max_futures_leverage_demo
@@ -486,15 +555,16 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
         suggested = max(current, math.ceil(actual))
         if suggested <= current:
             return None
-        return {
-            "boundary_key": boundary_key,
-            "violation_kind": "exceeds_max_leverage",
-            "current_value": current,
-            "suggested_value": suggested,
-            "changes": {boundary_key: suggested},
-        }
+        return candidate(
+            boundary_key=boundary_key,
+            violation_kind="exceeds_max_leverage",
+            current_value=current,
+            suggested_value=suggested,
+        )
 
     if violation.startswith("max_live_positions_reached:"):
+        if resolved.mode != "live":
+            return None
         try:
             reached = int(violation.split(":", 1)[1])
         except ValueError:
@@ -503,15 +573,16 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
         suggested = max(current, reached + 1)
         if suggested <= current:
             return None
-        return {
-            "boundary_key": "max_open_positions_live",
-            "violation_kind": "max_live_positions_reached",
-            "current_value": current,
-            "suggested_value": suggested,
-            "changes": {"max_open_positions_live": suggested},
-        }
+        return candidate(
+            boundary_key="max_open_positions_live",
+            violation_kind="max_live_positions_reached",
+            current_value=current,
+            suggested_value=suggested,
+        )
 
     if violation.startswith("max_demo_positions_reached:"):
+        if resolved.mode != "demo":
+            return None
         try:
             reached = int(violation.split(":", 1)[1])
         except ValueError:
@@ -520,37 +591,38 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
         suggested = max(current, reached + 1)
         if suggested <= current:
             return None
-        return {
-            "boundary_key": "max_open_positions_demo",
-            "violation_kind": "max_demo_positions_reached",
-            "current_value": current,
-            "suggested_value": suggested,
-            "changes": {"max_open_positions_demo": suggested},
-        }
+        return candidate(
+            boundary_key="max_open_positions_demo",
+            violation_kind="max_demo_positions_reached",
+            current_value=current,
+            suggested_value=suggested,
+        )
 
     if violation == "short_not_allowed_live":
+        if resolved.mode != "live":
+            return None
         current = bool(risk.allow_short_live)
         if current:
             return None
-        return {
-            "boundary_key": "allow_short_live",
-            "violation_kind": "short_not_allowed_live",
-            "current_value": current,
-            "suggested_value": True,
-            "changes": {"allow_short_live": True},
-        }
+        return candidate(
+            boundary_key="allow_short_live",
+            violation_kind="short_not_allowed_live",
+            current_value=current,
+            suggested_value=True,
+        )
 
     if violation == "short_not_allowed_demo":
+        if resolved.mode != "demo":
+            return None
         current = bool(risk.allow_short_demo)
         if current:
             return None
-        return {
-            "boundary_key": "allow_short_demo",
-            "violation_kind": "short_not_allowed_demo",
-            "current_value": current,
-            "suggested_value": True,
-            "changes": {"allow_short_demo": True},
-        }
+        return candidate(
+            boundary_key="allow_short_demo",
+            violation_kind="short_not_allowed_demo",
+            current_value=current,
+            suggested_value=True,
+        )
 
     return None
 
@@ -581,11 +653,15 @@ def build_risk_summary(
                 "symbol": proposal.get("symbol") if proposal else None,
                 "execution_mode": proposal.get("execution_mode") if proposal else None,
                 "strategy_id": proposal.get("strategy_id") if proposal else None,
+                "risk_mode": decision.get("risk_mode"),
+                "policy_id": decision.get("policy_id"),
+                "policy_revision": decision.get("policy_revision"),
+                "policy_hash": decision.get("policy_hash"),
             }
         )
 
     recent_risk_boundary_proposals: list[dict] = []
-    recent_proposed_boundary_keys: set[str] = set()
+    recent_proposed_boundary_scopes: set[tuple] = set()
     artifacts = recent_artifacts if recent_artifacts is not None else list_artifacts(limit=500)
     for artifact in artifacts:
         if artifact.get("artifact_type") != "risk_boundary_change_proposal":
@@ -599,18 +675,25 @@ def build_risk_summary(
         changes = content.get("changes")
         changes = changes if isinstance(changes, dict) else {}
         boundary_keys = sorted(str(key) for key in changes.keys())
-        recent_proposed_boundary_keys.update(boundary_keys)
+        for boundary_key in boundary_keys:
+            scope = _risk_boundary_scope(content, boundary_key)
+            if scope is not None:
+                recent_proposed_boundary_scopes.add(scope)
         recent_risk_boundary_proposals.append(
             {
                 "id": artifact.get("id"),
                 "title": artifact.get("title"),
                 "created_at": artifact.get("created_at"),
+                "risk_mode": content.get("risk_mode"),
+                "policy_id": content.get("policy_id"),
+                "policy_revision": content.get("policy_revision"),
+                "policy_hash": content.get("policy_hash"),
                 "changes": changes,
                 "boundary_keys": boundary_keys,
             }
         )
 
-    aggregated: dict[str, dict] = {}
+    aggregated: dict[tuple, dict] = {}
     for decision in recent_rejected_decisions:
         proposal = repo.get_trade_proposal(str(decision.get("proposal_id") or ""))
         created_at = _parse_utc_timestamp(decision.get("created_at"))
@@ -619,8 +702,16 @@ def build_risk_summary(
             candidate = _risk_boundary_change_from_violation(violation_text, proposal, cfg)
             if candidate is None:
                 continue
+            # Boundary proposals may only aggregate rejections evaluated under
+            # the exact current policy.  Historical/legacy decisions stay visible
+            # above but cannot be reinterpreted after a policy revision.
+            if _risk_policy_identity(decision) != _risk_policy_identity(candidate):
+                continue
             boundary_key = str(candidate["boundary_key"])
-            bucket = aggregated.get(boundary_key)
+            scope = _risk_boundary_scope(candidate)
+            if scope is None:
+                continue
+            bucket = aggregated.get(scope)
             if bucket is None:
                 bucket = {
                     **candidate,
@@ -631,7 +722,7 @@ def build_risk_summary(
                     "execution_modes": [],
                     "latest_created_at": decision.get("created_at"),
                 }
-                aggregated[boundary_key] = bucket
+                aggregated[scope] = bucket
             bucket["rejection_count"] += 1
             violations: list[str] = bucket["sample_violations"]
             if violation_text not in violations and len(violations) < 3:
@@ -665,7 +756,7 @@ def build_risk_summary(
         _finalize_risk_boundary_summary(candidate)
         for candidate in aggregated.values()
         if int(candidate.get("rejection_count") or 0) >= 2
-        and str(candidate.get("boundary_key") or "") not in recent_proposed_boundary_keys
+        and _risk_boundary_scope(candidate) not in recent_proposed_boundary_scopes
     ]
     due_boundary_changes.sort(
         key=lambda item: (
@@ -1758,7 +1849,12 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         first_candidate = due_risk_boundary_changes[0]
         recommendations.append(
             {
-                "id": f"risk-boundary-proposal:{first_candidate['boundary_key']}",
+                "id": (
+                    "risk-boundary-proposal:"
+                    f"{first_candidate['risk_mode']}:"
+                    f"{first_candidate['policy_hash']}:"
+                    f"{first_candidate['boundary_key']}"
+                ),
                 "kind": "risk_boundary_change_proposal_due",
                 "severity": "medium",
                 "summary": first_candidate["summary"],
@@ -1766,6 +1862,10 @@ def build_recommendations(limit: int = 10) -> list[dict]:
                 "metadata": {
                     "boundary_key": first_candidate["boundary_key"],
                     "violation_kind": first_candidate["violation_kind"],
+                    "risk_mode": first_candidate["risk_mode"],
+                    "policy_id": first_candidate["policy_id"],
+                    "policy_revision": first_candidate["policy_revision"],
+                    "policy_hash": first_candidate["policy_hash"],
                     "rejection_count": first_candidate["rejection_count"],
                     "changes": first_candidate["changes"],
                     "sample_violations": first_candidate["sample_violations"],

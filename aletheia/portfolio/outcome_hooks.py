@@ -17,6 +17,7 @@ logger = logging.getLogger("aletheia.portfolio.outcome_hooks")
 
 SHADOW_TRADES_HOOK = "shadow_trades"
 SERENITY_POST_MORTEM_HOOK = "serenity_post_mortem"
+EXIT_BREAKEVEN_SHADOW_HOOK = "exit_breakeven_shadow"
 
 
 def enqueue_outcome_hook_jobs(position: dict) -> list[dict]:
@@ -24,6 +25,11 @@ def enqueue_outcome_hook_jobs(position: dict) -> list[dict]:
     jobs = [
         repo.enqueue_outcome_hook_job(str(position["id"]), SHADOW_TRADES_HOOK),
     ]
+    if repo.get_exit_breakeven_shadow_assignment(str(position["id"])) is not None:
+        jobs.append(repo.enqueue_outcome_hook_job(
+            str(position["id"]),
+            EXIT_BREAKEVEN_SHADOW_HOOK,
+        ))
     if position.get("trade_school") == "serenity" and position.get("opportunity_id"):
         jobs.append(repo.enqueue_outcome_hook_job(
             str(position["id"]),
@@ -198,6 +204,10 @@ def _hook_applicability_reason(hook_type: str, position: dict) -> str | None:
         ):
             return "hook_not_applicable"
         return None
+    if hook_type == EXIT_BREAKEVEN_SHADOW_HOOK:
+        if repo.get_exit_breakeven_shadow_assignment(str(position["id"])) is None:
+            return "hook_not_applicable"
+        return None
     return "unsupported_hook_type"
 
 
@@ -220,5 +230,10 @@ def _execute_hook(hook_type: str, position: dict) -> None:
             float(realized),
             str(position.get("close_reason") or "verified_exit"),
         )
+        return
+    if hook_type == EXIT_BREAKEVEN_SHADOW_HOOK:
+        from aletheia.analytics.exit_breakeven_shadow import settle_position_shadow
+
+        settle_position_shadow(position)
         return
     raise ValueError(f"unsupported Outcome hook type: {hook_type}")

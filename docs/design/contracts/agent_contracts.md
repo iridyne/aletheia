@@ -50,11 +50,11 @@
 | 35a | news_analyze | 5min | agents | Independently analyze at most 3 news rows; each item and the whole job are bounded, and failures remain retry/failed rather than fabricated analyzed facts |
 | 36 | outcome_settler | 10min | io | Settle outstanding prediction / universe forward outcomes |
 | 36a | paper_funding_settler | 30min | io | Recover complete local-paper futures funding from persisted live/history evidence and atomically converge Position, close event, cash, eligibility, audit, and durable outcome hooks; read source I/O never spans the SQLite writer transaction |
-| 37 | learning_contribution_evaluator | interval `learning.evaluation_interval_minutes` (default 60) | io | Sole scheduled contribution evaluator. Measure only: append deterministic cluster-based contribution verdicts and evaluator health even when autonomous Learning is off or runtime is paused |
-| 38 | learning_lifecycle_controller | interval `learning.evaluation_interval_minutes` (default 60) | io | Apply at most one default-closed paper lifecycle action per current experiment; requires autonomous Learning, no pause/integrity incident, lifecycle automation, paper influence, and path allowlist |
+| 37 | learning_contribution_evaluator | interval `learning.evaluation_interval_minutes` (default 60) | learning_measurement | Sole scheduled contribution evaluator. Measure only: append deterministic cluster-based contribution verdicts and evaluator health even when autonomous Learning is off or runtime is paused |
+| 38 | learning_lifecycle_controller | interval `learning.evaluation_interval_minutes` (default 60) | io | Apply at most one owner-gated paper lifecycle action per current experiment; requires autonomous Learning, no pause/integrity incident, lifecycle automation, paper influence, and path allowlist |
 | 39 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
 | 40 | learning_startup_catchup | once, 5min after gateway boot | agents | Run only the latest missed dreaming/memo/reviewer date-window; a durable success watermark prevents restart duplicates |
-| 41 | learning_measurement_startup_catchup | once, 2min after gateway boot | io | Before the first regular evaluator interval, re-run only the current missing contribution-measurement window through `learning_contribution_evaluator`; independent of autonomous Learning and paper influence |
+| 41 | learning_measurement_startup_catchup | once, 2min after gateway boot | learning_measurement | Before the first regular evaluator interval, re-run only the current missing contribution-measurement window through `learning_contribution_evaluator`; shares its serial non-starving lane and remains independent of autonomous Learning and paper influence |
 | 42 | learning_lifecycle_audit_reconciler | every 5min | io | Retry bounded pending lifecycle JSONL mirrors by stable event id; never replay a transition and continue during layered pause |
 
 Learning behavior jobs (rows 10–15, 26, 30–31, 38 and the Learning behavior catch-up) share
@@ -285,7 +285,7 @@ durably queued and independently retried by `outcome_hook_replay`.
   Opportunity 4h market outcome is created before Operator prompt exposure and cannot measure the
   resulting trade/skip decision utility. Mixed/Serenity queues also fail closed. A future measured
   path requires a decision-linked causal outcome contract before any exposure or authority.
-- **Actions**: active entry decision only `trade` / `skip`. The separate portfolio review exposes only `hold` / `close_one` for an explicit Position.
+- **Actions**: active entry decision only `trade` / `skip`. The separate portfolio review exposes only `hold` / `adjust_position` / `close_one` for an explicit Position. An open `HORIZON_DUE` review cannot terminate with `hold`; it must either close or set an absolute `new_horizon_hours` strictly beyond current position age.
 - **Unsupported legacy outputs**: `close` / `reduce` / `watch` / `scale_in` / `flip` on the entry surface are normalized to an evidenced `skip` and never execute. `reduce_exposure` on portfolio review is treated as `hold`, never as a silent full close.
 - **Availability semantics**: missing/incomplete/stale exact candidate technical context is detected before model inference. For `trade`, the structured schema conditionally requires an explicit `market_type`, `stop_price` / `take_profit`, and all five entry-parameter reasons; the parser further requires `market_type` to be `spot` or `usdt_futures` and both prices to be finite and positive. Schema failure uses bounded structured retries and remains a content-free typed output defer; semantic, prompt-mark geometry, or price-derived reward:risk outside the inclusive `[1.00, 10.00]` plausibility envelope uses the existing single repair. A repaired first draft is retained as `operator_entry_plan_output_repair/error`, outside passed/rejected learning cohorts; the final authoritative entry-plan exposure is therefore `passed`, while an unrepaired second draft remains a real `rejected`. The fresh exact local-paper mark remains entry authority and validates instrument identity, long/short geometry, and `round(abs(tp-entry)/abs(entry-stop), 2)` against that envelope; invalid model protection is never silently replaced by config. A new Operator `spot+short` cannot be relabelled downstream as futures: it must repair to a valid decision or defer. The legacy coercion remains only for programmatic/historical recovery objects. If the submission-time refresh becomes stale/unavailable, crosses a protection level, or moves reward:risk outside the envelope, Proposal preparation returns a typed entry-plan defer with its gate trace. No final PiDecision is written and no pending signal is consumed. A newly persisted exact feature snapshot or entry-mark availability change changes the candidate fingerprint and reopens evaluation.
 - **Serenity availability semantics**: an exact Serenity carrier whose source row is
@@ -368,19 +368,32 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 #### learning_contribution_evaluator
 
 - **Trigger**: one recurring interval at `learning.evaluation_interval_minutes` (default 60);
-  startup catch-up is a one-shot caller of this same evaluator before the first interval
+  restart preserves a nearer durable future deadline, and an overdue deadline retries after 60s;
+  startup catch-up remains a one-shot caller of this same evaluator and retries only while the
+  current measurement watermark is still missing
 - **Inputs**: prospective `universe_family_calibration` exposures plus exact-key settled outcomes
 - **Statistical unit**: persisted `assignment_unit_key` cluster; complete-cluster allocation utility
   averages selected-member net return with zero utility for dropped members, and uses worst selected
   MAE; incomplete or legacy unit-less clusters are excluded
 - **Outcome precedence**: `filter_candidate_outcomes` is canonical full-arm truth;
   `universe_forward_outcomes` is a selected-member mirror/fallback and disagreement fails closed
-- **Outputs**: append-only verdicts under
-  `universe_family_calibration_cluster_allocation_utility_v4`; old metric verdicts remain history
+- **Outputs**: append-only monitoring and once-consumed confirmatory verdicts under
+  `universe_family_calibration_cluster_allocation_utility_v10`; old metric verdicts remain history
+- **Inference**: conditional randomization over the prospectively assigned complete clusters;
+  overlapping 1h/4h price paths are allowed and never resampled as IID outcomes
+- **Intervention provenance**: `authority_applied` records consistent treatment permission;
+  finite before/after behavior change is separate, and an authorized cluster is an actual
+  intervention only when at least one member changed
 - **Time semantics**: a market day is a UTC date with at least one complete eligible exposure unit
-  from either arm. Seven consecutive days plus 50 units in each arm inside that run are required;
+  from either arm. Shadow integrity readiness uses one day plus 10 units per arm only to permit an
+  owner-started Paper-10 trial. Seven consecutive days plus 50 units in each arm inside that run
+  remain required for economic promotion;
   a missing day resets the current window, planned outages receive no implicit waiver, and verdict
   `created_at` remains evaluation time
+- **Inference semantics**: recurring results are descriptive monitoring. A Paper stage registered
+  before exposure freezes one outcome-blind assignment-unit cutoff, waits for those exact outcomes,
+  and consumes one confirmatory look at authority alpha `0.025`; cutoff-external rows cannot change
+  that decision, while current monitoring harm/negative/invalid evidence remains an anytime brake
 - **Authority**: measurement only; cannot change experiment stage, multiplier, paper authority,
   Risk, Execution, exchange, or live state
 - **Current owner projection**: the implemented bounded summary is read-only and

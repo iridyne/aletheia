@@ -64,9 +64,6 @@ class _DummySchema:
         return self._schema
 
 
-def _json_schema_hint(schema: dict) -> str:
-    return json.dumps(schema)
-
 _MIN_CONVICTION_TO_TRADE = 55       # below this, skip (even after debate)
 _DEBATE_RANGE = (40, 80)            # conviction in this range triggers debate
 _MAX_CONVICTION_MULTIPLIER = 2.0    # cap: 2× base notional at 100% conviction
@@ -1000,6 +997,73 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         })
         raise DecisionUnavailable(identity_failure, stage="proposal_preflight")
 
+    # A Universe Scanner carrier cannot authorize the opposite trade direction.
+    # T0 is the immutable producer fact; the mutable Opportunity projection may
+    # contain legacy rows whose outer direction was rewritten by enrichment.
+    if decision.opportunity_id and decision.signal_source == "market_observer":
+        from aletheia.storage.repositories import get_opportunity
+
+        source_opportunity = get_opportunity(decision.opportunity_id)
+        if source_opportunity:
+            raw_metadata = source_opportunity.get("metadata") or {}
+            try:
+                metadata = (
+                    raw_metadata
+                    if isinstance(raw_metadata, dict)
+                    else json.loads(raw_metadata)
+                )
+            except (TypeError, ValueError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            evidence_manifest = metadata.get("evidence_manifest") or {}
+            if not isinstance(evidence_manifest, dict):
+                evidence_manifest = {}
+            t0 = evidence_manifest.get("t0") or {}
+            if not isinstance(t0, dict):
+                t0 = {}
+
+            source_agent = str(
+                source_opportunity.get("source_agent") or ""
+            ).strip().lower()
+            trigger_type = str(t0.get("trigger_type") or "").strip().lower()
+            scanner_owned = (
+                source_agent == "universe_scanner"
+                or trigger_type == "universe_scanner"
+            )
+            scanner_direction = str(t0.get("direction") or "").strip().lower()
+            decision_direction = str(decision.direction or "").strip().lower()
+            if (
+                scanner_owned
+                and scanner_direction in {"long", "short"}
+                and decision_direction in {"long", "short"}
+            ):
+                direction_matches = scanner_direction == decision_direction
+                reason = (
+                    "opportunity_direction_lineage_match"
+                    if direction_matches
+                    else "opportunity_direction_lineage_conflict"
+                )
+                decision.filter_trace.append({
+                    "filter_name": "opportunity_direction_lineage",
+                    "stage": "proposal_submission",
+                    "decision": "passed" if direction_matches else "rejected",
+                    "reason_code": reason,
+                    "inputs": {
+                        "opportunity_id": decision.opportunity_id,
+                        "source_agent": source_agent,
+                        "scanner_direction": scanner_direction,
+                        "decision_direction": decision_direction,
+                    },
+                    "parameters": {"direction_match_required": True},
+                })
+                if not direction_matches:
+                    raise DecisionUnavailable(
+                        reason,
+                        stage="proposal_preflight",
+                        filter_trace=list(decision.filter_trace),
+                    )
+
     missing_parameter_reasons = [
         key for key in _ENTRY_PARAMETER_KEYS
         if not isinstance(decision.parameter_rationale.get(key), str)
@@ -1299,6 +1363,73 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
             },
         )
 
+    # Capture the same exact venue + physical market that supplied the entry
+    # mark. Parsed System Operator trades fail closed when that instrument has
+    # no fresh microstructure evidence or is explicitly non-tradable. This runs
+    # after entry-plan validation so existing typed plan errors keep precedence,
+    # but still before immutable Proposal construction. Legacy programmatic
+    # callers retain compatibility while receiving exact attribution.
+    from aletheia.trading.entry_snapshot import capture_attribution_snapshot
+
+    attribution_snapshot = capture_attribution_snapshot(
+        decision.symbol,
+        exchange=str((snap or {}).get("exchange") or ""),
+        market_type=market_type,
+    )
+    if decision.parameter_rationale_required:
+        market_context = attribution_snapshot.get("market_context")
+        if not isinstance(market_context, dict):
+            market_context = {}
+        instrument = market_context.get("instrument")
+        if not isinstance(instrument, dict):
+            instrument = {}
+        tradability = market_context.get("tradability")
+        if not isinstance(tradability, dict):
+            tradability = {}
+        expected_market = (
+            "perp" if market_type in {"usdt_futures", "swap"} else market_type
+        )
+        expected_exchange = str((snap or {}).get("exchange") or "").lower()
+        identity_matches = (
+            bool(expected_exchange)
+            and instrument.get("symbol") == decision.symbol
+            and str(instrument.get("exchange") or "").lower() == expected_exchange
+            and instrument.get("market_type") == expected_market
+            and str(tradability.get("exchange") or "").lower() == expected_exchange
+        )
+        if not identity_matches or "is_tradable" not in tradability:
+            tradability_reason = "market_tradability_unavailable"
+        elif tradability.get("is_tradable") is not True:
+            tradability_reason = "market_not_tradable"
+        else:
+            tradability_reason = None
+        decision.filter_trace.append({
+            "filter_name": "market_tradability_gate",
+            "stage": "proposal_submission",
+            "decision": "rejected" if tradability_reason else "passed",
+            "reason_code": tradability_reason or "market_tradable",
+            "inputs": {
+                "symbol": decision.symbol,
+                "exchange": expected_exchange or None,
+                "market_type": expected_market,
+                "score": tradability.get("score"),
+                "spread_bps": tradability.get("spread_bps"),
+                "depth_10bps_usd": tradability.get("depth_10bps_usd"),
+                "volume_24h_usd": tradability.get("volume_24h_usd"),
+                "is_tradable": tradability.get("is_tradable"),
+            },
+            "parameters": {
+                "exact_instrument_required": True,
+                "missing_context_policy": "defer",
+            },
+        })
+        if tradability_reason:
+            raise DecisionUnavailable(
+                tradability_reason,
+                stage="operator_entry_plan",
+                filter_trace=list(decision.filter_trace),
+            )
+
     # Leverage only applies to futures. Clamp the PI's request to the per-asset-tier
     # cap (the risk engine enforces the same cap as a hard reject — clamping here keeps
     # the proposal inside the gate so a sane futures trade is not silently rejected for
@@ -1358,7 +1489,6 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
     rationale = f"{thesis}\n---\n{json.dumps(decision_meta)}"
 
     from aletheia.storage.models import TradeProposal
-    from aletheia.trading.entry_snapshot import capture_attribution_snapshot_json
 
     proposal = TradeProposal(
         symbol=decision.symbol,
@@ -1375,7 +1505,7 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         strategy_id=decision.strategy_id,
         opportunity_id=decision.opportunity_id,
         agent_rationale=rationale,
-        attribution_snapshot=capture_attribution_snapshot_json(decision.symbol),
+        attribution_snapshot=json.dumps(attribution_snapshot, default=str),
         trade_school=trade_school,
         # Exit-intent plan M2: carry the Operator's holding horizon and stop
         # provenance to the position at open. stop_source='operator' iff the AI
@@ -1568,11 +1698,9 @@ async def _assess_opportunity(ctx: dict) -> dict | None:
         "focus on WHAT to trade, not HOW MUCH. Return a JSON object matching the schema."
     )
     user = _build_assessment_prompt(ctx)
-    schema_text = _json_schema_hint(_DECISION_SCHEMA)
-    full_user = f"{user}\n\nReturn JSON: {schema_text}"
     result, err = await llm_structured(
         system,
-        full_user,
+        user,
         schema=_DummySchema(_DECISION_SCHEMA),
         provider=get_provider_for_tier("deep"),
         caller="system_operator.assess_opportunity",
@@ -1636,10 +1764,9 @@ async def _reassess_direct_skip(
         "complete trade decision if warranted; if evidence is merely insufficient, "
         "return skip_kind=insufficient_evidence so the caller can defer honestly."
     )
-    schema_text = _json_schema_hint(_DECISION_SCHEMA)
     result, err = await llm_structured(
         system,
-        f"{user}\n\nReturn JSON: {schema_text}",
+        user,
         schema=_DummySchema(_DECISION_SCHEMA),
         provider=get_provider_for_tier("deep"),
         caller="system_operator.reassess_direct_skip",
@@ -1717,9 +1844,6 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
 
     bull_user = _build_bull_prompt(symbol, direction, ctx)
     bear_user = _build_bear_prompt(symbol, direction, ctx)
-    bull_schema_hint = _json_schema_hint(_BULL_SCHEMA)
-    bear_schema_hint = _json_schema_hint(_BEAR_SCHEMA)
-
     system_bull = "You are a bull analyst. Return a JSON object matching the schema."
     system_bear = "You are a bear analyst. Return a JSON object matching the schema."
 
@@ -1727,7 +1851,7 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
     (bull_result, bull_err), (bear_result, bear_err) = await asyncio.gather(
         llm_structured(
             system_bull,
-            f"{bull_user}\n\nReturn JSON: {bull_schema_hint}",
+            bull_user,
             schema=_DummySchema(_BULL_SCHEMA),
             provider=_deep_provider,
             caller="system_operator.debate_bull",
@@ -1735,7 +1859,7 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
         ),
         llm_structured(
             system_bear,
-            f"{bear_user}\n\nReturn JSON: {bear_schema_hint}",
+            bear_user,
             schema=_DummySchema(_BEAR_SCHEMA),
             provider=_deep_provider,
             caller="system_operator.debate_bear",

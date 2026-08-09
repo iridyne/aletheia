@@ -13,7 +13,10 @@ from aletheia.learning.authority import (
     MEASUREMENT_VERDICTS,
     measurement_harm_block_reason,
     measurement_identity_reason,
+    measurement_intervention_block_reason,
     resolve_learning_authority,
+    trial_admission_measurement_block_reason,
+    TRIAL_ADMISSION_REASONS,
 )
 from aletheia.learning.cohorts import SUPPORTED_PATH_ID, SUPPORTED_PATH_IDS
 from aletheia.learning.behavior_contracts import current_behavior_contract_hash
@@ -37,6 +40,12 @@ from aletheia.learning.models import (
 )
 from aletheia.learning.experiments import _policy_epoch, current_policy_epoch
 from aletheia.learning.verdicts import METRIC_VERSION
+from aletheia.learning.fixed_look import (
+    InferenceContractError,
+    get_consumed_fixed_look_verdict,
+    inference_authority_reason,
+    register_fixed_look_decision,
+)
 from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
 
@@ -142,11 +151,25 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
         outcome_contract_version="v1",
         metric_version=METRIC_VERSION,
         behavior_contract_hash=expected_behavior_contract_hash,
+        inference_role="monitoring",
     )
     if verdict is None:
-        verdict = get_latest_measurement_verdict(experiment.experiment_id)
+        verdict = get_latest_measurement_verdict(
+            experiment.experiment_id,
+            inference_role="monitoring",
+        )
     if verdict is None:
         return LifecycleResult("hold", "hold", "no_current_stage_measurement", experiment_id)
+    if experiment.stage.startswith("paper_"):
+        latest_harm_reason = measurement_harm_block_reason(verdict)
+        latest_measurement = str(verdict.get("verdict") or "")
+        if (
+            latest_measurement not in {"negative", "invalid"}
+            and latest_harm_reason is None
+        ):
+            consumed = get_consumed_fixed_look_verdict(experiment.experiment_id)
+            if consumed is not None:
+                verdict = consumed
     measurement = str(verdict.get("verdict") or "")
     if measurement not in MEASUREMENT_VERDICTS:
         return LifecycleResult("hold", "hold", "unknown_measurement_verdict", experiment_id)
@@ -173,12 +196,32 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
     ):
         return LifecycleResult("hold", recommended, identity_reason, experiment_id, verdict_id=verdict["verdict_id"])
 
+    trial_admission_candidate = (
+        experiment.stage == "shadow"
+        and measurement == "insufficient_data"
+        and str(verdict.get("reason") or "") in TRIAL_ADMISSION_REASONS
+    )
+    trial_admission_reason = None
+    if trial_admission_candidate:
+        trial_admission_reason = trial_admission_measurement_block_reason(
+            verdict,
+            required_per_arm=experiment.min_samples_per_arm,
+            required_market_days=experiment.min_market_days,
+        )
+        if trial_admission_reason is not None:
+            return LifecycleResult(
+                "hold", "admit_trial", trial_admission_reason,
+                experiment_id, verdict_id=str(verdict["verdict_id"]),
+            )
+
     # A harm breach must never suppress the safety action it is evidence for.
     # It blocks every path that grants or extends authority, and nothing else:
     # holding a refreeze/invalidate because the result was harmful exempted the
     # worst experiments from being stopped at all.
     if recommended not in {"refreeze", "invalidate"}:
-        if harm_reason:
+        if harm_reason and not (
+            trial_admission_candidate and trial_admission_reason is None
+        ):
             return LifecycleResult(
                 "hold", recommended, harm_reason, experiment_id,
                 verdict_id=verdict["verdict_id"],
@@ -189,7 +232,7 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
     if (
         experiment.stage == "shadow"
         and measurement == "insufficient_data"
-        and str(verdict.get("reason") or "") == "no_actual_intervention"
+        and str(verdict.get("reason") or "") in TRIAL_ADMISSION_REASONS
     ):
         return LifecycleResult(
             "hold", "admit_trial", "shadow_requires_explicit_trial_admission",
@@ -214,6 +257,27 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
         )
     if experiment.stage not in STAGE_SUCCESSOR:
         return LifecycleResult("hold", "promote_stage", "terminal_stage", experiment_id, verdict_id=verdict["verdict_id"])
+    intervention_reason = measurement_intervention_block_reason(
+        verdict,
+        required_per_arm=experiment.min_samples_per_arm,
+    )
+    if intervention_reason:
+        return LifecycleResult(
+            "hold",
+            "promote_stage",
+            intervention_reason,
+            experiment_id,
+            verdict_id=verdict["verdict_id"],
+        )
+    inference_reason = inference_authority_reason(verdict)
+    if inference_reason:
+        return LifecycleResult(
+            "hold",
+            "promote_stage",
+            inference_reason,
+            experiment_id,
+            verdict_id=verdict["verdict_id"],
+        )
 
     gate_reason = _promotion_gate_reason(hypothesis.path_id)
     if gate_reason == "lifecycle_automation_disabled":
@@ -326,20 +390,29 @@ def _execute_trial_admission(
         outcome_contract_version="v1",
         metric_version=METRIC_VERSION,
         behavior_contract_hash=expected_behavior_contract_hash,
+        inference_role="monitoring",
     )
     if verdict is None or str(verdict.get("verdict_id") or "") != verdict_id:
         return LifecycleResult("hold", "admit_trial", "verdict_not_found_or_mismatch", experiment_id, verdict_id=verdict_id)
     if str(verdict.get("verdict") or "") != "insufficient_data":
         return LifecycleResult("hold", "admit_trial", "verdict_not_insufficient_data", experiment_id, verdict_id=verdict_id)
-    if str(verdict.get("reason") or "") != "no_actual_intervention":
-        return LifecycleResult("hold", "admit_trial", "verdict_not_no_actual_intervention", experiment_id, verdict_id=verdict_id)
+    admission_reason = trial_admission_measurement_block_reason(
+        verdict,
+        required_per_arm=experiment.min_samples_per_arm,
+        required_market_days=experiment.min_market_days,
+    )
+    if admission_reason is not None:
+        return LifecycleResult(
+            "hold", "admit_trial", admission_reason,
+            experiment_id, verdict_id=verdict_id,
+        )
 
     identity_reason = measurement_identity_reason(
         verdict, "shadow", current_policy_epoch,
         expected_horizon=hypothesis.target_horizon,
         expected_behavior_contract_hash=expected_behavior_contract_hash,
         expected_hypothesis_id=hypothesis.hypothesis_id,
-    ) or measurement_harm_block_reason(verdict)
+    )
     if identity_reason:
         return LifecycleResult("hold", "admit_trial", identity_reason, experiment_id, verdict_id=verdict_id)
 
@@ -377,20 +450,35 @@ def _execute_trial_admission(
         audit_source="dashboard",
         created_at=now,
     )
-    with transaction():
-        if not insert_lifecycle_event(event):
-            existing = get_lifecycle_event_by_dedup_key(dedup_key)
-            return LifecycleResult(
-                "admit_trial", "admit_trial", "already_transitioned", experiment.experiment_id,
-                (existing or {}).get("successor_experiment_id"), verdict_id,
+    try:
+        with transaction():
+            if not insert_lifecycle_event(event):
+                existing = get_lifecycle_event_by_dedup_key(dedup_key)
+                return LifecycleResult(
+                    "admit_trial", "admit_trial", "already_transitioned", experiment.experiment_id,
+                    (existing or {}).get("successor_experiment_id"), verdict_id,
+                )
+            db = get_db()
+            db.execute(
+                "UPDATE learning_experiments SET status='closed', ended_at=? "
+                "WHERE experiment_id=? AND ended_at IS NULL",
+                (now, experiment.experiment_id),
             )
-        db = get_db()
-        db.execute(
-            "UPDATE learning_experiments SET status='closed', ended_at=? "
-            "WHERE experiment_id=? AND ended_at IS NULL",
-            (now, experiment.experiment_id),
+            insert_experiment(successor)
+            register_fixed_look_decision(
+                successor,
+                hypothesis,
+                policy_epoch=current_policy_epoch,
+                behavior_contract_hash=expected_behavior_contract_hash,
+            )
+    except InferenceContractError:
+        return LifecycleResult(
+            "hold",
+            "admit_trial",
+            "inference_contract_registration_failed",
+            experiment_id,
+            verdict_id=verdict_id,
         )
-        insert_experiment(successor)
     _write_lifecycle_audit(event)
     return LifecycleResult(
         "admit_trial", "admit_trial", admitted_reason,
@@ -508,20 +596,35 @@ def _promote_one_stage(
         policy_epoch=policy_epoch,
         created_at=now,
     )
-    with transaction():
-        if not insert_lifecycle_event(event):
-            existing = get_lifecycle_event_by_dedup_key(dedup_key)
-            return LifecycleResult(
-                "promote_stage", "promote_stage", "already_transitioned", experiment.experiment_id,
-                (existing or {}).get("successor_experiment_id"), str(verdict["verdict_id"]),
+    try:
+        with transaction():
+            if not insert_lifecycle_event(event):
+                existing = get_lifecycle_event_by_dedup_key(dedup_key)
+                return LifecycleResult(
+                    "promote_stage", "promote_stage", "already_transitioned", experiment.experiment_id,
+                    (existing or {}).get("successor_experiment_id"), str(verdict["verdict_id"]),
+                )
+            db = get_db()
+            db.execute(
+                "UPDATE learning_experiments SET status='closed', ended_at=? "
+                "WHERE experiment_id=? AND ended_at IS NULL",
+                (now, experiment.experiment_id),
             )
-        db = get_db()
-        db.execute(
-            "UPDATE learning_experiments SET status='closed', ended_at=? "
-            "WHERE experiment_id=? AND ended_at IS NULL",
-            (now, experiment.experiment_id),
+            insert_experiment(successor)
+            register_fixed_look_decision(
+                successor,
+                hypothesis,
+                policy_epoch=policy_epoch,
+                behavior_contract_hash=str(verdict["behavior_contract_hash"]),
+            )
+    except InferenceContractError:
+        return LifecycleResult(
+            "hold",
+            "promote_stage",
+            "inference_contract_registration_failed",
+            experiment.experiment_id,
+            verdict_id=str(verdict["verdict_id"]),
         )
-        insert_experiment(successor)
     _write_lifecycle_audit(event)
     return LifecycleResult(
         "promote_stage", "promote_stage", "promoted_one_stage", experiment.experiment_id,
@@ -638,6 +741,7 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
         outcome_contract_version="v1",
         metric_version=METRIC_VERSION,
         behavior_contract_hash=expected_behavior_contract_hash,
+        inference_role="monitoring",
     )
     if verdict is not None and measurement_identity_reason(
         verdict,
@@ -655,7 +759,7 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
             recommended == "promote_stage"
             or (
                 verdict.get("verdict") == "insufficient_data"
-                and verdict.get("reason") == "no_actual_intervention"
+                and verdict.get("reason") in TRIAL_ADMISSION_REASONS
             )
         ):
             recommended = "admit_trial"
@@ -697,6 +801,19 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
         "current_verdict_id": authority.current_verdict_id,
         "treatment_control_progress": {
             "treatment": sum(len(cohort.treatment_samples) for cohort in cohorts),
+            "assigned_treatment": sum(
+                len(cohort.treatment_samples) for cohort in cohorts
+            ),
+            "authority_applied_treatment": sum(
+                len(cohort.authority_applied_treatment_samples)
+                for cohort in cohorts
+            ),
+            "actual_intervention_treatment": sum(
+                len(cohort.actual_treatment_samples) for cohort in cohorts
+            ),
+            "baseline_treatment": sum(
+                len(cohort.baseline_treatment_samples) for cohort in cohorts
+            ),
             "control": sum(len(cohort.control_samples) for cohort in cohorts),
             "required_per_arm": experiment.min_samples_per_arm,
             "cohorts": [cohort.inspection() for cohort in cohorts],

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 
 def _cfg(*, autonomous: bool = False, lifecycle: bool = False, paper: bool = False):
@@ -105,8 +106,14 @@ def test_controller_partial_cycle_is_degraded_then_recovers(monkeypatch):
 def test_scheduler_registers_separate_single_instance_learning_jobs(monkeypatch):
     from aletheia.agent_runtime import scheduler
 
+    durable_due = datetime.now(timezone.utc) + timedelta(minutes=17)
     monkeypatch.setattr(scheduler, "load_config", lambda: _cfg())
     monkeypatch.setattr(scheduler, "_recover_interrupted_serenity_run", lambda: [])
+    monkeypatch.setattr(
+        scheduler,
+        "_initial_learning_evaluator_run_time",
+        lambda _interval: durable_due,
+    )
     scheduler._scheduler = None
     started = scheduler.init_scheduler()
     try:
@@ -120,9 +127,53 @@ def test_scheduler_registers_separate_single_instance_learning_jobs(monkeypatch)
         assert evaluator.max_instances == controller.max_instances == 1
         assert audit_reconciler.max_instances == 1
         assert evaluator.coalesce is True and controller.coalesce is True
+        assert evaluator.next_run_time == durable_due
         assert "learning_lifecycle_audit_reconciler" in scheduler._ESSENTIAL_JOBS
     finally:
         scheduler.stop_scheduler()
+
+
+def test_learning_evaluator_restart_preserves_future_durable_deadline(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.learning import control
+
+    now = datetime(2026, 8, 7, 20, 49, tzinfo=timezone.utc)
+    durable_due = now + timedelta(minutes=17)
+    monkeypatch.setattr(
+        control,
+        "get_learning_job_health",
+        lambda _job_id: SimpleNamespace(next_due_at=durable_due.isoformat()),
+    )
+
+    initial_run = scheduler._initial_learning_evaluator_run_time(  # type: ignore[attr-defined]
+        60,
+        now=now,
+    )
+
+    assert initial_run == durable_due
+
+
+def test_learning_evaluator_restart_recovers_overdue_deadline_before_legacy_catchup(
+    monkeypatch,
+):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.learning import control
+
+    now = datetime(2026, 8, 7, 21, 10, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        control,
+        "get_learning_job_health",
+        lambda _job_id: SimpleNamespace(
+            next_due_at=(now - timedelta(minutes=4)).isoformat()
+        ),
+    )
+
+    initial_run = scheduler._initial_learning_evaluator_run_time(60, now=now)
+
+    assert initial_run == now + timedelta(
+        seconds=scheduler._LEARNING_EVALUATOR_RESTART_DELAY_SEC
+    )
+    assert initial_run < now + timedelta(minutes=2)
 
 
 def test_reschedule_learning_jobs_updates_both_live_intervals(monkeypatch):
@@ -249,6 +300,37 @@ def test_measurement_startup_catchup_only_claims_one_current_window(monkeypatch)
     control.record_measurement_job_success("learning_contribution_evaluator")
     assert not control.measurement_catchup_due("learning_contribution_evaluator")
     assert calls == []
+
+
+def test_measurement_jobs_share_a_dedicated_serial_executor():
+    """Restart recovery must not queue behind the saturated general IO lane."""
+    import ast
+    import inspect
+    import textwrap
+
+    from aletheia.agent_runtime import scheduler
+
+    assert scheduler._EXECUTOR_WORKERS["learning_measurement"] == 1
+    tree = ast.parse(textwrap.dedent(inspect.getsource(scheduler.init_scheduler)))
+    executors: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Attribute) or node.func.attr != "add_job":
+            continue
+        keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+        job_id = keywords.get("id")
+        executor = keywords.get("executor")
+        if (
+            isinstance(job_id, ast.Constant)
+            and isinstance(job_id.value, str)
+            and isinstance(executor, ast.Constant)
+            and isinstance(executor.value, str)
+        ):
+            executors[job_id.value] = executor.value
+
+    assert executors["learning_contribution_evaluator"] == "learning_measurement"
+    assert executors["learning_measurement_startup_catchup"] == "learning_measurement"
 
 
 def _health(**updates):

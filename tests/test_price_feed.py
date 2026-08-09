@@ -288,6 +288,42 @@ class TestRefreshWatchedPrices:
 
     @patch(
         "aletheia.data.price_feed.get_watched_instruments",
+        return_value=[
+            InstrumentId.from_parts("binance", "BTC/USDT", "spot"),
+            InstrumentId.from_parts("binance", "ETH/USDT", "spot"),
+        ],
+    )
+    @patch("aletheia.data.ccxt_provider.get_market_data_provider")
+    @patch("aletheia.config.loader.load_config")
+    def test_each_ticker_records_its_actual_observation_time(
+        self, mock_cfg, mock_provider_fn, mock_symbols
+    ):
+        cfg = MagicMock()
+        cfg.event_triggers.enabled = False
+        mock_cfg.return_value = cfg
+
+        provider = AsyncMock()
+        provider.get_ticker = AsyncMock(
+            side_effect=[
+                MagicMock(last_price=65000.0, provider="binance"),
+                MagicMock(last_price=3500.0, provider="binance"),
+            ]
+        )
+        provider.close = AsyncMock()
+        mock_provider_fn.return_value = provider
+        first_observed = datetime(2026, 8, 8, 1, 0, tzinfo=timezone.utc)
+        second_observed = first_observed + timedelta(seconds=20)
+
+        with patch("aletheia.data.price_feed.datetime") as clock:
+            clock.now.side_effect = [first_observed, second_observed]
+            result = asyncio.run(refresh_watched_prices())
+
+        assert result["refreshed"] == 2
+        assert _instrument_price_cache[("binance", "BTC/USDT", "spot")]["ts"] == first_observed
+        assert _instrument_price_cache[("binance", "ETH/USDT", "spot")]["ts"] == second_observed
+
+    @patch(
+        "aletheia.data.price_feed.get_watched_instruments",
         return_value=[InstrumentId.from_parts("binance", "ON/USDT", "perp")],
     )
     @patch("aletheia.data.ccxt_provider.get_market_data_provider")

@@ -21,9 +21,10 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
     ),
     SpecClaim(
         "LE-V03", "learning_evolution", "§7 actual intervention", "L2c",
-        "AT-01 carries exposure authority into each cohort sample; a fully shadow cohort with no "
-        "applied treatment returns insufficient_data/no_actual_intervention and cannot produce a "
-        "causal positive or negative verdict.",
+        "AT-01 preserves randomized intent-to-treat across all assigned treatment units while "
+        "separating permission from finite before/after behavior change at the cluster level. "
+        "No-op clusters cannot satisfy the actual-intervention minimum, and an underpowered paper "
+        "trial can continue gathering evidence without weakening harm or promotion gates.",
         status="implemented",
     ),
     SpecClaim(
@@ -45,11 +46,14 @@ def test_read_only_verdict_runtime_surface_exists():
     assert callable(evaluate_experiment)
     assert callable(inspect_experiment)
     assert "authority_applied" in {field.name for field in fields(CohortSample)}
+    assert "authority_reason" in {field.name for field in fields(CohortSample)}
+    assert "behavior_changed" in {field.name for field in fields(CohortSample)}
+    assert "behavior_change_reason" in {field.name for field in fields(CohortSample)}
     assert "assignment_unit_key" in {field.name for field in fields(CohortSample)}
-    assert METRIC_VERSION == "universe_family_calibration_cluster_allocation_utility_v4"
+    assert METRIC_VERSION == "universe_family_calibration_cluster_allocation_utility_v10"
     assert (
         get_learning_path("universe_family_calibration").behavior_contract_version
-        == "universe-family-calibration/v5"
+        == "universe-family-calibration/v11"
     )
 
 
@@ -75,8 +79,10 @@ def test_learning_contribution_route_returns_verdict_counts(monkeypatch):
     a mocked DB that has pre-populated verdict rows.
     """
     import sqlite3
+    import importlib
     from unittest.mock import patch
-    import aletheia.storage.sqlite as sqlite_mod
+    from aletheia.server.routes import analytics as analytics_routes
+    importlib.import_module("aletheia.learning.read_models")
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -103,9 +109,8 @@ def test_learning_contribution_route_returns_verdict_counts(monkeypatch):
         conn.execute(f"CREATE TABLE {tbl} ({cols[tbl]})")
     conn.commit()
 
-    with patch.object(sqlite_mod, "get_db", return_value=conn):
-        from aletheia.server.routes.analytics import get_learning_contribution
-        result = get_learning_contribution()
+    with patch("aletheia.storage.sqlite.get_db", return_value=conn):
+        result = analytics_routes.get_learning_contribution()
 
     verdicts = result.get("verdicts", {})
     assert verdicts.get("total") == 3, (
@@ -144,8 +149,10 @@ def test_learning_contribution_route_error_is_not_silent_zero():
     absent to simulate a schema/read failure.
     """
     import sqlite3
+    import importlib
     from unittest.mock import patch
-    import aletheia.storage.sqlite as sqlite_mod
+    from aletheia.server.routes import analytics as analytics_routes
+    importlib.import_module("aletheia.learning.read_models")
 
     # A DB with no learning_contribution_verdicts table → OperationalError on query.
     conn = sqlite3.connect(":memory:")
@@ -161,9 +168,8 @@ def test_learning_contribution_route_error_is_not_silent_zero():
     conn.commit()
     # NOTE: learning_contribution_verdicts is intentionally NOT created
 
-    with patch.object(sqlite_mod, "get_db", return_value=conn):
-        from aletheia.server.routes.analytics import get_learning_contribution
-        result = get_learning_contribution()
+    with patch("aletheia.storage.sqlite.get_db", return_value=conn):
+        result = analytics_routes.get_learning_contribution()
 
     verdicts = result.get("verdicts", {})
     assert verdicts.get("total") is None, (

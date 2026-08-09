@@ -307,15 +307,15 @@ async def test_universe_settings_are_visible_and_persisted(client):
 
 
 @pytest.mark.anyio
-async def test_learning_lifecycle_defaults_are_visible_and_paper_influence_stays_closed(client):
+async def test_learning_lifecycle_defaults_enable_only_the_measured_paper_path(client):
     response = await client.get("/api/settings")
     assert response.status_code == 200
     learning = response.json()["learning"]
     assert learning == {
         "contribution_evaluation_enabled": True,
-        "lifecycle_automation_enabled": False,
-        "paper_influence_enabled": False,
-        "paper_influence_paths": [],
+        "lifecycle_automation_enabled": True,
+        "paper_influence_enabled": True,
+        "paper_influence_paths": ["universe_family_calibration"],
         "auto_refreeze": True,
         "evaluation_interval_minutes": 60,
         "paper_active_allocation_pct": 0.80,
@@ -499,6 +499,8 @@ async def test_risk_policy_copy_is_revision_guarded_and_preserves_live_identity(
     policies = (await client.get("/api/settings/risk-policies")).json()
     demo = policies["demo"]
     live = policies["live"]
+    assert demo["capital"]["base_source"] == "account_equity"
+    assert live["capital"]["base_source"] == "account_equity"
 
     copied = await client.post(
         "/api/settings/risk-policies/copy",

@@ -546,6 +546,60 @@ def test_doctor_probe_no_session(tmp_path, monkeypatch):
     assert checks["trust.runtime_session.current"].severity == "info"
 
 
+def test_doctor_probe_recognizes_external_managed_gateway_session(tmp_path, monkeypatch):
+    """CLI Doctor must not label the live Gateway's DB session as a stale crash."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.diagnostics import doctor
+    from aletheia.diagnostics.doctor import _probe_runtime_session_provenance, Report
+    from datetime import timezone
+    from datetime import datetime
+
+    session = rs.start_runtime_session()
+    rs.reset_current_session()
+    monkeypatch.setattr(
+        doctor,
+        "_external_gateway_runtime_session_id",
+        lambda open_sessions: session["session_id"],
+    )
+
+    report = Report(generated_at=datetime.now(timezone.utc).isoformat())
+    _probe_runtime_session_provenance(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["trust.runtime_session.current"].severity == "ok"
+    assert "external Gateway session" in checks["trust.runtime_session.current"].detail
+    assert checks["trust.runtime_session.stale_open"].severity == "ok"
+
+
+def test_external_gateway_session_matches_live_process_start(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from datetime import datetime
+
+    from aletheia.diagnostics import doctor
+    from aletheia.gateway import pidfile
+    import psutil
+
+    started_at = "2026-08-08T00:01:08+00:00"
+
+    class _Process:
+        def create_time(self):
+            return datetime.fromisoformat(started_at).timestamp() - 1
+
+        def children(self, recursive=False):
+            assert recursive is True
+            return []
+
+    monkeypatch.setattr(pidfile, "read_pid", lambda: 123)
+    monkeypatch.setattr(pidfile, "is_running", lambda: True)
+    monkeypatch.setattr(psutil, "Process", lambda pid: _Process())
+
+    assert doctor._external_gateway_runtime_session_id([
+        {"session_id": "live-session", "started_at": started_at},
+        {"session_id": "old-crash", "started_at": "2026-08-07T22:00:00+00:00"},
+    ]) == "live-session"
+
+
 def test_doctor_probe_stale_open_sessions(tmp_path, monkeypatch):
     """Doctor must surface stale open sessions from prior crashes."""
     setup_env(tmp_path, monkeypatch)

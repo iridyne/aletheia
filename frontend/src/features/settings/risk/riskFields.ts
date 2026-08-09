@@ -61,7 +61,6 @@ export const RISK_MARGIN: NumField[] = [
 ]
 
 export const RISK_POLICY_NUM_FIELDS: NumField[] = [
-  { key: 'capital.base_usdt', label: 'Capital base', unit: 'USDT', min: 1, step: 1 },
   { key: 'capital.max_position_notional_usdt', label: 'Position notional cap', unit: 'USDT', min: 1, step: 1 },
   { key: 'capital.max_per_symbol_notional_usdt', label: 'Per-symbol cumulative cap', unit: 'USDT', min: 0, step: 10 },
   { key: 'capital.max_total_exposure_pct', label: 'Total exposure cap', unit: '%', min: 0, step: 0.5 },

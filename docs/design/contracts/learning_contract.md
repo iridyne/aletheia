@@ -1,11 +1,13 @@
 # Learning Subsystem Contract
 
 > Contract level: L2. This file is normative for the Learning subsystem.
-> Last aligned: 2026-08-06 product-gate, measured-path, and owner-observability reconciliation.
+> Last aligned: 2026-08-08 fixed-look inference and sequential-validity reconciliation.
 > Reference intent: [Product Direction - evidence-to-learning loop](../../product/definition/DIRECTION.md#2-complete-the-evidence-to-learning-loop).
 > Future designs:
 > [`learning_evolution.md`](../proposals/learning_evolution.md) and
-> [`learning_observability.md`](../proposals/learning_observability.md).
+> [`learning_observability.md`](../proposals/learning_observability.md), plus the
+> factor-scoring-specific
+> [`universe_continuous_scoring_safety.md`](../proposals/universe_continuous_scoring_safety.md).
 > They are Proposals, not current guarantees.
 
 Learning is not a dashboard-only feature. Its product role is to turn market
@@ -55,7 +57,7 @@ results can influence a later trading judgment, even when it lives outside `alet
 | Outcome joins | `analytics/trade_attribution.py`, `trade_path.py` | read-only realized-trade joins |
 | Candidate counterfactuals | `counterfactual/trades.py`, `filter_evidence.py`, `universe/filter_outcome_recorder.py` | `filter_candidate_outcomes` is the canonical full-arm fixed-horizon source; `universe_forward_outcomes` is a selected-member legacy mirror/fallback, and economic disagreement fails closed |
 | Outcome economics | `learning/outcomes.py`, `universe/outcome_economics.py`, `analytics/outcome_semantics.py`, `close_reasons.py`, `learning_window.py` | shared fail-closed cost/quality contract governs current Universe measurement. Other declared treatments remain static until they have an outcome the treatment can causally change. |
-| Universe family calibration | `universe/allocator.py::get_family_multipliers`, `learning/experiments.py`, `universe/service.py` | 50-sample retrospective cohorts may propose a bounded 0.9/1.1 shadow treatment; actual paper influence requires stable prospective arms, linked net outcomes, minimum time, and a positive verdict; fallback is 1.0 |
+| Universe family calibration | `universe/allocator.py::get_family_multipliers`, `learning/experiments.py`, `universe/service.py` | 50-sample retrospective cohorts may propose a bounded 0.9/1.1 shadow treatment; actual paper influence requires stable prospective arms, linked net outcomes, minimum time, owner admission, and a consumed fixed-look confirmatory verdict; fallback is 1.0 |
 | Structured cases | `analytics/trade_case_builder.py` | deterministic high-confidence cases and guard candidates |
 | Universe guard producer | `universe/outcome_recorder.py` | derives candidate guards from settled rejected/pass outcomes |
 | Narrative review | `agents/post_trade_reviewer.py` | medium-confidence prose; also triggers deterministic case building |
@@ -72,7 +74,7 @@ results can influence a later trading judgment, even when it lives outside `alet
 | Case/memo score | `agents/paper_trader_ranker.py`, `learning/experiments.py` | retrospective case/memo values are diagnostics only. Both ranker paths are measurement-unsupported, create no formal exposure, and return static zero deltas. |
 | Advisory retrieval | `knowledge/router.py`, `knowledge/retrieval.py` | ordinary advisory context remains available; the separate `observer_advisory_bundle` treatment hook is measurement-unsupported and injects no experimental bundle |
 | Persona learning | `trading/persona.py`, `persona_rollout.py`, `sizing_policy.py`, `trading/sizing.py` | clean realized history can calculate a bounded proposal, but `persona_sizing` is measurement-unsupported and actual notional remains the static baseline; downstream Risk caps remain unchanged |
-| Exit diagnostics | `analytics/exit_policy_advisor.py` | read-only advice only; no automatic mutation |
+| Exit diagnostics | `analytics/trade_path.py`, `analytics/exit_policy_advisor.py`, `analytics/exit_breakeven_shadow.py` | exact-protected stop exits may prove favorable excursion before the materialized first stop trigger; retrospective advice can only recommend the prospective paired shadow, and neither path mutates an exit or grants Learning authority |
 | Filter diagnostics | `analytics/filter_registry.py`, `filter_replay.py`, `filter_controller.py`, `filter_shadow_experiments.py` | shadow recommendations/observe-only experiments; no production mutation |
 | Contribution/health | measured Learning ledger/evaluator plus `lco-v1`, alpha, memo, guard impact/effectiveness, learning-funnel analytics, doctor and scheduler | bounded cached `lco-v1` summary and measured-path selection are shipped with timing/responsive accessibility proof; detail/pagination and the broader five-tab workbench remain future slices |
 | Supporting audits | trade insights/stats, family scorecard, opportunity flow, debate impact, thesis lineage, go-live scorecard | read models/gates; some are outcome sources or concurrent controls, not Learning treatments |
@@ -108,6 +110,11 @@ loop contributes positively. Current behavior has these contract-relevant limita
 
 - factor, ranker, learned-guard, automatic Risk-lesson, Observer-bundle and persona hooks remain
   behaviorally static because they are measurement-unsupported; they create no formal exposure;
+- continuous Universe curves, pessimistic missing-data scoring, and factor-level
+  suppression remain accepted future design only; the step scorer and static
+  factor fallback remain authoritative until the separate safeguards in
+  [`universe_continuous_scoring_safety.md`](../proposals/universe_continuous_scoring_safety.md)
+  are implemented and admitted;
 - factor identity is standardized as `factor_key` through producer, ranker and Operator context,
   but its unsupported experiment hook emits no before/after exposure;
 - the scheduled contribution evaluator measures the sole supported path through its
@@ -124,12 +131,33 @@ loop contributes positively. Current behavior has these contract-relevant limita
   scanner-run plus feature-snapshot identity so change-suppressed features cannot merge distinct
   entry-price windows;
 - contribution metric version
-  `universe_family_calibration_cluster_allocation_utility_v4` applies only to new verdicts. Earlier
+  `universe_family_calibration_cluster_allocation_utility_v10` applies only to new verdicts. Earlier
   metric verdict rows remain immutable history. A verdict's `created_at` is evaluation time, while
   `window_start` and `window_end` remain observation bounds;
+- treatment assignment and treatment intervention remain distinct. The v6 primary estimand stays
+  randomized intent-to-treat: every qualified assigned-treatment unit, including a baseline
+  fallback, enters the treatment mean, randomization test, harm calculation and persisted
+  `unique_treatment_n`. Selecting only effectively changed rows is forbidden because authority
+  refusal or a no-op baseline can correlate with market state. Permission and behavior are separate
+  provenance: `authority_applied` records a consistent authorized treatment assignment, while a
+  finite before/after delta records `behavior_changed`. A complete cluster is an actual intervention
+  only when permission is consistent and at least one member changed. Paper positive/promotion
+  requires the full actual-intervention minimum, not 100% intervention compliance. Refused and
+  all-no-op clusters remain in ITT and dilute the estimated policy effect; they cannot satisfy the
+  actual-intervention count but do not deadlock an otherwise qualified window. Counts and bounded
+  non-intervention reasons remain auditable. Metric v10 plus Universe behavior contract v11 starts a
+  from-zero identity; older metric v6-v9 and behavior v7-v10 evidence remains immutable history
+  and is never mixed or implicitly migrated;
+- the final numeric-treatment consumer independently enforces the Shadow authority invariant:
+  Shadow may persist only `authorized=false` with `experiment_stage_not_paper`. Any other
+  authorization/reason combination is forced to the static baseline, persisted under
+  `shadow_authority_invariant_violation:*`, and emitted through the existing critical infra-event
+  channel. This is a detection and containment backstop, not a second authority framework;
 - harm is determinate only after both arms reach the experiment's 50-assignment-unit gate. Before
-  that point the persisted state is `indeterminate`: it blocks authority but does not claim a
-  breach. Determinate loss-rate harm is an absolute increase above `0.15` (15 percentage points),
+  that point the persisted state is `indeterminate`: it blocks new authority and promotion but does
+  not claim a breach; the narrowly declared activated-trial collection exception below may retain
+  an existing bounded allocation. Determinate loss-rate harm is an absolute increase above `0.15`
+  (15 percentage points),
   and MAE p95 worsening is an absolute percentage-point difference above `0.25pp`; MAE fields use
   the `_pp` suffix rather than the ambiguous `_pct` suffix;
 - the current `min_market_days=7` gate means seven consecutive UTC dates, each containing at least
@@ -139,6 +167,30 @@ loop contributes positively. Current behavior has these contract-relevant limita
   current scheduler health. Any fully missing day resets the run; pre-gap samples are excluded from
   post-gap counts, economics, confidence and harm. Planned outages have no waiver contract and
   therefore fail closed with bounded `market_day_coverage` evidence;
+- recurring evaluator output is `monitoring` evidence only. Before any Paper exposure, owner
+  admission or predecessor promotion atomically registers one immutable
+  `ufc-fixed-look/v2` plan. The plan uses exposure-time facts to freeze the earliest qualifying
+  prefix ordered by `(exposed_at, assignment_unit_key)`, then waits for the exact cutoff units to
+  settle and consumes at most one conditional-randomization `confirmatory` verdict with authority
+  alpha `0.025`. The test holds cluster outcomes fixed and reassigns the observed treatment count,
+  so overlapping 1h/4h market paths are not falsely treated as IID samples. Cutoff
+  evidence is write-once and cutoff-external rows cannot change that stage's confirmatory result.
+  The inference assumes another cluster's assignment cannot rewrite the current cluster's
+  immutable full-arm outcome; identity disagreement continues to invalidate evidence.
+  A neutral or negative consumed look cannot continue sampling in an attempt to become positive. Each
+  successor stage registers a fresh prospective plan and no second active inference lineage may
+  reuse the same family without a separately approved multiplicity contract;
+- fixed-look efficacy and anytime safety are separate. Latest identity-matched `monitoring`
+  negative, invalid, or determinate-harm evidence can withdraw/refreeze authority at any time and
+  cannot be hidden by a later-written confirmatory row. Monitoring positive is descriptive and
+  cannot promote. Only the exact durable consumed verdict whose plan hash and cutoff fingerprint
+  match `learning_inference_decisions` is authority-eligible;
+- Shadow integrity readiness is deliberately separate from Paper efficacy. Ten complete current-
+  window assignment units per arm across one eligible UTC day may produce
+  `trial_integrity_ready_no_actual_intervention`; it proves only that both arms, exact identity and
+  fixed-horizon settlement are functioning. A protected owner may use that result to start one 10%
+  Paper trial while retaining 90% control. Seven days, 50 units per arm, sufficient actual
+  interventions and the consumed fixed look remain mandatory for every later promotion;
 - lifecycle, authority, and owner-facing progress consume only the exact current hypothesis, stage,
   policy epoch, horizon, outcome contract, metric version, and deterministic behavior-contract
   cohort. `code_commit` remains provenance and does not fragment behaviorally identical evidence.
@@ -146,12 +198,20 @@ loop contributes positively. Current behavior has these contract-relevant limita
   may conservatively refreeze or invalidate, but can never grant authority. Stage/hypothesis
   mismatch or malformed identity remains wrong-subject evidence and cannot mutate the current
   experiment;
+- after valid owner admission or predecessor activation, a bounded Paper stage may retain its
+  already-approved allocation while its current verdict is `insufficient_data` and harm is
+  indeterminate solely because the predeclared sample/continuity window is underpowered. This is a
+  collection liveness rule, not a promotion waiver: negative/invalid evidence, a determinate harm
+  breach, identity/config/refreeze failure, or any non-underpower indeterminate reason still
+  withdraws authority. Progression still requires positive ITT evidence, clear harm, and the full
+  actual-intervention minimum;
 - experiment registration is not an observation start. The first durable exposure atomically and
   idempotently changes an open experiment from `registered` to `active`, and `started_at` is always
   repaired to the earliest durable exposure;
-- the evaluator persists positive/neutral/negative/insufficient/invalid measurement verdicts and
-  never mutates authority itself. A protected owner admission plus the separate lifecycle/authority
-  gates are required before a paper treatment can apply;
+- the evaluator persists positive/neutral/negative/insufficient/invalid monitoring verdicts and,
+  when a frozen Paper cutoff is complete, at most one confirmatory verdict. It never mutates trading
+  authority itself. A protected owner admission plus the separate lifecycle/authority and consumed
+  inference gates are required before a paper treatment can apply or advance;
 - automatic lesson `block_*` suggestions are rewritten as non-blocking `shadow-only` guard
   candidates, never coerced into Risk Engine category `risk`, and excluded from historical
   auto-promotion until prospective evaluation or explicit owner action;
@@ -184,9 +244,10 @@ loop contributes positively. Current behavior has these contract-relevant limita
 - hypothesis identity includes the path behavior-contract version. A refreeze remains durable for
   repeated calls under that version, while a version change creates a distinct shadow hypothesis
   and experiment; it never reopens or mutates the refrozen predecessor.
-- the current UFC continuity contract is behavior version v5. It preserves the v4 bounded,
-  deterministic source-lineage fingerprint and adds consecutive eligible UTC exposure-day
-  qualification; the v2 harm, v3 settlement-source and v4 source-lineage-only semantics are
+- the current UFC contract is behavior version v8. It retains the v7 fixed-look, v6
+  permission-versus-effective-behavior, v5 continuous-window, and v4 deterministic source-lineage
+  rules, and separates first-trial integrity readiness from economic promotion evidence;
+  the v2 harm, v3 settlement-source, v4 source-lineage-only, and v5 continuity-only semantics are
   historical.
   Every path-version change rotates the policy epoch and starts a fresh from-zero window.
 - canonical/mirror disagreement remains whole-cohort `invalid`; no conflicting sample is silently
@@ -208,8 +269,9 @@ loop contributes positively. Current behavior has these contract-relevant limita
   recommend an owner admission. The public `admit_shadow_trial` API remains fail
   closed even when passed the string `owner`; the separately scoped protected
   settings route requires explicit confirmation, server-derived current epoch
-  identity and every default-closed paper gate. Lifecycle automation and paper
-  influence remain off by default.
+  identity and every default-closed experiment-authority gate. Lifecycle
+  automation and the sole measured Paper influence path are available by default,
+  but no Shadow experiment gains treatment authority without that admission.
 - the bounded `lco-v1` owner projection exposes current measurement, cohort
   integrity and sanitized job health on the default Learning tab. Legacy
   artifact/funnel counts remain activity-oriented and cannot establish

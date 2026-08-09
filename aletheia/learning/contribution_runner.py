@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 from aletheia.learning.cohorts import ContributionCohort, build_experiment_cohorts
 from aletheia.learning.ledger import get_record, insert_record
 from aletheia.learning.models import LearningContributionVerdict
+from aletheia.learning.fixed_look import (
+    InferenceContractError,
+    consume_fixed_look_verdict,
+    cutoff_assignment_unit_keys,
+    freeze_fixed_look_cutoff,
+    get_fixed_look_decision,
+)
 from aletheia.learning.verdicts import METRIC_VERSION, VerdictEvaluation, evaluate_cohort
 from aletheia.storage.sqlite import get_db
 
@@ -80,6 +87,9 @@ def evaluate_experiment(experiment_id: str) -> list[LearningContributionVerdict]
         insert_record("learning_contribution_verdicts", verdict, ignore_duplicates=True)
         stored = get_record("learning_contribution_verdicts", verdict.verdict_id)
         verdicts.append(LearningContributionVerdict(**(stored or verdict.model_dump())))
+        confirmatory = _maybe_consume_confirmatory_verdict(cohort)
+        if confirmatory is not None:
+            verdicts.append(confirmatory)
     return verdicts
 
 
@@ -102,8 +112,19 @@ def inspect_experiment(experiment_id: str) -> dict[str, Any]:
 def _build_verdict(
     cohort: ContributionCohort,
     evaluation: VerdictEvaluation,
+    *,
+    inference_role: str = "monitoring",
+    authority_eligible: bool = False,
+    inference_contract_version: str | None = None,
+    inference_plan_hash: str | None = None,
+    inference_cutoff_fingerprint: str | None = None,
 ) -> LearningContributionVerdict:
     metrics = dict(evaluation.harm_metrics)
+    metrics["inference_role"] = inference_role
+    metrics["authority_eligible"] = authority_eligible
+    metrics["inference_contract_version"] = inference_contract_version
+    metrics["inference_plan_hash"] = inference_plan_hash
+    metrics["inference_cutoff_fingerprint"] = inference_cutoff_fingerprint
     metrics["cohort_input_fingerprint"] = _cohort_fingerprint(cohort, evaluation)
     verdict_id = f"contribution-{metrics['cohort_input_fingerprint'][:24]}"
     window_start, window_end = _window(cohort, evaluation)
@@ -138,7 +159,63 @@ def _build_verdict(
             else None
         ),
         behavior_contract_hash=cohort.key.behavior_contract_hash or None,
+        inference_contract_version=inference_contract_version,
+        inference_role=inference_role,
+        authority_eligible=authority_eligible,
+        inference_plan_hash=inference_plan_hash,
+        inference_cutoff_fingerprint=inference_cutoff_fingerprint,
     )
+
+
+def _maybe_consume_confirmatory_verdict(
+    cohort: ContributionCohort,
+) -> LearningContributionVerdict | None:
+    if not str(cohort.experiment.stage).startswith("paper_"):
+        return None
+    decision = get_fixed_look_decision(cohort.experiment.experiment_id)
+    if decision is None or decision.status in {"consumed", "invalidated"}:
+        return None
+    try:
+        decision = freeze_fixed_look_cutoff(cohort.experiment.experiment_id)
+        selected_keys = cutoff_assignment_unit_keys(decision)
+    except InferenceContractError as exc:
+        logger.warning(
+            "fixed-look inference unavailable for experiment %s: %s",
+            cohort.experiment.experiment_id,
+            exc,
+        )
+        return None
+    if decision.status != "cutoff_frozen" or not selected_keys:
+        return None
+    confirmatory_cohorts = build_experiment_cohorts(
+        cohort.experiment.experiment_id,
+        assignment_unit_keys=frozenset(selected_keys),
+    )
+    selected = next(
+        (candidate for candidate in confirmatory_cohorts if candidate.key == cohort.key),
+        None,
+    )
+    if selected is None or selected.invalid_reasons:
+        return None
+    evaluation = evaluate_cohort(
+        selected,
+        authority_alpha=float(decision.authority_alpha),
+    )
+    if evaluation.verdict == "insufficient_data":
+        return None
+    verdict = _build_verdict(
+        selected,
+        evaluation,
+        inference_role="confirmatory",
+        authority_eligible=True,
+        inference_contract_version=decision.inference_contract_version,
+        inference_plan_hash=decision.plan_hash,
+        inference_cutoff_fingerprint=decision.cutoff_fingerprint,
+    )
+    if not consume_fixed_look_verdict(verdict):
+        return None
+    stored = get_record("learning_contribution_verdicts", verdict.verdict_id)
+    return LearningContributionVerdict.model_validate(stored or verdict.model_dump())
 
 
 def _cohort_fingerprint(cohort: ContributionCohort, evaluation: VerdictEvaluation) -> str:
@@ -172,6 +249,9 @@ def _cohort_fingerprint(cohort: ContributionCohort, evaluation: VerdictEvaluatio
                 "entry_ts": sample.entry_ts,
                 "exposed_at": sample.exposed_at,
                 "authority_applied": sample.authority_applied,
+                "authority_reason": sample.authority_reason,
+                "behavior_changed": sample.behavior_changed,
+                "behavior_change_reason": sample.behavior_change_reason,
             }
             for sample in sorted(cohort.samples, key=lambda row: (row.assignment, row.outcome_candidate_key))
         ],

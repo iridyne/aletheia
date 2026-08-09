@@ -197,16 +197,15 @@ def _truncate_event_field(value: Any, limit: int = 200) -> Any:
 
 
 async def _set_paused(paused: bool, *, event_type: str, message: str) -> dict[str, Any]:
-    cfg = load_config()
     if paused:
-        cfg.runtime.paused = True
-        save_config(cfg)
-        try:
-            from aletheia.agent_runtime.scheduler import pause_scheduler
+        from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, acquire_pause
 
-            pause_scheduler()
-        except Exception:
-            pass
+        acquire_pause(
+            MANUAL_OWNER,
+            reason="dashboard_operator_pause",
+            actor="human",
+            source="dashboard",
+        )
     else:
         from aletheia.agent_runtime import resume_gate
 

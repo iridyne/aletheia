@@ -25,8 +25,8 @@ and periodically re-checks until the condition clears.
 Design mirrors the existing LLM startup gate (agent_runtime/startup_gate.py) and
 the exchange connectivity monitor (agent_runtime/connectivity.py): a pure diagnosis
 function that never raises, plus an orchestration layer that owns the side effects.
-The shared `runtime.paused` flag is coordinated via a `paused_by_gate` marker in the
-durable blocker so a HUMAN pause is never auto-resumed by the gate (and vice versa).
+The shared `runtime.paused` flag is coordinated through durable pause-owner leases;
+the blocker file retains the detailed checks used by Doctor and Health.
 """
 
 from __future__ import annotations
@@ -327,11 +327,11 @@ def _check_reconciliation_incident(cfg) -> tuple[bool, str]:
 def _check_learning_influence(cfg) -> tuple[bool, str]:
     """Learning influence / lifecycle automation / allowlist must be self-consistent.
 
-    The active scope keeps behavioural influence disabled by default; enabling it
-    is a deliberate override that is only valid with a non-empty allowlist and a
-    bounded allocation. Contradictory settings (lifecycle automation on while
-    influence is off, influence on with an empty allowlist, an allocation outside
-    (0, 0.90]) indicate a misconfigured surface and must block the trading loop.
+    The active scope enables the measured Paper capability by default, while
+    experiment authority remains independently owner-gated. Contradictory settings
+    (lifecycle automation on while influence is off, influence on with an empty
+    allowlist, or an allocation outside (0, 0.90]) indicate a misconfigured surface
+    and must block the trading loop.
     """
     try:
         learning = cfg.learning
@@ -347,7 +347,7 @@ def _check_learning_influence(cfg) -> tuple[bool, str]:
         return False, f"paper_active_allocation_pct={alloc} outside (0, 0.90]"
 
     if not learning.paper_influence_enabled:
-        return True, "influence disabled (scope default)"
+        return True, "influence disabled by configured override"
     return True, f"influence enabled over {len(learning.paper_influence_paths)} path(s)"
 
 
@@ -381,7 +381,7 @@ def _user_block(cfg) -> str | None:
     """
     if cfg.runtime.kill_switch_active:
         return "kill_switch_active"
-    if cfg.runtime.paused and not _gate_owns_pause():
+    if "manual" in cfg.runtime.pause_owners:
         return "manual_pause"
     return None
 
@@ -484,15 +484,27 @@ def _notify(title: str, message: str) -> None:
         pass
 
 
-def _persist_paused(paused: bool) -> None:
-    """Read-modify-write a FRESH on-disk config so we only flip `paused` and never
-    clobber a concurrent settings edit (same rationale as the LLM startup gate)."""
-    from aletheia.config.loader import load_config, save_config
-
+def _persist_paused(paused: bool, *, generation: str | None = None):
+    """Acquire/release only the Startup Behavior Gate's durable pause lease."""
+    from aletheia.agent_runtime.pause_ownership import (
+        STARTUP_BEHAVIOR_OWNER,
+        acquire_pause,
+        release_pause,
+    )
     try:
-        fresh = load_config()
-        fresh.runtime.paused = paused
-        save_config(fresh)
+        if paused:
+            return acquire_pause(
+                STARTUP_BEHAVIOR_OWNER,
+                reason="startup_behavior_checks_blocked",
+                source="startup_behavior_gate",
+                layered=True,
+            )
+        return release_pause(
+            STARTUP_BEHAVIOR_OWNER,
+            generation=generation,
+            resume_when_clear=True,
+            source="startup_behavior_gate",
+        )
     except Exception as e:
         # In-memory scheduler is still paused/resumed correctly, but without
         # persistence the flag will not survive a restart.  Surface loudly so
@@ -520,13 +532,7 @@ def _apply_block(verdict: dict, cfg) -> None:
     paused_by_gate = system_failed
 
     if system_failed:
-        try:
-            from aletheia.agent_runtime.scheduler import pause_scheduler
-
-            pause_scheduler(layered=True)  # essential jobs keep running
-        except Exception as e:
-            logger.warning("startup gate: pause_scheduler failed: %s", e)
-        _persist_paused(True)
+        pause_lease = _persist_paused(True)
         # Stop the PI daemon if it was started due to a race or an earlier state;
         # it must not process new AI decisions while the gate is blocked.
         try:
@@ -539,6 +545,7 @@ def _apply_block(verdict: dict, cfg) -> None:
 
     write_gate_state({
         "paused_by_gate": paused_by_gate,
+        "pause_generation": getattr(pause_lease, "generation", None) if system_failed else None,
         "blockers": verdict["blockers"],
         "user_block_reason": verdict["user_block_reason"],
         "checks": verdict["checks"],
@@ -588,20 +595,33 @@ def _maybe_start_pi_daemon() -> None:
         logger.debug("startup gate: pi_daemon (re)start skipped: %s", e)
 
 
-def _resume_from_gate(cause: str) -> None:
-    _persist_paused(False)
-    try:
-        from aletheia.agent_runtime.scheduler import resume_scheduler
-
-        resume_scheduler()
-    except Exception as e:
-        logger.warning("startup gate: resume_scheduler failed: %s", e)
+def _resume_from_gate(cause: str, *, generation: str | None = None):
+    release = _persist_paused(False, generation=generation)
+    if release is None:
+        logger.warning("startup gate: owner release could not be persisted — staying paused")
+        return None
+    if not release.released:
+        logger.info("startup gate: pause generation changed — staying paused")
+        return release
+    if release.remaining_owners:
+        remaining = ", ".join(release.remaining_owners)
+        _audit(
+            "startup_behavior_gate_released_paused",
+            f"Startup behaviour gate cleared; trading remains paused by {remaining} ({cause})",
+        )
+        logger.info(
+            "Startup behaviour gate CLEARED — trading remains paused by %s (%s)",
+            remaining,
+            cause,
+        )
+        return release
     _audit("startup_behavior_gate_resumed",
            f"Startup behaviour gate cleared — AI/trading resumed ({cause})")
     logger.info("Startup behaviour gate CLEARED — AI/trading resumed (%s)", cause)
     _notify("Aletheia Startup Gate — trading resumed",
             "Startup checks passed; AI decisions and paper trading resumed.")
     _maybe_start_pi_daemon()
+    return release
 
 
 async def startup_behavior_gate(cfg=None) -> dict:
@@ -642,8 +662,15 @@ async def startup_behavior_gate(cfg=None) -> dict:
 
     if verdict["passed"] and not verdict["user_blocked"]:
         if _gate_owns_pause():
-            _resume_from_gate(cause="startup_checks_clear")
-        clear_gate_state()
+            state = read_gate_state() or {}
+            release = _resume_from_gate(
+                cause="startup_checks_clear",
+                generation=state.get("pause_generation"),
+            )
+            if release is not None and release.released:
+                clear_gate_state()
+        else:
+            clear_gate_state()
         _audit("startup_behavior_gate_passed", "Startup behaviour gate passed at boot")
         logger.info("Startup behaviour gate passed — AI/trading permitted")
         return verdict
@@ -668,15 +695,22 @@ async def recheck_once() -> bool:
     if not _gate_owns_pause():
         return False  # human-owned pause — never auto-resume
 
+    state = read_gate_state() or {}
+    pause_generation = state.get("pause_generation")
     verdict = evaluate_startup_gate(cfg)
     if verdict["passed"] and not verdict["user_blocked"]:
-        _resume_from_gate(cause="recheck_clear")
-        clear_gate_state()
-        return True
+        release = _resume_from_gate(
+            cause="recheck_clear",
+            generation=pause_generation,
+        )
+        if release is not None and release.released:
+            clear_gate_state()
+        return bool(release and release.resumed)
 
     # Still blocked — refresh the durable blocker so surfaces stay current.
     write_gate_state({
         "paused_by_gate": True,
+        "pause_generation": pause_generation,
         "blockers": verdict["blockers"],
         "user_block_reason": verdict["user_block_reason"],
         "checks": verdict["checks"],

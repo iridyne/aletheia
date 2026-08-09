@@ -10,7 +10,14 @@ import Tabs from '../components/Tabs'
 import PageHeader from '../components/PageHeader'
 import ThesisText from '../components/ThesisText'
 import { Badge, Button, Card, useToast } from '../components/ui'
-import { humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
+import {
+  fmtOpportunityScore,
+  fmtScore100,
+  fmtSymbol,
+  fmtTimestamp,
+  humanize,
+  opportunityScoreLabel,
+} from '../lib/format'
 
 /**
  * Agent Activity (WEBUI_PAGE_MAP.md — Agent Runs + Opportunities MERGED).
@@ -56,7 +63,18 @@ const oppColumns = [
   oppCol.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{fmtSymbol(info.getValue(), info.row.original.market)}</span> }),
   oppCol.accessor('market', { header: 'Market', cell: info => humanize(info.getValue()) }),
   oppCol.accessor('direction_bias', { header: 'Direction', cell: info => humanize(info.getValue()) }),
-  oppCol.accessor('confidence_score', { header: 'Confidence', cell: info => <span className="mono">{info.getValue() != null ? `${info.getValue()}%` : '—'}</span> }),
+  oppCol.accessor('confidence_score', {
+    header: 'Score',
+    cell: info => (
+      <span className="mono">
+        {fmtOpportunityScore(
+          info.row.original.source_agent,
+          info.getValue(),
+          info.row.original.confidence,
+        )}
+      </span>
+    ),
+  }),
   oppCol.accessor('source_agent', { header: 'Source', cell: info => info.getValue() ? humanize(info.getValue()) : '—' }),
   oppCol.accessor('status', { header: 'Status', cell: info => <StatusBadge status={info.getValue()} /> }),
   oppCol.accessor('created_at', { header: 'Created', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
@@ -195,7 +213,13 @@ function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
                 </Badge>
               } />
               <DrawerField label="Direction Bias" value={humanize(selected.direction_bias)} />
-              <DrawerField label="Confidence" value={selected.confidence_score != null ? `${selected.confidence_score}%` : selected.confidence ?? null} mono />
+              <DrawerField
+                label={opportunityScoreLabel(selected.source_agent)}
+                value={selected.confidence_score != null
+                  ? fmtScore100(selected.confidence_score)
+                  : selected.confidence ?? null}
+                mono
+              />
               <DrawerField label="Source Agent" value={selected.source_agent ? humanize(selected.source_agent) : null} />
               <DrawerField label="Status" value={<StatusBadge status={selected.status} />} />
             </DrawerSection>

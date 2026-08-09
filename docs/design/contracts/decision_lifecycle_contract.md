@@ -66,8 +66,8 @@ generation；只有 Ranker 原子写入 `signal_pending` 后，它才成为 `que
 |------|------|------------|
 | `market` | `str`(必填) | 机会的市场/场地描述符。跳5 当 PI 未显式选 `market_type` 时由 `_attach_opportunity_context` 作为继承来源(`trading_decision.py:909`)。⚠️ **已知歧义**:`market` 与下游期望的 `market_type` 枚举(`spot`/`usdt_futures`)值域是否一致**需核实并锁定**(报告 A1 design gap)。 |
 | `direction_bias` | `str \| None` | `long` / `short` / `neutral`。跳2 `paper_trader_ranker` 直接读它定方向。 |
-| `confidence` | `str` | **分类**置信度,默认 `speculative`(同 `VALID_CONFIDENCES`)。**不是**数值。 |
-| `confidence_score` | `int \| None` | **数值**置信度(0–100),跳2 打分用。与 `confidence`(分类)是两个字段,勿混。 |
+| `confidence` | `str` | **分类**置信度,默认 `speculative`(同 `VALID_CONFIDENCES`)。**不是**数值。字段由 Opportunity 的原始 producer 持有，后续 Observer assessment 不得覆盖。 |
+| `confidence_score` | `int \| None` | Producer-owned 数值信号,跳2 打分用。`market_observer` 新建行时表示 LLM confidence；`universe_scanner` 新建行时当前表示 `round(total_score)`，两者不是同一统计量，禁止在同一 Opportunity 上用 `max()` 混合或把它解释成概率。 |
 | `status` | `str` | 状态机:`open`(每个 snapshot 的可排序分析代次)→ `queued`(已认领为耐久 Operator 载体)→ `reviewed`(Operator 最终决定已落库);Filter 的永久拒绝也可从 `open` 直接进入 `reviewed`。父 snapshot supersede 只终结仍为 `open` 的代次；`queued` 由自身 `valid_until`、Operator 终局或 Proposal claim 终结。跳2 以 oldest-first 有界批次查询 `open` 工作集；top-N 只限制执行候选，不能截掉本批已扫描到的永久拒绝。永久拒绝或 TTL 终态与其原因事实同事务提交，证据失败则保持原状态可重试。 |
 | `scanner_family` | `str \| None` | 来源扫描器族,跳5 透传进归因链(风控 #16 部门集中度解析用)。 |
 | `valid_until` | `str \| None` | 机会自身的权威市场失效时间。`open` 在此后进入 Ranker 的 family soft-TTL 衰减，直到硬顶才终结；`queued` 到此时间立即失去 Proposal 权限。只有缺失/不可解析该字段的历史 queued 载体才使用 pending `created_at + 30min` 兜底。 |
@@ -91,6 +91,16 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 | `bear_case` | `str` | S4 强制反方论证。新 LLM 决策 schema 必填；空值仅允许历史记录。 |
 | `stop_price` / `take_profit` | `float \| None` | `trade` 的 LLM schema 与解析边界要求两者都是显式有限正数；缺失/0/NaN/Infinity 触发有界修复，不能由配置替模型补值。跳6 用新鲜精确 mark 校验多空几何及 `1.00 <= round(abs(tp-entry)/abs(entry-stop), 2) <= 10.00`；初稿越界走一次有界修复，二次仍错或提交时 mark 刷新导致越界则 `DecisionUnavailable(operator_entry_plan)`，不改写模型计划。`skip` 不要求这些字段。 |
 | `parameter_rationale` | `dict[str,str]` | 新开仓的五项 AI 理由：`entry_price` / `stop_loss` / `take_profit` / `notional_usdt` / `leverage`。仅 `trade` 的 LLM schema/解析路径要求全部为非空字符串；缺项触发同一有界输出修复，最终仍不完整则不创建 final PiDecision/Proposal。最终入场价同时保存实际 `market_snapshot_id / market_type / snapshot_at`，不是只写“来自快照”；详见 `trade_decision_rationale_contract.md`。 |
+
+跳6 在精确报价通过后，还必须用相同 `symbol + exchange + physical market_type`
+读取新鲜订单簿和 24h volume，形成 `market_tradability_gate`。`usdt_futures/swap`
+在采集存储层映射为 `perp`；订单簿和 volume 不得跨 venue 或 spot/perp 混用。
+缺失、过期、身份不完整的上下文返回
+`DecisionUnavailable(reason='market_tradability_unavailable', stage='operator_entry_plan')`；
+只有明确 `is_tradable=false` 才返回 `market_not_tradable`。两者均为非终态 defer，
+不创建 Proposal、不消费 pending。阈值仍由既有 `compute_tradability` 负责，本关卡
+只消费其明确结论，不改变评分公式。通过时，完整 instrument identity 与 tradability
+输入写入 hash-covered `TradeProposal.attribution_snapshot`，供事后复盘和 Learning 使用。
 
 ### 2.2a PiDecision（耐久 Operator 事实）
 
@@ -142,7 +152,8 @@ Operator 的 Proposal preflight 与最终原子 claim 都必须重查 Opportunit
 退休 Opportunity 或创建 Proposal；只能写 `operator_evaluation_events(event_kind=no_evaluable_candidate)`，
 附队列摘要、触发源和当前 policy epoch。该观察事实不进入 candidate skip/outcome cohort；历史无 target
 skip 仅作 legacy audit，不能由新逻辑继续产生。持仓动作不属于这个入口，只能由独立 portfolio review
-以 `hold` / `close_one` 表达；
+以 `hold` / `adjust_position` / `close_one` 表达；horizon 到期时 `hold` 不构成终态，
+只能明确延长到未来的绝对持仓 age 或平仓；
 `reduce_exposure` 等未实现标签不得映射为整仓关闭。命令路径先在内存中准备完整 immutable Proposal，
 再以短事务同时写入 `proposal_status=submitting` 的最终 PiDecision 和 TradeProposal,并把 Opportunity
 改为 `reviewed`;完成提交后才进入 Risk/Execution。这样崩溃只能留下“两者都没有”或“两者都存在”,
@@ -240,12 +251,13 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 - **DL-INV-17 状态只前进**:`paper_trader` 只允许 `open→queued`;任何旧批次不得把 `reviewed/expired` 倒退。Serenity 待处理信号在没有对称过期迁移时不得被市场信号 TTL 静默隐藏。
 - **DL-INV-18 pending 是 Opportunity 最终身份权限**:open Opportunity、ranker 候选和 heartbeat 不是终结或开仓授权；`skip/trade` 只可绑定精确且未过期的 pending 身份。零 pending heartbeat 不得把 open 改为 reviewed；缺失/不支持的模型动作是评估不可用，不能借 Opportunity 或 Position 身份制造终态。
 - **DL-INV-19 中断可恢复**:新提交不得产生“最终 claim 存在但 Proposal 不存在”的崩溃窗口;历史孤儿 submitting 行只能在完整交易身份匹配时补写一次 Proposal并继续；conviction 等非身份审计值沿用原 claim，不以新模型评分相等为恢复条件。
-- **DL-INV-20 入场与持仓动作分面**:入场 Operator 只暴露 `trade/skip`；portfolio review 只暴露 `hold/close_one` 并以明确 Position 为对象。`reduce_exposure`、`scale_in`、`flip` 等标签没有执行实现时不得出现在 schema/prompt，也不得映射为其他真实副作用。
+- **DL-INV-20 入场与持仓动作分面**:入场 Operator 只暴露 `trade/skip`；portfolio review 只暴露 `hold/adjust_position/close_one` 并以明确 Position 为对象。`HORIZON_DUE` 时 hold、空调整或未延长到当前 age 之后的调整均不完成复核。`reduce_exposure`、`scale_in`、`flip` 等标签没有执行实现时不得出现在 schema/prompt，也不得映射为其他真实副作用。
 - **DL-INV-21 direct skip 非对称否决禁止**:direct skip 必须经一次有界 blind 反事实确认，且每个 adverse reason 必须绑定同一候选的机器事实；`insufficient_evidence`、rank ordering、账户权益、单笔近期结果、可选数据缺失或无效输出不得成为终态。二次仍无效时只写候选级去重 observation 并保留 pending、轮转下一候选，绝不自动改成 trade。
 - **DL-INV-22 候选技术事实不被展示窗口截断**:全局特征展示上限不得决定精确 pending 候选是否有技术事实；必须按 `asset_id` 定向补齐，缺失/不完整/过期则在推理前 defer。
 - **DL-INV-23 新事实立即重开**:新精确 feature snapshot 必须改变候选 material fingerprint 并唤醒 Operator；不得让已有 neutral defer 吞掉新事实直到固定 heartbeat。
 - **DL-INV-24 判词旁路禁止**(2026-07-18 · policy_epoch `system_operator_skip_remediation` v1.5):SIDEWAYS/中性 50/50 regime、neutral funding、单笔近期结果、账户 equity、可选遥测缺失(如 OI delta)、Ranker rank_priority 数值等既不得作为 direct skip 授权(DL-INV-21 已锁),也不得通过 debate/conviction gate 通道降低 candidate conviction。conviction 只能来自候选特定证据(技术结构、funding/OI 信号、catalyst context);上述维度只能出现在 `bear_case` / `risk_factors` 作为顾虑,不能进入决定开仓与否的数值。违反本项在诊断里表现为 `direct_skip_not_confirmed` 或 `operator_low_conviction / debate_not_confirmed` 的诡异重复,均按 defer 处理。
 - **DL-INV-25 分析代次与工作载体分离**:Universe snapshot supersede 只能终结 `open` 分析代次；已写 `signal_pending` 的 `queued` 载体保留不可变的来源 snapshot/member id，并以自身 `valid_until` 继续到 Operator 终局。同 `symbol + direction + scanner_family` 已有活跃载体时，新代次记录 `active_operator_carrier`，不得重复入队；这里沿用既有 symbol-level spot/perp 排他规则。
+- **DL-INV-26 Producer 身份不可被 enrichment 改写**:若 Opportunity 由 `universe_scanner` 创建（或 T0 `trigger_type=universe_scanner`），其 `direction_bias`、`confidence`、`confidence_score` 保持原 producer 语义。Market Observer 的方向/置信判断只能写入 namespaced `metadata.observer_assessment`；方向相反时必须显式标 `direction_conflict` 并在 thesis/run step 中保留冲突，不能把同一 scanner carrier 静默翻成反向交易，也不能把 LLM confidence 与 scanner composite score 取最大值。Proposal preflight 必须重读同一 Opportunity 的 T0 scanner direction；最终 `TradingDecision.direction` 不一致时以 `opportunity_direction_lineage_conflict` typed defer 拒绝提交，零 Proposal/Risk/Order 副作用。
 
 ---
 
@@ -274,7 +286,7 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 | `DL-S20` | L2b | 旧 Serenity pending 仅在来源 id/symbol/direction 精确一致且来源 market_type 非空时恢复 NULL market_type；其余继续拒绝 |
 | `DL-S22` | L2b | Layer1 保留完整持仓权限上下文，但入场 prompt 不暴露假 close/reduce 动作 |
 | `DL-S33` | L2b | 活跃入场 schema/prompt 仅 trade/skip；遗留假动作成为可重试无效输出且零 Proposal |
-| `DL-S34` | L2c | portfolio review 仅 hold/close_one；reduce_exposure 不能静默整仓关闭 |
+| `DL-S34` | L2c | portfolio review 仅 hold/adjust_position/close_one；horizon 到期须未来 extension 或 close，reduce_exposure 不能静默整仓关闭 |
 | `DL-S35` | L2b | 零 pending heartbeat 的终态结果不绑定或退休 Layer1/ranker Opportunity；claim 事务内再次核验载体 |
 | `DL-S36` | L2b | 遗留 close/reduce 在上下文绑定前成为评估不可用，不借用 Opportunity/Position 身份 |
 | `DL-S43` | L2b | 缺失/不支持 action 或 malformed conviction 不合成终态 skip |
@@ -301,6 +313,8 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 | `DL-S69` | L2b | 新 Operator `spot+short` 先走一次有界修复、仍不合法则 typed defer；不得创建 futures Proposal、不得消费原 spot carrier；历史 coercion 仅作恢复兼容 |
 | `DL-S70` | L2b | `_DECISION_SCHEMA.skip_kind` 仅接受既有两个字符串或 JSON `null`；`trade+null` schema-valid，未登记的非空值仍是 `outside_enum`，`skip+null` 仍由 direct-skip validation typed defer 且不消费 carrier |
 | `DL-S71` | L2b | Operator 入场 RR 越界初稿只允许一次有界修复；二次仍越界时稳定返回 `operator_output_not_repaired:invalid_operator_entry_plan_risk_reward:outside_envelope`，零 final PiDecision/Proposal 且 Opportunity 保持 queued；当前边界只在 trace parameters 与契约中表达 |
+| `DL-S72` | L2b | 新 Operator trade 的精确品种 tradability 缺失/身份不完整时以 `market_tradability_unavailable` defer，明确 `is_tradable=false` 时以 `market_not_tradable` defer；两者均发生在 Proposal 创建前 |
+| `DL-S73` | L2b | 精确品种 tradability 明确通过时创建 Proposal，并把相同 venue + physical market identity 和连续评分输入写入不可变 attribution snapshot |
 | `DL-C01` | L2c | `_MIN_CONVICTION_TO_TRADE == 55`(改阈值即爆红,强制同步本契约) |
 | `DL-C02` | L2c | Proposal 前置不可用返回稳定 typed reason；确定性方向拒绝仍是明确 skip |
 

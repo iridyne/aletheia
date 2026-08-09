@@ -77,9 +77,9 @@ surface look shipped.
 
 | Capability | Current fact | LCO target |
 | --- | --- | --- |
-| Measured ledger | Seven permanent Learning tables exist | Read-only typed projection |
+| Measured ledger | Eight permanent Learning tables exist | Read-only typed projection |
 | Measurable path | `universe_family_calibration` has a current causal cohort adapter; Operator remains consumer-wired but measurement-unsupported | Explicit `measurement_supported` per path |
-| Current metric | `universe_family_calibration_cluster_allocation_utility_v4` | Current identity plus append-only metric history |
+| Current metric | `universe_family_calibration_cluster_allocation_utility_v10` | Current identity plus append-only metric history |
 | Cohort inspection | Internal aggregate inspection exists | Bounded aggregate plus selected cluster detail |
 | Lifecycle inspection | Internal read function returns progress, recommendation and job health | Public sanitized projection |
 | Job health | Current and durable last-failure fields exist | Current, recovery and catch-up states remain separate |
@@ -119,7 +119,7 @@ The only contribution states rendered as verdicts are:
 | `not_measured` | no eligible persisted verdict for the requested path/cohort |
 | `insufficient_data` | evaluator ran but sample, time, or intervention gates are unmet |
 | `neutral` | measured effect is inside the practical-neutral band |
-| `positive` | the identity-matched measurement verdict passed its declared gates |
+| `positive` | the identity-matched measurement verdict passed its declared gates; only a consumed confirmatory fixed look can grant promotion authority |
 | `negative` | measured effect or harm gate failed |
 | `invalid` | evidence identity, source, economics, selection, or contract is inconsistent |
 | `unavailable` | projection could not safely read or classify the required facts |
@@ -306,7 +306,7 @@ Each item contains:
     "policy_epoch": "...",
     "target_horizon": "4h",
     "outcome_contract_version": "...",
-    "metric_version": "universe_family_calibration_cluster_allocation_utility_v4",
+    "metric_version": "universe_family_calibration_cluster_allocation_utility_v10",
     "behavior_contract_hash": "...",
     "code_commit": "...",
     "matches_running_cohort": true,
@@ -323,6 +323,8 @@ Each item contains:
     "evaluated_at": "...",
     "window_start": "...",
     "window_end": "...",
+    "inference_role": "monitoring",
+    "authority_eligible": false,
     "coverage": {
       "basis": "eligible_assignment_unit_exposure_utc_day_either_arm",
       "status": "gap",
@@ -333,9 +335,22 @@ Each item contains:
       "outage_waiver": "unsupported_fail_closed"
     }
   },
+  "inference": {
+    "contract_version": null,
+    "status": "not_registered",
+    "authority_alpha": null,
+    "plan_hash": null,
+    "cutoff_fingerprint": null,
+    "consumed_verdict_id": null,
+    "authority_block_reason": null
+  },
   "samples": {
     "raw_exposures": 0,
     "treatment_assignment_units": 0,
+    "assigned_treatment_units": 0,
+    "authority_applied_treatment_units": 0,
+    "actual_intervention_treatment_units": 0,
+    "baseline_treatment_units": 0,
     "control_assignment_units": 0,
     "required_per_arm": 50,
     "complete_assignment_units": 0,
@@ -350,6 +365,10 @@ Each item contains:
     "exclusion_reasons": {},
     "invalid_reasons": {},
     "conflict_count": 0,
+    "actual_intervention_state": "none",
+    "actual_intervention_reason": "no_actual_intervention",
+    "treatment_authority_rejection_reasons": {},
+    "treatment_non_intervention_reasons": {},
     "harm_breached": false
   },
   "lifecycle": {
@@ -363,8 +382,11 @@ Each item contains:
 }
 ```
 
-Counts are named by statistical unit. `raw_exposures` and `cluster_members` must
-never be displayed as treatment/control sample size.
+Counts are named by statistical unit. Permission and effective behavior remain
+separate: an authorized all-no-op cluster is visible in
+`authority_applied_treatment_units` but not `actual_intervention_treatment_units`.
+`raw_exposures` and `cluster_members` must never be displayed as treatment/control
+sample size.
 
 `mutation_available=true` is readiness information only. It requires a current
 identity-matched `admit_trial` recommendation plus all default-closed paper

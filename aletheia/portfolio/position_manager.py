@@ -10,7 +10,7 @@ Governance:
 - LIVE positions (bitget_live_limited) are NEVER auto-closed (future + human-only).
 - The kill switch does NOT block closing — closing reduces risk.
 - No latest price → skip the position (never fabricate an exit).
-- The scheduler job that calls this still honors runtime.paused.
+- Layered pause keeps this scheduler job running so existing risk remains protected.
 """
 
 import hashlib
@@ -25,7 +25,7 @@ from aletheia.data.price_feed import (
     protective_price_venue,
 )
 from aletheia.storage.repositories import list_all_open_positions
-from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exit_plan, save_exit_plan
+from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exit_plan
 from aletheia.portfolio.pnl import close_position, _latest_price
 logger = logging.getLogger("aletheia.position_manager")
 
@@ -351,7 +351,7 @@ def _parse_dt(value: str | None) -> datetime | None:
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
         return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-    except ValueError:
+    except (ValueError, RuntimeError):
         return None
 
 
@@ -528,13 +528,14 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
     if tc["activation_profit_pct"] is not None and profit_pct < tc["activation_profit_pct"]:
         return
 
+    updates: dict = {}
+
     # 1. Breakeven move (opt-out via floor_at_breakeven): floor stop at entry when
     #    profit clears breakeven_trigger_pct.
     if tc["floor_at_breakeven"] and current_stop is not None and entry > 0:
         if profit_pct >= cfg.trading.breakeven_trigger_pct:
             if (is_long and current_stop < entry) or (not is_long and current_stop > entry):
-                from aletheia.storage.repositories import update_position
-                update_position(position["id"], stop_price=entry)
+                updates["stop_price"] = entry
                 position["stop_price"] = entry
                 current_stop = entry
 
@@ -548,7 +549,6 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
     else:
         trail_distance = price * (tc["pct"] / 100.0)
 
-    updates: dict = {}
     if is_long:
         new_hw = max(high_water, price)
         new_stop = new_hw - trail_distance
@@ -567,14 +567,31 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
             updates["trail_high_water"] = round(new_hw, 8)
 
     if updates:
-        from aletheia.storage.repositories import update_position
-        update_position(position["id"], **updates)
+        new_stop = updates.get("stop_price")
+        if new_stop is not None:
+            from aletheia.portfolio.protective_barrier import (
+                persist_position_exit_plan,
+            )
+
+            persisted_plan = load_exit_plan(position)
+            persisted_plan.stop_price = float(new_stop)
+            persist_position_exit_plan(
+                position["id"],
+                persisted_plan,
+                provenance="deterministic_trailing_v1",
+                extra_position_updates={
+                    key: value for key, value in updates.items() if key != "stop_price"
+                },
+            )
+        else:
+            from aletheia.storage.repositories import update_position
+
+            update_position(position["id"], **updates)
         # Sync the exchange TPSL bracket when the stop price changes.
         # #139 fix: dispatch broker-agnostically through execution.stops so OKX
         # and (eventually) Binance also honour the trailed stop, not just Bitget.
         # `replace_exchange_protective_stop` re-checks exchange_tpsl_enabled +
         # mode gating internally so the trail path stays honest per broker.
-        new_stop = updates.get("stop_price")
         if new_stop:
             try:
                 from aletheia.execution.stops import replace_exchange_protective_stop
@@ -901,8 +918,8 @@ def acknowledge_horizon_review(position_ids: list[str]) -> list[str]:
     """Durably mark horizon wakes only after their portfolio review completed.
 
     This marker is an acknowledgement, not a delivery receipt.  The caller filters
-    the supplied ids to HORIZON_DUE batches and invokes this only after a valid
-    hold/adjust result or a confirmed/durably claimed close.
+    the supplied ids to open HORIZON_DUE positions and invokes this only after an
+    effective future-horizon extension or a confirmed/durably claimed close.
     """
     from aletheia.storage.repositories import update_position
 
@@ -1178,13 +1195,21 @@ def adjust_stop(position_id: str, new_stop_price: float) -> dict:
     DB via update_position and syncs the exchange TPSL bracket when applicable.
     Returns {"updated": True} on success, {"error": str} on failure.
     """
-    from aletheia.storage.repositories import get_position, update_position
+    from aletheia.storage.repositories import get_position
 
     pos = get_position(position_id)
     if pos is None or pos.get("status") != "open":
         return {"error": f"position {position_id} not found or not open"}
 
-    update_position(position_id, stop_price=round(float(new_stop_price), 8))
+    from aletheia.portfolio.protective_barrier import persist_position_exit_plan
+
+    plan = load_exit_plan(pos)
+    plan.stop_price = round(float(new_stop_price), 8)
+    persist_position_exit_plan(
+        position_id,
+        plan,
+        provenance="legacy_adjust_stop_v1",
+    )
     logger.info("adjust_stop: %s new_stop=%.6f", position_id, new_stop_price)
 
     try:
@@ -1226,6 +1251,175 @@ def _stop_beyond_catastrophic(position: dict, new_stop: float, cfg) -> bool:
     return new_stop > entry * (1 + pct / 100.0)
 
 
+_TRAILING_ADJUSTMENT_KEYS = {
+    "mode",
+    "enabled",
+    "distance",
+    "activation_profit_pct",
+    "floor_at_breakeven",
+}
+_TRAILING_MODES = {"atr", "pct", "off", "none", "disabled"}
+
+
+def _positive_adjustment_number(value: object) -> float | None:
+    """Return one strict JSON number only when it is finite and positive."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) and number > 0 else None
+
+
+def _validated_trailing_adjustment(value: object) -> dict | None:
+    """Validate the persisted trailing shape without interpreting unknown fields."""
+    if not isinstance(value, dict) or not set(value).issubset(_TRAILING_ADJUSTMENT_KEYS):
+        return None
+
+    validated = dict(value)
+    if "mode" in validated:
+        mode = validated["mode"]
+        if not isinstance(mode, str) or mode.strip().lower() not in _TRAILING_MODES:
+            return None
+    for field in ("enabled", "floor_at_breakeven"):
+        if field in validated and not isinstance(validated[field], bool):
+            return None
+    for field in ("distance", "activation_profit_pct"):
+        if field in validated:
+            number = _positive_adjustment_number(validated[field])
+            if number is None:
+                return None
+            validated[field] = number
+    return validated
+
+
+def _risk_approved_entry_plan(position: dict) -> tuple[float, float] | None:
+    """Return the immutable Risk-authorized (entry, stop), or fail closed.
+
+    The current Position stop may have tightened into profit after entry, so it
+    cannot define the original risk denominator for a revised target.  Re-read
+    and validate the exact native Proposal -> authoritative RiskDecision -> Order
+    chain instead.  Legacy/adopted/mismatched evidence deliberately returns None.
+    """
+    proposal_id = position.get("proposal_id")
+    order_id = position.get("order_id")
+    if (
+        not proposal_id
+        or not order_id
+        or position.get("source") != "native"
+    ):
+        return None
+
+    try:
+        from aletheia.storage.repositories import (
+            get_order,
+            get_trade_proposal,
+            validate_native_order_authority,
+        )
+
+        order = get_order(str(order_id))
+        proposal = get_trade_proposal(str(proposal_id))
+        if order is None or proposal is None:
+            return None
+        validate_native_order_authority(order)
+    except Exception:
+        return None
+
+    if (
+        order.get("proposal_id") != proposal_id
+        or proposal.get("id") != proposal_id
+        or proposal.get("source") != "native"
+    ):
+        return None
+    for field in ("symbol", "market_type", "direction", "execution_mode"):
+        if order.get(field) != position.get(field) or proposal.get(field) != position.get(field):
+            return None
+    if order.get("position_id") not in (None, position.get("id")):
+        return None
+
+    entry = _positive_adjustment_number(proposal.get("price"))
+    stop = _positive_adjustment_number(proposal.get("stop_price"))
+    direction = position.get("direction")
+    if entry is None or stop is None:
+        return None
+    if direction in ("long", "buy"):
+        if not stop < entry:
+            return None
+    elif direction in ("short", "sell"):
+        if not entry < stop:
+            return None
+    else:
+        return None
+    return entry, stop
+
+
+def _fresh_adjustment_mark(position: dict, cfg) -> float | None:
+    """Read one exact fresh mark shared by stop and target validation."""
+    venue = protective_price_venue(
+        position.get("execution_mode"),
+        configured_data_venue=cfg.market_data.ccxt_exchange,
+    )
+    if venue is None:
+        return None
+    try:
+        raw_mark = get_fresh_price_for_protective_close(
+            str(position.get("symbol") or ""),
+            str(position.get("market_type") or ""),
+            venue=venue,
+        )
+    except Exception as exc:
+        logger.warning(
+            "operator adjustment mark unavailable pos=%s (%s)",
+            position.get("id"),
+            type(exc).__name__,
+        )
+        return None
+    return _positive_adjustment_number(raw_mark)
+
+
+def _validate_adjusted_target(
+    position: dict,
+    target: float,
+    mark: float,
+    approved_plan: tuple[float, float],
+) -> str | None:
+    """Return a stable failure reason for a target change, else None."""
+    entry = _positive_adjustment_number(position.get("entry_price"))
+    if entry is None:
+        return "target_entry_price_unavailable"
+
+    approved_entry, approved_stop = approved_plan
+    direction = position.get("direction")
+    if direction in ("long", "buy"):
+        geometry_valid = (
+            approved_stop < approved_entry < target
+            and entry < target
+            and mark < target
+        )
+    elif direction in ("short", "sell"):
+        geometry_valid = (
+            target < approved_entry < approved_stop
+            and target < entry
+            and target < mark
+        )
+    else:
+        geometry_valid = False
+    if not geometry_valid:
+        return "target_geometry_invalid"
+
+    from aletheia.trading.entry_plan import (
+        calculate_entry_plan_risk_reward,
+        entry_plan_risk_reward_is_plausible,
+    )
+
+    risk_reward = calculate_entry_plan_risk_reward(
+        approved_entry,
+        approved_stop,
+        target,
+    )
+    if not entry_plan_risk_reward_is_plausible(risk_reward):
+        return "target_risk_reward_outside_envelope"
+    return None
+
+
 def apply_operator_adjustment(
     position_id: str,
     *,
@@ -1238,12 +1432,15 @@ def apply_operator_adjustment(
     """System Operator revises an open position's ExitPlan WITHOUT closing it — the M3
     pivot that lets the AI manage a position, not just open/close it.
 
-    Validates the new stop against the Layer-0 catastrophic bound (a stop looser than
-    catastrophic is rejected), bumps the ExitPlan version, re-marks provenance
-    'operator', re-arms the horizon wake when the horizon changed, syncs the exchange
-    stop bracket, and writes an audit event. Returns a result dict.
+    Validates every authored value before persistence. Stop and target changes share
+    one exact fresh mark and must remain on opposite protective/profit sides of it.
+    Targets additionally require the original Risk-authorized entry-plan reward:risk
+    envelope. A stop may never loosen the current effective protection or the Layer-0
+    catastrophic bound; it may cross entry to lock profit while remaining behind the
+    mark. Successful changes bump the ExitPlan version, re-mark provenance 'operator',
+    re-arm a changed horizon, sync the exchange stop bracket, and write an audit event.
     """
-    from aletheia.storage.repositories import get_position, update_position
+    from aletheia.storage.repositories import get_position
 
     cfg = load_config()
     # Fetch by durable identity rather than scanning a capped list: the previous
@@ -1252,31 +1449,146 @@ def apply_operator_adjustment(
     pos = get_position(position_id)
     if pos is None or pos.get("status") != "open":
         return {"error": "position_not_found_or_not_open", "position_id": position_id}
+    if all(
+        value is None
+        for value in (new_stop, new_target, new_horizon, new_trailing)
+    ):
+        return {"error": "no_adjustment_requested", "position_id": position_id}
 
     if new_stop is not None:
-        new_stop = round(float(new_stop), 8)
+        validated_stop = _positive_adjustment_number(new_stop)
+        if validated_stop is None or round(validated_stop, 8) <= 0:
+            return {"error": "invalid_new_stop", "position_id": position_id}
+        new_stop = round(validated_stop, 8)
         if _stop_beyond_catastrophic(pos, new_stop, cfg):
             return {"error": "stop_looser_than_catastrophic", "position_id": position_id, "new_stop": new_stop}
 
+    if new_target is not None:
+        validated_target = _positive_adjustment_number(new_target)
+        if validated_target is None or round(validated_target, 8) <= 0:
+            return {"error": "invalid_new_target", "position_id": position_id}
+        new_target = round(validated_target, 8)
+
+    if new_horizon is not None:
+        validated_horizon = _positive_adjustment_number(new_horizon)
+        if validated_horizon is None:
+            return {"error": "invalid_new_horizon", "position_id": position_id}
+        new_horizon = validated_horizon
+        opened_at = _parse_dt(pos.get("opened_at"))
+        if opened_at is None:
+            return {
+                "error": "position_age_unavailable",
+                "position_id": position_id,
+            }
+        position_age_hours = (
+            datetime.now(timezone.utc) - opened_at
+        ).total_seconds() / 3600.0
+        if new_horizon <= position_age_hours:
+            return {
+                "error": "new_horizon_not_in_future",
+                "position_id": position_id,
+            }
+
+    if new_trailing is not None:
+        validated_trailing = _validated_trailing_adjustment(new_trailing)
+        if validated_trailing is None:
+            return {"error": "invalid_new_trailing", "position_id": position_id}
+        new_trailing = validated_trailing
+
     plan = load_exit_plan(pos)
-    old_stop = plan.stop_price
-    horizon_changed = new_horizon is not None and float(new_horizon) != (plan.expected_horizon_hours or -1.0)
+    current_stop = _positive_adjustment_number(
+        effective_exit_plan(pos, cfg).stop_price
+    )
+    direction = pos.get("direction")
+    if new_stop is not None and current_stop is not None:
+        if direction in ("long", "buy") and new_stop < current_stop:
+            return {
+                "error": "stop_would_loosen_protection",
+                "position_id": position_id,
+            }
+        if direction in ("short", "sell") and new_stop > current_stop:
+            return {
+                "error": "stop_would_loosen_protection",
+                "position_id": position_id,
+            }
+
+    approved_target_plan = None
+    if new_target is not None:
+        approved_target_plan = _risk_approved_entry_plan(pos)
+        if approved_target_plan is None:
+            return {
+                "error": "target_risk_authority_unavailable",
+                "position_id": position_id,
+            }
+
+    mark = None
+    if new_stop is not None or new_target is not None:
+        mark = _fresh_adjustment_mark(pos, cfg)
+        if mark is None:
+            error = (
+                "stop_fresh_mark_unavailable"
+                if new_stop is not None
+                else "target_fresh_mark_unavailable"
+            )
+            return {"error": error, "position_id": position_id}
+
+    if new_stop is not None:
+        if direction in ("long", "buy"):
+            valid_stop_geometry = new_stop < mark
+        elif direction in ("short", "sell"):
+            valid_stop_geometry = mark < new_stop
+        else:
+            valid_stop_geometry = False
+        if not valid_stop_geometry:
+            return {
+                "error": "stop_geometry_invalid",
+                "position_id": position_id,
+                "hint": "use_proactive_exit",
+            }
+
+    if new_target is not None:
+        target_error = _validate_adjusted_target(
+            pos,
+            new_target,
+            mark,
+            approved_target_plan,
+        )
+        if target_error is not None:
+            return {"error": target_error, "position_id": position_id}
+
+    persisted_old_stop = plan.stop_price
+    horizon_changed = new_horizon is not None and new_horizon != (plan.expected_horizon_hours or -1.0)
     new_plan = ExitPlan(
         stop_price=new_stop if new_stop is not None else plan.stop_price,
-        target_price=round(float(new_target), 8) if new_target is not None else plan.target_price,
-        expected_horizon_hours=float(new_horizon) if new_horizon is not None else plan.expected_horizon_hours,
+        target_price=new_target if new_target is not None else plan.target_price,
+        expected_horizon_hours=new_horizon if new_horizon is not None else plan.expected_horizon_hours,
         trailing=new_trailing if new_trailing is not None else plan.trailing,
         thesis_invalidation=plan.thesis_invalidation,
         provenance="operator",
         version=(plan.version or 0) + 1,
     )
-    save_exit_plan(position_id, new_plan)
-    if horizon_changed:
-        # A re-authored horizon should be allowed to wake the Operator again.
-        update_position(position_id, horizon_wake_sent_at=None)
+    from aletheia.portfolio.protective_barrier import persist_position_exit_plan
+
+    try:
+        new_plan = persist_position_exit_plan(
+            position_id,
+            new_plan,
+            provenance="system_operator_adjustment_v1",
+            extra_position_updates=(
+                {"horizon_wake_sent_at": None} if horizon_changed else None
+            ),
+        )
+    except ValueError:
+        return {
+            "error": "exit_plan_persistence_blocked",
+            "position_id": position_id,
+        }
 
     synced = False
-    if new_stop is not None and (old_stop is None or new_stop != round(float(old_stop), 8)):
+    if new_stop is not None and (
+        persisted_old_stop is None
+        or new_stop != round(float(persisted_old_stop), 8)
+    ):
         synced = _sync_exchange_stop(position_id, new_stop, pos, cfg)
 
     logger.info(
@@ -1337,7 +1649,7 @@ def proactive_exit(
     ``analytics/exit_driver_comparison.py`` reads ``close_reason`` to judge whether
     AI-discretionary exits beat deterministic rules.
     """
-    from aletheia.storage.repositories import get_position, update_position
+    from aletheia.storage.repositories import get_position
 
     if actor not in ("system_operator", "human"):
         return {"error": "unsupported_exit_actor", "position_id": position_id, "actor": actor}
@@ -1378,11 +1690,21 @@ def proactive_exit(
         level = round(level, 8)
         # exit_limit_source is persisted with the level so the executor can pick the
         # honest close_reason later, when the original caller is long gone.
-        update_position(
-            position_id,
-            exit_limit_price=level,
-            exit_limit_source=actor,
-        )
+        from aletheia.portfolio.protective_barrier import persist_position_exit_plan
+
+        try:
+            persist_position_exit_plan(
+                position_id,
+                load_exit_plan(pos),
+                provenance=f"{actor}_limit_exit_v1",
+                exit_limit_price=level,
+                exit_limit_source=actor,
+            )
+        except (ValueError, RuntimeError):
+            return {
+                "error": "exit_plan_persistence_blocked",
+                "position_id": position_id,
+            }
         logger.info(
             "proactive_exit(limit): %s resting exit at %.6f actor=%s reason=%s",
             position_id, level, actor, (reason or "")[:80],

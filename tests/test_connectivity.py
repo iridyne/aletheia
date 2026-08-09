@@ -48,10 +48,12 @@ def _reset_connectivity_state():
 
 
 def _claim_connectivity_pause(cfg, generation: str = "test-connectivity-generation"):
-    cfg.runtime.paused = True
-    cfg.runtime.paused_by_connectivity = True
-    cfg.runtime.connectivity_pause_generation = generation
-    cfg.runtime.connectivity_pause_acquired_at = "2026-08-07T00:00:00+00:00"
+    cfg.runtime.acquire_pause(
+        "exchange_connectivity",
+        reason="exchange probe failed",
+        generation=generation,
+        acquired_at="2026-08-07T00:00:00+00:00",
+    )
     return cfg
 
 
@@ -123,7 +125,11 @@ async def test_stale_recovery_after_reload_cannot_release_new_generation(monkeyp
     stale_cfg = AletheiaConfig()
     _claim_connectivity_pause(stale_cfg, generation="outage-n")
     fresh_cfg = stale_cfg.model_copy(deep=True)
-    fresh_cfg.runtime.connectivity_pause_generation = "outage-n-plus-one"
+    fresh_cfg.runtime.acquire_pause(
+        "exchange_connectivity",
+        reason="new outage",
+        generation="outage-n-plus-one",
+    )
 
     monkeypatch.setattr(
         "aletheia.config.loader.load_config",
@@ -164,7 +170,11 @@ async def test_generation_changed_during_llm_await_keeps_pause(tmp_path, monkeyp
 
     async def _llm_ok_after_new_generation(_cfg, max_retries=1):
         fresh = load_config()
-        fresh.runtime.connectivity_pause_generation = "outage-n-plus-one"
+        fresh.runtime.acquire_pause(
+            "exchange_connectivity",
+            reason="new outage",
+            generation="outage-n-plus-one",
+        )
         save_config(fresh)
         return {"any_usable": True, "checked": 1, "results": []}
 
@@ -735,8 +745,8 @@ async def test_intermittent_failure_resets_counter(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_no_double_pause_when_already_paused(tmp_path, monkeypatch):
-    """If already paused (runtime.paused=True), further failures don't re-pause."""
+async def test_connectivity_adds_owner_when_already_manually_paused(tmp_path, monkeypatch):
+    """An outage adds its own lease without erasing an existing manual pause."""
     setup_env(tmp_path, monkeypatch)
     _reset_connectivity_state()
 
@@ -764,8 +774,9 @@ async def test_no_double_pause_when_already_paused(tmp_path, monkeypatch):
     for _ in range(5):
         await run_connectivity_check()
 
-    # No pause_scheduler call — already paused
-    assert pause_called == []
+    assert pause_called == [True]
+    persisted = load_config()
+    assert set(persisted.runtime.pause_owners) == {"manual", "exchange_connectivity"}
 
 
 @pytest.mark.asyncio
@@ -794,8 +805,8 @@ async def test_network_recovery_keeps_a_pause_not_owned_by_connectivity(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_operator_pause_after_network_pause_replaces_ownership(tmp_path, monkeypatch):
-    """A later pause assignment supersedes the original connectivity claim."""
+async def test_operator_pause_after_network_pause_coexists_with_connectivity(tmp_path, monkeypatch):
+    """A later manual pause remains after connectivity releases only its lease."""
     setup_env(tmp_path, monkeypatch)
     _reset_connectivity_state()
 
@@ -818,8 +829,52 @@ async def test_operator_pause_after_network_pause_replaces_ownership(tmp_path, m
     await conn_mod._resume_from_network(cfg)
 
     assert resumed == []
-    assert load_config().runtime.paused_by_connectivity is False
-    assert load_config().runtime.connectivity_pause_generation is None
+    persisted = load_config()
+    assert persisted.runtime.paused_by_connectivity is False
+    assert persisted.runtime.connectivity_pause_generation is None
+    assert set(persisted.runtime.pause_owners) == {"manual"}
+
+
+@pytest.mark.asyncio
+async def test_network_recovery_keeps_startup_gate_owner_paused(tmp_path, monkeypatch):
+    """Exchange restoration releases connectivity only, never Startup Gate."""
+    setup_env(tmp_path, monkeypatch)
+    _reset_connectivity_state()
+
+    from aletheia.config.loader import load_config, save_config
+    import aletheia.agent_runtime.connectivity as conn_mod
+
+    cfg = load_config()
+    _claim_connectivity_pause(cfg, generation="outage-1")
+    cfg.runtime.acquire_pause(
+        "startup_behavior_gate",
+        reason="reconciliation incident",
+        generation="startup-1",
+    )
+    save_config(cfg)
+    resumed = []
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.resume_scheduler",
+        lambda: resumed.append(True),
+    )
+
+    await conn_mod._resume_from_network(cfg, pause_generation="outage-1")
+
+    persisted = load_config()
+    assert resumed == []
+    assert persisted.runtime.paused is True
+    assert set(persisted.runtime.pause_owners) == {"startup_behavior_gate"}
+    from aletheia.files.jsonl import read_jsonl
+
+    events = [
+        event
+        for event in read_jsonl("audit.jsonl")
+        if event.get("event_type") == "exchange_connectivity_restored_paused"
+    ]
+    assert events
+    assert events[-1]["after"]["remaining_pause_owners"] == [
+        "startup_behavior_gate"
+    ]
 
 
 @pytest.mark.asyncio

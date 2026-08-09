@@ -452,12 +452,17 @@ def test_gate_pauses_layered_and_records_durable_blocker(tmp_path, monkeypatch, 
     # Layered pause applied (essential jobs keep running).
     assert _mock_scheduler["pause"] == [True]
     # Persisted paused so the state survives a restart.
-    assert load_config().runtime.paused is True
+    persisted = load_config()
+    assert persisted.runtime.paused is True
+    assert set(persisted.runtime.pause_owners) == {"startup_behavior_gate"}
 
     # Durable blocker recorded and marked gate-owned.
     state = gate.read_gate_state()
     assert state is not None
     assert state["paused_by_gate"] is True
+    assert state["pause_generation"] == persisted.runtime.pause_owners[
+        "startup_behavior_gate"
+    ].generation
     assert "exchange_sync" in state["blockers"]
 
     # Audited.
@@ -599,6 +604,47 @@ def test_recheck_does_not_resume_user_pause(tmp_path, monkeypatch, _mock_schedul
     resumed = asyncio.run(gate.recheck_once())
     assert resumed is False
     assert load_config().runtime.paused is True   # still paused — user owns it
+    assert _mock_scheduler["resume"] == 0
+
+
+def test_gate_release_keeps_connectivity_owner_paused(
+    tmp_path, monkeypatch, _mock_scheduler
+):
+    """Clearing Startup Gate cannot release an overlapping connectivity pause."""
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg()
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+
+    cfg = load_config()
+    cfg.runtime.acquire_pause(
+        "exchange_connectivity",
+        reason="exchange probe failed",
+        generation="outage-1",
+    )
+    startup_lease = cfg.runtime.acquire_pause(
+        "startup_behavior_gate",
+        reason="startup checks blocked",
+        generation="startup-1",
+    )
+    save_config(cfg)
+    gate.write_gate_state(
+        {
+            "paused_by_gate": True,
+            "pause_generation": startup_lease.generation,
+            "blockers": [],
+            "user_block_reason": None,
+            "checks": [],
+            "updated_at": "2026-08-08T00:00:00+00:00",
+        }
+    )
+
+    resumed = asyncio.run(gate.recheck_once())
+
+    persisted = load_config()
+    assert resumed is False
+    assert persisted.runtime.paused is True
+    assert set(persisted.runtime.pause_owners) == {"exchange_connectivity"}
+    assert gate.read_gate_state() is None
     assert _mock_scheduler["resume"] == 0
 
 

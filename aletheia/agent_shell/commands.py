@@ -3,6 +3,7 @@
 import json
 import hashlib
 import logging
+import math
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -688,14 +689,14 @@ async def get_recommendations(params: dict) -> dict:
 
 
 async def pause_agents(params: dict) -> dict:
-    cfg = config_loader.load_config()
-    cfg.runtime.paused = True
-    config_loader.save_config(cfg)
-    try:
-        from aletheia.agent_runtime.scheduler import pause_scheduler
-        pause_scheduler()
-    except Exception:
-        pass
+    from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, acquire_pause
+
+    acquire_pause(
+        MANUAL_OWNER,
+        reason="agent_shell_pause",
+        actor="agent_shell",
+        source="command_center",
+    )
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "agent_shell", "source": "command_center",
                  "event_type": "gateway_paused", "message": "Agents paused via Agent Shell"})
@@ -1366,10 +1367,46 @@ async def propose_risk_boundary_change(params: dict) -> dict:
     if not changes:
         return {"error": "Cannot create a risk-boundary proposal without proposed changes."}
 
+    risk_mode = str(params.get("risk_mode") or "").strip().lower()
+    policy_id = str(params.get("policy_id") or "").strip()
+    requested_policy_hash = str(params.get("policy_hash") or "").strip()
+    policy_revision = params.get("policy_revision")
+    if risk_mode not in {"demo", "live"}:
+        return {"error": "Cannot create a risk-boundary proposal without a valid risk_mode."}
+    if (
+        not policy_id
+        or not requested_policy_hash
+        or isinstance(policy_revision, bool)
+        or not isinstance(policy_revision, int)
+    ):
+        return {"error": "Cannot create a risk-boundary proposal without policy identity."}
+
+    from aletheia.risk.policy import risk_policy_hash as compute_risk_policy_hash
+
+    cfg = config_loader.load_config()
+    current_policy = getattr(cfg.risk, risk_mode)
+    current_identity = (
+        current_policy.policy_id,
+        current_policy.revision,
+        compute_risk_policy_hash(current_policy),
+    )
+    requested_identity = (policy_id, policy_revision, requested_policy_hash)
+    if requested_identity != current_identity:
+        return {
+            "error": (
+                "Cannot create a risk-boundary proposal for a stale policy identity; "
+                "refresh risk recommendations first."
+            )
+        }
+
     content = {
+        "risk_mode": risk_mode,
+        "policy_id": policy_id,
+        "policy_revision": policy_revision,
+        "policy_hash": requested_policy_hash,
         "changes": changes,
         "rationale": rationale,
-        "current_risk_snapshot": config_loader.load_config().risk.model_dump(mode="json"),
+        "current_risk_snapshot": cfg.risk.model_dump(mode="json"),
         "requires_human_approval": True,
     }
     artifact_id = _create_proposal_artifact(
@@ -2885,6 +2922,16 @@ async def review_portfolio_state(params: dict) -> dict:
     wake_position_ids = list(dict.fromkeys(
         str(batch["position_id"]) for batch in wake_batches
     ))
+    from aletheia.agent_runtime.wake_events import HORIZON_DUE
+
+    horizon_due_position_ids = {
+        str(batch["position_id"])
+        for batch in wake_batches
+        if any(
+            isinstance(event, dict) and event.get("kind") == HORIZON_DUE
+            for event in (batch.get("events") or [])
+        )
+    }
     wake_fingerprint = (
         "sha256:"
         + hashlib.sha256(
@@ -2902,7 +2949,30 @@ async def review_portfolio_state(params: dict) -> dict:
     # This is execution authority, not a display context. build_app_context()
     # intentionally truncates and projects positions for UI/LLM summaries, so it
     # omits the exact id and market_type required for safe position selection.
-    open_positions = list_all_open_positions()
+    all_open_positions = list_all_open_positions()
+    total_unrealized_pnl = 0.0
+    unrealized_pnl_available = True
+    for position in all_open_positions:
+        try:
+            unrealized_pnl = float(position.get("unrealized_pnl"))
+        except (TypeError, ValueError):
+            unrealized_pnl_available = False
+            break
+        if not math.isfinite(unrealized_pnl):
+            unrealized_pnl_available = False
+            break
+        total_unrealized_pnl += unrealized_pnl
+    portfolio_context = {
+        "total_open_positions": len(all_open_positions),
+        "review_scope_positions": 0,
+        "unrealized_pnl_available": unrealized_pnl_available,
+        "total_unrealized_pnl_usdt": (
+            round(total_unrealized_pnl, 8)
+            if unrealized_pnl_available
+            else None
+        ),
+    }
+    open_positions = all_open_positions
     if wake_position_ids:
         wake_ids = set(wake_position_ids)
         open_positions = [
@@ -2910,6 +2980,13 @@ async def review_portfolio_state(params: dict) -> dict:
             for position in open_positions
             if str(position.get("id") or "") in wake_ids
         ]
+    # Stale wake batches are terminal for already-closed Positions and must not
+    # change the action contract for a different open Position in the same
+    # review.  Only in-scope open horizon wakes require close-or-extend.
+    open_scope_ids = {str(position.get("id") or "") for position in open_positions}
+    horizon_due_position_ids.intersection_update(open_scope_ids)
+    horizon_due_review = bool(horizon_due_position_ids)
+    portfolio_context["review_scope_positions"] = len(open_positions)
     risk = ctx.get("risk", {})
 
     if not open_positions:
@@ -2928,7 +3005,11 @@ async def review_portfolio_state(params: dict) -> dict:
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["hold", "adjust_position", "close_one"],
+                "enum": (
+                    ["adjust_position", "close_one"]
+                    if horizon_due_review
+                    else ["hold", "adjust_position", "close_one"]
+                ),
             },
             "target_symbol": {"type": "string"},
             "target_market_type": {"type": "string"},
@@ -2945,11 +3026,25 @@ async def review_portfolio_state(params: dict) -> dict:
         "required": ["action", "reasoning"],
     }
 
+    def _position_review_value(value) -> object:
+        return "not available" if value is None else value
+
     pos_summary = "\n".join(
         f"  id={p['id']} {p['symbol']} ({p.get('market_type', 'spot')}) "
         f"{p['direction']} qty={p['quantity']} "
-        f"upnl={p.get('unrealized_pnl', '?')}"
+        f"entry={_position_review_value(p.get('entry_price'))} "
+        f"current={_position_review_value(p.get('current_price'))} "
+        f"upnl={_position_review_value(p.get('unrealized_pnl'))} "
+        f"stop={_position_review_value(p.get('stop_price'))} "
+        f"target={_position_review_value(p.get('take_profit_price'))} "
+        f"opened_at={_position_review_value(p.get('opened_at'))} "
+        f"expected_horizon_hours={_position_review_value(p.get('expected_horizon_hours'))}"
         for p in open_positions
+    )
+    total_unrealized_text = (
+        f"{total_unrealized_pnl:.2f} USDT"
+        if unrealized_pnl_available
+        else "not available"
     )
     wake_section = (
         "\nWake evidence requiring this review:\n"
@@ -2958,7 +3053,11 @@ async def review_portfolio_state(params: dict) -> dict:
         else ""
     )
     system = "You are a portfolio risk reviewer for an autonomous paper trading system."
-    user = f"""Current open positions:
+    user = f"""Global portfolio context:
+  Total open positions: {len(all_open_positions)}
+  Global unrealized PnL: {total_unrealized_text}
+
+Positions in this review scope ({len(open_positions)} of {len(all_open_positions)} total open positions):
 {pos_summary}
 {wake_section}
 
@@ -2971,8 +3070,15 @@ Review the portfolio and decide:
 - "adjust_position": revise its stop, target, or horizon
 - "close_one": close one exact position
 
-Be conservative. For adjust_position or close_one, target_position_id must identify
-one listed position. Never act on a position outside the supplied wake evidence.
+Be conservative. Global portfolio context is read-only. For adjust_position or
+close_one, target_position_id must identify one listed review-scope position. Never
+act on a position outside the supplied wake evidence.
+
+For horizon_due wakes, "hold" is not a valid terminal answer. Choose "close_one",
+or choose "adjust_position" and set new_horizon_hours to an absolute age from
+opened_at that is strictly greater than the current age reported in the wake
+evidence. A stop/target-only or empty adjustment does not extend the horizon and
+will be retried.
 
 Return JSON: {_json.dumps(schema)}"""
 
@@ -2986,12 +3092,17 @@ Return JSON: {_json.dumps(schema)}"""
         user,
         schema=_Schema(),
         caller="agent_shell.portfolio_review",
+        # This bounded JSON choice does not benefit from an internal reasoning
+        # transcript. Reserve the output budget for the schema response so a
+        # thinking model cannot exhaust every retry before emitting JSON.
+        reasoning_effort="none",
     )
     if err or review is None:
         from aletheia.storage.models import PiDecision
         from aletheia.storage.repositories import insert_pi_decision
 
         target = open_positions[0] if len(open_positions) == 1 else None
+        review_error_code = str(err or "empty_review").split(":", 1)[0][:80]
         unavailable = PiDecision(
             symbol=target.get("symbol") if target else None,
             direction=target.get("direction") if target else None,
@@ -3011,6 +3122,8 @@ Return JSON: {_json.dumps(schema)}"""
                     "wake_fingerprint": wake_fingerprint,
                     "wake_batches": wake_batches,
                     "target_position_id": target.get("id") if target else None,
+                    "portfolio_context": portfolio_context,
+                    "error_code": review_error_code,
                     "effect": {"status": "unavailable"},
                 }
             }, sort_keys=True, separators=(",", ":"), default=str),
@@ -3020,12 +3133,13 @@ Return JSON: {_json.dumps(schema)}"""
             "action": "review_unavailable",
             "reason": "operator_review_unavailable",
             "review_completed": False,
+            "review_error_code": review_error_code,
             "position_review_decision_id": unavailable.id,
             "wake_fingerprint": wake_fingerprint,
         }
 
     raw_action = str(review.get("action") or "hold")
-    supported_action = raw_action in {"hold", "adjust_position", "close_one"}
+    supported_action = raw_action in set(schema["properties"]["action"]["enum"])
     action = raw_action if supported_action else "hold"
     reasoning = str(review.get("reasoning") or "")[:300]
     if not supported_action:
@@ -3037,6 +3151,10 @@ Return JSON: {_json.dumps(schema)}"""
         "reasoning": reasoning,
         "target_symbol": review.get("target_symbol"),
     }
+    if horizon_due_review and raw_action == "hold":
+        result["horizon_review_error"] = (
+            "explicit_extension_or_close_required"
+        )
 
     sym = review.get("target_symbol") or ""
     mkt = review.get("target_market_type")
@@ -3080,6 +3198,7 @@ Return JSON: {_json.dumps(schema)}"""
                 "close_error",
                 "close_one_error",
                 "positions_closed",
+                "horizon_review_error",
             }
         }
 
@@ -3090,6 +3209,7 @@ Return JSON: {_json.dumps(schema)}"""
                 "wake_fingerprint": wake_fingerprint,
                 "wake_batches": wake_batches,
                 "target_position_id": target.get("id") if target else None,
+                "portfolio_context": portfolio_context,
                 "effect": _effect(pending=pending),
             }
         }
@@ -3126,13 +3246,19 @@ Return JSON: {_json.dumps(schema)}"""
         from aletheia.portfolio.position_manager import apply_operator_adjustment
 
         target = matching[0]
-        result["adjust"] = apply_operator_adjustment(
-            target["id"],
-            new_stop=review.get("new_stop_price"),
-            new_target=review.get("new_target_price"),
-            new_horizon=review.get("new_horizon_hours"),
-            reason=reasoning,
-        )
+        if (
+            target["id"] in horizon_due_position_ids
+            and review.get("new_horizon_hours") is None
+        ):
+            result["adjust_position_error"] = "horizon_extension_required"
+        else:
+            result["adjust"] = apply_operator_adjustment(
+                target["id"],
+                new_stop=review.get("new_stop_price"),
+                new_target=review.get("new_target_price"),
+                new_horizon=review.get("new_horizon_hours"),
+                reason=reasoning,
+            )
 
     closed_count = 0
     if action == "close_one" and matching:
@@ -3161,7 +3287,7 @@ Return JSON: {_json.dumps(schema)}"""
     # durable pending-close claim is subsequently owned by reconciliation; retrying
     # the review must never submit a replacement order.
     if action == "hold":
-        review_completed = supported_action
+        review_completed = supported_action and not horizon_due_review
     elif action == "adjust_position":
         adjustment = result.get("adjust")
         review_completed = bool(
@@ -3183,17 +3309,20 @@ Return JSON: {_json.dumps(schema)}"""
     result["review_completed"] = review_completed
 
     if review_completed and wake_batches:
-        from aletheia.agent_runtime.wake_events import HORIZON_DUE
         from aletheia.portfolio.position_manager import acknowledge_horizon_review
 
-        horizon_position_ids = [
+        horizon_position_ids = list(dict.fromkeys(
             str(batch["position_id"])
             for batch in wake_batches
-            if any(
-                isinstance(event, dict) and event.get("kind") == HORIZON_DUE
-                for event in (batch.get("events") or [])
-            )
-        ]
+            if str(batch["position_id"]) in horizon_due_position_ids
+        ))
+        if action in {"adjust_position", "close_one"}:
+            effective_target_id = str(matching[0]["id"]) if matching else None
+            horizon_position_ids = [
+                position_id
+                for position_id in horizon_position_ids
+                if position_id == effective_target_id
+            ]
         if horizon_position_ids:
             result["horizon_reviews_acknowledged"] = acknowledge_horizon_review(
                 horizon_position_ids

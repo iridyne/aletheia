@@ -9,7 +9,7 @@
 > Round 1 protocol was terminated on 2026-06-27 and is historical Git evidence,
 > not a current active round.
 >
-> Last aligned with current Learning code/contracts: 2026-08-06.
+> Last aligned with current Learning code/contracts: 2026-08-08.
 
 ## 1. What an experiment must prove
 
@@ -103,15 +103,24 @@ The registry is the executable path inventory. Only
 
 - assignment is stable at the complete candidate cluster;
 - treatment and control both run the static baseline while stage=`shadow`;
-- 50 complete assignment units per arm are required;
-- the software gate requires seven consecutive UTC dates with at least one
-  complete eligible exposure unit from either arm; 50-per-arm sufficiency is
-  checked independently inside that continuous run;
+- first-trial integrity readiness requires 10 complete assignment units per arm
+  inside at least one continuous eligible UTC market day, persisted under
+  `ufc-shadow-trial-integrity/v1`;
+- the 50-per-arm and seven-consecutive-market-day contract is retained for each
+  Paper stage's economic promotion evidence, not spent waiting on two identical
+  Shadow baselines;
 - canonical/fallback outcome disagreement invalidates evidence;
 - all measurement identities must match the current cohort;
 - underpowered harm is `indeterminate` and cannot authorize;
-- because no treatment is applied in shadow, a mature shadow cohort is expected
-  to produce `insufficient_data/no_actual_intervention`, not positive/negative.
+- monitoring and confirmatory efficacy use conditional randomization over the
+  prospectively assigned complete clusters. Adjacent 10-minute decisions may
+  share 1h/4h market paths; those outcomes are never resampled as IID evidence.
+  This inference also requires that one cluster's immutable full-arm outcome is
+  not changed by another cluster's assignment; a violated identity invalidates evidence;
+- because no treatment is applied in shadow, an integrity-ready cohort produces
+  `insufficient_data/trial_integrity_ready_no_actual_intervention`; a cohort that
+  also matures the full historical window remains
+  `insufficient_data/no_actual_intervention`. Neither is positive/negative.
 
 An unexplained, planned, or partial outage resets the current qualification run
 when it leaves a full UTC date with no complete eligible exposure in either arm;
@@ -125,10 +134,23 @@ The verdict exposes bounded `market_day_coverage` reasons.
 Crossing `shadow -> paper_10` requires the protected owner admission route and
 every default-closed gate in [PHASE_GATES](../gates/PHASE_GATES.md). The scheduled
 controller may recommend the action but may not perform it autonomously.
+The integrity verdict grants no economic claim: it exists only to let a human
+start 10% treatment with a 90% prospective control before spending the full
+confirmatory window.
 
 Later progression is one stage at a time (`paper_10`, `paper_25`, `paper_50`,
-`paper_active`) on a current positive, harm-safe verdict. Neutral/insufficient holds;
-negative/harm refreezes; invalid evidence invalidates. A control holdout remains.
+`paper_active`) only on the current stage's authority-eligible positive confirmatory
+verdict consumed from its prospective fixed-look plan. Recurring monitoring-positive
+results are descriptive and hold. Neutral/insufficient holds; monitoring or
+confirmatory negative/harm refreezes; invalid evidence invalidates. A control
+holdout remains.
+
+After a valid owner admission or predecessor activation, an existing bounded Paper
+allocation may continue while the current verdict is `insufficient_data` and harm is
+indeterminate solely because the predeclared sample/continuity window is
+underpowered. This collection-liveness exception cannot promote, increase allocation,
+or survive negative/invalid evidence, determinate harm, identity/config failure, or a
+global refreeze.
 
 No result grants Risk, Execution, credential, live-unlock, or direct order authority.
 
@@ -144,9 +166,18 @@ Compare only cohorts sharing the declared causal identity. Do not pool across:
 - pre/post B-class changes.
 
 Report treatment/control counts, exclusions, actual intervention count, effect and
-confidence interval, harm state, exact window bounds, and mismatch reasons. If any
+confidence interval, inference role/plan/cutoff/consumption state, harm state, exact
+window bounds, and mismatch reasons. If any
 required fact is unavailable, the result is unavailable/invalid/insufficient, never
 zero, healthy, or positive by inference.
+
+The current v5 Universe primary estimand is randomized intent-to-treat: every
+qualified assigned-treatment unit remains in the primary effect and harm comparison,
+including an authority-refused baseline fallback. Actual intervention count and
+effective behavior provenance form a separate positive/promotion gate: permission is
+recorded independently, and a cluster counts as actual only when at least one member
+has a finite before/after delta. Refused and all-no-op clusters stay in ITT and dilute
+the policy effect; filtering the primary arm down to changed rows is prohibited.
 
 ## 7. Stop and invalidation rules
 

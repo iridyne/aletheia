@@ -275,6 +275,31 @@ def apply_update(*, restart: bool = False) -> dict:
             "message": "Refusing to pull: the source worktree has uncommitted changes.",
         }
 
+    current_branch = git_ops.current_branch()
+    if current_branch != branch:
+        write_audit(
+            {
+                "actor": "human",
+                "source": "api",
+                "event_type": "update_blocked",
+                "entity_type": "system_update",
+                "entity_id": git_ops.current_commit(),
+                "message": (
+                    "Update blocked: source checkout branch "
+                    f"{current_branch or 'detached'} does not match configured branch {branch}"
+                ),
+            }
+        )
+        return {
+            "applied": False,
+            "reason": "wrong_branch",
+            "mode": "development",
+            "message": (
+                f"Refusing to update from {current_branch or 'detached'}; "
+                f"use the configured {branch} source checkout."
+            ),
+        }
+
     old = git_ops.current_commit()
     pulled = git_ops.pull(branch)
     if not pulled.get("ok"):
@@ -415,6 +440,7 @@ def apply_update(*, restart: bool = False) -> dict:
                 "attempted_commit": new,
                 "recovery_started": bool(recovery.get("ok")),
             }
+        shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
 
     cfg.update.current_commit = new
     save_config(cfg)

@@ -15,7 +15,7 @@ before editing code. Do not resolve safety or trading-state conflicts by guessin
 
 ### 1.1 Causal Record Chain
 
-The trading record chain is:
+The native entry record chain is:
 
 ```text
 trade_proposals.id
@@ -25,6 +25,22 @@ trade_proposals.id
   -> positions derived from executed orders/fills
 ```
 
+The native close record chain is deliberately different:
+
+```text
+open positions.id
+  -> orders.position_id + orders.close_reason
+  -> fills.order_id
+  -> the same position projected to closed
+```
+
+A close reduces an already-authorized open Position. It does not replay the
+entry RiskDecision or invent a second RiskDecision that pretends to approve the
+exit. Native close Orders therefore keep `risk_decision_id=NULL`; their durable
+authority is the matching open Position plus `position_id`, `close_reason`, and
+the close client identity. Adopted exchange observations remain explicitly
+`source='adopted'` rather than claiming native decision authority.
+
 Rules:
 
 - A `trade_proposals` row is created exactly once for a proposed trade.
@@ -32,8 +48,11 @@ Rules:
   create a second proposal row.
 - Every `risk_decisions.proposal_id` must reference the original proposal.
 - Every `orders.proposal_id` must reference the original proposal.
-- Every `orders.risk_decision_id` must reference the risk decision that approved
-  or rejected execution for that proposal.
+- Every native entry `orders.risk_decision_id` must reference the authoritative
+  risk decision that approved execution for that proposal.
+- Every native close Order must reference the open Position it reduces, match
+  that Position's immutable instrument/proposal identity and quantity, and must
+  not claim an entry `risk_decision_id` as close authority.
 - Every `fills.order_id` must reference the order that produced the fill.
 - A `positions` row is a portfolio-state projection from orders/fills, but the
   schema NOW carries direct causal back-links (2026-07-07 update, #30):
@@ -525,8 +544,12 @@ MVP computation:
 
 - Use closed strategy-linked positions ordered by `closed_at`.
 - Build an equity curve from cumulative `realized_pnl`.
-- Use a conservative capital base from config risk settings:
-  `risk.max_live_limited_cap_usdt`.
+- Resolve the Demo risk policy capital base through its configured source.
+  The shipped and migrated default follows the matching paper/demo account
+  equity; `custom` uses the explicitly stored `capital.base_usdt`.
+- If account-equity mode has no fresh, positive authoritative snapshot, treat
+  the capital base as unavailable and fail the dependent gate closed. Never
+  silently fall back to the stored custom amount.
 - Compute drawdown as peak-to-trough cumulative PnL decline divided by capital
   base.
 - Pass if drawdown percentage is less than or equal to 5.0.
@@ -534,8 +557,7 @@ MVP computation:
 - Fail with `insufficient_closed_positions_for_pnl_checks` if closed positions
   are absent.
 
-If a richer portfolio equity table is added later, this gate may migrate to that
-source, but the migration must include tests.
+The resolved base and source must remain auditable and covered by tests.
 
 ### 5.6 Max Consecutive Losses
 

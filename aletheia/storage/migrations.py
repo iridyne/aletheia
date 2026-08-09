@@ -3305,7 +3305,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v7"
+SCHEMA_VERSION = "aletheia-sqlite-v13"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3387,6 +3387,867 @@ _MARKET_SIGNAL_IDENTITY_CHECKSUM = hashlib.sha256(
     (repr(_MARKET_SIGNAL_IDENTITY_COLUMNS) + "\nadditive_columns_v1").encode("utf-8")
 ).hexdigest()
 
+_UNIVERSE_TWIN_SHADOW_EVIDENCE_SQL = """
+CREATE TABLE IF NOT EXISTS universe_twin_shadow_batches (
+    scanner_run_id TEXT PRIMARY KEY,
+    authority_snapshot_id TEXT,
+    record_version TEXT NOT NULL,
+    authority_behavior_version TEXT NOT NULL,
+    shadow_behavior_version TEXT NOT NULL,
+    allocation_replay_contract TEXT NOT NULL,
+    policy_epoch_id TEXT,
+    feature_source_fingerprint TEXT NOT NULL,
+    availability_profile_id TEXT,
+    metric_version TEXT NOT NULL,
+    allocator_random_state_json TEXT NOT NULL,
+    policy_json TEXT NOT NULL,
+    allocation_context_json TEXT NOT NULL,
+    candidate_count INTEGER NOT NULL CHECK (candidate_count >= 0),
+    promotion_eligible INTEGER NOT NULL DEFAULT 0 CHECK (promotion_eligible IN (0, 1)),
+    blocking_reasons_json TEXT NOT NULL DEFAULT '[]',
+    batch_hash TEXT NOT NULL,
+    captured_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS universe_twin_shadow_records (
+    id TEXT PRIMARY KEY,
+    scanner_run_id TEXT NOT NULL,
+    candidate_key TEXT NOT NULL,
+    candidate_index INTEGER NOT NULL CHECK (candidate_index >= 0),
+    feature_snapshot_id TEXT,
+    asset_id TEXT,
+    symbol TEXT NOT NULL,
+    market_type TEXT NOT NULL,
+    authority_total_score REAL NOT NULL,
+    shadow_point_score REAL,
+    shadow_pessimistic_score REAL,
+    authority_rank INTEGER,
+    shadow_point_rank INTEGER,
+    shadow_pessimistic_rank INTEGER,
+    fine_filter_passed INTEGER CHECK (fine_filter_passed IN (0, 1)),
+    authority_selected INTEGER CHECK (authority_selected IN (0, 1)),
+    shadow_point_selected INTEGER CHECK (shadow_point_selected IN (0, 1)),
+    shadow_pessimistic_selected INTEGER CHECK (shadow_pessimistic_selected IN (0, 1)),
+    shadow_authority_applied INTEGER NOT NULL DEFAULT 0 CHECK (shadow_authority_applied IN (0, 1)),
+    promotion_eligible INTEGER NOT NULL DEFAULT 0 CHECK (promotion_eligible IN (0, 1)),
+    shadow_valid INTEGER NOT NULL DEFAULT 0 CHECK (shadow_valid IN (0, 1)),
+    compact_output_json TEXT NOT NULL,
+    input_json TEXT NOT NULL,
+    record_hash TEXT NOT NULL,
+    captured_at TEXT NOT NULL,
+    UNIQUE(scanner_run_id, candidate_key),
+    UNIQUE(scanner_run_id, candidate_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_universe_twin_shadow_batches_captured
+ON universe_twin_shadow_batches(captured_at);
+CREATE INDEX IF NOT EXISTS idx_universe_twin_shadow_records_run
+ON universe_twin_shadow_records(scanner_run_id);
+"""
+_UNIVERSE_TWIN_SHADOW_EVIDENCE_CHECKSUM = hashlib.sha256(
+    (_UNIVERSE_TWIN_SHADOW_EVIDENCE_SQL + "\nPRAGMA optimize").encode("utf-8")
+).hexdigest()
+
+_POSITION_PROTECTION_COLUMNS = (("exit_plan_effective_at", "positions", "TEXT"),)
+_POSITION_PROTECTION_SQL = """
+CREATE TABLE IF NOT EXISTS position_exit_plan_versions (
+    position_id TEXT NOT NULL REFERENCES positions(id),
+    version INTEGER NOT NULL CHECK (version >= 1),
+    effective_at TEXT NOT NULL CHECK (julianday(effective_at) IS NOT NULL),
+    stop_price REAL CHECK (stop_price IS NULL OR stop_price > 0),
+    take_profit_price REAL CHECK (
+        take_profit_price IS NULL OR take_profit_price > 0
+    ),
+    exit_limit_price REAL CHECK (exit_limit_price IS NULL OR exit_limit_price > 0),
+    exit_limit_source TEXT CHECK (
+        exit_limit_source IS NULL
+        OR exit_limit_source IN ('human', 'system_operator')
+    ),
+    plan_json TEXT NOT NULL CHECK (json_valid(plan_json)),
+    plan_hash TEXT NOT NULL CHECK (
+        length(plan_hash) = 64
+        AND plan_hash = lower(plan_hash)
+        AND plan_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    provenance TEXT NOT NULL CHECK (length(trim(provenance)) > 0),
+    created_at TEXT NOT NULL CHECK (julianday(created_at) IS NOT NULL),
+    PRIMARY KEY(position_id, version),
+    UNIQUE(position_id, version, effective_at, plan_hash),
+    CHECK (
+        (exit_limit_price IS NULL AND exit_limit_source IS NULL)
+        OR (exit_limit_price IS NOT NULL AND exit_limit_source IS NOT NULL)
+    ),
+    CHECK (
+        stop_price IS NOT NULL
+        OR take_profit_price IS NOT NULL
+        OR exit_limit_price IS NOT NULL
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_position_exit_plan_versions_effective
+ON position_exit_plan_versions(position_id, effective_at);
+
+CREATE TABLE IF NOT EXISTS position_protection_state (
+    position_id TEXT PRIMARY KEY REFERENCES positions(id),
+    venue TEXT NOT NULL CHECK (length(trim(venue)) > 0),
+    symbol TEXT NOT NULL CHECK (length(trim(symbol)) > 0),
+    market_type TEXT NOT NULL CHECK (market_type IN ('spot', 'perp')),
+    timeframe TEXT NOT NULL DEFAULT '1m' CHECK (timeframe = '1m'),
+    activated_at TEXT NOT NULL CHECK (julianday(activated_at) IS NOT NULL),
+    next_bar_open_ms INTEGER NOT NULL CHECK (next_bar_open_ms >= 0),
+    last_evaluated_bar_open_ms INTEGER CHECK (
+        last_evaluated_bar_open_ms IS NULL OR last_evaluated_bar_open_ms >= 0
+    ),
+    last_inspected_bar_open_ms INTEGER CHECK (
+        last_inspected_bar_open_ms IS NULL OR last_inspected_bar_open_ms >= 0
+    ),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN (
+        'active', 'gap', 'triggered', 'materialized', 'superseded',
+        'integrity_blocked'
+    )),
+    gap_reason TEXT,
+    gap_detected_at TEXT CHECK (
+        gap_detected_at IS NULL OR julianday(gap_detected_at) IS NOT NULL
+    ),
+    gap_count INTEGER NOT NULL DEFAULT 0 CHECK (gap_count >= 0),
+    recent_error TEXT,
+    trigger_id TEXT UNIQUE,
+    close_order_id TEXT REFERENCES orders(id),
+    close_fill_id TEXT REFERENCES fills(id),
+    close_fill_price REAL,
+    close_filled_at TEXT CHECK (
+        close_filled_at IS NULL OR julianday(close_filled_at) IS NOT NULL
+    ),
+    final_state TEXT CHECK (
+        final_state IS NULL OR final_state IN ('materialized', 'integrity_blocked')
+    ),
+    created_at TEXT NOT NULL CHECK (julianday(created_at) IS NOT NULL),
+    updated_at TEXT NOT NULL CHECK (julianday(updated_at) IS NOT NULL),
+    FOREIGN KEY (
+        position_id,
+        trigger_id
+    ) REFERENCES position_protection_triggers(
+        position_id,
+        trigger_id
+    ),
+    CHECK (
+        last_evaluated_bar_open_ms IS NULL
+        OR (
+            last_inspected_bar_open_ms IS NOT NULL
+            AND last_evaluated_bar_open_ms <= last_inspected_bar_open_ms
+        )
+    ),
+    CHECK (
+        last_inspected_bar_open_ms IS NULL
+        OR last_inspected_bar_open_ms <= next_bar_open_ms
+    ),
+    CHECK (
+        status != 'gap'
+        OR (
+            length(trim(gap_reason)) > 0
+            AND gap_detected_at IS NOT NULL
+            AND gap_count >= 1
+        )
+    ),
+    CHECK (
+        (trigger_id IS NULL AND status NOT IN ('triggered', 'materialized'))
+        OR trigger_id IS NOT NULL
+    ),
+    CHECK (
+        close_order_id IS NULL
+        OR (
+            trigger_id IS NOT NULL
+            AND status IN ('triggered', 'materialized', 'integrity_blocked')
+        )
+    ),
+    CHECK (
+        (
+            close_fill_id IS NULL
+            AND close_fill_price IS NULL
+            AND close_filled_at IS NULL
+            AND final_state IS NULL
+        )
+        OR (
+            close_fill_id IS NOT NULL
+            AND close_order_id IS NOT NULL
+            AND close_fill_price > 0
+            AND close_filled_at IS NOT NULL
+            AND final_state IS NOT NULL
+        )
+    ),
+    CHECK (
+        status != 'materialized'
+        OR (
+            trigger_id IS NOT NULL
+            AND close_order_id IS NOT NULL
+            AND close_fill_id IS NOT NULL
+            AND final_state = 'materialized'
+        )
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_position_protection_state_due
+ON position_protection_state(status, next_bar_open_ms);
+
+CREATE TABLE IF NOT EXISTS position_protection_triggers (
+    trigger_id TEXT PRIMARY KEY CHECK (
+        length(trigger_id) = 36
+        AND length(replace(trigger_id, '-', '')) = 32
+        AND substr(trigger_id, 9, 1) = '-'
+        AND substr(trigger_id, 14, 1) = '-'
+        AND substr(trigger_id, 19, 1) = '-'
+        AND substr(trigger_id, 24, 1) = '-'
+        AND lower(trigger_id) = trigger_id
+        AND replace(trigger_id, '-', '') NOT GLOB '*[^0-9a-f]*'
+    ),
+    position_id TEXT NOT NULL UNIQUE REFERENCES position_protection_state(position_id),
+    detected_at TEXT NOT NULL CHECK (julianday(detected_at) IS NOT NULL),
+    venue TEXT NOT NULL CHECK (length(trim(venue)) > 0),
+    symbol TEXT NOT NULL CHECK (length(trim(symbol)) > 0),
+    market_type TEXT NOT NULL CHECK (market_type IN ('spot', 'perp')),
+    timeframe TEXT NOT NULL CHECK (timeframe = '1m'),
+    bar_open_ms INTEGER NOT NULL CHECK (bar_open_ms >= 0),
+    bar_close_ms INTEGER NOT NULL CHECK (bar_close_ms = bar_open_ms + 60000),
+    bar_open REAL NOT NULL CHECK (bar_open > 0),
+    bar_high REAL NOT NULL CHECK (bar_high >= bar_open),
+    bar_low REAL NOT NULL CHECK (bar_low > 0 AND bar_low <= bar_open),
+    bar_close REAL NOT NULL CHECK (bar_close > 0),
+    bar_volume REAL NOT NULL CHECK (bar_volume >= 0),
+    provider TEXT NOT NULL CHECK (length(trim(provider)) > 0),
+    bar_hash TEXT NOT NULL CHECK (
+        length(bar_hash) = 64
+        AND bar_hash = lower(bar_hash)
+        AND bar_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    plan_version INTEGER NOT NULL CHECK (plan_version >= 1),
+    plan_effective_at TEXT NOT NULL CHECK (julianday(plan_effective_at) IS NOT NULL),
+    plan_hash TEXT NOT NULL CHECK (
+        length(plan_hash) = 64
+        AND plan_hash = lower(plan_hash)
+        AND plan_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    stop_price REAL CHECK (stop_price IS NULL OR stop_price > 0),
+    upside_price REAL CHECK (upside_price IS NULL OR upside_price > 0),
+    stop_hit INTEGER NOT NULL CHECK (stop_hit IN (0, 1)),
+    target_hit INTEGER NOT NULL CHECK (target_hit IN (0, 1)),
+    reason TEXT NOT NULL CHECK (reason IN ('stop_loss', 'take_profit', 'exit_limit')),
+    collision_policy TEXT NOT NULL CHECK (collision_policy = 'stop_first_v1'),
+    UNIQUE(position_id, trigger_id),
+    FOREIGN KEY (
+        position_id,
+        plan_version,
+        plan_effective_at,
+        plan_hash
+    ) REFERENCES position_exit_plan_versions(
+        position_id,
+        version,
+        effective_at,
+        plan_hash
+    ),
+    CHECK (bar_high >= bar_close AND bar_low <= bar_close),
+    CHECK (stop_price IS NOT NULL OR upside_price IS NOT NULL),
+    CHECK (stop_hit + target_hit >= 1),
+    CHECK (stop_hit = 0 OR stop_price IS NOT NULL),
+    CHECK (target_hit = 0 OR upside_price IS NOT NULL),
+    CHECK (stop_hit = 0 OR reason = 'stop_loss')
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_positions_exit_plan_projection_insert_guard
+BEFORE INSERT ON positions
+WHEN NEW.exit_plan_effective_at IS NOT NULL
+BEGIN
+    SELECT RAISE(ABORT, 'Position must start without an ExitPlan projection');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_exit_plan_versions_contiguous
+BEFORE INSERT ON position_exit_plan_versions
+BEGIN
+    SELECT CASE
+        WHEN (SELECT status FROM positions WHERE id = NEW.position_id) != 'open'
+        THEN RAISE(ABORT, 'ExitPlan requires an open Position')
+    END;
+    SELECT CASE
+        WHEN NEW.version != COALESCE(
+            (SELECT MAX(version) + 1
+             FROM position_exit_plan_versions
+             WHERE position_id = NEW.position_id),
+            1
+        )
+        THEN RAISE(ABORT, 'exit plan versions must be contiguous')
+    END;
+    SELECT CASE
+        WHEN NEW.version = 1
+         AND (SELECT exit_plan_effective_at FROM positions WHERE id = NEW.position_id)
+             IS NOT NULL
+        THEN RAISE(ABORT, 'exit plan projection conflicts with first version')
+    END;
+    SELECT CASE
+        WHEN NEW.version > 1
+         AND (SELECT exit_plan_effective_at FROM positions WHERE id = NEW.position_id)
+             IS NOT (
+                 SELECT effective_at
+                 FROM position_exit_plan_versions
+                 WHERE position_id = NEW.position_id
+                 ORDER BY version DESC
+                 LIMIT 1
+             )
+        THEN RAISE(ABORT, 'exit plan projection is stale')
+    END;
+    SELECT CASE
+        WHEN NEW.version > 1
+         AND julianday(NEW.effective_at) <= julianday((
+             SELECT effective_at
+             FROM position_exit_plan_versions
+             WHERE position_id = NEW.position_id
+             ORDER BY version DESC
+             LIMIT 1
+         ))
+        THEN RAISE(ABORT, 'exit plan effective_at must advance')
+    END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_exit_plan_versions_project
+AFTER INSERT ON position_exit_plan_versions
+BEGIN
+    UPDATE positions
+    SET exit_plan_effective_at = NEW.effective_at
+    WHERE id = NEW.position_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_positions_exit_plan_projection_guard
+BEFORE UPDATE OF exit_plan_effective_at ON positions
+WHEN NEW.exit_plan_effective_at IS NOT OLD.exit_plan_effective_at
+BEGIN
+    SELECT CASE
+        WHEN NEW.exit_plan_effective_at IS NULL
+        THEN RAISE(ABORT, 'exit plan projection cannot be cleared')
+    END;
+    SELECT CASE
+        WHEN NOT EXISTS (
+            SELECT 1
+            FROM position_exit_plan_versions
+            WHERE position_id = NEW.id
+              AND effective_at = NEW.exit_plan_effective_at
+        )
+        THEN RAISE(ABORT, 'exit plan projection requires an immutable version')
+    END;
+    SELECT CASE
+        WHEN OLD.exit_plan_effective_at IS NOT NULL
+         AND julianday(NEW.exit_plan_effective_at) < julianday(OLD.exit_plan_effective_at)
+        THEN RAISE(ABORT, 'exit plan projection cannot regress')
+    END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_exit_plan_versions_no_update
+BEFORE UPDATE ON position_exit_plan_versions
+BEGIN
+    SELECT RAISE(ABORT, 'position exit plan version is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_exit_plan_versions_no_delete
+BEFORE DELETE ON position_exit_plan_versions
+BEGIN
+    SELECT RAISE(ABORT, 'position exit plan versions are retained');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_no_delete
+BEFORE DELETE ON position_protection_state
+BEGIN
+    SELECT RAISE(ABORT, 'position protection state is retained');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_triggers_no_update
+BEFORE UPDATE ON position_protection_triggers
+BEGIN
+    SELECT RAISE(ABORT, 'position protection trigger evidence is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_triggers_no_delete
+BEFORE DELETE ON position_protection_triggers
+BEGIN
+    SELECT RAISE(ABORT, 'position protection trigger evidence is retained');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_identity_immutable
+BEFORE UPDATE OF venue, symbol, market_type, timeframe, activated_at, created_at
+ON position_protection_state
+BEGIN
+    SELECT RAISE(ABORT, 'position protection identity is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_cursor_monotonic
+BEFORE UPDATE OF next_bar_open_ms, last_evaluated_bar_open_ms,
+                 last_inspected_bar_open_ms
+ON position_protection_state
+WHEN NEW.next_bar_open_ms < OLD.next_bar_open_ms
+  OR (
+      OLD.last_evaluated_bar_open_ms IS NOT NULL
+      AND (
+          NEW.last_evaluated_bar_open_ms IS NULL
+          OR NEW.last_evaluated_bar_open_ms < OLD.last_evaluated_bar_open_ms
+      )
+  )
+  OR (
+      OLD.last_inspected_bar_open_ms IS NOT NULL
+      AND (
+          NEW.last_inspected_bar_open_ms IS NULL
+          OR NEW.last_inspected_bar_open_ms < OLD.last_inspected_bar_open_ms
+      )
+  )
+BEGIN
+    SELECT RAISE(ABORT, 'position protection cursor cannot regress');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_gap_count_monotonic
+BEFORE UPDATE OF gap_count ON position_protection_state
+WHEN NEW.gap_count < OLD.gap_count
+BEGIN
+    SELECT RAISE(ABORT, 'position protection gap count cannot regress');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_trigger_write_once
+BEFORE UPDATE OF trigger_id
+ON position_protection_state
+WHEN OLD.trigger_id IS NOT NULL
+BEGIN
+    SELECT RAISE(ABORT, 'position protection trigger evidence is write-once');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_triggers_plan_exact
+BEFORE INSERT ON position_protection_triggers
+WHEN NOT EXISTS (
+        SELECT 1
+        FROM position_exit_plan_versions
+        WHERE position_id = NEW.position_id
+          AND version = NEW.plan_version
+          AND effective_at = NEW.plan_effective_at
+          AND plan_hash = NEW.plan_hash
+          AND stop_price IS NEW.stop_price
+          AND COALESCE(exit_limit_price, take_profit_price) IS NEW.upside_price
+          AND julianday(effective_at) <= julianday(
+              NEW.bar_open_ms / 1000.0,
+              'unixepoch'
+          )
+    )
+ OR EXISTS (
+        SELECT 1
+        FROM position_exit_plan_versions AS later
+        WHERE later.position_id = NEW.position_id
+          AND later.version > NEW.plan_version
+          AND julianday(later.effective_at) < julianday(
+              NEW.bar_close_ms / 1000.0,
+              'unixepoch'
+          )
+    )
+BEGIN
+    SELECT RAISE(ABORT, 'position protection trigger ExitPlan is inconsistent');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_triggers_project
+AFTER INSERT ON position_protection_triggers
+BEGIN
+    UPDATE position_protection_state
+    SET trigger_id = NEW.trigger_id,
+        last_inspected_bar_open_ms = NEW.bar_open_ms,
+        last_evaluated_bar_open_ms = NEW.bar_open_ms,
+        next_bar_open_ms = NEW.bar_close_ms,
+        status = 'triggered',
+        updated_at = NEW.detected_at
+    WHERE position_id = NEW.position_id
+      AND trigger_id IS NULL
+      AND status IN ('active', 'gap')
+      AND venue = NEW.venue
+      AND symbol = NEW.symbol
+      AND market_type = NEW.market_type
+      AND timeframe = NEW.timeframe
+      AND next_bar_open_ms = NEW.bar_open_ms;
+    SELECT CASE
+        WHEN changes() != 1
+        THEN RAISE(ABORT, 'position protection first-trigger CAS failed')
+    END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_close_order_write_once
+BEFORE UPDATE OF close_order_id ON position_protection_state
+WHEN OLD.close_order_id IS NOT NULL
+ AND NEW.close_order_id IS NOT OLD.close_order_id
+BEGIN
+    SELECT RAISE(ABORT, 'position protection close order is write-once');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_close_fill_write_once
+BEFORE UPDATE OF close_fill_id, close_fill_price, close_filled_at, final_state
+ON position_protection_state
+WHEN OLD.close_fill_id IS NOT NULL
+BEGIN
+    SELECT RAISE(ABORT, 'position protection close fill evidence is write-once');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_position_protection_state_terminal_status
+BEFORE UPDATE OF status ON position_protection_state
+WHEN (OLD.status IN ('materialized', 'superseded') AND NEW.status != OLD.status)
+  OR (OLD.trigger_id IS NOT NULL AND NEW.status IN ('active', 'gap', 'superseded'))
+BEGIN
+    SELECT RAISE(ABORT, 'position protection terminal status cannot regress');
+END;
+"""
+_POSITION_PROTECTION_CHECKSUM = hashlib.sha256(
+    (
+        repr(_POSITION_PROTECTION_COLUMNS)
+        + "\n"
+        + _POSITION_PROTECTION_SQL
+        + "\nposition_protection_storage_v1\nPRAGMA optimize"
+    ).encode("utf-8")
+).hexdigest()
+
+_LEARNING_FIXED_LOOK_COLUMNS = (
+    ("inference_contract_version", "learning_contribution_verdicts", "TEXT"),
+    (
+        "inference_role",
+        "learning_contribution_verdicts",
+        "TEXT NOT NULL DEFAULT 'monitoring' CHECK (inference_role IN ('monitoring', 'confirmatory'))",
+    ),
+    (
+        "authority_eligible",
+        "learning_contribution_verdicts",
+        "INTEGER NOT NULL DEFAULT 0 CHECK (authority_eligible IN (0, 1))",
+    ),
+    ("inference_plan_hash", "learning_contribution_verdicts", "TEXT"),
+    ("inference_cutoff_fingerprint", "learning_contribution_verdicts", "TEXT"),
+)
+_LEARNING_FIXED_LOOK_SQL = """
+CREATE TABLE IF NOT EXISTS learning_inference_decisions (
+    experiment_id TEXT PRIMARY KEY REFERENCES learning_experiments(experiment_id),
+    inference_family_id TEXT NOT NULL CHECK (length(trim(inference_family_id)) > 0),
+    inference_contract_version TEXT NOT NULL CHECK (
+        inference_contract_version = 'ufc-fixed-look/v1'
+    ),
+    plan_json TEXT NOT NULL CHECK (json_valid(plan_json)),
+    plan_hash TEXT NOT NULL CHECK (
+        length(plan_hash) = 64
+        AND plan_hash = lower(plan_hash)
+        AND plan_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    status TEXT NOT NULL CHECK (
+        status IN ('collecting', 'cutoff_frozen', 'consumed', 'invalidated')
+    ),
+    cutoff_json TEXT CHECK (cutoff_json IS NULL OR json_valid(cutoff_json)),
+    cutoff_fingerprint TEXT CHECK (
+        cutoff_fingerprint IS NULL
+        OR (
+            length(cutoff_fingerprint) = 64
+            AND cutoff_fingerprint = lower(cutoff_fingerprint)
+            AND cutoff_fingerprint NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    cutoff_frozen_at TEXT CHECK (
+        cutoff_frozen_at IS NULL OR julianday(cutoff_frozen_at) IS NOT NULL
+    ),
+    consumed_verdict_id TEXT REFERENCES learning_contribution_verdicts(verdict_id),
+    consumed_at TEXT CHECK (consumed_at IS NULL OR julianday(consumed_at) IS NOT NULL),
+    authority_alpha REAL NOT NULL CHECK (authority_alpha > 0 AND authority_alpha < 0.5),
+    created_at TEXT NOT NULL CHECK (julianday(created_at) IS NOT NULL),
+    updated_at TEXT NOT NULL CHECK (julianday(updated_at) IS NOT NULL),
+    CHECK (
+        (status = 'collecting' AND cutoff_json IS NULL AND cutoff_fingerprint IS NULL
+            AND cutoff_frozen_at IS NULL AND consumed_verdict_id IS NULL AND consumed_at IS NULL)
+        OR (status = 'cutoff_frozen' AND cutoff_json IS NOT NULL
+            AND cutoff_fingerprint IS NOT NULL AND cutoff_frozen_at IS NOT NULL
+            AND consumed_verdict_id IS NULL AND consumed_at IS NULL)
+        OR (status = 'consumed' AND cutoff_json IS NOT NULL
+            AND cutoff_fingerprint IS NOT NULL AND cutoff_frozen_at IS NOT NULL
+            AND consumed_verdict_id IS NOT NULL AND consumed_at IS NOT NULL)
+        OR status = 'invalidated'
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_learning_inference_family
+ON learning_inference_decisions(inference_family_id, status);
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_inference_decisions_no_delete
+BEFORE DELETE ON learning_inference_decisions
+BEGIN
+    SELECT RAISE(ABORT, 'Learning inference decisions are retained');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_inference_plan_immutable
+BEFORE UPDATE OF experiment_id, inference_family_id, inference_contract_version, plan_json,
+                 plan_hash, authority_alpha, created_at
+ON learning_inference_decisions
+BEGIN
+    SELECT RAISE(ABORT, 'Learning inference plan is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_inference_cutoff_write_once
+BEFORE UPDATE OF cutoff_json, cutoff_fingerprint, cutoff_frozen_at
+ON learning_inference_decisions
+WHEN (
+    OLD.status != 'collecting'
+    OR OLD.cutoff_fingerprint IS NOT NULL
+ ) AND (
+    NEW.cutoff_json IS NOT OLD.cutoff_json
+    OR NEW.cutoff_fingerprint IS NOT OLD.cutoff_fingerprint
+    OR NEW.cutoff_frozen_at IS NOT OLD.cutoff_frozen_at
+ )
+BEGIN
+    SELECT RAISE(ABORT, 'Learning inference cutoff is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_inference_consumption_write_once
+BEFORE UPDATE OF consumed_verdict_id, consumed_at
+ON learning_inference_decisions
+WHEN (
+    OLD.status != 'cutoff_frozen'
+    OR OLD.consumed_verdict_id IS NOT NULL
+ ) AND (
+    NEW.consumed_verdict_id IS NOT OLD.consumed_verdict_id
+    OR NEW.consumed_at IS NOT OLD.consumed_at
+ )
+BEGIN
+    SELECT RAISE(ABORT, 'Learning inference decision is already consumed');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_inference_status_monotonic
+BEFORE UPDATE OF status ON learning_inference_decisions
+WHEN NOT (
+    NEW.status = OLD.status
+    OR (OLD.status = 'collecting' AND NEW.status IN ('cutoff_frozen', 'invalidated'))
+    OR (OLD.status = 'cutoff_frozen' AND NEW.status IN ('consumed', 'invalidated'))
+)
+BEGIN
+    SELECT RAISE(ABORT, 'Learning inference status cannot regress');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_inference_consumed_verdict_exact
+BEFORE UPDATE OF consumed_verdict_id ON learning_inference_decisions
+WHEN NEW.consumed_verdict_id IS NOT NULL
+ AND NOT EXISTS (
+    SELECT 1
+    FROM learning_contribution_verdicts AS verdict
+    WHERE verdict.verdict_id = NEW.consumed_verdict_id
+      AND verdict.experiment_id = NEW.experiment_id
+      AND verdict.inference_contract_version = NEW.inference_contract_version
+      AND verdict.inference_role = 'confirmatory'
+      AND verdict.authority_eligible = 1
+      AND verdict.inference_plan_hash = NEW.plan_hash
+      AND verdict.inference_cutoff_fingerprint = NEW.cutoff_fingerprint
+ )
+BEGIN
+    SELECT RAISE(ABORT, 'consumed Learning verdict does not match frozen inference');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_authority_verdict_inference_immutable
+BEFORE UPDATE ON learning_contribution_verdicts
+WHEN OLD.authority_eligible = 1 OR NEW.authority_eligible = 1
+BEGIN
+    SELECT RAISE(ABORT, 'authority-eligible Learning verdict is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_learning_authority_verdict_no_delete
+BEFORE DELETE ON learning_contribution_verdicts
+WHEN OLD.authority_eligible = 1
+BEGIN
+    SELECT RAISE(ABORT, 'authority-eligible Learning verdict is retained');
+END;
+"""
+_LEARNING_FIXED_LOOK_CHECKSUM = hashlib.sha256(
+    (
+        repr(_LEARNING_FIXED_LOOK_COLUMNS)
+        + "\n"
+        + _LEARNING_FIXED_LOOK_SQL
+        + "\nlearning_fixed_look_v1\nPRAGMA optimize"
+    ).encode("utf-8")
+).hexdigest()
+
+_EXIT_BREAKEVEN_SHADOW_SQL = """
+CREATE TABLE IF NOT EXISTS exit_breakeven_shadow_assignments (
+    position_id TEXT PRIMARY KEY REFERENCES positions(id),
+    experiment_version TEXT NOT NULL CHECK (experiment_version = 'exit-breakeven-shadow/v1'),
+    treatment_id TEXT NOT NULL CHECK (treatment_id = 'entry-lock-after-1.5pct/v1'),
+    assigned_at TEXT NOT NULL CHECK (julianday(assigned_at) IS NOT NULL),
+    venue TEXT NOT NULL CHECK (length(trim(venue)) > 0),
+    symbol TEXT NOT NULL CHECK (length(trim(symbol)) > 0),
+    market_type TEXT NOT NULL CHECK (market_type IN ('spot', 'perp')),
+    timeframe TEXT NOT NULL CHECK (timeframe = '1m'),
+    direction TEXT NOT NULL CHECK (direction IN ('long', 'short')),
+    entry_price REAL NOT NULL CHECK (entry_price > 0),
+    quantity REAL NOT NULL CHECK (quantity > 0),
+    entry_fee REAL NOT NULL CHECK (entry_fee >= 0),
+    exit_fee_rate REAL NOT NULL CHECK (exit_fee_rate >= 0),
+    slippage_bps REAL NOT NULL CHECK (slippage_bps >= 0),
+    trigger_return_pct REAL NOT NULL CHECK (trigger_return_pct > 0),
+    trigger_price REAL NOT NULL CHECK (trigger_price > 0),
+    shadow_stop_price REAL NOT NULL CHECK (shadow_stop_price > 0),
+    exit_plan_version INTEGER NOT NULL CHECK (exit_plan_version >= 1),
+    exit_plan_effective_at TEXT NOT NULL CHECK (julianday(exit_plan_effective_at) IS NOT NULL),
+    exit_plan_hash TEXT NOT NULL CHECK (
+        length(exit_plan_hash) = 64 AND exit_plan_hash = lower(exit_plan_hash)
+        AND exit_plan_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    rule_json TEXT NOT NULL CHECK (json_valid(rule_json)),
+    rule_hash TEXT NOT NULL CHECK (
+        length(rule_hash) = 64 AND rule_hash = lower(rule_hash)
+        AND rule_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    behavior_authority INTEGER NOT NULL DEFAULT 0 CHECK (behavior_authority = 0),
+    runtime_session_id TEXT,
+    code_commit TEXT,
+    behavior_fingerprint TEXT,
+    created_at TEXT NOT NULL CHECK (julianday(created_at) IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS exit_breakeven_shadow_outcomes (
+    position_id TEXT PRIMARY KEY REFERENCES exit_breakeven_shadow_assignments(position_id),
+    status TEXT NOT NULL CHECK (status IN ('unchanged', 'counterfactual_close', 'unavailable')),
+    reason TEXT NOT NULL CHECK (length(trim(reason)) > 0),
+    treatment_changed INTEGER NOT NULL CHECK (treatment_changed IN (0, 1)),
+    actual_closed_at TEXT NOT NULL CHECK (julianday(actual_closed_at) IS NOT NULL),
+    trigger_bar_open_ms INTEGER CHECK (trigger_bar_open_ms IS NULL OR trigger_bar_open_ms >= 0),
+    shadow_exit_bar_open_ms INTEGER CHECK (shadow_exit_bar_open_ms IS NULL OR shadow_exit_bar_open_ms >= 0),
+    shadow_exit_at TEXT CHECK (shadow_exit_at IS NULL OR julianday(shadow_exit_at) IS NOT NULL),
+    shadow_reference_price REAL CHECK (shadow_reference_price IS NULL OR shadow_reference_price > 0),
+    shadow_fill_price REAL CHECK (shadow_fill_price IS NULL OR shadow_fill_price > 0),
+    shadow_entry_fee REAL CHECK (shadow_entry_fee IS NULL OR shadow_entry_fee >= 0),
+    shadow_exit_fee REAL CHECK (shadow_exit_fee IS NULL OR shadow_exit_fee >= 0),
+    shadow_funding_cost REAL,
+    actual_net_pnl REAL,
+    shadow_net_pnl REAL,
+    incremental_net_pnl REAL,
+    cost_model_version TEXT,
+    evidence_json TEXT NOT NULL CHECK (json_valid(evidence_json)),
+    evidence_hash TEXT NOT NULL CHECK (
+        length(evidence_hash) = 64 AND evidence_hash = lower(evidence_hash)
+        AND evidence_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    settled_at TEXT NOT NULL CHECK (julianday(settled_at) IS NOT NULL),
+    CHECK (
+        (status = 'unavailable' AND treatment_changed = 0
+            AND shadow_net_pnl IS NULL AND incremental_net_pnl IS NULL)
+        OR (status = 'unchanged' AND treatment_changed = 0
+            AND actual_net_pnl IS NOT NULL AND shadow_net_pnl IS NOT NULL
+            AND incremental_net_pnl IS NOT NULL)
+        OR (status = 'counterfactual_close' AND treatment_changed = 1
+            AND trigger_bar_open_ms IS NOT NULL AND shadow_exit_bar_open_ms IS NOT NULL
+            AND shadow_exit_at IS NOT NULL AND shadow_fill_price IS NOT NULL
+            AND actual_net_pnl IS NOT NULL AND shadow_net_pnl IS NOT NULL
+            AND incremental_net_pnl IS NOT NULL AND cost_model_version IS NOT NULL)
+    )
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_exit_breakeven_assignment_no_update
+BEFORE UPDATE ON exit_breakeven_shadow_assignments
+BEGIN
+    SELECT RAISE(ABORT, 'Exit breakeven shadow assignment is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_exit_breakeven_assignment_no_delete
+BEFORE DELETE ON exit_breakeven_shadow_assignments
+BEGIN
+    SELECT RAISE(ABORT, 'Exit breakeven shadow assignment is retained');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_exit_breakeven_outcome_no_update
+BEFORE UPDATE ON exit_breakeven_shadow_outcomes
+BEGIN
+    SELECT RAISE(ABORT, 'Exit breakeven shadow outcome is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_exit_breakeven_outcome_no_delete
+BEFORE DELETE ON exit_breakeven_shadow_outcomes
+BEGIN
+    SELECT RAISE(ABORT, 'Exit breakeven shadow outcome is retained');
+END;
+"""
+_EXIT_BREAKEVEN_SHADOW_CHECKSUM = hashlib.sha256(
+    (_EXIT_BREAKEVEN_SHADOW_SQL + "\nexit_breakeven_shadow_v1\nPRAGMA optimize").encode("utf-8")
+).hexdigest()
+
+_LEARNING_RANDOMIZATION_INFERENCE_TABLE_SQL = """
+CREATE TABLE learning_inference_decisions (
+    experiment_id TEXT PRIMARY KEY REFERENCES learning_experiments(experiment_id),
+    inference_family_id TEXT NOT NULL CHECK (length(trim(inference_family_id)) > 0),
+    inference_contract_version TEXT NOT NULL CHECK (
+        inference_contract_version IN ('ufc-fixed-look/v1', 'ufc-fixed-look/v2')
+    ),
+    plan_json TEXT NOT NULL CHECK (json_valid(plan_json)),
+    plan_hash TEXT NOT NULL CHECK (
+        length(plan_hash) = 64
+        AND plan_hash = lower(plan_hash)
+        AND plan_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    status TEXT NOT NULL CHECK (
+        status IN ('collecting', 'cutoff_frozen', 'consumed', 'invalidated')
+    ),
+    cutoff_json TEXT CHECK (cutoff_json IS NULL OR json_valid(cutoff_json)),
+    cutoff_fingerprint TEXT CHECK (
+        cutoff_fingerprint IS NULL
+        OR (
+            length(cutoff_fingerprint) = 64
+            AND cutoff_fingerprint = lower(cutoff_fingerprint)
+            AND cutoff_fingerprint NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    cutoff_frozen_at TEXT CHECK (
+        cutoff_frozen_at IS NULL OR julianday(cutoff_frozen_at) IS NOT NULL
+    ),
+    consumed_verdict_id TEXT REFERENCES learning_contribution_verdicts(verdict_id),
+    consumed_at TEXT CHECK (consumed_at IS NULL OR julianday(consumed_at) IS NOT NULL),
+    authority_alpha REAL NOT NULL CHECK (authority_alpha > 0 AND authority_alpha < 0.5),
+    created_at TEXT NOT NULL CHECK (julianday(created_at) IS NOT NULL),
+    updated_at TEXT NOT NULL CHECK (julianday(updated_at) IS NOT NULL),
+    CHECK (
+        (status = 'collecting' AND cutoff_json IS NULL AND cutoff_fingerprint IS NULL
+            AND cutoff_frozen_at IS NULL AND consumed_verdict_id IS NULL AND consumed_at IS NULL)
+        OR (status = 'cutoff_frozen' AND cutoff_json IS NOT NULL
+            AND cutoff_fingerprint IS NOT NULL AND cutoff_frozen_at IS NOT NULL
+            AND consumed_verdict_id IS NULL AND consumed_at IS NULL)
+        OR (status = 'consumed' AND cutoff_json IS NOT NULL
+            AND cutoff_fingerprint IS NOT NULL AND cutoff_frozen_at IS NOT NULL
+            AND consumed_verdict_id IS NOT NULL AND consumed_at IS NOT NULL)
+        OR status = 'invalidated'
+    )
+);
+"""
+_LEARNING_RANDOMIZATION_INFERENCE_CHECKSUM = hashlib.sha256(
+    (
+        _LEARNING_RANDOMIZATION_INFERENCE_TABLE_SQL
+        + "\nconditional_randomization_inference_v1\nPRAGMA optimize"
+    ).encode("utf-8")
+).hexdigest()
+
+
+_UNIVERSE_TWIN_PROSPECTIVE_COLUMNS = (
+    ("experiment_id", "universe_twin_shadow_batches", "TEXT"),
+    ("behavior_contract_hash", "universe_twin_shadow_batches", "TEXT"),
+    ("assignment_unit_key", "universe_twin_shadow_batches", "TEXT"),
+    ("assignment_contract_version", "universe_twin_shadow_batches", "TEXT"),
+    ("assignment_arm", "universe_twin_shadow_batches", "TEXT"),
+    ("assignment_propensity", "universe_twin_shadow_batches", "REAL"),
+    ("treatment_coefficient", "universe_twin_shadow_batches", "REAL"),
+    ("treatment_policy", "universe_twin_shadow_batches", "TEXT"),
+    ("control_policy", "universe_twin_shadow_batches", "TEXT"),
+    ("primary_horizon", "universe_twin_shadow_batches", "TEXT"),
+    ("outcome_contract_version", "universe_twin_shadow_batches", "TEXT"),
+    ("experiment_id", "universe_twin_shadow_records", "TEXT"),
+    ("policy_epoch_id", "universe_twin_shadow_records", "TEXT"),
+    ("behavior_contract_hash", "universe_twin_shadow_records", "TEXT"),
+    ("availability_profile_id", "universe_twin_shadow_records", "TEXT"),
+    ("assignment_unit_key", "universe_twin_shadow_records", "TEXT"),
+    ("assignment_arm", "universe_twin_shadow_records", "TEXT"),
+    ("assignment_propensity", "universe_twin_shadow_records", "REAL"),
+    ("treatment_coefficient", "universe_twin_shadow_records", "REAL"),
+    ("primary_horizon", "universe_twin_shadow_records", "TEXT"),
+    ("outcome_contract_version", "universe_twin_shadow_records", "TEXT"),
+    ("metric_version", "universe_twin_shadow_records", "TEXT"),
+    ("outcome_candidate_key", "universe_twin_shadow_records", "TEXT"),
+    ("assigned_policy_selected", "universe_twin_shadow_records", "INTEGER"),
+)
+_UNIVERSE_TWIN_PROSPECTIVE_CHECKSUM = hashlib.sha256(
+    (repr(_UNIVERSE_TWIN_PROSPECTIVE_COLUMNS) + "\nadditive_columns_and_indexes_v2_atomic").encode(
+        "utf-8"
+    )
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -3436,6 +4297,24 @@ _MIGRATION_DESCRIPTIONS = {
     "20260806_0004_pending_outcome_partial_index_v5": "pending-outcome partial index",
     "20260806_0005_llm_inference_linkage_v6": "LLM inference audit linkage columns",
     "20260807_0006_market_signal_identity_v7": "exact market-signal evidence column",
+    "20260808_0007_universe_twin_shadow_evidence_v8": (
+        "non-authoritative Universe twin Shadow evidence tables"
+    ),
+    "20260808_0008_position_protection_state_v9": (
+        "immutable ExitPlan history and dormant protective-barrier state"
+    ),
+    "20260808_0009_learning_fixed_look_v10": (
+        "prospective fixed-look Learning inference decisions"
+    ),
+    "20260808_0010_exit_breakeven_shadow_v11": (
+        "prospective read-only exit breakeven shadow evidence"
+    ),
+    "20260808_0011_learning_randomization_inference_v12": (
+        "conditional-randomization Learning inference contract"
+    ),
+    "20260809_0012_universe_twin_prospective_v13": (
+        "prospective Shadow policy identity, assignment, and outcome linkage"
+    ),
 }
 
 
@@ -3537,6 +4416,178 @@ def _apply_market_signal_identity_v7(db: sqlite3.Connection) -> None:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
+def _apply_universe_twin_shadow_evidence_v8(db: sqlite3.Connection) -> None:
+    """Add replayable diagnostic evidence without granting it authority."""
+
+    db.executescript(_UNIVERSE_TWIN_SHADOW_EVIDENCE_SQL)
+    db.execute("PRAGMA optimize")
+
+
+def _apply_position_protection_state_v9(db: sqlite3.Connection) -> None:
+    """Add dormant protection state without initializing or evaluating Positions."""
+
+    for column, table, column_type in _POSITION_PROTECTION_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.executescript(_POSITION_PROTECTION_SQL)
+    db.execute("PRAGMA optimize")
+
+
+def _apply_learning_fixed_look_v10(db: sqlite3.Connection) -> None:
+    """Add prospective inference state without granting existing verdicts authority."""
+
+    for column, table, column_type in _LEARNING_FIXED_LOOK_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.executescript(_LEARNING_FIXED_LOOK_SQL)
+    db.execute("PRAGMA optimize")
+
+
+def _apply_exit_breakeven_shadow_v11(db: sqlite3.Connection) -> None:
+    """Add prospective shadow evidence without changing Position behavior."""
+
+    db.executescript(_EXIT_BREAKEVEN_SHADOW_SQL)
+    db.execute("PRAGMA optimize")
+
+
+def _apply_learning_randomization_inference_v12(db: sqlite3.Connection) -> None:
+    """Allow v2 plans while retaining every immutable v1 inference fact."""
+
+    expected_triggers = {
+        "trg_learning_inference_consumed_verdict_exact",
+        "trg_learning_inference_consumption_write_once",
+        "trg_learning_inference_cutoff_write_once",
+        "trg_learning_inference_decisions_no_delete",
+        "trg_learning_inference_plan_immutable",
+        "trg_learning_inference_status_monotonic",
+    }
+    row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' "
+        "AND name='learning_inference_decisions'"
+    ).fetchone()
+    if row is None:
+        raise MigrationStateError("learning inference decision table is missing")
+    table_sql = str(row[0] or "")
+    if "ufc-fixed-look/v2" in table_sql:
+        db.execute("PRAGMA optimize")
+        return
+    if "ufc-fixed-look/v1" not in table_sql:
+        raise MigrationStateError("unsupported Learning inference decision schema")
+
+    db.execute("SAVEPOINT learning_randomization_inference_v12")
+    try:
+        old_count = int(
+            db.execute(
+                "SELECT COUNT(*) FROM learning_inference_decisions"
+            ).fetchone()[0]
+        )
+        trigger_names = [
+            str(item[0])
+            for item in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger' "
+                "AND tbl_name='learning_inference_decisions'"
+            ).fetchall()
+        ]
+        if set(trigger_names) != expected_triggers:
+            raise MigrationStateError(
+                "Learning inference decision trigger contract drifted"
+            )
+        index_names = {
+            str(item[0])
+            for item in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' "
+                "AND tbl_name='learning_inference_decisions' AND sql IS NOT NULL"
+            ).fetchall()
+        }
+        if index_names != {"idx_learning_inference_family"}:
+            raise MigrationStateError(
+                "Learning inference decision index contract drifted"
+            )
+        for name in trigger_names:
+            quoted = name.replace('"', '""')
+            db.execute(f'DROP TRIGGER "{quoted}"')
+        db.execute("DROP INDEX IF EXISTS idx_learning_inference_family")
+        db.execute(
+            "ALTER TABLE learning_inference_decisions "
+            "RENAME TO learning_inference_decisions_v1"
+        )
+        db.execute(_LEARNING_RANDOMIZATION_INFERENCE_TABLE_SQL)
+        columns = (
+            "experiment_id, inference_family_id, inference_contract_version, plan_json, "
+            "plan_hash, status, cutoff_json, cutoff_fingerprint, cutoff_frozen_at, "
+            "consumed_verdict_id, consumed_at, authority_alpha, created_at, updated_at"
+        )
+        db.execute(
+            f"INSERT INTO learning_inference_decisions ({columns}) "
+            f"SELECT {columns} FROM learning_inference_decisions_v1"
+        )
+        new_count = int(
+            db.execute(
+                "SELECT COUNT(*) FROM learning_inference_decisions"
+            ).fetchone()[0]
+        )
+        if new_count != old_count:
+            raise MigrationStateError("learning inference decision row count changed")
+        db.execute("DROP TABLE learning_inference_decisions_v1")
+
+        # Reuse the immutable v10 object definitions without executescript:
+        # executescript commits implicitly and would break this savepoint.
+        pending_sql = ""
+        for line in _LEARNING_FIXED_LOOK_SQL.splitlines(keepends=True):
+            pending_sql += line
+            if not sqlite3.complete_statement(pending_sql):
+                continue
+            statement = pending_sql.strip()
+            pending_sql = ""
+            if statement.upper().startswith("CREATE TABLE"):
+                continue
+            db.execute(statement)
+        if pending_sql.strip():
+            raise MigrationStateError("incomplete Learning inference object DDL")
+        db.execute("PRAGMA optimize")
+        db.execute("RELEASE SAVEPOINT learning_randomization_inference_v12")
+    except (sqlite3.Error, MigrationStateError):
+        db.execute("ROLLBACK TO SAVEPOINT learning_randomization_inference_v12")
+        db.execute("RELEASE SAVEPOINT learning_randomization_inference_v12")
+        raise
+
+
+def _apply_universe_twin_prospective_v13(db: sqlite3.Connection) -> None:
+    """Add prospective identities without changing step-v1 authority."""
+
+    savepoint = "universe_twin_prospective_v13"
+    db.execute(f"SAVEPOINT {savepoint}")
+    try:
+        for column, table, column_type in _UNIVERSE_TWIN_PROSPECTIVE_COLUMNS:
+            existing = {
+                str(row[1])
+                for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if column not in existing:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_universe_twin_shadow_batches_epoch "
+            "ON universe_twin_shadow_batches(policy_epoch_id, captured_at)"
+        )
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_universe_twin_shadow_records_outcome "
+            "ON universe_twin_shadow_records(outcome_candidate_key) "
+            "WHERE outcome_candidate_key IS NOT NULL"
+        )
+        db.execute("PRAGMA optimize")
+        db.execute(f"RELEASE SAVEPOINT {savepoint}")
+    except sqlite3.Error:
+        db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+        db.execute(f"RELEASE SAVEPOINT {savepoint}")
+        raise
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -3571,8 +4622,44 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260807_0006_market_signal_identity_v7",
         checksum=_MARKET_SIGNAL_IDENTITY_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v7",
         apply=_apply_market_signal_identity_v7,
+    ),
+    MigrationStep(
+        migration_id="20260808_0007_universe_twin_shadow_evidence_v8",
+        checksum=_UNIVERSE_TWIN_SHADOW_EVIDENCE_CHECKSUM,
+        schema_version="aletheia-sqlite-v8",
+        apply=_apply_universe_twin_shadow_evidence_v8,
+    ),
+    MigrationStep(
+        migration_id="20260808_0008_position_protection_state_v9",
+        checksum=_POSITION_PROTECTION_CHECKSUM,
+        schema_version="aletheia-sqlite-v9",
+        apply=_apply_position_protection_state_v9,
+    ),
+    MigrationStep(
+        migration_id="20260808_0009_learning_fixed_look_v10",
+        checksum=_LEARNING_FIXED_LOOK_CHECKSUM,
+        schema_version="aletheia-sqlite-v10",
+        apply=_apply_learning_fixed_look_v10,
+    ),
+    MigrationStep(
+        migration_id="20260808_0010_exit_breakeven_shadow_v11",
+        checksum=_EXIT_BREAKEVEN_SHADOW_CHECKSUM,
+        schema_version="aletheia-sqlite-v11",
+        apply=_apply_exit_breakeven_shadow_v11,
+    ),
+    MigrationStep(
+        migration_id="20260808_0011_learning_randomization_inference_v12",
+        checksum=_LEARNING_RANDOMIZATION_INFERENCE_CHECKSUM,
+        schema_version="aletheia-sqlite-v12",
+        apply=_apply_learning_randomization_inference_v12,
+    ),
+    MigrationStep(
+        migration_id="20260809_0012_universe_twin_prospective_v13",
+        checksum=_UNIVERSE_TWIN_PROSPECTIVE_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_universe_twin_prospective_v13,
     ),
 )
 

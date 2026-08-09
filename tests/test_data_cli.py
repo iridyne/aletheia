@@ -11,12 +11,12 @@ def test_data_migrate_shows_step_progress_elapsed_and_qualified_eta(monkeypatch)
         {
             "current": False,
             "pending": ["20260806_0001_legacy_schema_v2"],
-            "schema_version": "aletheia-sqlite-v7",
+            "schema_version": "aletheia-sqlite-v13",
         },
         {
             "current": True,
             "pending": [],
-            "schema_version": "aletheia-sqlite-v7",
+            "schema_version": "aletheia-sqlite-v13",
         },
     ])
     monkeypatch.setattr(migrations, "migration_status", lambda: next(statuses))
@@ -50,4 +50,4 @@ def test_data_migrate_shows_step_progress_elapsed_and_qualified_eta(monkeypatch)
     assert "Applying pending migration" in result.output
     assert "Completed 1/1" in result.output
     assert "31s" in result.output
-    assert "schema=aletheia-sqlite-v7" in result.output
+    assert "schema=aletheia-sqlite-v13" in result.output

@@ -64,11 +64,10 @@ def test_agent_pause_resume_and_wake_commands(tmp_path, monkeypatch):
 
     import aletheia.config.loader as loader
     from aletheia.agent_runtime import resume_gate
+    from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, release_pause
 
     def fake_resume(**kwargs):
-        cfg = loader.load_config()
-        cfg.runtime.paused = False
-        loader.save_config(cfg)
+        release_pause(MANUAL_OWNER)
         return {"allowed": True, "reason": None, "checked": 1, "results": []}
 
     monkeypatch.setattr(resume_gate, "resume_if_llm_available_sync", fake_resume)
@@ -124,15 +123,14 @@ def test_agent_resume_and_wake_use_running_gateway_api(tmp_path, monkeypatch):
 
     import aletheia.config.loader as loader
     from aletheia.agent_runtime import resume_gate
+    from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, release_pause
     from aletheia.gateway import lifecycle
 
     calls = []
 
     def fake_gateway_resume():
         calls.append("api")
-        cfg = loader.load_config()
-        cfg.runtime.paused = False
-        loader.save_config(cfg)
+        release_pause(MANUAL_OWNER)
         return True
 
     monkeypatch.setattr(lifecycle, "resume_running_gateway_via_api_if_running", fake_gateway_resume)

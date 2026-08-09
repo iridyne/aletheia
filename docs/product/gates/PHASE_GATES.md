@@ -8,7 +8,7 @@
 > Current ownership and progress live in GitHub. Historical strategy-phase gates
 > were retired when the RuleSet/DSL/backtest decision path was removed.
 >
-> Last aligned with code and contracts: 2026-08-06.
+> Last aligned with code and contracts: 2026-08-08.
 
 ## Gate A - Active paper mainline eligibility
 
@@ -49,18 +49,20 @@ A current shadow measurement additionally requires:
 |---|---|
 | Prospective cohort | Stable assignment at the persisted assignment-unit cluster |
 | Complete outcomes | Canonical full-arm outcome or valid selected-member mirror/fallback; conflicts fail closed |
-| Minimum sample | 50 complete assignment units in treatment and 50 in control |
-| Minimum time | Seven consecutive UTC dates, each with at least one complete eligible exposure unit from either arm; both 50-unit arm gates must be met inside that run |
+| First-trial integrity sample | 10 complete assignment units in treatment and 10 in control |
+| First-trial integrity time | At least one continuous UTC date with a complete eligible exposure unit from either arm |
+| Economic promotion sample/time | After owner admission, every Paper stage still requires 50 complete units per arm inside seven consecutive eligible UTC dates |
 | Exact identity | Current hypothesis, stage, epoch, horizon, outcome contract, metric version, and behavior-contract hash |
-| Harm semantics | Underpowered is `indeterminate`; determinate breach blocks authority |
-| Actual intervention | Shadow normally has none and therefore yields `insufficient_data/no_actual_intervention` after ordinary sample/time gates |
+| Harm semantics | First-trial underpower may remain `indeterminate/insufficient_samples`; any determinate breach blocks admission or authority |
+| Actual intervention | Shadow has none and yields `insufficient_data/trial_integrity_ready_no_actual_intervention` after the integrity gate; it cannot claim contribution |
 
 A UTC date with no complete eligible unit in either arm resets the current
 qualification run. Daily arm imbalance remains visible and is handled by the
 independent per-arm sample gate. Planned or partial outages have no implicit waiver
 when they leave a full day uncovered; pre-gap samples remain history and cannot
-satisfy post-gap sample or outcome gates. The persisted coverage reason must be
-`qualified` before owner admission.
+satisfy post-gap sample or outcome gates. Admission requires the current
+one-day integrity window; promotion still requires the full qualified seven-day
+window.
 
 ## Gate C - Explicit shadow-to-paper trial admission
 
@@ -71,10 +73,12 @@ cross from `shadow` to `paper_10`.
 Admission requires all of the following at the moment of mutation:
 
 1. exact current shadow verdict is `insufficient_data` with reason
-   `no_actual_intervention`;
+   `trial_integrity_ready_no_actual_intervention` (or the stricter mature
+   `no_actual_intervention` result);
 2. verdict, experiment, hypothesis, stage, policy epoch, horizon, metric, outcome
    contract, and behavior-contract identities all match;
-3. harm state is `clear`;
+3. there is no determinate harm breach; the integrity result may be
+   `indeterminate` only for `insufficient_samples`;
 4. the experiment is active and the path remains measurement-supported;
 5. autonomous Learning, contribution evaluation, lifecycle automation, paper
    influence, and the exact path allowlist are enabled;
@@ -95,14 +99,34 @@ shadow --explicit owner admission--> paper_10 -> paper_25 -> paper_50 -> paper_a
 ```
 
 After owner admission, automated progression is allowed only one stage at a time
-when the current stage has a positive, identity-matched, harm-safe measurement and
-all promotion gates remain enabled. Allocation is bounded to 10%, 25%, 50%, then
-the configured `paper_active_allocation_pct` (default 80%, maximum 90%) so a control
-holdout remains.
+when the current stage has an authority-eligible, identity-matched, harm-safe
+`confirmatory` verdict consumed exactly once from its prospective frozen cutoff and
+all promotion gates remain enabled. A recurring `monitoring` positive is descriptive
+and can never promote. Allocation is bounded to 10%, 25%, 50%, then the configured
+`paper_active_allocation_pct` (default 80%, maximum 90%) so a control holdout remains.
+
+The primary result remains randomized intent-to-treat: all qualified assigned
+treatment units, including baseline fallbacks, contribute their realized outcome to
+the treatment mean, confidence interval and harm calculation. Actual intervention is
+a separate promotion gate. `authority_applied` records permission consistently across
+the cluster; an actual intervention additionally requires at least one member with a
+finite before/after behavior delta. The full per-arm minimum must be actual
+interventions. Refused and all-no-op clusters remain visible and stay in ITT, so they
+dilute the policy effect, but they do not count toward the intervention minimum.
+Lifecycle rechecks these counts so a legacy or malformed positive verdict cannot grant
+a successor stage.
+
+A validly activated bounded Paper stage does not lose its existing allocation merely
+because its current `insufficient_data` verdict has an `indeterminate` harm state from
+sample/continuity underpower. It may continue collecting the predeclared window.
+Negative/invalid evidence, determinate harm, identity/config/refreeze failure, or a
+non-underpower indeterminate reason still withdraws authority immediately; promotion
+continues to require positive ITT, clear-harm, and sufficient actual-intervention evidence.
 
 | Current evidence | Required lifecycle result |
 |---|---|
-| `positive` and all gates current | Promote one stage |
+| consumed fixed-look `positive` and all gates current | Promote one stage |
+| monitoring `positive` | Hold; descriptive only |
 | `neutral` or ordinary insufficient data | Hold |
 | `negative` or determinate harm breach | Refreeze/fail to static baseline |
 | `invalid` | Invalidate/fail to static baseline |

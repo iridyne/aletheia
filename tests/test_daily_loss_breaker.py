@@ -41,7 +41,8 @@ def test_realized_losses_trip_breaker_via_close(tmp_path, monkeypatch):
     from aletheia.risk import kill_switch
     from tests.test_outcome_closure import _insert_closed_position_via_producer
 
-    # cap = max_live_limited_cap_usdt (100) * max_daily_loss_pct (1.0%) = $1 limit.
+    # The default Demo denominator is authoritative paper account equity; this
+    # $10 loss is well beyond the default 1% daily-loss limit.
     pos_id = "daily-loss-entry"
     _insert_closed_position_via_producer(
         position_id=pos_id,

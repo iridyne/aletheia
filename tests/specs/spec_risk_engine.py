@@ -1181,17 +1181,39 @@ def test_paper_proposal_cannot_accept_live_mode():
 
 
 @spec_claim(
+    SpecClaim(
+        "RE-B31", "risk_engine_contract", "§2 percentage-limit denominator", "L2b",
+        "Percentage-based risk limits default to the matching account equity; an "
+        "unavailable snapshot fails closed and never silently uses stored custom capital",
+    ),
+)
+def test_default_capital_base_tracks_account_equity_and_fails_closed(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.risk.engine as eng
+
+    cfg = AletheiaConfig()
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 4321.0)
+    value, reason = eng._resolve_capital_base("paper_internal", cfg.risk.demo, cfg)
+    assert value == 4321.0
+    assert reason is None
+
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: None)
+    value, reason = eng._resolve_capital_base("paper_internal", cfg.risk.demo, cfg)
+    assert value is None
+    assert reason == "account_equity_unavailable:paper_internal"
+
+
+@spec_claim(
     SpecClaim("RE-B13", "risk_engine_contract", "§2 check #8", "L2b",
-              "demo daily-loss limit is computed from starting_capital_usdt (demo base), "
-              "NOT max_live_limited_cap_usdt — so a demo loss small relative to the demo "
-              "account does not spuriously trip the daily-loss brake (CR-RE-03)"),
+              "demo daily-loss resolves the Demo policy capital base, not the Live policy "
+              "base, and never passes merely because its capital base is unavailable"),
 )
 def test_demo_daily_loss_uses_demo_capital_base(tmp_path, monkeypatch):
     """A demo realized loss that is tiny vs the demo capital base must NOT trip
     the daily-loss brake just because it exceeds the (much smaller) live cap.
 
-    Setup: starting_capital_usdt=10000 (demo base), max_live_limited_cap_usdt=100
-    (live cap), max_daily_loss_pct=1%. A -$25 demo loss is:
+    Setup: explicit Demo custom base=10000, Live custom base=100, and Demo
+    max_daily_loss_pct=1%. A -$25 demo loss is:
       - vs demo base: 25 < 10000*1% = 100  → must NOT fire
       - vs live cap:  25 > 100*1%   = 1    → the OLD bug fired here
     """
@@ -1205,10 +1227,12 @@ def test_demo_daily_loss_uses_demo_capital_base(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
 
     cfg = AletheiaConfig()
-    cfg.risk.starting_capital_usdt = 10000.0      # demo base
-    cfg.risk.max_live_limited_cap_usdt = 100.0    # live cap (must NOT drive demo)
-    cfg.risk.max_daily_loss_pct = 1.0
-    cfg.risk.max_demo_position_notional_usdt = 10000.0  # don't let notional gate interfere
+    cfg.risk.demo.capital.base_source = "custom"
+    cfg.risk.demo.capital.base_usdt = 10000.0
+    cfg.risk.demo.loss.max_daily_loss_pct = 1.0
+    cfg.risk.demo.capital.max_position_notional_usdt = 10000.0
+    cfg.risk.live.capital.base_source = "custom"
+    cfg.risk.live.capital.base_usdt = 100.0
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
 
     # Create + close a demo position realizing a -$25 loss today.
@@ -1228,6 +1252,9 @@ def test_demo_daily_loss_uses_demo_capital_base(tmp_path, monkeypatch):
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
 
+    assert not any(v.startswith("capital_base_unavailable:") for v in result.violations), (
+        "the denominator must be available so this test proves the Demo base, not a skipped check"
+    )
     assert not any("max_daily_loss_exceeded" in v for v in result.violations), (
         "demo daily-loss brake tripped on a $25 loss against a $10000 demo base — "
         f"it is wrongly using the $100 live cap (CR-RE-03). violations={result.violations}"

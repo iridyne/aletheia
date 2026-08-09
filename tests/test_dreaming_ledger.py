@@ -8,6 +8,7 @@ must never break the dreaming run if its queries fail.
 """
 
 import sqlite3
+from datetime import datetime, timezone
 
 import pytest
 
@@ -39,6 +40,104 @@ def _mock_llm_unavailable(monkeypatch):
     async def _fail(*a, **k):
         return None, "llm_unavailable: test"
     monkeypatch.setattr(dreaming_agent, "llm_complete", _fail)
+
+
+def _seed_trade_case_study() -> None:
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc).isoformat()
+    get_db().execute(
+        "INSERT INTO knowledge_items "
+        "(id,item_type,title,status,confidence,created_at,updated_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (
+            "case-1",
+            "trade_case_study",
+            "Case: BTC/USDT long (stop_loss)",
+            "active",
+            "high_confidence",
+            now,
+            now,
+        ),
+    )
+    get_db().commit()
+
+
+async def test_lesson_extraction_reports_invalid_structured_output(
+    tmp_path, monkeypatch,
+):
+    """A transport-successful but unusable model response must not look healthy."""
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.agents import dreaming_agent
+    _seed_trade_case_study()
+
+    async def _legacy_invalid(*_args, **_kwargs):
+        return "not-json", None
+
+    async def _structured_invalid(*_args, **_kwargs):
+        return None, "structured_parse_error: no valid JSON object found"
+
+    monkeypatch.setattr(dreaming_agent, "llm_complete", _legacy_invalid)
+    monkeypatch.setattr(
+        dreaming_agent,
+        "llm_structured",
+        _structured_invalid,
+        raising=False,
+    )
+
+    outputs: list[str] = []
+    errors: list[str] = []
+    await dreaming_agent._extract_lessons(None, outputs, errors)
+
+    assert outputs == []
+    assert errors == [
+        "lesson_extraction_invalid_output:structured_parse_error: "
+        "no valid JSON object found"
+    ]
+
+
+async def test_lesson_extraction_persists_schema_valid_lesson(
+    tmp_path, monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    _seed_trade_case_study()
+
+    from aletheia.agents import dreaming_agent
+    from aletheia.storage.sqlite import get_db
+
+    async def _structured_success(*_args, **_kwargs):
+        return {
+            "lessons": [
+                {
+                    "summary": "BTC long stop-loss cases require tighter entry timing.",
+                    "category": "entry_timing",
+                    "severity": "warning",
+                    "evidence": {"outcome_counts": {"loss": 1}},
+                    "recommendation": None,
+                }
+            ]
+        }, None
+
+    monkeypatch.setattr(dreaming_agent, "llm_structured", _structured_success)
+    outputs: list[str] = []
+    errors: list[str] = []
+
+    await dreaming_agent._extract_lessons(None, outputs, errors)
+
+    assert errors == []
+    assert len(outputs) == 1
+    assert outputs[0].startswith("lesson:")
+    row = get_db().execute(
+        "SELECT source_type,source_id,status,summary,evidence_json "
+        "FROM ps_lessons"
+    ).fetchone()
+    assert row is not None
+    assert row["source_type"] == "trade_case_study"
+    assert row["source_id"] == "case-1"
+    assert row["status"] == "proposed"
+    assert "BTC long stop-loss" in row["summary"]
+    assert "outcome_counts" in row["evidence_json"]
 
 
 async def test_dreaming_review_includes_learning_ledger(tmp_path, monkeypatch):

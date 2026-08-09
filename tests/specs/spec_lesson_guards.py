@@ -237,7 +237,7 @@ def test_automatic_risk_lesson_requires_paper_treatment_authority(tmp_path, monk
         symbol="BTC/USDT", direction="long", scanner_family="momentum",
     )
 
-    # Default config has paper influence disabled and an empty exact-path allowlist.
+    # The unsupported risk lesson path is absent from the exact default allowlist.
     assert not any("lesson_block_symbol" in row for row in eng._check_lesson_constraints(proposal))
     exposure = get_db().execute(
         "SELECT * FROM learning_exposures WHERE path_id='risk_lesson_constraint'"

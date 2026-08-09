@@ -191,6 +191,7 @@ def compute_total_score(
     scoring_cohort_key: str | None = None,
     *,
     calibration_evidence: dict[str, dict] | None = None,
+    scoring_audit_out: dict[str, object] | None = None,
 ) -> float:
     """Compute the final total_score for universe ranking.
 
@@ -198,8 +199,13 @@ def compute_total_score(
     When calibration multipliers are provided, opportunity_score is scaled by
     the family's empirical hit_rate performance.
     """
-    opportunity = scanner_result.get("opportunity_score", 0)
+    raw_opportunity = scanner_result.get("opportunity_score", 0)
+    opportunity = raw_opportunity
     family = scanner_result.get("scanner_family", "momentum")
+    calibration_effective_multiplier = 1.0
+    calibration_authority_applied = False
+    calibration_assignment = "not_evaluated"
+    calibration_reason = "not_configured"
     if calibration:
         exact_key = _calibration_key(
             family,
@@ -261,6 +267,13 @@ def compute_total_score(
                 assignment_key=cluster_key,
             )
             opportunity = influence.value
+            calibration_effective_multiplier = (
+                influence.value / float(raw_opportunity)
+                if abs(float(raw_opportunity)) > 1e-12 else 1.0
+            )
+            calibration_authority_applied = influence.applied
+            calibration_assignment = influence.assignment
+            calibration_reason = influence.reason
             if candidate_key:
                 feat["learning_candidate_key"] = candidate_key
                 feat["learning_exposure_id"] = influence.exposure_id
@@ -269,7 +282,21 @@ def compute_total_score(
     # cfg.scanner_weights via _action_adjust_scanner_weight (OL-C09) and the UI
     # shows it, but scoring never consumed it — the manual bias was inert. Empty
     # dict (default) → 1.0 for every family, preserving current behavior.
-    opportunity *= cfg.scanner_weights.get(family, 1.0)
+    operator_multiplier = cfg.scanner_weights.get(family, 1.0)
+    opportunity *= operator_multiplier
+    if scoring_audit_out is not None:
+        scoring_audit_out.update({
+            "contract": "universe-authority-score-audit/v1",
+            "raw_opportunity_score": float(raw_opportunity),
+            "calibration_effective_multiplier": calibration_effective_multiplier,
+            "calibration_authority_applied": calibration_authority_applied,
+            "calibration_assignment": calibration_assignment,
+            "calibration_reason": calibration_reason,
+            "operator_multiplier": float(operator_multiplier),
+            "effective_opportunity_multiplier": (
+                calibration_effective_multiplier * float(operator_multiplier)
+            ),
+        })
     tradability = feat.get("tradability_score", 50.0)
 
     # Liquidity score from volume (simple: high volume = good liquidity)
@@ -342,7 +369,13 @@ def resolve_family_quota(cfg: UniverseConfig, regime_state: str | None) -> dict[
 
 
 def allocate_universe(
-    scored: list[dict], cfg: UniverseConfig, regime_state: str | None = None,
+    scored: list[dict],
+    cfg: UniverseConfig,
+    regime_state: str | None = None,
+    *,
+    explore_sampler=None,
+    decorate_selected: bool = True,
+    log_result: bool = True,
 ) -> list[dict]:
     """Select final universe candidates with quota enforcement and explore/exploit.
 
@@ -415,7 +448,8 @@ def allocate_universe(
             # members from that family because every item was checked against the
             # same pre-sample count. Re-checking after each admission keeps the
             # documented quota invariant across exploit *and* explore.
-            randomized = random.sample(viable, len(viable))
+            sampler = explore_sampler or random.sample
+            randomized = sampler(viable, len(viable))
             for r in randomized:
                 if len(explore_selected) >= explore_count:
                     break
@@ -431,35 +465,37 @@ def allocate_universe(
     final = exploit_selected + explore_selected
     final = final[:max_total]
 
-    for item in final:
-        family = item.get("scanner_family", "momentum")
-        item["ttl_sec"] = _FAMILY_TTL.get(family, 3600)
+    if decorate_selected:
+        for item in final:
+            family = item.get("scanner_family", "momentum")
+            item["ttl_sec"] = _FAMILY_TTL.get(family, 3600)
 
-        # Guard: only mark execution_eligible if there is live price data within the
-        # last 2 hours. Symbols with zero snapshots (e.g. NATGAS/USDT) would otherwise
-        # reach PI Agent as tradeable but fail silently at proposal submission.
-        _sym = item.get("symbol", "")
-        _has_live_price = has_fresh_market_snapshot(_sym, item.get("market_type", "spot"))
+            # Guard: only mark execution_eligible if there is live price data within the
+            # last 2 hours. Symbols with zero snapshots (e.g. NATGAS/USDT) would otherwise
+            # reach PI Agent as tradeable but fail silently at proposal submission.
+            _sym = item.get("symbol", "")
+            _has_live_price = has_fresh_market_snapshot(_sym, item.get("market_type", "spot"))
 
-        if not _has_live_price:
-            logger.warning(
-                "no_live_price_for_symbol: %s — execution_eligible set to False", _sym
-            )
-        item["execution_eligible"] = _has_live_price
+            if not _has_live_price:
+                logger.warning(
+                    "no_live_price_for_symbol: %s — execution_eligible set to False", _sym
+                )
+            item["execution_eligible"] = _has_live_price
 
-        # Risk flags
-        risk_flags = []
-        if item.get("late_entry_penalty", 0) > 15:
-            risk_flags.append("late_entry")
-        if item.get("crowding_risk", 0) > 10:
-            risk_flags.append("crowded")
-        if (item.get("spread_bps") or 0) > 20:
-            risk_flags.append("wide_spread")
-        item["risk_flags"] = risk_flags
+            # Risk flags
+            risk_flags = []
+            if item.get("late_entry_penalty", 0) > 15:
+                risk_flags.append("late_entry")
+            if item.get("crowding_risk", 0) > 10:
+                risk_flags.append("crowded")
+            if (item.get("spread_bps") or 0) > 20:
+                risk_flags.append("wide_spread")
+            item["risk_flags"] = risk_flags
 
-    logger.info(
-        "Allocation: %d scored → %d exploit + %d explore = %d final (regime=%s)",
-        len(scored), len(exploit_selected), len(explore_selected), len(final),
-        regime_state or "static",
-    )
+    if log_result:
+        logger.info(
+            "Allocation: %d scored → %d exploit + %d explore = %d final (regime=%s)",
+            len(scored), len(exploit_selected), len(explore_selected), len(final),
+            regime_state or "static",
+        )
     return final

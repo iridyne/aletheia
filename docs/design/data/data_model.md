@@ -1,9 +1,9 @@
 # Data Model Reference
 
 > Complete index of Aletheia Trading OS data layer.
-> ~96 SQLite table declarations, 59 Pydantic models, WAL mode, versioned additive migrations.
+> ~100 SQLite table declarations, 63 Pydantic models, WAL mode, versioned additive migrations.
 > Source of truth: `aletheia/storage/migrations.py` (DDL) + `models.py` (types).
-> Last updated: 2026-08-07
+> Last updated: 2026-08-08
 
 ---
 
@@ -41,7 +41,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 
 ## 3. Table Groups
 
-### A. Trading Core (17 tables)
+### A. Trading Core (20 tables)
 | Table | Purpose | Key columns | Written by |
 |-------|---------|-------------|------------|
 | `opportunities` | Scanner output -- trading signals; lifecycle is `open→queued→reviewed` or `open/queued→expired`; expired never regresses to reviewed | symbol, direction, confidence, key_observations (JSON), last_ranked_at, universe snapshot/member identity | market_observer |
@@ -52,7 +52,12 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `approvals` | Human approval records | proposal_id, decision, decided_by | frontend |
 | `orders` | Execution orders; native exchange entry `pending` is an unresolved Risk reservation, not zero exposure | symbol, side, quantity, order_type, status | execution gateway |
 | `fills` | Order fill confirmations | order_id, fill_price, fill_quantity, fee | broker adapter |
-| `positions` | Open/closed positions; a closed future may keep net economics unavailable. Delayed local funding materialization stores its versioned evidence fingerprint in reconciliation evidence. Market-aware evaluation remains advisory: its structured evidence records the exact venue/symbol/physical-market identity and source rows used for an Operator wake. | symbol, direction, entry_price, quantity, status, nullable realized_pnl, funding_cost, funding_source, **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence), **exit_limit_source** ('human'|'system_operator'; author of a resting limit exit — selects human_limit_exit vs operator_limit_exit in close_reason for attribution honesty), **last_market_signal_evidence** (versioned JSON; exact position/signal identities, Opportunity/member/asset/Feature provenance, evaluation and delivery result) | position_manager / outcome closure / paper funding settler |
+| `positions` | Open/closed positions; a closed future may keep net economics unavailable. Delayed local funding materialization stores its versioned evidence fingerprint in reconciliation evidence. Market-aware evaluation remains advisory: its structured evidence records the exact venue/symbol/physical-market identity and source rows used for an Operator wake. | symbol, direction, entry_price, quantity, status, nullable realized_pnl, funding_cost, funding_source, **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence), **exit_limit_source** ('human'|'system_operator'; author of a resting limit exit — selects human_limit_exit vs operator_limit_exit in close_reason for attribution honesty), **exit_plan_effective_at** (nullable projection to the current immutable ExitPlan; NULL means the dormant barrier has not been activated), **last_market_signal_evidence** (versioned JSON; exact position/signal identities, Opportunity/member/asset/Feature provenance, evaluation and delivery result) | position_manager / outcome closure / paper funding settler |
+| `position_exit_plan_versions` | Retained, append-only resolved ExitPlan history. `(position_id, version)` is contiguous and immutable; insert atomically advances the nullable Position projection. | position_id, version, effective_at, resolved stop/take-profit/exit-limit, plan_json, plan_hash, provenance, created_at | protection repository + new/forward-adopted Paper runtime |
+| `position_protection_state` | One retained row per newly protected local-paper Position. It freezes exact instrument identity and monotonic cursors, preserves gap history, and projects first-trigger plus exact close linkage. | position_id, venue, canonical symbol, physical market_type, timeframe=1m, activated_at, cursor/gap/status, trigger_id, close Order/Fill linkage | protection repository + protective scheduler |
+| `position_protection_triggers` | Append-only first-barrier evidence. One immutable row per protected Position contains the exact 1-minute bar, resolved ExitPlan and deterministic collision policy. | trigger_id, position_id, exact instrument/bar/provider/hash, ExitPlan identity/barriers, hit flags/reason | protective scheduler + native paper close |
+| `exit_breakeven_shadow_assignments` | Prospective immutable assignment for the read-only profit-capture experiment. The fixed +1.5% trigger and entry-price shadow stop are frozen with exact instrument, ExitPlan, cost and build provenance before any eligible bar. | position_id, treatment/rule hash, assigned_at, exact instrument, entry economics, trigger/stop, ExitPlan and runtime provenance, behavior_authority=0 | new protected local-paper activation |
+| `exit_breakeven_shadow_outcomes` | One immutable paired result after an eligible actual close. Missing exact 1m coverage, identity, ordering or funding remains unavailable; available rows contain actual, shadow and incremental net PnL under the frozen cost model. | position_id, disposition/reason, trigger/exit bars, shadow fill/costs, actual/shadow/incremental net PnL, evidence hash | durable outcome-hook replay |
 | `position_close_events` | **Per-close economic ledger** (exit-intent R1) — one row per close EVENT (full close = 1 row; partial reduce = 1 row per reduction) so realized PnL sums from close events, unifying full + partial closes. Delayed funding finalization atomically converges the unique full-close projection with Position and paper cash. The daily-loss breaker adds partial-close realized via this ledger (`is_partial=1`) on top of the verified full-close read | position_id, close_reason, exit_price, closed_qty, realized_pnl, entry_fee, exit_fee, is_partial, closed_at | `pnl.close_position` / `pnl.reduce_position` / paper account service |
 | `outcome_hook_jobs` | Durable eligible-close feedback outbox; one row per Position and hook, with leased replay after failure | position_id, hook_type, status, attempts, next_attempt_at, claim_token, last_error | outcome close transaction / outcome_hook_replay |
 | `position_disappearance_candidates` | Durable account-scoped position-disappearance confirmation state; never authorizes close by itself | position_id, identity_key, broker_id, account_environment, non-secret account_fingerprint, instrument identity, confirmation_count, direct_query_state, semantics_version | position reconciler (OI-B01 target) |
@@ -109,14 +114,15 @@ automatic close or stop change.
 | `news_items` | External news signals | source, headline, sentiment, symbols (JSON) |
 | `market_ohlcv` | Historical candlestick data; rows are isolated by full instrument identity. Explicit offline compact may cluster the composite PK as `WITHOUT ROWID`; the logical schema is unchanged. | exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume |
 
-### C-bis. Measured Learning Ledger (7 tables)
+### C-bis. Measured Learning Ledger (8 tables)
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `learning_hypotheses` | Canonical scoped Learning hypothesis | hypothesis_id, fingerprint, path_id, scope/action JSON, status, version |
 | `learning_experiments` | One isolated shadow or paper stage; a `registered` experiment's first exposure atomically/idempotently activates it and anchors `started_at` to earliest durable `exposed_at` | experiment_id, hypothesis_id, parent experiment, activation verdict, stage generation, assignment salt, allocation, status, started_at |
 | `learning_exposures` | Immutable record of one actual/control influence; `assignment_unit_key` persists the randomized cluster independently from member candidate identity | dedup_key, assignment, assignment_unit_key, entity ids, before/after/manifest, outcome_candidate_key, experiment stage, policy epoch, behavior_contract_hash, provenance code_commit |
-| `learning_contribution_verdicts` | Append-only measured verdict window; `created_at` is evaluation time while window fields are observation bounds, and prior metric/behavior versions remain history | stage, unique cluster-arm counts, delta/interval, harm metrics, metric_version, behavior_contract_hash, provenance code_commit, measurement verdict, created_at |
+| `learning_contribution_verdicts` | Append-only measured verdict window; recurring monitoring is descriptive and only a consumed confirmatory row may be authority-eligible | stage, unique cluster-arm counts, delta/interval, harm metrics, metric_version, behavior_contract_hash, inference role/plan/cutoff identity, measurement verdict, created_at |
+| `learning_inference_decisions` | Retained prospective fixed-look plan and once-only decision binding for each Paper experiment | inference family/contract, immutable plan/hash, frozen cutoff/fingerprint, authority alpha, consumed verdict id/time, status |
 | `learning_lifecycle_events` | Durable transition/blocked-promotion record and JSONL audit outbox; historical rows default mirrored, new rows remain pending until stable-id append acknowledgement | event_id, dedup key, experiment/successor/verdict ids, from/to stage, action, reason, policy epoch, audit actor/source/status/mirrored_at/failure reason |
 | `learning_job_health` | Durable expected-run/backlog health; current error may clear on recovery while last failure identity persists | schedule, watermarks, consecutive_failures, status, last_error, last_failed_at, last_failure_reason |
 | `learning_policy_epochs` | Non-sensitive effective-policy attribution boundary | effective-values hash/JSON, affected paths, safety flag, interval |
@@ -142,7 +148,7 @@ an assignment unit remain permanent and auditable but are excluded, never inferr
 
 ### C-ter. Learning Contribution projection boundary
 
-The current data model adds no `lco-v1` table, materialized projection, config
+The `lco-v1` projection itself adds no table, materialized projection, config
 field, data source, retention rule, or migration. `lco-v1` is a bounded
 read-only projection over the existing ledger and is implemented for summary
 and the default dashboard contribution tab. Any broader derived model is
@@ -155,10 +161,16 @@ stage, horizon, outcome-contract and code-build verdicts remain append-only hist
 classified as non-current by the read model.
 
 The current metric version is
-`universe_family_calibration_cluster_allocation_utility_v4`. Its existing `harm_metrics_json`
+`universe_family_calibration_cluster_allocation_utility_v10`. Its existing `harm_metrics_json`
 evaluation envelope also carries bounded `market_day_coverage` facts for the latest consecutive
-eligible UTC exposure-day window and its per-arm sample counts. A metric-version change appends new
-verdicts; it does not rewrite or delete older verdict history.
+eligible UTC exposure-day window, its per-arm sample counts, separate treatment-permission and
+effective-intervention counts, bounded non-intervention reasons, and conditional-randomization
+inference provenance. Effective intervention is
+derived from finite exposure `before_json`/`after_json` values rather than inferred from permission.
+A Shadow-only integrity result additionally records that one current market day and 10 complete
+units per arm have exercised the prospective pipeline; it remains `insufficient_data` and is not a
+contribution verdict.
+A metric-version change appends new verdicts; it does not rewrite or delete older verdict history.
 
 ### D. Market Data Collection (11 tables)
 
@@ -231,6 +243,8 @@ and spec `AR-S08`.
 | `universe_members` | Assets in a universe snapshot | snapshot_id, symbol, market_type, rank, score, scanner_direction |
 | `universe_forward_outcomes` | Fixed-horizon selected-Universe-member economics; legacy mirror/fallback for contribution measurement, not the canonical full-arm source | outcome_candidate_key, venue, symbol, market_type, direction, horizon, gross_return_pct, directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, min_tradable_edge_pct, mfe_pct, mae_pct, settlement_price_source, cost_model_version |
 | `universe_policies` | Universe selection rules | policy_name, filters (JSON), priority |
+| `universe_twin_shadow_batches` | Non-authoritative prospective continuous-score comparison, sampled at most once per 55min | scanner_run_id, experiment/policy epoch/behavior/source/metric identities, scanner-run assignment arm/propensity/coefficient, control/treatment policy, 4h outcome contract, allocator replay state, blockers, batch_hash |
+| `universe_twin_shadow_records` | Compact complete-batch step/point/pessimistic comparison and exact outcome linkage | scanner_run_id, candidate_index, candidate/feature/asset/instrument ids, ranks, all three selections, assignment identity, assigned-policy selection, outcome_candidate_key, compact output JSON, allowlisted replay input JSON, record_hash |
 
 ### G-bis. Opportunity Filter Evidence (6 tables)
 
@@ -338,7 +352,7 @@ production trading state and cannot authorize a parameter change.
 
 ---
 
-## 4. Pydantic Model Index (59 models)
+## 4. Pydantic Model Index (62 models)
 
 All models in `aletheia/storage/models.py`. Key mapping:
 
@@ -354,6 +368,11 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | TradeProposal | trade_proposals | Trading |
 | RiskDecision | risk_decisions | Trading |
 | Order | orders | Trading |
+| PositionExitPlanVersion | position_exit_plan_versions | Trading protection storage |
+| PositionProtectionState | position_protection_state | Trading protection storage |
+| PositionProtectionTrigger | position_protection_triggers | Trading protection storage |
+| ExitBreakevenShadowAssignment | exit_breakeven_shadow_assignments | Observe-only exit experiment |
+| ExitBreakevenShadowOutcome | exit_breakeven_shadow_outcomes | Observe-only exit experiment |
 | Fill | fills | Trading |
 | Position | positions | Trading |
 | OutcomeHookJob | outcome_hook_jobs | Trading feedback |
@@ -428,6 +447,11 @@ All models in `aletheia/storage/models.py`. Key mapping:
 9. Dataset-size-sensitive repair is never an implicit read/startup side effect. Schema v3 rebuilds `knowledge_fts` once as migration `20260806_0002_startup_dataset_boundary_v3` and installs indexes for startup reconciliation and windowed telemetry reads. Normal knowledge writes maintain FTS incrementally; later full rebuilds require the explicit `knowledge reindex` maintenance command or a new versioned migration.
 10. Physical packing is outside the migration ledger. In particular, `market_ohlcv` rowid-to-`WITHOUT ROWID` conversion runs only inside explicit offline `data compact --apply`, after a verified backup and with the Gateway stopped; fresh deploy and normal Gateway startup never perform it.
 11. Schema v6 adds the content-free `inference_call_id` linkage columns through migration `20260806_0005_llm_inference_linkage_v6`. The LLM inference harness does not edit the frozen legacy baseline; databases that already received the columns from pre-ledger code are accepted idempotently.
+12. Schema v9 adds `positions.exit_plan_effective_at`, immutable `position_exit_plan_versions`, retained `position_protection_state`, and append-only `position_protection_triggers` through migration `20260808_0008_position_protection_state_v9`. It performs no Position backfill or activation and does not install an evaluator or close consumer.
+13. Schema v10 adds prospective fixed-look Learning inference decisions through migration `20260808_0009_learning_fixed_look_v10` without granting existing verdicts authority.
+14. Schema v11 adds retained `exit_breakeven_shadow_assignments` and `exit_breakeven_shadow_outcomes` through migration `20260808_0010_exit_breakeven_shadow_v11`. It performs no historical backfill and grants no trading or Learning authority.
+15. Schema v12 rebuilds only `learning_inference_decisions` to admit immutable `ufc-fixed-look/v2` plans while retaining every v1 row, foreign key, index, write-once trigger, and no-delete trigger. Migration `20260808_0011_learning_randomization_inference_v12` changes no exposure, verdict, trading, Risk, Execution, or Live fact.
+16. Schema v13 adds prospective Universe Twin experiment, assignment, and canonical outcome-linkage columns through migration `20260809_0012_universe_twin_prospective_v13`. It preserves step-v1 authority, records no Learning exposure or verdict, and installs no Paper, Risk, Execution, or Live consumer.
 
 Automatic readers must use indexed, bounded keys or a declared retained evidence window. User-requested export/backup may traverse a complete dataset, but it must stream through a cursor/disk-backed archive rather than materialize a table or archive in process memory.
 
@@ -439,7 +463,7 @@ Automatic readers must use indexed, bounded keys or a declared retained evidence
 > **Authoritative retention contract**: see [`RETENTION_POLICY.md`](RETENTION_POLICY.md) for the
 > full per-table window, prune column, function name, cascade order, archive flag, write-guardrail
 > file:line references, VACUUM strategy, and open-questions resolution (Phase 3, 2026-07-17).
-> Two-class rule: **trust-bearing tables (audit chain + 7 learning tables) are NEVER pruned;
+> Two-class rule: **trust-bearing tables (audit chain + 8 learning tables) are NEVER pruned;
 > only telemetry/market-data tables are.**
 
 ### 7.1 Prunable tables (telemetry only, Phase 3 windows)
@@ -464,6 +488,7 @@ current defaults; see `RETENTION_POLICY.md` for rationale and cascade details.
 | `universe_forward_outcomes` | 30d + earliest-exposure guard for active open experiments | `prune_universe_forward_outcomes` |
 | `universe_snapshots` / `universe_members` | 30d + protected fallback-outcome guard | `prune_universe_snapshots` (cascade) |
 | `universe_scanner_runs` | 30d | `prune_universe_scanner_runs` |
+| `universe_twin_shadow_batches` / `universe_twin_shadow_records` | fixed 30d via `universe_scanner_runs_days`; ≤1 batch/55min, records before batches, prospective 4h outcomes live in canonical `filter_candidate_outcomes`, no Learning clean-window extension | `prune_universe_twin_shadow_evidence` |
 | `market_ohlcv` | 1m=2d / 5m=7d / 15m=30d / 1h=90d / 4h=180d / 1d=730d + hard drop `exchange='legacy_unknown'` | `prune_market_ohlcv` (new) |
 | `market_regimes` | 60d + skip-if-unchanged dedup | `prune_market_regimes` (new) |
 | `filter_decision_batches` | 30d (contract) | `prune_filter_decision_batches` |
@@ -489,11 +514,15 @@ current defaults; see `RETENTION_POLICY.md` for rationale and cascade details.
 
 Audit chain (12): `trade_proposals` · `risk_decisions` · `orders` · `fills` · `positions` ·
 `audit_events` · `capital_events` · `approvals` · `knowledge_items` · `ps_orders` · `ps_fills` ·
+Protective-barrier evidence (3): `position_exit_plan_versions` ·
+`position_protection_state` · `position_protection_triggers`. All are retained
+and absent from `_PRUNABLE`.
+
 `ps_positions`.
 
-Measured Learning Ledger (7): `learning_experiments` · `learning_exposures` ·
+Measured Learning Ledger (8): `learning_experiments` · `learning_exposures` ·
 `learning_hypotheses` · `learning_policy_epochs` · `learning_contribution_verdicts` ·
-`learning_lifecycle_events` · `learning_job_health`.
+`learning_inference_decisions` · `learning_lifecycle_events` · `learning_job_health`.
 
 > **Invariant**: the causal record chain (§2) + the learning ledger (§C-bis) are permanent.
 > Any new prune target MUST be added to `_PRUNABLE` explicitly and MUST NOT include a
@@ -660,5 +689,94 @@ row commit in one SQLite transaction. The periodic settler also scans orphaned
 rows even when no NULL-PnL close remains.
 
 Every paper cash delta and resulting cash balance must be finite. The HTTP
+
+## 11. Protective Barrier Contract (schema v9 storage; Paper runtime active)
+
+Schema v9 provides the durable substrate. The runtime consumer activates it
+inside the transaction that opens a new `paper_internal` Position with at least
+one resolved protective level. Its periodic cycle also forward-adopts a still-open
+local-paper Position that lacks protection: the current resolved plan becomes
+effective at the adoption instant and the cursor starts at the first complete
+1-minute bar whose open is not earlier than that instant. No pre-adoption candle
+is replayed, and a mid-hold adoption is not assigned to the prospective exit
+shadow. A level-less Paper entry does not fabricate an ExitPlan or cursor.
+Migration never creates these facts. The protective scheduler evaluates only
+the frozen exact instrument's completed 1-minute bar;
+missing data remains a visible gap and a bar bisected by an ExitPlan change is
+skipped as `exit_plan_boundary_unordered` rather than assigned to either plan.
+Before evaluation, the same protective worker refreshes only missing due bars
+from the frozen venue with an explicit `since` cursor, bypassing the general
+OHLCV TTL cache and forbidding a fallback venue. Available backlog bars are then
+consumed in chronological order under a bounded per-position catch-up limit.
+
+The storage invariants are:
+
+1. `positions.exit_plan_effective_at` is nullable. It advances atomically only
+   when a contiguous immutable `position_exit_plan_versions` row is inserted;
+   it cannot be cleared, fabricated, or regressed.
+2. ExitPlan identity is `(position_id, version, effective_at, plan_hash)`. The
+   stored JSON hash and resolved stop/take-profit/exit-limit values must agree,
+   and an applied version cannot be updated or deleted.
+3. Each activated Position has at most one retained
+   `position_protection_state` row. Activation freezes lowercase venue,
+   canonical `BASE/QUOTE` symbol, physical market (`spot` or `perp`), and
+   `timeframe='1m'`. Only logical `spot -> spot` and
+   `perp|usdt_futures -> perp` mappings are accepted; unknown market types fail
+   closed. Activation is explicit; forward adoption never backdates its plan or
+   cursor and never claims historical barrier coverage.
+4. `next_bar_open_ms`, `last_inspected_bar_open_ms`, and
+   `last_evaluated_bar_open_ms` are monotonic compare-and-set cursors. A gap
+   retains its reason, detection time, count, and bounded recent error without
+   silently advancing the evaluation cursor.
+5. The first trigger is one complete row in the append-only
+   `position_protection_triggers` table: UUID/detection time,
+   frozen identity, exact 1-minute bar and provider/hash, exact ExitPlan
+   identity and resolved barriers, hit flags/reason, and
+   `collision_policy='stop_first_v1'`. Inserting it atomically projects
+   `trigger_id` and `triggered` onto state. Neither repositories nor direct SQL
+   may replace any trigger field after the first successful compare-and-set. A
+   trigger bar must be fully covered by one authoritative ExitPlan: a stale
+   version, a plan effective after bar open, or a later plan effective before
+   bar close is rejected instead of retroactively applying either plan.
+6. `close_order_id`, then the exact
+   `close_fill_id`/price/time/final state, are write-once and must resolve to the
+   same Position and native close chain. Trigger evidence authorizes only a call
+   to the existing `paper_internal` routed close: the close re-reads a fresh mark,
+   applies adverse slippage and writes its normal Order/Fill. Barrier prices are
+   never fabricated as fills. This consumer grants no Risk, external Execution,
+   or Live authority.
+
+Status is restricted to `active`, `gap`, `triggered`, `materialized`,
+`superseded`, or `integrity_blocked`; terminal and triggered states cannot
+regress to an evaluable state. A native non-barrier close supersedes an
+untriggered cursor before any post-close candle is evaluated; a recorded trigger
+continues through its exact close-linkage recovery instead. All three new tables
+are permanent trust-bearing evidence and are excluded from retention pruning.
 schema and central ledger writer reject NaN, both infinities, and finite-input
 arithmetic overflow before any append or audit event.
+
+## 12. Exit Breakeven Shadow Contract (schema v11, observe-only)
+
+Schema v11 adds a single-variable prospective experiment for the concrete MVP
+failure mode "a trade was profitable, then exited at a loss." For each newly
+protected native `paper_internal` short-term Position, activation best-effort
+freezes one rule before the first eligible bar: after a completed exact 1-minute
+bar reaches 1.5% favorable return, an additional shadow stop at the entry fill
+becomes active from the next completed bar. The treatment has
+`behavior_authority=0`; it never changes the Position, ExitPlan, RiskDecision,
+Order, Fill, scheduler authority, or Learning authority.
+
+Settlement runs through the existing durable eligible-outcome hook. It compares
+the real net result with the paired shadow result only when exact instrument
+identity and contiguous completed 1-minute bars are available. A same-bar
+trigger/stop cannot activate retrospectively. A shadow stop touch uses that
+completed bar's close as the observable detection mark, then applies the frozen
+adverse Paper slippage and fee model. Perpetual rows additionally require a
+complete local funding window through the shadow close time. Any missing identity,
+bar, ordering, arithmetic, actual Outcome, or funding fact produces an immutable
+`unavailable` row with no invented delta.
+
+Assignments and outcomes are retained append-only evidence. The descriptive
+report can total paired incremental net PnL, but no sample count or result grants
+promotion or parameter-mutation authority; a later owner-reviewed behavior trial
+requires a separate measured Learning contract.

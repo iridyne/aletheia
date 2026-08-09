@@ -1429,7 +1429,7 @@ async def _analyze_symbol(
         len(context),
         len(sym_memory),
     )
-    logger.warning(
+    logger.debug(
         "[MO DIAG] %s (%s): LLM call start — ctx_len=%d, scanner=%s",
         symbol,
         market_type,
@@ -1466,7 +1466,7 @@ async def _analyze_symbol(
         logger.warning(
             "[MO] %s (%s): LLM call FAILED after %.1fs — error=%s", symbol, market_type, _llm_duration, llm_error
         )
-        logger.warning(
+        logger.debug(
             "[MO DIAG] %s (%s): LLM FAILED — dur=%.1fs, err=%s", symbol, market_type, _llm_duration, llm_error
         )
         return None, f"{market_type}:{symbol}:llm_unavailable: {llm_error}"
@@ -1480,7 +1480,7 @@ async def _analyze_symbol(
         read.get("confidence"),
         read.get("confidence_score"),
     )
-    logger.warning(
+    logger.debug(
         "[MO DIAG] %s (%s): LLM OK — dur=%.1fs, dir=%s, conf=%s, score=%s",
         symbol,
         market_type,
@@ -1546,13 +1546,73 @@ async def _analyze_symbol(
                 output=existing["id"],
             )
             return existing["id"], llm_error
-        updates: dict = {"thesis": thesis}
         try:
             existing_meta = json.loads(existing.get("metadata") or "{}")
             if not isinstance(existing_meta, dict):
                 existing_meta = {}
         except (TypeError, ValueError):
             existing_meta = {}
+        source_manifest = existing_meta.get("evidence_manifest")
+        source_t0 = (
+            source_manifest.get("t0")
+            if isinstance(source_manifest, dict)
+            and isinstance(source_manifest.get("t0"), dict)
+            else {}
+        )
+        scanner_owned = (
+            existing.get("source_agent") == "universe_scanner"
+            or source_t0.get("trigger_type") == "universe_scanner"
+        )
+        source_direction = str(
+            source_t0.get("direction")
+            or scanner_direction
+            or existing.get("direction_bias")
+            or ""
+        ).lower()
+        direction_conflict = (
+            scanner_owned
+            and source_direction in {"long", "short"}
+            and direction in {"long", "short"}
+            and source_direction != direction
+        )
+        updates: dict = {
+            "thesis": (
+                f"[observer_direction_conflict scanner={source_direction} "
+                f"observer={direction}] {thesis}"
+                if direction_conflict
+                else thesis
+            )
+        }
+        if scanner_owned:
+            # The deterministic signal owns direction and scanner-score semantics.
+            # Observer output is a later assessment, not permission to reinterpret
+            # the same lifecycle identity as the opposite trade or mix an LLM
+            # confidence score into the scanner's composite ranking score.
+            existing_meta["observer_assessment"] = {
+                "version": "market-observer-assessment/v1",
+                "direction_bias": direction,
+                "confidence": confidence,
+                "confidence_score": confidence_score,
+                "scanner_direction": source_direction or None,
+                "direction_conflict": direction_conflict,
+            }
+            if direction_conflict:
+                record_step(
+                    run_id,
+                    f"observer_direction_conflict:{symbol}",
+                    input_data=(
+                        f"scanner_direction={source_direction} "
+                        f"observer_direction={direction}"
+                    ),
+                    output_data="scanner_identity_preserved",
+                )
+                logger.info(
+                    "observer direction conflict for %s: scanner=%s observer=%s; "
+                    "preserving scanner-owned Opportunity identity",
+                    symbol,
+                    source_direction,
+                    direction,
+                )
         if learning_manifest:
             existing_meta["learning_manifest"] = learning_manifest
         existing_meta["evidence_manifest"] = _opportunity_evidence_manifest(
@@ -1574,11 +1634,11 @@ async def _analyze_symbol(
             updates["oi_delta_1h"] = oi_delta_val
         if observations:
             updates["key_observations"] = json.dumps(observations)
-        if confidence_score is not None:
+        if confidence_score is not None and not scanner_owned:
             old_score = existing.get("confidence_score") or 0
             updates["confidence_score"] = max(old_score, confidence_score)
             updates["confidence"] = confidence
-        if direction != "neutral":
+        if direction != "neutral" and not scanner_owned:
             updates["direction_bias"] = direction
         enriched = update_open_opportunity(existing["id"], **updates)
         if not enriched:
@@ -1947,7 +2007,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
         logger.warning("market_observer prefetch batch failed: %s", exc)
         return {"outputs": outputs, "errors": errors, "warnings": warnings}
     _prefetch_wall = _time.monotonic() - _t_prefetch_start
-    logger.warning("[MO DIAG] parallel prefetch done: %.1fs for %d symbols", _prefetch_wall, len(instruments))
+    logger.debug("[MO DIAG] parallel prefetch done: %.1fs for %d symbols", _prefetch_wall, len(instruments))
 
     _prefetch_map: dict[str, _SymbolPrefetch] = {}
     _empty_pf: dict = {
@@ -1987,7 +2047,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             score=lambda _i: _prefetch_map[instrument_key(_i)].signal_score,
             key=instrument_key,
         )
-    logger.warning(
+    logger.debug(
         "[MO DIAG] run start: %d instruments, force_full=%s, budget=%.0fs",
         len(instruments),
         _force_full,

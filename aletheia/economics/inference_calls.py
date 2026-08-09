@@ -36,6 +36,19 @@ _SAFE_SCHEMA_ERROR_CODES = frozenset(
         "validation_failed",
     }
 )
+_STRUCTURED_ATTEMPT_OUTCOMES = frozenset(
+    {
+        "accepted",
+        "provider_error",
+        "timeout",
+        "cancelled",
+        "empty_content",
+        "non_object_json",
+        "parse_error",
+        "truncated_output",
+        "schema_invalid",
+    }
+)
 
 
 def _utcnow() -> str:
@@ -116,6 +129,32 @@ def record_inference_started(call: InferenceCall, *, started_at: str | None = No
                 _json(call.storage_metadata()),
                 now,
             ),
+        )
+        if not was_in_tx:
+            db.commit()
+        return True
+    except Exception:
+        return False
+
+
+def record_structured_attempt_outcome(
+    logical_call_id: str,
+    structured_attempt_index: int,
+    outcome: str,
+    *,
+    created_at: str | None = None,
+) -> bool:
+    """Persist one content-free outer structured-attempt result, best effort."""
+    if outcome not in _STRUCTURED_ATTEMPT_OUTCOMES or structured_attempt_index < 0:
+        return False
+    try:
+        db = ensure_economics_schema()
+        was_in_tx = db.in_transaction
+        db.execute(
+            """INSERT OR IGNORE INTO llm_structured_attempt_outcomes (
+                logical_call_id,structured_attempt_index,outcome,created_at
+            ) VALUES (?,?,?,?)""",
+            (logical_call_id, structured_attempt_index, outcome, created_at or _utcnow()),
         )
         if not was_in_tx:
             db.commit()

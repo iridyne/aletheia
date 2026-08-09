@@ -156,18 +156,21 @@ def _seed_pre_order_reservation(
     *,
     suffix: str,
     execution_mode: str = "paper_internal",
+    symbol: str = "BTC/USDT",
+    quantity: float = 10.0,
+    price: float = 100.0,
 ):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import RiskDecision, TradeProposal
 
     proposal = TradeProposal(
         id=f"proposal-reservation-{suffix}",
-        symbol="BTC/USDT",
+        symbol=symbol,
         market_type="usdt_futures",
         direction="long",
         order_type="market",
-        quantity=10.0,
-        price=100.0,
+        quantity=quantity,
+        price=price,
         leverage=5,
         execution_mode=execution_mode,
         status="executing",
@@ -364,8 +367,9 @@ def test_unresolved_entry_is_consumed_by_existing_live_exposure_gate(
 ):
     _setup_db(tmp_path, monkeypatch)
     cfg = _risk_config(monkeypatch)
-    cfg.risk.max_live_limited_cap_usdt = 1_000.0
-    cfg.risk.max_total_live_exposure_pct = 10.0  # unchanged formula -> 100 USDT
+    cfg.risk.live.capital.base_source = "custom"
+    cfg.risk.live.capital.base_usdt = 1_000.0
+    cfg.risk.live.capital.max_total_exposure_pct = 10.0  # 100 USDT
     _seed_entry_order(
         suffix="live-cap",
         execution_mode="bitget_live_limited",
@@ -384,6 +388,108 @@ def test_unresolved_entry_is_consumed_by_existing_live_exposure_gate(
     )
 
     assert "max_total_live_exposure_exceeded:101.0>100.0" in result.violations
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-UEE-16",
+        "pipeline_unresolved_entry_exposure",
+        "§3 Demo exposure gate integration",
+        "L2b",
+        "The Demo max-total-exposure formula includes unresolved entries from the "
+        "proposal's exact account pool and rejects the projected excess.",
+        status="implemented",
+    )
+)
+def test_unresolved_paper_entry_is_consumed_by_demo_exposure_gate(
+    tmp_path, monkeypatch
+):
+    _setup_db(tmp_path, monkeypatch)
+    cfg = _risk_config(monkeypatch)
+    cfg.risk.demo.capital.base_source = "custom"
+    cfg.risk.demo.capital.base_usdt = 1_000.0
+    cfg.risk.demo.capital.max_total_exposure_pct = 10.0  # 100 USDT
+    _seed_entry_order(
+        suffix="paper-cap",
+        execution_mode="paper_internal",
+        symbol="BTC/USDT",
+        quantity=10.0,
+        price=10.0,
+        status="submission_unknown",
+    )
+    # A separate exchange-demo account must not consume the local Paper ledger.
+    _seed_entry_order(
+        suffix="okx-demo-other-account",
+        execution_mode="okx_demo",
+        symbol="ETH/USDT",
+        quantity=100.0,
+        price=10.0,
+        status="submission_unknown",
+    )
+
+    result = _evaluate_new_proposal(
+        suffix="paper-cap",
+        symbol="SOL/USDT",
+        execution_mode="paper_internal",
+        quantity=0.1,
+        price=10.0,
+    )
+
+    assert "max_total_demo_exposure_exceeded:101.0>100.0" in result.violations
+    assert not any("1001.0>100.0" in violation for violation in result.violations)
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-UEE-17",
+        "pipeline_unresolved_entry_exposure",
+        "§3 Demo exposure gate integration",
+        "L2b",
+        "Open Positions and pre-Order Risk reservations share the exact Demo "
+        "account's max-total-exposure boundary.",
+        status="implemented",
+    )
+)
+def test_demo_exposure_gate_counts_open_positions_and_pre_order_reservations(
+    tmp_path, monkeypatch
+):
+    _setup_db(tmp_path, monkeypatch)
+    cfg = _risk_config(monkeypatch)
+    cfg.risk.demo.capital.base_source = "custom"
+    cfg.risk.demo.capital.base_usdt = 1_000.0
+    cfg.risk.demo.capital.max_total_exposure_pct = 10.0  # 100 USDT
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    repo.insert_position(Position(
+        id="position-uee-paper-cap",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=4.0,
+        entry_price=10.0,
+        current_price=10.0,
+        execution_mode="paper_internal",
+        status="open",
+    ))
+    _seed_pre_order_reservation(
+        suffix="paper-cap",
+        execution_mode="paper_internal",
+        symbol="ETH/USDT",
+        quantity=6.0,
+        price=10.0,
+    )
+
+    result = _evaluate_new_proposal(
+        suffix="paper-open-and-reserved-cap",
+        symbol="SOL/USDT",
+        execution_mode="paper_internal",
+        quantity=0.1,
+        price=10.0,
+    )
+
+    assert "max_total_demo_exposure_exceeded:101.0>100.0" in result.violations
 
 
 @pytest.mark.parametrize(
@@ -437,8 +543,9 @@ def test_pending_native_exchange_entry_reserves_risk_capacity(
         )
         assert "symbol_already_open:ETH/USDT" in result.violations
     else:
-        cfg.risk.max_live_limited_cap_usdt = 1_000.0
-        cfg.risk.max_total_live_exposure_pct = 10.0
+        cfg.risk.live.capital.base_source = "custom"
+        cfg.risk.live.capital.base_usdt = 1_000.0
+        cfg.risk.live.capital.max_total_exposure_pct = 10.0
         _seed_entry_order(
             suffix="pending-notional",
             execution_mode="bitget_live_limited",
