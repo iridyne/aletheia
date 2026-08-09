@@ -252,15 +252,15 @@ def test_universe_alpha_prefers_prospective_control_cohort():
     universe = report["verdicts"]["universe"]
 
     assert universe["verdict"] == "positive"
-    assert universe["causal_grade"] == "strong_prospective_control"
+    assert universe["causal_grade"] == "weak_observational"
     assert universe["evidence_type"] == "prospective_control_cohort"
     assert universe["baseline"] == 0.0
     assert universe["observed"] == 3.0
-    assert universe["measurement_status"] == "measured_contribution"
+    assert universe["measurement_status"] == "directional_evidence_only"
     assert report["main_bottleneck"]["layer"] == "insufficient_data"
 
 
-def test_strong_prospective_universe_negative_is_actionable():
+def test_prospective_universe_negative_remains_directional_without_authority_contract():
     from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
     from aletheia.storage.sqlite import get_db
 
@@ -277,13 +277,13 @@ def test_strong_prospective_universe_negative_is_actionable():
     report = build_alpha_attribution_audit(days=30)
     universe = report["verdicts"]["universe"]
 
-    assert universe["contribution_verdict"] == "negative"
-    assert universe["measurement_status"] == "measured_contribution"
-    assert report["main_bottleneck"]["layer"] == "Universe Alpha"
-    assert "measured negative contribution" in report["main_bottleneck"]["summary"]
+    assert universe["verdict"] == "negative"
+    assert universe["contribution_verdict"] == "insufficient_data"
+    assert universe["measurement_status"] == "directional_evidence_only"
+    assert report["main_bottleneck"]["layer"] == "insufficient_data"
 
 
-def test_measured_universe_negative_beats_more_negative_weak_ranker():
+def test_prospective_universe_and_ranker_negatives_remain_non_actionable():
     from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
     from aletheia.storage.sqlite import get_db
 
@@ -305,35 +305,24 @@ def test_measured_universe_negative_beats_more_negative_weak_ranker():
 
     assert report["verdicts"]["ranker"]["delta"] < report["verdicts"]["universe"]["delta"]
     assert report["verdicts"]["ranker"]["measurement_status"] == "directional_evidence_only"
-    assert report["main_bottleneck"]["layer"] == "Universe Alpha"
+    assert report["verdicts"]["universe"]["measurement_status"] == "directional_evidence_only"
+    assert report["main_bottleneck"]["layer"] == "insufficient_data"
 
 
 def test_two_measured_negative_layers_are_not_ranked_by_raw_delta():
-    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
-    from aletheia.storage.sqlite import get_db
+    from aletheia.analytics.alpha_attribution import _main_bottleneck
 
-    db = get_db()
-    _insert_prospective_control_cohort(
-        db,
-        layer="universe",
-        prefix="universe-multi",
-        selected_return=-1.0,
-        control_return=0.0,
-    )
-    _insert_prospective_control_cohort(
-        db,
-        layer="serenity",
-        prefix="serenity-multi",
-        selected_return=-5.0,
-        control_return=0.0,
-    )
-    db.commit()
+    bottleneck = _main_bottleneck({
+        "universe": {
+            "name": "Universe Alpha", "delta": -1.0,
+            "contribution_verdict": "negative", "measurement_status": "measured_contribution",
+        },
+        "serenity": {
+            "name": "Serenity Alpha", "delta": -5.0,
+            "contribution_verdict": "negative", "measurement_status": "measured_contribution",
+        },
+    })
 
-    report = build_alpha_attribution_audit(days=30)
-    bottleneck = report["main_bottleneck"]
-
-    assert report["verdicts"]["universe"]["contribution_verdict"] == "negative"
-    assert report["verdicts"]["serenity"]["contribution_verdict"] == "negative"
     assert bottleneck["layer"] == "not_comparable"
     assert set(bottleneck["candidate_layers"]) == {"Universe Alpha", "Serenity Alpha"}
     assert bottleneck["suspected_modules"] == []
