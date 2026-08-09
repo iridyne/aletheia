@@ -104,9 +104,25 @@ def build_risk_policy_contribution(
         "ORDER BY datetime(rd.created_at), rd.id, fd.id",
         (cutoff,),
     ).fetchall()
+    raw_rows = [dict(row) for row in rows]
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in rows:
-        grouped[str(row["risk_decision_id"])].append(dict(row))
+    for row in raw_rows:
+        grouped[str(row["risk_decision_id"])].append(row)
+
+    scoped = [
+        row
+        for row in raw_rows
+        if (
+            _risk_policy_identity(row) is not None
+            and _parse_time(row.get("risk_created_at")) is not None
+        )
+    ]
+    if not scoped:
+        return empty_risk_policy_contribution("No in-scope authoritative Risk policy is available.")
+    current_identity = _risk_policy_identity(max(
+        scoped,
+        key=lambda row: (_parse_time(row.get("risk_created_at")), str(row["risk_decision_id"])),
+    ))
 
     exclusions: Counter[str] = Counter()
     eligible: list[dict[str, Any]] = []
@@ -115,6 +131,9 @@ def build_risk_policy_contribution(
             exclusions["ambiguous_risk_filter_evidence"] += 1
             continue
         row = candidates[0]
+        if _risk_policy_identity(row) != current_identity:
+            exclusions["non_current_risk_policy_identity"] += 1
+            continue
         reason = _exclusion_reason(row, cutoff_at)
         if reason is not None:
             exclusions[reason] += 1
@@ -132,15 +151,7 @@ def build_risk_policy_contribution(
         return base
 
     identities = {
-        (
-            str(row["risk_mode"]),
-            str(row["policy_id"]),
-            int(row["policy_revision"]),
-            str(row["policy_hash"]),
-            str(row["producer_commit"]),
-            str(row["behavior_fingerprint"]),
-            str(row["cost_model_version"]),
-        )
+        (*_risk_policy_identity(row), str(row["cost_model_version"]))
         for row in eligible
     }
     approved = sum(int(row["approved"]) for row in eligible)
@@ -156,15 +167,15 @@ def build_risk_policy_contribution(
         base["details"] = {"identity_count": len(identities)}
         return base
 
-    mode, policy_id, revision, policy_hash, commit, behavior, cost_model = identities.pop()
+    mode, policy_id, revision, policy_hash, behavior, cost_model = identities.pop()
     base["policy_identity"] = {
         "risk_mode": mode,
         "policy_id": policy_id,
         "policy_revision": revision,
         "policy_hash": policy_hash,
-        "producer_commit": commit,
         "behavior_fingerprint": behavior,
         "cost_model_version": cost_model,
+        "source_code_commits": sorted({str(row["producer_commit"]) for row in eligible}),
     }
     if len(eligible) < max(1, int(min_sample_size)):
         base["reason"] = "insufficient_paired_risk_samples"
@@ -207,6 +218,35 @@ def build_risk_policy_contribution(
         },
     })
     return base
+
+
+def _risk_policy_identity(row: dict[str, Any]) -> tuple[str, str, int, str, str] | None:
+    if (
+        row.get("proposal_source") != "native"
+        or row.get("execution_mode") != "paper_internal"
+        or row.get("proposal_execution_mode") != "paper_internal"
+        or row.get("risk_mode") != "demo"
+        or any(
+            row.get(field) in {None, ""}
+            for field in (
+                "policy_id", "policy_revision", "policy_hash", "behavior_fingerprint",
+            )
+        )
+    ):
+        return None
+    try:
+        revision = int(row["policy_revision"])
+    except (TypeError, ValueError):
+        return None
+    if revision < 1:
+        return None
+    return (
+        str(row["risk_mode"]),
+        str(row["policy_id"]),
+        revision,
+        str(row["policy_hash"]),
+        str(row["behavior_fingerprint"]),
+    )
 
 
 def _exclusion_reason(row: dict[str, Any], cutoff_at: datetime) -> str | None:

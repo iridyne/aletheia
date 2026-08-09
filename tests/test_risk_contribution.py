@@ -84,6 +84,21 @@ def test_risk_policy_value_is_paired_against_pass_all_control(monkeypatch):
             approved=index < 5,
             net_return_pct=1.0 if index < 5 else -2.0,
         )
+    for table, key in (
+        ("trade_proposals", "id"),
+        ("risk_decisions", "id"),
+    ):
+        prefix = "risk-proposal" if table == "trade_proposals" else "risk-decision"
+        db.execute(
+            f"UPDATE {table} SET producer_commit='build-b' "
+            f"WHERE {key} IN ({','.join('?' for _ in range(5))})",
+            tuple(f"{prefix}-{index}" for index in range(5, 10)),
+        )
+    db.execute(
+        "UPDATE filter_decisions SET code_commit='build-b' "
+        "WHERE id IN ('risk-filter-5','risk-filter-6','risk-filter-7',"
+        "'risk-filter-8','risk-filter-9')"
+    )
 
     monkeypatch.setattr(
         alpha_attribution,
@@ -108,6 +123,7 @@ def test_risk_policy_value_is_paired_against_pass_all_control(monkeypatch):
     assert evidence["delta"] == 1.0
     assert evidence["behavior_authority"] is False
     assert evidence["promotion_eligible"] is False
+    assert evidence["policy_identity"]["source_code_commits"] == ["build-a", "build-b"]
 
 
 def test_risk_policy_value_fails_closed_without_enough_interventions():
@@ -129,7 +145,7 @@ def test_risk_policy_value_fails_closed_without_enough_interventions():
     assert evidence["reason"] == "insufficient_actual_risk_interventions"
 
 
-def test_risk_policy_value_does_not_mix_policy_identities():
+def test_risk_policy_value_selects_current_policy_identity():
     from aletheia.analytics.risk_contribution import build_risk_policy_contribution
     from aletheia.storage.sqlite import get_db
 
@@ -148,7 +164,10 @@ def test_risk_policy_value_does_not_mix_policy_identities():
 
     assert evidence["measurement_status"] == "not_measured"
     assert evidence["contribution_verdict"] == "insufficient_data"
-    assert evidence["reason"] == "mixed_risk_policy_identity"
+    assert evidence["eligible_count"] == 1
+    assert evidence["exclusion_counts"] == {"non_current_risk_policy_identity": 9}
+    assert evidence["policy_identity"]["policy_hash"] == "policy-hash-b"
+    assert evidence["reason"] == "insufficient_paired_risk_samples"
 
 
 def test_risk_policy_value_rejects_mixed_proposal_risk_provenance():

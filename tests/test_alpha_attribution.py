@@ -93,6 +93,7 @@ def _insert_operator_candidate(
     pnl: float,
     *,
     behavior: str = "behavior-test",
+    producer_commit: str = "commit-test",
     hours_after: int = 0,
 ) -> None:
     decision_id = f"operator-{decision}-{idx}"
@@ -103,12 +104,13 @@ def _insert_operator_candidate(
         "(id, created_at, symbol, direction, market_type, action, opportunity_id, "
         "signal_source, runtime_session_id, producer_commit, behavior_fingerprint) "
         "VALUES (?, ?, 'BTC/USDT', 'long', 'spot', ?, ?, 'market_observer', "
-        "'session-test', 'commit-test', ?)",
+        "'session-test', ?, ?)",
         (
             decision_id,
             entry,
             "trade" if decision == "passed" else "skip",
             f"opp-operator-{decision}-{idx}",
+            producer_commit,
             behavior,
         ),
     )
@@ -120,8 +122,17 @@ def _insert_operator_candidate(
         "outcome_candidate_key, evaluated_at) "
         "VALUES (?, ?, ?, 'pi_decision', 'bitget', 'BTC/USDT', 'spot', 'long', "
         "'operator_gate', 'system_operator', 1, ?, ?, '{}', '{}', 'operator-v1', "
-        "'commit-test', ?, ?)",
-        (f"fd-operator-{decision}-{idx}", f"dedup-operator-{decision}-{idx}", key, decision, decision, key, entry),
+        "?, ?, ?)",
+        (
+            f"fd-operator-{decision}-{idx}",
+            f"dedup-operator-{decision}-{idx}",
+            key,
+            decision,
+            decision,
+            producer_commit,
+            key,
+            entry,
+        ),
     )
     db.execute(
         "INSERT INTO filter_candidate_outcomes "
@@ -374,8 +385,9 @@ def test_system_operator_alpha_compares_fixed_horizon_passed_and_rejected_candid
 
     db = get_db()
     for i in range(5):
-        _insert_operator_candidate(db, i, "passed", -3.0)
-        _insert_operator_candidate(db, i, "rejected", 2.0)
+        commit = "commit-a" if i < 3 else "commit-b"
+        _insert_operator_candidate(db, i, "passed", -3.0, producer_commit=commit)
+        _insert_operator_candidate(db, i, "rejected", 2.0, producer_commit=commit)
     db.commit()
 
     report = build_alpha_attribution_audit(days=30)
@@ -389,6 +401,7 @@ def test_system_operator_alpha_compares_fixed_horizon_passed_and_rejected_candid
     assert operator["details"]["economic_unit"] == "net_return_pct"
     assert operator["baseline"] > operator["observed"]
     assert operator["measurement_status"] == "directional_evidence_only"
+    assert operator["details"]["source_code_commits"] == ["commit-a", "commit-b"]
     assert report["main_bottleneck"]["layer"] == "insufficient_data"
 
 

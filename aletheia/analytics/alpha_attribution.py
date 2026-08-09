@@ -789,7 +789,7 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         ") "
     )
     contract = db.execute(
-        first_exposure + "SELECT fd.producer_commit, fd.behavior_fingerprint, fo.cost_model_version "
+        first_exposure + "SELECT fd.behavior_fingerprint, fo.cost_model_version "
         "FROM first_rows fd JOIN filter_candidate_outcomes fo "
         "ON fo.outcome_candidate_key=fd.outcome_candidate_key "
         "WHERE fo.horizon='24h' "
@@ -824,18 +824,18 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
 
     rows = db.execute(
         first_exposure + "SELECT fd.outcome_candidate_key, fd.action, fo.net_return_pct, "
+        "GROUP_CONCAT(DISTINCT fd.producer_commit) AS source_code_commits, "
         "MAX(CASE WHEN fd.decision='rejected' THEN 1 ELSE 0 END) AS rejected, "
         "MAX(CASE WHEN fd.decision IN ('passed','passed_with_penalty') THEN 1 ELSE 0 END) AS passed "
         "FROM first_rows fd JOIN filter_candidate_outcomes fo "
         "ON fo.outcome_candidate_key=fd.outcome_candidate_key "
-        "WHERE fd.producer_commit=? AND fd.behavior_fingerprint=? AND fo.cost_model_version=? "
+        "WHERE fd.behavior_fingerprint=? AND fo.cost_model_version=? "
         "AND fo.horizon='24h' AND fo.status='settled' AND fo.net_return_pct IS NOT NULL "
         "AND fd.venue=fo.venue AND fd.symbol=fo.symbol "
         "AND lower(fd.direction)=lower(fo.direction) AND fd.market_type=fo.market_type "
         "AND datetime(fo.entry_ts) >= datetime(?) "
         "GROUP BY fd.outcome_candidate_key, fd.action, fo.net_return_pct",
         (
-            contract["producer_commit"],
             contract["behavior_fingerprint"],
             contract["cost_model_version"],
             cutoff,
@@ -858,9 +858,14 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         "statistical_unit": "outcome_candidate_key",
         "economic_unit": "net_return_pct",
         "source_table": "filter_candidate_outcomes",
-        "producer_commit": contract["producer_commit"],
         "behavior_fingerprint": contract["behavior_fingerprint"],
         "cost_model_version": contract["cost_model_version"],
+        "source_code_commits": sorted({
+            commit
+            for row in rows
+            for commit in str(row["source_code_commits"] or "").split(",")
+            if commit
+        }),
         "authority_limitations": [
             "operator_assignment_not_randomized",
             "passed_and_rejected_candidate_selection_confounded",

@@ -138,6 +138,15 @@ def test_execution_cost_is_paired_against_frictionless_reference(monkeypatch):
     db = get_db()
     for index in range(5):
         _seed_paired_position(db, index)
+    for table in ("trade_proposals", "risk_decisions", "orders", "fills"):
+        db.execute(
+            f"UPDATE {table} SET producer_commit='build-b' WHERE id LIKE ?",
+            ("%-4",),
+        )
+    db.execute(
+        "UPDATE positions SET producer_commit='build-b', "
+        "closed_producer_commit='build-b' WHERE id='execution-position-4'"
+    )
     monkeypatch.setattr(
         alpha_attribution,
         "_utcnow",
@@ -163,6 +172,9 @@ def test_execution_cost_is_paired_against_frictionless_reference(monkeypatch):
     assert evidence["behavior_authority"] is False
     assert evidence["promotion_eligible"] is False
     assert evidence["details"]["routing_value_measured"] is False
+    assert evidence["execution_identity"]["source_code_commits"] == [
+        "build-a", "build-b",
+    ]
 
 
 def test_execution_cost_fails_closed_without_prospective_close_reference():
@@ -185,6 +197,38 @@ def test_execution_cost_fails_closed_without_prospective_close_reference():
     assert evidence["exclusion_counts"] == {
         "incomplete_execution_fill_economics": 1,
     }
+
+
+def test_execution_cost_selects_current_behavior_identity():
+    from aletheia.analytics.execution_contribution import (
+        build_execution_cost_contribution,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for index in range(6):
+        _seed_paired_position(db, index)
+    for table in ("trade_proposals", "risk_decisions", "orders", "fills"):
+        db.execute(
+            f"UPDATE {table} SET behavior_fingerprint='behavior-b' WHERE id LIKE ?",
+            ("%-5",),
+        )
+    db.execute(
+        "UPDATE positions SET behavior_fingerprint='behavior-b', "
+        "closed_behavior_fingerprint='behavior-b' "
+        "WHERE id='execution-position-5'"
+    )
+
+    evidence = build_execution_cost_contribution(
+        db,
+        cutoff="2026-08-01T00:00:00+00:00",
+    )
+
+    assert evidence["measurement_status"] == "not_measured"
+    assert evidence["eligible_count"] == 1
+    assert evidence["exclusion_counts"] == {"non_current_execution_behavior": 5}
+    assert evidence["reason"] == "insufficient_paired_execution_samples"
+    assert evidence["execution_identity"]["entry_behavior_fingerprint"] == "behavior-b"
 
 
 def test_execution_cost_fails_closed_when_fill_fee_disagrees_with_position():

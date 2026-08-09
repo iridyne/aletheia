@@ -178,7 +178,8 @@ Current implementation:
 - Joins the exact `pi_decision:<id>` outcome key to the canonical settled
   `filter_candidate_outcomes` row at `24h`.
 - Requires matching venue, symbol, market type, direction, behavior fingerprint,
-  producer commit, and cost-model version.
+  and cost-model version. Producer commits remain per-row validated provenance
+  but do not fragment a behavior-equivalent cohort.
 - Compares candidate-level net returns for consistent `trade` decisions versus
   consistent `skip` / `portfolio_guard_skip` decisions. Trace/action conflicts
   are excluded rather than forced into either arm.
@@ -265,12 +266,14 @@ Current implementation:
 - Defines pass-all control value as each candidate's cost-aware net return.
   Approved candidates have the same treatment value; rejected candidates are
   actual Risk interventions whose treatment value is zero exposure.
-- Requires one policy/build/behavior/cost identity, enough candidates, and enough
-  actual rejections. Missing or mixed evidence fails closed.
+- Selects the latest in-scope policy/behavior identity, requires one cost model,
+  enough candidates, and enough actual rejections. Older policy identities and
+  missing or mixed evidence fail closed.
 
 An audit window may span clean Gateway restarts. Runtime session is therefore
-validated on every Proposal-to-Risk lineage but is not a cohort-wide identity;
-policy, build, behavior, and cost model remain cohort-wide identities.
+validated on every Proposal-to-Risk lineage but is not a cohort-wide identity.
+The policy, behavior contract, and cost model define the cohort; source commits
+remain reported provenance and do not fragment behavior-equivalent evidence.
 
 The statistical unit is `proposal_id`; the economic unit is percentage points of
 candidate `net_return_pct`. This is a paired value estimate for the Risk gate,
@@ -299,6 +302,9 @@ Current implementation:
 - Reports mean net-return delta plus quote-currency fee, price-impact, and total
   incremental PnL. Missing references, mixed identities, partial/ambiguous chains,
   or insufficient samples fail closed.
+- Uses entry/close behavior fingerprints as the cohort identity while preserving
+  every source commit as provenance, so clean rebuilds do not fragment identical
+  execution accounting behavior.
 
 The statistical unit is `position_id`. This is prospective paired accounting for
 Execution cost, not a randomized routing-policy experiment. It measures fees and

@@ -66,9 +66,21 @@ def build_execution_cost_contribution(
         execution_mode="paper_internal",
         closed_after=cutoff,
     )
+    scoped = [row for row in outcomes if _position_behavior_identity(row) is not None]
+    if not scoped:
+        return empty_execution_cost_contribution(
+            "No current Paper execution behavior identity is available."
+        )
+    current_identity = _position_behavior_identity(max(
+        scoped,
+        key=lambda row: (str(row["closed_at"]), str(row["id"])),
+    ))
     exclusions: Counter[str] = Counter()
     records: list[dict[str, Any]] = []
     for position in outcomes:
+        if _position_behavior_identity(position) != current_identity:
+            exclusions["non_current_execution_behavior"] += 1
+            continue
         record, reason = _paired_position_cost(db, position)
         if reason is not None:
             exclusions[reason] += 1
@@ -90,24 +102,22 @@ def build_execution_cost_contribution(
         return base
 
     identities = {
-        (
-            row["entry_producer_commit"],
-            row["entry_behavior_fingerprint"],
-            row["close_producer_commit"],
-            row["close_behavior_fingerprint"],
-        )
+        _execution_behavior_identity(row)
         for row in records
     }
     if len(identities) != 1:
         base["reason"] = "mixed_execution_identity"
         base["details"] = {"identity_count": len(identities)}
         return base
-    entry_commit, entry_behavior, close_commit, close_behavior = identities.pop()
+    entry_behavior, close_behavior = identities.pop()
     base["execution_identity"] = {
-        "entry_producer_commit": entry_commit,
         "entry_behavior_fingerprint": entry_behavior,
-        "close_producer_commit": close_commit,
         "close_behavior_fingerprint": close_behavior,
+        "source_code_commits": sorted({
+            row[field]
+            for row in records
+            for field in ("entry_producer_commit", "close_producer_commit")
+        }),
     }
     if len(records) < max(1, int(min_sample_size)):
         base["reason"] = "insufficient_paired_execution_samples"
@@ -312,6 +322,20 @@ def _paired_position_cost(
         "close_producer_commit": close["order_producer_commit"],
         "close_behavior_fingerprint": close["order_behavior_fingerprint"],
     }, None
+
+
+def _execution_behavior_identity(row: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(row["entry_behavior_fingerprint"]),
+        str(row["close_behavior_fingerprint"]),
+    )
+
+
+def _position_behavior_identity(row: dict[str, Any]) -> tuple[str, str] | None:
+    values = (row.get("behavior_fingerprint"), row.get("closed_behavior_fingerprint"))
+    if any(value in {None, ""} for value in values):
+        return None
+    return str(values[0]), str(values[1])
 
 
 def _order_fill_exclusion(
