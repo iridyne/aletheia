@@ -372,6 +372,17 @@ def test_task6_bundle_persistence_is_atomic_with_outcome_registration() -> None:
         )
 
 
+def test_task6_no_chase_proposed_direction_is_replayable() -> None:
+    bundle = _bundle("run-no-chase-replay", no_chase=True)
+
+    report = replay_twin_shadow_bundle(
+        bundle.batch.model_dump(),
+        [item.model_dump() for item in bundle.evidence],
+    )
+
+    assert report.matches is True
+
+
 def test_task6_read_only_evaluation_reports_estimates_but_cannot_promote() -> None:
     bundles = []
     arms = set()
