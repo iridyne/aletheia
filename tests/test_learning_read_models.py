@@ -89,6 +89,10 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
         confidence_high=0.5,
         harm_metrics_json=json.dumps({
             "raw_exposure_n": 18,
+            "exposed_treatment_assignment_unit_n": 4,
+            "exposed_authority_applied_treatment_unit_n": 0,
+            "exposed_actual_intervention_treatment_unit_n": 0,
+            "exposed_control_assignment_unit_n": 5,
             "unique_assignment_unit_n": 9,
             "cluster_member_n": 27,
             "allocation_selected_member_n": 7,
@@ -231,6 +235,10 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     assert item["measurement"]["iid_outcome_assumption"] is False
     assert item["samples"] == {
         "raw_exposures": 18,
+        "exposed_treatment_units": 4,
+        "exposed_authority_applied_treatment_units": 0,
+        "exposed_actual_intervention_treatment_units": 0,
+        "exposed_control_units": 5,
         "treatment_assignment_units": 4,
         "assigned_treatment_units": 4,
         "authority_applied_treatment_units": 0,

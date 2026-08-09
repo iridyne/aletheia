@@ -141,6 +141,10 @@ class ContributionCohort:
     hypothesis: LearningHypothesis
     samples: list[CohortSample] = field(default_factory=list)
     raw_exposure_n: int = 0
+    exposed_treatment_assignment_units: set[str] = field(default_factory=set)
+    exposed_authority_applied_treatment_units: set[str] = field(default_factory=set)
+    exposed_actual_intervention_treatment_units: set[str] = field(default_factory=set)
+    exposed_control_assignment_units: set[str] = field(default_factory=set)
     duplicate_exposure_n: int = 0
     duplicate_outcome_n: int = 0
     mirrored_universe_row_n: int = 0
@@ -191,6 +195,18 @@ class ContributionCohort:
                 self.source_code_commit_unknown_n == 0
             ),
             "raw_exposure_n": self.raw_exposure_n,
+            "exposed_treatment_assignment_unit_n": len(
+                self.exposed_treatment_assignment_units
+            ),
+            "exposed_authority_applied_treatment_unit_n": len(
+                self.exposed_authority_applied_treatment_units
+            ),
+            "exposed_actual_intervention_treatment_unit_n": len(
+                self.exposed_actual_intervention_treatment_units
+            ),
+            "exposed_control_assignment_unit_n": len(
+                self.exposed_control_assignment_units
+            ),
             "unique_treatment_n": len(self.treatment_samples),
             "assigned_treatment_n": len(self.treatment_samples),
             "actual_intervention_treatment_n": len(self.actual_treatment_samples),
@@ -372,6 +388,25 @@ def build_experiment_cohorts(
         if exposed_at is None:
             cohort.invalid_reasons["missing_exposure_time"] += 1
             continue
+        if assignment == "control":
+            cohort.exposed_control_assignment_units.add(assignment_unit_key)
+        else:
+            authority_applied, _ = _manifest_authority(exposure.get("manifest_json"))
+            behavior_changed, behavior_change_reason = _exposure_behavior_change(
+                exposure,
+                assignment=assignment,
+                authority_applied=authority_applied,
+            )
+            if behavior_changed is not None and behavior_change_reason is not None:
+                cohort.exposed_treatment_assignment_units.add(assignment_unit_key)
+                if authority_applied:
+                    cohort.exposed_authority_applied_treatment_units.add(
+                        assignment_unit_key
+                    )
+                if authority_applied and behavior_changed:
+                    cohort.exposed_actual_intervention_treatment_units.add(
+                        assignment_unit_key
+                    )
 
         (
             outcome,
