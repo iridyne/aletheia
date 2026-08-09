@@ -506,6 +506,107 @@ def test_learning_alpha_detects_same_pattern_improvement_after_lesson():
     assert learning["observed"] == 2.0
 
 
+def test_learning_alpha_consumes_exact_confirmatory_authority_verdict(monkeypatch):
+    import aletheia.analytics.alpha_attribution as alpha_attribution
+    from aletheia.learning.contribution_runner import evaluate_experiment
+    from aletheia.learning.fixed_look import register_fixed_look_decision
+    from tests.test_learning_verdict_runtime import (
+        _experiment,
+        _exposure,
+        _iso as learning_iso,
+        _outcome,
+    )
+
+    monkeypatch.setattr(
+        alpha_attribution,
+        "_utcnow",
+        lambda: datetime(2026, 8, 9, 10, tzinfo=timezone.utc),
+    )
+
+    hypothesis, experiment = _experiment(min_samples=50, min_days=0)
+    register_fixed_look_decision(
+        experiment,
+        hypothesis,
+        policy_epoch="epoch-a",
+        behavior_contract_hash="behavior-v1",
+    )
+    for index in range(50):
+        for assignment, net, offset in (("treatment", 1.0, 0), ("control", 0.0, 1)):
+            candidate = f"alpha-{assignment}-{index:02d}"
+            _exposure(
+                experiment,
+                hypothesis,
+                candidate=candidate,
+                assignment=assignment,
+                exposed_at=learning_iso(minutes=index * 2 + offset),
+            )
+            _outcome(
+                candidate,
+                net=net,
+                entry_at=learning_iso(minutes=index * 2 + offset + 1),
+            )
+    evaluate_experiment(experiment.experiment_id)
+
+    learning = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+
+    assert learning["verdict"] == "positive"
+    assert learning["contribution_verdict"] == "positive"
+    assert learning["measurement_status"] == "measured_contribution"
+    assert learning["causal_grade"] == "strong_prospective_control"
+    assert learning["evidence_type"] == "dedicated_learning_contribution_verdict"
+    assert learning["details"]["path_id"] == "universe_family_calibration"
+    assert learning["details"]["unique_treatment_n"] == 50
+    assert learning["details"]["unique_control_n"] == 50
+
+
+def test_learning_alpha_rejects_authority_verdict_spanning_before_audit_window(monkeypatch):
+    import aletheia.analytics.alpha_attribution as alpha_attribution
+    from aletheia.learning.contribution_runner import evaluate_experiment
+    from aletheia.learning.fixed_look import register_fixed_look_decision
+    from tests.test_learning_verdict_runtime import (
+        _experiment,
+        _exposure,
+        _iso as learning_iso,
+        _outcome,
+    )
+
+    monkeypatch.setattr(
+        alpha_attribution,
+        "_utcnow",
+        lambda: datetime(2026, 8, 9, 10, tzinfo=timezone.utc),
+    )
+
+    hypothesis, experiment = _experiment(min_samples=50, min_days=0)
+    register_fixed_look_decision(
+        experiment,
+        hypothesis,
+        policy_epoch="epoch-a",
+        behavior_contract_hash="behavior-v1",
+    )
+    for index in range(50):
+        for assignment, net, offset in (("treatment", 1.0, 0), ("control", 0.0, 1)):
+            candidate = f"old-alpha-{assignment}-{index:02d}"
+            exposed_at = (
+                learning_iso(days=-1, minutes=offset)
+                if index == 0
+                else learning_iso(minutes=index * 2 + offset)
+            )
+            _exposure(
+                experiment,
+                hypothesis,
+                candidate=candidate,
+                assignment=assignment,
+                exposed_at=exposed_at,
+            )
+            _outcome(candidate, net=net, entry_at=learning_iso(minutes=index * 2 + offset + 1))
+    evaluate_experiment(experiment.experiment_id)
+
+    learning = alpha_attribution.build_alpha_attribution_audit(days=27)["verdicts"]["learning"]
+
+    assert learning["contribution_verdict"] == "insufficient_data"
+    assert learning["measurement_status"] == "not_measured"
+
+
 def test_weak_negative_keeps_diagnostics_without_prescriptive_rendering():
     from aletheia.analytics.alpha_attribution import (
         build_alpha_attribution_audit,

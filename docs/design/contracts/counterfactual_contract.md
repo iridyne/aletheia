@@ -65,12 +65,20 @@
 | `analytics.guard_impact._outcomes_for_candidate` | `shadow_trades` | 单 opportunity 最近一次已结算 shadow (per-opp，不需要去重) |
 | `analytics.alpha_attribution._ranker_alpha` | `shadow_trades` + `filter_candidate_outcomes` | 用 Shadow 的 rank/batch/epoch 身份连接 canonical `24h` 成本后候选结果 |
 | `analytics.alpha_attribution._system_operator_alpha` | `filter_decisions` + `pi_decisions` + `filter_candidate_outcomes` | 同一行为指纹下 passed/rejected 候选的 canonical `24h` 成本后比较 |
+| `analytics.alpha_attribution._learning_alpha` | Learning fixed-look decision + contribution verdict + exact candidate outcomes | 只消费已绑定的 confirmatory authority verdict；generic learning 事件仍为弱诊断 |
+| `analytics.alpha_attribution._exit_paired_evidence` | `exit_breakeven_shadow_assignments` + `_outcomes` | 投影同一 Position 的冻结 Exit treatment 增量净 PnL；不并入五层 verdict，不授权行为 |
 | `analytics.thesis_lineage` | `shadow_trades` | per-opp shadow 汇总 |
 | `economics.viability` | `shadow_trades` | 单 opp/batch 的选中 vs 对照的净收益比较 |
 | `server.routes.data GET /analytics/shadow-trades` | `shadow_trades` | 只读 API |
 | `analytics.filter_controller.evaluate_active_shadow_experiments` | `filter_shadow_experiments` / `_evaluations` | 前瞻实验周期评估 |
 
 **跨候选的聚合消费必须走 `list_deduped_shadows`**（按 `outcome_candidate_key` 去重）。单-opp / 单-batch 的查询可以直接读表；因其查询模式天然不跨候选，不受长寿命候选过度加权影响。
+
+Alpha Audit 的集成边界是显式的：Ranker 与 System Operator 共享 canonical
+`24h` `filter_candidate_outcomes.net_return_pct`；Learning 复用自身已消费的
+fixed-look authority verdict；Exit 保留其 Position 配对、quote-currency
+estimand。不同 estimand 不做原始 delta 排名；统一跨层净经济基准后续见
+#803。
 
 ## 4. Observable result
 

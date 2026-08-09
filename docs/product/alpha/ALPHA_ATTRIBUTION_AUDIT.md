@@ -56,6 +56,12 @@ Each verdict includes:
 - `suspected_modules`
 - `reason`
 
+The report also exposes `exit_paired_evidence` outside those five verdicts. It
+projects one existing prospective paired Exit treatment in quote-currency net
+PnL. It is intentionally not a sixth layer verdict: the treatment covers only
+eligible protected short-term Paper positions and cannot establish generic
+Exit-module contribution or authorize promotion.
+
 These fields have different authority:
 
 - `verdict` classifies the observed or directional result. A weak result may
@@ -143,10 +149,18 @@ policy itself; it cannot by itself prescribe a prompt or model change.
 
 ### Learning Alpha
 
-Question: after learning/memo/guard events, do same-pattern losses improve?
+Question: does an exact supported Learning treatment improve its declared
+cost-aware outcome, and what do weaker learning/memo/guard diagnostics suggest?
 
 Current implementation:
 
+- Preferentially consumes exactly one current, already-consumed fixed-look
+  confirmatory verdict for a measurement-supported Learning path.
+- Requires the durable inference decision, authority eligibility, exact
+  experiment/hypothesis/stage/policy epoch/horizon/outcome/metric/code/behavior
+  identities, arm sample contract, and complete baseline/observed/delta.
+- Never averages multiple Learning estimands. Missing, stale, incompatible, or
+  conflicting authority evidence fails closed.
 - Reads accepted/applied `ps_lessons`.
 - Also reads structured `knowledge_items` for `trading_memo`, `trading_guard`,
   but not `guard_candidate` because candidates are not active behavior yet.
@@ -156,9 +170,30 @@ Current implementation:
   provide a control group.
 - Falls back to same-pattern before/after only when controls are too thin.
 
-This is still weaker than a randomized learning holdout, because disabling active
-guards for random trades would be unsafe. The report labels this as
-`moderate_quasi_causal` when controls exist and `weak_before_after` otherwise.
+Only the exact consumed confirmatory path can produce
+`strong_prospective_control` and measured contribution. Generic lesson/memo/guard
+fallbacks remain `moderate_quasi_causal` or `weak_before_after`; disabling active
+safety guards for random trades would be unsafe.
+
+### Exit Paired Evidence
+
+Question: for the frozen `entry-lock-after-1.5pct/v1` treatment, how would the
+same eligible Position's net quote-currency PnL have changed?
+
+Current implementation:
+
+- Reads immutable prospective assignments and paired outcomes from the existing
+  Exit breakeven shadow experiment.
+- Uses the same Position as the statistical unit and reports actual, shadow, and
+  incremental net PnL under the frozen cost model.
+- Includes only rows closed within the audit window; missing exact one-minute
+  path, ordering, identity, or funding remains unavailable.
+- Always reports `behavior_authority=false`, `promotion_eligible=false`, and
+  `contribution_verdict=insufficient_data`.
+
+This is strong treatment-specific paired evidence, not a generic Exit layer
+estimand. The durable outcome does not carry `close_reason`, so the Audit also
+states that stop-loss-specific attribution is unavailable.
 
 ### Serenity Alpha
 
@@ -194,6 +229,10 @@ This audit is read-only:
   has the declared policy, behavior, horizon, statistical-unit, outcome, cost,
   and integrity identities required by its contribution contract. The current
   `alpha_control_observations` producer does not meet this grade.
+- `strong_prospective_paired_shadow`: one Position has a prospective frozen
+  treatment and an identity- and cost-complete paired shadow outcome. This grade
+  is treatment-specific and does not by itself grant module contribution
+  authority.
 - `moderate_quasi_causal`: difference-in-differences against contemporaneous
   controls is available, but there was no randomized holdout.
 - `weak_reconstructed`: the baseline was reconstructed after the fact from OHLCV.
@@ -204,10 +243,11 @@ This audit is read-only:
 
 - Historical Universe and Serenity observations before this feature still fall back
   to reconstructed OHLCV baselines.
-- Learning Alpha depends on structured evidence/tags. Unstructured narrative-only
-  lessons cannot be judged by this v1 audit.
-- Learning causality is quasi-causal unless the project explicitly introduces
-  randomized learning holdouts, which is not appropriate for active safety guards.
+- Generic Learning Alpha depends on structured evidence/tags. Unstructured
+  narrative-only lessons cannot be judged, and unsupported paths remain
+  directional even when they are consumer-wired.
+- Exit paired evidence covers one frozen treatment and does not yet attribute by
+  actual `close_reason`.
 - Directional verdicts retain suspected-module metadata for diagnosis, but the
   CLI does not render that metadata as confirmed or prescriptive advice.
 - A negative Ranker or System Operator observational delta does not prove either

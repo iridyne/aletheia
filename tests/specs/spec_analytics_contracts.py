@@ -166,7 +166,8 @@ def test_resolve_stale_shadows_uses_historical_bar():
               "include baseline/sample/delta/confidence/causal-grade fields, use "
               "insufficient_data instead of fake conclusions when samples are thin, "
               "and preserve directional evidence as diagnostic while only measured "
-              "contribution is eligible for an actionable bottleneck.",
+              "contribution is eligible for an actionable bottleneck; treatment-specific "
+              "Exit paired evidence remains non-authoritative outside those five verdicts.",
               status="implemented"),
 )
 def test_alpha_attribution_contract_shape_on_empty_db():
@@ -185,6 +186,11 @@ def test_alpha_attribution_contract_shape_on_empty_db():
                     "causal_grade", "evidence_type", "contribution_verdict",
                     "measurement_status", "suspected_modules", "reason"):
             assert key in item
+    paired = report["exit_paired_evidence"]
+    assert paired["contract_version"] == "exit-paired-evidence/v1"
+    assert paired["behavior_authority"] is False
+    assert paired["promotion_eligible"] is False
+    assert paired["contribution_verdict"] == "insufficient_data"
     assert report["main_bottleneck"]["layer"] == "insufficient_data"
 
     weak_negative = {

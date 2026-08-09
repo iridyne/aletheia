@@ -105,6 +105,7 @@ def build_alpha_attribution_audit(days: int = 30, min_sample_size: int = MIN_SAM
         "window_days": days,
         **outcome_window_metadata(),
         "verdicts": verdicts,
+        "exit_paired_evidence": _exit_paired_evidence(cutoff),
         "main_bottleneck": _main_bottleneck(verdicts),
     }
 
@@ -122,6 +123,7 @@ def _empty_report(generated_at: str, days: int, reason: str) -> dict:
         "window_days": days,
         **outcome_window_metadata(),
         "verdicts": verdicts,
+        "exit_paired_evidence": _empty_exit_paired_evidence(reason),
         "main_bottleneck": _main_bottleneck(verdicts),
     }
 
@@ -146,6 +148,67 @@ def _empty_layer(name: str, reason: str) -> dict:
         evidence_type="none",
         causal_grade="insufficient",
     )
+
+
+def _empty_exit_paired_evidence(reason: str) -> dict:
+    return {
+        "contract_version": "exit-paired-evidence/v1",
+        "experiment_version": "exit-breakeven-shadow/v1",
+        "treatment_id": "entry-lock-after-1.5pct/v1",
+        "cost_model_version": "paper-fill-close-bar-v1",
+        "behavior_authority": False,
+        "promotion_eligible": False,
+        "contribution_verdict": "insufficient_data",
+        "measurement_status": "not_measured",
+        "evidence_type": "prospective_paired_shadow",
+        "causal_grade": "insufficient",
+        "statistical_unit": "position_id",
+        "economic_unit": "net_pnl_quote_currency",
+        "outcome_count": 0,
+        "available_count": 0,
+        "unavailable_count": 0,
+        "changed_count": 0,
+        "incremental_net_pnl_total": None,
+        "incremental_net_pnl_mean": None,
+        "positive_increment_count": 0,
+        "close_reason_attribution_available": False,
+        "reason": reason,
+    }
+
+
+def _exit_paired_evidence(cutoff: str) -> dict:
+    from aletheia.analytics.exit_breakeven_shadow import (
+        build_exit_breakeven_shadow_report,
+    )
+
+    try:
+        report = build_exit_breakeven_shadow_report(closed_after=cutoff)
+    except sqlite3.OperationalError as exc:
+        return _empty_exit_paired_evidence(
+            f"Required Exit paired evidence table is unavailable: {exc}"
+        )
+    if not report["available_count"]:
+        return {
+            **_empty_exit_paired_evidence(
+                "No settled, identity-complete Exit paired outcomes are available in the audit window."
+            ),
+            **report,
+        }
+    return {
+        "contract_version": "exit-paired-evidence/v1",
+        **report,
+        "contribution_verdict": "insufficient_data",
+        "measurement_status": "treatment_specific_paired_evidence",
+        "evidence_type": "prospective_paired_shadow",
+        "causal_grade": "strong_prospective_paired_shadow",
+        "statistical_unit": "position_id",
+        "economic_unit": "net_pnl_quote_currency",
+        "close_reason_attribution_available": False,
+        "reason": (
+            "This estimates one frozen entry-lock treatment for eligible Paper positions; "
+            "it does not establish generic Exit-module contribution or authorize behavior changes."
+        ),
+    }
 
 
 def render_alpha_audit(report: dict) -> str:
@@ -179,6 +242,16 @@ def render_alpha_audit(report: dict) -> str:
             and modules
         ):
             lines.append(f"  Measured suspect modules: {', '.join(modules[:3])}")
+    paired = report.get("exit_paired_evidence") or {}
+    lines.extend([
+        "",
+        f"Exit paired evidence: {paired.get('measurement_status', 'not_measured')}",
+        "  "
+        f"available={paired.get('available_count', 0)} "
+        f"changed={paired.get('changed_count', 0)} "
+        f"mean_delta={_fmt_metric(paired.get('incremental_net_pnl_mean'))}",
+        f"  {paired.get('reason', 'Exit paired evidence is unavailable.')}",
+    ])
     bottleneck = report["main_bottleneck"]
     lines.extend([
         "",
@@ -522,7 +595,160 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
     )
 
 
+def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | None:
+    from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
+    from aletheia.learning.fixed_look import (
+        get_consumed_fixed_look_verdict,
+        get_fixed_look_decision,
+    )
+
+    path_ids = sorted(SUPPORTED_PATH_IDS)
+    if not path_ids:
+        return None
+    placeholders = ",".join("?" for _ in path_ids)
+    rows = db.execute(
+        "SELECT e.experiment_id, e.hypothesis_id, e.stage, e.min_samples_per_arm, "
+        "h.path_id, h.target_horizon FROM learning_experiments e "
+        "JOIN learning_hypotheses h ON h.hypothesis_id=e.hypothesis_id "
+        f"WHERE e.ended_at IS NULL AND h.path_id IN ({placeholders}) "
+        "ORDER BY datetime(e.created_at) DESC, e.experiment_id DESC",
+        tuple(path_ids),
+    ).fetchall()
+    valid: list[tuple[dict, dict]] = []
+    invalid: list[dict] = []
+    required_identity = (
+        "policy_epoch",
+        "stage",
+        "target_horizon",
+        "outcome_contract_version",
+        "metric_version",
+        "code_commit",
+        "behavior_contract_hash",
+        "inference_contract_version",
+        "inference_plan_hash",
+        "inference_cutoff_fingerprint",
+    )
+    for raw in rows:
+        experiment = dict(raw)
+        decision = get_fixed_look_decision(experiment["experiment_id"])
+        if decision is None or decision.status != "consumed":
+            continue
+        verdict = get_consumed_fixed_look_verdict(experiment["experiment_id"])
+        if verdict is None:
+            invalid.append({"experiment_id": experiment["experiment_id"], "reason": "consumed_verdict_invalid"})
+            continue
+        mismatch = next(
+            (
+                reason
+                for reason, matches in (
+                    ("hypothesis_mismatch", verdict.get("hypothesis_id") == experiment["hypothesis_id"]),
+                    ("stage_mismatch", verdict.get("stage") == experiment["stage"]),
+                    ("horizon_mismatch", verdict.get("target_horizon") == experiment["target_horizon"]),
+                    ("identity_incomplete", all(verdict.get(field) not in {None, ""} for field in required_identity)),
+                    ("sample_contract_unmet", min(int(verdict.get("unique_treatment_n") or 0), int(verdict.get("unique_control_n") or 0)) >= int(experiment["min_samples_per_arm"] or min_sample_size)),
+                    ("economic_result_incomplete", all(verdict.get(field) is not None for field in ("baseline", "observed", "delta"))),
+                )
+                if not matches
+            ),
+            None,
+        )
+        if mismatch:
+            invalid.append({"experiment_id": experiment["experiment_id"], "reason": mismatch})
+            continue
+        window_start = _parse_dt(verdict.get("window_start"))
+        window_end = _parse_dt(verdict.get("window_end"))
+        cutoff_at = _parse_dt(cutoff)
+        if (
+            window_start is None
+            or window_end is None
+            or cutoff_at is None
+            or window_start < cutoff_at
+            or window_end < window_start
+        ):
+            continue
+        valid.append((experiment, verdict))
+
+    if len(valid) > 1 or invalid:
+        reason = (
+            "Several current Learning estimands have authority verdicts and cannot be aggregated."
+            if len(valid) > 1
+            else "A consumed Learning verdict failed its exact identity contract."
+        )
+        return _verdict(
+            "Learning Alpha",
+            "insufficient_data",
+            0,
+            None,
+            None,
+            None,
+            "insufficient",
+            reason,
+            {
+                "valid_verdict_count": len(valid),
+                "invalid_verdicts": invalid,
+                "path_ids": sorted({row[0]["path_id"] for row in valid}),
+            },
+            evidence_type="dedicated_learning_contribution_verdict",
+            causal_grade="insufficient",
+        )
+    if not valid:
+        return None
+
+    experiment, verdict = valid[0]
+    status = str(verdict["verdict"])
+    if status not in {"positive", "neutral", "negative"}:
+        return _verdict(
+            "Learning Alpha",
+            "insufficient_data",
+            min(int(verdict["unique_treatment_n"]), int(verdict["unique_control_n"])),
+            verdict.get("baseline"),
+            verdict.get("observed"),
+            None,
+            "insufficient",
+            f"The exact confirmatory Learning verdict is {status}, so it cannot establish contribution.",
+            {"verdict_id": verdict["verdict_id"], "path_id": experiment["path_id"]},
+            evidence_type="dedicated_learning_contribution_verdict",
+            causal_grade="insufficient",
+        )
+    sample_size = min(int(verdict["unique_treatment_n"]), int(verdict["unique_control_n"]))
+    return _verdict(
+        "Learning Alpha",
+        status,
+        sample_size,
+        verdict["baseline"],
+        verdict["observed"],
+        verdict["delta"],
+        _confidence_label(sample_size, min_sample_size),
+        f"Learning path {experiment['path_id']} has a consumed exact confirmatory contribution verdict: {verdict['reason']}",
+        {
+            "path_id": experiment["path_id"],
+            "experiment_id": experiment["experiment_id"],
+            "hypothesis_id": experiment["hypothesis_id"],
+            "verdict_id": verdict["verdict_id"],
+            "unique_treatment_n": int(verdict["unique_treatment_n"]),
+            "unique_control_n": int(verdict["unique_control_n"]),
+            "window_start": verdict["window_start"],
+            "window_end": verdict["window_end"],
+            "policy_epoch": verdict["policy_epoch"],
+            "target_horizon": verdict["target_horizon"],
+            "outcome_contract_version": verdict["outcome_contract_version"],
+            "metric_version": verdict["metric_version"],
+            "code_commit": verdict["code_commit"],
+            "behavior_contract_hash": verdict["behavior_contract_hash"],
+            "inference_contract_version": verdict["inference_contract_version"],
+            "inference_plan_hash": verdict["inference_plan_hash"],
+            "inference_cutoff_fingerprint": verdict["inference_cutoff_fingerprint"],
+            "harm_metrics": _parse_json(verdict.get("harm_metrics_json")),
+        },
+        evidence_type="dedicated_learning_contribution_verdict",
+        causal_grade="strong_prospective_control",
+    )
+
+
 def _learning_alpha(db, cutoff: str, days: int, min_sample_size: int) -> dict:
+    dedicated = _dedicated_learning_alpha(db, cutoff, min_sample_size)
+    if dedicated is not None:
+        return dedicated
     raw_events = _learning_events(db, cutoff)
     events = _dedupe_learning_events(raw_events)
     if not raw_events:

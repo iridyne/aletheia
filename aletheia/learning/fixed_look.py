@@ -299,6 +299,22 @@ def inference_authority_reason(verdict: dict[str, Any]) -> str | None:
         or verdict.get("inference_cutoff_fingerprint") != decision.cutoff_fingerprint
     ):
         return "inference_identity_mismatch"
+    try:
+        plan = _validated_plan(decision)
+    except InferenceContractError:
+        return "inference_plan_invalid"
+    expected = {
+        "experiment_id": verdict.get("experiment_id"),
+        "hypothesis_id": verdict.get("hypothesis_id"),
+        "stage": verdict.get("stage"),
+        "policy_epoch": verdict.get("policy_epoch"),
+        "target_horizon": verdict.get("target_horizon"),
+        "outcome_contract_version": verdict.get("outcome_contract_version"),
+        "metric_version": verdict.get("metric_version"),
+        "behavior_contract_hash": verdict.get("behavior_contract_hash"),
+    }
+    if any(plan.get(field) != value for field, value in expected.items()):
+        return "inference_plan_identity_mismatch"
     return None
 
 
