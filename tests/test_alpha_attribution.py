@@ -410,6 +410,135 @@ def test_universe_alpha_prefers_prospective_control_cohort():
     assert report["main_bottleneck"]["layer"] == "insufficient_data"
 
 
+def test_alpha_audit_projects_universe_twin_without_granting_authority():
+    from aletheia.analytics.alpha_attribution import (
+        build_alpha_attribution_audit,
+        render_alpha_audit,
+    )
+    from aletheia.storage import repositories as repo
+    from tests.test_universe_twin_experiment import _bundle
+
+    bundle = _bundle("alpha-twin", captured_at=_iso(days_ago=1))
+    repo.insert_universe_twin_shadow_bundle(
+        bundle.batch,
+        bundle.evidence,
+        outcomes=bundle.outcomes,
+        min_interval_sec=0,
+    )
+
+    report = build_alpha_attribution_audit(days=30)
+    twin = report["universe_twin_evidence"]
+
+    assert twin["policy_epoch_id"] == bundle.batch.policy_epoch_id
+    assert twin["expected_cluster_n"] == 1
+    assert twin["complete_cluster_n"] == 0
+    assert twin["measurement_status"] == "not_measured"
+    assert twin["contribution_verdict"] == "insufficient_data"
+    assert twin["behavior_authority"] is False
+    assert twin["promotion_eligible"] is False
+    assert "fixed_horizon_outcomes_incomplete" in twin["blocking_reasons"]
+    assert twin["audit_window_compatible"] is True
+    assert report["main_bottleneck"]["layer"] == "insufficient_data"
+    assert "Universe Twin evidence: not_measured" in render_alpha_audit(report)
+
+
+def test_alpha_audit_twin_projection_fails_closed_without_storage():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute("DROP TABLE universe_twin_shadow_batches")
+    db.commit()
+
+    report = build_alpha_attribution_audit(days=30)
+
+    assert set(report["verdicts"]) == {
+        "universe", "ranker", "system_operator", "learning", "serenity",
+    }
+    twin = report["universe_twin_evidence"]
+    assert twin["measurement_status"] == "not_measured"
+    assert twin["contribution_verdict"] == "insufficient_data"
+    assert "storage is unavailable" in twin["reason"]
+
+
+def test_alpha_audit_twin_projection_never_promotes_complete_invalid_or_failed_evidence(
+    monkeypatch,
+):
+    import aletheia.universe.twin_evaluation as twin_evaluation
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage import repositories as repo
+    from tests.test_universe_twin_experiment import _bundle
+
+    bundle = _bundle("alpha-twin-states", captured_at="2026-08-08T00:00:00+00:00")
+    repo.insert_universe_twin_shadow_bundle(
+        bundle.batch,
+        bundle.evidence,
+        outcomes=bundle.outcomes,
+        min_interval_sec=0,
+    )
+
+    monkeypatch.setattr(
+        twin_evaluation,
+        "evaluate_twin_shadow_epoch",
+        lambda _epoch: {
+            "verdict": "not_available",
+            "complete_cluster_n": 100,
+            "expected_cluster_n": 100,
+            "treatment_cluster_n": 50,
+            "control_cluster_n": 50,
+            "observed_cluster_utility_delta": 1.0,
+        },
+    )
+    complete = build_alpha_attribution_audit(days=30)["universe_twin_evidence"]
+    assert complete["measurement_status"] == "prospective_shadow_diagnostic"
+    assert complete["causal_grade"] == "prospective_cluster_shadow_only"
+    assert complete["contribution_verdict"] == "insufficient_data"
+
+    monkeypatch.setattr(
+        twin_evaluation,
+        "evaluate_twin_shadow_epoch",
+        lambda _epoch: {"verdict": "invalid", "complete_cluster_n": 0},
+    )
+    invalid = build_alpha_attribution_audit(days=30)["universe_twin_evidence"]
+    assert invalid["measurement_status"] == "invalid_evidence"
+    assert invalid["causal_grade"] == "insufficient"
+    assert invalid["contribution_verdict"] == "insufficient_data"
+
+    def fail(_epoch):
+        raise RuntimeError("synthetic twin evaluation failure")
+
+    monkeypatch.setattr(twin_evaluation, "evaluate_twin_shadow_epoch", fail)
+    failed = build_alpha_attribution_audit(days=30)["universe_twin_evidence"]
+    assert failed["measurement_status"] == "not_measured"
+    assert failed["contribution_verdict"] == "insufficient_data"
+    assert "RuntimeError" in failed["reason"]
+
+
+def test_alpha_audit_does_not_truncate_twin_epoch_across_requested_window():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage import repositories as repo
+    from tests.test_universe_twin_experiment import _bundle
+
+    for run_id, captured_at in (
+        ("alpha-twin-old", "2026-06-01T00:00:00+00:00"),
+        ("alpha-twin-current", "2026-08-08T00:00:00+00:00"),
+    ):
+        bundle = _bundle(run_id, captured_at=captured_at)
+        repo.insert_universe_twin_shadow_bundle(
+            bundle.batch,
+            bundle.evidence,
+            outcomes=bundle.outcomes,
+            min_interval_sec=0,
+        )
+
+    twin = build_alpha_attribution_audit(days=30)["universe_twin_evidence"]
+
+    assert twin["measurement_status"] == "not_measured"
+    assert twin["audit_window_compatible"] is False
+    assert twin["window_start"] == "2026-06-01T00:00:00+00:00"
+    assert "not truncated or pooled" in twin["reason"]
+
+
 def test_prospective_universe_negative_remains_directional_without_authority_contract():
     from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
     from aletheia.storage.sqlite import get_db
@@ -680,8 +809,10 @@ def test_cli_and_api_surface_alpha_audit():
     assert result.exit_code == 0
     assert "Alpha Attribution Audit" in result.output
     assert "System Operator:" in result.output
+    assert "Universe Twin evidence:" in result.output
 
     assert any(route.path == "/api/analytics/alpha-attribution" for route in fastapi_app.routes)
     data = get_alpha_attribution(days=7)
     assert data["window_days"] == 7
+    assert "universe_twin_evidence" in data
     assert set(data["verdicts"]) == {"universe", "ranker", "system_operator", "learning", "serenity"}
