@@ -31,13 +31,106 @@ def _insert_ohlcv(db, symbol: str, timeframe: str, entry_at: str, entry: float, 
         )
 
 
-def _insert_shadow(db, batch: str, opp: str, rank: int, pnl: float, selected: int = 0) -> None:
+def _insert_shadow(
+    db,
+    batch: str,
+    opp: str,
+    rank: int,
+    pnl: float,
+    selected: int = 0,
+    *,
+    shadow_pnl: float | None = None,
+    policy_epoch: str = "epoch-test",
+    hours_after: int = 0,
+) -> None:
+    entry = _iso(days_ago=1, hours_after=hours_after)
+    outcome_key = f"opportunity:{opp}"
     db.execute(
         "INSERT INTO shadow_trades "
-        "(id, batch_id, opportunity_id, symbol, direction, scanner_family, trade_score, rank, "
-        "entry_price, was_selected, created_at, pnl_pct, net_pnl_pct, resolved_at) "
-        "VALUES (?, ?, ?, 'BTC/USDT', 'long', 'momentum', ?, ?, 100, ?, ?, ?, ?, ?)",
-        (f"sh-{batch}-{rank}-{opp}", batch, opp, 100 - rank, rank, selected, _iso(days_ago=1), pnl, pnl, _iso()),
+        "(id, batch_id, opportunity_id, symbol, venue, market_type, direction, "
+        "scanner_family, trade_score, rank, entry_price, outcome_candidate_key, "
+        "was_selected, policy_epoch_id, created_at, pnl_pct, net_pnl_pct, "
+        "cost_model_version, resolved_at) "
+        "VALUES (?, ?, ?, 'BTC/USDT', 'bitget', 'spot', 'long', 'momentum', ?, ?, "
+        "100, ?, ?, ?, ?, ?, ?, 'candidate-net-v1', ?)",
+        (
+            f"sh-{batch}-{rank}-{opp}",
+            batch,
+            opp,
+            100 - rank,
+            rank,
+            outcome_key,
+            selected,
+            policy_epoch,
+            entry,
+            pnl if shadow_pnl is None else shadow_pnl,
+            pnl if shadow_pnl is None else shadow_pnl,
+            _iso(),
+        ),
+    )
+    db.execute(
+        "INSERT INTO filter_candidate_outcomes "
+        "(id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
+        "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
+        "cost_model_version, status) "
+        "VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', '24h', 100, ?, ?, ?, ?, "
+        "'candidate-net-v1', 'settled')",
+        (
+            f"fco-{batch}-{rank}-{opp}",
+            outcome_key,
+            entry,
+            _iso(hours_after=24),
+            _iso(),
+            pnl,
+        ),
+    )
+
+
+def _insert_operator_candidate(
+    db,
+    idx: int,
+    decision: str,
+    pnl: float,
+    *,
+    behavior: str = "behavior-test",
+    hours_after: int = 0,
+) -> None:
+    decision_id = f"operator-{decision}-{idx}"
+    key = f"pi_decision:{decision_id}"
+    entry = _iso(days_ago=1, hours_after=hours_after)
+    db.execute(
+        "INSERT INTO pi_decisions "
+        "(id, created_at, symbol, direction, market_type, action, opportunity_id, "
+        "signal_source, runtime_session_id, producer_commit, behavior_fingerprint) "
+        "VALUES (?, ?, 'BTC/USDT', 'long', 'spot', ?, ?, 'market_observer', "
+        "'session-test', 'commit-test', ?)",
+        (
+            decision_id,
+            entry,
+            "trade" if decision == "passed" else "skip",
+            f"opp-operator-{decision}-{idx}",
+            behavior,
+        ),
+    )
+    db.execute(
+        "INSERT INTO filter_decisions "
+        "(id, dedup_key, candidate_key, candidate_kind, venue, symbol, market_type, "
+        "direction, filter_name, stage, sequence_no, decision, reason_code, "
+        "input_snapshot, parameter_snapshot, filter_version, code_commit, "
+        "outcome_candidate_key, evaluated_at) "
+        "VALUES (?, ?, ?, 'pi_decision', 'bitget', 'BTC/USDT', 'spot', 'long', "
+        "'operator_gate', 'system_operator', 1, ?, ?, '{}', '{}', 'operator-v1', "
+        "'commit-test', ?, ?)",
+        (f"fd-operator-{decision}-{idx}", f"dedup-operator-{decision}-{idx}", key, decision, decision, key, entry),
+    )
+    db.execute(
+        "INSERT INTO filter_candidate_outcomes "
+        "(id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
+        "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
+        "cost_model_version, status) "
+        "VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', '24h', 100, ?, ?, ?, ?, "
+        "'candidate-net-v1', 'settled')",
+        (f"fco-operator-{decision}-{idx}", key, entry, _iso(hours_after=24), _iso(), pnl),
     )
 
 
@@ -151,21 +244,58 @@ def test_ranker_alpha_detects_top1_underperforming_shadow_baseline():
     assert ranker["verdict"] == "negative"
     assert ranker["sample_size"] == 5
     assert ranker["baseline"] > ranker["observed"]
+    assert ranker["details"]["horizon"] == "24h"
+    assert ranker["details"]["statistical_unit"] == "outcome_candidate_key"
+    assert ranker["details"]["economic_unit"] == "net_return_pct"
     assert ranker["measurement_status"] == "directional_evidence_only"
     assert report["main_bottleneck"]["layer"] == "insufficient_data"
 
 
-def test_system_operator_alpha_compares_executed_trade_to_same_batch_shadows():
+def test_ranker_alpha_uses_canonical_fixed_horizon_outcome_not_shadow_lifecycle_pnl():
     from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
     for i in range(5):
-        _insert_trade_chain(db, i, pnl_pct=-3.0)
-        batch = f"sys{i}"
-        _insert_shadow(db, batch, f"opp-{i}", 1, -3.0, selected=1)
-        _insert_shadow(db, batch, f"alt-a-{i}", 2, 2.0)
-        _insert_shadow(db, batch, f"alt-b-{i}", 3, 1.0)
+        batch = f"fixed{i}"
+        _insert_shadow(db, batch, f"fixed-r1-{i}", 1, -2.0, selected=1, shadow_pnl=50.0)
+        _insert_shadow(db, batch, f"fixed-r2-{i}", 2, 2.0, shadow_pnl=-50.0)
+    db.commit()
+
+    ranker = build_alpha_attribution_audit(days=30)["verdicts"]["ranker"]
+
+    assert ranker["verdict"] == "negative"
+    assert ranker["observed"] == -2.0
+    assert ranker["baseline"] == 2.0
+    assert ranker["details"]["source_table"] == "filter_candidate_outcomes"
+
+
+def test_ranker_alpha_does_not_mix_policy_epochs():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for i in range(5):
+        _insert_shadow(db, f"old-{i}", f"old-r1-{i}", 1, -2.0, policy_epoch="epoch-old")
+        _insert_shadow(db, f"old-{i}", f"old-r2-{i}", 2, 2.0, policy_epoch="epoch-old")
+    _insert_shadow(db, "new-0", "new-r1-0", 1, 3.0, policy_epoch="epoch-new", hours_after=1)
+    _insert_shadow(db, "new-0", "new-r2-0", 2, -3.0, policy_epoch="epoch-new", hours_after=1)
+    db.commit()
+
+    ranker = build_alpha_attribution_audit(days=30)["verdicts"]["ranker"]
+
+    assert ranker["verdict"] == "insufficient_data"
+    assert ranker["details"]["policy_epoch_id"] == "epoch-new"
+
+
+def test_system_operator_alpha_compares_fixed_horizon_passed_and_rejected_candidates():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for i in range(5):
+        _insert_operator_candidate(db, i, "passed", -3.0)
+        _insert_operator_candidate(db, i, "rejected", 2.0)
     db.commit()
 
     report = build_alpha_attribution_audit(days=30)
@@ -173,10 +303,30 @@ def test_system_operator_alpha_compares_executed_trade_to_same_batch_shadows():
 
     assert operator["verdict"] == "negative"
     assert operator["sample_size"] == 5
-    assert operator["details"]["shadow_sample_size"] == 10
+    assert operator["details"]["rejected_sample_size"] == 5
+    assert operator["details"]["horizon"] == "24h"
+    assert operator["details"]["statistical_unit"] == "outcome_candidate_key"
+    assert operator["details"]["economic_unit"] == "net_return_pct"
     assert operator["baseline"] > operator["observed"]
     assert operator["measurement_status"] == "directional_evidence_only"
     assert report["main_bottleneck"]["layer"] == "insufficient_data"
+
+
+def test_system_operator_alpha_does_not_mix_behavior_fingerprints():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for i in range(5):
+        _insert_operator_candidate(db, i, "passed", -3.0, behavior="behavior-old")
+        _insert_operator_candidate(db, i, "rejected", 2.0, behavior="behavior-old")
+    _insert_operator_candidate(db, 99, "passed", 3.0, behavior="behavior-new", hours_after=1)
+    db.commit()
+
+    operator = build_alpha_attribution_audit(days=30)["verdicts"]["system_operator"]
+
+    assert operator["verdict"] == "insufficient_data"
+    assert operator["details"]["behavior_fingerprint"] == "behavior-new"
 
 
 def test_universe_alpha_uses_forward_outcomes_against_deterministic_baseline():

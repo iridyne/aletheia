@@ -363,18 +363,22 @@ def test_shadow_trade_has_shared_net_outcome_fields():
 @spec_claim(
     SpecClaim(
         "FE-C04", _CONTRACT, "§6 net alpha consumers", "L2c",
-        "Ranker and System Operator alpha baselines consume net_pnl_pct rather than legacy shadow gross PnL.",
+        "Ranker and System Operator alpha baselines consume exact settled 24h "
+        "filter_candidate_outcomes net economics rather than variable-hold Position "
+        "or legacy Shadow PnL.",
         status="implemented",
     )
 )
-def test_alpha_attribution_uses_shadow_net_pnl():
+def test_alpha_attribution_uses_canonical_fixed_horizon_net_outcomes():
     from pathlib import Path
 
     source = (
         Path(__file__).parents[2] / "aletheia" / "analytics" / "alpha_attribution.py"
     ).read_text(encoding="utf-8")
-    assert "SELECT batch_id, rank, net_pnl_pct FROM shadow_trades" in source
-    assert "SELECT net_pnl_pct FROM shadow_trades" in source
+    assert "JOIN filter_candidate_outcomes fo" in source
+    assert "fo.horizon='24h'" in source
+    assert "fo.net_return_pct" in source
+    assert "eligible_strategy_outcomes(closed_after=cutoff)" not in source
 
 
 @spec_claim(

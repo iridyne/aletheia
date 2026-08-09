@@ -26,7 +26,7 @@
 | Level | 含义 | 模块 |
 |---|---|---|
 | L0 | 完整性：决策身份、first exposure、版本/epoch、结果键 | `counterfactual/trades.py::persist_shadow_batch` 落库时绑定；`shadow_trades.policy_epoch_id` 是硬字段 |
-| L1 | 固定时点结果：预注册 horizon 的成本后结果 | `counterfactual/trades.py::resolve_shadow_trades_for_position` + `resolve_stale_shadows` |
+| L1 | 固定时点结果：预注册 horizon 的成本后结果 | keyed rows 由 canonical `filter_candidate_outcomes` 结算并投影；legacy 无键行保留 Position-close / stale resolver |
 | L2 | 描述性诊断：在可比 cohort 中的差异 | `counterfactual/calibration.py::build_calibration` |
 | L3 | 有界回放：固定历史、版本和参数，产出可检验假设 | `counterfactual/filter_replay.py` |
 | L4 | 前瞻实验：预登记分配、观察 gate | `counterfactual/filter_experiments.py` |
@@ -39,7 +39,8 @@
 生产入口只有下述几个函数；调用它们的位置由 [decision_lifecycle_contract.md](decision_lifecycle_contract.md) 与 [scheduler_contract.md](scheduler_contract.md) 约束：
 
 - `counterfactual.trades.persist_shadow_batch(top_candidates, selected, top_n=5)` — 由 `paper_trader` 在 ranker 决策后同批调用；写入 Top-N shadow 行（含选中与未选中）。
-- `counterfactual.trades.resolve_shadow_trades_for_position(position)` — 由 `portfolio.outcome_hooks` 通过常量 `SHADOW_TRADES_HOOK = "shadow_trades"` 在 Position 结束时调用。
+- `counterfactual.trades.resolve_shadow_trades_for_position(position)` — 由 `portfolio.outcome_hooks` 通过常量 `SHADOW_TRADES_HOOK = "shadow_trades"` 在 Position 结束时调用；当前只处理没有 `outcome_candidate_key` 的 legacy 行。
+- `storage.repositories.settle_linked_shadow_outcomes(...)` — 固定结果结算器在同一候选的 canonical `24h` `filter_candidate_outcomes` 成熟后，把完全相同的成本后结果投影到带 `outcome_candidate_key` 的 Shadow 行。
 - `counterfactual.trades.resolve_stale_shadows(min_age_hours, horizon_hours, limit, dry_run)` — 由 scheduler job `shadow_resolver`（interval=6h，见 [scheduler_contract.md](scheduler_contract.md)）调用。
 - `counterfactual.filter_experiments.register_replay_ready_experiments(replays)` — 由 `analytics.filter_controller` 在 shadow 观察周期调用。
 - `counterfactual.filter_experiments.evaluate_active_shadow_experiments()` — 由 `analytics.filter_controller` 定期评估收集中的实验。
@@ -51,7 +52,7 @@
 
 反事实模块的持久化状态**只在三张表**中；schema 见 [data_model.md](../data/data_model.md)：
 
-- **`shadow_trades`** — 每 tick、每候选一行的固定 horizon 反事实账本。写入者只有 `persist_shadow_batch`；结算者只有 `resolve_shadow_trades_for_position` / `resolve_stale_shadows`。
+- **`shadow_trades`** — 每 tick、每候选一行的固定 horizon 反事实账本。写入者是 `persist_shadow_batch`；带键行由 canonical `24h` 候选结果投影结算，legacy 无键行才走 `resolve_shadow_trades_for_position` / `resolve_stale_shadows`。
 - **`filter_shadow_experiments`** — 前瞻观察实验的注册记录，`production_mutation_allowed=0` 是硬字段，写入 SQL 保留此列以让观察-only 边界在数据库层显式。
 - **`filter_shadow_evaluations`** — 每个实验的证据快照，`disposition` 取值 `collecting` / `ready_for_review` / `completed_no_support` / `invalidated`。
 
@@ -62,7 +63,8 @@
 | `counterfactual.calibration.build_calibration` | `shadow_trades` | conviction 门槛校准报告 |
 | `analytics.family_scorecard.compute_family_scorecard` | `shadow_trades` (via `list_deduped_shadows`) | 每 scanner_family 的已结算候选数（90 天） |
 | `analytics.guard_impact._outcomes_for_candidate` | `shadow_trades` | 单 opportunity 最近一次已结算 shadow (per-opp，不需要去重) |
-| `analytics.alpha_attribution._ranker_alpha` | `shadow_trades` | 每 batch 内的 rank vs pnl 关联 |
+| `analytics.alpha_attribution._ranker_alpha` | `shadow_trades` + `filter_candidate_outcomes` | 用 Shadow 的 rank/batch/epoch 身份连接 canonical `24h` 成本后候选结果 |
+| `analytics.alpha_attribution._system_operator_alpha` | `filter_decisions` + `pi_decisions` + `filter_candidate_outcomes` | 同一行为指纹下 passed/rejected 候选的 canonical `24h` 成本后比较 |
 | `analytics.thesis_lineage` | `shadow_trades` | per-opp shadow 汇总 |
 | `economics.viability` | `shadow_trades` | 单 opp/batch 的选中 vs 对照的净收益比较 |
 | `server.routes.data GET /analytics/shadow-trades` | `shadow_trades` | 只读 API |
@@ -73,7 +75,7 @@
 ## 4. Observable result
 
 - `shadow_trades.pnl_pct` 与 `net_pnl_pct`：在成本模型（费用 + 点差 + 资金费）下的方向性净收益，单位为百分比数值。`net_pnl_pct = NULL` 而 `pnl_pct != NULL` 表示 gross-only（例如 perp 缺资金费），不得进入学习。
-- `shadow_trades.settlement_price_source` 允许取值：`"position_close"`（Position 关闭时锚定）、`"stale_forward_ohlcv"`（backfill job 用 OHLCV 结算）、`NULL`（历史 minimal-writer 路径）。
+- 带 `outcome_candidate_key` 的 `shadow_trades` 以 canonical `24h` `filter_candidate_outcomes` 为结果权威；Position-close 与 stale-forward 路径只保留给历史无键行。`settlement_price_source` 必须沿用产生该结果的实际结算来源，不能由消费方重算或改写。
 - `filter_shadow_evaluations.disposition = "ready_for_review"` 是本合同下的**最强观察结论**，它只表示证据 gate 已达标、值得人工审阅，从不表示"应该改变生产行为"。改变生产行为须走新 policy epoch + owner 批准，不属于本合同。
 - `build_calibration` 报告是描述性诊断，读者应联合 `avg_net_pct` / `median_net_pct` / `win_rate_pct` 判读；低 n 档必须视为不确定。
 
