@@ -696,6 +696,20 @@ def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monk
     assert monitoring_positive["contribution_verdict"] == "insufficient_data"
     assert monitoring_positive["measurement_status"] == "directional_evidence_only"
 
+    def unavailable_projection(*, limit):
+        raise RuntimeError("projection failed")
+
+    monkeypatch.setattr(
+        learning_read_models,
+        "build_learning_contribution_projection",
+        unavailable_projection,
+    )
+    unavailable = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+
+    assert unavailable["verdict"] == "insufficient_data"
+    assert unavailable["evidence_type"] == "dedicated_learning_contribution_monitoring"
+    assert "projection is unavailable" in unavailable["reason"]
+
 
 def test_learning_alpha_consumes_exact_confirmatory_authority_verdict(monkeypatch):
     import aletheia.analytics.alpha_attribution as alpha_attribution

@@ -930,31 +930,60 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
             causal_grade="insufficient",
         )
     if not valid:
+        cutoff_at = _parse_dt(cutoff)
+        experiment_rows = {row["experiment_id"]: dict(row) for row in rows}
+        paper_experiment_ids = {
+            experiment_id
+            for experiment_id, experiment in experiment_rows.items()
+            if str(experiment.get("stage") or "").startswith("paper_")
+            and cutoff_at is not None
+            and (
+                started_at := _parse_dt(
+                    experiment.get("started_at") or experiment.get("created_at")
+                )
+            )
+            is not None
+            and started_at >= cutoff_at
+        }
+        if not paper_experiment_ids:
+            return None
         try:
             from aletheia.learning.read_models import build_learning_contribution_projection
 
             projection = build_learning_contribution_projection(limit=len(path_ids))
         except Exception:
-            return None
-        experiment_rows = {row["experiment_id"]: dict(row) for row in rows}
-        cutoff_at = _parse_dt(cutoff)
-        current_paper = []
-        for item in projection.get("items", []):
-            experiment = experiment_rows.get(item.get("experiment_id"))
-            started_at = _parse_dt(
-                (experiment or {}).get("started_at")
-                or (experiment or {}).get("created_at")
+            return _verdict(
+                "Learning Alpha",
+                "insufficient_data",
+                0,
+                None,
+                None,
+                None,
+                "insufficient",
+                "A current Paper Learning experiment exists, but its contribution projection is unavailable.",
+                {"experiment_ids": sorted(paper_experiment_ids)},
+                evidence_type="dedicated_learning_contribution_monitoring",
+                causal_grade="insufficient",
             )
-            if (
-                experiment is not None
-                and str(item.get("stage") or "").startswith("paper_")
-                and cutoff_at is not None
-                and started_at is not None
-                and started_at >= cutoff_at
-            ):
-                current_paper.append(item)
+        current_paper = [
+            item
+            for item in projection.get("items", [])
+            if item.get("experiment_id") in paper_experiment_ids
+        ]
         if not current_paper:
-            return None
+            return _verdict(
+                "Learning Alpha",
+                "insufficient_data",
+                0,
+                None,
+                None,
+                None,
+                "insufficient",
+                "A current Paper Learning experiment exists, but no current exact measurement projection is available.",
+                {"experiment_ids": sorted(paper_experiment_ids)},
+                evidence_type="dedicated_learning_contribution_monitoring",
+                causal_grade="insufficient",
+            )
         if len(current_paper) > 1:
             return _verdict(
                 "Learning Alpha",
