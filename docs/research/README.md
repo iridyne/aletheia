@@ -10,6 +10,7 @@ Research files are evidence, audits, and explorations. They can guide work but d
 | `audits/` | Code, system, data-flow, platform, and lifecycle audits |
 | `agents-learning/` | Agent behavior, OpenAlice/Serenity, learning-system research |
 | `trading-strategy/` | Strategy, sizing, entry/exit, position research |
+| `trading-theory/` | Falsifiable market theory, evidence grades, and AI feature candidates |
 | `market-data/` | Market context, new data sources, xStocks support |
 | `integrations/` | Demo/live parity and infrastructure integrations |
 | `knowledge-bases/` | Imported or synthesized domain knowledge bases |
