@@ -66,8 +66,8 @@ def test_proposals_route_redirects_to_blotter():
     ), "Expected `<Route path=\"/proposals\" element={<Navigate to=\"/blotter\" replace />}` in App.tsx"
     # `Proposals` component import must be gone (file deleted).
     assert "from './pages/Proposals'" not in app
-    # The Blotter route + component import exist.
-    assert "import Blotter from './pages/Blotter'" in app
+    # The Blotter route + lazy component import exist.
+    assert "const Blotter = lazy(() => import('./pages/Blotter'))" in app
     assert "<Route path=\"/blotter\" element={<Blotter />}" in app
 
 
