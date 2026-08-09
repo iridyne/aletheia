@@ -147,6 +147,21 @@ Preview 无权读取凭证，因此不参与该所有权竞争。
 - 普通 PR 可以继续合并，但正在观察的 Runtime 保持 pinned；
 - 不得让 autostart、update、Worktree hook 或 Agent 自动把 qualification host 推到最新 master。
 
+### 6.4 Source checkout 的受控更新
+
+`uv run ato update apply --yes` 是 source checkout 的人类触发更新入口，默认会构建
+dashboard、smoke 校验并重启 Gateway。它不是 PR merge、也不是 Qualification admission。
+
+- 只能在 owner 的干净 source checkout 上运行，且当前分支必须等于配置的
+  `update.branch`；Worktree、feature branch、detached HEAD 都必须拒绝；
+- 更新仅允许 `origin/<update.branch>` 的 fast-forward。ahead、diverged 或本地 composite
+  commit 不是“可更新”状态：停止 `update apply`，由 owner 先选择并解决 Git 身份；
+- 成功输出的 commit 仍须以 Runtime 的 `boot_commit == current_commit`、Gateway status 和
+  doctor/provenance 复核。一次新 build 的观察窗口从首次 eligible exposure 起算，不能把
+  重启时间或旧 cohort 当作新证据；
+- source 更新临时替换 dashboard static assets；只有 Gateway readiness 成功后才清理旧静态
+  备份。不得把 source-checkout 临时物或 packaged-runtime rollback backup 混为一谈。
+
 ## 7. 高速开发流程
 
 ### 7.1 开始一个非平凡任务
