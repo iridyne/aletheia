@@ -1,6 +1,6 @@
 # Deployment Guide
 
-> Gateway 生命周期管理 + 看门狗 + 监控。本文描述**单机本地部署**（Windows 11）。
+> Gateway 生命周期管理 + 看门狗 + 监控。本文描述 Windows 11 与当前 Fedora source-checkout 运行实例。
 
 ---
 
@@ -42,6 +42,30 @@ uv run aletheia data migrate
 # 只读查看容量、最大对象和最近 30 次夜间样本
 uv run aletheia data capacity --deep --history 30
 ```
+
+## Fedora 运行实例：精确部署 SOP
+
+Fedora 是当前长期运行实例；macOS 只用于开发和控制。合并 Ready PR 后，先确认并记录
+owner 选定的 `origin/master` HEAD（通常就是该 PR 的 merge SHA），再从 Mac 执行现有的一键更新入口：
+
+```sh
+ssh fedora 'cd /home/admin/aletheia && uv run aletheia update apply --yes --restart'
+```
+
+这个命令已经负责 fast-forward、依赖同步、前端构建、Migration/SQLite 校验、Gateway
+重启和 readiness；不要再包一层部署脚本。完成后只做以下验收：
+
+1. Fedora `git rev-parse HEAD` 等于预期 merge SHA；
+2. `/api/status` 的 `boot_commit == current_commit ==` 预期 SHA；
+3. `/api/health` 为 healthy，Gateway 与 scheduler 正在运行；
+4. 仍为 `paper_internal` / `local_paper`，`live_disabled`；
+5. Provider、Outcome settlement 和目标 Evaluation evidence 正常继续采集。
+
+每次部署都记录新的 Runtime provenance segment。只读审计、文档或不改变 behavior contract
+的修复不要求随机 A/B；是否延续 cohort 仍由显式 comparability/admission 判断。部署会改变
+选择、仓位、Risk、成本模型或实验 identity 的代码时，按
+[Experiment Protocol](../../product/experiments/EXPERIMENT_PROTOCOL.md) 关闭受影响窗口并从首次
+eligible exposure 开新窗口。PR merge 本身不等于部署。
 
 ## 数据库迁移边界
 
