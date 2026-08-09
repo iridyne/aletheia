@@ -678,6 +678,10 @@ def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monk
         },
         "samples": {
             "raw_exposures": 21,
+            "exposed_treatment_units": 1,
+            "exposed_authority_applied_treatment_units": 1,
+            "exposed_actual_intervention_treatment_units": 1,
+            "exposed_control_units": 5,
             "treatment_assignment_units": 0,
             "control_assignment_units": 0,
             "actual_intervention_treatment_units": 0,
@@ -712,6 +716,7 @@ def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monk
     assert learning["evidence_type"] == "dedicated_learning_contribution_monitoring"
     assert learning["details"]["experiment_id"] == experiment.experiment_id
     assert learning["details"]["raw_exposures"] == 21
+    assert learning["details"]["exposed_actual_intervention_treatment_units"] == 1
     assert learning["details"]["exclusion_reasons"] == {"unsettled": 21}
     assert learning["details"]["window_start"] == "1970-01-01T00:00:00+00:00"
     assert requested_limits == [100]
@@ -719,6 +724,7 @@ def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monk
         alpha_attribution.build_alpha_attribution_audit(days=30)
     )
     assert f"Learning experiment: id={experiment.experiment_id} stage=paper_10" in rendered
+    assert "exposed_interventions=1 settled_interventions=0" in rendered
     assert 'exclusions={"unsettled": 21}' in rendered
 
     item["measurement"].update(

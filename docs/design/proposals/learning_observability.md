@@ -346,6 +346,10 @@ Each item contains:
   },
   "samples": {
     "raw_exposures": 0,
+    "exposed_treatment_units": 0,
+    "exposed_authority_applied_treatment_units": 0,
+    "exposed_actual_intervention_treatment_units": 0,
+    "exposed_control_units": 0,
     "treatment_assignment_units": 0,
     "assigned_treatment_units": 0,
     "authority_applied_treatment_units": 0,
@@ -385,6 +389,9 @@ Each item contains:
 Counts are named by statistical unit. Permission and effective behavior remain
 separate: an authorized all-no-op cluster is visible in
 `authority_applied_treatment_units` but not `actual_intervention_treatment_units`.
+The `exposed_*` counts are identity-valid assignment units observed before
+outcome settlement; the unprefixed treatment/control counts remain complete
+economic measurement units. Exposure telemetry never satisfies a verdict gate.
 `raw_exposures` and `cluster_members` must never be displayed as treatment/control
 sample size.
 

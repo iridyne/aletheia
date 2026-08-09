@@ -602,6 +602,18 @@ def _project_experiment(
         },
         "samples": {
             "raw_exposures": _safe_int(metrics.get("raw_exposure_n")),
+            "exposed_treatment_units": _safe_int(
+                metrics.get("exposed_treatment_assignment_unit_n")
+            ),
+            "exposed_authority_applied_treatment_units": _safe_int(
+                metrics.get("exposed_authority_applied_treatment_unit_n")
+            ),
+            "exposed_actual_intervention_treatment_units": _safe_int(
+                metrics.get("exposed_actual_intervention_treatment_unit_n")
+            ),
+            "exposed_control_units": _safe_int(
+                metrics.get("exposed_control_assignment_unit_n")
+            ),
             "treatment_assignment_units": (
                 _safe_int((current_verdict or {}).get("unique_treatment_n"))
                 if current else 0
@@ -749,6 +761,18 @@ def _project_experiment(
                 verdict_metrics.get("unique_assignment_unit_n")
             ),
             "raw_exposures": _safe_int(verdict_metrics.get("raw_exposure_n")),
+            "exposed_treatment_units": _safe_int(
+                verdict_metrics.get("exposed_treatment_assignment_unit_n")
+            ),
+            "exposed_authority_applied_treatment_units": _safe_int(
+                verdict_metrics.get("exposed_authority_applied_treatment_unit_n")
+            ),
+            "exposed_actual_intervention_treatment_units": _safe_int(
+                verdict_metrics.get("exposed_actual_intervention_treatment_unit_n")
+            ),
+            "exposed_control_units": _safe_int(
+                verdict_metrics.get("exposed_control_assignment_unit_n")
+            ),
             "harm_state": str(verdict_metrics.get("harm_state") or "unknown"),
             "harm_indeterminate_reason": verdict_metrics.get(
                 "harm_indeterminate_reason"

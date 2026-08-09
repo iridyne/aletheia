@@ -198,6 +198,9 @@ Current implementation:
   `lco-v1` read model to expose its exact experiment identity, raw samples,
   intervention state, and exclusions instead of falling back to unrelated
   lesson before/after diagnostics.
+- Reports identity-valid exposed intervention units separately from settled
+  economic intervention units; exposure telemetry never satisfies a verdict
+  or promotion gate.
 - Requires the durable inference decision, authority eligibility, exact
   experiment/hypothesis/stage/policy epoch/horizon/outcome/metric/code/behavior
   identities, arm sample contract, and complete baseline/observed/delta.

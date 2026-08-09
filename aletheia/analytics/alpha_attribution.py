@@ -440,7 +440,9 @@ def render_alpha_audit(report: dict) -> str:
                     "  Learning experiment: "
                     f"id={details['experiment_id']} stage={details.get('stage')} "
                     f"raw_exposures={details.get('raw_exposures', 0)} "
-                    "actual_interventions="
+                    "exposed_interventions="
+                    f"{details.get('exposed_actual_intervention_treatment_units', 0)} "
+                    "settled_interventions="
                     f"{details.get('actual_intervention_treatment_units', 0)}"
                 )
                 lines.append(
@@ -1068,6 +1070,9 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
                 "unique_control_n": int(samples.get("control_assignment_units") or 0),
                 "actual_intervention_treatment_units": int(
                     samples.get("actual_intervention_treatment_units") or 0
+                ),
+                "exposed_actual_intervention_treatment_units": int(
+                    samples.get("exposed_actual_intervention_treatment_units") or 0
                 ),
                 "actual_intervention_state": integrity.get("actual_intervention_state"),
                 "exclusion_reasons": integrity.get("exclusion_reasons") or {},

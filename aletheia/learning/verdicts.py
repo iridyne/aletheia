@@ -560,6 +560,18 @@ def _harm_metrics(
             cohort.source_code_commit_unknown_n == 0
         ),
         "raw_exposure_n": cohort.raw_exposure_n,
+        "exposed_treatment_assignment_unit_n": len(
+            cohort.exposed_treatment_assignment_units
+        ),
+        "exposed_authority_applied_treatment_unit_n": len(
+            cohort.exposed_authority_applied_treatment_units
+        ),
+        "exposed_actual_intervention_treatment_unit_n": len(
+            cohort.exposed_actual_intervention_treatment_units
+        ),
+        "exposed_control_assignment_unit_n": len(
+            cohort.exposed_control_assignment_units
+        ),
         "unique_assignment_unit_n": len(cohort.samples),
         "cluster_member_n": sum(sample.member_count for sample in cohort.samples),
         "duplicate_exposure_n": cohort.duplicate_exposure_n,
