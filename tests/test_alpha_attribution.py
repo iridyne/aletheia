@@ -299,7 +299,9 @@ def test_ranker_alpha_uses_entry_aligned_first_rank_not_later_rerank():
         alt_opp = f"first-alt-{i}"
         _insert_shadow(db, first_batch, top_opp, 1, 2.0)
         _insert_shadow(db, first_batch, alt_opp, 2, -2.0)
-        late_at = _iso(days_ago=1, hours_after=1)
+        late_at = (
+            datetime.fromisoformat(_iso(days_ago=1)) + timedelta(milliseconds=500)
+        ).isoformat()
         for opp, rank in ((top_opp, 2), (alt_opp, 1)):
             db.execute(
                 "INSERT INTO shadow_trades "
@@ -324,6 +326,13 @@ def test_ranker_alpha_uses_entry_aligned_first_rank_not_later_rerank():
         "UPDATE shadow_trades SET created_at=? WHERE batch_id='misaligned'",
         (_iso(days_ago=1, hours_after=1),),
     )
+    _insert_shadow(db, "mixed", "mixed-top", 1, -20.0)
+    _insert_shadow(db, "mixed", "mixed-alt", 2, 20.0)
+    _insert_shadow(db, "mixed", "mixed-stale", 3, 20.0)
+    db.execute(
+        "UPDATE shadow_trades SET created_at=? WHERE opportunity_id='mixed-stale'",
+        (_iso(days_ago=1, hours_after=1),),
+    )
     db.commit()
 
     ranker = build_alpha_attribution_audit(days=30)["verdicts"]["ranker"]
@@ -332,7 +341,8 @@ def test_ranker_alpha_uses_entry_aligned_first_rank_not_later_rerank():
     assert ranker["observed"] == 2.0
     assert ranker["baseline"] == -2.0
     assert ranker["details"]["first_exposure_alignment_max_sec"] == 60
-    assert ranker["details"]["temporally_misaligned_candidate_count"] == 2
+    assert ranker["details"]["temporally_misaligned_candidate_count"] == 3
+    assert ranker["details"]["temporally_misaligned_batch_count"] == 2
 
 
 def test_ranker_alpha_weights_each_batch_once():

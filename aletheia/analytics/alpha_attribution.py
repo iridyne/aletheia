@@ -636,7 +636,7 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         " SELECT s.batch_id, s.outcome_candidate_key, s.rank, fo.net_return_pct,"
         " s.created_at AS ranked_at, fo.entry_ts,"
         " ROW_NUMBER() OVER (PARTITION BY s.outcome_candidate_key "
-        " ORDER BY datetime(s.created_at) ASC, s.id ASC) AS exposure_rank"
+        " ORDER BY julianday(s.created_at) ASC, s.id ASC) AS exposure_rank"
         " FROM shadow_trades s JOIN filter_candidate_outcomes fo"
         " ON fo.outcome_candidate_key=s.outcome_candidate_key"
         " WHERE s.batch_id IS NOT NULL AND s.policy_epoch_id=?"
@@ -660,18 +660,23 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
 
     batches: dict[str, list[dict]] = defaultdict(list)
     temporally_misaligned_candidates = 0
+    temporally_misaligned_batch_ids: set[str] = set()
     for row in rows:
         candidate = dict(row)
         ranked_at = _parse_dt(candidate.get("ranked_at"))
         entry_at = _parse_dt(candidate.get("entry_ts"))
         if ranked_at is None or entry_at is None:
             temporally_misaligned_candidates += 1
+            temporally_misaligned_batch_ids.add(str(row["batch_id"]))
             continue
         lag_sec = (ranked_at - entry_at).total_seconds()
         if lag_sec < 0 or lag_sec > _RANKER_ENTRY_ALIGNMENT_MAX_SEC:
             temporally_misaligned_candidates += 1
+            temporally_misaligned_batch_ids.add(str(row["batch_id"]))
             continue
         batches[row["batch_id"]].append(candidate)
+    for batch_id in temporally_misaligned_batch_ids:
+        batches.pop(batch_id, None)
 
     top1: list[float] = []
     top2_5: list[float] = []
@@ -706,6 +711,7 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         "eligible_average": _safe_mean(eligible),
         "batch_count": usable_batches,
         "temporally_misaligned_candidate_count": temporally_misaligned_candidates,
+        "temporally_misaligned_batch_count": len(temporally_misaligned_batch_ids),
         "temporally_mixed_batch_count": temporally_mixed_batches,
         "first_exposure_alignment_max_sec": _RANKER_ENTRY_ALIGNMENT_MAX_SEC,
         "horizon": "24h",
