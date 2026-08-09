@@ -262,25 +262,27 @@ def _exclusion_reason(row: dict[str, Any], cutoff_at: datetime) -> str | None:
     proposal_id = str(row["proposal_id"])
     if row.get("filter_proposal_id") != proposal_id or row.get("filter_outcome_key") != f"proposal:{proposal_id}":
         return "risk_filter_candidate_identity_mismatch"
-    if any(
-        str(row.get(filter_field) or "").lower() != str(row.get(proposal_field) or "").lower()
-        for filter_field, proposal_field in (
-            ("filter_symbol", "proposal_symbol"),
-            ("filter_market_type", "proposal_market_type"),
-            ("filter_direction", "proposal_direction"),
-        )
+    if (
+        str(row.get("filter_symbol") or "").lower()
+        != str(row.get("proposal_symbol") or "").lower()
+        or _canonical_market_type(row.get("filter_market_type"))
+        != _canonical_market_type(row.get("proposal_market_type"))
+        or str(row.get("filter_direction") or "").lower()
+        != str(row.get("proposal_direction") or "").lower()
     ):
         return "risk_filter_instrument_mismatch"
     if row.get("outcome_status") != "settled" or row.get("settled_at") in {None, ""}:
         return "risk_outcome_unsettled"
-    if row.get("filter_venue") != row.get("outcome_venue") or any(
-        str(row.get(outcome_field) or "").lower() != str(row.get(proposal_field) or "").lower()
-        for outcome_field, proposal_field in (
-            ("outcome_symbol", "proposal_symbol"),
-            ("outcome_market_type", "proposal_market_type"),
-            ("outcome_direction", "proposal_direction"),
-        )
-    ) or not row.get("outcome_venue"):
+    if (
+        row.get("filter_venue") != row.get("outcome_venue")
+        or str(row.get("outcome_symbol") or "").lower()
+        != str(row.get("proposal_symbol") or "").lower()
+        or _canonical_market_type(row.get("outcome_market_type"))
+        != _canonical_market_type(row.get("proposal_market_type"))
+        or str(row.get("outcome_direction") or "").lower()
+        != str(row.get("proposal_direction") or "").lower()
+        or not row.get("outcome_venue")
+    ):
         return "risk_outcome_instrument_mismatch"
     entry_at = _parse_time(row.get("entry_ts"))
     due_at = _parse_time(row.get("due_at"))
@@ -333,6 +335,11 @@ def _parse_json(raw: Any) -> Any:
     except (TypeError, ValueError):
         return None
     return value
+
+
+def _canonical_market_type(raw: Any) -> str:
+    value = str(raw or "").lower()
+    return "perp" if value in {"perp", "futures", "swap", "usdt_futures"} else value
 
 
 def _parse_time(raw: Any) -> datetime | None:

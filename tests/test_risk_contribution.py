@@ -184,3 +184,31 @@ def test_risk_policy_value_rejects_malformed_approval_value():
         {"approved": "0"},
         datetime(2026, 8, 1, tzinfo=timezone.utc),
     ) == "invalid_risk_decision_value"
+
+
+def test_risk_policy_value_accepts_equivalent_perp_market_aliases():
+    from aletheia.analytics.risk_contribution import build_risk_policy_contribution
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_candidate(db, 0, approved=False, net_return_pct=-1.0)
+    db.execute(
+        "UPDATE trade_proposals SET market_type='usdt_futures' "
+        "WHERE id='risk-proposal-0'",
+    )
+    db.execute(
+        "UPDATE filter_decisions SET market_type='perp' "
+        "WHERE id='risk-filter-0'",
+    )
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET market_type='perp' "
+        "WHERE id='risk-outcome-0'",
+    )
+
+    evidence = build_risk_policy_contribution(
+        db,
+        cutoff="2026-08-01T00:00:00+00:00",
+    )
+
+    assert evidence["eligible_count"] == 1
+    assert evidence["exclusion_counts"] == {}
