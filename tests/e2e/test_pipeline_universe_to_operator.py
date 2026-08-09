@@ -178,6 +178,16 @@ async def test_real_universe_refresh_reaches_one_operator_defer(
         "aletheia.model_provider.router.get_provider_for_tier",
         lambda _tier: "fixture",
     )
+    # This scenario owns one outer SAVEPOINT for rollback isolation. Twin evidence
+    # persists on a second thread/connection, which cannot acquire SQLite's writer
+    # slot until that SAVEPOINT ends. Exercise Twin persistence in its dedicated
+    # contract tests; here, use the production cadence skip to keep this authority
+    # pipeline focused on Universe -> Operator.
+    monkeypatch.setattr(
+        repo,
+        "universe_twin_shadow_capture_due",
+        lambda *_args, **_kwargs: False,
+    )
 
     async def fixed_operator_response(*_args, **_kwargs):
         # The model proposes an entry with a sub-threshold conviction. Since
