@@ -173,7 +173,7 @@ def test_allocator_audit_records_realized_learning_authority(
     assert audit["effective_opportunity_multiplier"] == pytest.approx(1.1)
 
 
-def test_zero_score_ufc_treatment_persists_authority_without_effective_intervention(
+def test_zero_score_shadow_treatment_persists_blocked_authority_provenance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from aletheia.config.schema import AletheiaConfig
@@ -189,8 +189,8 @@ def test_zero_score_ufc_treatment_persists_authority_without_effective_intervent
         authority,
         "resolve_learning_authority",
         lambda _path, experiment, _epoch: AuthorityDecision(
-            True,
-            "current_stage_measurement_underpowered",
+            False,
+            "experiment_stage_not_paper",
             experiment.stage,
             experiment.allocation_pct,
             experiment.activation_verdict_id,
@@ -213,11 +213,12 @@ def test_zero_score_ufc_treatment_persists_authority_without_effective_intervent
     manifest = json.loads(exposure["manifest_json"])
     assert audit["calibration_assignment"] == "treatment"
     assert audit["calibration_authority_applied"] is False
-    assert audit["calibration_reason"] == "baseline:no_effective_treatment_delta"
+    assert audit["calibration_reason"] == "baseline:experiment_stage_not_paper"
     assert exposure["before_json"] == exposure["after_json"]
-    assert manifest["authority_applied"] is True
+    assert manifest["authority_applied"] is False
+    assert manifest["authority_reason"] == "experiment_stage_not_paper"
     assert manifest["behavior_changed"] is False
-    assert manifest["behavior_change_reason"] == "no_effective_treatment_delta"
+    assert manifest["behavior_change_reason"] == "authority_not_applied"
 
 
 def test_twin_applies_same_realized_external_multiplier_without_authority() -> None:
