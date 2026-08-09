@@ -147,7 +147,7 @@ jobs:
 
     steps:
       - name: Isolate Aletheia runtime state
-        run: echo "ALETHEIA_DATA_DIR=$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-tests" >> "$GITHUB_ENV"
+        run: echo "ALETHEIA_DATA_DIR=$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-tests" >> "$GITHUB_ENV"
 
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -195,12 +195,17 @@ jobs:
         run: |
           set -euo pipefail
           for tier in tier_spec tier_unit tier_integration tier_e2e; do
-            ALETHEIA_DATA_DIR="$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${tier}" \
+            ALETHEIA_DATA_DIR="$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${tier}" \
               uv run pytest tests/ \
                 --ignore=tests/simulation \
+                --ignore=tests/test_auto_resume.py \
+                --ignore=tests/test_operator_cli.py \
                 -m "$tier" \
                 -n auto \
                 --dist loadfile \
                 -q --tb=short \
                 --timeout=120
           done
+          ALETHEIA_DATA_DIR="$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-runtime-state" \
+            uv run pytest tests/test_auto_resume.py tests/test_operator_cli.py \
+              -n 2 --dist loadfile -q --tb=short --timeout=120
