@@ -64,9 +64,6 @@ class _DummySchema:
         return self._schema
 
 
-def _json_schema_hint(schema: dict) -> str:
-    return json.dumps(schema)
-
 _MIN_CONVICTION_TO_TRADE = 55       # below this, skip (even after debate)
 _DEBATE_RANGE = (40, 80)            # conviction in this range triggers debate
 _MAX_CONVICTION_MULTIPLIER = 2.0    # cap: 2× base notional at 100% conviction
@@ -1701,11 +1698,9 @@ async def _assess_opportunity(ctx: dict) -> dict | None:
         "focus on WHAT to trade, not HOW MUCH. Return a JSON object matching the schema."
     )
     user = _build_assessment_prompt(ctx)
-    schema_text = _json_schema_hint(_DECISION_SCHEMA)
-    full_user = f"{user}\n\nReturn JSON: {schema_text}"
     result, err = await llm_structured(
         system,
-        full_user,
+        user,
         schema=_DummySchema(_DECISION_SCHEMA),
         provider=get_provider_for_tier("deep"),
         caller="system_operator.assess_opportunity",
@@ -1769,10 +1764,9 @@ async def _reassess_direct_skip(
         "complete trade decision if warranted; if evidence is merely insufficient, "
         "return skip_kind=insufficient_evidence so the caller can defer honestly."
     )
-    schema_text = _json_schema_hint(_DECISION_SCHEMA)
     result, err = await llm_structured(
         system,
-        f"{user}\n\nReturn JSON: {schema_text}",
+        user,
         schema=_DummySchema(_DECISION_SCHEMA),
         provider=get_provider_for_tier("deep"),
         caller="system_operator.reassess_direct_skip",
@@ -1850,9 +1844,6 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
 
     bull_user = _build_bull_prompt(symbol, direction, ctx)
     bear_user = _build_bear_prompt(symbol, direction, ctx)
-    bull_schema_hint = _json_schema_hint(_BULL_SCHEMA)
-    bear_schema_hint = _json_schema_hint(_BEAR_SCHEMA)
-
     system_bull = "You are a bull analyst. Return a JSON object matching the schema."
     system_bear = "You are a bear analyst. Return a JSON object matching the schema."
 
@@ -1860,7 +1851,7 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
     (bull_result, bull_err), (bear_result, bear_err) = await asyncio.gather(
         llm_structured(
             system_bull,
-            f"{bull_user}\n\nReturn JSON: {bull_schema_hint}",
+            bull_user,
             schema=_DummySchema(_BULL_SCHEMA),
             provider=_deep_provider,
             caller="system_operator.debate_bull",
@@ -1868,7 +1859,7 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
         ),
         llm_structured(
             system_bear,
-            f"{bear_user}\n\nReturn JSON: {bear_schema_hint}",
+            bear_user,
             schema=_DummySchema(_BEAR_SCHEMA),
             provider=_deep_provider,
             caller="system_operator.debate_bear",

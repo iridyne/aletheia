@@ -604,6 +604,24 @@ async def llm_structured(
     last_response = None
     last_response_shape: str | None = None
     last_schema_error_code: str | None = None
+    active_structured_attempt: int | None = None
+    recorded_structured_attempts: set[int] = set()
+
+    def _record_structured_outcome(outcome: str) -> None:
+        if (
+            inference_call is None
+            or active_structured_attempt is None
+            or active_structured_attempt in recorded_structured_attempts
+        ):
+            return
+        from aletheia.economics.inference_calls import record_structured_attempt_outcome
+
+        record_structured_attempt_outcome(
+            inference_call.logical_call_id,
+            active_structured_attempt,
+            outcome,
+        )
+        recorded_structured_attempts.add(active_structured_attempt)
 
     def _failure(error: str) -> tuple[dict | None, str]:
         nonlocal inference_finished
@@ -683,6 +701,7 @@ async def llm_structured(
         last_err = "structured_parse_error: no valid JSON object found in response"
         max_attempts = 3
         for attempt in range(max_attempts):
+            active_structured_attempt = attempt
             # Escalate token budget on each retry
             attempt_max_tokens = max_tokens
             if attempt == 1:
@@ -724,6 +743,7 @@ async def llm_structured(
                 logger.warning(
                     "LLM structured call exhausted %.0fs total wall-clock budget", _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC
                 )
+                _record_structured_outcome("timeout")
                 _record_llm(False)
                 return _failure("llm_unavailable: structured_timeout")
             try:
@@ -748,6 +768,7 @@ async def llm_structured(
                 logger.warning(
                     "LLM structured call exceeded %.0fs total wall-clock budget", _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC
                 )
+                _record_structured_outcome("timeout")
                 _record_llm(False)
                 return _failure("llm_unavailable: structured_timeout")
             content = (resp.content or "").strip()
@@ -758,6 +779,7 @@ async def llm_structured(
 
             if not content:
                 last_response_shape = "empty"
+                _record_structured_outcome("empty_content")
                 if output_tokens > 0:
                     # Reasoning model exhausted budget on thinking phase → retry with more
                     if attempt < max_attempts - 1:
@@ -797,6 +819,7 @@ async def llm_structured(
                 except (TypeError, ValueError) as exc:
                     last_schema_error_code = _classify_schema_validation_error(exc)
                     last_err = f"structured_schema_invalid: {last_schema_error_code}"
+                    _record_structured_outcome("schema_invalid")
                     if attempt < max_attempts - 1:
                         logger.warning(
                             "LLM structured call: schema validation failed (attempt %d/%d) — retrying",
@@ -812,11 +835,13 @@ async def llm_structured(
                     parse_valid=True,
                     schema_valid=True,
                 )
+                _record_structured_outcome("accepted")
                 inference_finished = True
                 _record_llm(True)
                 return data, None
             if data is not None:
                 last_err = "structured_non_dict"
+                _record_structured_outcome("non_object_json")
                 if attempt < max_attempts - 1:
                     logger.warning(
                         "LLM structured call: JSON value is not an object (attempt %d/%d) — retrying",
@@ -828,6 +853,7 @@ async def llm_structured(
 
             # Parse failed — check if output was truncated (near token limit)
             truncated = output_tokens > 0 and output_tokens >= attempt_max_tokens * 0.9
+            _record_structured_outcome("truncated_output" if truncated else "parse_error")
             if truncated and attempt < max_attempts - 1:
                 logger.warning(
                     "LLM structured call: parse failure, output likely truncated "
@@ -857,6 +883,7 @@ async def llm_structured(
         # content-free logical inference in ``running``. Finalize telemetry, but
         # never turn cancellation into a fallback value or availability tuple.
         try:
+            _record_structured_outcome("cancelled")
             if inference_call is not None and not inference_finished:
                 _record_call_finished(
                     inference_call,
@@ -875,10 +902,12 @@ async def llm_structured(
     except json.JSONDecodeError as e:
         # Bad JSON but the LLM did respond — not an outage, don't trip health counter
         logger.warning("LLM structured call: JSON parse failed: %s", e)
+        _record_structured_outcome("parse_error")
         return _failure(f"structured_parse_error: {e}")
     except Exception as e:
         detail = _exception_detail(e)
         logger.warning("LLM structured call failed: %s", detail)
+        _record_structured_outcome("provider_error")
         _record_llm(False)
         return _failure(f"llm_unavailable: {detail}")
 

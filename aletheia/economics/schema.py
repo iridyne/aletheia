@@ -131,6 +131,20 @@ CREATE INDEX IF NOT EXISTS idx_llm_inference_calls_run
 CREATE INDEX IF NOT EXISTS idx_llm_inference_calls_caller
     ON llm_inference_calls(caller, started_at DESC);
 
+-- One content-free result per outer structured-repair attempt. This is separate
+-- from physical provider attempts: a provider success can still fail JSON/schema
+-- validation, and one repair attempt can use a provider fallback.
+CREATE TABLE IF NOT EXISTS llm_structured_attempt_outcomes (
+    logical_call_id TEXT NOT NULL REFERENCES llm_inference_calls(logical_call_id),
+    structured_attempt_index INTEGER NOT NULL CHECK(structured_attempt_index >= 0),
+    outcome TEXT NOT NULL CHECK(outcome IN (
+        'accepted','provider_error','timeout','cancelled','empty_content',
+        'non_object_json','parse_error','truncated_output','schema_invalid'
+    )),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(logical_call_id, structured_attempt_index)
+);
+
 -- Aggregate-only blinded owner review. Raw model responses remain in an
 -- explicitly chosen ephemeral review packet outside the repository/ledger.
 CREATE TABLE IF NOT EXISTS llm_context_pair_reviews (
@@ -370,6 +384,7 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
         "runtime_cost_events",
         "economics_budgets",
         "llm_inference_calls",
+        "llm_structured_attempt_outcomes",
         "llm_context_pair_reviews",
     }
     existing_tables = {
