@@ -82,6 +82,7 @@ export function DataTable<T>({
           {data.length > pageSize ? (
             <input
               placeholder="Filter..."
+              aria-label="Filter table rows"
               value={globalFilter}
               onChange={e => setGlobalFilter(e.target.value)}
               className="dt-filter"
@@ -127,18 +128,27 @@ export function DataTable<T>({
       <table>
         <thead>
           <tr>
-            {table.getHeaderGroups()[0].headers.map(header => (
-              <th
-                key={header.id}
-                onClick={header.column.getCanSort() ? header.column.getToggleSortingHandler() : undefined}
-                className={header.column.getCanSort() ? 'sortable' : undefined}
-              >
-                {flexRender(header.column.columnDef.header, header.getContext())}
-                <span className="sort-indicator">
-                  {{ asc: ' ▲', desc: ' ▼' }[header.column.getIsSorted() as string] ?? ''}
-                </span>
-              </th>
-            ))}
+            {table.getHeaderGroups()[0].headers.map(header => {
+              const canSort = header.column.getCanSort()
+              const sorted = header.column.getIsSorted()
+              const label = flexRender(header.column.columnDef.header, header.getContext())
+              return (
+                <th
+                  key={header.id}
+                  className={canSort ? 'sortable' : undefined}
+                  aria-sort={canSort ? sorted === 'asc' ? 'ascending' : sorted === 'desc' ? 'descending' : 'none' : undefined}
+                >
+                  {canSort ? (
+                    <button type="button" className="dt-sort-button" onClick={header.column.getToggleSortingHandler()}>
+                      {label}
+                      <span className="sort-indicator" aria-hidden="true">
+                        {{ asc: ' ▲', desc: ' ▼' }[sorted as string] ?? ''}
+                      </span>
+                    </button>
+                  ) : label}
+                </th>
+              )
+            })}
           </tr>
         </thead>
         <tbody>

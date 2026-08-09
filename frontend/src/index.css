@@ -181,6 +181,10 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 }
 .content { margin-left: 240px; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; transition: margin-left 0.15s ease; }
 .main { flex: 1; padding: var(--space-4) var(--space-5); background: var(--bg-2); overflow-y: auto; overflow-x: hidden; }
+.route-state {
+  min-height: 240px; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: var(--space-3); text-align: center;
+}
 /* Collapse sidebar on narrow viewports (L1); hamburger toggle handled in App.tsx */
 .hamburger { display: none !important; }
 /* Mobile drawer backdrop — click anywhere outside the sidebar to close it.
@@ -371,6 +375,11 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   font-family: var(--mono); font-size: 0.72rem; font-weight: 600;
   letter-spacing: 0.04em; text-transform: uppercase;
 }
+.realtime-state {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--muted); font-size: 0.62rem; text-transform: uppercase;
+}
+.realtime-state .dot { width: 6px; height: 6px; box-shadow: none; }
 .status-cluster-green  { color: var(--green); }
 .status-cluster-yellow { color: var(--yellow); }
 .status-cluster-red    { color: var(--red); }
@@ -569,6 +578,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   gap: var(--space-3); margin-bottom: var(--space-3);
 }
 .page-header .page-title { margin-bottom: 0; }
+.page-role { margin-top: var(--space-1); color: var(--muted); font-size: 0.78rem; line-height: 1.45; }
 .page-header-actions { display: flex; gap: var(--space-2); flex-shrink: 0; }
 
 /* ---------- Honest notice banner (e.g. News ingestion not configured) ---------- */
@@ -1238,6 +1248,12 @@ code { background: var(--bg); padding: 0.12rem 0.35rem; border-radius: 3px; font
 /* ---------- DataTable sort + toolbar + pagination ---------- */
 th.sortable { cursor: pointer; user-select: none; }
 th.sortable:hover { color: var(--text); }
+.dt-sort-button {
+  display: inline-flex; align-items: center; justify-content: flex-start; width: 100%;
+  padding: 0; border: 0; border-radius: 0; background: none; color: inherit;
+  font: inherit; letter-spacing: inherit; text-transform: inherit; text-align: left;
+}
+.dt-sort-button:hover { background: none; filter: none; }
 .sort-indicator { color: var(--accent); font-size: 0.55rem; margin-left: 2px; vertical-align: middle; }
 .dt-toolbar {
   display: flex; align-items: center; justify-content: space-between;

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
 /**
@@ -112,6 +112,16 @@ const CHANGE_MAP: Record<string, readonly unknown[][]> = {
 
 const WS_RETRY_BASE_MS = 3_000
 const WS_RETRY_MAX_MS = 30_000
+const DIAGNOSTIC_COUNT_MAX = 999
+
+export type RealtimeTransportState = 'connecting' | 'connected' | 'reconnecting' | 'polling_only' | 'disconnected'
+
+export interface RealtimeStatus {
+  state: RealtimeTransportState
+  lastFrameAt: number | null
+  malformedFrameCount: number
+  unknownCategoryCount: number
+}
 
 /**
  * Opens a WebSocket to /api/ws and invalidates React Query caches whenever
@@ -121,8 +131,14 @@ const WS_RETRY_MAX_MS = 30_000
  *
  * Must be called inside a component that is a descendant of QueryClientProvider.
  */
-export function useRealtimeUpdates(): void {
+export function useRealtimeUpdates(): RealtimeStatus {
   const queryClient = useQueryClient()
+  const [status, setStatus] = useState<RealtimeStatus>({
+    state: 'connecting',
+    lastFrameAt: null,
+    malformedFrameCount: 0,
+    unknownCategoryCount: 0,
+  })
 
   useEffect(() => {
     let retryDelay = WS_RETRY_BASE_MS
@@ -130,27 +146,61 @@ export function useRealtimeUpdates(): void {
     let ws: WebSocket | null = null
     let dead = false
 
-    function connect() {
+    const updateStatus = (update: Partial<RealtimeStatus> | ((current: RealtimeStatus) => RealtimeStatus)) => {
+      if (!dead) setStatus(current => typeof update === 'function' ? update(current) : { ...current, ...update })
+    }
+    const boundedAdd = (count: number, increment = 1) => Math.min(count + increment, DIAGNOSTIC_COUNT_MAX)
+
+    function scheduleReconnect() {
+      if (dead || document.visibilityState === 'hidden') return
+      updateStatus({ state: 'polling_only' })
+      retryTimer = setTimeout(() => {
+        retryTimer = null
+        retryDelay = Math.min(retryDelay * 1.5, WS_RETRY_MAX_MS)
+        connect(true)
+      }, retryDelay)
+    }
+
+    function connect(reconnecting = false) {
       if (dead || document.visibilityState === 'hidden' || ws) return
+      updateStatus({ state: reconnecting ? 'reconnecting' : 'connecting' })
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const socket = new WebSocket(`${proto}//${window.location.host}/api/ws`)
       ws = socket
 
       socket.onopen = () => {
         retryDelay = WS_RETRY_BASE_MS  // reset backoff on success
+        updateStatus({ state: 'connected' })
       }
 
       socket.onmessage = (e: MessageEvent) => {
         try {
-          const msg = JSON.parse(e.data as string) as { type: string; changed: string[] }
-          if ((msg.type !== 'update' && msg.type !== 'alert') || !Array.isArray(msg.changed)) return
+          const msg = JSON.parse(e.data as string) as { type?: unknown; changed?: unknown }
+          if ((msg.type !== 'update' && msg.type !== 'alert')
+            || !Array.isArray(msg.changed)
+            || msg.changed.some(key => typeof key !== 'string')) {
+            updateStatus(current => ({
+              ...current,
+              malformedFrameCount: boundedAdd(current.malformedFrameCount),
+            }))
+            return
+          }
+          const unknownCount = msg.changed.filter(key => !(key in CHANGE_MAP)).length
+          updateStatus(current => ({
+            ...current,
+            lastFrameAt: Date.now(),
+            unknownCategoryCount: boundedAdd(current.unknownCategoryCount, unknownCount),
+          }))
           for (const key of msg.changed) {
             for (const queryKey of (CHANGE_MAP[key] ?? [])) {
               queryClient.invalidateQueries({ queryKey: queryKey as unknown[] })
             }
           }
         } catch {
-          // ignore malformed frames
+          updateStatus(current => ({
+            ...current,
+            malformedFrameCount: boundedAdd(current.malformedFrameCount),
+          }))
         }
       }
 
@@ -158,12 +208,7 @@ export function useRealtimeUpdates(): void {
         // A hidden→visible transition may already have installed a replacement.
         if (ws !== socket) return
         ws = null
-        if (!dead && document.visibilityState !== 'hidden') {
-          retryTimer = setTimeout(() => {
-            retryDelay = Math.min(retryDelay * 1.5, WS_RETRY_MAX_MS)
-            connect()
-          }, retryDelay)
-        }
+        scheduleReconnect()
       }
 
       socket.onerror = () => socket.close()
@@ -177,6 +222,7 @@ export function useRealtimeUpdates(): void {
         }
         ws?.close()
         ws = null
+        updateStatus({ state: 'disconnected' })
         return
       }
       retryDelay = WS_RETRY_BASE_MS
@@ -193,4 +239,6 @@ export function useRealtimeUpdates(): void {
       ws?.close()
     }
   }, [queryClient])
+
+  return status
 }

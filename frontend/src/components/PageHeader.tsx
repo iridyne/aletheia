@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import { useLocation } from 'react-router-dom'
 import { NAV } from '../App'
 
@@ -19,6 +20,7 @@ export default function PageHeader({
 }) {
   const location = useLocation()
   const groupName = NAV.find(g => g.items.some(i => i.to === location.pathname))?.group
+  const roleId = useId()
 
   return (
     <div className="page-header">
@@ -30,7 +32,8 @@ export default function PageHeader({
             <span className="crumb-current">{title}</span>
           </div>
         )}
-        <h2 className="page-title" title={role}>{title}</h2>
+        <h2 className="page-title" aria-describedby={role ? roleId : undefined}>{title}</h2>
+        {role && <p id={roleId} className="page-role">{role}</p>}
       </div>
       {actions && <div className="page-header-actions">{actions}</div>}
     </div>

@@ -71,18 +71,22 @@ export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spo
   const initializedRef = useRef(false)
   // Latest markers, read by the click handler + re-applied without rebuilding the chart.
   const markersRef = useRef<TradeMarker[]>(markers)
+  const markerClickRef = useRef(onMarkerClick)
+  markerClickRef.current = onMarkerClick
 
   const [status, setStatus] = useState<'loading' | 'ok' | 'empty' | 'error'>('loading')
 
-  // Main lifecycle: (re)build the chart whenever symbol/timeframe changes.
+  // Main lifecycle: rebuild whenever the requested market-data identity changes.
   useEffect(() => {
-    if (!containerRef.current) return
+    const container = containerRef.current
+    if (!container) return
     let cancelled = false
+    setStatus('loading')
 
-    const chart = createChart(containerRef.current, {
+    const chart = createChart(container, {
       layout: chartTheme.layout,
       grid: chartTheme.grid,
-      width: containerRef.current.clientWidth,
+      width: container.clientWidth,
       height: 320,
       timeScale: { timeVisible: true, rightOffset: 4 },
     })
@@ -183,30 +187,32 @@ export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spo
     }
     chart.timeScale().subscribeVisibleLogicalRangeChange(onRangeChange)
 
-    if (onMarkerClick) {
-      chart.subscribeClick(param => {
-        if (!param.time) return
-        const t = param.time as number
-        const matched = markersRef.current.find(m => m.time === t && m.id)
-        if (matched?.id) onMarkerClick(matched.id)
-      })
+    const handleClick = (param: Parameters<Parameters<typeof chart.subscribeClick>[0]>[0]) => {
+      if (!param.time || !markerClickRef.current) return
+      const t = param.time as number
+      const matched = markersRef.current.find(m => m.time === t && m.id)
+      if (matched?.id) markerClickRef.current(matched.id)
     }
+    chart.subscribeClick(handleClick)
 
     const poll = window.setInterval(() => void pollLatest(), LIVE_POLL_MS)
-    const onResize = () => chart.applyOptions({ width: containerRef.current!.clientWidth })
-    window.addEventListener('resize', onResize)
+    const resizeObserver = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width
+      if (width) chart.applyOptions({ width })
+    })
+    resizeObserver.observe(container)
 
     return () => {
       cancelled = true
       window.clearInterval(poll)
-      window.removeEventListener('resize', onResize)
+      resizeObserver.disconnect()
+      chart.unsubscribeClick(handleClick)
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRangeChange)
       chart.remove()
       seriesRef.current = null
       chartRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, timeframe])
+  }, [symbol, timeframe, marketType])
 
   // Re-apply markers without rebuilding the chart when the prop changes.
   useEffect(() => {

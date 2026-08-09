@@ -46,11 +46,12 @@ export default function PnLChart({ days }: Props) {
   useEffect(() => {
     // No data → the container div isn't rendered (see below), so don't create a
     // chart. This also avoids leaving an empty 220px canvas as dead whitespace.
-    if (!hasData || !containerRef.current) return
-    const chart = createChart(containerRef.current, {
+    const container = containerRef.current
+    if (!hasData || !container) return
+    const chart = createChart(container, {
       layout: chartTheme.layout,
       grid: chartTheme.grid,
-      width: containerRef.current.clientWidth,
+      width: container.clientWidth,
       height: 220,
       timeScale: { timeVisible: true },
     })
@@ -93,9 +94,12 @@ export default function PnLChart({ days }: Props) {
     series.setData(unique(genuineRows))
     chart.timeScale().fitContent()
 
-    const onResize = () => chart.applyOptions({ width: containerRef.current!.clientWidth })
-    window.addEventListener('resize', onResize)
-    return () => { window.removeEventListener('resize', onResize); chart.remove() }
+    const resizeObserver = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width
+      if (width) chart.applyOptions({ width })
+    })
+    resizeObserver.observe(container)
+    return () => { resizeObserver.disconnect(); chart.remove() }
   }, [data, days, hasData])
 
   if (isLoading) {

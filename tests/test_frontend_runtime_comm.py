@@ -40,6 +40,48 @@ def test_realtime_updates_pause_while_tab_is_hidden():
     assert "document.removeEventListener('visibilitychange', handleVisibilityChange)" in src
 
 
+def test_realtime_updates_expose_degraded_state_and_bounded_diagnostics():
+    src = _read("lib/useRealtimeUpdates.ts")
+
+    assert "export interface RealtimeStatus" in src
+    assert "state: 'polling_only'" in src
+    assert "DIAGNOSTIC_COUNT_MAX = 999" in src
+    assert "malformedFrameCount: boundedAdd" in src
+    assert "unknownCategoryCount: boundedAdd" in src
+
+
+def test_chart_lifecycle_tracks_market_identity_and_container_size():
+    price = _read("charts/PriceChart.tsx")
+    pnl = _read("charts/PnLChart.tsx")
+
+    assert "}, [symbol, timeframe, marketType])" in price
+    assert "markerClickRef.current = onMarkerClick" in price
+    assert "chart.unsubscribeClick(handleClick)" in price
+    assert "resizeObserver.disconnect()" in price
+    assert "resizeObserver.disconnect()" in pnl
+
+
+def test_routes_recover_inside_shell_and_redirect_legacy_paths():
+    src = _read("App.tsx")
+
+    assert "const Overview = lazy(() => import('./pages/Overview'))" in src
+    assert '<Suspense fallback=' in src
+    assert '<Route path="/agent-runs" element={<Navigate to="/agent-activity" replace />} />' in src
+    assert '<Route path="/positions" element={<Navigate to="/trades" replace />} />' in src
+    assert '<Route path="*" element={<NotFound />} />' in src
+
+
+def test_shared_page_header_and_table_expose_accessible_semantics():
+    header = _read("components/PageHeader.tsx")
+    table = _read("components/DataTable.tsx")
+
+    assert 'aria-describedby={role ? roleId : undefined}' in header
+    assert 'className="page-role">{role}' in header
+    assert 'aria-label="Filter table rows"' in table
+    assert "aria-sort={canSort ?" in table
+    assert 'className="dt-sort-button"' in table
+
+
 def test_source_install_stops_packaged_update_poll_after_mode_detection():
     src = _read("components/PackagedUpdateBanner.tsx")
 
