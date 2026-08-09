@@ -167,7 +167,8 @@ def test_resolve_stale_shadows_uses_historical_bar():
               "insufficient_data instead of fake conclusions when samples are thin, "
               "and preserve directional evidence as diagnostic while only measured "
               "contribution is eligible for an actionable bottleneck; treatment-specific "
-              "Exit paired evidence remains non-authoritative outside those five verdicts, "
+              "Universe Twin and Exit paired evidence remain non-authoritative outside "
+              "those five verdicts, "
               "and Risk policy evidence must fail closed unless its paired fixed-horizon "
               "identity and actual-intervention contract is complete; Execution cost "
               "evidence likewise requires prospective immutable reference prices and "
@@ -190,6 +191,12 @@ def test_alpha_attribution_contract_shape_on_empty_db():
                     "causal_grade", "evidence_type", "contribution_verdict",
                     "measurement_status", "suspected_modules", "reason"):
             assert key in item
+    twin = report["universe_twin_evidence"]
+    assert twin["contract_version"] == "universe-twin-evidence/v1"
+    assert twin["authority"] == "shadow_only"
+    assert twin["behavior_authority"] is False
+    assert twin["promotion_eligible"] is False
+    assert twin["contribution_verdict"] == "insufficient_data"
     paired = report["exit_paired_evidence"]
     assert paired["contract_version"] == "exit-paired-evidence/v1"
     assert paired["behavior_authority"] is False

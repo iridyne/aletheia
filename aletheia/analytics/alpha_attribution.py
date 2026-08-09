@@ -105,6 +105,7 @@ def build_alpha_attribution_audit(days: int = 30, min_sample_size: int = MIN_SAM
         "window_days": days,
         **outcome_window_metadata(),
         "verdicts": verdicts,
+        "universe_twin_evidence": _universe_twin_evidence(db, cutoff),
         "exit_paired_evidence": _exit_paired_evidence(cutoff),
         "risk_policy_evidence": _risk_policy_evidence(db, cutoff, min_sample_size),
         "execution_cost_evidence": _execution_cost_evidence(
@@ -127,6 +128,7 @@ def _empty_report(generated_at: str, days: int, reason: str) -> dict:
         "window_days": days,
         **outcome_window_metadata(),
         "verdicts": verdicts,
+        "universe_twin_evidence": _empty_universe_twin_evidence(reason),
         "exit_paired_evidence": _empty_exit_paired_evidence(reason),
         "risk_policy_evidence": _empty_risk_policy_evidence(reason),
         "execution_cost_evidence": _empty_execution_cost_evidence(reason),
@@ -178,6 +180,147 @@ def _empty_exit_paired_evidence(reason: str) -> dict:
         "incremental_net_pnl_mean": None,
         "positive_increment_count": 0,
         "close_reason_attribution_available": False,
+        "reason": reason,
+    }
+
+
+def _empty_universe_twin_evidence(reason: str) -> dict:
+    return {
+        "contract_version": "universe-twin-evidence/v1",
+        "authority": "shadow_only",
+        "behavior_authority": False,
+        "promotion_eligible": False,
+        "contribution_verdict": "insufficient_data",
+        "measurement_status": "not_measured",
+        "evidence_type": "prospective_randomized_cluster_shadow",
+        "causal_grade": "insufficient",
+        "statistical_unit": "scanner_run_id",
+        "economic_unit": "cluster_mean_assigned_net_return_pct_unselected_zero",
+        "policy_epoch_id": None,
+        "expected_cluster_n": 0,
+        "complete_cluster_n": 0,
+        "treatment_cluster_n": 0,
+        "control_cluster_n": 0,
+        "observed_cluster_utility_delta": None,
+        "window_scope": "exact_policy_epoch",
+        "window_start": None,
+        "window_end": None,
+        "audit_window_compatible": None,
+        "verdict": "insufficient_data",
+        "blocking_reasons": [],
+        "invalid_reasons": [],
+        "reason": reason,
+    }
+
+
+def _universe_twin_evidence(db, cutoff: str) -> dict:
+    try:
+        latest = db.execute(
+            "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
+            "WHERE experiment_id IS NOT NULL AND policy_epoch_id IS NOT NULL "
+            "AND datetime(captured_at) IS NOT NULL "
+            "AND datetime(captured_at) >= datetime(?) "
+            "ORDER BY datetime(captured_at) DESC, scanner_run_id DESC LIMIT 1",
+            (cutoff,),
+        ).fetchone()
+    except sqlite3.DatabaseError as exc:
+        return _empty_universe_twin_evidence(
+            f"Universe Twin evidence storage is unavailable: {type(exc).__name__}."
+        )
+    if latest is None:
+        return _empty_universe_twin_evidence(
+            "No prospective Universe Twin policy epoch is available in the audit window."
+        )
+
+    policy_epoch_id = str(latest["policy_epoch_id"])
+    try:
+        bounds = db.execute(
+            "SELECT MIN(captured_at) AS window_start, MAX(captured_at) AS window_end "
+            "FROM universe_twin_shadow_batches WHERE policy_epoch_id=?",
+            (policy_epoch_id,),
+        ).fetchone()
+    except sqlite3.DatabaseError as exc:
+        return {
+            **_empty_universe_twin_evidence(
+                f"Universe Twin epoch bounds are unavailable: {type(exc).__name__}."
+            ),
+            "policy_epoch_id": policy_epoch_id,
+        }
+    window_start = bounds["window_start"] if bounds else None
+    window_end = bounds["window_end"] if bounds else None
+    start_at = _parse_dt(window_start)
+    end_at = _parse_dt(window_end)
+    cutoff_at = _parse_dt(cutoff)
+    if (
+        start_at is None
+        or end_at is None
+        or cutoff_at is None
+        or start_at < cutoff_at
+        or end_at < start_at
+    ):
+        return {
+            **_empty_universe_twin_evidence(
+                "The exact Universe Twin epoch falls outside or violates the requested "
+                "audit window and is not truncated or pooled."
+            ),
+            "policy_epoch_id": policy_epoch_id,
+            "window_start": window_start,
+            "window_end": window_end,
+            "audit_window_compatible": False,
+        }
+    try:
+        from aletheia.universe.twin_evaluation import evaluate_twin_shadow_epoch
+
+        report = evaluate_twin_shadow_epoch(policy_epoch_id)
+        complete_cluster_n = int(report.get("complete_cluster_n") or 0)
+    except Exception as exc:
+        return {
+            **_empty_universe_twin_evidence(
+                f"Universe Twin evaluation is unavailable: {type(exc).__name__}."
+            ),
+            "policy_epoch_id": policy_epoch_id,
+            "window_start": window_start,
+            "window_end": window_end,
+            "audit_window_compatible": True,
+        }
+
+    if report.get("verdict") == "invalid":
+        measurement_status = "invalid_evidence"
+        causal_grade = "insufficient"
+        reason = (
+            "The exact Universe Twin epoch failed its integrity contract; it cannot "
+            "grant contribution authority."
+        )
+    elif complete_cluster_n > 0:
+        measurement_status = "prospective_shadow_diagnostic"
+        causal_grade = "prospective_cluster_shadow_only"
+        reason = (
+            "Universe Twin scanner-cluster outcomes are projected into Alpha Audit, "
+            "but the frozen experiment is Shadow-only and cannot grant contribution "
+            "authority or promotion."
+        )
+    else:
+        measurement_status = "not_measured"
+        causal_grade = "prospective_cluster_shadow_only"
+        reason = (
+            "Prospective Universe Twin clusters exist, but no complete fixed-horizon "
+            "scanner cluster is available yet."
+        )
+    return {
+        **report,
+        "contract_version": "universe-twin-evidence/v1",
+        "behavior_authority": False,
+        "promotion_eligible": False,
+        "contribution_verdict": "insufficient_data",
+        "measurement_status": measurement_status,
+        "evidence_type": "prospective_randomized_cluster_shadow",
+        "causal_grade": causal_grade,
+        "statistical_unit": "scanner_run_id",
+        "economic_unit": "cluster_mean_assigned_net_return_pct_unselected_zero",
+        "window_scope": "exact_policy_epoch",
+        "window_start": window_start,
+        "window_end": window_end,
+        "audit_window_compatible": True,
         "reason": reason,
     }
 
@@ -297,6 +440,20 @@ def render_alpha_audit(report: dict) -> str:
             and modules
         ):
             lines.append(f"  Measured suspect modules: {', '.join(modules[:3])}")
+    twin = report.get("universe_twin_evidence") or {}
+    lines.extend([
+        "",
+        "Universe Twin evidence: "
+        f"{twin.get('measurement_status', 'not_measured')}",
+        "  "
+        f"complete_clusters={twin.get('complete_cluster_n', 0)}/"
+        f"{twin.get('expected_cluster_n', 0)} "
+        f"treatment={twin.get('treatment_cluster_n', 0)} "
+        f"control={twin.get('control_cluster_n', 0)} "
+        f"delta={_fmt_metric(twin.get('observed_cluster_utility_delta'))} "
+        f"contribution={twin.get('contribution_verdict', 'insufficient_data')}",
+        f"  {twin.get('reason', 'Universe Twin evidence is unavailable.')}",
+    ])
     paired = report.get("exit_paired_evidence") or {}
     lines.extend([
         "",

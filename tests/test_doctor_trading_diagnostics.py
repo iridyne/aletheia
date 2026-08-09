@@ -47,6 +47,7 @@ def test_doctor_json_deep_includes_compact_trading_diagnostics():
     trading = payload["diagnostics"]["trading"]
     assert set(trading) == {"alpha", "funnel", "sizing", "thesis"}
     assert "main_bottleneck" in trading["alpha"]
+    assert "universe_twin_evidence" in trading["alpha"]
     assert "exit_paired_evidence" in trading["alpha"]
     assert "risk_policy_evidence" in trading["alpha"]
     assert "execution_cost_evidence" in trading["alpha"]

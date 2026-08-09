@@ -56,9 +56,12 @@ Each verdict includes:
 - `suspected_modules`
 - `reason`
 
-The report also exposes three module-specific projections outside those five
+The report also exposes four module-specific projections outside those five
 verdicts:
 
+- `universe_twin_evidence` consumes the existing randomized scanner-cluster
+  Twin evaluator for one exact policy epoch and exposes fixed-4h outcome
+  maturity, identity failures, cluster utility, and harm diagnostics.
 - `exit_paired_evidence` projects one existing prospective paired Exit treatment
   in quote-currency net PnL.
 - `risk_policy_evidence` estimates the authoritative local-Paper Risk policy's
@@ -67,8 +70,8 @@ verdicts:
   immutable pre-fill entry/exit references to attribute actual fees and price
   impact.
 
-Neither is a sixth judging-layer verdict and neither grants behavior authority
-or promotion.
+None is a sixth judging-layer verdict and none grants behavior authority or
+promotion.
 
 These fields have different authority:
 
@@ -108,6 +111,33 @@ Current implementation:
   matured yet.
 
 No random result changes between runs: fallback samples are selected by a stable hash.
+
+### Universe Twin Evidence
+
+Question: under one exact randomized scanner-run assignment, what fixed-4h net
+allocation utility was observed for the frozen pessimistic Twin policy versus
+the frozen authority control policy?
+
+Current implementation:
+
+- Selects the newest prospective Twin policy epoch represented inside the audit
+  window, then invokes the existing read-only `evaluate_twin_shadow_epoch()` for
+  that exact epoch.
+- Uses complete scanner runs as assignment and statistical units. Assigned-policy
+  selected candidates use canonical `filter_candidate_outcomes`; unselected
+  candidates contribute zero to the full scanner-cluster denominator.
+- Exposes treatment/control cluster counts, effective sample size, fixed-horizon
+  completeness, outcome identity, cost, harm, and continuity blockers through
+  the API, CLI, and deep Doctor projection.
+- Evaluates only when the full frozen policy epoch fits inside the requested
+  audit window and reports its exact start/end bounds. An epoch crossing the
+  cutoff returns `not_measured`; it is never silently truncated or pooled.
+- Always reports `authority=shadow_only`, `behavior_authority=false`,
+  `promotion_eligible=false`, and `contribution_verdict=insufficient_data`.
+
+This closes the evidence-reader gap without changing Universe selection. Even a
+complete or negative Twin report is a prospective Shadow diagnostic, not a
+measured Universe contribution verdict and never an actionable bottleneck.
 
 ### Ranker Alpha
 
@@ -301,6 +331,10 @@ This audit is read-only:
   treatment and an identity- and cost-complete paired shadow outcome. This grade
   is treatment-specific and does not by itself grant module contribution
   authority.
+- `prospective_cluster_shadow_only`: complete scanner runs were assigned before
+  their fixed-horizon outcomes and evaluated under one frozen policy epoch, but
+  no behavior authority or actual intervention was granted. This grade remains
+  non-actionable.
 - `strong_prospective_paired_policy`: every candidate has an ex-ante
   authoritative policy action and exact fixed-horizon control outcome; actual
   reject interventions produce paired policy-value deltas. This measures the
@@ -319,6 +353,9 @@ This audit is read-only:
 
 - Historical Universe and Serenity observations before this feature still fall back
   to reconstructed OHLCV baselines.
+- Universe Twin evidence is evaluated by exact policy epoch and remains
+  Shadow-only; collecting more clusters cannot by itself create behavior
+  authority or a measured Universe-layer verdict.
 - Generic Learning Alpha depends on structured evidence/tags. Unstructured
   narrative-only lessons cannot be judged, and unsupported paths remain
   directional even when they are consumer-wired.

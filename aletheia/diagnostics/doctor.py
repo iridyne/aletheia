@@ -154,6 +154,7 @@ def _safe_alpha_diagnostic() -> dict:
         return {
             "available": True,
             "main_bottleneck": report.get("main_bottleneck"),
+            "universe_twin_evidence": report.get("universe_twin_evidence"),
             "exit_paired_evidence": report.get("exit_paired_evidence"),
             "risk_policy_evidence": report.get("risk_policy_evidence"),
             "execution_cost_evidence": report.get("execution_cost_evidence"),
