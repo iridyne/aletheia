@@ -288,6 +288,86 @@ def test_ranker_alpha_does_not_mix_policy_epochs():
     assert ranker["details"]["policy_epoch_id"] == "epoch-new"
 
 
+def test_ranker_alpha_uses_entry_aligned_first_rank_not_later_rerank():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for i in range(5):
+        first_batch = f"first-{i}"
+        top_opp = f"first-top-{i}"
+        alt_opp = f"first-alt-{i}"
+        _insert_shadow(db, first_batch, top_opp, 1, 2.0)
+        _insert_shadow(db, first_batch, alt_opp, 2, -2.0)
+        late_at = (
+            datetime.fromisoformat(_iso(days_ago=1)) + timedelta(milliseconds=500)
+        ).isoformat()
+        for opp, rank in ((top_opp, 2), (alt_opp, 1)):
+            db.execute(
+                "INSERT INTO shadow_trades "
+                "(id, batch_id, opportunity_id, symbol, venue, market_type, direction, "
+                "scanner_family, trade_score, rank, entry_price, outcome_candidate_key, "
+                "was_selected, policy_epoch_id, created_at, cost_model_version) "
+                "VALUES (?, ?, ?, 'BTC/USDT', 'bitget', 'spot', 'long', 'momentum', "
+                "?, ?, 100, ?, 0, 'epoch-test', ?, 'candidate-net-v1')",
+                (
+                    f"late-{i}-{opp}",
+                    f"late-batch-{i}",
+                    opp,
+                    100 - rank,
+                    rank,
+                    f"opportunity:{opp}",
+                    late_at,
+                ),
+            )
+    _insert_shadow(db, "misaligned", "misaligned-top", 1, -20.0)
+    _insert_shadow(db, "misaligned", "misaligned-alt", 2, 20.0)
+    db.execute(
+        "UPDATE shadow_trades SET created_at=? WHERE batch_id='misaligned'",
+        (_iso(days_ago=1, hours_after=1),),
+    )
+    _insert_shadow(db, "mixed", "mixed-top", 1, -20.0)
+    _insert_shadow(db, "mixed", "mixed-alt", 2, 20.0)
+    _insert_shadow(db, "mixed", "mixed-stale", 3, 20.0)
+    db.execute(
+        "UPDATE shadow_trades SET created_at=? WHERE opportunity_id='mixed-stale'",
+        (_iso(days_ago=1, hours_after=1),),
+    )
+    db.commit()
+
+    ranker = build_alpha_attribution_audit(days=30)["verdicts"]["ranker"]
+
+    assert ranker["verdict"] == "positive"
+    assert ranker["observed"] == 2.0
+    assert ranker["baseline"] == -2.0
+    assert ranker["details"]["first_exposure_alignment_max_sec"] == 60
+    assert ranker["details"]["temporally_misaligned_candidate_count"] == 3
+    assert ranker["details"]["temporally_misaligned_batch_count"] == 2
+
+
+def test_ranker_alpha_weights_each_batch_once():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for i in range(5):
+        batch = f"paired-{i}"
+        _insert_shadow(db, batch, f"paired-top-{i}", 1, 0.0)
+        if i < 4:
+            _insert_shadow(db, batch, f"paired-alt-{i}", 2, 1.0)
+        else:
+            for rank in range(2, 6):
+                _insert_shadow(db, batch, f"paired-alt-{i}-{rank}", rank, -1.0)
+    db.commit()
+
+    ranker = build_alpha_attribution_audit(days=30)["verdicts"]["ranker"]
+
+    assert ranker["verdict"] == "negative"
+    assert ranker["baseline"] == 0.6
+    assert ranker["delta"] == -0.6
+    assert ranker["details"]["baseline_batch_count"] == 5
+
+
 def test_system_operator_alpha_compares_fixed_horizon_passed_and_rejected_candidates():
     from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
     from aletheia.storage.sqlite import get_db

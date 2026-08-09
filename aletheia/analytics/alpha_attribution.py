@@ -29,6 +29,7 @@ VERDICT_NAMES = (
 
 MIN_SAMPLE_SIZE = 5
 ALPHA_THRESHOLD_PCT = 0.10
+_RANKER_ENTRY_ALIGNMENT_MAX_SEC = 60
 
 _MODULES_BY_LAYER = {
     "Universe Alpha": [
@@ -603,9 +604,11 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         "AND lower(s.direction)=lower(fo.direction) "
         "AND (CASE WHEN lower(s.market_type) IN "
         "('perp','futures','swap','usdt_futures') THEN 'perp' ELSE 'spot' END)=fo.market_type "
+        "AND julianday(s.created_at)>=julianday(fo.entry_ts) "
+        "AND (julianday(s.created_at)-julianday(fo.entry_ts))*86400.0<=? "
         "AND datetime(fo.entry_ts) >= datetime(?) "
         "ORDER BY datetime(fo.entry_ts) DESC, datetime(s.created_at) DESC, s.id DESC LIMIT 1",
-        (cutoff,),
+        (_RANKER_ENTRY_ALIGNMENT_MAX_SEC, cutoff),
     ).fetchone()
     if not contract:
         return _verdict(
@@ -631,8 +634,9 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
     rows = db.execute(
         "WITH candidates AS ("
         " SELECT s.batch_id, s.outcome_candidate_key, s.rank, fo.net_return_pct,"
+        " s.created_at AS ranked_at, fo.entry_ts,"
         " ROW_NUMBER() OVER (PARTITION BY s.outcome_candidate_key "
-        " ORDER BY datetime(s.created_at) DESC, s.id DESC) AS candidate_rank"
+        " ORDER BY julianday(s.created_at) ASC, s.id ASC) AS exposure_rank"
         " FROM shadow_trades s JOIN filter_candidate_outcomes fo"
         " ON fo.outcome_candidate_key=s.outcome_candidate_key"
         " WHERE s.batch_id IS NOT NULL AND s.policy_epoch_id=?"
@@ -645,20 +649,52 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         " AND (CASE WHEN lower(s.market_type) IN "
         " ('perp','futures','swap','usdt_futures') THEN 'perp' ELSE 'spot' END)=fo.market_type"
         " AND datetime(fo.entry_ts) >= datetime(?)"
-        ") SELECT batch_id, outcome_candidate_key, rank, net_return_pct "
-        "FROM candidates WHERE candidate_rank=1",
-        (contract["policy_epoch_id"], contract["cost_model_version"], cutoff),
+        ") SELECT batch_id, outcome_candidate_key, rank, net_return_pct, ranked_at, entry_ts "
+        "FROM candidates WHERE exposure_rank=1",
+        (
+            contract["policy_epoch_id"],
+            contract["cost_model_version"],
+            cutoff,
+        ),
     ).fetchall()
 
     batches: dict[str, list[dict]] = defaultdict(list)
+    temporally_misaligned_candidates = 0
+    temporally_misaligned_batch_ids: set[str] = set()
     for row in rows:
-        batches[row["batch_id"]].append(dict(row))
+        candidate = dict(row)
+        ranked_at = _parse_dt(candidate.get("ranked_at"))
+        entry_at = _parse_dt(candidate.get("entry_ts"))
+        if ranked_at is None or entry_at is None:
+            temporally_misaligned_candidates += 1
+            temporally_misaligned_batch_ids.add(str(row["batch_id"]))
+            continue
+        lag_sec = (ranked_at - entry_at).total_seconds()
+        if lag_sec < 0 or lag_sec > _RANKER_ENTRY_ALIGNMENT_MAX_SEC:
+            temporally_misaligned_candidates += 1
+            temporally_misaligned_batch_ids.add(str(row["batch_id"]))
+            continue
+        batches[row["batch_id"]].append(candidate)
+    for batch_id in temporally_misaligned_batch_ids:
+        batches.pop(batch_id, None)
 
     top1: list[float] = []
     top2_5: list[float] = []
+    batch_baselines: list[float] = []
     eligible: list[float] = []
     usable_batches = 0
+    temporally_mixed_batches = 0
     for batch_rows in batches.values():
+        entry_times = [_parse_dt(r.get("entry_ts")) for r in batch_rows]
+        if any(ts is None for ts in entry_times):
+            temporally_mixed_batches += 1
+            continue
+        valid_entry_times = [ts for ts in entry_times if ts is not None]
+        if (
+            max(valid_entry_times) - min(valid_entry_times)
+        ).total_seconds() > _RANKER_ENTRY_ALIGNMENT_MAX_SEC:
+            temporally_mixed_batches += 1
+            continue
         rank1 = [float(r["net_return_pct"]) for r in batch_rows if int(r["rank"] or 0) == 1]
         rest = [float(r["net_return_pct"]) for r in batch_rows if 2 <= int(r["rank"] or 0) <= 5]
         if len(rank1) != 1 or not rest:
@@ -666,41 +702,49 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         usable_batches += 1
         top1.append(rank1[0])
         top2_5.extend(rest)
+        batch_baselines.append(mean(rest))
         eligible.extend(float(r["net_return_pct"]) for r in batch_rows if int(r["rank"] or 0) >= 1)
 
     details = {
         "top2_5_sample_size": len(top2_5),
+        "baseline_batch_count": len(batch_baselines),
         "eligible_average": _safe_mean(eligible),
         "batch_count": usable_batches,
+        "temporally_misaligned_candidate_count": temporally_misaligned_candidates,
+        "temporally_misaligned_batch_count": len(temporally_misaligned_batch_ids),
+        "temporally_mixed_batch_count": temporally_mixed_batches,
+        "first_exposure_alignment_max_sec": _RANKER_ENTRY_ALIGNMENT_MAX_SEC,
         "horizon": "24h",
         "statistical_unit": "outcome_candidate_key",
         "assignment_unit": "batch_id",
         "economic_unit": "net_return_pct",
+        "estimand": "mean_batch_rank1_minus_mean_rank2_5",
         "source_table": "filter_candidate_outcomes",
         "policy_epoch_id": contract["policy_epoch_id"],
         "cost_model_version": contract["cost_model_version"],
         "authority_limitations": [
             "rank_assignment_not_randomized",
             "batch_cluster_dependence_not_inferred",
+            "rank1_is_ordering_not_execution_selection",
         ],
     }
-    if len(top1) < min_sample_size or len(top2_5) < min_sample_size:
+    if len(top1) < min_sample_size or len(batch_baselines) < min_sample_size:
         return _verdict(
             "Ranker Alpha",
             "insufficient_data",
             len(top1),
-            _safe_mean(top2_5),
+            _safe_mean(batch_baselines),
             _safe_mean(top1),
             None,
             "insufficient",
-            "Not enough identity-complete 24h candidates in both rank1 and rank2-5 cohorts.",
+            "Not enough temporally aligned first-exposure 24h Ranker batches.",
             details,
             evidence_type="fixed_horizon_candidate_cohort",
             causal_grade="insufficient",
         )
 
     observed = mean(top1)
-    base = mean(top2_5)
+    base = mean(batch_baselines)
     delta = observed - base
     status = _status_from_delta(delta)
     return _verdict(
@@ -711,7 +755,7 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         observed,
         delta,
         _confidence_label(len(top1), min_sample_size),
-        f"Ranker top1 {'beat' if delta > 0 else 'trailed' if delta < 0 else 'matched'} rank2-5 on the same 24h cost-aware candidate outcome contract.",
+        f"Ranker first-exposure top1 {'beat' if delta > 0 else 'trailed' if delta < 0 else 'matched'} the per-batch rank2-5 baseline on the same 24h cost-aware outcome contract.",
         details,
         evidence_type="fixed_horizon_candidate_cohort",
         causal_grade="moderate_prospective_cohort",

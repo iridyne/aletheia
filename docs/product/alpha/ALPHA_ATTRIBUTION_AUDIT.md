@@ -151,9 +151,12 @@ Current implementation:
   canonical settled `filter_candidate_outcomes` row at the declared `24h`
   horizon.
 - Requires matching venue, symbol, market type, direction, policy epoch, and
-  cost-model version, and deduplicates repeated ticks to one candidate vote.
+  cost-model version. Repeated ticks use only the first rank observation aligned
+  within 60 seconds of the canonical outcome entry; later re-ranks cannot inherit
+  an earlier return window.
 - Compares rank `1` candidates against ranks `2-5`; only batches containing both
-  arms contribute.
+  arms with entry times inside the same 60-second cohort contribute. Each batch
+  gets equal weight rather than giving larger rank2-5 sets more votes.
 
 The statistical unit is the candidate key, the assignment unit is the batch,
 and the economic unit is cost-aware `net_return_pct`. This removes the previous
