@@ -39,7 +39,7 @@ from aletheia.universe.twin_scoring import (
 )
 
 
-TWIN_FEATURE_SOURCE_CONTRACT = "universe-twin-feature-source-v1"
+TWIN_FEATURE_SOURCE_CONTRACT = "universe-twin-feature-source-v2"
 TWIN_METRIC_VERSION = "universe-continuous-shadow-cluster-allocation-utility-v1"
 TWIN_SHADOW_CAPTURE_INTERVAL_SEC = 55 * 60
 TWIN_SHADOW_MAX_TOP_SENSITIVITIES = 8
@@ -59,7 +59,13 @@ _IDENTITY_AND_MARKET_FIELDS = frozenset(
     }
 )
 _SCANNER_FIELDS = frozenset(
-    {"scanner_family", "scanner_direction", "direction", "opportunity_score"}
+    {
+        "scanner_family",
+        "scanner_direction",
+        "direction",
+        "proposed_direction",
+        "opportunity_score",
+    }
 )
 _AUDIT_FIELDS = frozenset(
     {"contract", "effective_opportunity_multiplier", "calibration_authority_applied"}
