@@ -56,6 +56,22 @@ unfinished. Track them in GitHub; they do not interrupt the window.
 Safety tightening is never delayed for experiment purity. It is applied under its
 own contract and the affected evidence window is then handled honestly.
 
+### 2.1 A/B is not the default acceptance method
+
+Use the least expensive evidence method that can answer the declared claim:
+
+| Change or question | Required evidence | Randomized A/B |
+|---|---|---|
+| Documentation, UI, tests, refactoring, or report-only observability that cannot change a decision, outcome, identity, or cost | Review, focused regression, and contract checks | No |
+| An A-class repair that restores the already-declared persistence, accounting, identity, or replay contract | Reproduction plus deterministic replay/hash/integrity regression; invalidate affected historical evidence | No |
+| A frozen treatment and control can be evaluated on the same statistical unit with complete cost-aware outcomes | Prospective paired counterfactual evidence | No, unless the policy change alters future exposure and breaks the pairing |
+| A policy changes future eligibility, selection, sizing, or treatment and the missing outcome cannot be reconstructed on the same unit | Pre-registered prospective treatment/control assignment | Yes |
+| Promotion or behavior authority | The method-specific confirmatory, harm, and owner gates | Only when the causal claim itself requires A/B |
+
+An observation window is a bounded evidence cohort. It is not automatically an
+A/B test. Directional before/after or retrospective cohorts may prioritize the
+next question, but they do not substitute for a required prospective control.
+
 ## 3. Candidate and window identity
 
 Before an observation window starts, the owner records in runtime/GitHub evidence:
@@ -74,6 +90,27 @@ Before an observation window starts, the owner records in runtime/GitHub evidenc
 Commit SHA is provenance. The deterministic behavior-contract identity decides
 whether unrelated code changes fragment a Learning cohort, but deploying any new
 build still requires the Qualification protocol's owner decision.
+
+### 3.1 Window scope and safe concurrency
+
+A window belongs to one `path / hypothesis / experiment / stage`, not to the
+entire repository. One pinned stable Runtime may collect multiple independent
+Shadow, paired-counterfactual, and prospective path windows concurrently when
+each has its own assignment unit, policy epoch, outcome identity, and harm gates.
+
+Concurrency does not make interacting treatments identifiable. Unless a factorial
+or interference contract is pre-registered, only one behavior-changing treatment
+may claim attribution over the same decision population at a time. Other paths may
+continue collecting non-authoritative evidence.
+
+Every deployed SHA opens a new Runtime provenance segment. Evidence is neither
+automatically pooled nor automatically discarded solely because that SHA changed.
+An explicitly audited adapter may continue a behaviorally identical path only when
+it treats `code_commit` as provenance and proves unchanged behavior, input lineage,
+outcome, metric, horizon, assignment, and inference identities. Otherwise current
+authority admission remains build-bound. Avoid unnecessary resets by leaving the
+pinned qualification Runtime unchanged for documentation, UI, monitoring, and
+unrelated development changes; comparability is never an operator assumption.
 
 ## 4. Observation freeze
 

@@ -250,9 +250,22 @@ Observation window 内：
 - 只有阻断 Startup → Scheduler → Outcome → Verdict 的 P0/P1，或造成错误交易事实/安全
   风险的问题，才允许中断窗口并部署修复。
 
-当前 admission 会把证据绑定到 code commit，因此即使 A-class 修复不改变经济语义，只要部署了
-新 commit，也必须按 current-build identity 重新建立可授权窗口。未来若实现经过审计的 behavior
-contract fingerprint，可另行放宽；当前不得自行假设等价。
+当前 admission 默认把证据绑定到 code commit，因此即使 A-class 修复不改变经济语义，只要部署了
+新 commit，也要按 current-build identity 重新建立可授权窗口。唯一例外是受影响 measurement
+adapter 已有经过审计的 behavior-contract identity，明确把 `code_commit` 仅作为 provenance，并能
+证明 behavior、input lineage、outcome、metric、horizon、assignment 与 inference identity 均未改变；
+当前不得由 operator 自行假设等价。
+
+这里的“重新建立窗口”不等于“每个模块重新做 A/B”。每个窗口按
+`path / hypothesis / experiment / stage` 独立登记；同一个固定 SHA 的 Qualification Runtime
+可以并行采集多个互不干扰的 Shadow、paired-counterfactual 和 prospective 窗口。证据方法按
+[`Experiment Protocol`](../../product/experiments/EXPERIMENT_PROTOCOL.md#21-ab-is-not-the-default-acceptance-method)
+选择：完整性与会计修复用 replay/hash，存在同统计单位对照时优先 paired evidence，只有改变
+未来暴露且无法构造对照的行为政策才要求 prospective A/B。
+
+并行窗口仍共享一个执行 owner。没有预登记 factorial/interference 合同时，同一决策人群一次
+只允许一个行为 treatment 声称归因；其他路径可以继续收集无 authority 的证据。不得为并行
+观察手工启动第二个有执行权 Gateway、复制 primary data root，或共享同一外部账号。
 
 ### 8.3 Bug 分类与窗口影响
 
