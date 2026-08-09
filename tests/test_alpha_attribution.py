@@ -635,6 +635,68 @@ def test_learning_alpha_detects_same_pattern_improvement_after_lesson():
     assert learning["observed"] == 2.0
 
 
+def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monkeypatch):
+    import aletheia.analytics.alpha_attribution as alpha_attribution
+    import aletheia.learning.read_models as learning_read_models
+    from tests.test_learning_verdict_runtime import _experiment
+
+    monkeypatch.setattr(
+        alpha_attribution,
+        "_utcnow",
+        lambda: datetime(2026, 8, 9, 10, tzinfo=timezone.utc),
+    )
+    hypothesis, experiment = _experiment(min_samples=50, min_days=7)
+    item = {
+        "path_id": hypothesis.path_id,
+        "experiment_id": experiment.experiment_id,
+        "stage": "paper_10",
+        "allocation_pct": 0.1,
+        "current_identity": {"policy_epoch": "epoch-a", "matches_running_cohort": True},
+        "measurement": {
+            "state": "insufficient_data",
+            "reason": "insufficient unique prospective treatment/control samples",
+            "baseline": None,
+            "observed": None,
+            "delta": None,
+            "authority_eligible": False,
+        },
+        "samples": {
+            "raw_exposures": 21,
+            "treatment_assignment_units": 0,
+            "control_assignment_units": 0,
+            "actual_intervention_treatment_units": 0,
+        },
+        "integrity": {
+            "actual_intervention_state": "none",
+            "exclusion_reasons": {"unsettled": 21},
+        },
+        "inference": {"status": "collecting"},
+    }
+    monkeypatch.setattr(
+        learning_read_models,
+        "build_learning_contribution_projection",
+        lambda *, limit: {"items": [item]},
+    )
+
+    learning = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+
+    assert learning["verdict"] == "insufficient_data"
+    assert learning["contribution_verdict"] == "insufficient_data"
+    assert learning["measurement_status"] == "not_measured"
+    assert learning["evidence_type"] == "dedicated_learning_contribution_monitoring"
+    assert learning["details"]["experiment_id"] == experiment.experiment_id
+    assert learning["details"]["raw_exposures"] == 21
+    assert learning["details"]["exclusion_reasons"] == {"unsettled": 21}
+
+    item["measurement"].update(state="positive", baseline=0.0, observed=1.0, delta=1.0)
+    item["samples"].update(treatment_assignment_units=50, control_assignment_units=50)
+    monitoring_positive = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+
+    assert monitoring_positive["verdict"] == "positive"
+    assert monitoring_positive["contribution_verdict"] == "insufficient_data"
+    assert monitoring_positive["measurement_status"] == "directional_evidence_only"
+
+
 def test_learning_alpha_consumes_exact_confirmatory_authority_verdict(monkeypatch):
     import aletheia.analytics.alpha_attribution as alpha_attribution
     from aletheia.learning.contribution_runner import evaluate_experiment

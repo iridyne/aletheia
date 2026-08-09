@@ -845,6 +845,7 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
     placeholders = ",".join("?" for _ in path_ids)
     rows = db.execute(
         "SELECT e.experiment_id, e.hypothesis_id, e.stage, e.min_samples_per_arm, "
+        "e.started_at, e.created_at, "
         "h.path_id, h.target_horizon FROM learning_experiments e "
         "JOIN learning_hypotheses h ON h.hypothesis_id=e.hypothesis_id "
         f"WHERE e.ended_at IS NULL AND h.path_id IN ({placeholders}) "
@@ -929,7 +930,96 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
             causal_grade="insufficient",
         )
     if not valid:
-        return None
+        try:
+            from aletheia.learning.read_models import build_learning_contribution_projection
+
+            projection = build_learning_contribution_projection(limit=len(path_ids))
+        except Exception:
+            return None
+        experiment_rows = {row["experiment_id"]: dict(row) for row in rows}
+        cutoff_at = _parse_dt(cutoff)
+        current_paper = []
+        for item in projection.get("items", []):
+            experiment = experiment_rows.get(item.get("experiment_id"))
+            started_at = _parse_dt(
+                (experiment or {}).get("started_at")
+                or (experiment or {}).get("created_at")
+            )
+            if (
+                experiment is not None
+                and str(item.get("stage") or "").startswith("paper_")
+                and cutoff_at is not None
+                and started_at is not None
+                and started_at >= cutoff_at
+            ):
+                current_paper.append(item)
+        if not current_paper:
+            return None
+        if len(current_paper) > 1:
+            return _verdict(
+                "Learning Alpha",
+                "insufficient_data",
+                0,
+                None,
+                None,
+                None,
+                "insufficient",
+                "Several current Paper Learning estimands are collecting and cannot be aggregated.",
+                {
+                    "experiment_ids": [row["experiment_id"] for row in current_paper],
+                    "path_ids": [row["path_id"] for row in current_paper],
+                },
+                evidence_type="dedicated_learning_contribution_monitoring",
+                causal_grade="insufficient",
+            )
+
+        item = current_paper[0]
+        measurement = item.get("measurement") or {}
+        samples = item.get("samples") or {}
+        integrity = item.get("integrity") or {}
+        state = str(measurement.get("state") or "not_measured")
+        status = state if state in {"positive", "neutral", "negative"} else "insufficient_data"
+        sample_size = min(
+            int(samples.get("treatment_assignment_units") or 0),
+            int(samples.get("control_assignment_units") or 0),
+        )
+        return _verdict(
+            "Learning Alpha",
+            status,
+            sample_size,
+            measurement.get("baseline"),
+            measurement.get("observed"),
+            measurement.get("delta") if status != "insufficient_data" else None,
+            _confidence_label(sample_size, min_sample_size),
+            (
+                f"Current Paper Learning monitoring verdict is {state}, but only a consumed "
+                "confirmatory verdict can establish contribution."
+            ),
+            {
+                "path_id": item.get("path_id"),
+                "experiment_id": item.get("experiment_id"),
+                "stage": item.get("stage"),
+                "allocation_pct": item.get("allocation_pct"),
+                "measurement_reason": measurement.get("reason"),
+                "measurement_authority_eligible": bool(measurement.get("authority_eligible")),
+                "raw_exposures": int(samples.get("raw_exposures") or 0),
+                "unique_treatment_n": int(samples.get("treatment_assignment_units") or 0),
+                "unique_control_n": int(samples.get("control_assignment_units") or 0),
+                "actual_intervention_treatment_units": int(
+                    samples.get("actual_intervention_treatment_units") or 0
+                ),
+                "actual_intervention_state": integrity.get("actual_intervention_state"),
+                "exclusion_reasons": integrity.get("exclusion_reasons") or {},
+                "current_identity": item.get("current_identity") or {},
+                "inference_status": (item.get("inference") or {}).get("status"),
+            },
+            evidence_type="dedicated_learning_contribution_monitoring",
+            causal_grade=(
+                "moderate_prospective_monitoring"
+                if status != "insufficient_data"
+                else "insufficient"
+            ),
+        )
 
     experiment, verdict = valid[0]
     status = str(verdict["verdict"])
