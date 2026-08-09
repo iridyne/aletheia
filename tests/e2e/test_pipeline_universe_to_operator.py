@@ -22,7 +22,9 @@ import pytest
 def _fixture_ohlcv(symbol: str, timeframe: str, limit: int) -> list[list[float]]:
     """Return fresh candles with a real, high-scoring SOL momentum shape."""
     step_ms = (4 if timeframe == "4h" else 1) * 60 * 60 * 1000
-    end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    # Keep the penultimate bar unambiguously closed even though the production
+    # refresh captures its reference clock just before calling this fixture.
+    end_ms = int(datetime.now(timezone.utc).timestamp() * 1000) - 60_000
     start_ms = end_ms - max(limit - 1, 0) * step_ms
     price = 60_000.0 if symbol == "BTC/USDT" else 100.0
     rows: list[list[float]] = []
@@ -35,7 +37,9 @@ def _fixture_ohlcv(symbol: str, timeframe: str, limit: int) -> list[list[float]]
             # Alternating gains/losses keep RSI out of the overextended band while
             # producing positive 4h and 24h relative strength.
             price *= 1.006 if index % 2 == 0 else 0.997
-        volume = 5_000.0 if index == limit - 1 else 1_000.0
+        # Keep the confirmation in completed bars: the production feature path
+        # correctly discards the latest forming candles.
+        volume = 5_000.0 if index >= limit - 4 else 1_000.0
         rows.append([
             float(start_ms + index * step_ms),
             opened,
@@ -178,7 +182,6 @@ async def test_real_universe_refresh_reaches_one_operator_defer(
         "aletheia.model_provider.router.get_provider_for_tier",
         lambda _tier: "fixture",
     )
-
     async def fixed_operator_response(*_args, **_kwargs):
         # The model proposes an entry with a sub-threshold conviction. Since
         # Phase C (2026-07-18) the real conviction gate raises

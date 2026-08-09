@@ -1,8 +1,7 @@
 """Shared fixtures for end-to-end pipeline tests.
 
 Key difference from unit tests:
-- Session-scoped DB: one SQLite file for the entire e2e session (fast)
-- Per-test isolation via SAVEPOINT/ROLLBACK (not DROP+CREATE)
+- Per-test SQLite files isolate background-thread writes as well as the main thread
 - NO mocking of module-to-module interfaces (that's the whole point)
 - Exchange/LLM calls ARE mocked (we test data flow, not network)
 """
@@ -23,9 +22,9 @@ def pytest_collection_modifyitems(items):
             item.add_marker(pytest.mark.e2e)
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def _e2e_db_path(tmp_path_factory):
-    """Create a single DB file for the entire e2e session."""
+    """Create one disposable data directory per E2E test."""
     db_dir = tmp_path_factory.mktemp("e2e_data")
     (db_dir / "logs").mkdir()
     return db_dir
@@ -33,11 +32,7 @@ def _e2e_db_path(tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def e2e_db(_e2e_db_path, monkeypatch):
-    """Per-test DB isolation via SAVEPOINT/ROLLBACK.
-
-    Each test sees a clean DB state (post-migrations) without paying
-    the cost of DROP+CREATE. ~1ms per test instead of ~40ms.
-    """
+    """Give each test a clean DB that secondary thread connections can share."""
     db_path = _e2e_db_path / "e2e.db"
     monkeypatch.setattr(loader, "DATA_DIR", _e2e_db_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", _e2e_db_path / "config.yaml")
@@ -45,7 +40,7 @@ def e2e_db(_e2e_db_path, monkeypatch):
     monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: _e2e_db_path)
     monkeypatch.setattr(sq, "db_path", lambda: db_path)
 
-    # Ensure DB + migrations exist (idempotent after first test)
+    # A unique file avoids SAVEPOINT deadlocks with production background writers.
     sq.reset_db()
     sq._db_conn = None
     conn = sqlite3.connect(str(db_path), check_same_thread=False, isolation_level=None)
@@ -55,11 +50,10 @@ def e2e_db(_e2e_db_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
 
-    # SAVEPOINT for per-test isolation
-    conn.execute("SAVEPOINT e2e_test")
-    yield conn
-    conn.execute("ROLLBACK TO SAVEPOINT e2e_test")
-    conn.execute("RELEASE SAVEPOINT e2e_test")
+    try:
+        yield conn
+    finally:
+        sq.reset_db()
 
 
 @pytest.fixture(autouse=True)

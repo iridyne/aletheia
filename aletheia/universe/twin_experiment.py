@@ -26,15 +26,15 @@ from aletheia.universe.twin_scoring import TwinShadowInput, TwinShadowRecord
 
 
 TWIN_EXPERIMENT_PATH_ID = "universe_continuous_shadow_comparison"
-TWIN_EXPERIMENT_CONTRACT_VERSION = "universe-continuous-shadow-experiment/v1"
-TWIN_EXPERIMENT_BEHAVIOR_VERSION = "universe-continuous-shadow-comparison/v1"
+TWIN_EXPERIMENT_CONTRACT_VERSION = "universe-continuous-shadow-experiment/v2"
+TWIN_EXPERIMENT_BEHAVIOR_VERSION = "universe-continuous-shadow-comparison/v2"
 TWIN_EXPERIMENT_ASSIGNMENT_CONTRACT = "sha256-cluster-assignment/v1"
 TWIN_EXPERIMENT_ASSIGNMENT_PROPENSITY = 0.5
 TWIN_EXPERIMENT_PRIMARY_HORIZON = "4h"
-TWIN_EXPERIMENT_OUTCOME_CONTRACT = "fixed-horizon-candidate-net/v1"
+TWIN_EXPERIMENT_OUTCOME_CONTRACT = "fixed-horizon-assigned-selection-net/v2"
 TWIN_EXPERIMENT_COST_MODEL_VERSION = COST_MODEL_VERSION
 TWIN_EXPERIMENT_METRIC_VERSION = (
-    "universe-continuous-pessimistic-cluster-allocation-utility/v1"
+    "universe-continuous-pessimistic-cluster-itt-utility/v2"
 )
 TWIN_EXPERIMENT_TREATMENT_POLICY = "continuous_pessimistic"
 TWIN_EXPERIMENT_CONTROL_POLICY = "universe_step_v1"
