@@ -22,6 +22,15 @@ then read only the `@` guide whose scope matches the task.
   authority by editing instructions or exposing restricted tools.
 - Use `uv run` for Python. Do not run large pytest suites on macOS; use the
   Windows validation host instead.
+- The operational Gateway and model-provider configuration live on the
+  owner-selected remote Fedora runtime. Treat macOS as a development/control
+  environment: do not infer operational state from local config or start a
+  local Gateway unless explicitly requested.
+- Before opening or resetting an Observation/qualification window after a
+  merged behavior or evidence change, deploy the exact merged commit to the
+  Fedora Paper runtime, restart it when required, and verify the runtime commit,
+  schema, provider, and settlement health. Never qualify observations from a
+  stale or unrecorded build.
 - For Mac-to-Windows Agent work, prefer Orca Remote Runtime over ad-hoc SSH:
   Windows runs `orca serve` on the EasyTier-private network, and Mac connects
   through a paired Orca Environment. This makes remote worktrees, terminals,
