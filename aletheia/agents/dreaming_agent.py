@@ -369,6 +369,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         max_tokens=600,
         provider=get_provider_for_tier("deep"),
         caller="dreaming.lesson_extraction",
+        reasoning_effort="none",
     )
     log_tool(
         run_id,
