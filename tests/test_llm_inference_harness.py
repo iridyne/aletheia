@@ -76,6 +76,12 @@ async def test_structured_repair_attempts_share_one_logical_call():
         logical["logical_call_id"],
     ]
     assert [row["attempt_index"] for row in attempts] == [0, 1]
+    outcomes = db.execute(
+        "SELECT structured_attempt_index,outcome FROM llm_structured_attempt_outcomes "
+        "WHERE logical_call_id=? ORDER BY structured_attempt_index",
+        (logical["logical_call_id"],),
+    ).fetchall()
+    assert [tuple(row) for row in outcomes] == [(0, "schema_invalid"), (1, "accepted")]
 
 
 @pytest.mark.asyncio
@@ -109,6 +115,16 @@ async def test_schema_invalid_object_never_becomes_success():
         "attempt_count": 3,
         "error_type": "structured_schema_invalid",
     }
+    outcomes = get_db().execute(
+        "SELECT structured_attempt_index,outcome FROM llm_structured_attempt_outcomes "
+        "WHERE logical_call_id=(SELECT logical_call_id FROM llm_inference_calls "
+        "WHERE caller='market_observer.market_read') ORDER BY structured_attempt_index"
+    ).fetchall()
+    assert [tuple(row) for row in outcomes] == [
+        (0, "schema_invalid"),
+        (1, "schema_invalid"),
+        (2, "schema_invalid"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -149,6 +165,12 @@ async def test_external_cancellation_finalizes_structured_logical_call_and_propa
     assert logical["parse_valid"] is None
     assert logical["schema_valid"] is None
     assert logical["error_type"] == "cancelled"
+    outcomes = get_db().execute(
+        "SELECT outcome FROM llm_structured_attempt_outcomes "
+        "WHERE logical_call_id=(SELECT logical_call_id FROM llm_inference_calls "
+        "WHERE caller='news_analyzer.analysis')"
+    ).fetchall()
+    assert [row["outcome"] for row in outcomes] == ["cancelled"]
 
 
 @pytest.mark.asyncio
@@ -325,6 +347,10 @@ def test_economics_schema_tolerates_pre_migration_tool_table():
 
     assert db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='llm_inference_calls'"
+    ).fetchone()
+    assert db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='llm_structured_attempt_outcomes'"
     ).fetchone()
     assert not db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='trigger' "

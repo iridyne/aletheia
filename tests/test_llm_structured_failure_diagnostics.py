@@ -83,6 +83,12 @@ async def test_schema_failure_persists_only_bounded_content_free_diagnostics():
         "schema_error_code": "wrong_type",
     }
     assert secret_marker not in json.dumps(row, ensure_ascii=False)
+    outcomes = get_db().execute(
+        "SELECT outcome FROM llm_structured_attempt_outcomes "
+        "WHERE logical_call_id=? ORDER BY structured_attempt_index",
+        (row["logical_call_id"],),
+    ).fetchall()
+    assert [item["outcome"] for item in outcomes] == ["schema_invalid"] * 3
 
 
 @pytest.mark.asyncio
@@ -97,6 +103,12 @@ async def test_parse_failure_classifies_text_without_retaining_it():
         "response_shape": "non_json_text",
     }
     assert secret_marker not in json.dumps(row, ensure_ascii=False)
+    outcomes = get_db().execute(
+        "SELECT outcome FROM llm_structured_attempt_outcomes "
+        "WHERE logical_call_id=? ORDER BY structured_attempt_index",
+        (row["logical_call_id"],),
+    ).fetchall()
+    assert [item["outcome"] for item in outcomes] == ["parse_error"] * 3
 
 
 @pytest.mark.asyncio
