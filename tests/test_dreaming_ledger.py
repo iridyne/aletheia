@@ -63,6 +63,24 @@ def _seed_trade_case_study() -> None:
     get_db().commit()
 
 
+def test_lesson_extraction_declares_its_structured_transport_contract():
+    from aletheia.agents.dreaming_agent import _LessonExtractionResult
+    from aletheia.model_provider.inference_contract import (
+        OutputMode,
+        build_inference_call,
+    )
+
+    call = build_inference_call(
+        caller="dreaming.lesson_extraction",
+        system="extract lessons",
+        messages=[{"role": "user", "content": "one trade case"}],
+        context_adapter_id="none-v1",
+        schema=_LessonExtractionResult,
+    )
+
+    assert call.caller.output_mode is OutputMode.STRUCTURED
+
+
 async def test_lesson_extraction_reports_invalid_structured_output(
     tmp_path, monkeypatch,
 ):
