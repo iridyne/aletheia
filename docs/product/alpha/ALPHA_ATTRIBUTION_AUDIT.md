@@ -101,28 +101,45 @@ Question: does ranker top1 outperform rank2-5 and the eligible shadow set?
 
 Current implementation:
 
-- Reads resolved `shadow_trades`.
-- Groups by `batch_id`.
-- Compares rank `1` PnL against ranks `2-5`.
+- Uses `shadow_trades` only for the prospective rank, batch, and policy-epoch
+  assignment facts.
+- Joins every candidate through its exact `outcome_candidate_key` to the
+  canonical settled `filter_candidate_outcomes` row at the declared `24h`
+  horizon.
+- Requires matching venue, symbol, market type, direction, policy epoch, and
+  cost-model version, and deduplicates repeated ticks to one candidate vote.
+- Compares rank `1` candidates against ranks `2-5`; only batches containing both
+  arms contribute.
 
-This is directional evidence. Shadow batches preserve the candidate set, but do
-not constitute a prospective Ranker treatment/control experiment.
+The statistical unit is the candidate key, the assignment unit is the batch,
+and the economic unit is cost-aware `net_return_pct`. This removes the previous
+variable-hold Position/shadow mismatch. It remains directional evidence because
+rank assignment is not randomized and the audit does not infer clustered
+uncertainty.
 
 ### System Operator Alpha
 
-Question: do accepted/executed System Operator trades outperform same-cycle
-shadow candidates?
+Question: do candidates passed by the System Operator outperform candidates it
+rejected under one behavior contract?
 
 Current implementation:
 
-- Reads executed `trade_proposals`.
-- Joins closed `positions`.
-- Finds the matching shadow batch by `opportunity_id`.
-- Compares actual closed position PnL against unselected resolved shadows in the
-  same batch.
+- Reads the authoritative `pi_decisions` action and its append-only
+  `filter_decisions` trace.
+- Requires durable runtime-session provenance, matching producer commit and
+  behavior fingerprint, and uses first exposure only.
+- Joins the exact `pi_decision:<id>` outcome key to the canonical settled
+  `filter_candidate_outcomes` row at `24h`.
+- Requires matching venue, symbol, market type, direction, behavior fingerprint,
+  producer commit, and cost-model version.
+- Compares candidate-level net returns for consistent `trade` decisions versus
+  consistent `skip` / `portfolio_guard_skip` decisions. Trace/action conflicts
+  are excluded rather than forced into either arm.
 
-This comparison mixes downstream queue, Risk, Execution, and Exit effects, so it
-is directional and cannot by itself prescribe a prompt or model change.
+This no longer mixes actual Position lifecycle, Risk, Execution, and Exit effects
+with a fixed-horizon Shadow baseline. It is still directional because Operator
+assignment is not randomized and the passed/rejected cohorts are selected by the
+policy itself; it cannot by itself prescribe a prompt or model change.
 
 ### Learning Alpha
 

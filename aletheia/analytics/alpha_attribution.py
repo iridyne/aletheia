@@ -263,13 +263,63 @@ def _universe_alpha(db, cutoff: str, min_sample_size: int) -> dict:
 
 
 def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
-    rows = db.execute(
-        "SELECT batch_id, rank, net_pnl_pct FROM shadow_trades "
-        "WHERE batch_id IS NOT NULL "
-        "AND resolved_at IS NOT NULL "
-        "AND net_pnl_pct IS NOT NULL "
-        "AND datetime(created_at) >= datetime(?)",
+    contract = db.execute(
+        "SELECT s.policy_epoch_id, fo.cost_model_version "
+        "FROM shadow_trades s JOIN filter_candidate_outcomes fo "
+        "ON fo.outcome_candidate_key=s.outcome_candidate_key "
+        "WHERE s.batch_id IS NOT NULL AND s.policy_epoch_id IS NOT NULL "
+        "AND fo.horizon='24h' AND fo.status='settled' "
+        "AND fo.net_return_pct IS NOT NULL AND fo.cost_model_version IS NOT NULL "
+        "AND s.cost_model_version=fo.cost_model_version "
+        "AND s.venue=fo.venue AND s.symbol=fo.symbol "
+        "AND lower(s.direction)=lower(fo.direction) "
+        "AND (CASE WHEN lower(s.market_type) IN "
+        "('perp','futures','swap','usdt_futures') THEN 'perp' ELSE 'spot' END)=fo.market_type "
+        "AND datetime(fo.entry_ts) >= datetime(?) "
+        "ORDER BY datetime(fo.entry_ts) DESC, datetime(s.created_at) DESC, s.id DESC LIMIT 1",
         (cutoff,),
+    ).fetchone()
+    if not contract:
+        return _verdict(
+            "Ranker Alpha",
+            "insufficient_data",
+            0,
+            None,
+            None,
+            None,
+            "insufficient",
+            "No identity-complete 24h cost-aware Ranker candidate cohort is available.",
+            {
+                "horizon": "24h",
+                "statistical_unit": "outcome_candidate_key",
+                "assignment_unit": "batch_id",
+                "economic_unit": "net_return_pct",
+                "source_table": "filter_candidate_outcomes",
+            },
+            evidence_type="fixed_horizon_candidate_cohort",
+            causal_grade="insufficient",
+        )
+
+    rows = db.execute(
+        "WITH candidates AS ("
+        " SELECT s.batch_id, s.outcome_candidate_key, s.rank, fo.net_return_pct,"
+        " ROW_NUMBER() OVER (PARTITION BY s.outcome_candidate_key "
+        " ORDER BY datetime(s.created_at) DESC, s.id DESC) AS candidate_rank"
+        " FROM shadow_trades s JOIN filter_candidate_outcomes fo"
+        " ON fo.outcome_candidate_key=s.outcome_candidate_key"
+        " WHERE s.batch_id IS NOT NULL AND s.policy_epoch_id=?"
+        " AND s.rank BETWEEN 1 AND 5"
+        " AND fo.horizon='24h' AND fo.status='settled'"
+        " AND fo.net_return_pct IS NOT NULL AND fo.cost_model_version=?"
+        " AND s.cost_model_version=fo.cost_model_version"
+        " AND s.venue=fo.venue AND s.symbol=fo.symbol"
+        " AND lower(s.direction)=lower(fo.direction)"
+        " AND (CASE WHEN lower(s.market_type) IN "
+        " ('perp','futures','swap','usdt_futures') THEN 'perp' ELSE 'spot' END)=fo.market_type"
+        " AND datetime(fo.entry_ts) >= datetime(?)"
+        ") SELECT batch_id, outcome_candidate_key, rank, net_return_pct "
+        "FROM candidates WHERE candidate_rank=1",
+        (contract["policy_epoch_id"], contract["cost_model_version"], cutoff),
     ).fetchall()
 
     batches: dict[str, list[dict]] = defaultdict(list)
@@ -281,26 +331,44 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
     eligible: list[float] = []
     usable_batches = 0
     for batch_rows in batches.values():
-        rank1 = [float(r["net_pnl_pct"]) for r in batch_rows if int(r["rank"] or 0) == 1]
-        rest = [float(r["net_pnl_pct"]) for r in batch_rows if 2 <= int(r["rank"] or 0) <= 5]
-        if not rank1 or not rest:
+        rank1 = [float(r["net_return_pct"]) for r in batch_rows if int(r["rank"] or 0) == 1]
+        rest = [float(r["net_return_pct"]) for r in batch_rows if 2 <= int(r["rank"] or 0) <= 5]
+        if len(rank1) != 1 or not rest:
             continue
         usable_batches += 1
         top1.append(rank1[0])
         top2_5.extend(rest)
-        eligible.extend(float(r["net_pnl_pct"]) for r in batch_rows if int(r["rank"] or 0) >= 1)
+        eligible.extend(float(r["net_return_pct"]) for r in batch_rows if int(r["rank"] or 0) >= 1)
 
-    if usable_batches < min_sample_size or len(top2_5) < min_sample_size:
+    details = {
+        "top2_5_sample_size": len(top2_5),
+        "eligible_average": _safe_mean(eligible),
+        "batch_count": usable_batches,
+        "horizon": "24h",
+        "statistical_unit": "outcome_candidate_key",
+        "assignment_unit": "batch_id",
+        "economic_unit": "net_return_pct",
+        "source_table": "filter_candidate_outcomes",
+        "policy_epoch_id": contract["policy_epoch_id"],
+        "cost_model_version": contract["cost_model_version"],
+        "authority_limitations": [
+            "rank_assignment_not_randomized",
+            "batch_cluster_dependence_not_inferred",
+        ],
+    }
+    if len(top1) < min_sample_size or len(top2_5) < min_sample_size:
         return _verdict(
             "Ranker Alpha",
             "insufficient_data",
-            usable_batches,
+            len(top1),
             _safe_mean(top2_5),
             _safe_mean(top1),
             None,
             "insufficient",
-            "Not enough cost-aware net shadow batches with rank1 and rank2-5 outcomes.",
-            {"top2_5_sample_size": len(top2_5), "eligible_average": _safe_mean(eligible)},
+            "Not enough identity-complete 24h candidates in both rank1 and rank2-5 cohorts.",
+            details,
+            evidence_type="fixed_horizon_candidate_cohort",
+            causal_grade="insufficient",
         )
 
     observed = mean(top1)
@@ -310,91 +378,147 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
     return _verdict(
         "Ranker Alpha",
         status,
-        usable_batches,
+        len(top1),
         base,
         observed,
         delta,
-        _confidence_label(usable_batches, min_sample_size),
-        f"Ranker top1 {'beat' if delta > 0 else 'trailed' if delta < 0 else 'matched'} the rank2-5 shadow average.",
-        {"top2_5_sample_size": len(top2_5), "eligible_average": _safe_mean(eligible)},
+        _confidence_label(len(top1), min_sample_size),
+        f"Ranker top1 {'beat' if delta > 0 else 'trailed' if delta < 0 else 'matched'} rank2-5 on the same 24h cost-aware candidate outcome contract.",
+        details,
+        evidence_type="fixed_horizon_candidate_cohort",
+        causal_grade="moderate_prospective_cohort",
     )
 
 
 def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
-    rows = []
-    for position in eligible_strategy_outcomes(closed_after=cutoff):
-        proposal_id = position.get("proposal_id")
-        if not proposal_id:
-            continue
-        proposal = db.execute(
-            "SELECT id AS proposal_id, opportunity_id FROM trade_proposals "
-            "WHERE id = ? AND status = 'executed' AND opportunity_id IS NOT NULL",
-            (proposal_id,),
-        ).fetchone()
-        if proposal:
-            rows.append({
-                **position,
-                "proposal_id": proposal["proposal_id"],
-                "opportunity_id": proposal["opportunity_id"],
-            })
-
-    accepted: list[float] = []
-    shadows: list[float] = []
-    compared_proposals = 0
-
-    for row in rows:
-        opp_id = row["opportunity_id"]
-        batch = db.execute(
-            "SELECT batch_id FROM shadow_trades "
-            "WHERE opportunity_id = ? AND batch_id IS NOT NULL LIMIT 1",
-            (opp_id,),
-        ).fetchone()
-        if not batch or not batch["batch_id"]:
-            continue
-        shadow_rows = db.execute(
-            "SELECT net_pnl_pct FROM shadow_trades "
-            "WHERE batch_id = ? "
-            "AND resolved_at IS NOT NULL "
-            "AND net_pnl_pct IS NOT NULL "
-            "AND opportunity_id != ?",
-            (batch["batch_id"], opp_id),
-        ).fetchall()
-        if not shadow_rows:
-            continue
-        pnl_pct = _position_pnl_pct(row)
-        if pnl_pct is None:
-            continue
-        compared_proposals += 1
-        accepted.append(pnl_pct)
-        shadows.extend(float(r["net_pnl_pct"]) for r in shadow_rows)
-
-    if compared_proposals < min_sample_size or len(shadows) < min_sample_size:
+    first_exposure = (
+        "WITH operator_rows AS ("
+        " SELECT fd.*, fd.rowid AS source_rowid, pd.action, pd.runtime_session_id,"
+        " pd.producer_commit, pd.behavior_fingerprint,"
+        " MIN(fd.evaluated_at) OVER "
+        " (PARTITION BY fd.outcome_candidate_key) AS first_evaluated_at"
+        " FROM filter_decisions fd JOIN pi_decisions pd"
+        " ON fd.candidate_key=('pi_decision:' || pd.id)"
+        " WHERE fd.candidate_kind='pi_decision' AND fd.stage='system_operator'"
+        " AND fd.outcome_candidate_key IS NOT NULL"
+        " AND pd.signal_source='market_observer' AND pd.opportunity_id IS NOT NULL"
+        " AND pd.runtime_session_id IS NOT NULL AND pd.producer_commit IS NOT NULL"
+        " AND pd.behavior_fingerprint IS NOT NULL AND pd.producer_commit=fd.code_commit"
+        "), first_rows AS ("
+        " SELECT * FROM operator_rows"
+        " WHERE evaluated_at=first_evaluated_at"
+        ") "
+    )
+    contract = db.execute(
+        first_exposure + "SELECT fd.producer_commit, fd.behavior_fingerprint, fo.cost_model_version "
+        "FROM first_rows fd JOIN filter_candidate_outcomes fo "
+        "ON fo.outcome_candidate_key=fd.outcome_candidate_key "
+        "WHERE fo.horizon='24h' "
+        "AND fo.status='settled' AND fo.net_return_pct IS NOT NULL "
+        "AND fo.cost_model_version IS NOT NULL "
+        "AND fd.venue=fo.venue AND fd.symbol=fo.symbol "
+        "AND lower(fd.direction)=lower(fo.direction) "
+        "AND fd.market_type=fo.market_type "
+        "AND datetime(fo.entry_ts) >= datetime(?) "
+        "ORDER BY datetime(fo.entry_ts) DESC, fd.source_rowid DESC LIMIT 1",
+        (cutoff,),
+    ).fetchone()
+    if not contract:
         return _verdict(
             "System Operator Alpha",
             "insufficient_data",
-            compared_proposals,
-            _safe_mean(shadows),
+            0,
+            None,
+            None,
+            None,
+            "insufficient",
+            "No identity-complete 24h cost-aware System Operator candidate cohort is available.",
+            {
+                "horizon": "24h",
+                "statistical_unit": "outcome_candidate_key",
+                "economic_unit": "net_return_pct",
+                "source_table": "filter_candidate_outcomes",
+            },
+            evidence_type="fixed_horizon_candidate_cohort",
+            causal_grade="insufficient",
+        )
+
+    rows = db.execute(
+        first_exposure + "SELECT fd.outcome_candidate_key, fd.action, fo.net_return_pct, "
+        "MAX(CASE WHEN fd.decision='rejected' THEN 1 ELSE 0 END) AS rejected, "
+        "MAX(CASE WHEN fd.decision IN ('passed','passed_with_penalty') THEN 1 ELSE 0 END) AS passed "
+        "FROM first_rows fd JOIN filter_candidate_outcomes fo "
+        "ON fo.outcome_candidate_key=fd.outcome_candidate_key "
+        "WHERE fd.producer_commit=? AND fd.behavior_fingerprint=? AND fo.cost_model_version=? "
+        "AND fo.horizon='24h' AND fo.status='settled' AND fo.net_return_pct IS NOT NULL "
+        "AND fd.venue=fo.venue AND fd.symbol=fo.symbol "
+        "AND lower(fd.direction)=lower(fo.direction) AND fd.market_type=fo.market_type "
+        "AND datetime(fo.entry_ts) >= datetime(?) "
+        "GROUP BY fd.outcome_candidate_key, fd.action, fo.net_return_pct",
+        (
+            contract["producer_commit"],
+            contract["behavior_fingerprint"],
+            contract["cost_model_version"],
+            cutoff,
+        ),
+    ).fetchall()
+
+    accepted = [
+        float(row["net_return_pct"])
+        for row in rows
+        if row["action"] == "trade" and not int(row["rejected"] or 0) and int(row["passed"] or 0)
+    ]
+    rejected = [
+        float(row["net_return_pct"])
+        for row in rows
+        if row["action"] in {"skip", "portfolio_guard_skip"} and int(row["rejected"] or 0)
+    ]
+    details = {
+        "rejected_sample_size": len(rejected),
+        "horizon": "24h",
+        "statistical_unit": "outcome_candidate_key",
+        "economic_unit": "net_return_pct",
+        "source_table": "filter_candidate_outcomes",
+        "producer_commit": contract["producer_commit"],
+        "behavior_fingerprint": contract["behavior_fingerprint"],
+        "cost_model_version": contract["cost_model_version"],
+        "authority_limitations": [
+            "operator_assignment_not_randomized",
+            "passed_and_rejected_candidate_selection_confounded",
+        ],
+    }
+
+    if len(accepted) < min_sample_size or len(rejected) < min_sample_size:
+        return _verdict(
+            "System Operator Alpha",
+            "insufficient_data",
+            len(accepted),
+            _safe_mean(rejected),
             _safe_mean(accepted),
             None,
             "insufficient",
-            "Not enough executed closed proposals linked to resolved same-cycle shadow candidates.",
-            {"shadow_sample_size": len(shadows)},
+            "Not enough identity-complete 24h candidates in both passed and rejected System Operator cohorts.",
+            details,
+            evidence_type="fixed_horizon_candidate_cohort",
+            causal_grade="insufficient",
         )
 
     observed = mean(accepted)
-    base = mean(shadows)
+    base = mean(rejected)
     delta = observed - base
     status = _status_from_delta(delta)
     return _verdict(
         "System Operator Alpha",
         status,
-        compared_proposals,
+        len(accepted),
         base,
         observed,
         delta,
-        _confidence_label(compared_proposals, min_sample_size),
-        f"Accepted System Operator trades {'beat' if delta > 0 else 'trailed' if delta < 0 else 'matched'} same-cycle unselected shadows.",
-        {"shadow_sample_size": len(shadows)},
+        _confidence_label(len(accepted), min_sample_size),
+        f"Passed System Operator candidates {'beat' if delta > 0 else 'trailed' if delta < 0 else 'matched'} rejected candidates on the same 24h cost-aware outcome contract.",
+        details,
+        evidence_type="fixed_horizon_candidate_cohort",
+        causal_grade="moderate_prospective_cohort",
     )
 
 
@@ -916,16 +1040,6 @@ def _forward_return_from_ohlcv(db, symbol: str, entry_at: str, horizon: str, dir
         raw = (exit_price - entry_price) / entry_price * 100.0
         return _directional_return(raw, direction)
     return None
-
-
-def _position_pnl_pct(row) -> float | None:
-    entry = float(row["entry_price"] or 0)
-    qty = float(row["quantity"] or 0)
-    pnl = float(row["realized_pnl"] or 0)
-    notional = entry * qty
-    if notional <= 0:
-        return None
-    return pnl / notional * 100.0
 
 
 def _directional_return(raw_return_pct: float, direction: str | None) -> float:
