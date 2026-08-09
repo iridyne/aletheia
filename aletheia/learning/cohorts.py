@@ -388,16 +388,16 @@ def build_experiment_cohorts(
         if exposed_at is None:
             cohort.invalid_reasons["missing_exposure_time"] += 1
             continue
-        if assignment == "control":
-            cohort.exposed_control_assignment_units.add(assignment_unit_key)
-        else:
-            authority_applied, _ = _manifest_authority(exposure.get("manifest_json"))
-            behavior_changed, behavior_change_reason = _exposure_behavior_change(
-                exposure,
-                assignment=assignment,
-                authority_applied=authority_applied,
-            )
-            if behavior_changed is not None and behavior_change_reason is not None:
+        authority_applied, _ = _manifest_authority(exposure.get("manifest_json"))
+        behavior_changed, behavior_change_reason = _exposure_behavior_change(
+            exposure,
+            assignment=assignment,
+            authority_applied=authority_applied,
+        )
+        if behavior_changed is not None and behavior_change_reason is not None:
+            if assignment == "control":
+                cohort.exposed_control_assignment_units.add(assignment_unit_key)
+            else:
                 cohort.exposed_treatment_assignment_units.add(assignment_unit_key)
                 if authority_applied:
                     cohort.exposed_authority_applied_treatment_units.add(
@@ -540,6 +540,18 @@ def build_experiment_cohorts(
                 behavior_change_reason=behavior_change_reason,
             ))
     for cohort in cohorts.values():
+        conflicting_units = {
+            unit_key
+            for unit_key, assignments in unit_assignments[cohort.key].items()
+            if len(assignments) != 1
+        }
+        for units in (
+            cohort.exposed_treatment_assignment_units,
+            cohort.exposed_authority_applied_treatment_units,
+            cohort.exposed_actual_intervention_treatment_units,
+            cohort.exposed_control_assignment_units,
+        ):
+            units.difference_update(conflicting_units)
         cohort.samples = _aggregate_assignment_units(
             cohort,
             expected_unit_members[cohort.key],

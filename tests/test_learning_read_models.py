@@ -930,6 +930,10 @@ def test_lco_projection_never_publishes_a_stale_verdicts_numbers_as_current(
     assert historical["harm_breached"] is True
     assert historical["breach_reasons"] == ["mae_p95_worsening"]
     assert historical["raw_exposures"] == 18
+    assert historical["exposed_treatment_units"] == 4
+    assert historical["exposed_authority_applied_treatment_units"] == 0
+    assert historical["exposed_actual_intervention_treatment_units"] == 0
+    assert historical["exposed_control_units"] == 5
     assert historical["complete_assignment_units"] == 9
     assert historical["treatment_assignment_units"] == 4
     assert historical["control_assignment_units"] == 5

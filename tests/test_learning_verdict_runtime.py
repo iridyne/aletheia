@@ -1571,6 +1571,37 @@ def test_pending_outcomes_preserve_exposed_intervention_units():
     assert metrics["exclusion_reasons"]["unsettled"] == 3
 
 
+def test_exposed_units_reject_invalid_control_and_cross_arm_provenance():
+    hypothesis, experiment = _experiment(min_samples=1, stage="paper_10")
+    _exposure(
+        experiment,
+        hypothesis,
+        candidate="invalid-control",
+        assignment="control",
+        authority_applied=True,
+    )
+    _filter_outcome("invalid-control", status="pending", net=None)
+    for assignment in ("treatment", "control"):
+        candidate = f"cross-arm-{assignment}"
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=candidate,
+            assignment=assignment,
+            assignment_unit_key="cross-arm-cluster",
+            authority_applied=assignment == "treatment",
+        )
+        _filter_outcome(candidate, status="pending", net=None)
+
+    metrics = json.loads(_run(experiment.experiment_id)[0].harm_metrics_json)
+
+    assert metrics["exposed_treatment_assignment_unit_n"] == 0
+    assert metrics["exposed_authority_applied_treatment_unit_n"] == 0
+    assert metrics["exposed_actual_intervention_treatment_unit_n"] == 0
+    assert metrics["exposed_control_assignment_unit_n"] == 0
+    assert metrics["invalid_reasons"]["conflicting_assignment_unit"] == 1
+
+
 def test_primary_effect_remains_intent_to_treat_with_baseline_fallback():
     hypothesis, experiment = _experiment(min_samples=2, stage="paper_10")
     for candidate, applied, net, reason in (
