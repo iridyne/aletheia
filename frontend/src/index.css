@@ -1359,6 +1359,10 @@ th.sortable:hover { color: var(--text); }
 
 .text-muted { color: var(--muted); }
 .text-error { color: var(--red); }
+.data-state { margin: 0; color: var(--muted); font-size: var(--fs-sm); }
+.data-state-stale,
+.data-state-partial { color: var(--yellow); margin-bottom: var(--space-2); }
+.data-state-unavailable { color: var(--red); }
 .text-pre-wrap { white-space: pre-wrap; }
 .mono { font-family: var(--mono); }
 .chart-h-sm { height: 180px; }
