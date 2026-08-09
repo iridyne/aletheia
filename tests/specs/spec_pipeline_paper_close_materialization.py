@@ -718,6 +718,7 @@ def test_stop_or_tp_materializes_one_close_from_observed_mark(
     assert close_fill["fill_quantity"] == pytest.approx(position.quantity)
     expected_fee = expected_fill * position.quantity * FEE_RATE
     assert close_fill["fee"] == pytest.approx(expected_fee)
+    assert close_order["created_at"] == close_fill["filled_at"]
     assert close_fill["filled_at"] == close_order["filled_at"]
     assert stored["exit_fee"] == pytest.approx(expected_fee)
     evidence = json.loads(stored["reconciliation_evidence"])

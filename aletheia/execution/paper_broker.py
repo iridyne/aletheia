@@ -385,6 +385,7 @@ def close_paper_position(
         price=fill_price,
         execution_mode="paper_internal",
         status="filled",
+        created_at=filled_at,
         filled_at=filled_at,
     )
     close_fill = Fill(
