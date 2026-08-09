@@ -635,6 +635,127 @@ def test_learning_alpha_detects_same_pattern_improvement_after_lesson():
     assert learning["observed"] == 2.0
 
 
+def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monkeypatch):
+    import aletheia.analytics.alpha_attribution as alpha_attribution
+    import aletheia.learning.read_models as learning_read_models
+    from aletheia.storage.sqlite import get_db
+    from tests.test_learning_verdict_runtime import _experiment, _exposure
+
+    monkeypatch.setattr(
+        alpha_attribution,
+        "_utcnow",
+        lambda: datetime(2026, 8, 9, 10, tzinfo=timezone.utc),
+    )
+    hypothesis, experiment = _experiment(min_samples=50, min_days=7)
+    db = get_db()
+    db.execute(
+        "UPDATE learning_experiments SET created_at=?, started_at=? WHERE experiment_id=?",
+        ("2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00", experiment.experiment_id),
+    )
+    db.commit()
+    _exposure(
+        experiment,
+        hypothesis,
+        candidate="paper-monitoring-current",
+        assignment="control",
+        exposed_at="2026-08-09T09:00:00+00:00",
+    )
+    item = {
+        "path_id": hypothesis.path_id,
+        "experiment_id": experiment.experiment_id,
+        "stage": "paper_10",
+        "allocation_pct": 0.1,
+        "current_identity": {"policy_epoch": "epoch-a", "matches_running_cohort": True},
+        "measurement": {
+            "state": "insufficient_data",
+            "reason": "insufficient unique prospective treatment/control samples",
+            "baseline": None,
+            "observed": None,
+            "delta": None,
+            "authority_eligible": False,
+            "window_start": "1970-01-01T00:00:00+00:00",
+            "window_end": "1970-01-01T00:00:00+00:00",
+        },
+        "samples": {
+            "raw_exposures": 21,
+            "treatment_assignment_units": 0,
+            "control_assignment_units": 0,
+            "actual_intervention_treatment_units": 0,
+        },
+        "integrity": {
+            "actual_intervention_state": "none",
+            "exclusion_reasons": {"unsettled": 21},
+        },
+        "inference": {"status": "collecting"},
+    }
+    requested_limits = []
+    monkeypatch.setattr(
+        learning_read_models,
+        "build_learning_contribution_projection",
+        lambda *, limit: requested_limits.append(limit) or {
+            "items": [
+                {
+                    "path_id": hypothesis.path_id,
+                    "experiment_id": "newer-shadow-experiment",
+                    "stage": "shadow",
+                },
+                item,
+            ]
+        },
+    )
+
+    learning = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+
+    assert learning["verdict"] == "insufficient_data"
+    assert learning["contribution_verdict"] == "insufficient_data"
+    assert learning["measurement_status"] == "not_measured"
+    assert learning["evidence_type"] == "dedicated_learning_contribution_monitoring"
+    assert learning["details"]["experiment_id"] == experiment.experiment_id
+    assert learning["details"]["raw_exposures"] == 21
+    assert learning["details"]["exclusion_reasons"] == {"unsettled": 21}
+    assert learning["details"]["window_start"] == "1970-01-01T00:00:00+00:00"
+    assert requested_limits == [100]
+    rendered = alpha_attribution.render_alpha_audit(
+        alpha_attribution.build_alpha_attribution_audit(days=30)
+    )
+    assert f"Learning experiment: id={experiment.experiment_id} stage=paper_10" in rendered
+    assert 'exclusions={"unsettled": 21}' in rendered
+
+    item["measurement"].update(
+        state="positive",
+        baseline=0.0,
+        observed=1.0,
+        delta=1.0,
+        window_start="2026-08-09T09:00:00+00:00",
+        window_end="2026-08-09T09:10:00+00:00",
+    )
+    item["samples"].update(treatment_assignment_units=50, control_assignment_units=50)
+    monitoring_positive = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+
+    assert monitoring_positive["verdict"] == "positive"
+    assert monitoring_positive["contribution_verdict"] == "insufficient_data"
+    assert monitoring_positive["measurement_status"] == "directional_evidence_only"
+
+    item["measurement"]["window_start"] = None
+    missing_window = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+    assert missing_window["verdict"] == "insufficient_data"
+    assert missing_window["details"]["audit_window_compatible"] is False
+
+    def unavailable_projection(*, limit):
+        raise RuntimeError("projection failed")
+
+    monkeypatch.setattr(
+        learning_read_models,
+        "build_learning_contribution_projection",
+        unavailable_projection,
+    )
+    unavailable = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+
+    assert unavailable["verdict"] == "insufficient_data"
+    assert unavailable["evidence_type"] == "dedicated_learning_contribution_monitoring"
+    assert "projection is unavailable" in unavailable["reason"]
+
+
 def test_learning_alpha_consumes_exact_confirmatory_authority_verdict(monkeypatch):
     import aletheia.analytics.alpha_attribution as alpha_attribution
     from aletheia.learning.contribution_runner import evaluate_experiment
