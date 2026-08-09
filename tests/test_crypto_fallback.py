@@ -279,8 +279,10 @@ class TestFallbackChainProvider:
         p2.get_ticker = AsyncMock(side_effect=ValueError("err2"))
 
         chain = FallbackChainProvider([p1, p2])
-        with pytest.raises(ValueError, match="err2"):
+        with pytest.raises(ValueError, match="err2") as exc_info:
             await chain.get_ticker("BTC/USDT")
+
+        assert not hasattr(exc_info.value, "ohlcv_attempts")
 
     @pytest.mark.anyio
     async def test_not_implemented_skips_silently(self):

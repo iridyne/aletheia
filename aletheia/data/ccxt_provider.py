@@ -38,7 +38,14 @@ import logging
 import time
 from typing import Any
 
-from aletheia.data.providers import Candle, Ticker
+from aletheia.data.providers import (
+    Candle,
+    OHLCVAttempt,
+    OHLCVResult,
+    Ticker,
+    classify_ohlcv_outcome,
+    parse_ohlcv_candle,
+)
 from aletheia.data.symbols import InstrumentId, to_canonical
 from aletheia.data.venue_health import (
     VenueCoolingDownError,
@@ -199,7 +206,7 @@ class CCXTProvider:
         timeframe: str = "1h",
         limit: int = 100,
         since: int | None = None,
-    ) -> list[Candle]:
+    ) -> OHLCVResult:
         ccxt_symbol, canon, mkt = _resolve_ccxt_symbol(symbol)
 
         from aletheia.data.cache import get_cache
@@ -210,9 +217,12 @@ class CCXTProvider:
                 market_type=mkt, exchange=self._primary_name,
             )
             if cached is not None:
-                return cached
+                return cached if isinstance(cached, OHLCVResult) else OHLCVResult(
+                    cached, requested=limit,
+                )
 
         last_err: Exception | None = None
+        attempts: list[OHLCVAttempt] = []
         for name, ensure in (
             (self._primary_name, self._ensure_primary),
             (self._fallback_name, self._ensure_fallback),
@@ -223,7 +233,9 @@ class CCXTProvider:
                     market_type=mkt, exchange=name,
                 )
                 if cached is not None:
-                    return cached
+                    return cached if isinstance(cached, OHLCVResult) else OHLCVResult(
+                        cached, requested=limit,
+                    )
             if not is_venue_available(name):
                 last_err = VenueCoolingDownError(f"market-data venue cooling down: {name}")
                 continue
@@ -232,19 +244,31 @@ class CCXTProvider:
                     ccxt_symbol, timeframe=timeframe, since=since, limit=limit
                 )
                 record_venue_success(name)
-                candles = [
-                    Candle(
-                        timestamp=int(row[0]),
-                        open=float(row[1]),
-                        high=float(row[2]),
-                        low=float(row[3]),
-                        close=float(row[4]),
-                        volume=float(row[5]),
-                        provider="ccxt",
-                        exchange=name,
-                    )
+                parsed = [
+                    parse_ohlcv_candle(row, provider="ccxt", exchange=name)
                     for row in raw
                 ]
+                candles = [candle for candle in parsed if candle is not None]
+                rejected = len(parsed) - len(candles)
+                outcome = classify_ohlcv_outcome(
+                    accepted=len(candles), rejected=rejected, requested=limit,
+                )
+                attempts.append(OHLCVAttempt(
+                    provider=name,
+                    outcome=outcome,
+                    accepted=len(candles),
+                    rejected=rejected,
+                ))
+                if rejected:
+                    logger.warning(
+                        "ohlcv quality rejected %d/%d row(s) from %s for %s",
+                        rejected,
+                        len(parsed),
+                        name,
+                        ccxt_symbol,
+                    )
+                if not candles:
+                    continue
                 # Mark the trailing bar as open when its close time is still in
                 # the future. CCXT always returns the currently-forming bar as
                 # the last element; treat it as unconfirmed so callers can
@@ -265,18 +289,38 @@ class CCXTProvider:
                     name,
                     market_type=mkt,
                 )
-                if since is None and candles:
+                result = OHLCVResult(
+                    candles,
+                    requested=limit,
+                    rejected=sum(attempt.rejected for attempt in attempts),
+                    attempts=attempts,
+                )
+                if since is None:
                     cache.set(
-                        canon, timeframe, limit, candles,
+                        canon, timeframe, limit, result,
                         market_type=mkt, exchange=name,
                     )
-                return candles
+                return result
             except Exception as e:  # noqa: BLE001 — try fallback, then re-raise
                 last_err = e
+                attempts.append(OHLCVAttempt(
+                    provider=name,
+                    outcome="failed",
+                    reason=type(e).__name__,
+                ))
                 if is_venue_refusal(e):
                     record_venue_failure(name, e)
                 logger.warning("ohlcv fetch failed on %s for %s: %s", name, ccxt_symbol, e)
-        raise last_err if last_err else RuntimeError("ohlcv fetch failed")
+        if attempts and any(attempt.outcome == "empty" for attempt in attempts):
+            return OHLCVResult(
+                requested=limit,
+                rejected=sum(attempt.rejected for attempt in attempts),
+                attempts=attempts,
+            )
+        if last_err:
+            last_err.ohlcv_attempts = tuple(attempts)  # type: ignore[attr-defined]
+            raise last_err
+        raise RuntimeError("ohlcv fetch failed")
 
     @staticmethod
     def _persist(

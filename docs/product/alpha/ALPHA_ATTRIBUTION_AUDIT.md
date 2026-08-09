@@ -327,7 +327,7 @@ This audit is read-only:
 - Risk policy evidence uses a pass-all candidate control and does not model
   portfolio capacity, simultaneous exposures, or downstream Execution/Exit.
 - Execution cost evidence is limited to newly opened and closed native
-  `paper_internal` Positions under schema v15. Exchange/demo/live rows, legacy
+  `paper_internal` Positions under schema v16. Exchange/demo/live rows, legacy
   rows, partial closes, and routing-policy value remain unmeasured.
 - Directional verdicts retain suspected-module metadata for diagnosis, but the
   CLI does not render that metadata as confirmed or prescriptive advice.

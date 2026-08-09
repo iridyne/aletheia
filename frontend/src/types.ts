@@ -384,6 +384,20 @@ export interface SystemStatus {
   scheduler_running: boolean
   scheduler_state: string
   scheduler_job_count: number
+  scheduler_last_tick: string | null
+  ohlcv_cache: {
+    size: number
+    max_entries: number
+    hits: number
+    misses: number
+    expired: number
+    evicted: number
+  } | null
+  startup_failure_policy: Array<{
+    stage: string
+    on_failure: 'fail_startup' | 'warn_continue' | 'pause_autonomy'
+    readiness_effect: string
+  }>
   model_provider: string
   external_connectivity: ExternalConnectivityStatus
   health_status: string

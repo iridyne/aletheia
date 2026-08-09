@@ -1,4 +1,4 @@
-import { Routes, Route, NavLink, Navigate, Link } from 'react-router-dom'
+import { Routes, Route, NavLink, Navigate, Link, useLocation } from 'react-router-dom'
 import { lazy, Suspense, useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -32,6 +32,7 @@ import type { InfraEvent } from './types'
 import { deriveMasterState, getOperatorDisplayStatus } from './lib/systemState'
 import { devPreviewLabel } from './dev-preview'
 import { useRealtimeUpdates, type RealtimeStatus } from './lib/useRealtimeUpdates'
+import RouteErrorBoundary from './components/RouteErrorBoundary'
 
 const Overview = lazy(() => import('./pages/Overview'))
 const AgentActivity = lazy(() => import('./pages/AgentActivity'))
@@ -615,6 +616,7 @@ function StatusBar({ realtime }: { realtime: RealtimeStatus }) {
 }
 
 export default function App() {
+  const location = useLocation()
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
@@ -700,8 +702,9 @@ export default function App() {
         </header>
         <main className="main">
           <BackendConnectionGuard />
-          <Suspense fallback={<div className="route-state" role="status">Loading page…</div>}>
-            <Routes>
+          <RouteErrorBoundary key={location.pathname} destination={location.pathname}>
+            <Suspense fallback={<div className="route-state" role="status">Loading page…</div>}>
+              <Routes>
               <Route path="/" element={<Overview />} />
               <Route path="/agent-activity" element={<AgentActivity />} />
               <Route path="/agent-runs" element={<Navigate to="/agent-activity" replace />} />
@@ -725,8 +728,9 @@ export default function App() {
               <Route path="/universe" element={<Universe />} />
               <Route path="/usage" element={<Usage />} />
               <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Suspense>
+              </Routes>
+            </Suspense>
+          </RouteErrorBoundary>
         </main>
       </div>
     </div>

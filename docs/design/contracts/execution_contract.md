@@ -577,7 +577,7 @@ exchange-backed futures 仍只接受对应账户私有账单的 `broker_ledger`�
 数量，而不是用 0 提供一个看似完整的数字。spot 不产生 funding，关闭时明确写 `funding_cost=0`、
 `funding_source='not_applicable'`，不受此冻结影响。
 
-### 11.7 Native Paper paired execution-cost measurement（schema v15）
+### 11.7 Native Paper paired execution-cost measurement（schema v16）
 
 新建 native `paper_internal` entry Order 在 slippage 前持久化
 `reference_price=Risk 已核验的 Proposal.price` 与来源

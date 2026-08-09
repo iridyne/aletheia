@@ -1122,9 +1122,11 @@ def _schedule_auto_retry(run_id: str, run: dict, retry_count: int) -> None:
                     brief_snapshot=run.get("brief_snapshot"),
                     focus_theme_id=run.get("focus_theme_id"),
                     retry_count=retry_count + 1,
+                    idempotency_key=f"serenity-retry:{run_id}:{retry_count + 1}",
                 )
-                repo.insert_serenity_research_run(new_run)
-                enqueue_research_run(new_run.id)
+                stored, deduplicated = repo.insert_serenity_research_retry(new_run)
+                if not deduplicated:
+                    enqueue_research_run(stored["id"])
 
             _scheduler.add_job(
                 _retry_job, "date", run_date=run_time,

@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from aletheia import __version__
 from aletheia.config.loader import load_config, save_config
 from aletheia.infra.events import list_infra_events
+from aletheia.server.startup_policy import startup_policy_snapshot
 
 router = APIRouter(prefix="/api", tags=["system"])
 infra_router = APIRouter(prefix="/_infra", tags=["infra"])
@@ -271,7 +272,13 @@ def status():
         sched = status_snapshot()
     except Exception as e:
         logger.warning("status scheduler snapshot failed: %s", e)
-        sched = {"running": False, "state": f"error:{type(e).__name__}", "job_count": 0}
+        sched = {
+            "enabled": None,
+            "running": False,
+            "state": f"error:{type(e).__name__}",
+            "job_count": 0,
+            "last_tick": None,
+        }
 
     try:
         from aletheia.agent_runtime.build_info import get_boot_commit
@@ -302,6 +309,14 @@ def status():
     # enough — the boot_commit next to it never changes at all.
     head_commit = _cached_head_commit()
 
+    try:
+        from aletheia.data.cache import get_cache
+
+        ohlcv_cache = get_cache().stats()
+    except Exception as e:
+        logger.debug("status OHLCV cache snapshot failed: %s", e)
+        ohlcv_cache = None
+
     return {
         "gateway_running": True,  # if we can respond, we are running
         "paused": cfg.runtime.paused,
@@ -317,10 +332,13 @@ def status():
         "exchange_diverged": alignment.diverged,
         "live_state": cfg.live.state,
         "permission_mode": cfg.agent.permission_mode,
-        "scheduler_enabled": cfg.runtime.scheduler_enabled,
+        "scheduler_enabled": sched.get("enabled", cfg.runtime.scheduler_enabled),
         "scheduler_running": sched["running"],
         "scheduler_state": sched["state"],
         "scheduler_job_count": sched["job_count"],
+        "scheduler_last_tick": sched.get("last_tick"),
+        "ohlcv_cache": ohlcv_cache,
+        "startup_failure_policy": startup_policy_snapshot(),
         "model_provider": cfg.models.default_provider,
         "external_connectivity": external_connectivity,
         "health_status": h.get("status", "healthy" if h["healthy"] else "degraded"),

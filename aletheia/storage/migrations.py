@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v15"
+SCHEMA_VERSION = "aletheia-sqlite-v16"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4281,6 +4281,15 @@ _EXECUTION_REFERENCE_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+_SERENITY_RETRY_IDEMPOTENCY_SQL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_serenity_retry_attempt_identity "
+    "ON serenity_research_runs(parent_run_id, retry_count) "
+    "WHERE idempotency_key LIKE 'serenity-retry:%'"
+)
+_SERENITY_RETRY_IDEMPOTENCY_CHECKSUM = hashlib.sha256(
+    _SERENITY_RETRY_IDEMPOTENCY_SQL.encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -4348,7 +4357,10 @@ _MIGRATION_DESCRIPTIONS = {
     "20260809_0012_universe_twin_prospective_v13": (
         "prospective Shadow policy identity, assignment, and outcome linkage"
     ),
-    "20260809_0014_execution_reference_v15": (
+    "20260809_0014_serenity_retry_idempotency_v15": (
+        "one newly-created Serenity retry per parent and retry count"
+    ),
+    "20260809_0015_execution_reference_v16": (
         "immutable pre-fill reference prices for paired Paper execution accounting"
     ),
 }
@@ -4636,7 +4648,7 @@ def _apply_technical_snapshot_metadata_v14(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
-def _apply_execution_reference_v15(db: sqlite3.Connection) -> None:
+def _apply_execution_reference_v16(db: sqlite3.Connection) -> None:
     """Persist immutable pre-fill references without changing order behavior."""
 
     for column, table, column_type in _EXECUTION_REFERENCE_COLUMNS:
@@ -4646,6 +4658,13 @@ def _apply_execution_reference_v15(db: sqlite3.Connection) -> None:
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.execute(_EXECUTION_REFERENCE_SQL)
+    db.execute("PRAGMA optimize")
+
+
+def _apply_serenity_retry_idempotency_v15(db: sqlite3.Connection) -> None:
+    """Enforce one newly-created retry attempt per parent/count identity."""
+
+    db.execute(_SERENITY_RETRY_IDEMPOTENCY_SQL)
     db.execute("PRAGMA optimize")
 
 
@@ -4729,10 +4748,16 @@ _MIGRATIONS = (
         apply=_apply_technical_snapshot_metadata_v14,
     ),
     MigrationStep(
-        migration_id="20260809_0014_execution_reference_v15",
+        migration_id="20260809_0014_serenity_retry_idempotency_v15",
+        checksum=_SERENITY_RETRY_IDEMPOTENCY_CHECKSUM,
+        schema_version="aletheia-sqlite-v15",
+        apply=_apply_serenity_retry_idempotency_v15,
+    ),
+    MigrationStep(
+        migration_id="20260809_0015_execution_reference_v16",
         checksum=_EXECUTION_REFERENCE_CHECKSUM,
         schema_version=SCHEMA_VERSION,
-        apply=_apply_execution_reference_v15,
+        apply=_apply_execution_reference_v16,
     ),
 )
 

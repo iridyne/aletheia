@@ -2189,6 +2189,7 @@ def retry_serenity_run(run_id: str):
     if run["status"] not in ("failed", "rate_limited"):
         raise HTTPException(400, "Only failed or rate_limited runs can be retried")
 
+    retry_count = (run.get("retry_count") or 0) + 1
     new_run = SerenityResearchRun(
         trigger_type=run.get("trigger_type", "manual"),
         mode=run.get("mode", "standard"),
@@ -2197,15 +2198,22 @@ def retry_serenity_run(run_id: str):
         profile_snapshot_id=run.get("profile_snapshot_id"),
         brief_snapshot=run.get("brief_snapshot"),
         focus_theme_id=run.get("focus_theme_id"),
-        retry_count=(run.get("retry_count") or 0) + 1,
+        retry_count=retry_count,
+        idempotency_key=f"serenity-retry:{run_id}:{retry_count}",
     )
-    repo.insert_serenity_research_run(new_run)
+    stored, deduplicated = repo.insert_serenity_research_retry(new_run)
 
-    from aletheia.agents.research_worker import enqueue_research_run
+    if not deduplicated:
+        from aletheia.agents.research_worker import enqueue_research_run
 
-    enqueue_research_run(new_run.id)
+        enqueue_research_run(stored["id"])
 
-    return {"runId": new_run.id, "status": "queued", "parentRunId": run_id}
+    return {
+        "runId": stored["id"],
+        "status": stored["status"],
+        "parentRunId": run_id,
+        "deduplicated": deduplicated,
+    }
 
 
 @router.post("/serenity/runs/{run_id}/cancel")
