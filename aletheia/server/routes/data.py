@@ -1416,15 +1416,6 @@ async def get_market_ohlcv(
                         raise
                     candles = db_rows
                     data_source = "database_fallback"
-                if use_cache and data_source == "provider_fetch":
-                    cache.set(
-                        cache_key,
-                        timeframe,
-                        limit,
-                        candles,
-                        market_type=market_type,
-                        exchange=effective_exchange,
-                    )
             finally:
                 await provider.close()
 
@@ -1454,8 +1445,18 @@ async def get_market_ohlcv(
                 ),
             )
         ]
+        observed_exchanges = {
+            (c.get("exchange") if isinstance(c, dict) else getattr(c, "exchange", None))
+            for c in candles
+        }
+        observed_exchanges.discard(None)
+        actual_exchange = (
+            next(iter(observed_exchanges))
+            if len(observed_exchanges) == 1
+            else effective_exchange
+        )
         response.headers["X-Aletheia-Data-Source"] = data_source
-        response.headers["X-Aletheia-Data-Instrument"] = f"{effective_exchange}:{sym}:{market_type}:{timeframe}"
+        response.headers["X-Aletheia-Data-Instrument"] = f"{actual_exchange}:{sym}:{market_type}:{timeframe}"
         return rows
     except Exception as e:
         logging.getLogger("aletheia.routes.data").warning("OHLCV fetch failed: %s", e)
