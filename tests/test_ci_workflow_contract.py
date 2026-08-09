@@ -168,8 +168,13 @@ def test_python_regression_excludes_nightly_simulation_and_isolates_state() -> N
     assert "for tier in tier_spec tier_unit tier_integration tier_e2e" in commands
     assert "uv run pytest tests/" in commands
     assert "--ignore=tests/simulation" in commands
+    assert "--ignore=tests/test_auto_resume.py" in commands
+    assert "--ignore=tests/test_operator_cli.py" in commands
+    assert "tests/test_auto_resume.py tests/test_operator_cli.py" in commands
+    assert "-n 2 --dist loadfile" in commands
     assert "--dist loadfile" in commands
     assert "ALETHEIA_DATA_DIR=$RUNNER_TEMP" in commands
+    assert "GITHUB_RUN_ATTEMPT" in commands
     assert "GITHUB_ENV" in commands
     assert "unzip" in commands
     assert "python -m zipfile" in commands
