@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 
 import pytest
@@ -165,7 +166,7 @@ def test_assignment_is_prospective_immutable_and_non_authoritative():
         )
 
 
-def test_long_shadow_closes_only_after_later_bar_and_reports_incremental_net():
+def test_long_shadow_closes_only_after_later_bar_and_reports_incremental_net(monkeypatch):
     position = _seed_position()
     assert repo.insert_exit_breakeven_shadow_assignment(_assignment(position))
     _store_bars(_bars([
@@ -185,6 +186,21 @@ def test_long_shadow_closes_only_after_later_bar_and_reports_incremental_net():
     report = build_exit_breakeven_shadow_report()
     assert report["changed_count"] == 1
     assert report["promotion_eligible"] is False
+
+    import aletheia.analytics.alpha_attribution as alpha_attribution
+
+    monkeypatch.setattr(
+        alpha_attribution,
+        "_utcnow",
+        lambda: datetime(2026, 8, 9, 10, tzinfo=timezone.utc),
+    )
+    paired = alpha_attribution.build_alpha_attribution_audit(days=30)["exit_paired_evidence"]
+    assert paired["measurement_status"] == "treatment_specific_paired_evidence"
+    assert paired["statistical_unit"] == "position_id"
+    assert paired["economic_unit"] == "net_pnl_quote_currency"
+    assert paired["incremental_net_pnl_mean"] == pytest.approx(outcome["incremental_net_pnl"])
+    assert paired["behavior_authority"] is False
+    assert paired["contribution_verdict"] == "insufficient_data"
 
 
 def test_same_bar_trigger_and_stop_is_not_retrospectively_activated():

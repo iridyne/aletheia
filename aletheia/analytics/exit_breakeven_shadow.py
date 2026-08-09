@@ -407,15 +407,31 @@ def settle_position_shadow(position: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def build_exit_breakeven_shadow_report(limit: int = 1000) -> dict[str, Any]:
+def build_exit_breakeven_shadow_report(
+    limit: int = 1000,
+    *,
+    closed_after: str | None = None,
+) -> dict[str, Any]:
     """Return descriptive evidence only; no promotion or parameter mutation."""
 
     rows = repo.list_exit_breakeven_shadow_outcomes(limit=limit)
+    if closed_after is not None:
+        cutoff = _parse_utc(closed_after)
+        if cutoff is None:
+            raise ValueError("closed_after must be an ISO-8601 timestamp with timezone")
+        rows = [
+            row
+            for row in rows
+            if (closed_at := _parse_utc(row.get("actual_closed_at"))) is not None
+            and closed_at >= cutoff
+        ]
     available = [row for row in rows if row["status"] != "unavailable"]
     changed = [row for row in available if bool(row["treatment_changed"])]
     deltas = [float(row["incremental_net_pnl"]) for row in available]
     return {
         "experiment_version": EXPERIMENT_VERSION,
+        "treatment_id": TREATMENT_ID,
+        "cost_model_version": COST_MODEL_VERSION,
         "behavior_authority": False,
         "outcome_count": len(rows),
         "available_count": len(available),

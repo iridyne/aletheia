@@ -229,6 +229,12 @@ def test_confirmatory_verdict_is_consumed_once_and_bound_to_frozen_cutoff():
     assert persisted.status == "consumed"
     assert persisted.consumed_verdict_id == verdict.verdict_id
 
+    from aletheia.learning.fixed_look import inference_authority_reason
+
+    assert inference_authority_reason(
+        verdict.model_copy(update={"policy_epoch": "other-epoch"}).model_dump()
+    ) == "inference_plan_identity_mismatch"
+
     from aletheia.storage.sqlite import get_db
 
     db = get_db()

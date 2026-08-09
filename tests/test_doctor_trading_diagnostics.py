@@ -12,6 +12,10 @@ def test_default_doctor_json_does_not_include_trading_diagnostics(monkeypatch):
         raise AssertionError("trading audit should not run in default doctor")
 
     monkeypatch.setattr(
+        "aletheia.analytics.alpha_attribution.build_alpha_attribution_audit",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
         "aletheia.analytics.trade_funnel.build_trade_funnel_audit",
         fail_if_called,
     )
@@ -43,6 +47,7 @@ def test_doctor_json_deep_includes_compact_trading_diagnostics():
     trading = payload["diagnostics"]["trading"]
     assert set(trading) == {"alpha", "funnel", "sizing", "thesis"}
     assert "main_bottleneck" in trading["alpha"]
+    assert "exit_paired_evidence" in trading["alpha"]
     assert "main_choke_point" in trading["funnel"]
     assert "main_sizing_bottleneck" in trading["sizing"]
     assert "missing_counts" in trading["thesis"]

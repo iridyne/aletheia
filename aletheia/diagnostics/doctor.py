@@ -154,6 +154,7 @@ def _safe_alpha_diagnostic() -> dict:
         return {
             "available": True,
             "main_bottleneck": report.get("main_bottleneck"),
+            "exit_paired_evidence": report.get("exit_paired_evidence"),
             "verdicts": {
                 key: value.get("verdict")
                 for key, value in verdicts.items()
