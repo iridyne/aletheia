@@ -179,6 +179,7 @@ def build_ranker_confidence_replay(
     horizon: str,
     evaluated_since: str | None = None,
     evaluated_after: str | None = None,
+    current_minimum_confidence: str | None = None,
     min_samples: int = 20,
     max_candidates: int = _MAX_CANDIDATES,
 ) -> dict[str, Any]:
@@ -216,14 +217,19 @@ def build_ranker_confidence_replay(
     rejected_rows, rejected_capped = _load_first_exposure_rows(
         decision="rejected", **common
     )
+    frozen_minimum = _confidence_value(current_minimum_confidence)
+    if current_minimum_confidence is not None and frozen_minimum is None:
+        raise ValueError("current_minimum_confidence is invalid")
     minimum_values = [
         _confidence_value(_json_dict(row.get("parameter_snapshot")).get("minimum"))
         for row in (*passed_rows, *rejected_rows)
     ]
     minimums = set(minimum_values)
     current_minimum = (
-        next(iter(minimums))
-        if minimum_values and None not in minimums and len(minimums) == 1
+        frozen_minimum
+        if frozen_minimum is not None and all(value == frozen_minimum for value in minimum_values)
+        else next(iter(minimums))
+        if frozen_minimum is None and minimum_values and None not in minimums and len(minimums) == 1
         else None
     )
     current_metrics = _outcome_metrics(passed_rows)

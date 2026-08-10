@@ -446,6 +446,9 @@ def _ranker_check(
 def _ranker_rebuild(
     experiment: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    control = str(
+        _json_dict(experiment["control_parameter"]).get("minimum_confidence") or ""
+    )
     treatment = str(
         _json_dict(experiment["treatment_parameter"]).get("minimum_confidence") or ""
     )
@@ -457,6 +460,7 @@ def _ranker_rebuild(
         market_type=experiment["market_type"],
         horizon=experiment["horizon"],
         evaluated_after=experiment["started_at"],
+        current_minimum_confidence=control,
         min_samples=int(experiment["min_samples"]),
     )
     match = next((

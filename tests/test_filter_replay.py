@@ -237,3 +237,12 @@ def test_ranker_confidence_replay_uses_existing_controller_path():
         }
     ]
     assert bounded[0]["filter_name"] == "ranker_confidence_gate"
+
+    empty = build_ranker_confidence_replay(
+        **scope,
+        evaluated_after=(now + timedelta(seconds=1)).isoformat(),
+        current_minimum_confidence="medium",
+        min_samples=2,
+    )
+    assert empty["current_pass"]["candidate_count"] == 0
+    assert empty["alternatives"][0]["readiness"] == "insufficient_data"
