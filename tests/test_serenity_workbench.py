@@ -982,7 +982,7 @@ async def test_pipeline_full_stages(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
 
-    run = SerenityResearchRun(trigger_type="manual", mode="standard", status="queued")
+    run = SerenityResearchRun(trigger_type="manual", mode="standard", status="running")
     repo.insert_serenity_research_run(run)
 
     evidence_json = json.dumps([
