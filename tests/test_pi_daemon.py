@@ -94,8 +94,10 @@ async def test_debounce_batches_signals():
         eval_count += 1
         return {"action": "skip"}
 
-    with patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate), \
-         patch("aletheia.config.loader.load_config") as mock_cfg:
+    with (
+        patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate),
+        patch("aletheia.config.loader.load_config") as mock_cfg,
+    ):
         mock_cfg.return_value.runtime.paused = False
         mock_cfg.return_value.agent.permission_mode = "Paper"
 
@@ -136,8 +138,10 @@ async def test_daemon_drains_reported_pending_backlog():
         eval_count += 1
         return {"action": "skip", "pending_queue_remaining": value}
 
-    with patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate), \
-         patch("aletheia.config.loader.load_config") as mock_cfg:
+    with (
+        patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate),
+        patch("aletheia.config.loader.load_config") as mock_cfg,
+    ):
         mock_cfg.return_value.runtime.paused = False
         mock_cfg.return_value.agent.permission_mode = "Paper"
 
@@ -160,6 +164,58 @@ async def test_daemon_drains_reported_pending_backlog():
     assert eval_count == 3
 
 
+async def test_no_model_defer_backlog_does_not_wait_for_llm_cooldown():
+    """Durable no-model defers do not wait for the full LLM cooldown."""
+    remaining = [2, 1, 0]
+    eval_count = 0
+
+    async def fake_evaluate(_params):
+        nonlocal eval_count
+        value = remaining[min(eval_count, len(remaining) - 1)]
+        eval_count += 1
+        return {
+            "action": "evaluation_deferred",
+            "model_invoked": False,
+            "pending_queue_remaining": value,
+        }
+
+    with (
+        patch(
+            "aletheia.agent_shell.commands.evaluate_trading_opportunity",
+            new=fake_evaluate,
+        ),
+        patch("aletheia.config.loader.load_config") as mock_cfg,
+        patch.object(pd, "_NO_MODEL_COOLDOWN_MAX_SEC", 0.01),
+    ):
+        mock_cfg.return_value.runtime.paused = False
+        mock_cfg.return_value.agent.permission_mode = "Paper"
+
+        task = start_pi_daemon(
+            loop=asyncio.get_running_loop(),
+            debounce_sec=0.0,
+            cooldown_sec=1.0,
+            heartbeat_sec=999.0,
+        )
+        await asyncio.sleep(0.02)
+        notify_pi_daemon(source="no_model_defer_backlog_test")
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    assert eval_count == 3
+
+
+def test_no_model_defer_backlog_keeps_a_delay_when_cooldown_is_zero(monkeypatch):
+    monkeypatch.setattr(pd, "_NO_MODEL_COOLDOWN_MAX_SEC", 0.25)
+
+    assert pd._evaluation_cooldown_delay(pd._EVALUATION_NO_MODEL_PENDING, 0.0) == 0.25
+    assert pd._evaluation_cooldown_delay(pd._EVALUATION_NO_MODEL_PENDING, 60.0) == 0.25
+    assert pd._evaluation_cooldown_delay(1, 0.0) == 0.0
+
+
 async def test_failed_evaluation_rearms_daemon_signal():
     """A failed evaluation must be retried without waiting for another producer."""
     results = [-1, 0]
@@ -171,8 +227,10 @@ async def test_failed_evaluation_rearms_daemon_signal():
         eval_count += 1
         return result
 
-    with patch.object(pd, "_run_evaluation", new=fake_run_evaluation), \
-         patch("aletheia.config.loader.load_config") as mock_cfg:
+    with (
+        patch.object(pd, "_run_evaluation", new=fake_run_evaluation),
+        patch("aletheia.config.loader.load_config") as mock_cfg,
+    ):
         mock_cfg.return_value.runtime.paused = False
         mock_cfg.return_value.agent.permission_mode = "Paper"
 
@@ -212,18 +270,19 @@ async def _run_horizon_review_retry(first_result):
         entry_evaluations.append(params)
         return {"action": "skip", "pending_queue_remaining": 0}
 
-    with patch(
-        "aletheia.agent_shell.commands.review_portfolio_state",
-        new=fake_review,
-    ), patch(
-        "aletheia.agent_shell.commands.evaluate_trading_opportunity",
-        new=fake_entry_evaluation,
-    ), patch.object(pd, "_has_pending_signal_work", return_value=False), patch(
-        "aletheia.config.loader.load_config"
-    ) as mock_cfg, patch.object(
-        pd, "_PORTFOLIO_RETRY_BASE_SEC", 0.03
-    ), patch.object(
-        pd, "_PORTFOLIO_RETRY_MAX_SEC", 0.05
+    with (
+        patch(
+            "aletheia.agent_shell.commands.review_portfolio_state",
+            new=fake_review,
+        ),
+        patch(
+            "aletheia.agent_shell.commands.evaluate_trading_opportunity",
+            new=fake_entry_evaluation,
+        ),
+        patch.object(pd, "_has_pending_signal_work", return_value=False),
+        patch("aletheia.config.loader.load_config") as mock_cfg,
+        patch.object(pd, "_PORTFOLIO_RETRY_BASE_SEC", 0.03),
+        patch.object(pd, "_PORTFOLIO_RETRY_MAX_SEC", 0.05),
     ):
         mock_cfg.return_value.runtime.paused = False
         mock_cfg.return_value.agent.permission_mode = "Paper"
@@ -294,20 +353,12 @@ def test_portfolio_retry_backoff_grows_and_caps_without_losing_batch(monkeypatch
 
 
 async def test_review_unavailable_retries_the_same_horizon_wake_batch():
-    captured, entry_evaluations = await _run_horizon_review_retry({
-        "action": "review_unavailable",
-        "reason": "operator_review_unavailable",
-        "review_completed": False,
-    })
-
-    assert len(captured) == 2
-    assert captured[1]["wake_batches"] == captured[0]["wake_batches"]
-    assert entry_evaluations == []
-
-
-async def test_review_timeout_retries_the_same_horizon_wake_batch():
     captured, entry_evaluations = await _run_horizon_review_retry(
-        asyncio.TimeoutError()
+        {
+            "action": "review_unavailable",
+            "reason": "operator_review_unavailable",
+            "review_completed": False,
+        }
     )
 
     assert len(captured) == 2
@@ -315,13 +366,23 @@ async def test_review_timeout_retries_the_same_horizon_wake_batch():
     assert entry_evaluations == []
 
 
+async def test_review_timeout_retries_the_same_horizon_wake_batch():
+    captured, entry_evaluations = await _run_horizon_review_retry(asyncio.TimeoutError())
+
+    assert len(captured) == 2
+    assert captured[1]["wake_batches"] == captured[0]["wake_batches"]
+    assert entry_evaluations == []
+
+
 async def test_failed_close_review_retries_instead_of_reporting_daemon_success():
-    captured, entry_evaluations = await _run_horizon_review_retry({
-        "action": "close_one",
-        "positions_closed": 0,
-        "close_error": "protective_mark_unavailable",
-        "review_completed": False,
-    })
+    captured, entry_evaluations = await _run_horizon_review_retry(
+        {
+            "action": "close_one",
+            "positions_closed": 0,
+            "close_error": "protective_mark_unavailable",
+            "review_completed": False,
+        }
+    )
 
     assert len(captured) == 2
     assert captured[1]["wake_batches"] == captured[0]["wake_batches"]
@@ -337,8 +398,10 @@ async def test_heartbeat_triggers_evaluation():
         eval_count += 1
         return {"action": "skip"}
 
-    with patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate), \
-         patch("aletheia.config.loader.load_config") as mock_cfg:
+    with (
+        patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate),
+        patch("aletheia.config.loader.load_config") as mock_cfg,
+    ):
         mock_cfg.return_value.runtime.paused = False
         mock_cfg.return_value.agent.permission_mode = "Paper"
 
@@ -379,11 +442,12 @@ async def test_defer_deadline_wakes_before_heartbeat_without_early_evaluation():
         completed = True
         return 0
 
-    with patch.object(pd, "_has_pending_signal_work", return_value=False), patch.object(
-        pd, "_next_pending_signal_defer_delay", side_effect=fake_defer_delay
-    ), patch.object(pd, "_run_evaluation", new=fake_run_evaluation), patch(
-        "aletheia.config.loader.load_config"
-    ) as mock_cfg:
+    with (
+        patch.object(pd, "_has_pending_signal_work", return_value=False),
+        patch.object(pd, "_next_pending_signal_defer_delay", side_effect=fake_defer_delay),
+        patch.object(pd, "_run_evaluation", new=fake_run_evaluation),
+        patch("aletheia.config.loader.load_config") as mock_cfg,
+    ):
         mock_cfg.return_value.runtime.paused = False
         mock_cfg.return_value.agent.permission_mode = "Paper"
         task = start_pi_daemon(
@@ -416,11 +480,12 @@ async def test_overdue_defer_does_not_spin_while_runtime_is_paused():
         delay_reads += 1
         return 0.0
 
-    with patch.object(pd, "_has_pending_signal_work", return_value=False), patch.object(
-        pd, "_next_pending_signal_defer_delay", side_effect=overdue_defer
-    ), patch.object(pd, "_run_evaluation") as evaluate, patch(
-        "aletheia.config.loader.load_config"
-    ) as mock_cfg:
+    with (
+        patch.object(pd, "_has_pending_signal_work", return_value=False),
+        patch.object(pd, "_next_pending_signal_defer_delay", side_effect=overdue_defer),
+        patch.object(pd, "_run_evaluation") as evaluate,
+        patch("aletheia.config.loader.load_config") as mock_cfg,
+    ):
         mock_cfg.return_value.runtime.paused = True
         mock_cfg.return_value.agent.permission_mode = "Paper"
         task = start_pi_daemon(
@@ -449,8 +514,10 @@ async def test_skips_when_paused():
         eval_count += 1
         return {"action": "skip"}
 
-    with patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate), \
-         patch("aletheia.config.loader.load_config") as mock_cfg:
+    with (
+        patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate),
+        patch("aletheia.config.loader.load_config") as mock_cfg,
+    ):
         mock_cfg.return_value.runtime.paused = True
         mock_cfg.return_value.agent.permission_mode = "Paper"
 
@@ -496,6 +563,7 @@ async def test_start_stop_lifecycle():
 
 # ── M1.5: wake-event path (coalescing + rate limit) ──────────────────────────
 
+
 async def _run_daemon_with_event(event, *, wake_capacity=15):
     """Start the daemon, deliver one WakeEvent, return the list of params the fake
     evaluate received."""
@@ -508,15 +576,21 @@ async def _run_daemon_with_event(event, *, wake_capacity=15):
         # test double as an incomplete review and keep retrying after the test.
         return {"action": "hold", "review_completed": True}
 
-    with patch("aletheia.agent_shell.commands.review_portfolio_state", new=fake_evaluate), \
-         patch("aletheia.config.loader.load_config") as mock_cfg:
+    with (
+        patch("aletheia.agent_shell.commands.review_portfolio_state", new=fake_evaluate),
+        patch("aletheia.config.loader.load_config") as mock_cfg,
+    ):
         mock_cfg.return_value.runtime.paused = False
         mock_cfg.return_value.agent.permission_mode = "Paper"
 
         loop = asyncio.get_running_loop()
         task = start_pi_daemon(
-            loop=loop, debounce_sec=0.02, cooldown_sec=0.02, heartbeat_sec=999.0,
-            coalesce_window_sec=0.0, wake_capacity=wake_capacity,
+            loop=loop,
+            debounce_sec=0.02,
+            cooldown_sec=0.02,
+            heartbeat_sec=999.0,
+            coalesce_window_sec=0.0,
+            wake_capacity=wake_capacity,
         )
         await asyncio.sleep(0.02)
         notify_pi_daemon(source=event.kind, event=event)
