@@ -1,0 +1,46 @@
+name: Prepare and tag releases
+
+on:
+  repository_dispatch:
+    types: [release_please]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please-master
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Maintain release pull request and tag approved releases
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Run Release Please
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Run CI for the release pull request
+        if: steps.release.outputs.prs_created == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
+        env:
+          RELEASE_PRS: ${{ steps.release.outputs.prs }}
+        with:
+          retries: 3
+          script: |
+            for (const pullRequest of JSON.parse(process.env.RELEASE_PRS)) {
+              await github.rest.actions.createWorkflowDispatch({
+                ...context.repo,
+                workflow_id: 'ci.yml',
+                ref: pullRequest.headBranchName,
+              });
+            }
