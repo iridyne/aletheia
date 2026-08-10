@@ -19,13 +19,25 @@ _FIXTURE = (
     / "fixtures"
     / "learning_b_market_observer_v1.json"
 )
+_TECHNICAL_FIXTURE = (
+    Path(__file__).parent.parent
+    / "docs"
+    / "research"
+    / "llm_harness"
+    / "fixtures"
+    / "technical_context_market_observer_v1.json"
+)
 
 
 class _PairProvider(ModelProvider):
     name = "fixture-provider"
     model = "fixed-fixture-model"
 
+    def __init__(self):
+        self.reasoning_efforts = []
+
     async def complete(self, request):
+        self.reasoning_efforts.append(request.reasoning_effort)
         content = {
             "direction_bias": "long",
             "confidence": "medium",
@@ -69,6 +81,10 @@ async def test_learning_b_pair_is_blinded_linked_and_aggregate_only(tmp_path, mo
     assert report["status"] == "awaiting_owner_review"
     assert report["effectiveness_conclusion"] is None
     assert report["metrics"]["valid_pair"] is True
+    assert provider.reasoning_efforts == ["none", "none"]
+    assert {
+        arm["total_tokens"] for arm in report["metrics"]["arms"].values()
+    } == {140}
     assert review_path.stat().st_mode & 0o777 == 0o600
     packet = json.loads(review_path.read_text(encoding="utf-8"))
     assert [item["label"] for item in packet["presentations"]] == ["A", "B"]
@@ -156,3 +172,112 @@ def test_learning_b_refuses_raw_review_packet_inside_repository():
 
     with pytest.raises(ValueError, match="outside the repository"):
         _review_path(_FIXTURE.parent / "raw-output.json")
+
+
+@pytest.mark.asyncio
+async def test_technical_context_pair_reuses_harness_and_stays_content_free(
+    tmp_path, monkeypatch
+):
+    from aletheia.agents import helpers
+    from aletheia.economics import context_effectiveness as effectiveness
+
+    provider = _PairProvider()
+    review_path = tmp_path / "technical-review.json"
+    monkeypatch.setattr(
+        effectiveness,
+        "_provider_preflight",
+        lambda _name: ("fixture-provider", None),
+    )
+    with (
+        patch.object(helpers, "get_provider", lambda _name: provider),
+        patch.object(helpers, "complete_with_fallback", _direct_complete),
+    ):
+        report = await effectiveness.run_technical_context_pair(
+            fixture_path=_TECHNICAL_FIXTURE,
+            review_output=review_path,
+        )
+
+    assert report["status"] == "awaiting_owner_review"
+    assert report["evaluation_pair_id"].startswith("technical_context_")
+    assert report["metrics"]["valid_pair"] is True
+    assert provider.reasoning_efforts == ["none", "none"]
+    packet = json.loads(review_path.read_text(encoding="utf-8"))
+    assert packet["protocol"] == "technical-context-owner-blind-review-v1"
+    assert packet["rubric_version"] == "technical-context-owner-v1"
+
+    db = get_db()
+    calls = db.execute(
+        "SELECT caller,metadata_json FROM llm_inference_calls WHERE "
+        "json_extract(metadata_json,'$.evaluation_pair_id')=?",
+        (report["evaluation_pair_id"],),
+    ).fetchall()
+    assert {row["caller"] for row in calls} == {
+        "evaluation.technical_context.control",
+        "evaluation.technical_context.treatment",
+    }
+    artifacts = db.execute(
+        "SELECT evaluation_arm,kind,stable_id,rendered_chars "
+        "FROM llm_context_artifacts WHERE evaluation_pair_id=? "
+        "AND stable_id LIKE '%:technical'",
+        (report["evaluation_pair_id"],),
+    ).fetchall()
+    assert {row["evaluation_arm"] for row in artifacts} == {"control", "treatment"}
+    assert {row["kind"] for row in artifacts} == {"environment"}
+    assert sorted(row["rendered_chars"] for row in artifacts)[0] == 0
+
+    scores_path = tmp_path / "technical-scores.json"
+    control_label = report["metrics"]["arms"]["control"]["blind_label"]
+    treatment_label = report["metrics"]["arms"]["treatment"]["blind_label"]
+    score_payload = {
+        "rubric_version": "technical-context-owner-v1",
+        "scores": {
+            control_label: {
+                "quality_score": 3,
+                "grounded_use": "not_applicable",
+                "context_harm": False,
+            },
+            treatment_label: {
+                "quality_score": 5,
+                "grounded_use": "yes",
+                "context_harm": True,
+            },
+        },
+    }
+    scores_path.write_text(json.dumps(score_payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="pair identity mismatch"):
+        effectiveness.record_learning_b_review(
+            pair_id=report["evaluation_pair_id"], scores_path=scores_path
+        )
+    wrong_rubric = {**score_payload, "rubric_version": "learning-b-owner-v1"}
+    scores_path.write_text(json.dumps(wrong_rubric), encoding="utf-8")
+    with pytest.raises(ValueError, match="rubric version mismatch"):
+        effectiveness.record_technical_context_review(
+            pair_id=report["evaluation_pair_id"], scores_path=scores_path
+        )
+    scores_path.write_text(json.dumps(score_payload), encoding="utf-8")
+    review = effectiveness.record_technical_context_review(
+        pair_id=report["evaluation_pair_id"], scores_path=scores_path
+    )
+    assert review["status"] == "review_recorded"
+    assert review["verdict"] == "control_better"
+    assert review["gate_failures"] == ["treatment_context_harm"]
+    stored_rubric = db.execute(
+        "SELECT rubric_version FROM llm_context_pair_reviews WHERE evaluation_pair_id=?",
+        (report["evaluation_pair_id"],),
+    ).fetchone()[0]
+    assert stored_rubric == "technical-context-owner-v1"
+    assert effectiveness.summarize_learning_b_reviews()["reviewed_pairs"] == 0
+
+    db.execute(
+        "DELETE FROM runtime_cost_events WHERE call_id IN (?,?)",
+        (
+            report["metrics"]["arms"]["control"]["logical_call_id"],
+            report["metrics"]["arms"]["treatment"]["logical_call_id"],
+        ),
+    )
+    missing_telemetry = effectiveness._pair_metrics(report["evaluation_pair_id"])
+    assert missing_telemetry["valid_pair"] is False
+    assert set(missing_telemetry["invalid_reasons"]) == {
+        "control_missing_attempt_telemetry",
+        "treatment_missing_attempt_telemetry",
+    }

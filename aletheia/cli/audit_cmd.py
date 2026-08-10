@@ -583,6 +583,55 @@ def learning_context_b1(
     typer.echo("Effectiveness conclusion: none")
 
 
+@audit_app.command("technical-context-check")
+def technical_context_check(
+    review_output: str = typer.Option(
+        ..., "--review-output", help="Ephemeral blinded packet path outside the repository."
+    ),
+    fixture: Optional[str] = typer.Option(
+        None, "--fixture", help="Frozen technical-context fixture JSON."
+    ),
+    provider: Optional[str] = typer.Option(
+        None, "--provider", help="Configured provider profile; defaults to the active profile."
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """Run one offline paired technical-context anti-regression check."""
+    import asyncio
+    from pathlib import Path
+
+    from aletheia.economics.context_effectiveness import run_technical_context_pair
+
+    fixture_path = (
+        Path(fixture)
+        if fixture
+        else Path(__file__).resolve().parents[2]
+        / "docs"
+        / "research"
+        / "llm_harness"
+        / "fixtures"
+        / "technical_context_market_observer_v1.json"
+    )
+    report = asyncio.run(
+        run_technical_context_pair(
+            fixture_path=fixture_path,
+            review_output=Path(review_output),
+            provider_name=provider,
+        )
+    )
+    if output_json:
+        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"Technical context status: {report['status']}")
+    if report.get("blocker"):
+        typer.echo(f"Blocker: {report['blocker']}")
+    if report.get("evaluation_pair_id"):
+        typer.echo(f"Pair: {report['evaluation_pair_id']}")
+    if report.get("review_packet"):
+        typer.echo(f"Blinded review packet: {report['review_packet']}")
+    typer.echo("Effectiveness conclusion: none")
+
+
 @audit_app.command("learning-context-b1-score")
 def learning_context_b1_score(
     pair_id: str = typer.Option(..., "--pair-id"),
@@ -601,6 +650,28 @@ def learning_context_b1_score(
     typer.echo(f"Learning B review: {report['verdict']}")
     typer.echo(f"Quality delta (treatment-control): {report['quality_delta']}")
     typer.echo("This pair alone is not a framework-wide effectiveness conclusion.")
+
+
+@audit_app.command("technical-context-score")
+def technical_context_score(
+    pair_id: str = typer.Option(..., "--pair-id"),
+    scores: str = typer.Option(..., "--scores", help="Aggregate A/B owner-score JSON."),
+    output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """Import aggregate blinded technical-context scores without raw outputs."""
+    from pathlib import Path
+
+    from aletheia.economics.context_effectiveness import record_technical_context_review
+
+    report = record_technical_context_review(
+        pair_id=pair_id, scores_path=Path(scores)
+    )
+    if output_json:
+        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"Technical context review: {report['verdict']}")
+    typer.echo(f"Quality delta (treatment-control): {report['quality_delta']}")
+    typer.echo("This offline pair is an anti-regression result, not profit evidence.")
 
 
 @audit_app.command("learning-context-b1-summary")
