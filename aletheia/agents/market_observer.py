@@ -298,9 +298,10 @@ def _is_perp_structure_fresh(row: dict | None) -> bool:
     )
 
 
-# The static prompt names the technical-context-v1 categories but does not add
-# field-specific trading priors. Numeric definitions remain in the versioned
-# renderer, while Risk and Execution keep their independent authority.
+# ROUND 2 decision: keep LSR/F&G field-specific priors out of _SYSTEM_PROMPT.
+# The static prompt names the technical-context-v1 categories, while numeric
+# definitions remain in the versioned renderer and Risk/Execution retain their
+# independent authority.
 _SYSTEM_PROMPT = """\
 You are a crypto market observer for Aletheia paper-trading.
 
