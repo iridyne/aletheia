@@ -64,12 +64,26 @@ def test_ci_only_validates_pull_requests_merge_queue_and_explicit_release_runs()
     assert triggers["pull_request"]["branches"] == ["master"]
 
 
-def test_ci_has_two_review_focused_jobs() -> None:
+def test_ci_has_two_review_jobs_and_verified_release_handoff() -> None:
     jobs = _workflow()["jobs"]
 
-    assert set(jobs) == {"review", "tests"}
+    assert set(jobs) == {"review", "tests", "release-candidate"}
     assert jobs["review"]["name"] == "Review checks"
     assert jobs["tests"]["name"] == "Python regression"
+    handoff = jobs["release-candidate"]
+    assert handoff["name"] == "Hand off verified release candidate"
+    assert handoff["needs"] == ["review", "tests"]
+    assert "event_name == 'workflow_dispatch'" in handoff["if"]
+    assert "release-please--branches--master" in handoff["if"]
+    assert handoff["permissions"] == {"contents": "write"}
+    assert handoff["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
+    assert len(handoff["steps"]) == 1
+    step = handoff["steps"][0]
+    assert step["uses"] == GITHUB_SCRIPT_ACTION
+    assert step["with"]["retries"] == "3"
+    assert "release_candidate_verified" in step["with"]["script"]
+    assert "head_branch" in step["with"]["script"]
+    assert "head_sha: context.sha" in step["with"]["script"]
 
 
 def test_ci_never_builds_or_distributes_release_artifacts() -> None:
@@ -88,11 +102,12 @@ def test_ci_never_builds_or_distributes_release_artifacts() -> None:
     assert not [token for token in forbidden if token in source]
 
 
-def test_all_jobs_use_self_hosted_runners_and_read_only_permissions() -> None:
+def test_ci_jobs_use_self_hosted_runners_and_minimum_permissions() -> None:
     workflow = _workflow()
 
     assert workflow["permissions"] == {"contents": "read"}
-    for job in workflow["jobs"].values():
+    for job_name in ("review", "tests"):
+        job = workflow["jobs"][job_name]
         assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
         setup_uv = next(step for step in job["steps"] if str(step.get("uses", "")).startswith("astral-sh/setup-uv@"))
         assert setup_uv["with"]["enable-cache"] == "false"
@@ -261,7 +276,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     workflow = _auto_merge_workflow()
     triggers = workflow["on"]
 
-    assert set(triggers) == {"pull_request_target", "repository_dispatch", "workflow_run"}
+    assert set(triggers) == {"pull_request_target", "repository_dispatch"}
     assert triggers["pull_request_target"]["branches"] == ["master"]
     assert triggers["pull_request_target"]["types"] == [
         "opened",
@@ -273,11 +288,10 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "unlabeled",
         "closed",
     ]
-    assert triggers["repository_dispatch"]["types"] == ["auto_merge_update"]
-    assert triggers["workflow_run"] == {
-        "workflows": ["Aletheia CI"],
-        "types": ["completed"],
-    }
+    assert triggers["repository_dispatch"]["types"] == [
+        "auto_merge_update",
+        "release_candidate_verified",
+    ]
     assert workflow["permissions"] == {"contents": "read"}
 
     assert set(workflow["jobs"]) == {
@@ -318,10 +332,10 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "pull-requests": "read",
     }
     release_guard = release_candidate["if"]
-    assert "workflow_run.event == 'workflow_dispatch'" in release_guard
-    assert "workflow_run.conclusion == 'success'" in release_guard
+    assert "event.action == 'release_candidate_verified'" in release_guard
     assert "release-please--branches--master" in release_guard
     candidate_script = release_candidate["steps"][0]["with"]["script"]
+    assert "context.payload.client_payload" in candidate_script
     assert "pullRequest.head.sha === run.head_sha" in candidate_script
     assert "autorelease: pending" in candidate_script
     assert "do-not-auto-merge" in candidate_script
@@ -338,6 +352,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "ubuntu-24.04",
     ]
     assert "event_name == 'repository_dispatch'" in update["if"]
+    assert "event.action == 'auto_merge_update'" in update["if"]
     assert update["permissions"] == {
         "contents": "write",
         "pull-requests": "write",

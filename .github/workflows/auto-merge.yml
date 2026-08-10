@@ -5,10 +5,7 @@ on:
     branches: [master]
     types: [opened, reopened, ready_for_review, edited, synchronize, labeled, unlabeled, closed]
   repository_dispatch:
-    types: [auto_merge_update]
-  workflow_run:
-    workflows: [Aletheia CI]
-    types: [completed]
+    types: [auto_merge_update, release_candidate_verified]
 
 permissions:
   contents: read
@@ -61,10 +58,9 @@ jobs:
   release-candidate:
     name: Approve a verified release candidate
     if: >-
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.event == 'workflow_dispatch' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      startsWith(github.event.workflow_run.head_branch, 'release-please--branches--master')
+      github.event_name == 'repository_dispatch' &&
+      github.event.action == 'release_candidate_verified' &&
+      startsWith(github.event.client_payload.head_branch, 'release-please--branches--master')
     permissions:
       contents: write
       issues: write
@@ -76,7 +72,7 @@ jobs:
         with:
           retries: 3
           script: |
-            const run = context.payload.workflow_run;
+            const run = context.payload.client_payload;
             const {data: pullRequests} = await github.rest.pulls.list({
               ...context.repo,
               state: 'open',
@@ -114,7 +110,9 @@ jobs:
 
   update:
     name: Apply auto-merge update
-    if: github.event_name == 'repository_dispatch'
+    if: >-
+      github.event_name == 'repository_dispatch' &&
+      github.event.action == 'auto_merge_update'
     permissions:
       contents: write
       pull-requests: write
