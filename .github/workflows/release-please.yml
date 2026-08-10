@@ -57,11 +57,14 @@ jobs:
               base: 'master',
             });
             for (const pullRequest of pullRequests) {
-              if (!pullRequest.labels.some(({name}) =>
-                ['autorelease: pending', 'autorelease: pending,do-not-auto-merge'].includes(name),
-              )) {
+              if (!pullRequest.labels.some(({name}) => name === 'autorelease: pending')) {
                 continue;
               }
+              await github.rest.issues.addLabels({
+                ...context.repo,
+                issue_number: pullRequest.number,
+                labels: ['do-not-auto-merge'],
+              });
               await github.rest.actions.createWorkflowDispatch({
                 ...context.repo,
                 workflow_id: 'ci.yml',

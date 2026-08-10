@@ -157,7 +157,8 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
     assert dispatch["with"]["retries"] == "3"
     assert "pulls.list" in dispatch["with"]["script"]
     assert "autorelease: pending" in dispatch["with"]["script"]
-    assert "autorelease: pending,do-not-auto-merge" in dispatch["with"]["script"]
+    assert "issues.addLabels" in dispatch["with"]["script"]
+    assert "labels: ['do-not-auto-merge']" in dispatch["with"]["script"]
     assert "createWorkflowDispatch" in dispatch["with"]["script"]
     assert "workflow_id: 'ci.yml'" in dispatch["with"]["script"]
     assert "ref: pullRequest.head.ref" in dispatch["with"]["script"]
@@ -290,7 +291,6 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert schedule["permissions"] == {"contents": "write"}
     assert set(schedule["env"]) == {"OPERATION", "PR_NUMBER", "EXPECTED_HEAD_SHA"}
     assert "do-not-auto-merge" in schedule["env"]["OPERATION"]
-    assert "autorelease: pending,do-not-auto-merge" in schedule["env"]["OPERATION"]
     assert len(schedule["steps"]) == 1
     schedule_step = schedule["steps"][0]
     assert schedule_step["name"] == "Dispatch trusted auto-merge update"
