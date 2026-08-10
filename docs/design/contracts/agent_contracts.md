@@ -3,7 +3,7 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-07-21 (paper funding accounting convergence)
+> Last updated: 2026-08-10 (structured System Operator trade motivation)
 
 ---
 
@@ -274,6 +274,23 @@ durably queued and independently retried by `outcome_hook_replay`.
     NOT a same-day setup and NOT to be rubber-stamped (PI remains sole decision maker).
 - **LLM**: Yes (structured decision with Bull/Bear debate)
 - **Outputs**: an exact-candidate PiDecision (action, symbol, conviction, reasoning JSON, opportunity_id, signal_source) with `evidence_manifest_json` preserving Opportunity T0, Observer T1 and System Operator T1 identities under `operator-candidate-v3`. Operator T1 direct identities are limited to the exact technical snapshot and Position X block rendered in its prompt; Observer news/macro/on-chain/prediction/Hyperliquid identities remain only in upstream `opportunity_t1` and are labelled as summary-mediated, never copied as direct Operator evidence. Serenity resolves its separate id namespace and records only the exact Layer 3 evidence ids that belong to its persisted theme. A zero-pending wake instead writes one non-trading `operator_evaluation_event` and does not call the LLM
+- **Structured trade motivation**: every new entry decision builds one
+  object with `schema_version=structured-trade-motivation/v1`, containing
+  `action_intent` (`long`/`short` for entry, `hold` for no-trade, with
+  `close`/`reduce` reserved for their existing actions), `thesis`,
+  `observed_facts` with source refs, `interpretations`, supporting/opposing
+  evidence, assumptions, invalidation conditions, expected horizon, confidence,
+  uncertainty reason, and the exact evidence manifest. The identical object is
+  stored in the Proposal `agent_rationale.decision_meta.trade_motivation` and in
+  the owning PiDecision `evidence_manifest_json.trade_motivation`; Thesis Lineage
+  reads PiDecision first and Proposal second. Missing fields remain
+  `unavailable`, empty, or `null`; readers never derive a structured object from
+  legacy prose. This reuses existing JSON carriers and requires no table migration.
+  `observed_facts` retains only refs that resolve to identities in that exact
+  decision manifest; facts with no valid ref are omitted rather than presented as observed.
+  The B-class behavior is part of the Opportunity Information policy epoch via
+  `structured_trade_motivation=structured-trade-motivation/v1`, so pre/post-change
+  decisions cannot share an epoch.
 - **Side effects**: Candidate path writes `pi_decisions`; zero-pending path appends only an observation event; neither path bypasses paper_trader queue authority
 - **Attribution**: `_attach_opportunity_context` backfills `opportunity_id` + `signal_source`
   (`market_observer` Layer 1 wins on tie; `serenity` Layer 3 is the fallback). `signal_source`

@@ -84,6 +84,14 @@ def test_rationale_meta_json_is_always_parseable(monkeypatch):
     assert len(meta["supporting"]) == 5
     assert len(meta["supporting_signals"]) == 5
     assert len(meta["opposing_signals"]) == 5
+    motivation = meta["trade_motivation"]
+    assert motivation["schema_version"] == "structured-trade-motivation/v1"
+    assert motivation["action_intent"] == "short"
+    assert motivation["thesis"] == long_reasoning
+    assert motivation["supporting_evidence"] == _decision(long_reasoning).supporting_signals[:5]
+    assert motivation["opposing_evidence"] == _decision(long_reasoning).opposing_signals[:5]
+    assert motivation["observed_facts"] == []
+    assert motivation["evidence_manifest"] == {}
 
 
 def test_rationale_thesis_capped_but_not_the_whole_string(monkeypatch):

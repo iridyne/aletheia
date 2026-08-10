@@ -185,6 +185,13 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
             "supporting_signals": ["fixed long opportunity"],
             "opposing_signals": ["fixture reversal"],
             "key_assumptions": ["the fixture snapshot is current"],
+            "observed_facts": [{
+                "fact": "The fixed long opportunity is queued.",
+                "evidence_refs": [f"opportunity:{opportunity.id}"],
+            }],
+            "interpretations": ["The fixed setup supports a bounded paper entry."],
+            "invalidation_conditions": ["Price reaches the declared stop."],
+            "uncertainty_reason": "This is one deterministic fixture setup.",
         }, None)
 
     async def deterministic_review(*args, **kwargs):
@@ -262,6 +269,19 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     assert position["proposal_id"] == proposal["id"]
     assert position["order_id"] == order["id"]
     assert position["opportunity_id"] == opportunity.id
+    proposal_meta = json.loads(proposal["agent_rationale"].split("\n---\n", 1)[1])
+    proposal_motivation = proposal_meta["trade_motivation"]
+    decision_motivation = json.loads(decision["evidence_manifest_json"])["trade_motivation"]
+    assert decision_motivation == proposal_motivation
+    assert proposal_motivation["schema_version"] == "structured-trade-motivation/v1"
+    assert proposal_motivation["action_intent"] == "long"
+    assert proposal_motivation["observed_facts"][0]["evidence_refs"] == [
+        f"opportunity:{opportunity.id}"
+    ]
+    assert proposal_motivation["invalidation_conditions"] == [
+        "Price reaches the declared stop."
+    ]
+    assert proposal_motivation["evidence_manifest"]
     attribution = json.loads(proposal["attribution_snapshot"])
     assert attribution["market_context"]["instrument"] == {
         "symbol": "BTC/USDT",
