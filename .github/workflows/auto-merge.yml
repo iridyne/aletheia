@@ -6,6 +6,9 @@ on:
     types: [opened, reopened, ready_for_review, edited, synchronize, labeled, unlabeled, closed]
   repository_dispatch:
     types: [auto_merge_update]
+  workflow_run:
+    workflows: [Aletheia CI]
+    types: [completed]
 
 permissions:
   contents: read
@@ -52,6 +55,60 @@ jobs:
                 operation,
                 pull_request_number: pullRequestNumber,
                 expected_head_sha: expectedHeadSha,
+              },
+            });
+
+  release-candidate:
+    name: Approve a verified release candidate
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'release-please--branches--master')
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: read
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    steps:
+      - name: Release the verified candidate hold
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
+        with:
+          retries: 3
+          script: |
+            const run = context.payload.workflow_run;
+            const {data: pullRequests} = await github.rest.pulls.list({
+              ...context.repo,
+              state: 'open',
+              base: 'master',
+              head: `${context.repo.owner}:${run.head_branch}`,
+            });
+            const candidates = pullRequests.filter((pullRequest) =>
+              pullRequest.head.repo?.full_name === context.repo.owner + '/' + context.repo.repo &&
+              pullRequest.head.sha === run.head_sha &&
+              pullRequest.labels.some(({name}) => name === 'autorelease: pending') &&
+              pullRequest.labels.some(({name}) => name === 'do-not-auto-merge'),
+            );
+            if (candidates.length === 0) {
+              core.info('no held release candidate matches the successful CI run');
+              return;
+            }
+            if (candidates.length !== 1) {
+              throw new Error(`expected one release candidate, found ${candidates.length}`);
+            }
+            const [pullRequest] = candidates;
+            await github.rest.issues.removeLabel({
+              ...context.repo,
+              issue_number: pullRequest.number,
+              name: 'do-not-auto-merge',
+            });
+            await github.rest.repos.createDispatchEvent({
+              ...context.repo,
+              event_type: 'auto_merge_update',
+              client_payload: {
+                operation: 'enable',
+                pull_request_number: pullRequest.number,
+                expected_head_sha: run.head_sha,
               },
             });
 

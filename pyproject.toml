@@ -48,6 +48,12 @@ packages = ["aletheia"]
 [tool.hatch.version]
 path = "aletheia/__init__.py"
 
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "aletheia/__init__.py" },
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
