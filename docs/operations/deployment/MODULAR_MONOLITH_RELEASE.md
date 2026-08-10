@@ -35,6 +35,11 @@ the release PR creates the matching tag and a metadata-only GitHub Release. It
 does not publish a package, build an artifact, deploy a Runtime, or open an
 Observation window.
 
+The workflow invokes the exact `release-please@17.6.0` CLI through the
+GitHub-owned Node setup Action. This preserves the repository's restrictive
+Action allowlist; it does not require a PAT or an allowlist exception for a
+third-party Action.
+
 The bootstrap manifest remains at the last released product version (`0.5.0`).
 The first generated release PR promotes the version, changelog, and manifest
 together to the reviewed `0.6.0` baseline; only its merge may create `v0.6.0`.
