@@ -564,11 +564,6 @@ def enqueue_research_run(run_id: str) -> None:
 
 async def _process_research_run(run_id: str) -> None:
     """Main execution pipeline for a research run."""
-    from aletheia.learning.opportunity_information_policy import (
-        ensure_opportunity_information_policy_epoch,
-    )
-
-    ensure_opportunity_information_policy_epoch()
     run = repo.get_serenity_research_run(run_id)
     if not run:
         logger.error("Research run %s not found", run_id)
@@ -579,21 +574,40 @@ async def _process_research_run(run_id: str) -> None:
         return
 
     now = datetime.now(timezone.utc).isoformat()
-    repo.update_serenity_research_run(run_id, status="running", started_at=now, updated_at=now)
+    if not repo.claim_serenity_research_run(run_id, now=now):
+        current = repo.get_serenity_research_run(run_id)
+        logger.info(
+            "Research run %s was not claimed; current status is %s",
+            run_id,
+            (current or {}).get("status", "missing"),
+        )
+        return
     _emit_event(run_id, "run.started", message="Research run started")
 
     try:
+        from aletheia.learning.opportunity_information_policy import (
+            ensure_opportunity_information_policy_epoch,
+        )
+
+        ensure_opportunity_information_policy_epoch()
         await _run_pipeline(run_id, run)
     except _CancelledError:
         logger.info("Research run %s cancelled", run_id)
+        _acknowledge_cancellation(run_id)
     except _RateLimitError as e:
-        _handle_rate_limit(run_id, run, str(e))
+        if not _acknowledge_cancellation(run_id):
+            _handle_rate_limit(
+                run_id,
+                repo.get_serenity_research_run(run_id) or run,
+                str(e),
+            )
     except Exception as e:
         detail = _error_detail(e)
         logger.error("Research run %s failed at stage: %s", run_id, detail)
         run_refreshed = repo.get_serenity_research_run(run_id)
         stage = (run_refreshed or run).get("stage")
-        _mark_failed(run_id, _classify_error(e), detail[:500], stage)
+        if not _acknowledge_cancellation(run_id):
+            _mark_failed(run_id, _classify_error(e), detail[:500], stage)
 
 
 async def _run_pipeline(run_id: str, run: dict) -> None:
@@ -938,6 +952,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
                 message=f"Generated {len(persisted_opps)} opportunities")
 
     # --- Auto-promote (D5 switch) ---
+    _check_cancellation(run_id)
     try:
         from aletheia.config.loader import load_config as _load_cfg
         _cfg = _load_cfg()
@@ -964,14 +979,17 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
 
     now = datetime.now(timezone.utc).isoformat()
     final_status = "completed" if counts["themes"] > 0 else "completed_empty"
-    repo.update_serenity_research_run(
+    finished = repo.finish_serenity_research_run(
         run_id,
-        status=final_status,
+        final_status,
         stage=None,
         finished_at=now,
         updated_at=now,
         artifact_counts=json.dumps(counts),
     )
+    if not finished:
+        _acknowledge_cancellation(run_id)
+        return
     _emit_event(run_id, f"run.{final_status}",
                 message=f"Run {final_status}: {counts['themes']} themes, {counts['evidence']} evidence, "
                         f"{counts['claims']} claims, {counts['opportunities']} opportunities")
@@ -1051,15 +1069,18 @@ def _emit_event(run_id: str, event_type: str, stage: str | None = None,
 
 def _mark_failed(run_id: str, error_type: str, error_message: str, error_stage: str | None) -> None:
     now = datetime.now(timezone.utc).isoformat()
-    repo.update_serenity_research_run(
+    finished = repo.finish_serenity_research_run(
         run_id,
-        status="failed",
+        "failed",
         error_type=error_type,
         error_message=error_message[:500] if error_message else None,
         error_stage=error_stage,
         finished_at=now,
         updated_at=now,
     )
+    if not finished:
+        _acknowledge_cancellation(run_id)
+        return
     _emit_event(run_id, "run.failed", stage=error_stage,
                 message=f"{error_type}: {error_message[:200] if error_message else ''}")
 
@@ -1080,9 +1101,9 @@ def _handle_rate_limit(run_id: str, run: dict, error_message: str) -> None:
         jitter = random.randint(0, delay // 4)
         next_retry_at = (now + timedelta(seconds=delay + jitter)).isoformat()
 
-    repo.update_serenity_research_run(
+    finished = repo.finish_serenity_research_run(
         run_id,
-        status="rate_limited",
+        "rate_limited",
         error_type="provider_rate_limit",
         error_message=error_message[:500],
         error_stage=run.get("stage"),
@@ -1090,6 +1111,9 @@ def _handle_rate_limit(run_id: str, run: dict, error_message: str) -> None:
         updated_at=now.isoformat(),
         next_retry_at=next_retry_at,
     )
+    if not finished:
+        _acknowledge_cancellation(run_id)
+        return
     _emit_event(run_id, "run.rate_limited",
                 message=f"Rate limited: {error_message[:200]}"
                         + (f" (next retry at {next_retry_at})" if next_retry_at else " (retries exhausted)"))
@@ -1170,7 +1194,23 @@ class _CancelledError(Exception):
 
 def _should_cancel(run_id: str) -> bool:
     run = repo.get_serenity_research_run(run_id)
-    return run is not None and run["status"] == "cancelled"
+    return run is not None and run["status"] in {"cancel_requested", "cancelled"}
+
+
+def _acknowledge_cancellation(run_id: str) -> bool:
+    run = repo.get_serenity_research_run(run_id)
+    if not run or run["status"] != "cancel_requested":
+        return False
+    now = datetime.now(timezone.utc).isoformat()
+    if not repo.acknowledge_serenity_research_run_cancel(run_id, now=now):
+        return False
+    _emit_event(
+        run_id,
+        "run.cancelled",
+        stage=run.get("stage"),
+        message="Cancellation acknowledged by research worker",
+    )
+    return True
 
 
 def _check_cancellation(run_id: str) -> None:

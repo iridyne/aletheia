@@ -737,7 +737,7 @@ def _parse_scheduler_timestamp(value: str | None) -> datetime | None:
 
 
 def _recover_interrupted_serenity_run() -> list[str]:
-    """Mark research work owned by the previous gateway process as failed."""
+    """Reconcile research work owned by the previous gateway process."""
     try:
         from aletheia.storage import repositories as repo
         from aletheia.storage.models import SerenityRunEvent
@@ -749,6 +749,23 @@ def _recover_interrupted_serenity_run() -> list[str]:
         recovered: list[str] = []
         for run in active_runs:
             run_id = run["id"]
+            if run["status"] == "cancel_requested":
+                if repo.acknowledge_serenity_research_run_cancel(run_id, now=now):
+                    recovered.append(run_id)
+                    try:
+                        repo.insert_serenity_run_event(SerenityRunEvent(
+                            run_id=run_id,
+                            event_type="run.cancelled",
+                            stage=run.get("stage"),
+                            message="Gateway restart confirmed cancellation after worker exit",
+                        ))
+                    except Exception as event_exc:
+                        logger.warning(
+                            "Could not record cancellation event for Serenity run %s: %s",
+                            run_id,
+                            event_exc,
+                        )
+                continue
             repo.update_serenity_research_run(
                 run_id,
                 status="failed",

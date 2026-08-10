@@ -769,20 +769,61 @@ async def test_cancel_queued_run(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "cancelled"
+    assert data["deduplicated"] is False
 
     updated = repo.get_serenity_research_run(run.id)
     assert updated["status"] == "cancelled"
     assert updated["finished_at"] is not None
+    assert repo.claim_serenity_research_run(run.id, now="2026-06-13T00:00:00Z") is False
 
 
 @pytest.mark.anyio
 async def test_cancel_running_run(client):
-    run = SerenityResearchRun(status="running", started_at="2026-06-13T00:00:00Z")
+    run = SerenityResearchRun(
+        status="running",
+        stage="collect_evidence",
+        started_at="2026-06-13T00:00:00Z",
+        updated_at="2026-06-13T00:01:00Z",
+    )
     repo.insert_serenity_research_run(run)
 
     resp = await client.post(f"/api/serenity/runs/{run.id}/cancel")
     assert resp.status_code == 200
-    assert resp.json()["status"] == "cancelled"
+    assert resp.json()["status"] == "cancel_requested"
+
+    requested = repo.get_serenity_research_run(run.id)
+    assert requested["status"] == "cancel_requested"
+    assert requested["finished_at"] is None
+    assert repo.get_active_serenity_research_run()["id"] == run.id
+    assert repo.finish_serenity_research_run(
+        run.id,
+        "completed",
+        finished_at="2026-06-13T00:02:00Z",
+        updated_at="2026-06-13T00:02:00Z",
+    ) is False
+
+    repeated = await client.post(f"/api/serenity/runs/{run.id}/cancel")
+    assert repeated.status_code == 200
+    assert repeated.json() == {
+        "runId": run.id,
+        "status": "cancel_requested",
+        "deduplicated": True,
+    }
+
+    status = (await client.get("/api/serenity/status")).json()
+    assert status["currentRun"]["stage"] == "collect_evidence"
+    assert status["currentRun"]["lastProgressAt"] == requested["updated_at"]
+    listed = (await client.get("/api/serenity/runs")).json()["items"][0]
+    assert listed["stage"] == "collect_evidence"
+    assert listed["lastProgressAt"] == requested["updated_at"]
+
+    from aletheia.agents.research_worker import _acknowledge_cancellation
+
+    assert _acknowledge_cancellation(run.id) is True
+    cancelled = repo.get_serenity_research_run(run.id)
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["finished_at"] is not None
+    assert repo.list_serenity_run_events(run.id)[-1]["event_type"] == "run.cancelled"
 
 
 @pytest.mark.anyio
@@ -1026,8 +1067,11 @@ async def test_pipeline_cancellation(tmp_path, monkeypatch):
 
     assert _should_cancel(run.id) is False
 
-    # Mark cancelled
-    repo.update_serenity_research_run(run.id, status="cancelled")
+    # A request is active until the worker acknowledges it.
+    repo.request_serenity_research_run_cancel(
+        run.id,
+        now="2026-06-13T00:01:00+00:00",
+    )
     assert _should_cancel(run.id) is True
 
     with pytest.raises(_CancelledError):
@@ -1052,7 +1096,7 @@ async def test_pipeline_rate_limit_handling(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
 
-    run = SerenityResearchRun(trigger_type="manual", mode="standard", status="queued", retry_count=0)
+    run = SerenityResearchRun(trigger_type="manual", mode="standard", status="running", retry_count=0)
     repo.insert_serenity_research_run(run)
 
     from aletheia.agents.research_worker import _handle_rate_limit
@@ -1082,7 +1126,7 @@ async def test_pipeline_rate_limit_retries_exhausted(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
 
-    run = SerenityResearchRun(trigger_type="scheduled", mode="standard", status="queued", retry_count=3)
+    run = SerenityResearchRun(trigger_type="scheduled", mode="standard", status="running", retry_count=3)
     repo.insert_serenity_research_run(run)
 
     from aletheia.agents.research_worker import _handle_rate_limit

@@ -4482,6 +4482,67 @@ def update_serenity_research_run(run_id: str, **kwargs) -> None:
     _update("serenity_research_runs", run_id, kwargs)
 
 
+def claim_serenity_research_run(run_id: str, *, now: str) -> bool:
+    """Claim one queued run without reviving a concurrently cancelled run."""
+    cursor = execute_write(
+        "UPDATE serenity_research_runs SET status = 'running', started_at = ?, "
+        "updated_at = ? WHERE id = ? AND status = 'queued'",
+        (now, now, run_id),
+    )
+    return cursor.rowcount == 1
+
+
+def request_serenity_research_run_cancel(run_id: str, *, now: str) -> tuple[str | None, bool]:
+    """Cancel queued work or request cooperative cancellation of running work."""
+    queued = execute_write(
+        "UPDATE serenity_research_runs SET status = 'cancelled', finished_at = ?, "
+        "updated_at = ? WHERE id = ? AND status = 'queued'",
+        (now, now, run_id),
+    )
+    if queued.rowcount == 1:
+        return "cancelled", True
+    running = execute_write(
+        "UPDATE serenity_research_runs SET status = 'cancel_requested', updated_at = ? "
+        "WHERE id = ? AND status = 'running'",
+        (now, run_id),
+    )
+    if running.rowcount == 1:
+        return "cancel_requested", True
+    current = get_serenity_research_run(run_id)
+    return (str(current["status"]) if current else None), False
+
+
+def acknowledge_serenity_research_run_cancel(run_id: str, *, now: str) -> bool:
+    """Write terminal cancellation only after the running worker has stopped."""
+    cursor = execute_write(
+        "UPDATE serenity_research_runs SET status = 'cancelled', finished_at = ?, "
+        "next_retry_at = NULL, updated_at = ? "
+        "WHERE id = ? AND status = 'cancel_requested'",
+        (now, now, run_id),
+    )
+    return cursor.rowcount == 1
+
+
+def finish_serenity_research_run(run_id: str, status: str, **kwargs) -> bool:
+    """Commit a worker outcome only while that worker still owns running state."""
+    if status not in {"completed", "completed_empty", "failed", "rate_limited"}:
+        raise ValueError(f"invalid Serenity terminal status: {status}")
+    allowed = {
+        "stage", "finished_at", "updated_at", "artifact_counts", "error_type",
+        "error_message", "error_stage", "next_retry_at",
+    }
+    unknown = set(kwargs) - allowed
+    if unknown:
+        raise ValueError(f"invalid Serenity terminal fields: {sorted(unknown)}")
+    values = {"status": status, **kwargs}
+    sets = ", ".join(f"{key} = ?" for key in values)
+    cursor = execute_write(
+        f"UPDATE serenity_research_runs SET {sets} WHERE id = ? AND status = 'running'",
+        [*values.values(), run_id],
+    )
+    return cursor.rowcount == 1
+
+
 def get_active_serenity_research_run() -> dict | None:
     rows = list_active_serenity_research_runs(limit=1)
     return rows[0] if rows else None
@@ -4490,7 +4551,8 @@ def get_active_serenity_research_run() -> dict | None:
 def list_active_serenity_research_runs(limit: int = 100) -> list[dict]:
     db = get_db()
     rows = db.execute(
-        "SELECT * FROM serenity_research_runs WHERE status IN ('queued', 'running', 'waiting_retry') "
+        "SELECT * FROM serenity_research_runs "
+        "WHERE status IN ('queued', 'running', 'cancel_requested', 'waiting_retry') "
         "ORDER BY created_at DESC LIMIT ?",
         (limit,),
     ).fetchall()
