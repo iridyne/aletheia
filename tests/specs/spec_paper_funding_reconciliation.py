@@ -209,6 +209,48 @@ def test_paper_funding_reconciliation_apply_is_guarded_and_idempotent(
     assert len(repo.list_outcome_hook_jobs(position_id=position_id)) <= 1
 
 
+def test_reconciliation_preserves_validated_close_evidence_after_ledger_drift(
+    tmp_path, monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    position_id = _seed_recoverable_position()
+    from aletheia.maintenance.paper_funding_reconciliation import (
+        apply_paper_funding_reconciliation,
+        inspect_paper_funding_reconciliation,
+    )
+    from aletheia.storage import repositories as repo
+
+    initial = inspect_paper_funding_reconciliation(position_ids=[position_id])
+    apply_paper_funding_reconciliation(
+        position_ids=[position_id],
+        expected_fingerprint=initial["report_fingerprint"],
+    )
+    before = repo._select_one("positions", position_id)
+    assert before is not None
+    stored_funding = json.loads(before["reconciliation_evidence"])["funding"]
+
+    # Later historical ingestion must not redefine the immutable evidence used
+    # when this Position was closed and economically materialized.
+    _snapshot_at(
+        rate=0.1234,
+        target=_iso_ms(4, millisecond=4),
+        observed=_iso_ms(4, millisecond=4),
+    )
+
+    report = inspect_paper_funding_reconciliation(position_ids=[position_id])
+    row = report["rows"][0]
+
+    assert row["categories"] == []
+    assert row["repair_mode"] == "already_current"
+    assert row["proposed"]["funding_evidence"] == stored_funding
+    assert row["proposed"]["funding_cost"] == pytest.approx(before["funding_cost"])
+    assert row["proposed"]["realized_pnl"] == pytest.approx(before["realized_pnl"])
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM paper_account_events WHERE position_id=?",
+        (position_id,),
+    ).fetchone()["n"] == 1
+
+
 @spec_claim(
     SpecClaim(
         "PFA-REC-04",

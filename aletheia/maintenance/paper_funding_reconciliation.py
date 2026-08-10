@@ -117,8 +117,42 @@ def _close_event_values(position_id: str) -> list[dict]:
     ).fetchall()]
 
 
-def _proposed_result(row: dict) -> tuple[dict, float | None, float | None, bool, str]:
+def _project_result(
+    row: dict,
+    *,
+    evidence: dict,
+    funding_cost: float,
+) -> tuple[dict, float, float | None, bool, str]:
     from aletheia.analytics.outcome_integrity import outcome_write_eligibility
+    direction = str(row.get("direction") or "").lower()
+    quantity = float(row["quantity"])
+    entry = float(row["entry_price"])
+    exit_price = float(row["current_price"])
+    if direction in {"long", "buy"}:
+        gross = (exit_price - entry) * quantity
+    elif direction in {"short", "sell"}:
+        gross = (entry - exit_price) * quantity
+    else:
+        return evidence, funding_cost, None, False, "invalid_direction"
+    realized = round(
+        gross
+        - float(row["entry_fee"])
+        - float(row["exit_fee"])
+        - funding_cost,
+        8,
+    )
+    check = {
+        **row,
+        "realized_pnl": realized,
+        "funding_cost": funding_cost,
+        "funding_source": "local_simulation",
+        "exit_fill_verified": True,
+    }
+    eligible, reason = outcome_write_eligibility(check, exit_fill_verified=True)
+    return evidence, funding_cost, realized, eligible, reason
+
+
+def _proposed_result(row: dict) -> tuple[dict, float | None, float | None, bool, str]:
     from aletheia.portfolio.local_funding import compute_local_funding
 
     funding = compute_local_funding(
@@ -130,32 +164,11 @@ def _proposed_result(row: dict) -> tuple[dict, float | None, float | None, bool,
         return funding.evidence, None, None, False, str(
             funding.evidence.get("reason") or "incomplete_funding_economics"
         )
-    direction = str(row.get("direction") or "").lower()
-    quantity = float(row["quantity"])
-    entry = float(row["entry_price"])
-    exit_price = float(row["current_price"])
-    if direction in {"long", "buy"}:
-        gross = (exit_price - entry) * quantity
-    elif direction in {"short", "sell"}:
-        gross = (entry - exit_price) * quantity
-    else:
-        return funding.evidence, None, None, False, "invalid_direction"
-    realized = round(
-        gross
-        - float(row["entry_fee"])
-        - float(row["exit_fee"])
-        - float(funding.funding_cost),
-        8,
+    return _project_result(
+        row,
+        evidence=funding.evidence,
+        funding_cost=float(funding.funding_cost),
     )
-    check = {
-        **row,
-        "realized_pnl": realized,
-        "funding_cost": funding.funding_cost,
-        "funding_source": "local_simulation",
-        "exit_fill_verified": True,
-    }
-    eligible, reason = outcome_write_eligibility(check, exit_fill_verified=True)
-    return funding.evidence, float(funding.funding_cost), realized, eligible, reason
 
 
 def _stored_funding_identity(row: dict) -> dict[str, Any]:
@@ -215,13 +228,23 @@ def _stored_funding_identity(row: dict) -> dict[str, Any]:
 
 def _plan_row(row: dict) -> dict:
     position_id = str(row["id"])
-    evidence, funding_cost, proposed_pnl, eligible, reason = _proposed_result(row)
+    recomputed = _proposed_result(row)
+    recomputed_evidence = recomputed[0]
     recomputed_fingerprint = (
-        _fingerprint(evidence)
-        if isinstance(evidence, dict) and evidence.get("status") == "complete"
+        _fingerprint(recomputed_evidence)
+        if isinstance(recomputed_evidence, dict)
+        and recomputed_evidence.get("status") == "complete"
         else None
     )
     stored_identity = _stored_funding_identity(row)
+    if stored_identity["validated"] and row.get("funding_cost") is not None:
+        evidence, funding_cost, proposed_pnl, eligible, reason = _project_result(
+            row,
+            evidence=stored_identity["funding_evidence"],
+            funding_cost=float(row["funding_cost"]),
+        )
+    else:
+        evidence, funding_cost, proposed_pnl, eligible, reason = recomputed
     close_events = _close_event_values(position_id)
     cash_total, cash_events = _cash_total(position_id)
     hooks = repo.list_outcome_hook_jobs(position_id=position_id, limit=20)
