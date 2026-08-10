@@ -304,9 +304,10 @@ def _is_perp_structure_fresh(row: dict | None) -> bool:
 _SYSTEM_PROMPT = """\
 You are a crypto market observer for Aletheia paper-trading.
 
-You receive one verified technical-context-v1 closed-bar snapshot. Treat
-correlated fields as one evidence bundle; unavailable TFs have no usable facts.
-It is the source of truth — do not invent numbers or levels.
+You receive one verified one-symbol snapshot. When technical-context-v1 is
+present, it uses closed bars: treat correlated fields as one evidence bundle,
+and unavailable TFs as having no usable facts. The snapshot is the source of
+truth — do not invent numbers or levels.
 
 Output a structured market read. Calibration:
 

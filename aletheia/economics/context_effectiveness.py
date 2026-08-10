@@ -200,6 +200,7 @@ async def _run_context_pair(
     call_errors: dict[str, str] = {}
 
     for arm in arms:
+        is_technical_pair = treatment_field == "technical_context"
         treatment = fixture[treatment_field] if arm == "treatment" else ""
         rendered_context = fixture["market_context"]
         if treatment:
@@ -226,7 +227,11 @@ async def _run_context_pair(
             },
             {
                 "kind": treatment_artifact_kind,
-                "stable_id": f"fixture:{fixture['fixture_id']}:{treatment_artifact_suffix}",
+                "stable_id": (
+                    f"technical-context-v1:fixture:{fixture['fixture_id']}"
+                    if is_technical_pair
+                    else f"fixture:{fixture['fixture_id']}:{treatment_artifact_suffix}"
+                ),
                 "source": treatment_artifact_source,
                 "selected_reason": "paired_treatment" if treatment else "control_omission",
                 "trust_class": treatment_trust_class,
@@ -245,6 +250,11 @@ async def _run_context_pair(
             "context_symbol": fixture["symbol"],
             "evaluation": evaluation,
             "reasoning_effort": "none",
+            "context_adapter": (
+                "technical-context-v1"
+                if is_technical_pair and arm == "treatment"
+                else "none"
+            ),
         }
         if treatment_field == "learning_context" and arm == "control":
             result, error = await llm_structured(
