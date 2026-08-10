@@ -29,9 +29,13 @@ physical tokenomics attempts.
 
 Market-data computation and storage lifecycle are owned by the
 [Technical Analysis and OHLCV Tiering Contract](technical_analysis_contract.md).
+Exact-timeframe and real-field provider results are owned by the
+[OHLCV Provider Result Contract](ohlcv_provider_result_contract.md).
+Collector execution facts and persisted dataset freshness are kept separate by
+the [Market Data Coverage and Collector Health Contract](market_data_coverage_contract.md).
 
-Dashboard empty, stale, partial, unavailable, configuration, and permission
-presentation semantics are owned by the
+Learning Knowledge empty, stale, and unavailable presentation semantics are
+owned by the
 [Dashboard Data Presentation Contract](dashboard_data_presentation_contract.md).
 
 The [Universe Twin Shadow Evidence Contract](universe_twin_shadow_contract.md)
