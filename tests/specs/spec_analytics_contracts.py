@@ -202,6 +202,7 @@ def test_alpha_attribution_contract_shape_on_empty_db():
     assert paired["contract_version"] == "exit-paired-evidence/v2"
     assert paired["outcome_coverage"] is None
     assert paired["incremental_net_pnl_mean_ci_95"] is None
+    assert paired["unsettled_count"] == 0
     assert paired["behavior_authority"] is False
     assert paired["promotion_eligible"] is False
     assert paired["contribution_verdict"] == "insufficient_data"

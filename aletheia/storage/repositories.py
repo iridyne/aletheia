@@ -3713,6 +3713,34 @@ def list_exit_breakeven_shadow_outcomes(limit: int = 1000) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def list_exit_breakeven_shadow_report_rows(
+    *,
+    closed_after: str | None = None,
+) -> list[dict]:
+    """Return every eligible closed assignment, including unsettled outcomes."""
+
+    cutoff_clause = (
+        "AND julianday(position.closed_at) >= julianday(?) "
+        if closed_after is not None
+        else ""
+    )
+    params = (closed_after,) if closed_after is not None else ()
+    rows = get_db().execute(
+        "SELECT assignment.position_id, outcome.status, outcome.treatment_changed, "
+        "outcome.actual_closed_at, outcome.incremental_net_pnl, "
+        "position.closed_at AS assigned_closed_at, position.close_reason "
+        "FROM exit_breakeven_shadow_assignments AS assignment "
+        "JOIN positions AS position ON position.id=assignment.position_id "
+        "LEFT JOIN exit_breakeven_shadow_outcomes AS outcome "
+        "ON outcome.position_id=assignment.position_id "
+        "WHERE position.status='closed' AND position.outcome_eligible=1 "
+        + cutoff_clause
+        + "ORDER BY position.closed_at DESC",
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def find_compatible_open_position(
     symbol: str,
     market_type: str,

@@ -238,8 +238,9 @@ Current implementation:
   incremental net PnL under the frozen cost model.
 - Reports available-outcome coverage and a deterministic position-level
   percentile-bootstrap 95% interval for mean incremental net PnL when at least
-  two outcomes are available. Unavailable outcomes stay in the coverage
-  denominator and are never imputed as zero.
+  two outcomes are available. Eligible closed assignments without a settled
+  outcome and unavailable outcomes stay in the coverage denominator and are
+  never imputed as zero. Bootstrap work is capped independently of cohort size.
 - Includes only rows closed within the audit window; missing exact one-minute
   path, ordering, identity, or funding remains unavailable.
 - Joins the immutable paired result back to its Position solely to expose a

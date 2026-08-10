@@ -242,7 +242,7 @@ def test_report_bootstrap_is_deterministic_by_position(monkeypatch):
             "close_reason": None,
         },
     ]
-    monkeypatch.setattr(repo, "list_exit_breakeven_shadow_outcomes", lambda **_: rows)
+    monkeypatch.setattr(repo, "list_exit_breakeven_shadow_report_rows", lambda **_: rows)
 
     first = build_exit_breakeven_shadow_report()
     rows.reverse()
@@ -250,6 +250,20 @@ def test_report_bootstrap_is_deterministic_by_position(monkeypatch):
 
     assert first["incremental_net_pnl_mean_ci_95"] == [0.0, 2.0]
     assert second["incremental_net_pnl_mean_ci_95"] == first["incremental_net_pnl_mean_ci_95"]
+
+
+def test_report_counts_closed_assignment_without_outcome_as_unsettled():
+    position = _seed_position()
+    assert repo.insert_exit_breakeven_shadow_assignment(_assignment(position))
+    _close(position["id"])
+
+    report = build_exit_breakeven_shadow_report()
+
+    assert report["outcome_count"] == 1
+    assert report["available_count"] == 0
+    assert report["unavailable_count"] == 0
+    assert report["unsettled_count"] == 1
+    assert report["outcome_coverage"] == 0.0
 
 
 def test_same_bar_trigger_and_stop_is_not_retrospectively_activated():

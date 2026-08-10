@@ -180,6 +180,7 @@ def _empty_exit_paired_evidence(reason: str) -> dict:
         "outcome_count": 0,
         "available_count": 0,
         "unavailable_count": 0,
+        "unsettled_count": 0,
         "outcome_coverage": None,
         "changed_count": 0,
         "incremental_net_pnl_total": None,
@@ -187,7 +188,8 @@ def _empty_exit_paired_evidence(reason: str) -> dict:
         "incremental_net_pnl_mean_ci_95": None,
         "bootstrap_method": "position_percentile_bootstrap/v1",
         "bootstrap_seed": 20260810,
-        "bootstrap_replicates": 20_000,
+        "bootstrap_replicates": 0,
+        "bootstrap_max_draws": 2_000_000,
         "positive_increment_count": 0,
         "close_reason_breakdown": [],
         "close_reason_attribution_available": False,
@@ -672,6 +674,7 @@ def render_alpha_audit(report: dict) -> str:
         f"Exit paired evidence: {paired.get('measurement_status', 'not_measured')}",
         "  "
         f"available={paired.get('available_count', 0)} "
+        f"unsettled={paired.get('unsettled_count', 0)} "
         f"coverage={_fmt_metric(paired.get('outcome_coverage'))} "
         f"changed={paired.get('changed_count', 0)} "
         f"mean_delta={_fmt_metric(paired.get('incremental_net_pnl_mean'))}",
