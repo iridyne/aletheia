@@ -338,6 +338,26 @@ def _build_macos_plist() -> dict:
     }
 
 
+def _runner_commands_match(actual: object, expected: object) -> bool:
+    if actual == expected:
+        return True
+    if not isinstance(actual, list) or not isinstance(expected, list):
+        return False
+    if len(actual) != len(expected) or actual[1:] != expected[1:]:
+        return False
+    if not all(isinstance(part, str) for part in (*actual, *expected)):
+        return False
+    actual_python, expected_python = Path(actual[0]), Path(expected[0])
+    if actual_python.parent != expected_python.parent:
+        return False
+    if not actual_python.name.startswith("python") or not expected_python.name.startswith("python"):
+        return False
+    try:
+        return actual_python.samefile(expected_python)
+    except OSError:
+        return False
+
+
 def _write_plist(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=False)
@@ -349,8 +369,13 @@ def _write_plist(path: Path, payload: dict) -> None:
 
 
 def _macos_payload_valid(payload: dict) -> bool:
+    expected = _build_macos_plist()
     return (
-        payload == _build_macos_plist()
+        _runner_commands_match(
+            payload.get("ProgramArguments"), expected["ProgramArguments"]
+        )
+        and {key: value for key, value in payload.items() if key != "ProgramArguments"}
+        == {key: value for key, value in expected.items() if key != "ProgramArguments"}
         and "KeepAlive" not in payload
         and "StartInterval" not in payload
         and "EnvironmentVariables" not in payload
@@ -366,7 +391,9 @@ def _status_macos() -> dict:
         payload = plistlib.loads(canonical.read_bytes())
         valid = _macos_payload_valid(payload)
         if enabled_path.exists():
-            valid = valid and plistlib.loads(enabled_path.read_bytes()) == payload
+            valid = valid and _macos_payload_valid(
+                plistlib.loads(enabled_path.read_bytes())
+            )
     except Exception:
         valid = False
     loaded = False
@@ -478,6 +505,27 @@ def _build_systemd_unit() -> str:
     )
 
 
+def _systemd_unit_valid(actual: str, expected: str) -> bool:
+    if actual == expected:
+        return True
+    prefix = "ExecStart="
+    actual_exec = [line for line in actual.splitlines() if line.startswith(prefix)]
+    expected_exec = [line for line in expected.splitlines() if line.startswith(prefix)]
+    if len(actual_exec) != 1 or len(expected_exec) != 1:
+        return False
+    if actual.replace(actual_exec[0], f"{prefix}<runner>", 1) != expected.replace(
+        expected_exec[0], f"{prefix}<runner>", 1
+    ):
+        return False
+    try:
+        return _runner_commands_match(
+            shlex.split(actual_exec[0][len(prefix):]),
+            shlex.split(expected_exec[0][len(prefix):]),
+        )
+    except ValueError:
+        return False
+
+
 def _systemctl(args: list[str]):
     return subprocess.run(
         ["systemctl", "--user", *args], capture_output=True, text=True,
@@ -490,7 +538,9 @@ def _status_linux() -> dict:
     if not path.exists():
         return _result(backend="systemd", owned=True, config_valid=True)
     try:
-        valid = path.read_text(encoding="utf-8") == _build_systemd_unit()
+        valid = _systemd_unit_valid(
+            path.read_text(encoding="utf-8"), _build_systemd_unit()
+        )
     except OSError:
         valid = False
     try:

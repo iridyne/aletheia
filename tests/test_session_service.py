@@ -143,6 +143,35 @@ def test_macos_enablement_is_separate_from_running_state(tmp_path, monkeypatch):
     assert canonical.exists() and not enabled.exists()
 
 
+def test_persistent_services_accept_only_equivalent_python_aliases(monkeypatch):
+    from aletheia.gateway import session_service
+
+    monkeypatch.setattr(
+        session_service.Path,
+        "samefile",
+        lambda self, other: self.parent == session_service.Path(other).parent,
+    )
+    monkeypatch.setattr(
+        session_service._managed,
+        "_runner_command",
+        lambda **_kwargs: ["/venv/bin/python", "/app/_gateway_runner.py", "--no-browser"],
+    )
+
+    plist = session_service._build_macos_plist()
+    plist["ProgramArguments"][0] = "/venv/bin/python3"
+    assert session_service._macos_payload_valid(plist) is True
+
+    expected = session_service._build_systemd_unit()
+    equivalent = expected.replace("/venv/bin/python ", "/venv/bin/python3 ")
+    assert session_service._systemd_unit_valid(equivalent, expected) is True
+    assert session_service._systemd_unit_valid(
+        expected.replace("/venv/bin/python ", "/venv/bin/pypy "), expected
+    ) is False
+    assert session_service._systemd_unit_valid(
+        equivalent.replace("Restart=on-failure", "Restart=always"), expected
+    ) is False
+
+
 def test_linux_unit_uses_native_on_failure_semantics(monkeypatch):
     from aletheia.gateway import session_service
     monkeypatch.setattr(session_service._managed, "_runner_command", lambda **kwargs: ["/opt/aletheia", "__packaged_gateway_runner", "--no-browser"])
