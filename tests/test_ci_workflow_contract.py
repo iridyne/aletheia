@@ -281,7 +281,11 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     workflow = _auto_merge_workflow()
     triggers = workflow["on"]
 
-    assert set(triggers) == {"pull_request_target", "repository_dispatch"}
+    assert set(triggers) == {
+        "pull_request_target",
+        "repository_dispatch",
+        "workflow_run",
+    }
     assert triggers["pull_request_target"]["branches"] == ["master"]
     assert triggers["pull_request_target"]["types"] == [
         "opened",
@@ -297,6 +301,10 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "auto_merge_update",
         "release_candidate_verified",
     ]
+    assert triggers["workflow_run"] == {
+        "workflows": ["Aletheia CI"],
+        "types": ["completed"],
+    }
     assert workflow["permissions"] == {"contents": "read"}
 
     assert set(workflow["jobs"]) == {
@@ -304,6 +312,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "release-candidate",
         "update",
         "release",
+        "release-after-ci",
     }
     schedule = workflow["jobs"]["schedule"]
     assert schedule["name"] == "Schedule auto-merge update"
@@ -390,6 +399,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     ]
     assert "action == 'closed'" in release["if"]
     assert "merged == true" in release["if"]
+    assert "merged_by.login != 'github-actions[bot]'" in release["if"]
     assert release["permissions"] == {"contents": "write"}
     assert len(release["steps"]) == 1
     release_step = release["steps"][0]
@@ -399,6 +409,24 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "createDispatchEvent" in release_script
     assert "event_type: 'release_please'" in release_script
     assert "merge_commit_sha" in release_script
+
+    release_after_ci = workflow["jobs"]["release-after-ci"]
+    assert release_after_ci["name"] == "Dispatch bot auto-merge release after CI"
+    assert release_after_ci["runs-on"] == [
+        "self-hosted",
+        "Linux",
+        "X64",
+        "ubuntu-24.04",
+    ]
+    assert release_after_ci["permissions"] == {
+        "contents": "write",
+        "pull-requests": "read",
+    }
+    followup_script = release_after_ci["steps"][0]["with"]["script"]
+    assert "context.payload.workflow_run" in followup_script
+    assert "pullRequest.head.sha !== run.head_sha" in followup_script
+    assert "pullRequest.merged_by?.login !== 'github-actions[bot]'" in followup_script
+    assert "event_type: 'release_please'" in followup_script
 
     # All phases carry write-capable base-repository tokens. Keep them
     # metadata-only: never check out or execute pull-request content.
@@ -434,10 +462,9 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     assert "await dispatchRelease(mergeResult.data.sha)" in update_script
     assert "pullRequest.state === 'MERGED'" in update_script
     assert "await dispatchRelease(pullRequest.mergeCommit?.oid)" in update_script
-    assert "auto-merge is enabled; waiting for the merged commit" in update_script
+    assert "auto-merge is enabled; GitHub will merge when required checks pass" in update_script
     assert "if (!/^[0-9a-f]{40}$/.test(mergeCommitSha || ''))" in update_script
-    assert "if (attempt === maxAttempts)" in update_script
-    assert "throw new Error(`auto-merge did not complete after ${maxAttempts} checks`)" in update_script
+    assert "auto-merge did not complete" not in update_script
     assert "const autoMergeStates = new Set(['BEHIND', 'BLOCKED', 'HAS_HOOKS'])" in update_script
     assert "enablePullRequestAutoMerge" in update_script
     assert "mergeMethod: SQUASH" in update_script
