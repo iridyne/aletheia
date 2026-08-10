@@ -7,9 +7,10 @@ from the trade_case_builder module (deterministic, no LLM).
 import hashlib
 import json
 import logging
+import time
 
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import llm_complete, log_tool
+from aletheia.agents.helpers import elapsed_ms, llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.knowledge.manager import create_post_trade_review
@@ -172,6 +173,7 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
     ensure_opportunity_information_policy_epoch()
     outputs: list[str] = []
     errors: list[str] = []
+    artifact_refs: list[dict[str, str]] = []
 
     if not is_tool_permitted("create_post_trade_review", permission_mode):
         errors.append("create_post_trade_review not permitted in current mode")
@@ -180,11 +182,12 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
     from aletheia.agents.round_robin import DurableRoundRobin
 
     round_robin = DurableRoundRobin(_STRATEGY_ROUND_ROBIN_STATE_KEY)
+    started_at = time.monotonic()
     strategy_page = _closed_strategy_page(
         next_key=round_robin.next_key(),
         page_size=_STRATEGY_ATTEMPT_LIMIT + 1,
     )
-    log_tool(run_id, "get_positions", "observe", True)
+    log_tool(run_id, "get_positions", "observe", True, duration_ms=elapsed_ms(started_at))
     eligible_window_seen = False
     eligibility_read_failed = False
 
@@ -341,6 +344,7 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
             # C1 (LEARNING_LOOP_AUDIT §R1): a post_trade_review is a SOFT LLM
             # reflection, not an attributed hard case. Keep it medium_confidence
             # so the retrieval quality gate is led by real trade case studies.
+            started_at = time.monotonic()
             item = create_post_trade_review(
                 "Post-Trade Review",
                 content,
@@ -362,8 +366,10 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
                     "observe",
                     True,
                     output=item.id,
+                    duration_ms=elapsed_ms(started_at),
                 )
                 outputs.append(f"post_trade_review:{item.id}")
+                artifact_refs.append({"artifact_type": "post_trade_review", "artifact_id": item.id})
             completed_attempt = True
         except Exception as exc:
             eligibility_read_failed = True
@@ -402,7 +408,7 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
     if guard_candidates:
         outputs.append(f"guard_candidates_created:{len(guard_candidates)}")
 
-    return {"outputs": outputs, "errors": errors}
+    return {"outputs": outputs, "errors": errors, "output_artifacts": artifact_refs}
 
 
 def _run_case_builder_safe(run_id: str | None) -> tuple[list, list]:
@@ -410,11 +416,27 @@ def _run_case_builder_safe(run_id: str | None) -> tuple[list, list]:
     try:
         from aletheia.analytics.trade_case_builder import build_case_studies, detect_guard_candidates
 
+        started_at = time.monotonic()
         cases = build_case_studies(since_hours=168, skip_existing=True)
-        log_tool(run_id, "build_case_studies", "observe", True, output=f"{len(cases)} created")
+        log_tool(
+            run_id,
+            "build_case_studies",
+            "observe",
+            True,
+            output=f"{len(cases)} created",
+            duration_ms=elapsed_ms(started_at),
+        )
 
+        started_at = time.monotonic()
         candidates = detect_guard_candidates()
-        log_tool(run_id, "detect_guard_candidates", "observe", True, output=f"{len(candidates)} created")
+        log_tool(
+            run_id,
+            "detect_guard_candidates",
+            "observe",
+            True,
+            output=f"{len(candidates)} created",
+            duration_ms=elapsed_ms(started_at),
+        )
 
         return cases, candidates
     except Exception as e:

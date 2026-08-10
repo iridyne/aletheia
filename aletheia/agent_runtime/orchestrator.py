@@ -3,7 +3,7 @@
 import traceback
 
 from aletheia.agent_runtime.run_logger import begin_queued_run, start_run, end_run
-from aletheia.storage.models import AgentRun
+from aletheia.storage.models import AgentArtifactRef, AgentRun
 from aletheia.config.loader import load_config
 from aletheia.files.jsonl import write_audit
 
@@ -39,6 +39,7 @@ async def run_agent(
         )
     outputs = []
     errors = []
+    artifact_refs: list[AgentArtifactRef] = []
     from aletheia.agent_runtime.run_context import (
         reset_current_agent_run_id,
         set_current_agent_run_id,
@@ -56,6 +57,10 @@ async def run_agent(
             if isinstance(result, dict):
                 outputs = result.get("outputs", [])
                 errors = result.get("errors", [])
+                artifact_refs = [
+                    AgentArtifactRef.model_validate(ref)
+                    for ref in result.get("output_artifacts", [])
+                ]
                 _agent_warnings = result.get("warnings", [])
                 if _agent_warnings:
                     import logging
@@ -92,7 +97,13 @@ async def run_agent(
         reset_current_agent_run_id(run_token)
 
     status = "completed" if not errors else "completed_with_errors"
-    end_run(run, status=status, outputs=outputs, errors=errors)
+    end_run(
+        run,
+        status=status,
+        outputs=outputs,
+        errors=errors,
+        artifact_refs=artifact_refs,
+    )
     # Release the per-run step counter (helpers.log_tool / record_step keep one
     # per run_id to assign monotonic step_numbers without SELECT-MAX).
     try:
@@ -101,4 +112,10 @@ async def run_agent(
         _release_run_counter(run.id)
     except Exception:
         pass
-    return {"run_id": run.id, "status": status, "outputs": outputs, "errors": errors}
+    return {
+        "run_id": run.id,
+        "status": status,
+        "outputs": outputs,
+        "errors": errors,
+        "output_artifacts": [artifact.model_dump() for artifact in artifact_refs],
+    }

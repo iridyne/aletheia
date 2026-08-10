@@ -179,10 +179,17 @@ risk:                              # HARD limits — agent cannot change these
   max_single_trade_risk_pct: 0.25
   # ... see Settings → Risk Boundaries (read-only display)
 retention:                         # telemetry pruning (trade/audit/knowledge never pruned)
-  agent_runs_days: 30
+  agent_runs_days: 90
+  tool_calls_days: 90
+  runtime_sessions_days: 90
   market_snapshots_days: 30
   jsonl_max_mb: 50.0
 ```
+
+`agent_runs_days`, `tool_calls_days`, and `runtime_sessions_days` default to 90
+days and can be set from 1 to 90 in **Settings → Data Retention**. Agent-run
+artifact links follow their parent AgentRun retention; changing local settings
+does not rewrite a remote Runtime's saved configuration.
 
 The Risk Engine limits are **hard** — they can only be changed by editing config
 as a human; the agent can propose changes in a report but cannot apply them.

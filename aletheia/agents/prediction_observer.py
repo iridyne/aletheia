@@ -18,13 +18,14 @@ Design choices:
 
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import llm_structured, log_tool, record_step, observer_llm_deadline
+from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool, record_step, observer_llm_deadline
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
@@ -230,6 +231,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
     """Fetch Polymarket data and create prediction Opportunities for tracking."""
     outputs: list[str] = []
     errors: list[str] = []
+    artifact_refs: list[dict[str, str]] = []
 
     if not is_tool_permitted("get_market_snapshot", permission_mode):
         errors.append("get_market_snapshot not permitted in current mode")
@@ -255,8 +257,16 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
     from aletheia.data.polymarket_provider import fetch_active_markets, format_prediction_context
 
     try:
+        started_at = time.monotonic()
         markets = await fetch_active_markets(categories=categories, limit=50)
-        log_tool(run_id, "fetch_prediction_markets", "observe", True, output=f"markets:{len(markets)}")
+        log_tool(
+            run_id,
+            "fetch_prediction_markets",
+            "observe",
+            True,
+            output=f"markets:{len(markets)}",
+            duration_ms=elapsed_ms(started_at),
+        )
     except Exception as e:
         errors.append(f"polymarket_fetch_failed:{e}")
         update_prediction_run(obs_run_id, status="failed", errors=errors)
@@ -394,7 +404,9 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
             valid_until=pred_valid_until,
             metadata=_build_market_metadata(market, markets_scanned=len(markets)),
         )
+        started_at = time.monotonic()
         insert_opportunity(opp)
+        duration_ms = elapsed_ms(started_at)
         try:
             from aletheia.agent_runtime.scheduler import notify_paper_trader
 
@@ -404,8 +416,16 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
                 "Failed to notify Ranker after prediction Opportunity commit",
                 exc_info=True,
             )
-        log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
+        log_tool(
+            run_id,
+            "create_opportunity",
+            "observe",
+            True,
+            output=opp.id,
+            duration_ms=duration_ms,
+        )
         outputs.append(f"opportunity:{opp.id}")
+        artifact_refs.append({"artifact_type": "opportunity", "artifact_id": opp.id})
         opps_created += 1
 
     # Generate claims for each market (heuristic + LLM observations for top market)
@@ -496,10 +516,11 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
                 ev.assessed_tier, ev.assessed_by = assess_evidence_tier(ev.model_dump())
                 insert_serenity_evidence(ev)
                 outputs.append(f"serenity_evidence:{ev.id}")
+                artifact_refs.append({"artifact_type": "serenity_evidence", "artifact_id": ev.id})
     except Exception as e:
         errors.append(f"serenity_evidence_link:{e}")
 
     update_prediction_run(
         obs_run_id, status="completed", markets_scanned=len(markets), opportunities_created=opps_created
     )
-    return {"outputs": outputs, "errors": errors}
+    return {"outputs": outputs, "errors": errors, "output_artifacts": artifact_refs}

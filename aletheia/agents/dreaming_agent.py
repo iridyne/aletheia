@@ -2,12 +2,13 @@
 
 import json
 import logging
+import time
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import llm_complete, llm_structured, log_tool
+from aletheia.agents.helpers import elapsed_ms, llm_complete, llm_structured, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.knowledge.manager import create_daily_review, create_dreaming_log
@@ -274,7 +275,11 @@ def _build_trading_performance_block() -> str:
     )
 
 
-async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[str]) -> None:
+async def _extract_lessons(
+    run_id: str | None,
+    outputs: list[str],
+    errors: list[str],
+) -> list[dict[str, str]]:
     """Extract structured lessons from recent trade_case_study items into ps_lessons.
 
     C4: reads trade_case_study (real closed-trade PnL) not post_trade_review, which was
@@ -290,7 +295,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         if (r.get("created_at") or "") >= cutoff
     ]
     if not reviews:
-        return
+        return []
 
     # #17 fix: previously the dreaming agent re-processed the SAME case study
     # every day for its 24h post-close window — no processed-ID tracking meant
@@ -328,7 +333,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         pass
 
     if not reviews:
-        return
+        return []
 
     # Build rich case lines including PnL metrics so the LLM has something
     # concrete to summarise and the evidence_json is populated for lesson_reviewer.
@@ -393,12 +398,12 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         errors.append(
             f"lesson_extraction_invalid_output:{err or 'empty_payload'}"
         )
-        return
+        return []
 
     lessons = payload.get("lessons")
     if not isinstance(lessons, list) or not lessons:
         errors.append("lesson_extraction_invalid_output:empty_lessons")
-        return
+        return []
 
     # Build aggregate evidence from the case study metadata directly — this gives
     # lesson_reviewer deterministic numbers even if the LLM skipped the evidence field.
@@ -445,6 +450,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         }
 
     store = LessonStore()
+    artifact_refs: list[dict[str, str]] = []
     for lesson in lessons[:3]:
         if not isinstance(lesson, dict) or not lesson.get("summary"):
             continue
@@ -487,6 +493,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
             rec = route_automatic_block_recommendation(
                 rec, evidence=evidence, source_id=source_id,
             )
+        started_at = time.monotonic()
         created = store.create(
             summary=lesson["summary"],
             source_type="trade_case_study",
@@ -496,8 +503,17 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
             evidence=evidence,
             recommendation=rec,
         )
-        log_tool(run_id, "create_lesson", "observe", True, output=created.lesson_id)
+        log_tool(
+            run_id,
+            "create_lesson",
+            "observe",
+            True,
+            output=created.lesson_id,
+            duration_ms=elapsed_ms(started_at),
+        )
         outputs.append(f"lesson:{created.lesson_id}")
+        artifact_refs.append({"artifact_type": "lesson", "artifact_id": created.lesson_id})
+    return artifact_refs
 
 
 @register_agent("dreaming_agent")
@@ -505,6 +521,7 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
     """Consolidate recent activity into a dreaming/learning log (guide §17.2)."""
     outputs: list[str] = []
     errors: list[str] = []
+    artifact_refs: list[dict[str, str]] = []
 
     if not is_tool_permitted("write_dreaming_log", permission_mode):
         errors.append("write_dreaming_log not permitted in current mode")
@@ -512,11 +529,14 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
 
     from datetime import datetime, timezone, timedelta
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    started_at = time.monotonic()
+    all_recent_runs = list_agent_runs(limit=200)
+    duration_ms = elapsed_ms(started_at)
     recent_runs = [
-        r for r in list_agent_runs(limit=200)
+        r for r in all_recent_runs
         if (r.get("started_at") or "") >= cutoff
     ]
-    log_tool(run_id, "get_recent_agent_runs", "observe", True)
+    log_tool(run_id, "get_recent_agent_runs", "observe", True, duration_ms=duration_ms)
     summary_lines = [f"- {r['agent_name']}: {r['status']} ({r.get('started_at', '')[:16]})" for r in recent_runs]
     activity = "\n".join(summary_lines) if summary_lines else "No recent agent activity."
 
@@ -537,8 +557,15 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
 
     trading_block = ""
     try:
+        started_at = time.monotonic()
         trading_block = _build_daily_trading_performance(cutoff)
-        log_tool(run_id, "build_trading_performance", "observe", True)
+        log_tool(
+            run_id,
+            "build_trading_performance",
+            "observe",
+            True,
+            duration_ms=elapsed_ms(started_at),
+        )
     except Exception as e:
         errors.append(f"trading_performance_failed: {e}")
 
@@ -560,15 +587,31 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
         doc_body = trading_block + "\n\n" + content
         # Append a real learning-progress snapshot. Never let it break the run.
         try:
+            started_at = time.monotonic()
             doc_body += _build_learning_ledger()
-            log_tool(run_id, "build_learning_ledger", "observe", True)
+            log_tool(
+                run_id,
+                "build_learning_ledger",
+                "observe",
+                True,
+                duration_ms=elapsed_ms(started_at),
+            )
         except Exception as e:
             errors.append(f"learning_ledger_failed: {e}")
 
+        started_at = time.monotonic()
         item = create_dreaming_log("Daily Consolidation", doc_body)
         if item:
-            log_tool(run_id, "write_dreaming_log", "observe", True, output=item.id)
+            log_tool(
+                run_id,
+                "write_dreaming_log",
+                "observe",
+                True,
+                output=item.id,
+                duration_ms=elapsed_ms(started_at),
+            )
             outputs.append(f"dreaming_log:{item.id}")
+            artifact_refs.append({"artifact_type": "dreaming_log", "artifact_id": item.id})
         else:
             logger.info("dreaming_agent: dreaming_log skipped by quality/dedup gate")
 
@@ -589,19 +632,34 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
                 review_body += _build_learning_ledger()
             except Exception as e:
                 errors.append(f"learning_ledger_in_review_failed: {e}")
+            started_at = time.monotonic()
             review = create_daily_review("Daily Review", review_body)
             # create_daily_review returns None when the body fails the quality gate
             # (empty / too-short) — don't fabricate a write that didn't happen.
             if review is not None:
-                log_tool(run_id, "write_daily_review", "observe", True, output=review.id)
+                log_tool(
+                    run_id,
+                    "write_daily_review",
+                    "observe",
+                    True,
+                    output=review.id,
+                    duration_ms=elapsed_ms(started_at),
+                )
                 outputs.append(f"daily_review:{review.id}")
+                artifact_refs.append({"artifact_type": "daily_review", "artifact_id": review.id})
             else:
-                log_tool(run_id, "write_daily_review", "observe", False,
-                         output="skipped:quality_gate")
+                log_tool(
+                    run_id,
+                    "write_daily_review",
+                    "observe",
+                    False,
+                    output="skipped:quality_gate",
+                    duration_ms=elapsed_ms(started_at),
+                )
 
     # Lesson extraction: mine actionable lessons from today's post-trade reviews
     try:
-        await _extract_lessons(run_id, outputs, errors)
+        artifact_refs.extend(await _extract_lessons(run_id, outputs, errors))
     except Exception as e:
         errors.append(f"lesson_extraction_failed: {e}")
 
@@ -609,11 +667,19 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
     # after the nightly consolidation. No-op when git_enabled is off; never raises.
     try:
         from aletheia.files.git import commit_all
+        started_at = time.monotonic()
         commit = commit_all(f"daily snapshot ({getattr(item, 'id', 'nightly')})")
         if commit.get("committed"):
-            log_tool(run_id, "git_commit_all", "observe", True, output=commit.get("message"))
+            log_tool(
+                run_id,
+                "git_commit_all",
+                "observe",
+                True,
+                output=commit.get("message"),
+                duration_ms=elapsed_ms(started_at),
+            )
             outputs.append("git_snapshot:committed")
     except Exception as e:
         errors.append(f"git_snapshot_failed: {e}")
 
-    return {"outputs": outputs, "errors": errors}
+    return {"outputs": outputs, "errors": errors, "output_artifacts": artifact_refs}

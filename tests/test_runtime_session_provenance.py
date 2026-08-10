@@ -122,6 +122,18 @@ def test_start_session_persists_row_and_sets_current(tmp_path, monkeypatch):
     assert prov["behavior_fingerprint"] == session["behavior_fingerprint"]
 
 
+def test_start_session_snapshots_economics_tracing_state(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setenv("ALETHEIA_COST_TRACING", "off")
+    session = rs.start_runtime_session(AletheiaConfig())
+
+    assert session["economics_tracing_enabled"] is False
+    assert repo.get_runtime_session(session["session_id"])["economics_tracing_enabled"] == 0
+
+
 def test_end_session_marks_clean_shutdown(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import runtime_session as rs

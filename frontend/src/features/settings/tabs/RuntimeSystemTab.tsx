@@ -302,8 +302,9 @@ function RetentionCard({ settings, qc }: any) {
   if (!retention) return null
 
   const RETENTION_FIELDS: NumField[] = [
-    { key: 'agent_runs_days',          label: 'Agent runs',          unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
-    { key: 'tool_calls_days',          label: 'Tool calls',          unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
+    { key: 'agent_runs_days',          label: 'Agent runs',          unit: 'days', min: 1, max: 90, step: 1, isInt: true },
+    { key: 'runtime_sessions_days',    label: 'Runtime sessions',    unit: 'days', min: 1, max: 90, step: 1, isInt: true },
+    { key: 'tool_calls_days',          label: 'Tool calls',          unit: 'days', min: 1, max: 90, step: 1, isInt: true },
     { key: 'run_steps_days',           label: 'Run steps',           unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
     { key: 'market_snapshots_days',    label: 'Market snapshots',    unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
     { key: 'portfolio_snapshots_days', label: 'Portfolio snapshots', unit: 'days', min: 1, max: 9999, step: 1, isInt: true },

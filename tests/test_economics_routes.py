@@ -11,7 +11,7 @@ and `test_economic_cli`.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -88,6 +88,250 @@ def _seed_llm_cost(
             now, now, latency_ms, usage_json, cost, "USD", cost_status, metadata_json, now,
         ),
     )
+
+
+# ── /api/economics/usage-insights ───────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_usage_insights_is_exact_aggregate_only_and_windowed(client):
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for index in range(201):
+        _seed_llm_cost(
+            db,
+            event_id=f"insight-{index}",
+            cost=0.01,
+            run_id="run-1",
+            metadata_json='{"prompt":"must_not_escape","response":"must_not_escape"}',
+        )
+    _seed_llm_cost(db, event_id="insight-unknown", cost=None)
+    db.execute(
+        """INSERT INTO runtime_cost_events (
+            id,event_type,run_id,call_id,provider,model_or_tool,attempt_index,status,
+            started_at,finished_at,usage_json,estimated_cost_usd,currency,cost_status,
+            metadata_json,created_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            "insight-tool", "tool", "run-1", "insight-tool", "tool", "market_data", 0,
+            "recorded", _now(), _now(), "{}", 0.02, "USD", "estimated",
+            '{"would_block":[{"policy_id":"budget-1"}]}', _now(),
+        ),
+    )
+    db.execute(
+        """INSERT INTO llm_context_artifacts (
+            id,schema_version,caller,kind,stable_id,freshness_status,rendered_chars,created_at
+        ) VALUES (?,?,?,?,?,?,?,?)""",
+        ("insight-context", "test", "observer", "news", "article-1", "fresh", 12, _now()),
+    )
+    session_now = datetime.now(timezone.utc)
+    db.execute(
+        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
+        ("untraced-usage", (session_now - timedelta(days=8)).isoformat(), (session_now + timedelta(days=1)).isoformat(), 0),
+    )
+
+    resp = await client.get("/api/economics/usage-insights?days=7")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert set(data) == {
+        "window", "coverage", "token_mix", "pricing", "attribution", "tools",
+        "reliability", "budgets", "trends", "research_yield",
+    }
+    assert data["window"] == {
+        **data["window"], "days": 7, "timezone": "UTC",
+    }
+    assert [axis["id"] for axis in data["coverage"]["axes"]] == [
+        "consumption", "pricing", "attribution", "tools", "reliability",
+        "budgets", "trends", "research_yield",
+    ]
+    assert data["pricing"]["known_cost_usd"] == pytest.approx(2.01)
+    assert data["pricing"]["estimated_cost_usd"] == pytest.approx(0.02)
+    assert data["pricing"]["unknown_event_count"] == 1
+    assert data["attribution"]["status"] == "partial"
+    assert any(row["axis"] == "agent_run" for row in data["attribution"]["rows"])
+    assert data["tools"]["status"] == "not_available"
+    assert data["research_yield"]["status"] == "not_available"
+    unavailable_zero_days = [
+        row for row in data["trends"]["daily"]
+        if row["full_window_day"] and row["event_count"] == 0
+    ]
+    assert unavailable_zero_days
+    assert {row["zero_observation_status"] for row in unavailable_zero_days} == {"not_available"}
+    assert data["trends"]["trace_coverage"]["legacy_or_untraced_session_count"] == 1
+    assert "must_not_escape" not in resp.text
+
+
+@pytest.mark.anyio
+async def test_usage_insights_accepts_only_supported_windows(client):
+    assert (await client.get("/api/economics/usage-insights?days=30")).status_code == 200
+    assert (await client.get("/api/economics/usage-insights?days=90")).status_code == 200
+    assert (await client.get("/api/economics/usage-insights?days=1")).status_code == 422
+
+
+@pytest.mark.anyio
+async def test_usage_insights_projects_typed_and_timed_facts_without_content(client):
+    from aletheia.economics.budgets import add_budget
+    from aletheia.economics.tracing import add_tool_cost_profile
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    now_datetime = datetime.now(timezone.utc)
+    now = now_datetime.isoformat()
+    db.execute(
+        "INSERT INTO agent_runs (id,agent_name,permission_mode,started_at) VALUES (?,?,?,?)",
+        ("usage-run", "market_observer", "Observe", now),
+    )
+    _seed_llm_cost(
+        db,
+        event_id="physical-0",
+        cost=0.1,
+        run_id="usage-run",
+        provider="provider-a",
+        model="model-a",
+        latency_ms=100,
+        usage_json='{"normalized":{"input_tokens":100,"output_tokens":50,"reasoning_tokens":10,"cached_input_tokens":4}}',
+        metadata_json='{"logical_agent":"market_observer","identity_source":"explicit_economic_context","evaluation_id":"eval-1","trigger":"scheduled"}',
+    )
+    db.execute(
+        """INSERT INTO runtime_cost_events (
+            id,event_type,run_id,call_id,provider,model_or_tool,attempt_index,status,
+            started_at,finished_at,latency_ms,usage_json,estimated_cost_usd,currency,cost_status,
+            error_type,metadata_json,created_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            "physical-1", "llm", "usage-run", "physical-0", "provider-b", "model-b", 1,
+            "error", now, now, 200, "{}", None, "USD", "unknown", "timeout",
+            '{"logical_agent":"market_observer"}', now,
+        ),
+    )
+    db.execute(
+        """INSERT INTO llm_inference_calls (
+            logical_call_id,schema_version,run_id,caller,prompt_template_id,prompt_version,
+            prompt_static_sha256,rendered_prompt_sha256,context_adapter_id,tool_policy_id,
+            allowed_tools_sha256,temperature,max_tokens,allow_model_fallback,status,
+            parse_valid,schema_valid,attempt_count,retry_count,fallback_used,final_provider,
+            final_model,started_at,finished_at,metadata_json,created_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            "logical-1", "test", "usage-run", "market_observer", "template", "v1", "a", "b",
+            "context", "tools", "c", 0.0, 100, 1, "success", 1, 1, 2, 1, 1,
+            "provider-b", "model-b", now, now, "{}", now,
+        ),
+    )
+    add_tool_cost_profile(
+        tool_name="timed_tool", usd_per_call=0.03,
+        effective_from="2020-01-01T00:00:00+00:00", source="test",
+    )
+    db.execute(
+        """INSERT INTO agent_tool_calls (
+            id,run_id,tool_name,tool_class,permitted,duration_ms,created_at
+        ) VALUES (?,?,?,?,?,?,?)""",
+        ("timed-tool", "usage-run", "timed_tool", "observe", 1, 125, now),
+    )
+    add_budget(scope="provider", subject="provider-a", usd_cap=10, window="daily", source="test")
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS agent_run_artifacts (
+            run_id TEXT NOT NULL, artifact_type TEXT NOT NULL, artifact_id TEXT NOT NULL,
+            PRIMARY KEY (run_id, artifact_type, artifact_id)
+        )"""
+    )
+    db.execute("INSERT INTO opportunities (id,symbol,market) VALUES (?,?,?)", ("opp-1", "BTC/USDT", "spot"))
+    db.execute(
+        "INSERT INTO trade_proposals (id,symbol,market_type,direction) VALUES (?,?,?,?)",
+        ("proposal-1", "BTC/USDT", "spot", "long"),
+    )
+    db.execute(
+        "INSERT INTO pi_decisions (id,created_at,action,conviction,proposal_id) VALUES (?,?,?,?,?)",
+        ("pi-1", now, "propose", 80, "proposal-1"),
+    )
+    db.execute(
+        "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,execution_mode,proposal_id) VALUES (?,?,?,?,?,?,?,?)",
+        ("position-1", "BTC/USDT", "spot", "long", 1, 100, "paper_internal", "proposal-1"),
+    )
+    db.execute(
+        "INSERT INTO orders (id,proposal_id,symbol,market_type,direction,order_type,quantity,execution_mode,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("order-1", "proposal-1", "BTC/USDT", "spot", "long", "market", 1, "paper_internal", "filled", now),
+    )
+    db.execute(
+        "INSERT INTO fills (id,order_id,fill_price,fill_quantity,filled_at) VALUES (?,?,?,?,?)",
+        ("fill-1", "order-1", 100, 1, now),
+    )
+    db.execute("INSERT INTO serenity_themes (id,name) VALUES (?,?)", ("theme-1", "Usage evidence"))
+    db.execute(
+        "INSERT INTO serenity_evidence (id,theme_id,title,summary) VALUES (?,?,?,?)",
+        ("serenity-1", "theme-1", "Evidence title", "serenity_raw_content_must_not_escape"),
+    )
+    db.execute(
+        "INSERT INTO agent_run_artifacts (run_id,artifact_type,artifact_id) VALUES (?,?,?)",
+        ("usage-run", "opportunity", "opp-1"),
+    )
+    db.execute(
+        "INSERT INTO agent_run_artifacts (run_id,artifact_type,artifact_id) VALUES (?,?,?)",
+        ("usage-run", "pi_decision", "pi-1"),
+    )
+    db.execute(
+        "INSERT INTO agent_run_artifacts (run_id,artifact_type,artifact_id) VALUES (?,?,?)",
+        ("usage-run", "serenity_evidence", "serenity-1"),
+    )
+    db.execute(
+        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
+        ("traced-usage", (now_datetime - timedelta(days=8)).isoformat(), (now_datetime + timedelta(days=1)).isoformat(), 1),
+    )
+    from aletheia.model_provider.fallback import _record_model_failure
+
+    _record_model_failure("provider-a", "model-a", RuntimeError("cooldown_raw_error_must_not_escape"))
+    _record_model_failure("provider-a", "model-a", RuntimeError("cooldown_raw_error_must_not_escape"))
+
+    data = (await client.get("/api/economics/usage-insights?days=7")).json()
+
+    assert data["token_mix"]["input_tokens"] == 100
+    assert data["token_mix"]["cached_tokens"] == 4
+    assert {row["axis"] for row in data["attribution"]["rows"]} == {
+        "agent_run", "logical_agent", "role", "direct_tags",
+    }
+    tool = data["tools"]["rows"][0]
+    assert tool["tool_name"] == "timed_tool"
+    assert tool["timing_coverage_pct"] == 100
+    assert tool["p50_duration_ms"] == 125
+    assert tool["known_cost_usd"] == pytest.approx(0.03)
+    assert data["reliability"]["logical"]["retry_count"] == 1
+    assert data["reliability"]["physical"]["fallback_call_count"] == 1
+    assert data["reliability"]["physical"]["error_categories"] == [{"error_type": "timeout", "event_count": 1}]
+    assert data["budgets"]["rows"][0]["forecast_status"] == "available"
+    assert data["research_yield"]["artifacts"] == [
+        {
+            "run_id": "usage-run", "agent_name": "market_observer",
+            "artifact_type": "opportunity", "artifact_count": 1,
+        },
+        {
+            "run_id": "usage-run", "agent_name": "market_observer",
+            "artifact_type": "pi_decision", "artifact_count": 1,
+        },
+        {
+            "run_id": "usage-run", "agent_name": "market_observer",
+            "artifact_type": "serenity_evidence", "artifact_count": 1,
+        },
+    ]
+    assert data["research_yield"]["lineage"][0]["factual_record_count"] == 1
+    stages = {row["stage"]: row for row in data["research_yield"]["lineage"]}
+    assert stages["serenity_evidence"]["factual_record_count"] == 1
+    assert stages["proposal"]["factual_record_count"] == 1
+    assert stages["order"]["factual_record_count"] == 1
+    assert stages["fill"]["factual_record_count"] == 1
+    assert stages["position"]["factual_record_count"] == 1
+    assert any(
+        row["full_window_day"] and row["event_count"] == 0 and row["zero_observation_status"] == "observed_zero"
+        for row in data["trends"]["daily"]
+    )
+    cooldown = data["reliability"]["current_model_cooldown"]
+    assert cooldown["current"] is True
+    assert cooldown["fact_scope"] == "current_in_process"
+    assert cooldown["cooling_down_count"] == 1
+    assert cooldown["rows"][0]["cooling_down"] is True
+    assert "serenity_raw_content_must_not_escape" not in str(data)
+    assert "cooldown_raw_error_must_not_escape" not in str(data)
 
 
 # ── /api/economics/status ────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
@@ -280,9 +281,16 @@ def _build_research_cycle_payload(opportunity: dict) -> dict:
 
 
 @router.get("/agent-runs")
-def get_agent_runs():
+def get_agent_runs(
+    days: Annotated[int | None, Query(ge=1, le=90)] = None,
+    limit: Annotated[int, Query(ge=1, le=5_000)] = 50,
+):
     _ensure_db()
-    return [_with_agent_run_output_events(run) for run in repo.list_agent_runs()]
+    if days is None and limit == 50:
+        runs = repo.list_agent_runs()
+    else:
+        runs = repo.list_agent_runs(limit=limit, days=days)
+    return [_with_agent_run_output_events(run) for run in runs]
 
 
 @router.get("/agent-runs/{run_id}")

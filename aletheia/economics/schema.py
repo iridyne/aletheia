@@ -88,6 +88,8 @@ CREATE INDEX IF NOT EXISTS idx_runtime_cost_events_window
     ON runtime_cost_events(event_type, started_at);
 CREATE INDEX IF NOT EXISTS idx_runtime_cost_events_normalized_started
     ON runtime_cost_events(replace(started_at,' ','T'));
+CREATE INDEX IF NOT EXISTS idx_runtime_cost_events_type_normalized_started
+    ON runtime_cost_events(event_type, replace(started_at,' ','T'));
 CREATE INDEX IF NOT EXISTS idx_runtime_cost_events_entity
     ON runtime_cost_events(opportunity_id, decision_id, proposal_id);
 
@@ -319,7 +321,7 @@ def _install_tool_trigger(db: sqlite3.Connection) -> None:
         BEGIN
             INSERT OR IGNORE INTO runtime_cost_events (
                 id,event_type,run_id,call_id,provider,model_or_tool,attempt_index,
-                status,started_at,finished_at,usage_json,cost_profile_id,
+                status,started_at,finished_at,latency_ms,usage_json,cost_profile_id,
                 estimated_cost_usd,currency,cost_status,metadata_json,created_at
             ) VALUES (
                 'toolcost_' || NEW.id,
@@ -332,6 +334,7 @@ def _install_tool_trigger(db: sqlite3.Connection) -> None:
                 CASE WHEN NEW.permitted=1 THEN 'recorded' ELSE 'denied' END,
                 NEW.created_at,
                 NEW.created_at,
+                NEW.duration_ms,
                 '{}',
                 CASE WHEN NEW.permitted=0 THEN NULL ELSE (
                     SELECT id FROM tool_cost_profiles
@@ -397,9 +400,6 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
         "SELECT sql FROM sqlite_master WHERE type='trigger' "
         "AND name='trg_agent_tool_call_cost_event'"
     ).fetchone()
-    trigger_ready = bool(
-        trigger_row and "inference_call_id" in str(trigger_row[0] or "")
-    )
     tool_table = db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_tool_calls'"
     ).fetchone()
@@ -412,6 +412,12 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
         else set()
     )
     tool_inference_link_ready = "inference_call_id" in tool_columns
+    tool_duration_ready = "duration_ms" in tool_columns
+    trigger_sql = str(trigger_row[0] or "") if trigger_row else ""
+    trigger_ready = bool(
+        "inference_call_id" in trigger_sql
+        and (not tool_duration_ready or "NEW.duration_ms" in trigger_sql)
+    )
 
     if not required_tables.issubset(existing_tables):
         if db.in_transaction:
@@ -446,7 +452,7 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
             "ON llm_context_artifacts(logical_call_id, created_at)"
         )
 
-    if tool_table and tool_inference_link_ready and not trigger_ready:
+    if tool_table and tool_inference_link_ready and tool_duration_ready and not trigger_ready:
         if db.in_transaction:
             raise RuntimeError(
                 "economics trigger initialization refused inside an active transaction"

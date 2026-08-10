@@ -31,10 +31,11 @@ plain accepted lesson is advisory, never an autonomous hard block.
 import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import llm_complete, log_tool
+from aletheia.agents.helpers import elapsed_ms, llm_complete, log_tool
 from aletheia.model_provider.router import get_provider_for_tier
 
 logger = logging.getLogger("aletheia.agents.lesson_reviewer")
@@ -286,6 +287,7 @@ async def run_lesson_reviewer(
 
     outputs: list[str] = []
     errors: list[str] = []
+    artifact_refs: list[dict[str, str]] = []
     store = LessonStore()
 
     # ── Step A: overturn — re-judge already-consumed lessons against fresh evidence ──
@@ -302,19 +304,35 @@ async def run_lesson_reviewer(
             errors.append(f"evidence_failed:{lesson.lesson_id}:{e}")
             continue
         if _deterministic_demote(evidence):
+            started_at = time.monotonic()
             store.reject(lesson.lesson_id)
             demoted += 1
             outputs.append(f"demoted:{lesson.lesson_id}")
-            log_tool(run_id, "demote_lesson", "observe", True, output=lesson.lesson_id)
+            log_tool(
+                run_id,
+                "demote_lesson",
+                "observe",
+                True,
+                output=lesson.lesson_id,
+                duration_ms=elapsed_ms(started_at),
+            )
             continue
         if evidence["exact_scope"]["total"] < _MIN_SETTLED_EVIDENCE:
             continue
         decision, reason = await _judge(lesson, evidence, run_id)
         if decision == "reject":
+            started_at = time.monotonic()
             store.reject(lesson.lesson_id)
             demoted += 1
             outputs.append(f"demoted:{lesson.lesson_id}")
-            log_tool(run_id, "demote_lesson", "observe", True, output=f"{lesson.lesson_id}:{reason}")
+            log_tool(
+                run_id,
+                "demote_lesson",
+                "observe",
+                True,
+                output=f"{lesson.lesson_id}:{reason}",
+                duration_ms=elapsed_ms(started_at),
+            )
 
     # ── Step B: promote — judge proposed lessons ──
     # Oldest-first prevents a busy producer from starving long-waiting lessons.
@@ -336,15 +354,31 @@ async def run_lesson_reviewer(
             continue
         decision, reason = await _judge(lesson, evidence, run_id)
         if decision == "accept":
+            started_at = time.monotonic()
             store.accept(lesson.lesson_id)
             newly_accepted.append(lesson.lesson_id)
             outputs.append(f"accepted:{lesson.lesson_id}")
-            log_tool(run_id, "accept_lesson", "observe", True, output=f"{lesson.lesson_id}:{reason}")
+            log_tool(
+                run_id,
+                "accept_lesson",
+                "observe",
+                True,
+                output=f"{lesson.lesson_id}:{reason}",
+                duration_ms=elapsed_ms(started_at),
+            )
         elif decision == "reject":
+            started_at = time.monotonic()
             store.reject(lesson.lesson_id)
             rejected += 1
             outputs.append(f"rejected:{lesson.lesson_id}")
-            log_tool(run_id, "reject_lesson", "observe", True, output=f"{lesson.lesson_id}:{reason}")
+            log_tool(
+                run_id,
+                "reject_lesson",
+                "observe",
+                True,
+                output=f"{lesson.lesson_id}:{reason}",
+                duration_ms=elapsed_ms(started_at),
+            )
         else:
             deferred += 1
 
@@ -360,6 +394,7 @@ async def run_lesson_reviewer(
     all_to_apply = newly_accepted + stuck_accepted
     if all_to_apply:
         try:
+            started_at = time.monotonic()
             policy_store = PolicyStore()
             pending_ids = set(all_to_apply)
             pv = next((
@@ -380,8 +415,10 @@ async def run_lesson_reviewer(
                     created_by="lesson_reviewer",
                 )
             outputs.append(f"policy_version:{pv.policy_version_id}:{len(all_to_apply)}_applied")
+            artifact_refs.append({"artifact_type": "policy_version", "artifact_id": pv.policy_version_id})
             log_tool(run_id, "apply_lessons_to_policy", "observe", True,
-                     output=f"{pv.policy_version_id}:{len(all_to_apply)}")
+                     output=f"{pv.policy_version_id}:{len(all_to_apply)}",
+                     duration_ms=elapsed_ms(started_at))
         except Exception as e:
             errors.append(f"policy_version_create_failed:{e}")
             pv = None
@@ -397,13 +434,22 @@ async def run_lesson_reviewer(
                             skill_store = SkillStore()
                         lesson = store.get(lid)
                         if lesson:
+                            started_at = time.monotonic()
                             skill = skill_store.create_from_lesson(
                                 lesson,
                                 policy_version_id=pv.policy_version_id,
                             )
                             if skill:
                                 outputs.append(f"draft_skill:{skill.skill_id}")
-                                log_tool(run_id, "create_draft_skill", "observe", True, output=skill.skill_id)
+                                artifact_refs.append({"artifact_type": "draft_skill", "artifact_id": skill.skill_id})
+                                log_tool(
+                                    run_id,
+                                    "create_draft_skill",
+                                    "observe",
+                                    True,
+                                    output=skill.skill_id,
+                                    duration_ms=elapsed_ms(started_at),
+                                )
                     except Exception as e:
                         errors.append(f"skill_create_failed:{lid}:{e}")
                 except Exception as e:
@@ -419,4 +465,4 @@ async def run_lesson_reviewer(
         f"summary:accepted={len(newly_accepted)},rejected={rejected},"
         f"deferred={deferred},demoted={demoted},remaining={remaining}"
     )
-    return {"outputs": outputs, "errors": errors}
+    return {"outputs": outputs, "errors": errors, "output_artifacts": artifact_refs}

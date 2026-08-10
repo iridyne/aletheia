@@ -504,8 +504,8 @@ def test_existing_tool_ledger_is_mirrored_as_unknown_not_zero():
     run = _insert_run()
     get_db().execute(
         """INSERT INTO agent_tool_calls
-           (id,run_id,tool_name,tool_class,input_data,output_data,permitted,created_at)
-           VALUES ('tool-economics-test',?,'market_lookup','read','{}','{}',1,
+           (id,run_id,tool_name,tool_class,input_data,output_data,permitted,duration_ms,created_at)
+           VALUES ('tool-economics-test',?,'market_lookup','read','{}','{}',1,125,
                    '2026-07-16T00:00:00+00:00')""",
         (run.id,),
     )
@@ -516,7 +516,7 @@ def test_existing_tool_ledger_is_mirrored_as_unknown_not_zero():
     assert row["event_type"] == "tool"
     assert row["cost_status"] == "unknown"
     assert row["estimated_cost_usd"] is None
-    assert row["latency_ms"] is None
+    assert row["latency_ms"] == 125
 
 
 def test_preexisting_tool_rows_are_backfilled_idempotently():
@@ -541,6 +541,7 @@ def test_preexisting_tool_rows_are_backfilled_idempotently():
     ).fetchall()
     assert len(rows) == 1
     assert rows[0]["cost_status"] == "unknown"
+    assert rows[0]["latency_ms"] is None
     metadata = json.loads(rows[0]["metadata_json"])
     assert metadata["legacy_backfill"] == 1
 

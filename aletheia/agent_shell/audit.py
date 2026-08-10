@@ -9,17 +9,19 @@ from aletheia.storage.sqlite import get_db
 
 def record_command(session_id: str, command: str, parameters: dict,
                    permitted: bool, result_summary: str,
-                   inference_call_id: str | None = None) -> None:
+                   inference_call_id: str | None = None,
+                   duration_ms: int | None = None) -> None:
     """Write audit record to SQLite + JSONL."""
     cmd_id = str(uuid.uuid4())
+    stored_duration_ms = max(0, int(duration_ms)) if duration_ms is not None else None
 
     db = get_db()
     db.execute(
         "INSERT INTO agent_shell_commands (id, session_id, command, parameters, "
-        "permitted, result_summary, inference_call_id, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+        "permitted, result_summary, inference_call_id, duration_ms, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
         (cmd_id, session_id, command, json.dumps(parameters), int(permitted),
-         result_summary[:2000], inference_call_id),
+         result_summary[:2000], inference_call_id, stored_duration_ms),
     )
     db.commit()
     append_session_log(
@@ -32,6 +34,7 @@ def record_command(session_id: str, command: str, parameters: dict,
             "permitted": permitted,
             "result_summary": result_summary[:2000],
             "inference_call_id": inference_call_id,
+            "duration_ms": stored_duration_ms,
         },
     )
 
@@ -45,6 +48,7 @@ def record_command(session_id: str, command: str, parameters: dict,
             "entity_id": cmd_id,
             "message": f"{'ALLOWED' if permitted else 'DENIED'}: {command}",
             "inference_call_id": inference_call_id,
+            "duration_ms": stored_duration_ms,
         })
     except Exception:
         pass

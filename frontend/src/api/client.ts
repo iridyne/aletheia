@@ -518,6 +518,80 @@ export interface EconomicsModelHealthResponse {
 	snapshot: ModelHealthEntry[];
 }
 
+export type UsageInsightsAvailability =
+	| "available"
+	| "partial"
+	| "not_available";
+
+export interface UsageInsightsSection {
+	status: UsageInsightsAvailability;
+	reason: string | null;
+}
+
+export interface UsageInsightsRow {
+	[key: string]: unknown;
+}
+
+export interface UsageInsightsResponse {
+	window: {
+		days: number;
+		started_at: string;
+		ended_at: string;
+		as_of: string;
+		timezone: "UTC";
+	};
+	coverage: UsageInsightsSection & {
+		axes: Array<{
+			id: string;
+			label: string;
+			status: UsageInsightsAvailability;
+			coverage_pct: number | null;
+			reason: string | null;
+		}>;
+	};
+	token_mix: UsageInsightsSection & {
+		input_tokens: number | null;
+		output_tokens: number | null;
+		reasoning_tokens: number | null;
+		cached_tokens: number | null;
+		event_count: number | null;
+	};
+	pricing: UsageInsightsSection & {
+		known_cost_usd: number | null;
+		estimated_cost_usd: number | null;
+		unknown_event_count: number | null;
+		pricing_coverage_pct: number | null;
+		gaps: UsageInsightsRow[];
+	};
+	attribution: UsageInsightsSection & { rows: UsageInsightsRow[] };
+	tools: UsageInsightsSection & {
+		rows: UsageInsightsRow[];
+		timing_coverage_pct: number | null;
+		pricing_coverage_pct: number | null;
+	};
+	reliability: UsageInsightsSection & {
+		logical: UsageInsightsRow;
+		physical: UsageInsightsRow;
+		current_model_cooldown: UsageInsightsSection & {
+			current: true;
+			fact_scope: "current_in_process";
+			as_of: string;
+			rows: UsageInsightsRow[];
+			cooling_down_count: number;
+		};
+	};
+	budgets: UsageInsightsSection & { rows: UsageInsightsRow[] };
+	trends: UsageInsightsSection & {
+		daily: UsageInsightsRow[];
+		baseline: UsageInsightsRow | null;
+		trace_coverage: UsageInsightsSection & UsageInsightsRow;
+	};
+	research_yield: UsageInsightsSection & {
+		artifacts: UsageInsightsRow[];
+		lineage: UsageInsightsRow[];
+	};
+}
+
 export interface SerenityTheme {
 	id: string;
 	name: string;
@@ -822,6 +896,8 @@ export const api = {
 	// Read-only economics surface (Phase 1 of the tokenomics harness).
 	// Mirrors `aletheia audit` CLI subcommands so operators can see LLM
 	// spend and cooldown state from the dashboard.
+	getUsageInsights: (days: 7 | 30 | 90) =>
+		fetchJson<UsageInsightsResponse>(`/economics/usage-insights?days=${days}`),
 	getEconomicsStatus: () =>
 		fetchJson<EconomicsStatusResponse>("/economics/status"),
 	getEconomicsCosts: (params?: {
@@ -1897,6 +1973,7 @@ export const api = {
 	updateRetentionConfig: (
 		body: Partial<{
 			agent_runs_days: number;
+			runtime_sessions_days: number;
 			tool_calls_days: number;
 			run_steps_days: number;
 			market_snapshots_days: number;
@@ -1955,6 +2032,12 @@ export const api = {
 
 	// Data
 	getAgentRuns: () => fetchJson<any[]>("/agent-runs"),
+	getAgentRunsInWindow: (days: number, limit = 5_000) => {
+		const qs = new URLSearchParams();
+		qs.set("days", String(days));
+		qs.set("limit", String(limit));
+		return fetchJson<any[]>(`/agent-runs?${qs.toString()}`);
+	},
 	getAgentRunToolCalls: (runId: string) =>
 		fetchJson<any[]>(`/agent-runs/${runId}/tool-calls`),
 	// #72 fix: the per-step reasoning trace backend endpoint exists at

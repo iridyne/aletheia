@@ -14,6 +14,7 @@ Design choices:
 """
 
 import logging
+import time
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -21,7 +22,7 @@ from pydantic import BaseModel, Field
 from aletheia.agents import register_agent
 
 logger = logging.getLogger("aletheia.agents.stock_observer")
-from aletheia.agents.helpers import llm_structured, log_tool, record_step, observer_llm_deadline
+from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool, record_step, observer_llm_deadline
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import insert_opportunity, list_strategies
@@ -196,17 +197,19 @@ async def _analyze_stock(
     import asyncio as _asyncio
 
     loop = _asyncio.get_event_loop()
+    started_at = time.monotonic()
     data = await loop.run_in_executor(None, _fetch_stock_indicators, ticker)
+    duration_ms = elapsed_ms(started_at)
 
     if isinstance(data, _FetchError):
-        log_tool(run_id, "get_stock_snapshot", "observe", False, output=ticker)
+        log_tool(run_id, "get_stock_snapshot", "observe", False, output=ticker, duration_ms=duration_ms)
         return None, f"hard:{data.reason}:{ticker}"
 
     if data is None:
-        log_tool(run_id, "get_stock_snapshot", "observe", False, output=ticker)
+        log_tool(run_id, "get_stock_snapshot", "observe", False, output=ticker, duration_ms=duration_ms)
         return None, f"soft:empty_data:{ticker}"
 
-    log_tool(run_id, "get_stock_snapshot", "observe", True, output=ticker)
+    log_tool(run_id, "get_stock_snapshot", "observe", True, output=ticker, duration_ms=duration_ms)
     snapshot_text = _render_stock_snapshot(data)
 
     record_step(
@@ -284,8 +287,16 @@ async def _analyze_stock(
         linked_strategy_id=linked_strategy_id,
         asset_class="equity",
     )
+    started_at = time.monotonic()
     insert_opportunity(opp)
-    log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
+    log_tool(
+        run_id,
+        "create_opportunity",
+        "observe",
+        True,
+        output=opp.id,
+        duration_ms=elapsed_ms(started_at),
+    )
     return opp.id, llm_error
 
 
@@ -294,6 +305,7 @@ async def run_stock_observer(permission_mode: str = "Observe", run_id: str | Non
     """Observe US equity symbols and create equity Opportunities (observation-only)."""
     outputs: list[str] = []
     errors: list[str] = []
+    artifact_refs: list[dict[str, str]] = []
 
     if not is_tool_permitted("get_market_snapshot", permission_mode):
         errors.append("get_market_snapshot not permitted in current mode")
@@ -325,6 +337,7 @@ async def run_stock_observer(permission_mode: str = "Observe", run_id: str | Non
             )
             if opp_id:
                 outputs.append(f"opportunity:{opp_id}")
+                artifact_refs.append({"artifact_type": "opportunity", "artifact_id": opp_id})
             if err:
                 if err.startswith("hard:"):
                     hard_errors.append(err)
@@ -343,4 +356,4 @@ async def run_stock_observer(permission_mode: str = "Observe", run_id: str | Non
     if soft_warnings:
         outputs.append(f"soft_skipped:{len(soft_warnings)}")
 
-    return {"outputs": outputs, "errors": errors}
+    return {"outputs": outputs, "errors": errors, "output_artifacts": artifact_refs}

@@ -54,6 +54,24 @@ def test_agent_run_routes_preserve_raw_outputs_and_add_semantics(monkeypatch):
     assert detail["output_events"][0]["is_operator_decision"] is False
 
 
+def test_agent_run_route_forwards_usage_window(monkeypatch):
+    from aletheia.server.routes import data
+
+    observed = {}
+    run = {"id": "run-1", "agent_name": "paper_trader", "outputs_created": "[]"}
+
+    monkeypatch.setattr(data, "_ensure_db", lambda: None)
+
+    def list_agent_runs(*, limit, days):
+        observed.update(limit=limit, days=days)
+        return [dict(run)]
+
+    monkeypatch.setattr(data.repo, "list_agent_runs", list_agent_runs)
+
+    assert data.get_agent_runs(days=7, limit=5_000)[0]["id"] == "run-1"
+    assert observed == {"days": 7, "limit": 5_000}
+
+
 def test_non_paper_agent_outputs_are_left_unclassified():
     from aletheia.server.routes.data import _agent_run_output_events
 

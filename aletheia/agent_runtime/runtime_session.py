@@ -149,6 +149,14 @@ def start_runtime_session(cfg=None, runtime_context: dict | None = None) -> dict
     from aletheia.storage.migrations import SCHEMA_VERSION
     from aletheia.storage.models import RuntimeSession
 
+    economics_tracing_enabled = None
+    try:
+        from aletheia.economics.tracing import tracing_enabled
+
+        economics_tracing_enabled = tracing_enabled()
+    except Exception:
+        pass
+
     session = RuntimeSession(
         runtime_id=_runtime_id(runtime_context),
         boot_commit=_boot_commit(),
@@ -157,6 +165,7 @@ def start_runtime_session(cfg=None, runtime_context: dict | None = None) -> dict
         schema_version=SCHEMA_VERSION,
         active_scope_id=_active_scope_id(),
         execution_mode=getattr(getattr(cfg, "exchange", None), "paper_execution_mode", None),
+        economics_tracing_enabled=economics_tracing_enabled,
     )
     durable = False
     try:

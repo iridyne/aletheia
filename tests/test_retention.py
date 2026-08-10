@@ -36,6 +36,35 @@ def _recent():
     return datetime.now(timezone.utc).isoformat()
 
 
+def test_usage_retention_defaults_are_90_days():
+    from aletheia.config.schema import RetentionConfig
+
+    retention = RetentionConfig()
+    assert retention.agent_runs_days == 90
+    assert retention.tool_calls_days == 90
+    assert retention.runtime_sessions_days == 90
+
+
+def test_retention_settings_usage_windows_are_limited_to_90_days(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.server.routes import settings
+
+    cfg = AletheiaConfig()
+    app = FastAPI()
+    app.include_router(settings.router)
+    monkeypatch.setattr(settings, "load_config", lambda: cfg)
+    monkeypatch.setattr(settings, "save_config", lambda _cfg: None)
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda _event: None)
+    client = TestClient(app)
+
+    for field in ("agent_runs_days", "tool_calls_days", "runtime_sessions_days"):
+        assert client.post("/api/settings/retention", json={field: 90}).status_code == 200
+        assert client.post("/api/settings/retention", json={field: 91}).status_code == 400
+        assert client.post("/api/settings/retention", json={field: 0}).status_code == 400
+
+
 def _run_cleanup_with_test_config(monkeypatch):
     from aletheia.agent_runtime import scheduler
     from aletheia.config.schema import AletheiaConfig
@@ -103,15 +132,20 @@ def test_cleanup_catchup_due_detects_just_missed_local_cron(tmp_path, monkeypatc
 def test_prune_agent_runs_keeps_recent_deletes_old(tmp_path, monkeypatch):
     conn = setup_env(tmp_path, monkeypatch)
     conn.execute("INSERT INTO agent_runs (id, agent_name, permission_mode, started_at, status) VALUES (?,?,?,?,?)",
-                 ("old1", "market_observer", "Observe", _old(60), "completed"))
+                 ("old1", "market_observer", "Observe", _old(91), "completed"))
     conn.execute("INSERT INTO agent_runs (id, agent_name, permission_mode, started_at, status) VALUES (?,?,?,?,?)",
-                 ("new1", "market_observer", "Observe", _recent(), "completed"))
+                 ("new1", "market_observer", "Observe", _old(89), "completed"))
+    conn.execute(
+        "INSERT INTO agent_run_artifacts (run_id, artifact_type, artifact_id) VALUES (?,?,?)",
+        ("old1", "opportunity", "old-opportunity"),
+    )
     conn.commit()
 
-    deleted = repo.prune_agent_runs(days=30)
+    deleted = repo.prune_agent_runs()
     assert deleted == 1
     ids = {r["id"] for r in repo.list_agent_runs(limit=100)}
     assert "new1" in ids and "old1" not in ids
+    assert conn.execute("SELECT 1 FROM agent_run_artifacts WHERE run_id='old1'").fetchone() is None
 
 
 def test_prune_market_snapshots(tmp_path, monkeypatch):
