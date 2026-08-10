@@ -37,7 +37,7 @@ across structured repair retries and model fallback attempts.
 | Environment | permission mode, paper execution mode, live state, logical agent/run identities, and explicitly bound evaluation/opportunity/decision/proposal IDs when already known |
 | Request | requested provider, temperature, max tokens, fallback policy |
 | Output | output mode, schema identity/SHA-256, parse-valid and schema-valid outcomes; on terminal structured failure only, a fixed response-shape enum plus bounded schema error class |
-| Evaluation | bounded pair, arm, and fixture IDs when the call belongs to an offline evaluation |
+| Evaluation | bounded pair, arm, fixture, and optional modality IDs when the call belongs to an offline evaluation |
 
 Prompt text, response text, source bodies, credentials, and secrets are not
 stored in this envelope. Structured-failure diagnostics never store model
@@ -181,6 +181,8 @@ the Contract spec.
 | `dreaming.lesson_extraction` | `dreaming.lesson_extraction` | `v1` | `structured` | `none` |
 | `dreaming.nightly_consolidation` | `dreaming.nightly_consolidation` | `v1` | `text` | `none` |
 | `equity_observer.market_read` | `equity_observer.market_read` | `v1` | `structured` | `none` |
+| `evaluation.context_ablation.control` | `market_observer.market_read` | `v1` | `structured` | `none` |
+| `evaluation.context_ablation.treatment` | `market_observer.market_read` | `v1` | `structured` | `none` |
 | `evaluation.learning_b.control` | `market_observer.market_read` | `v1` | `structured` | `none` |
 | `evaluation.learning_b.treatment` | `market_observer.market_read` | `v1` | `structured` | `none` |
 | `evaluation.technical_context.control` | `market_observer.market_read` | `v1` | `structured` | `none` |
