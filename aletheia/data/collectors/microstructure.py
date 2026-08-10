@@ -37,7 +37,7 @@ class MicrostructureCollector:
                 try:
                     # InstrumentId-aware: set defaultType and ccxt symbol per market_type
                     if isinstance(sym, InstrumentId):
-                        is_perp = sym.market_type == "perp"
+                        is_perp = sym.market_type in {"perp", "futures"}
                         fetch_sym = sym.to_ccxt_symbol()
                         canonical_sym = sym.symbol
                         market_type = sym.market_type

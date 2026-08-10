@@ -38,9 +38,12 @@ def test_parse_oi_threads_lsr_value():
         "openInterestValue": 1_234_567.0,
         "info": {"sumOpenInterest": "12.34"},
     }
-    snap = _parse_oi("BTC/USDT", "binance", raw, lsr=2.09)
+    snap = _parse_oi(
+        "BTC/USDT", "binance", raw, lsr=2.09, top_position_ratio=1.42
+    )
     assert isinstance(snap, OpenInterestSnapshot)
     assert snap.long_short_ratio == 2.09
+    assert snap.top_trader_position_ratio == 1.42
     assert snap.symbol == "BTC/USDT"
     assert snap.exchange == "binance"
     assert snap.open_interest_usd == 1_234_567.0
@@ -95,6 +98,33 @@ def test_fetch_lsr_binance_batch_returns_empty_on_http_error(monkeypatch):
 
     result = asyncio.run(mod._fetch_lsr_binance_batch(["BTC/USDT", "ETH/USDT"]))
     assert result == {}, f"expected empty dict on HTTP failure; got: {result!r}"
+
+
+def test_fetch_top_position_ratio_uses_public_binance_endpoint(monkeypatch):
+    import aletheia.data.collectors.derivatives as mod
+
+    class Client:
+        async def get(self, url, *, params):
+            assert url.endswith("topLongShortPositionRatio")
+            assert params["symbol"] == "BTCUSDT"
+            return type(
+                "Response",
+                (),
+                {"status_code": 200, "json": lambda self: [{"longShortRatio": "1.42"}]},
+            )()
+
+    class Context:
+        async def __aenter__(self):
+            return Client()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(mod, "httpx_client", lambda **_kwargs: Context())
+    result = asyncio.run(
+        mod._fetch_top_position_ratio_binance_batch(["BTC/USDT"])
+    )
+    assert result == {"BTC/USDT": 1.42}
 
 
 def test_lsr_timeout_does_not_cancel_primary_funding_or_oi(monkeypatch):

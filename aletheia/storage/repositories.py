@@ -6028,6 +6028,22 @@ def universe_twin_shadow_capture_due(
     )
 
 
+def relative_rank_shadow_capture_due(
+    captured_at: str,
+    *,
+    min_interval_sec: int = 55 * 60,
+) -> bool:
+    row = get_db().execute(
+        "SELECT captured_at FROM universe_relative_rank_shadow_batches "
+        "ORDER BY captured_at DESC LIMIT 1"
+    ).fetchone()
+    return _universe_twin_shadow_capture_due_from_latest(
+        captured_at,
+        str(row["captured_at"]) if row else None,
+        min_interval_sec=min_interval_sec,
+    )
+
+
 def _validate_universe_twin_prospective_bundle(
     batch: UniverseTwinShadowBatch,
     evidence: Sequence[UniverseTwinShadowEvidence],
@@ -6296,6 +6312,82 @@ def list_universe_twin_shadow_records(scanner_run_id: str) -> list[dict]:
         "SELECT * FROM universe_twin_shadow_records WHERE scanner_run_id=? "
         "ORDER BY candidate_index",
         (scanner_run_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def insert_relative_rank_shadow_bundle(
+    batch,
+    *,
+    outcomes: Sequence | None = None,
+    min_interval_sec: int = 55 * 60,
+) -> int:
+    """Atomically persist one isolated relative-rank cluster and its outcomes."""
+
+    batch_data = batch.model_dump()
+    outcome_rows = [item.model_dump() for item in outcomes or ()]
+    try:
+        records = json.loads(batch.records_json)
+    except (TypeError, ValueError):
+        raise ValueError("relative_rank_shadow_records_invalid") from None
+    if not isinstance(records, list) or len(records) != batch.candidate_count:
+        raise ValueError("relative_rank_shadow_candidate_count_mismatch")
+    if batch.assignment_unit_key != batch.scanner_run_id:
+        raise ValueError("relative_rank_shadow_assignment_unit_mismatch")
+    if batch.promotion_eligible:
+        raise ValueError("relative_rank_shadow_promotion_not_allowed")
+    selected_keys = {
+        str(record.get("outcome_candidate_key"))
+        for record in records
+        if record.get("assigned_policy_selected")
+    }
+    if "None" in selected_keys or len(selected_keys) != len(outcome_rows):
+        raise ValueError("relative_rank_shadow_outcome_count_mismatch")
+    if selected_keys != {
+        str(row.get("outcome_candidate_key")) for row in outcome_rows
+    }:
+        raise ValueError("relative_rank_shadow_outcome_identity_mismatch")
+
+    db = get_db()
+    with transaction(immediate=True):
+        stored = db.execute(
+            "SELECT batch_hash FROM universe_relative_rank_shadow_batches "
+            "WHERE scanner_run_id=?",
+            (batch.scanner_run_id,),
+        ).fetchone()
+        if stored is not None:
+            if stored["batch_hash"] != batch.batch_hash:
+                raise ValueError("relative_rank_shadow_batch_identity_conflict")
+            _assert_twin_outcomes_match(outcome_rows)
+            return 0
+        latest = db.execute(
+            "SELECT captured_at FROM universe_relative_rank_shadow_batches "
+            "ORDER BY captured_at DESC LIMIT 1"
+        ).fetchone()
+        if not _universe_twin_shadow_capture_due_from_latest(
+            batch.captured_at,
+            str(latest["captured_at"]) if latest else None,
+            min_interval_sec=min_interval_sec,
+        ):
+            return 0
+        columns = list(batch_data)
+        execute_write(
+            "INSERT INTO universe_relative_rank_shadow_batches "
+            f"({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})",
+            [batch_data[column] for column in columns],
+        )
+        if outcome_rows:
+            _assert_twin_outcomes_match(outcome_rows, allow_missing=True)
+            insert_filter_candidate_outcomes_batch(list(outcomes or ()))
+            _assert_twin_outcomes_match(outcome_rows)
+    return 1
+
+
+def list_relative_rank_shadow_batches(policy_epoch_id: str) -> list[dict]:
+    rows = get_db().execute(
+        "SELECT * FROM universe_relative_rank_shadow_batches "
+        "WHERE policy_epoch_id=? ORDER BY captured_at",
+        (policy_epoch_id,),
     ).fetchall()
     return [dict(row) for row in rows]
 
@@ -8547,23 +8639,27 @@ def prune_universe_twin_shadow_evidence(
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     with transaction(immediate=True):
+        deleted = 0
         run_rows = db.execute(
             "SELECT scanner_run_id FROM universe_twin_shadow_batches WHERE captured_at < ?",
             (cutoff,),
         ).fetchall()
         run_ids = [str(row[0]) for row in run_rows]
-        if not run_ids:
-            return 0
-        placeholders = ", ".join("?" for _ in run_ids)
-        records = execute_write(
-            f"DELETE FROM universe_twin_shadow_records WHERE scanner_run_id IN ({placeholders})",
-            run_ids,
+        if run_ids:
+            placeholders = ", ".join("?" for _ in run_ids)
+            deleted += execute_write(
+                f"DELETE FROM universe_twin_shadow_records WHERE scanner_run_id IN ({placeholders})",
+                run_ids,
+            ).rowcount or 0
+            deleted += execute_write(
+                f"DELETE FROM universe_twin_shadow_batches WHERE scanner_run_id IN ({placeholders})",
+                run_ids,
+            ).rowcount or 0
+        deleted += execute_write(
+            "DELETE FROM universe_relative_rank_shadow_batches WHERE captured_at < ?",
+            (cutoff,),
         ).rowcount or 0
-        batches = execute_write(
-            f"DELETE FROM universe_twin_shadow_batches WHERE scanner_run_id IN ({placeholders})",
-            run_ids,
-        ).rowcount or 0
-    return records + batches
+    return deleted
 
 
 def prune_agent_shell_commands(days: int = 14) -> int:

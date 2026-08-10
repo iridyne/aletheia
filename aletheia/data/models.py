@@ -54,6 +54,7 @@ class OpenInterestSnapshot(BaseModel):
     open_interest_coin: float | None = None
     oi_change_1h_pct: float | None = None
     long_short_ratio: float | None = None
+    top_trader_position_ratio: float | None = None
     observed_at: str
 
 

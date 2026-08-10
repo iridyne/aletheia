@@ -366,6 +366,14 @@ def test_persistence_is_outside_authority_publication_transaction() -> None:
         and node.func.id == "_persist_twin_shadow_nonfatal"
     ]
     assert len(persistence_calls) == 2
+    relative_persistence_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_persist_relative_rank_shadow_nonfatal"
+    ]
+    assert len(relative_persistence_calls) == 2
 
     authority_transactions = [
         node
@@ -381,3 +389,7 @@ def test_persistence_is_outside_authority_publication_transaction() -> None:
     assert authority_transactions
     for transaction_node in authority_transactions:
         assert not any(call in set(ast.walk(transaction_node)) for call in persistence_calls)
+        assert not any(
+            call in set(ast.walk(transaction_node))
+            for call in relative_persistence_calls
+        )

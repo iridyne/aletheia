@@ -1285,6 +1285,8 @@ class UniverseFeatureSnapshot(BaseModel):
     funding_rate: float | None = None
     open_interest: float | None = None
     oi_delta_1h: float | None = None
+    long_short_ratio: float | None = None
+    top_trader_position_ratio: float | None = None
     data_freshness_sec: int | None = None
     btc_beta: float | None = None
     taker_buy_ratio: float | None = None
@@ -1481,6 +1483,36 @@ class UniverseTwinShadowEvidence(BaseModel):
     compact_output_json: str
     input_json: str
     record_hash: str
+    captured_at: str = Field(default_factory=_utcnow)
+
+
+class UniverseRelativeRankShadowBatch(BaseModel):
+    scanner_run_id: str
+    authority_snapshot_id: str | None = None
+    experiment_id: str
+    policy_epoch_id: str
+    behavior_contract_hash: str
+    assignment_unit_key: str
+    assignment_contract_version: str
+    assignment_arm: str
+    assignment_propensity: float
+    treatment_coefficient: float
+    treatment_policy: str
+    control_policy: str
+    primary_horizon: str
+    outcome_contract_version: str
+    metric_version: str
+    feature_source_fingerprint: str
+    record_version: str
+    behavior_version: str
+    min_candidate_count: int
+    candidate_count: int
+    eligible_count: int
+    available: bool
+    promotion_eligible: bool = False
+    blocking_reasons_json: str = "[]"
+    records_json: str
+    batch_hash: str
     captured_at: str = Field(default_factory=_utcnow)
 
 

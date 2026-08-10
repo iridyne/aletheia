@@ -30,6 +30,9 @@ logger = logging.getLogger("aletheia.data.collectors.derivatives")
 # Fed into OpenInterestSnapshot.long_short_ratio at write time; normalizer's
 # compute_leverage_state already consumes long_short_ratio into crowding_score.
 _BINANCE_LSR_URL = "https://fapi.binance.com/futures/data/globalLongShortAccountRatio"
+_BINANCE_TOP_POSITION_RATIO_URL = (
+    "https://fapi.binance.com/futures/data/topLongShortPositionRatio"
+)
 # LSR enriches OI but is not allowed to consume the primary venue's live
 # Funding/OI budget.  A partial result is honest and remains useful.
 _LSR_BUDGET_SEC = 4.0
@@ -53,11 +56,28 @@ class DerivativesCollector:
         # for all symbols up-front so a failure here cannot mask the OI write — per
         # spec MS-C01: LSR failure must NOT prevent OpenInterestSnapshot persistence.
         lsr_map: dict[str, float] = {}
+        top_position_map: dict[str, float] = {}
         try:
             if cfg.market_data.enable_long_short_ratio:
-                lsr_map = await asyncio.wait_for(
-                    _fetch_lsr_binance_batch(symbols), timeout=_LSR_BUDGET_SEC
+                positioning_results = await asyncio.wait_for(
+                    asyncio.gather(
+                        _fetch_lsr_binance_batch(symbols),
+                        _fetch_top_position_ratio_binance_batch(symbols),
+                        return_exceptions=True,
+                    ),
+                    timeout=_LSR_BUDGET_SEC,
                 )
+                for label, result in zip(
+                    ("global_account_ratio", "top_position_ratio"),
+                    positioning_results,
+                    strict=True,
+                ):
+                    if isinstance(result, BaseException):
+                        errors.append(f"{label}_batch:{type(result).__name__}")
+                    elif label == "global_account_ratio":
+                        lsr_map = result
+                    else:
+                        top_position_map = result
         except asyncio.TimeoutError:
             errors.append("lsr_batch_timeout")
             logger.debug("LSR batch fetch exceeded %.1fs local budget", _LSR_BUDGET_SEC)
@@ -138,7 +158,9 @@ class DerivativesCollector:
                 if raw_oi:
                     snap = _parse_oi(
                         sym, primary_name, raw_oi,
-                        lsr=lsr_map.get(sym), mark_price=mark_price,
+                        lsr=lsr_map.get(sym),
+                        top_position_ratio=top_position_map.get(sym),
+                        mark_price=mark_price,
                     )
                     if snap:
                         oi.append(snap)
@@ -285,6 +307,7 @@ def _parse_oi(
     exchange: str,
     raw: dict,
     lsr: float | None = None,
+    top_position_ratio: float | None = None,
     mark_price: float | None = None,
 ) -> OpenInterestSnapshot | None:
     # Prefer the exchange-reported USD notional. Storing the raw amount as USD
@@ -322,6 +345,7 @@ def _parse_oi(
         open_interest_coin=oi_coin,
         oi_change_1h_pct=oi_change_1h_pct,
         long_short_ratio=lsr,
+        top_trader_position_ratio=top_position_ratio,
         observed_at=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -478,6 +502,7 @@ async def _maybe_backfill_oi_history(
             open_interest_coin=float(oi_amount) if oi_amount is not None else None,
             oi_change_1h_pct=None,
             long_short_ratio=None,
+            top_trader_position_ratio=None,
             observed_at=observed,
         )
         insert_open_interest_snapshot(snap.model_dump())
@@ -509,4 +534,32 @@ async def _fetch_lsr_binance_batch(symbols: list[str]) -> dict[str, float]:
                         results[sym] = float(ratio)
             except Exception as e:
                 logger.debug("LSR fetch failed for %s: %s", sym, e)
+    return results
+
+
+async def _fetch_top_position_ratio_binance_batch(
+    symbols: list[str],
+) -> dict[str, float]:
+    """Fetch latest 1h top-trader long/short position ratio from Binance."""
+    results: dict[str, float] = {}
+    async with httpx_client(timeout=10) as client:
+        for sym in symbols[:20]:
+            try:
+                resp = await client.get(
+                    _BINANCE_TOP_POSITION_RATIO_URL,
+                    params={
+                        "symbol": sym.replace("/", ""),
+                        "period": "1h",
+                        "limit": 1,
+                    },
+                )
+                if resp.status_code != 200:
+                    continue
+                items = resp.json()
+                if items and isinstance(items, list):
+                    ratio = items[0].get("longShortRatio")
+                    if ratio is not None:
+                        results[sym] = float(ratio)
+            except Exception as exc:
+                logger.debug("Top position ratio fetch failed for %s: %s", sym, exc)
     return results

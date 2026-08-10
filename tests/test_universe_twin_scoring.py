@@ -498,7 +498,10 @@ def test_refresh_wires_twin_off_thread_and_never_feeds_authority_consumers() -> 
         if name not in authority_consumers:
             continue
         referenced_names = {node.id for node in ast.walk(call) if isinstance(node, ast.Name)}
-        assert not any(value.startswith("twin_shadow") for value in referenced_names)
+        assert not any(
+            value.startswith(("twin_shadow", "relative_rank"))
+            for value in referenced_names
+        )
 
 
 def test_shadow_batch_failure_cannot_fail_authority_refresh(

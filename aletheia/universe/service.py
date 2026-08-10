@@ -90,7 +90,8 @@ async def _compute_twin_shadow_nonfatal(
     base_policy=None,
     policy_factory=None,
     policy_kwargs: dict | None = None,
-) -> tuple:
+    policy_keyword: str = "base_policy",
+):
     """Run diagnostic scoring off-thread without failing step-v1 refresh."""
     if not inputs:
         return ()
@@ -104,7 +105,7 @@ async def _compute_twin_shadow_nonfatal(
                 builder,
                 inputs,
                 scanner_run_id=scanner_run_id,
-                base_policy=base_policy,
+                **{policy_keyword: base_policy},
             ),
             timeout=_TWIN_SHADOW_TIMEOUT_SEC,
         )
@@ -114,6 +115,14 @@ async def _compute_twin_shadow_nonfatal(
             type(shadow_exc).__name__,
         )
         return ()
+
+
+async def _compute_relative_rank_nonfatal(*args, **kwargs):
+    return await _compute_twin_shadow_nonfatal(
+        *args,
+        policy_keyword="policy",
+        **kwargs,
+    )
 
 
 def _finalize_twin_shadow_nonfatal(
@@ -166,6 +175,32 @@ async def _compute_twin_shadow_allocation_nonfatal(
         return marker(records, reason)
 
 
+async def _compute_relative_rank_allocation_nonfatal(
+    replay,
+    annotator,
+    batch,
+    inputs: tuple,
+    *,
+    authority_selected: list[dict],
+    **kwargs,
+):
+    if not batch:
+        return None
+    try:
+        replayed = await asyncio.wait_for(
+            asyncio.to_thread(replay, batch, inputs, **kwargs),
+            timeout=_TWIN_SHADOW_TIMEOUT_SEC,
+        )
+        return annotator(replayed, authority_selected)
+    except Exception as shadow_exc:
+        logger.warning(
+            "Universe relative-rank Shadow replay unavailable without authority "
+            "impact: %s",
+            type(shadow_exc).__name__,
+        )
+        return None
+
+
 async def _persist_twin_shadow_nonfatal(
     builder,
     persist,
@@ -192,6 +227,12 @@ async def _persist_twin_shadow_nonfatal(
             return 0
         policy = policy_factory(**policy_kwargs)
         bundle = builder(records, inputs, policy=policy, **kwargs)
+        if not hasattr(bundle, "evidence"):
+            return persist(
+                bundle.batch,
+                outcomes=bundle.outcomes,
+                min_interval_sec=min_interval_sec,
+            )
         return persist(
             bundle.batch,
             bundle.evidence,
@@ -213,6 +254,10 @@ async def _persist_twin_shadow_nonfatal(
             kwargs.get("scanner_run_id", "not_available"),
         )
         return 0
+
+
+async def _persist_relative_rank_shadow_nonfatal(*args, **kwargs) -> int:
+    return await _persist_twin_shadow_nonfatal(*args, **kwargs)
 
 
 @contextmanager
@@ -580,6 +625,17 @@ class UniverseService:
         from aletheia.universe.twin_experiment import (
             build_prospective_twin_shadow_bundle,
         )
+        from aletheia.universe.relative_rank_shadow import (
+            annotate_relative_authority_selection,
+            build_relative_rank_batch,
+            replay_relative_rank_allocation,
+        )
+        from aletheia.universe.relative_rank_persistence import (
+            RELATIVE_RANK_CAPTURE_INTERVAL_SEC,
+        )
+        from aletheia.universe.relative_rank_experiment import (
+            build_prospective_relative_rank_bundle,
+        )
         from aletheia.universe.signal_emitter import (
             emit_deterministic_opportunities,
             _infer_direction,
@@ -726,6 +782,16 @@ class UniverseService:
                     "min_depth_10bps_usd": cfg.universe.min_depth_10bps_usd,
                 },
             )
+            relative_rank_batch = await _compute_relative_rank_nonfatal(
+                build_relative_rank_batch,
+                tuple(twin_shadow_inputs),
+                scanner_run_id=run.id,
+                policy_factory=ContinuousScoringPolicy,
+                policy_kwargs={
+                    "min_volume_24h_usdt": cfg.universe.min_volume_24h_usdt,
+                    "min_depth_10bps_usd": cfg.universe.min_depth_10bps_usd,
+                },
+            )
 
             # Pass 2: fine spread filter with per-family tolerance. Records rejections
             # via record_filter_decision with scanner_family → filter_candidate_outcomes
@@ -753,6 +819,19 @@ class UniverseService:
                 twin_shadow_records,
                 tuple(twin_shadow_inputs),
                 scanner_run_id=run.id,
+                universe_config=cfg.universe,
+                app_config=cfg,
+                family_tolerances=family_tolerances,
+                regime_state=current_regime.state if current_regime else None,
+                allocator_random_state=allocator_random_state,
+                dedupe=_dedupe_by_symbol_preferred_market,
+            )
+            relative_rank_batch = await _compute_relative_rank_allocation_nonfatal(
+                replay_relative_rank_allocation,
+                annotate_relative_authority_selection,
+                relative_rank_batch,
+                tuple(twin_shadow_inputs),
+                authority_selected=allocated,
                 universe_config=cfg.universe,
                 app_config=cfg,
                 family_tolerances=family_tolerances,
@@ -910,6 +989,30 @@ class UniverseService:
                     scanner_run_id=run.id,
                     authority_snapshot_id=prev_snapshot_id,
                     allocator_random_state=allocator_random_state,
+                    universe_config=cfg.universe,
+                    enabled_markets=cfg.exchange.enabled_markets,
+                    preferred_market_type=cfg.exchange.preferred_market_type,
+                    family_tolerances=family_tolerances,
+                    regime_state=regime_tag_for_fp,
+                    provider_id=(
+                        f"{cfg.market_data.provider}:{cfg.market_data.ccxt_exchange}"
+                    ),
+                    outcome_venue=cfg.market_data.ccxt_exchange,
+                    captured_at=entry_ts,
+                )
+                await _persist_relative_rank_shadow_nonfatal(
+                    build_prospective_relative_rank_bundle,
+                    repo.insert_relative_rank_shadow_bundle,
+                    relative_rank_batch,
+                    tuple(twin_shadow_inputs),
+                    policy_factory=ContinuousScoringPolicy,
+                    policy_kwargs={
+                        "min_volume_24h_usdt": cfg.universe.min_volume_24h_usdt,
+                        "min_depth_10bps_usd": cfg.universe.min_depth_10bps_usd,
+                    },
+                    capture_due=repo.relative_rank_shadow_capture_due,
+                    min_interval_sec=RELATIVE_RANK_CAPTURE_INTERVAL_SEC,
+                    authority_snapshot_id=prev_snapshot_id,
                     universe_config=cfg.universe,
                     enabled_markets=cfg.exchange.enabled_markets,
                     preferred_market_type=cfg.exchange.preferred_market_type,
@@ -1099,6 +1202,28 @@ class UniverseService:
                 scanner_run_id=run.id,
                 authority_snapshot_id=snap.id,
                 allocator_random_state=allocator_random_state,
+                universe_config=cfg.universe,
+                enabled_markets=cfg.exchange.enabled_markets,
+                preferred_market_type=cfg.exchange.preferred_market_type,
+                family_tolerances=family_tolerances,
+                regime_state=regime_tag_for_fp,
+                provider_id=(f"{cfg.market_data.provider}:{cfg.market_data.ccxt_exchange}"),
+                outcome_venue=cfg.market_data.ccxt_exchange,
+                captured_at=entry_ts,
+            )
+            await _persist_relative_rank_shadow_nonfatal(
+                build_prospective_relative_rank_bundle,
+                repo.insert_relative_rank_shadow_bundle,
+                relative_rank_batch,
+                tuple(twin_shadow_inputs),
+                policy_factory=ContinuousScoringPolicy,
+                policy_kwargs={
+                    "min_volume_24h_usdt": cfg.universe.min_volume_24h_usdt,
+                    "min_depth_10bps_usd": cfg.universe.min_depth_10bps_usd,
+                },
+                capture_due=repo.relative_rank_shadow_capture_due,
+                min_interval_sec=RELATIVE_RANK_CAPTURE_INTERVAL_SEC,
+                authority_snapshot_id=snap.id,
                 universe_config=cfg.universe,
                 enabled_markets=cfg.exchange.enabled_markets,
                 preferred_market_type=cfg.exchange.preferred_market_type,

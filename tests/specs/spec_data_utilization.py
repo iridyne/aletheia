@@ -32,6 +32,9 @@ _LOCAL_FUNDING = _ROOT / "aletheia" / "portfolio" / "local_funding.py"
 _PAPER_ACCOUNT = _ROOT / "aletheia" / "portfolio" / "paper_account.py"
 _VERGEX_STRUCTURE = _ROOT / "aletheia" / "data" / "collectors" / "vergex_structure.py"
 _POSITION_X = _ROOT / "aletheia" / "data" / "position_x.py"
+_DERIVATIVES = _ROOT / "aletheia" / "data" / "collectors" / "derivatives.py"
+_RELATIVE_RANK = _ROOT / "aletheia" / "universe" / "relative_rank_shadow.py"
+_UNIVERSE_FEATURES = _ROOT / "aletheia" / "universe" / "features.py"
 _MARKET_DATA = _ROOT / "aletheia" / "trading" / "market_data.py"
 _DATA_UTILIZATION_DOC = _ROOT / "docs" / "design" / "data" / "data_utilization.md"
 _API_REFERENCE_DOC = _ROOT / "docs" / "design" / "api" / "api_reference.md"
@@ -41,6 +44,29 @@ _INFERENCE_CONTRACT = (
 )
 
 _CONTRACT = "data_utilization_contract"
+
+
+@spec_claim(
+    SpecClaim(
+        "DU-S26",
+        _CONTRACT,
+        "§3 public derivatives positioning in Relative Rank Shadow",
+        "L2c",
+        "Global account and top-trader position ratios remain distinct, persist "
+        "through the Universe feature snapshot, and fail closed for perp ranking.",
+        status="implemented",
+    ),
+)
+def test_public_positioning_ratios_reach_relative_rank_shadow():
+    derivatives = _DERIVATIVES.read_text(encoding="utf-8")
+    features = _UNIVERSE_FEATURES.read_text(encoding="utf-8")
+    ranker = _RELATIVE_RANK.read_text(encoding="utf-8")
+    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
+
+    assert "topLongShortPositionRatio" in derivatives
+    for field in ("long_short_ratio", "top_trader_position_ratio"):
+        assert field in derivatives and field in features and field in ranker
+    assert "DU-S26" in doc
 
 
 @spec_claim(
