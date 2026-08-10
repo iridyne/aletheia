@@ -483,10 +483,9 @@ def test_applied_policy_version_closure():
 )
 async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
     """Behavioral proof on the autouse in-memory DB. Mocks ONLY the LLM network
-    boundary (llm_complete); LessonStore / PolicyStore / evidence SQL all run for
+    boundary (llm_structured); LessonStore / PolicyStore / evidence SQL all run for
     real, and we assert the resulting DB state — not that a mock was called.
     """
-    import json as _json
     from unittest.mock import AsyncMock
 
     from aletheia.storage.sqlite import get_db
@@ -521,8 +520,8 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
     )
 
     monkeypatch.setattr(
-        lr, "llm_complete",
-        AsyncMock(return_value=(_json.dumps({"decision": "accept", "reasoning": "supported"}), None)),
+        lr, "llm_structured",
+        AsyncMock(return_value=({"decision": "accept", "reasoning": "supported"}, None)),
     )
 
     await lr.run_lesson_reviewer(run_id="test")
@@ -541,6 +540,33 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
     assert len(skills) == 1
     assert skills[0].status == "draft"
     assert skills[0].name == f"lesson:{lesson.lesson_id}"
+
+
+async def test_lesson_reviewer_surfaces_structured_judgment_failure(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from aletheia.learning.lessons import LessonStore
+    import aletheia.agents.lesson_reviewer as lr
+
+    lesson = LessonStore().create("scoped", "trade_case_study", "case-1")
+    monkeypatch.setattr(
+        lr, "_fetch_evidence",
+        lambda _lesson: {
+            "aggregate": {"total": 20, "win_rate": 50.0, "avg_return": 0.1},
+            "exact_scope": {"total": 20, "win_rate": 50.0, "avg_return": 0.1},
+        },
+    )
+    call = AsyncMock(return_value=(None, "structured_empty_content"))
+    monkeypatch.setattr(lr, "llm_structured", call)
+
+    result = await lr.run_lesson_reviewer(run_id="test")
+
+    assert LessonStore().get(lesson.lesson_id).status == "proposed"
+    assert result["errors"] == [
+        f"judgment_failed:{lesson.lesson_id}:llm_error:structured_empty_content"
+    ]
+    assert call.await_args.kwargs["schema"] is lr._LessonJudgment
+    assert call.await_args.kwargs["reasoning_effort"] == "none"
 
 
 async def test_lesson_reviewer_reuses_policy_after_partial_apply_failure():

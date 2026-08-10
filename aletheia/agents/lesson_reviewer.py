@@ -33,9 +33,12 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import elapsed_ms, llm_complete, log_tool
+from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool
 from aletheia.model_provider.router import get_provider_for_tier
 
 logger = logging.getLogger("aletheia.agents.lesson_reviewer")
@@ -53,6 +56,11 @@ _DEMOTE_WIN_RATE = 35.0
 _SYMBOL_RE = re.compile(r"\b([A-Z0-9]{2,12}/USDT)\b")
 _LONG_RE = re.compile(r"\blongs?\b", re.IGNORECASE)
 _SHORT_RE = re.compile(r"\bshorts?\b", re.IGNORECASE)
+
+
+class _LessonJudgment(BaseModel):
+    decision: Literal["accept", "reject", "defer"]
+    reasoning: str = Field(default="", max_length=200)
 
 
 def _fetch_evidence(lesson) -> dict:
@@ -228,7 +236,7 @@ async def _judge(lesson, evidence: dict, run_id: str | None) -> tuple[str, str]:
 
     decision ∈ {accept, reject, defer}; defaults to 'defer' on any failure.
     """
-    content, err = await llm_complete(
+    payload, err = await llm_structured(
         system=(
             "You are a skeptical trading-lesson evaluator. Decide whether a proposed "
             "lesson is supported by the recent settled-outcome evidence provided. "
@@ -247,19 +255,13 @@ async def _judge(lesson, evidence: dict, run_id: str | None) -> tuple[str, str]:
         max_tokens=200,
         provider=get_provider_for_tier("deep"),
         caller="lesson_reviewer.judge",
+        schema=_LessonJudgment,
+        reasoning_effort="none",
     )
     log_tool(run_id, "llm_judge_lesson", "observe", err is None)
-    if err:
-        return "defer", f"llm_error:{err}"
-    try:
-        content_str = (content or "").strip().strip("`").removeprefix("json").strip()
-        parsed = json.loads(content_str)
-    except (json.JSONDecodeError, ValueError):
-        return "defer", "unparseable_llm_response"
-    decision = str(parsed.get("decision", "defer")).lower()
-    if decision not in ("accept", "reject", "defer"):
-        decision = "defer"
-    return decision, str(parsed.get("reasoning", ""))[:200]
+    if err or payload is None:
+        return "defer", f"llm_error:{err or 'empty_payload'}"
+    return str(payload["decision"]), str(payload.get("reasoning") or "")[:200]
 
 
 def _deterministic_demote(evidence: dict) -> bool:
@@ -333,6 +335,8 @@ async def run_lesson_reviewer(
                 output=f"{lesson.lesson_id}:{reason}",
                 duration_ms=elapsed_ms(started_at),
             )
+        elif reason.startswith("llm_error:"):
+            errors.append(f"judgment_failed:{lesson.lesson_id}:{reason}")
 
     # ── Step B: promote — judge proposed lessons ──
     # Oldest-first prevents a busy producer from starving long-waiting lessons.
@@ -381,6 +385,8 @@ async def run_lesson_reviewer(
             )
         else:
             deferred += 1
+            if reason.startswith("llm_error:"):
+                errors.append(f"judgment_failed:{lesson.lesson_id}:{reason}")
 
     # ── Step C: apply — fold accepted lessons (this run + any stuck from prior runs) ──
     # GAP-04: a prior create_version failure leaves lessons stuck in 'accepted'; pick
