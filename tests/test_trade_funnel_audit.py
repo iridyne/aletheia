@@ -198,6 +198,41 @@ def test_trade_funnel_conversion_uses_linked_opportunity_cohort():
     )
 
 
+def test_trade_funnel_counts_durable_operator_defer_as_evaluated():
+    """A deferred carrier was consumed even though it has no terminal PI action."""
+    import json
+
+    from aletheia.analytics.trade_funnel import build_trade_funnel_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, 1)
+    _insert_signal(db, 1, "signal_pending")
+    db.execute(
+        "INSERT INTO operator_evaluation_events "
+        "(id,dedup_key,event_kind,trigger,pending_unresolved_total,pending_visible_count,"
+        "queue_snapshot_json,data_health_json,created_at) "
+        "VALUES ('defer-funnel-1','defer-funnel-key-1',"
+        "'operator_decision_deferred_unchanged_context','signal',1,1,?,?,?)",
+        (
+            json.dumps({"opportunity_id": "opp-funnel-1"}),
+            "{}",
+            _iso(),
+        ),
+    )
+    db.commit()
+
+    report = build_trade_funnel_audit(
+        hours=24,
+        min_sample_size=1,
+        include_ranker_snapshot=False,
+    )
+
+    assert report["causal_cohort_counts"]["system_operator_evaluated"] == 1
+    assert report["conversion_rates"]["signal_pending_to_evaluated"] == 1.0
+    assert report["main_choke_point"]["stage"] == "system_operator_decision"
+
+
 def test_trade_funnel_uses_persisted_ranker_and_submission_evidence():
     from aletheia.analytics.trade_funnel import (
         build_trade_funnel_audit,

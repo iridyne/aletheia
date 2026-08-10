@@ -438,13 +438,32 @@ def _causal_cohort_counts(db, cutoff: str) -> dict[str, int | None]:
             opportunity_id = str(decision["opportunity_id"])
             if opportunity_id in signal_ids:
                 latest_action[opportunity_id] = str(decision["action"])
+        observed_ids: set[str] = set()
+        if _table_exists(db, "operator_evaluation_events"):
+            rows = db.execute(
+                "SELECT DISTINCT CASE WHEN json_valid(oe.queue_snapshot_json) "
+                "THEN json_extract(oe.queue_snapshot_json, '$.opportunity_id') END "
+                "AS opportunity_id "
+                "FROM operator_evaluation_events oe "
+                "JOIN opportunities o ON o.id = CASE "
+                "WHEN json_valid(oe.queue_snapshot_json) "
+                "THEN json_extract(oe.queue_snapshot_json, '$.opportunity_id') END "
+                "WHERE datetime(o.created_at) >= datetime(?) "
+                "AND oe.event_kind LIKE 'operator_decision_deferred_%'",
+                (cutoff,),
+            ).fetchall()
+            observed_ids = {
+                str(row["opportunity_id"])
+                for row in rows
+                if row["opportunity_id"] is not None
+            } & signal_ids
         action_counts = Counter(latest_action.values())
         trade_ids = {
             opportunity_id
             for opportunity_id, action in latest_action.items()
             if action in {"trade", "scale_in", "flip"}
         }
-        counts["system_operator_evaluated"] = len(latest_action)
+        counts["system_operator_evaluated"] = len(set(latest_action) | observed_ids)
         for action, key in (
             ("trade", "decisions_trade"),
             ("watch", "decisions_watch"),
@@ -589,7 +608,7 @@ def _top_dropoffs(counts: dict) -> list[dict]:
     stages = [
         ("opportunity_to_signal_pending", counts["opportunities_created"], counts["signal_pending_written"], "Ranker/paper_trader gate is filtering or deduping candidates."),
         ("signal_pending_to_evaluated", counts["signal_pending_written"], counts["system_operator_evaluated"], "System Operator daemon/scheduler is not consuming pending signals."),
-        ("evaluated_to_trade_decision", counts["system_operator_evaluated"], trade_decisions, "System Operator is mostly choosing skip/watch."),
+        ("evaluated_to_trade_decision", counts["system_operator_evaluated"], trade_decisions, "System Operator is mostly deferring or choosing skip/watch."),
         ("trade_decision_to_proposal", trade_decisions, counts["proposals_created"], "Decision-to-proposal submission path is not producing proposals."),
         ("proposal_to_risk_approved", counts["proposals_created"], counts["risk_approved"], "Risk Engine or configured constraints are blocking proposals."),
         ("risk_approved_to_executed", counts["risk_approved"], counts["orders_executed"], "Execution Gateway, broker, or symbol availability is failing after approval."),
@@ -798,7 +817,7 @@ def _main_choke_point(
             "system_operator_decision",
             "warn",
             f"{counts['system_operator_evaluated']} evaluated signals produced 0 trade decisions.",
-            "Inspect System Operator skip/watch reasons and prompt/context constraints.",
+            "Inspect System Operator defer/skip/watch reasons and prompt/context constraints.",
         )
     if int(counts["signal_pending_written"] or 0) > 0 and int(counts["system_operator_evaluated"] or 0) == 0:
         return _choke(
