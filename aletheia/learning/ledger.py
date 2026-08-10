@@ -133,13 +133,21 @@ def get_job_health(job_id: str) -> dict | None:
     return get_record("learning_job_health", job_id)
 
 
-def latest_failed_lesson_reviewer_attempt(input_watermark: str) -> dict | None:
+def latest_lesson_reviewer_attempt(input_watermark: str) -> dict | None:
     row = get_db().execute(
         "SELECT * FROM learning_lesson_reviewer_attempts "
         "WHERE input_watermark=? ORDER BY started_at DESC, rowid DESC LIMIT 1",
         (input_watermark,),
     ).fetchone()
-    return dict(row) if row and row["outcome"] == "failed" else None
+    return dict(row) if row else None
+
+
+def running_lesson_reviewer_attempts() -> list[dict]:
+    rows = get_db().execute(
+        "SELECT * FROM learning_lesson_reviewer_attempts "
+        "WHERE outcome='running' ORDER BY started_at"
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def finish_lesson_reviewer_attempt(

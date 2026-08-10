@@ -8,9 +8,11 @@ from zoneinfo import ZoneInfo
 from aletheia.config.loader import load_config
 from aletheia.learning.ledger import (
     finish_lesson_reviewer_attempt,
+    get_record,
     get_job_health,
     insert_record,
-    latest_failed_lesson_reviewer_attempt,
+    latest_lesson_reviewer_attempt,
+    running_lesson_reviewer_attempts,
     upsert_job_health,
 )
 from aletheia.learning.models import LearningJobHealth, LessonReviewerAttempt
@@ -315,7 +317,16 @@ def record_learning_job_started(job_id: str) -> str | None:
         if job_id == "lesson_reviewer":
             watermark = current_daily_window(job_id, now=now)
             assert watermark is not None
-            retry = latest_failed_lesson_reviewer_attempt(watermark)
+            for unfinished in running_lesson_reviewer_attempts():
+                finish_lesson_reviewer_attempt(
+                    unfinished["attempt_id"],
+                    finished_at=now.isoformat(),
+                    outcome="failed",
+                    error_class="InterruptedError",
+                    error_message="process_restart_before_completion",
+                )
+            previous = latest_lesson_reviewer_attempt(watermark)
+            retry = previous if previous and previous["outcome"] == "failed" else None
             attempt = LessonReviewerAttempt(
                 input_watermark=watermark,
                 started_at=now.isoformat(),
@@ -343,6 +354,11 @@ def record_learning_job_success(job_id: str, *, attempt_id: str | None = None) -
     window = current_daily_window(job_id, now=now)
     if window is not None:
         updates["input_watermark"] = window
+    if job_id == "lesson_reviewer" and attempt_id is not None:
+        attempt = get_record("learning_lesson_reviewer_attempts", attempt_id)
+        if attempt is None:
+            raise RuntimeError(f"lesson reviewer attempt is missing: {attempt_id}")
+        updates["input_watermark"] = attempt["input_watermark"]
     if job_id in {"dreaming_daily", "lesson_reviewer"}:
         count, oldest = _lesson_backlog()
         updates["backlog_count"] = count
