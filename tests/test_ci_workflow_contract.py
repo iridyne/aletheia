@@ -386,8 +386,9 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     assert "pullRequest.state === 'MERGED'" in update_script
     assert "await dispatchRelease(pullRequest.mergeCommit?.oid)" in update_script
     assert "auto-merge is enabled; waiting for the merged commit" in update_script
-    assert "auto-merge did not complete after" in update_script
-    assert "merged pull request did not expose a 40-character merge commit SHA" in update_script
+    assert "if (!/^[0-9a-f]{40}$/.test(mergeCommitSha || ''))" in update_script
+    assert "if (attempt === maxAttempts)" in update_script
+    assert "throw new Error(`auto-merge did not complete after ${maxAttempts} checks`)" in update_script
     assert "const autoMergeStates = new Set(['BEHIND', 'BLOCKED', 'HAS_HOOKS'])" in update_script
     assert "enablePullRequestAutoMerge" in update_script
     assert "mergeMethod: SQUASH" in update_script
