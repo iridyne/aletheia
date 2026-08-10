@@ -28,8 +28,9 @@ history. A merged-PR event explicitly dispatches Release Please because merges
 performed with the repository `GITHUB_TOKEN` do not reliably start another
 workflow through a `push` event. When the trusted auto-merge worker performs a
 clean squash merge, it emits that dispatch in the same job; the closed-PR path
-also covers a human merge. If native auto-merge is enabled while checks settle,
-the worker waits for the merged commit and can replay that dispatch when rerun.
+also covers a human or native auto-merge. If native auto-merge is enabled while
+checks settle, the worker waits for the merged commit but leaves release
+dispatch to that single closed-PR path.
 Release Please keeps its `autorelease: pending` marker on the generated PR and
 the workflow adds `do-not-auto-merge` while the candidate is unverified. Release
 Please explicitly dispatches the existing read-only CI workflow on the generated

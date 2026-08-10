@@ -210,7 +210,7 @@ jobs:
                   core.info('merged pull request head differs from the authorized head; no release dispatch');
                   return;
                 }
-                await dispatchRelease(pullRequest.mergeCommit?.oid);
+                core.info('pull request was merged externally; the closed event owns release dispatch');
                 return;
               }
               if (pullRequest.state !== 'OPEN') {

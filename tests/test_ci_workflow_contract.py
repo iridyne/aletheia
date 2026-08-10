@@ -428,7 +428,8 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     assert "event_type: 'release_please'" in update_script
     assert "await dispatchRelease(mergeResult.data.sha)" in update_script
     assert "pullRequest.state === 'MERGED'" in update_script
-    assert "await dispatchRelease(pullRequest.mergeCommit?.oid)" in update_script
+    assert "the closed event owns release dispatch" in update_script
+    assert "dispatchRelease(pullRequest.mergeCommit?.oid)" not in update_script
     assert "auto-merge is enabled; waiting for the merged commit" in update_script
     assert "if (!/^[0-9a-f]{40}$/.test(mergeCommitSha || ''))" in update_script
     assert "if (attempt === maxAttempts)" in update_script
