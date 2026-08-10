@@ -23,7 +23,6 @@ _COUNT_KEYS = (
     "ranker_eligible",
     "signal_pending_written",
     "system_operator_evaluated",
-    "operator_deferred",
     "decisions_trade",
     "decisions_watch",
     "decisions_skip",
@@ -387,6 +386,7 @@ def _causal_cohort_counts(db, cutoff: str) -> dict[str, int | None]:
     counts but cannot honestly contribute to conversion.
     """
     counts = _empty_counts()
+    counts["operator_deferred"] = 0
     if not _table_exists(db, "opportunities"):
         return counts
 
@@ -442,15 +442,22 @@ def _causal_cohort_counts(db, cutoff: str) -> dict[str, int | None]:
         observed_ids: set[str] = set()
         if _table_exists(db, "operator_evaluation_events"):
             rows = db.execute(
-                "SELECT DISTINCT CASE WHEN json_valid(oe.queue_snapshot_json) "
-                "THEN json_extract(oe.queue_snapshot_json, '$.opportunity_id') END "
-                "AS opportunity_id "
-                "FROM operator_evaluation_events oe "
-                "JOIN opportunities o ON o.id = CASE "
-                "WHEN json_valid(oe.queue_snapshot_json) "
-                "THEN json_extract(oe.queue_snapshot_json, '$.opportunity_id') END "
-                "WHERE datetime(o.created_at) >= datetime(?) "
-                "AND oe.event_kind LIKE 'operator_decision_deferred_%'",
+                "WITH ranked AS ("
+                "  SELECT json_extract(oe.queue_snapshot_json, '$.opportunity_id') "
+                "    AS opportunity_id, oe.event_kind, "
+                "    json_extract(oe.queue_snapshot_json, '$.defer_until') AS defer_until, "
+                "    ROW_NUMBER() OVER ("
+                "      PARTITION BY json_extract(oe.queue_snapshot_json, '$.opportunity_id') "
+                "      ORDER BY julianday(oe.created_at) DESC, oe.rowid DESC"
+                "    ) AS rn "
+                "  FROM operator_evaluation_events oe "
+                "  JOIN opportunities o "
+                "    ON o.id=json_extract(oe.queue_snapshot_json, '$.opportunity_id') "
+                "  WHERE json_valid(oe.queue_snapshot_json) "
+                "    AND datetime(o.created_at) >= datetime(?)"
+                ") SELECT opportunity_id FROM ranked "
+                "WHERE rn=1 AND event_kind LIKE 'operator_decision_deferred_%' "
+                "AND julianday(defer_until) > julianday('now')",
                 (cutoff,),
             ).fetchall()
             observed_ids = {
@@ -748,6 +755,10 @@ def _main_choke_point(
     proposal_submission_reasons: list[dict] | None = None,
 ) -> dict:
     trade_decisions = _trade_decision_count(counts)
+    terminal_decisions = sum(
+        int(counts[key] or 0)
+        for key in ("decisions_trade", "decisions_watch", "decisions_skip", "decisions_scale_in", "decisions_flip")
+    )
     positions = int(counts["positions_opened"] or 0)
     median_notional = stats.get("median_notional_usdt")
 
@@ -815,7 +826,7 @@ def _main_choke_point(
             "Inspect the structured proposal-submission reasons before changing System Operator behavior.",
         )
     if int(counts["system_operator_evaluated"] or 0) >= min_sample_size and trade_decisions == 0:
-        if int(counts["operator_deferred"] or 0) > 0:
+        if int(counts["operator_deferred"] or 0) > 0 and terminal_decisions == 0:
             return _choke(
                 "system_operator_deferred",
                 "warn",
