@@ -44,6 +44,36 @@ def _record_ttl_decision(
     )
 
 
+def _record_confidence_decision(
+    *, key: str, decision: str, confidence: str, net_4h: float, now: datetime
+) -> None:
+    from aletheia.analytics.filter_evidence import record_filter_decision
+    from aletheia.storage.sqlite import get_db
+
+    record_filter_decision(
+        candidate_key=key,
+        candidate_kind="opportunity",
+        filter_name="ranker_confidence_gate",
+        stage="paper_ranker",
+        decision=decision,
+        reason_code="confidence_at_or_above" if decision == "passed" else "confidence_below",
+        symbol="BTC/USDT",
+        venue="okx",
+        market_type="perp",
+        direction="long",
+        scanner_family="mean_reversion",
+        entry_price_usd=100.0,
+        inputs={"confidence": confidence},
+        parameters={"minimum": "medium"},
+        evaluated_at=now.isoformat(),
+    )
+    get_db().execute(
+        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=? "
+        "WHERE outcome_candidate_key=? AND horizon='4h'",
+        (net_4h, key),
+    )
+
+
 def test_family_ttl_replay_is_fixed_version_incremental_and_bounded():
     from aletheia.counterfactual.filter_replay import build_family_ttl_replay
     from aletheia.storage.sqlite import get_db
@@ -154,3 +184,56 @@ def test_family_ttl_replay_uses_first_exposure_and_rejects_invalid_scope():
             horizon="1h",
             current_ttl_sec=1800,
         )
+
+
+def test_ranker_confidence_replay_uses_existing_controller_path():
+    from aletheia.counterfactual.filter_replay import (
+        build_bounded_filter_replays,
+        build_ranker_confidence_replay,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc)
+    _record_confidence_decision(
+        key="opportunity:pass", decision="passed", confidence="medium",
+        net_4h=0.0, now=now,
+    )
+    for suffix in ("a", "b"):
+        _record_confidence_decision(
+            key=f"opportunity:reject-{suffix}", decision="rejected",
+            confidence="speculative", net_4h=2.0, now=now,
+        )
+    version = get_db().execute(
+        "SELECT filter_version FROM filter_decisions "
+        "WHERE filter_name='ranker_confidence_gate' LIMIT 1"
+    ).fetchone()[0]
+    scope = {
+        "filter_version": version,
+        "stage": "paper_ranker",
+        "scanner_family": "mean_reversion",
+        "direction": "long",
+        "market_type": "perp",
+        "horizon": "4h",
+    }
+
+    report = build_ranker_confidence_replay(**scope, min_samples=2)
+    bounded = build_bounded_filter_replays([
+        {"filter_name": "ranker_confidence_gate", "verdict": "overrestrictive_suspect", **scope}
+    ], min_samples=2)
+
+    assert report["current_minimum_confidence"] == "medium"
+    assert report["alternatives"] == [
+        {
+            "minimum_confidence": "speculative",
+            "newly_admitted_candidates": 2,
+            "candidate_count": 2,
+            "settled_n": 2,
+            "outcome_coverage": 1.0,
+            "raw_avg_net_pct": 2.0,
+            "median_net_pct": 2.0,
+            "shrunk_avg_net_pct": 0.181818,
+            "delta_vs_current_pass_pct": 0.181818,
+            "readiness": "ready_for_controlled_experiment",
+        }
+    ]
+    assert bounded[0]["filter_name"] == "ranker_confidence_gate"
