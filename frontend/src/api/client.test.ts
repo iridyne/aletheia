@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, api, extractApiError, parseApiError } from './client'
+import { ApiError, api, decodeOhlcvResponse, extractApiError, parseApiError } from './client'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -98,5 +98,31 @@ describe('API errors', () => {
 
     expect(error.message).toBe('502 error')
     expect(error.details).toBeUndefined()
+  })
+})
+
+describe('OHLCV response metadata', () => {
+  it('retains source and computes as-of freshness at the client boundary', () => {
+    const result = decodeOhlcvResponse(
+      [{ time: 1_800, open: 1, high: 2, low: 0.5, close: 1.5, volume: 4 }],
+      new Headers({
+        'X-Aletheia-Data-Source': 'database_fallback',
+        'X-Aletheia-Data-Instrument': 'bybit:BTC/USDT:spot:5m',
+      }),
+      '5m',
+      2_500_000,
+    )
+
+    expect(result.meta).toMatchObject({
+      source: 'database_fallback',
+      instrument: 'bybit:BTC/USDT:spot:5m',
+      asOf: '1970-01-01T00:30:00.000Z',
+      ageMs: 700_000,
+      stale: true,
+    })
+    expect(() => decodeOhlcvResponse({ candles: [] }, new Headers(), '5m')).toThrow(TypeError)
+    expect(() => decodeOhlcvResponse([
+      { time: 1_800, open: null, high: 2, low: 0.5, close: 1.5, volume: 4 },
+    ], new Headers(), '5m')).toThrow(TypeError)
   })
 })

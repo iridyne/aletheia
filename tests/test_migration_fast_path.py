@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 22)
+        f"aletheia-sqlite-v{version}" for version in range(2, 23)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v21"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v22"
     connection.close()
 
 
@@ -544,6 +544,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE agent_tool_calls (id TEXT PRIMARY KEY);
         CREATE TABLE agent_shell_commands (id TEXT PRIMARY KEY);
         CREATE TABLE runtime_sessions (session_id TEXT PRIMARY KEY);
+        CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
         INSERT INTO learning_experiments VALUES ('legacy-experiment');
         INSERT INTO learning_contribution_verdicts
         VALUES ('legacy-positive', 'legacy-experiment');
@@ -576,14 +577,34 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260810_0020_lesson_reviewer_attempts_v21",
-        "aletheia-sqlite-v21",
+        "20260810_0021_event_jsonl_outbox_v22",
+        "aletheia-sqlite-v22",
     )
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "
         "FROM learning_contribution_verdicts WHERE verdict_id='legacy-positive'"
     ).fetchone()
     assert tuple(legacy) == ("monitoring", 0)
+    connection.close()
+
+
+def test_event_jsonl_outbox_migration_does_not_replay_historical_rows():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)"
+    )
+    connection.execute("INSERT INTO ps_event_log VALUES ('old', '2026-08-01T00:00:00+00:00')")
+
+    migrations._apply_event_jsonl_outbox_v22(connection)
+    migrations._apply_event_jsonl_outbox_v22(connection)
+
+    row = connection.execute(
+        "SELECT jsonl_mirror_status, jsonl_attempt_count, jsonl_mirrored_at "
+        "FROM ps_event_log WHERE event_id='old'"
+    ).fetchone()
+    assert tuple(row) == ("mirrored", 0, "2026-08-01T00:00:00+00:00")
     connection.close()
 
 

@@ -2,25 +2,10 @@ import { Routes, Route, NavLink, Navigate, Link, useLocation } from 'react-route
 import { lazy, Suspense, useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Activity,
-  ChartCandlestick,
-  ClipboardList,
-  Command as CommandIcon,
   Diamond,
-  Gauge,
-  Globe,
-  GraduationCap,
-  LayoutDashboard,
   Menu,
-  Newspaper,
   PanelLeftClose,
   PanelLeftOpen,
-  Settings as SettingsIcon,
-  ShieldAlert,
-  Telescope,
-  TrendingUp,
-  Wallet,
-  type LucideIcon,
 } from 'lucide-react'
 import { api } from './api/client'
 import CommandPalette from './components/CommandPalette'
@@ -33,6 +18,7 @@ import { deriveMasterState, getOperatorDisplayStatus } from './lib/systemState'
 import { devPreviewLabel } from './dev-preview'
 import { useRealtimeUpdates, type RealtimeStatus } from './lib/useRealtimeUpdates'
 import RouteErrorBoundary from './components/RouteErrorBoundary'
+import { NAV } from './routeManifest'
 
 const Overview = lazy(() => import('./pages/Overview'))
 const AgentActivity = lazy(() => import('./pages/AgentActivity'))
@@ -48,59 +34,6 @@ const SerenityLens = lazy(() => import('./pages/SerenityLens'))
 const PredictionLens = lazy(() => import('./pages/PredictionLens'))
 const Universe = lazy(() => import('./pages/Universe'))
 const Usage = lazy(() => import('./pages/Usage'))
-
-export type NavItem = { to: string; label: string; icon: LucideIcon }
-export type NavGroup = { group: string; items: NavItem[] }
-
-// Nav follows the owner-approved trading-desk IA:
-// global entries -> Research -> Decision -> Portfolio -> global entries.
-// Keep this list honest: items must point only at implemented routes.
-export const NAV: NavGroup[] = [
-  {
-    group: '',
-    items: [
-      { to: '/', label: 'Overview', icon: LayoutDashboard },
-      { to: '/command-center', label: 'Command Center', icon: CommandIcon },
-    ],
-  },
-  {
-    group: 'Research',
-    items: [
-      { to: '/universe', label: 'Universe Board', icon: Globe },
-      { to: '/charts', label: 'Markets', icon: ChartCandlestick },
-      { to: '/prediction-markets', label: 'Prediction Markets', icon: TrendingUp },
-      // Serenity Lens is a supply-chain research/discovery path (a way to observe
-      // the world for opportunities), not a learning/evolution loop — belongs here.
-      { to: '/serenity-lens', label: 'Serenity Lens', icon: Telescope },
-      { to: '/news', label: 'News Intel', icon: Newspaper },
-    ],
-  },
-  {
-    group: 'Decision',
-    items: [
-      // Blotter (BLOTTER_DESIGN.md) merges the four Overview decision cards +
-      // the legacy /proposals page into one sell-side-style workstation. The
-      // /proposals route is preserved below as a legacy redirect target.
-      { to: '/blotter', label: 'Blotter', icon: ClipboardList },
-      { to: '/agent-activity', label: 'Agent Activity', icon: Activity },
-    ],
-  },
-  {
-    group: 'Portfolio',
-    items: [
-      { to: '/trades', label: 'Trades & Positions', icon: Wallet },
-      { to: '/risk', label: 'Risk & Controls', icon: ShieldAlert },
-    ],
-  },
-  {
-    group: '',
-    items: [
-      { to: '/learning', label: 'Learning', icon: GraduationCap },
-      { to: '/usage', label: 'Usage', icon: Gauge },
-      { to: '/settings', label: 'Settings', icon: SettingsIcon },
-    ],
-  },
-]
 
 const RAIL_STORAGE_KEY = 'sidebar:collapsed'
 

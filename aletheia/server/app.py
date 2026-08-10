@@ -50,6 +50,48 @@ from aletheia.server.routes.ws import router as ws_router
 
 logger = logging.getLogger("aletheia")
 
+LIFESPAN_TASK_CATALOG = {
+    "llm_startup_gate": {"owner": "server.lifespan", "failure_policy": "pause_ai_and_trading"},
+    "startup_exchange_sync": {"owner": "server.lifespan", "failure_policy": "warn"},
+    "startup_exchange_gate": {"owner": "server.lifespan", "failure_policy": "pause_trading"},
+    "startup_behavior_gate": {"owner": "server.lifespan", "failure_policy": "pause_ai_and_trading"},
+    "pi_daemon": {"owner": "server.lifespan", "failure_policy": "warn"},
+    "telegram_polling": {"owner": "server.lifespan", "failure_policy": "warn"},
+    "event_loop_lag_monitor": {"owner": "server.lifespan", "failure_policy": "observe"},
+    "startup_gate_recheck": {"owner": "startup_behavior_gate", "failure_policy": "retry"},
+    "llm_auto_resume": {"owner": "auto_resume", "failure_policy": "retry"},
+    "exchange_auto_resume": {"owner": "connectivity", "failure_policy": "retry"},
+}
+_lifespan_tasks: dict[str, asyncio.Task | None] = {}
+
+
+def lifecycle_task_snapshot() -> list[dict[str, object]]:
+    """Read-only ownership facts; this registry never starts or permits work."""
+    rows = []
+    for task_id, policy in LIFESPAN_TASK_CATALOG.items():
+        task = _lifespan_tasks.get(task_id)
+        direct = policy["owner"] == "server.lifespan"
+        rows.append(
+            {
+                "task_id": task_id,
+                **policy,
+                "ownership": "direct" if direct else "module_owned",
+                "state": (
+                    "not_started"
+                    if task is None
+                    else "cancelled"
+                    if task.cancelled()
+                    else "finished"
+                    if task.done()
+                    else "running"
+                )
+                if direct
+                else "module_owned",
+                "stop_timeout_sec": None,
+            }
+        )
+    return rows
+
 
 def _log_startup_stage(stage: str, stage_started: float, startup_started: float) -> float:
     finished = time.perf_counter()
@@ -436,6 +478,14 @@ async def lifespan(app: FastAPI):
             start_runtime_session(cfg, runtime_context)
         except Exception as e:
             logger.warning("Runtime session start failed (non-fatal): %s", e)
+        try:
+            from aletheia.storage.event_store import get_event_store
+
+            mirror_result = get_event_store().reconcile_jsonl(limit=100)
+            if mirror_result["attempted"]:
+                logger.info("Event JSONL mirror reconciliation: %s", mirror_result)
+        except Exception as e:
+            logger.warning("Event JSONL mirror reconciliation failed (non-fatal): %s", e)
     stage_started = _log_startup_stage("runtime_reconciliation", stage_started, startup_started)
     init_tool_registry()
     from aletheia.agent_runtime.job_queue import get_agent_job_manager
@@ -459,7 +509,9 @@ async def lifespan(app: FastAPI):
     # the few seconds the probe takes is safe: scheduler jobs themselves re-check
     # cfg.runtime.paused, and the only time-sensitive job (market_data) is
     # harmless to run once. See _llm_startup_gate.
-    llm_gate_task = asyncio.create_task(_llm_startup_gate(cfg)) if background_services_enabled else None
+    llm_gate_task = (
+        asyncio.create_task(_llm_startup_gate(cfg), name="llm_startup_gate") if background_services_enabled else None
+    )
 
     # #138: initial exchange-state sync deferred to a POST-yield worker-thread task.
     # It is a blocking aggregation that can take up to 30s on a slow/unreachable broker;
@@ -544,7 +596,7 @@ async def lifespan(app: FastAPI):
         if telegram_bot.configure():
             if telegram_bot.allowed_chat_ids:
                 try:
-                    telegram_task = asyncio.create_task(telegram_bot.run())
+                    telegram_task = asyncio.create_task(telegram_bot.run(), name="telegram_polling")
                 except Exception as e:
                     logger.warning("Telegram polling startup failed: %s", e)
                     telegram_task = None
@@ -562,6 +614,18 @@ async def lifespan(app: FastAPI):
     event_loop_lag_task = asyncio.create_task(
         event_loop_lag_monitor.run(),
         name="event_loop_lag_monitor",
+    )
+    _lifespan_tasks.clear()
+    _lifespan_tasks.update(
+        {
+            "llm_startup_gate": llm_gate_task,
+            "startup_exchange_sync": startup_sync_task,
+            "startup_exchange_gate": exchange_gate_task,
+            "startup_behavior_gate": behavior_gate_task,
+            "pi_daemon": pi_daemon_task,
+            "telegram_polling": telegram_task,
+            "event_loop_lag_monitor": event_loop_lag_task,
+        }
     )
     _log_startup_stage("pre_yield_services", stage_started, startup_started)
     try:
@@ -625,6 +689,7 @@ async def lifespan(app: FastAPI):
                 await _cancel_background_task(pi_daemon_task, "PI daemon")
             except Exception:
                 pass
+        _lifespan_tasks.clear()
         # Mark the Runtime Session ended cleanly. Reaching this finally means an
         # orderly lifespan exit; a hard kill skips it, leaving ended_at NULL +
         # shutdown_clean=0 so a crash stays distinguishable from a clean stop.

@@ -205,6 +205,43 @@ def test_event_store_idempotency_single_append(tmp_path, monkeypatch):
     )
 
 
+def test_event_store_reconciles_failed_jsonl_mirror(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    monkeypatch.setattr("aletheia.storage.event_store.get_data_dir", lambda: tmp_path)
+
+    from aletheia.storage.event_store import EventStore, make_event
+    from aletheia.storage.sqlite import get_db
+
+    store = EventStore()
+    write_jsonl = store._write_jsonl
+    monkeypatch.setattr(store, "_write_jsonl", lambda _event: (_ for _ in ()).throw(OSError()))
+    event = store.append(make_event("mirror_test", "test", "one"))
+
+    row = get_db().execute(
+        "SELECT jsonl_mirror_status, jsonl_attempt_count, jsonl_next_attempt_at, "
+        "jsonl_last_error_class FROM ps_event_log WHERE event_id=?",
+        (event.event_id,),
+    ).fetchone()
+    assert tuple(row[:2]) == ("failed", 1)
+    assert row[2] is not None
+    assert row[3] == "OSError"
+
+    get_db().execute(
+        "UPDATE ps_event_log SET jsonl_next_attempt_at='2000-01-01T00:00:00+00:00' "
+        "WHERE event_id=?",
+        (event.event_id,),
+    )
+    get_db().commit()
+    monkeypatch.setattr(store, "_write_jsonl", write_jsonl)
+
+    assert store.reconcile_jsonl() == {"attempted": 1, "mirrored": 1, "failed": 0}
+    assert store.reconcile_jsonl() == {"attempted": 0, "mirrored": 0, "failed": 0}
+    lines = list((tmp_path / "events").glob("event_log_*.jsonl"))[0].read_text().splitlines()
+    assert sum(event.event_id in line for line in lines) == 1
+
+
 @spec_claim(
     SpecClaim(
         "PR-S06", "persistence_recovery_contract",

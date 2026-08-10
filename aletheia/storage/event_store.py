@@ -1,8 +1,9 @@
 """Append-only EventStore with DB + JSONL dual-write and idempotency."""
 
 import json
+import logging
 import platform
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from aletheia.config.loader import get_data_dir
@@ -25,8 +26,19 @@ def _events_dir() -> Path:
     return d
 
 
-def _jsonl_path() -> Path:
-    month = datetime.now(timezone.utc).strftime("%Y-%m")
+logger = logging.getLogger("aletheia.event_store")
+
+
+def _jsonl_path(created_at: str | None = None) -> Path:
+    try:
+        observed = (
+            datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            if created_at
+            else datetime.now(timezone.utc)
+        )
+    except ValueError:
+        observed = datetime.now(timezone.utc)
+    month = observed.astimezone(timezone.utc).strftime("%Y-%m")
     return _events_dir() / f"event_log_{month}.jsonl"
 
 
@@ -39,10 +51,11 @@ class EventStore:
         On idempotency_key conflict returns the previously persisted event
         (same event_id); no duplicate JSONL line is written.
         """
+        had_outer_transaction = get_db().in_transaction
         event = self._prepare(event)
         persisted, inserted = self._write_db(event)
-        if inserted:
-            self._write_jsonl(persisted)
+        if not had_outer_transaction and (inserted or self._mirror_pending(persisted.event_id)):
+            self._attempt_jsonl_mirror(persisted)
         return persisted
 
     def append_many(self, events: list[PSEvent]) -> list[PSEvent]:
@@ -84,10 +97,23 @@ class EventStore:
             if not was_in_tx:
                 db.rollback()
             raise
-        for ev, was_inserted in results:
-            if was_inserted:
-                self._write_jsonl(ev)
+        if not was_in_tx:
+            for ev, was_inserted in results:
+                if was_inserted or self._mirror_pending(ev.event_id):
+                    self._attempt_jsonl_mirror(ev)
         return [ev for ev, _ in results]
+
+    def reconcile_jsonl(self, *, limit: int = 100) -> dict[str, int]:
+        """Retry due EventStore mirrors without replaying authoritative events."""
+        now = _utcnow_iso()
+        rows = get_db().execute(
+            "SELECT * FROM ps_event_log WHERE jsonl_mirror_status IN ('pending','failed') "
+            "AND (jsonl_next_attempt_at IS NULL OR jsonl_next_attempt_at<=?) "
+            "ORDER BY created_at LIMIT ?",
+            (now, min(max(int(limit), 1), 500)),
+        ).fetchall()
+        mirrored = sum(self._attempt_jsonl_mirror(self._row_to_event(row)) for row in rows)
+        return {"attempted": len(rows), "mirrored": mirrored, "failed": len(rows) - mirrored}
 
     def get(self, event_id: str) -> PSEvent | None:
         """Retrieve a single event by ID."""
@@ -217,10 +243,65 @@ class EventStore:
                 return False  # TOCTOU race on idempotency_key — caller fetches existing
             raise
 
+    def _mirror_pending(self, event_id: str) -> bool:
+        row = get_db().execute(
+            "SELECT jsonl_mirror_status FROM ps_event_log WHERE event_id=?",
+            (event_id,),
+        ).fetchone()
+        return bool(row and row[0] != "mirrored")
+
+    def _attempt_jsonl_mirror(self, event: PSEvent) -> bool:
+        db = get_db()
+        was_in_tx = db.in_transaction
+        row = db.execute(
+            "SELECT jsonl_attempt_count FROM ps_event_log WHERE event_id=?",
+            (event.event_id,),
+        ).fetchone()
+        attempt_count = int(row[0] or 0) + 1
+        now = datetime.now(timezone.utc)
+        try:
+            self._write_jsonl(event)
+        except OSError as exc:
+            delay = min(3600, 60 * (2 ** min(attempt_count - 1, 6)))
+            db.execute(
+                "UPDATE ps_event_log SET jsonl_mirror_status='failed', "
+                "jsonl_attempt_count=?, jsonl_next_attempt_at=?, "
+                "jsonl_last_error_class=?, jsonl_mirrored_at=NULL WHERE event_id=?",
+                (
+                    attempt_count,
+                    (now + timedelta(seconds=delay)).isoformat(),
+                    type(exc).__name__,
+                    event.event_id,
+                ),
+            )
+            if not was_in_tx:
+                db.commit()
+            logger.warning("event JSONL mirror failed for %s (%s)", event.event_id, type(exc).__name__)
+            return False
+        db.execute(
+            "UPDATE ps_event_log SET jsonl_mirror_status='mirrored', "
+            "jsonl_attempt_count=?, jsonl_next_attempt_at=NULL, "
+            "jsonl_last_error_class=NULL, jsonl_mirrored_at=? WHERE event_id=?",
+            (attempt_count, now.isoformat(), event.event_id),
+        )
+        if not was_in_tx:
+            db.commit()
+        return True
+
     def _write_jsonl(self, event: PSEvent) -> None:
-        """Append event as one JSON line to the monthly JSONL file."""
+        """Idempotently append one event to its monthly JSONL mirror."""
         line = json.dumps(event.model_dump(), ensure_ascii=False)
-        path = _jsonl_path()
+        path = _jsonl_path(event.created_at)
+        # ponytail: monthly O(n) scan is enough for local logs; add a side index only
+        # if measured mirror retries make startup reconciliation material.
+        if path.exists():
+            with path.open("r", encoding="utf-8") as existing:
+                for raw in existing:
+                    try:
+                        if json.loads(raw).get("event_id") == event.event_id:
+                            return
+                    except json.JSONDecodeError:
+                        continue
         with open(path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
 

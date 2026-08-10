@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 import threading
 import time
 from typing import Any
@@ -118,6 +119,59 @@ def get_venue_health_snapshot() -> list[dict[str, Any]]:
         }
         for state in sorted(states, key=lambda item: item.venue)
     ]
+
+
+def get_provider_capability_snapshot(
+    *,
+    provider: str,
+    primary: str,
+    fallback: str | None = None,
+) -> list[dict[str, Any]]:
+    """Describe configured market-data providers without granting authority."""
+    now = time.time()
+    configured = {
+        primary.strip().lower(): "primary",
+        **({fallback.strip().lower(): "fallback"} if fallback else {}),
+    }
+    with _VENUE_HEALTH_LOCK:
+        states = {name: VenueHealthState(**asdict(state)) for name, state in _VENUE_HEALTH.items()}
+    rows = []
+    for venue in sorted(set(configured) | set(states)):
+        state = states.get(venue)
+        cooling = bool(state and state.cooldown_until > now)
+        healthy = None
+        if cooling:
+            healthy = False
+        elif (
+            state
+            and state.last_success_at is not None
+            and (state.last_failure_at is None or state.last_success_at >= state.last_failure_at)
+        ):
+            healthy = True
+        last_success = state.last_success_at if state else None
+        is_configured = venue in configured
+        rows.append(
+            {
+                "provider": provider,
+                "venue": venue,
+                "role": configured.get(venue, "observed_unconfigured"),
+                "configured": is_configured,
+                "entitled": True if provider == "ccxt" and is_configured else None,
+                "entitlement_source": "public_market_data" if provider == "ccxt" and is_configured else "unknown",
+                "healthy": healthy,
+                "permitted": is_configured,
+                "permission_source": "market_data_config" if is_configured else "not_configured",
+                "last_success_at": (
+                    datetime.fromtimestamp(last_success, tz=timezone.utc).isoformat()
+                    if last_success is not None
+                    else None
+                ),
+                "age_sec": round(now - last_success, 1) if last_success is not None else None,
+                "cooling_down": cooling,
+                "last_error": state.last_error if state else None,
+            }
+        )
+    return rows
 
 
 def reset_venue_health() -> None:

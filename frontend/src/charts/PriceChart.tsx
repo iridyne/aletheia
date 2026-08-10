@@ -75,6 +75,7 @@ export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spo
   markerClickRef.current = onMarkerClick
 
   const [status, setStatus] = useState<'loading' | 'ok' | 'empty' | 'error'>('loading')
+  const [dataMeta, setDataMeta] = useState<{ source: string; asOf: string | null; ageMs: number | null; stale: boolean | null } | null>(null)
 
   // Main lifecycle: rebuild whenever the requested market-data identity changes.
   useEffect(() => {
@@ -140,9 +141,10 @@ export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spo
     const pollLatest = async () => {
       if (cancelled || !initializedRef.current || !barsRef.current.length) return
       try {
-        const res = await api.getOhlcv(symbol, timeframe, 2, 0, '', marketType)
+        const res = await api.getOhlcvWithMeta(symbol, timeframe, 2, marketType)
         if (cancelled) return
-        const rows = (Array.isArray(res) ? res : []).map(toBar).sort((a, b) => a.time - b.time)
+        setDataMeta(res.meta)
+        const rows = res.candles.map(toBar).sort((a, b) => a.time - b.time)
         let appended = false
         for (const b of rows) {
           const last = barsRef.current[barsRef.current.length - 1]
@@ -165,10 +167,11 @@ export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spo
     // Initial load: most recent INITIAL_LIMIT candles.
     ;(async () => {
       try {
-        const res = await api.getOhlcv(symbol, timeframe, INITIAL_LIMIT, 0, '', marketType)
+        const res = await api.getOhlcvWithMeta(symbol, timeframe, INITIAL_LIMIT, marketType)
         if (cancelled) return
-        const rows = Array.isArray(res) ? res : []
-        if (!rows.length) { setStatus(Array.isArray(res) ? 'empty' : 'error'); return }
+        const rows = res.candles
+        setDataMeta(res.meta)
+        if (!rows.length) { setStatus('empty'); return }
         barsRef.current = rows.map(toBar)
         timesRef.current = new Set(barsRef.current.map(b => b.time))
         series.setData(barsRef.current.map(b => ({ ...b, time: b.time as Time })))
@@ -224,6 +227,12 @@ export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spo
     <div>
       {status === 'error' && <p className="hint">Could not load market data (configure exchange / network).</p>}
       {status === 'empty' && <p className="hint">No candle data yet.</p>}
+      {dataMeta && (
+        <p className="hint" title={dataMeta.asOf ?? undefined}>
+          Source: {dataMeta.source} · As of: {dataMeta.ageMs === null ? 'not available' : `${Math.floor(dataMeta.ageMs / 60_000)}m ago`}
+          {dataMeta.stale === true ? ' · stale' : ''}
+        </p>
+      )}
       <div ref={containerRef} style={{ width: '100%' }} />
       {markers.length > 0 && (
         <div className="chart-legend">
