@@ -4,7 +4,7 @@
   "symbol": "BTC/USDT",
   "max_tokens": 2048,
   "market_context": "Snapshot time: 2026-08-01T12:00:00Z\nVenue: bitget, market_type: perp\nPrice: 115240.0 USDT\n1h return: +1.8%; 4h return: +3.9%; 24h return: +5.2%\nFunding: +0.0100% per 8h; open interest 1h delta: +6.4%\nOrderbook: spread=1.8 bps, depth adequate, imbalance=+0.11\nNo fresh symbol-matched news is available.",
-  "technical_context": "as_of=2026-08-01T12:00:00Z; last_bar=closed; quality=complete; warmup=complete\ntrend: EMA20 above EMA50, both slopes positive\nmomentum: RSI14=68.1\nvolatility: ATR14=0.82% of close; Bollinger width expanding\nlocation: close is 0.24 ATR below Donchian20 high and 1.55 ATR above VWAP20\nparticipation: volume_zscore20=1.7; normalized_OBV rising\nThese are deterministic derived facts, not independent votes or execution authority.",
+  "technical_context": "### BTC/USDT technical-context-v1 (bitget perp; closed bars)\n- 1h q=ok close=115240.00 trend=up(+0.65%) rsi=68.1 mom=+3.10% atr=0.82% bb=0.84/3.60% vwap=+1.55ATR donchian=H0.24/L3.10ATR vol=+1.70z/1.42x obv=+8.20\n- 4h q=ok close=115240.00 trend=up(+1.10%) rsi=62.4 mom=+5.20% atr=1.45% bb=0.76/5.10% vwap=+1.18ATR donchian=H0.41/L2.70ATR vol=+0.90z/1.18x obv=+12.40\n- 1d q=unavailable:warmup(30) close=115240.00\nThese are deterministic derived facts, one correlated evidence bundle, and no execution authority.",
   "rubric": {
     "quality_score": "1-5: grounded market read that weighs trend, extension, participation, uncertainty, and invalidation without treating correlated indicators as independent votes",
     "grounded_use": "yes only when the output uses supplied technical facts accurately; control may be not_applicable",

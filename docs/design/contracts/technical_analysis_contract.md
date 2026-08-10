@@ -32,10 +32,15 @@ SQLite BLOB cold storage, and external cold files are not configured.
 - SHA-256 input fingerprint;
 - data quality and quality reasons.
 
-Market Observer consumes the shared snapshot directly. Universe scanners use
-its projected RSI/ATR/Bollinger/volume facts. System Operator consumes the
-persisted feature row and includes technical version/input identity in its
-material decision fingerprint.
+Market Observer consumes the shared snapshot directly and renders one bounded
+`technical-context-v1` block. The block preserves exact instrument identity,
+algorithm version and a bundle input fingerprint in its linked Harness artifact;
+model-visible rows contain normalized trend, momentum, volatility, location and
+participation facts. Insufficient-warmup or degraded timeframes expose only an
+unavailable quality state, not partial indicator values. Universe scanners use
+projected RSI/ATR/Bollinger/volume facts. System Operator consumes the persisted
+feature row and includes technical version/input identity in its material
+decision fingerprint.
 
 ## Observable result
 
@@ -46,6 +51,10 @@ hits. Fixed-size rolling provider windows append only their new suffix.
 
 The batch and incremental paths expose one `TechnicalSnapshot` contract. The
 batch path remains available for independent reconciliation.
+
+The Market Observer does not send recent raw close arrays. Correlated raw
+SMA/EMA levels are compressed into one EMA trend state and spread; ATR, VWAP and
+Donchian location are normalized so the model does not need to calculate them.
 
 ## Invariants and trust boundaries
 

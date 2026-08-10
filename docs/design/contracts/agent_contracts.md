@@ -124,8 +124,9 @@ durably queued and independently retried by `outcome_hook_replay`.
 
 - **Trigger**: scheduler every 10min + event-driven wake
 - **Inputs**: exact-instrument market snapshots, structured 1h RSI/ATR pre-filter facts,
-  freshness-qualified derivatives/macro/on-chain data, and successfully analyzed,
-  relevance-qualified, exact-entity news
+  one `technical-context-v1` closed-bar bundle, freshness-qualified
+  derivatives/macro/on-chain data, and successfully analyzed, relevance-qualified,
+  exact-entity news
 - **LLM**: Yes (analysis of market conditions)
 - **Outputs**: opportunities table (symbol, direction, confidence, key_observations JSON)
 - **Side effects**: Writes to `opportunities` table and requests an on-demand Ranker
@@ -133,6 +134,10 @@ durably queued and independently retried by `outcome_hook_replay`.
   trading daemon directly; only Ranker admission plus committed `signal_pending` does.
 - **Error behavior**: Degrades to basic technical-only signals when LLM unavailable
 - **Prompt contract** (2026-07-01, spec UP-08): the per-symbol LLM prompt names the `scanner_family` that surfaced the symbol so the read VALIDATES that family rather than doing a generic scan (MO-4).
+- **Technical context contract**: the model sees normalized EMA trend, RSI/momentum,
+  ATR/Bollinger volatility, VWAP/Donchian location and volume/OBV participation.
+  The Harness records `technical-context-v1` plus the exact artifact identity;
+  degraded or insufficient-warmup timeframes render no partial indicator values.
 - **Guard advisory contract** (spec UP-07, 断口F): guard advisory is built PER-SYMBOL inside `_analyze_symbol` with `{symbol, scanner_family, asset_class}` via `router.build_guard_advisory()` — NOT run-level with a symbol list (which never matched any guard). The run-level memory_block carries only symbol-agnostic lessons.
 - **Learning attribution**: advisory retrieval + memo + per-symbol learned guard context is one
   `observer_advisory_bundle` manifest stored in the causal Opportunity metadata. The bundle is
