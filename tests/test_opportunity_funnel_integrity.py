@@ -419,51 +419,6 @@ def test_requeued_generation_remains_visible_after_older_queue_eviction(
     assert ("BTC/USDT", "long", "momentum") in _active_signal_setups()
 
 
-def test_priority_eviction_sees_latest_requeued_generation(
-    tmp_path, monkeypatch
-):
-    conn = _setup_db(tmp_path, monkeypatch)
-    now = datetime.now(timezone.utc)
-    _insert_opportunity(
-        conn,
-        "requeued-weak",
-        status="queued",
-        valid_until=(now + timedelta(hours=1)).isoformat(),
-    )
-    conn.execute(
-        "UPDATE opportunities SET confidence_score=25 WHERE id='requeued-weak'"
-    )
-    _insert_pending(
-        conn,
-        "weak-generation-1",
-        "requeued-weak",
-        (now - timedelta(minutes=20)).isoformat(),
-    )
-    _insert_queue_eviction(
-        conn,
-        "evicted-weak-generation-1",
-        "requeued-weak",
-        (now - timedelta(minutes=10)).isoformat(),
-    )
-    _insert_pending(
-        conn,
-        "weak-generation-2",
-        "requeued-weak",
-        (now - timedelta(minutes=5)).isoformat(),
-    )
-    conn.commit()
-
-    from aletheia.agents.paper_trader import _evict_weakest_queue_occupants
-
-    assert _evict_weakest_queue_occupants(
-        [{"opportunity_id": "waiting-strong", "confidence_score": 80}],
-        max_age_minutes=30,
-    ) == 1
-    assert conn.execute(
-        "SELECT status FROM opportunities WHERE id='requeued-weak'"
-    ).fetchone()[0] == "reviewed"
-
-
 def test_expired_requeued_generation_ignores_older_queue_eviction(
     tmp_path, monkeypatch
 ):

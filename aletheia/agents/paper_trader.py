@@ -37,7 +37,6 @@ from aletheia.storage.repositories import (
     list_pending_signal_queue,
     prune_signal_pending_stale,
     transition_open_opportunity_to_queued,
-    transition_opportunity_to_reviewed,
     transition_queued_opportunity_to_open,
 )
 
@@ -246,91 +245,6 @@ def _operator_evaluated_opportunity_ids(
         return {str(row[0]) for row in rows if row[0]}
     except Exception:
         return set()
-
-
-def _evict_weakest_queue_occupants(
-    eligible_candidates: list[dict],
-    max_age_minutes: int,
-) -> int:
-    """Evict queue occupants with lower confidence than waiting higher-scored candidates.
-
-    When the queue is full of low-scored signals and a better candidate is waiting,
-    the capacity cap would block the better signal forever (FIFO allocation failure).
-    This pre-pass frees at most N=capacity slots by evicting the lowest-scored
-    occupant(s) only when a strictly higher-scored candidate is waiting.
-
-    Returns the number of occupant slots freed so the caller can credit available_queue_slots.
-    (#325)
-    """
-    from aletheia.storage.sqlite import get_db
-
-    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
-    try:
-        rows = get_db().execute(
-            "SELECT p.opportunity_id, COALESCE(o.confidence_score, 0) "
-            "FROM pi_decisions p "
-            "JOIN opportunities o ON o.id=p.opportunity_id "
-            "WHERE p.action='signal_pending' "
-            "AND COALESCE(p.signal_source, 'market_observer')='market_observer' "
-            "AND o.status='queued' "
-            "AND ((datetime(o.valid_until) IS NOT NULL AND datetime(o.valid_until)>datetime('now')) "
-            "     OR (datetime(o.valid_until) IS NULL "
-            "         AND datetime(p.created_at)>=datetime(?))) "
-            "AND p.rowid=("
-            " SELECT newer.rowid FROM pi_decisions newer "
-            " WHERE newer.opportunity_id=p.opportunity_id "
-            " AND COALESCE(newer.signal_source,'market_observer')="
-            "     COALESCE(p.signal_source,'market_observer') "
-            " AND newer.action='signal_pending' "
-            " ORDER BY julianday(newer.created_at) DESC, newer.rowid DESC LIMIT 1"
-            ") "
-            "AND NOT EXISTS ("
-            " SELECT 1 FROM pi_decisions final "
-            " WHERE final.opportunity_id=p.opportunity_id "
-            " AND COALESCE(final.signal_source,'market_observer')="
-            "     COALESCE(p.signal_source,'market_observer') "
-            " AND final.action!='signal_pending' "
-            " AND COALESCE(final.proposal_status,'')!='submitting' "
-            " AND (julianday(final.created_at)>julianday(p.created_at) "
-            "      OR (julianday(final.created_at)=julianday(p.created_at) "
-            "          AND final.rowid>p.rowid))"
-            ") "
-            "ORDER BY COALESCE(o.confidence_score, 0) ASC",
-            (cutoff,),
-        ).fetchall()
-    except Exception:
-        return 0
-
-    if not rows:
-        return 0
-
-    # Waiting candidates that would be eligible (not already skipped)
-    waiting_scores = sorted(
-        [int(c.get("confidence_score") or 0) for c in eligible_candidates if not c.get("skip_reason")],
-        reverse=True,
-    )
-    if not waiting_scores:
-        return 0
-
-    evicted = 0
-    for opp_id, occupant_score in rows:
-        if not waiting_scores:
-            break
-        best_waiting = waiting_scores[0]
-        if best_waiting <= occupant_score:
-            break  # Best waiting candidate is no better; stop eviction
-        try:
-            if transition_opportunity_to_reviewed(opp_id):
-                evicted += 1
-                waiting_scores.pop(0)
-                logger.info(
-                    "queue_priority_eviction: evicted opp=%s score=%s for waiting score=%s",
-                    opp_id, occupant_score, best_waiting,
-                )
-        except Exception:
-            break
-
-    return evicted
 
 
 def _select_signal_candidates(candidates: list[dict], limit: int = 3) -> list[dict]:
@@ -586,17 +500,6 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         current_queue = []
         errors.append("signal_queue_capacity_unavailable")
         logger.warning("pending queue capacity unavailable: %s", type(exc).__name__)
-
-    # Priority eviction: when the queue is full of lower-quality signals, evict the
-    # weakest occupant(s) to make room for higher-confidence waiting candidates. (#325)
-    if available_queue_slots == 0:
-        try:
-            freed = _evict_weakest_queue_occupants(eligible, _PENDING_SIGNAL_MAX_AGE_MINUTES)
-            if freed:
-                available_queue_slots = freed
-                outputs.append(f"priority_eviction:{freed}")
-        except Exception as exc:
-            logger.warning("priority eviction unavailable (non-fatal): %s", type(exc).__name__)
 
     plan = _plan_signal_batch(
         eligible,
