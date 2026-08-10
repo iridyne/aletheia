@@ -187,7 +187,8 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     evidence_with_scope = {
         "case_count": 12,
         "outcome_counts": {"loss": 9},
-        "factor_keys": ["momentum:BTCUSDT:long:medium_confidence:not_late"],
+        "factor_keys": ["momentum:ETHUSDT:long:medium_confidence:not_late"],
+        "supporting_factor_keys": ["momentum:BTCUSDT:long:medium_confidence:not_late"],
         "scanner_families": ["momentum"],
     }
     routed = guard_routing.route_automatic_block_recommendation(
@@ -211,6 +212,17 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     assert "BTCUSDT" in applies_to["symbol"]
     assert "scanner_family" in applies_to, "applies_to must contain scanner_family scope"
     assert "momentum" in applies_to["scanner_family"]
+    unavailable = guard_routing.route_automatic_block_recommendation(
+        {"action": "block_scanner", "scanner": "momentum"},
+        evidence={
+            "supporting_factor_keys": [],
+            "factor_keys": ["momentum:ETHUSDT:long:medium_confidence:not_late"],
+        },
+        source_id="case-2",
+    )
+    assert unavailable == {
+        "action": "guard_shadow_unavailable", "reason": "invalid_block_scope",
+    }
     from pathlib import Path
     dreaming_source = Path("aletheia/agents/dreaming_agent.py").read_text(encoding="utf-8")
     assert "route_automatic_block_recommendation" in dreaming_source

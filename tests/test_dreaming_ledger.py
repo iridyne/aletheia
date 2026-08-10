@@ -7,6 +7,7 @@ actually producing validated strategies, not just piling up notes. The ledger
 must never break the dreaming run if its queries fail.
 """
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 
@@ -134,6 +135,7 @@ async def test_lesson_extraction_persists_schema_valid_lesson(
                     "summary": "BTC long stop-loss cases require tighter entry timing.",
                     "category": "entry_timing",
                     "severity": "warning",
+                    "supporting_factor_keys": ["invented:key:long"],
                     "evidence": {"outcome_counts": {"loss": 1}},
                     "recommendation": None,
                 }
@@ -160,6 +162,7 @@ async def test_lesson_extraction_persists_schema_valid_lesson(
     assert row["status"] == "proposed"
     assert "BTC long stop-loss" in row["summary"]
     assert "outcome_counts" in row["evidence_json"]
+    assert json.loads(row["evidence_json"])["supporting_factor_keys"] == []
 
 
 async def test_dreaming_review_includes_learning_ledger(tmp_path, monkeypatch):

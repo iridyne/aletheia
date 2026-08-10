@@ -116,10 +116,19 @@ def _fetch_evidence(lesson) -> dict:
 
     rec = _json_dict(lesson.recommendation_json)
     ev = _json_dict(lesson.evidence_json)
+    factor_parts = [
+        str(key).split(":")
+        for key in (ev.get("supporting_factor_keys") or [])
+        if len(str(key).split(":")) == 5
+    ]
+
+    def _single_factor_value(index: int) -> str | None:
+        values = {parts[index] for parts in factor_parts if parts[index] != "unknown"}
+        return next(iter(values)) if len(values) == 1 else None
 
     # Recover a symbol if the lesson carries one.
     symbol = None
-    symbol = rec.get("symbol") or ev.get("symbol")
+    symbol = rec.get("symbol") or ev.get("symbol") or _single_factor_value(1)
     if not symbol and lesson.summary:
         m = _SYMBOL_RE.search(lesson.summary)
         if m:
@@ -135,6 +144,7 @@ def _fetch_evidence(lesson) -> dict:
     # that family. universe_forward_outcomes carries scanner_family.
     scanner = rec.get("scanner") or rec.get("scanner_family")
     scanner = scanner or ev.get("scanner") or ev.get("scanner_family")
+    scanner = scanner or _single_factor_value(0)
     if not scanner:
         families = ev.get("scanner_families")
         if isinstance(families, list) and len(families) == 1:
@@ -143,7 +153,7 @@ def _fetch_evidence(lesson) -> dict:
     if scanner:
         evidence["scanner_family_stats"] = _agg("AND scanner_family = ?", (scanner,))
 
-    direction = rec.get("direction") or ev.get("direction")
+    direction = rec.get("direction") or ev.get("direction") or _single_factor_value(2)
     if not direction and lesson.summary:
         if _LONG_RE.search(lesson.summary):
             direction = "long"
