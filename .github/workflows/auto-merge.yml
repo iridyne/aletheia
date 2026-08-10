@@ -94,6 +94,7 @@ jobs:
                   state
                   isDraft
                   headRefOid
+                  mergeCommit { oid }
                   mergeStateStatus
                   autoMergeRequest { enabledAt }
                 }
@@ -105,6 +106,19 @@ jobs:
                 number: pullRequestNumber,
               });
               return result.repository.pullRequest;
+            };
+            const dispatchRelease = async (mergeCommitSha) => {
+              if (!/^[0-9a-f]{40}$/.test(mergeCommitSha || '')) {
+                throw new Error('merged pull request did not expose a 40-character merge commit SHA');
+              }
+              await github.rest.repos.createDispatchEvent({
+                ...context.repo,
+                event_type: 'release_please',
+                client_payload: {
+                  merged_pull_request: pullRequestNumber,
+                  merge_commit_sha: mergeCommitSha,
+                },
+              });
             };
 
             if (operation === 'disable') {
@@ -132,7 +146,19 @@ jobs:
             const maxAttempts = 150;
             for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
               const pullRequest = await fetchPullRequest();
-              if (!pullRequest || pullRequest.state !== 'OPEN') {
+              if (!pullRequest) {
+                core.info('pull request is no longer open; no auto-merge update needed');
+                return;
+              }
+              if (pullRequest.state === 'MERGED') {
+                if (pullRequest.headRefOid !== expectedHeadSha) {
+                  core.info('merged pull request head differs from the authorized head; no release dispatch');
+                  return;
+                }
+                await dispatchRelease(pullRequest.mergeCommit?.oid);
+                return;
+              }
+              if (pullRequest.state !== 'OPEN') {
                 core.info('pull request is no longer open; no auto-merge update needed');
                 return;
               }
@@ -148,8 +174,12 @@ jobs:
                 return;
               }
               if (pullRequest.autoMergeRequest) {
-                core.info('auto-merge is already enabled');
-                return;
+                if (attempt === maxAttempts) {
+                  throw new Error(`auto-merge did not complete after ${maxAttempts} checks`);
+                }
+                core.info('auto-merge is enabled; waiting for the merged commit');
+                await new Promise((resolve) => setTimeout(resolve, 5000));
+                continue;
               }
               if (['UNKNOWN', 'UNSTABLE'].includes(pullRequest.mergeStateStatus)) {
                 if (attempt === maxAttempts) {
@@ -176,14 +206,7 @@ jobs:
                     `GitHub declined protected merge: ${mergeResult.data.message || 'unknown reason'}`,
                   );
                 }
-                await github.rest.repos.createDispatchEvent({
-                  ...context.repo,
-                  event_type: 'release_please',
-                  client_payload: {
-                    merged_pull_request: pullRequestNumber,
-                    merge_commit_sha: mergeResult.data.sha,
-                  },
-                });
+                await dispatchRelease(mergeResult.data.sha);
                 return;
               }
               if (!autoMergeStates.has(pullRequest.mergeStateStatus)) {
@@ -203,7 +226,9 @@ jobs:
                   }`,
                   { pullRequestId: pullRequest.id },
                 );
-                return;
+                core.info('auto-merge enabled; waiting for the merged commit');
+                await new Promise((resolve) => setTimeout(resolve, 5000));
+                continue;
               } catch (error) {
                 if (
                   attempt < maxAttempts &&
