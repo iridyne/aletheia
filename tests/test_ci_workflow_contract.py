@@ -157,6 +157,8 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
     assert dispatch["with"]["retries"] == "3"
     assert "pulls.list" in dispatch["with"]["script"]
     assert "autorelease: pending" in dispatch["with"]["script"]
+    assert "issues.addLabels" in dispatch["with"]["script"]
+    assert "labels: ['do-not-auto-merge']" in dispatch["with"]["script"]
     assert "createWorkflowDispatch" in dispatch["with"]["script"]
     assert "workflow_id: 'ci.yml'" in dispatch["with"]["script"]
     assert "ref: pullRequest.head.ref" in dispatch["with"]["script"]

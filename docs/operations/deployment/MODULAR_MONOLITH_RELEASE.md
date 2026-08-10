@@ -30,8 +30,9 @@ workflow through a `push` event. When the trusted auto-merge worker performs a
 clean squash merge, it emits that dispatch in the same job; the closed-PR path
 also covers a human merge. If native auto-merge is enabled while checks settle,
 the worker waits for the merged commit and can replay that dispatch when rerun.
-The generated PR carries `do-not-auto-merge`
-until a human decides to release. Release Please explicitly dispatches the
+Release Please keeps its `autorelease: pending` marker on the generated PR and
+the workflow adds `do-not-auto-merge`, which the trusted auto-merge workflow
+treats as a hold until a human decides to release. Release Please explicitly dispatches the
 existing read-only CI workflow on the generated branch because its
 `GITHUB_TOKEN` cannot trigger the normal pull-request event. Removing the label
 after that CI succeeds hands the PR to the normal protected squash path. Merging
