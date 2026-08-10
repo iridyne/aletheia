@@ -593,6 +593,20 @@ def test_active_run_detection(tmp_path, monkeypatch):
     reset_db()
 
 
+def test_unclaimed_worker_failure_does_not_strand_queued_run(db):
+    run = SerenityResearchRun(status="queued")
+    repo.insert_serenity_research_run(run)
+
+    from aletheia.agents.research_worker import _mark_failed
+
+    _mark_failed(run.id, "database_error", "claim failed", None, allow_queued=True)
+
+    failed = repo.get_serenity_research_run(run.id)
+    assert failed["status"] == "failed"
+    assert failed["finished_at"] is not None
+    assert repo.get_active_serenity_research_run() is None
+
+
 # --- Phase H: Comprehensive Tests ---
 
 
@@ -769,20 +783,71 @@ async def test_cancel_queued_run(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "cancelled"
+    assert data["deduplicated"] is False
 
     updated = repo.get_serenity_research_run(run.id)
     assert updated["status"] == "cancelled"
     assert updated["finished_at"] is not None
+    assert repo.claim_serenity_research_run(run.id, now="2026-06-13T00:00:00Z") is False
 
 
 @pytest.mark.anyio
-async def test_cancel_running_run(client):
-    run = SerenityResearchRun(status="running", started_at="2026-06-13T00:00:00Z")
+async def test_cancel_running_run(client, monkeypatch):
+    run = SerenityResearchRun(
+        status="running",
+        stage="collect_evidence",
+        started_at="2026-06-13T00:00:00Z",
+        updated_at="2026-06-13T00:01:00Z",
+    )
     repo.insert_serenity_research_run(run)
+
+    request_cancel = repo.request_serenity_research_run_cancel
+
+    def advance_stage_then_cancel(run_id: str, *, now: str):
+        repo.update_serenity_research_run(run_id, stage="extract_claims")
+        return request_cancel(run_id, now=now)
+
+    monkeypatch.setattr(repo, "request_serenity_research_run_cancel", advance_stage_then_cancel)
 
     resp = await client.post(f"/api/serenity/runs/{run.id}/cancel")
     assert resp.status_code == 200
-    assert resp.json()["status"] == "cancelled"
+    assert resp.json()["status"] == "cancel_requested"
+
+    requested = repo.get_serenity_research_run(run.id)
+    assert requested["status"] == "cancel_requested"
+    assert requested["finished_at"] is None
+    assert repo.get_active_serenity_research_run()["id"] == run.id
+    assert repo.finish_serenity_research_run(
+        run.id,
+        "completed",
+        finished_at="2026-06-13T00:02:00Z",
+        updated_at="2026-06-13T00:02:00Z",
+    ) is False
+
+    repeated = await client.post(f"/api/serenity/runs/{run.id}/cancel")
+    assert repeated.status_code == 200
+    assert repeated.json() == {
+        "runId": run.id,
+        "status": "cancel_requested",
+        "deduplicated": True,
+    }
+
+    status = (await client.get("/api/serenity/status")).json()
+    assert status["currentRun"]["stage"] == "extract_claims"
+    assert status["currentRun"]["lastProgressAt"] == requested["updated_at"]
+    listed = (await client.get("/api/serenity/runs")).json()["items"][0]
+    assert listed["stage"] == "extract_claims"
+    assert listed["lastProgressAt"] == requested["updated_at"]
+
+    from aletheia.agents.research_worker import _acknowledge_cancellation
+
+    assert _acknowledge_cancellation(run.id) is True
+    cancelled = repo.get_serenity_research_run(run.id)
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["finished_at"] is not None
+    events = repo.list_serenity_run_events(run.id)
+    assert events[-2]["stage"] == "extract_claims"
+    assert events[-1]["event_type"] == "run.cancelled"
 
 
 @pytest.mark.anyio
@@ -941,7 +1006,7 @@ async def test_pipeline_full_stages(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
 
-    run = SerenityResearchRun(trigger_type="manual", mode="standard", status="queued")
+    run = SerenityResearchRun(trigger_type="manual", mode="standard", status="running")
     repo.insert_serenity_research_run(run)
 
     evidence_json = json.dumps([
@@ -1026,8 +1091,11 @@ async def test_pipeline_cancellation(tmp_path, monkeypatch):
 
     assert _should_cancel(run.id) is False
 
-    # Mark cancelled
-    repo.update_serenity_research_run(run.id, status="cancelled")
+    # A request is active until the worker acknowledges it.
+    repo.request_serenity_research_run_cancel(
+        run.id,
+        now="2026-06-13T00:01:00+00:00",
+    )
     assert _should_cancel(run.id) is True
 
     with pytest.raises(_CancelledError):
@@ -1052,7 +1120,7 @@ async def test_pipeline_rate_limit_handling(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
 
-    run = SerenityResearchRun(trigger_type="manual", mode="standard", status="queued", retry_count=0)
+    run = SerenityResearchRun(trigger_type="manual", mode="standard", status="running", retry_count=0)
     repo.insert_serenity_research_run(run)
 
     from aletheia.agents.research_worker import _handle_rate_limit
@@ -1082,7 +1150,7 @@ async def test_pipeline_rate_limit_retries_exhausted(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
 
-    run = SerenityResearchRun(trigger_type="scheduled", mode="standard", status="queued", retry_count=3)
+    run = SerenityResearchRun(trigger_type="scheduled", mode="standard", status="running", retry_count=3)
     repo.insert_serenity_research_run(run)
 
     from aletheia.agents.research_worker import _handle_rate_limit
@@ -1156,11 +1224,12 @@ def test_enqueue_crash_preserves_empty_timeout_type(monkeypatch):
     monkeypatch.setattr(
         worker,
         "_mark_failed",
-        lambda run_id, error_type, error_message, stage: recorded.update(
+        lambda run_id, error_type, error_message, stage, *, allow_queued=False: recorded.update(
             run_id=run_id,
             error_type=error_type,
             error_message=error_message,
             stage=stage,
+            allow_queued=allow_queued,
         ),
     )
 
@@ -1170,3 +1239,4 @@ def test_enqueue_crash_preserves_empty_timeout_type(monkeypatch):
     assert recorded["error_type"] == "provider_timeout"
     assert recorded["error_message"] == "TimeoutError"
     assert recorded["stage"] is None
+    assert recorded["allow_queued"] is True

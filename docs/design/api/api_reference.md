@@ -484,7 +484,7 @@ reconciled.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/serenity/status` | Pipeline status overview |
+| GET | `/serenity/status` | Pipeline status overview. Current/last run summaries expose durable `stage` and `lastProgressAt`; `cancel_requested` remains active until worker or restart acknowledgement. |
 | GET | `/serenity/themes` | List research themes |
 | POST | `/serenity/themes` | Create new theme |
 | GET | `/serenity/themes/{id}` | Theme detail |
@@ -509,11 +509,11 @@ reconciled.
 | GET | `/serenity/opportunities/{id}/post-mortems` | Post-mortems |
 | POST | `/serenity/opportunities/{id}/post-mortems` | Create post-mortem |
 | POST | `/serenity/runs` | Start research run |
-| GET | `/serenity/runs` | List runs |
-| GET | `/serenity/runs/{id}` | Run detail |
+| GET | `/serenity/runs` | List runs with durable stage and last-progress time |
+| GET | `/serenity/runs/{id}` | Run detail, lifecycle events, stage, and last-progress time |
 | GET | `/serenity/runs/{id}/artifacts` | Run artifacts |
 | POST | `/serenity/runs/{id}/retry` | Retry failed run |
-| POST | `/serenity/runs/{id}/cancel` | Cancel running run |
+| POST | `/serenity/runs/{id}/cancel` | Cancel queued work immediately or request cooperative cancellation of a running worker; retries are idempotent |
 | GET | `/serenity/profile` | User research profile |
 | PATCH | `/serenity/profile` | Update profile |
 | POST | `/serenity/profile/parse` | Parse profile from text |

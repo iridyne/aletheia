@@ -8,7 +8,7 @@
 > - `aletheia/agents/research_worker.py` (多镜头研究 pipeline + 符号过滤 + 晋升)
 > - 决策/执行/持仓层的 trade_school 穿透 (见 §8–§10)
 > Cross-references: decision_lifecycle_contract.md · knowledge_contract.md · risk_engine_contract.md · live_unlock_contract.md · data_model.md
-> Last updated: 2026-07-02
+> Last updated: 2026-08-10
 
 ---
 
@@ -132,6 +132,37 @@ Stage 4 **强制裁决** (S4 verdict): `_OPPORTUNITIES_SYSTEM` 强制 LLM 输出
 
 生成端**必须**路由过评估器: `research_worker` 与 `prediction_observer` 都调 `assess_evidence_tier` / `assess_opportunity_tier`(SE-S02/S03),否则证据仍是自评。
 
+### 5.1 Research run lifecycle truth
+
+`serenity_research_runs` 是研究 attempt 生命周期权威。Worker 用 SQLite
+compare-and-set 将 `queued→running`；因此 API 先赢得 queued cancel 时可以直接写
+terminal `cancelled`，迟到的 worker 不能重新激活该 run。
+
+Running cancel 是协作请求，不是已停止声明：
+
+| 当前状态 | 事件 | 下一状态 | `finished_at` |
+|---|---|---|---|
+| `queued` | cancel 在 worker claim 前成功 | `cancelled` | 立即写入 |
+| `running` | owner 请求 cancel | `cancel_requested` | 保持为空 |
+| `cancel_requested` | worker 到达 checkpoint | `cancelled` | worker 确认时写入 |
+| `cancel_requested` | gateway restart，旧 worker 已消失 | `cancelled` | startup reconcile 写入 |
+| `running` | pipeline 正常终结 | 原有 terminal outcome | guarded write 写入 |
+
+`cancel_requested` 继续属于 active run，占用 Serenity 单一运行槽。完成、失败与
+rate-limit 终态只允许 `WHERE status='running'` 的 CAS；并发 cancel 赢得后，迟到的
+worker 终态不能覆盖请求。重复 cancel 请求对 `cancel_requested/cancelled` 幂等。
+
+取消只在 stage/lens/provider 调用之间的已有 checkpoint 生效；不会声称能强杀 Python
+thread 或中断正在等待的 provider 请求。取消请求后，worker 不再进入 auto-promote，
+但 checkpoint 之前已提交的部分研究 artifact 继续保留并可审计。
+
+### 5.2 Durable progress facts
+
+Run ID 同时是 attempt 与 progress generation。当前 `stage`、`updated_at` 和
+`serenity_run_events` 提供 durable progress；status、list 与 detail API 暴露
+`stage` 和 `lastProgressAt`。系统不输出 overall/stage percentage，因为各 stage
+工作量没有可靠 denominator，伪百分比不是当前保证。
+
 ---
 
 ## §6 归因链 signal_source (attribution)
@@ -228,6 +259,10 @@ Serenity 直接产出的股票代币(xStocks)机会使用独立资产类别 `equ
 | `spec_serenity_live_readiness.py` | serenity_live_readiness | live 对称 + 信任边界隔离 | LR-S01~S06 |
 | `spec_serenity_xstock_execution.py` | serenity_xstock_execution | equity_tradeable 资产类别 | SX-S01~S03 |
 
+Research attempt lifecycle 的聚焦行为由 `tests/test_serenity_workbench.py` 和
+`tests/test_serenity_scheduler_continuity.py` 覆盖：queued/running cancel race、worker
+acknowledgement、terminal CAS、durable progress surface 与 restart reconciliation。
+
 > 运行: `uv run pytest tests/test_spec_conformance.py -q`(spec_*.py 不匹配 pytest 默认 python_files,须经 conformance 硬编码导入;直接 `pytest tests/specs/spec_serenity_*.py` 亦可点名收集)。
 
 ---
@@ -236,6 +271,8 @@ Serenity 直接产出的股票代币(xStocks)机会使用独立资产类别 `equ
 
 - **L1 评分权重硬编码**: `tier_score_map` / `stage_score_map` / `avg_score_map` / `_RESEARCHABILITY_CEILING` 写死在 `serenity_scoring.py`,非 config-driven。注意区分: Serenity 的**行为参数**(止损/持有天数/自动晋升/PI 阈值)**已** config 化 + 前端控件(§8/§7);硬编码的仅是**内部评分映射**这一实现细节。MVP 阶段不暴露 (owner 待定)。
 - **评估器无历史学习**: 评估器是静态规则,不随交易结果自适应(设计如此,保确定性)。
+- **取消是协作式**: 当前 provider 请求返回前不能释放 worker thread；若需要有界硬停，
+  必须先把研究 worker 隔离到独立 process owner，不能把 thread timeout 当作物理终止。
 
 ---
 

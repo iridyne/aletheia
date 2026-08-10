@@ -46,3 +46,6 @@ Proposal as stable decision history.
 - [OHLCV Provider Observation/Result](ohlcv_provider_observation_result.md):
   exact-timeframe and real-OHLCV result semantics, source/venue identity, and
   explicit rejection of coarse or field-incomplete fallback data.
+- [Serenity Research Attempt Truth](serenity_research_attempt_truth.md):
+  cooperative cancellation acknowledgement, guarded terminal transitions,
+  durable progress facts, and restart reconciliation for Serenity runs.

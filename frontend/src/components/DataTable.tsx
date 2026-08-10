@@ -207,7 +207,7 @@ export function statusBadgeClass(status: string): string {
   if (['rejected', 'failed', 'error', 'blocked', 'retired', 'cancelled', 'canceled', 'killed'].includes(s))
     return 'badge-red'
   // yellow — in-flight / pending / warning / throttled
-  if (['pending', 'running', 'in_progress', 'rate_limited', 'paused', 'degraded', 'warning', 'flagged', 'under_review', 'paper_running'].includes(s))
+  if (['pending', 'running', 'cancel_requested', 'in_progress', 'rate_limited', 'paused', 'degraded', 'warning', 'flagged', 'under_review', 'paper_running'].includes(s))
     return 'badge-yellow'
   // muted — empty / inert / closed-neutral
   if (['completed_empty', 'idle', 'closed', 'reviewed', 'archived', 'deprecated', 'not_evaluated', 'not_available'].includes(s))

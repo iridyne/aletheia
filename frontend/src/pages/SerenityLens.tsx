@@ -284,7 +284,7 @@ function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }
   const { data: artifacts } = useQuery({
     queryKey: ['serenity-run-artifacts', runId],
     queryFn: () => api.getSerenityRunArtifacts(runId),
-    enabled: !!data?.run && data.run.status !== 'running' && data.run.status !== 'queued',
+    enabled: !!data?.run && !['queued', 'running', 'cancel_requested'].includes(data.run.status),
   })
 
   const retryMut = useMutation({
@@ -353,7 +353,7 @@ function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }
             <span className="lens-status-value">{shortDate(run.finishedAt || run.finished_at)}</span>
           </div>
         )}
-        {run.status === 'running' && (run.startedAt || run.started_at) && (
+        {['running', 'cancel_requested'].includes(run.status) && (run.startedAt || run.started_at) && (
           <div className="lens-status-item">
             <span className="lens-status-label">Progress</span>
             <span className="lens-status-value">
