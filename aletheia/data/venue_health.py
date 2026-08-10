@@ -129,10 +129,10 @@ def get_provider_capability_snapshot(
 ) -> list[dict[str, Any]]:
     """Describe configured market-data providers without granting authority."""
     now = time.time()
-    configured = {
-        primary.strip().lower(): "primary",
-        **({fallback.strip().lower(): "fallback"} if fallback else {}),
-    }
+    primary_key = primary.strip().lower()
+    configured = {primary_key: "primary"}
+    if fallback and (fallback_key := fallback.strip().lower()) != primary_key:
+        configured[fallback_key] = "fallback"
     with _VENUE_HEALTH_LOCK:
         states = {name: VenueHealthState(**asdict(state)) for name, state in _VENUE_HEALTH.items()}
     rows = []

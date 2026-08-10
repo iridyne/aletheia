@@ -18,6 +18,17 @@ const SCROLL_TRIGGER_BARS = 10
 // Live tail: re-poll the newest candles on this cadence (ms).
 const LIVE_POLL_MS = 10_000
 
+export function marketDataMetaState(
+  meta: { ageMs: number | null; stale: boolean | null; receivedAt: number },
+  now: number,
+) {
+  const elapsed = Math.max(0, now - meta.receivedAt)
+  return {
+    ageMs: meta.ageMs === null ? null : meta.ageMs + elapsed,
+    stale: meta.stale === true || elapsed > LIVE_POLL_MS * 2,
+  }
+}
+
 function toBar(c: any): Bar {
   return { time: c.time, open: c.open, high: c.high, low: c.low, close: c.close }
 }
@@ -75,7 +86,10 @@ export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spo
   markerClickRef.current = onMarkerClick
 
   const [status, setStatus] = useState<'loading' | 'ok' | 'empty' | 'error'>('loading')
-  const [dataMeta, setDataMeta] = useState<{ source: string; asOf: string | null; ageMs: number | null; stale: boolean | null } | null>(null)
+  const [dataMeta, setDataMeta] = useState<{
+    source: string; asOf: string | null; ageMs: number | null; stale: boolean | null; receivedAt: number
+  } | null>(null)
+  const [now, setNow] = useState(() => Date.now())
 
   // Main lifecycle: rebuild whenever the requested market-data identity changes.
   useEffect(() => {
@@ -83,6 +97,7 @@ export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spo
     if (!container) return
     let cancelled = false
     setStatus('loading')
+    setDataMeta(null)
 
     const chart = createChart(container, {
       layout: chartTheme.layout,
@@ -143,7 +158,7 @@ export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spo
       try {
         const res = await api.getOhlcvWithMeta(symbol, timeframe, 2, marketType)
         if (cancelled) return
-        setDataMeta(res.meta)
+        setDataMeta({ ...res.meta, receivedAt: Date.now() })
         const rows = res.candles.map(toBar).sort((a, b) => a.time - b.time)
         let appended = false
         for (const b of rows) {
@@ -170,7 +185,7 @@ export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spo
         const res = await api.getOhlcvWithMeta(symbol, timeframe, INITIAL_LIMIT, marketType)
         if (cancelled) return
         const rows = res.candles
-        setDataMeta(res.meta)
+        setDataMeta({ ...res.meta, receivedAt: Date.now() })
         if (!rows.length) { setStatus('empty'); return }
         barsRef.current = rows.map(toBar)
         timesRef.current = new Set(barsRef.current.map(b => b.time))
@@ -199,6 +214,7 @@ export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spo
     chart.subscribeClick(handleClick)
 
     const poll = window.setInterval(() => void pollLatest(), LIVE_POLL_MS)
+    const clock = window.setInterval(() => setNow(Date.now()), LIVE_POLL_MS)
     const resizeObserver = new ResizeObserver(entries => {
       const width = entries[0]?.contentRect.width
       if (width) chart.applyOptions({ width })
@@ -208,6 +224,7 @@ export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spo
     return () => {
       cancelled = true
       window.clearInterval(poll)
+      window.clearInterval(clock)
       resizeObserver.disconnect()
       chart.unsubscribeClick(handleClick)
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRangeChange)
@@ -223,14 +240,16 @@ export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spo
     if (seriesRef.current) seriesRef.current.setMarkers(seriesMarkers(markers))
   }, [markers])
 
+  const metaState = dataMeta ? marketDataMetaState(dataMeta, now) : null
+
   return (
     <div>
       {status === 'error' && <p className="hint">Could not load market data (configure exchange / network).</p>}
       {status === 'empty' && <p className="hint">No candle data yet.</p>}
       {dataMeta && (
         <p className="hint" title={dataMeta.asOf ?? undefined}>
-          Source: {dataMeta.source} · As of: {dataMeta.ageMs === null ? 'not available' : `${Math.floor(dataMeta.ageMs / 60_000)}m ago`}
-          {dataMeta.stale === true ? ' · stale' : ''}
+          Source: {dataMeta.source} · As of: {metaState?.ageMs === null ? 'not available' : `${Math.floor((metaState?.ageMs ?? 0) / 60_000)}m ago`}
+          {metaState?.stale ? ' · stale' : ''}
         </p>
       )}
       <div ref={containerRef} style={{ width: '100%' }} />

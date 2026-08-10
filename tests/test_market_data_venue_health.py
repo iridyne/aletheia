@@ -49,6 +49,14 @@ def test_provider_capability_snapshot_keeps_policy_and_health_separate(monkeypat
     assert rows[1]["healthy"] is None
 
 
+def test_provider_capability_snapshot_keeps_same_venue_primary():
+    rows = get_provider_capability_snapshot(
+        provider="ccxt", primary="binance", fallback="binance"
+    )
+
+    assert [(row["venue"], row["role"]) for row in rows] == [("binance", "primary")]
+
+
 @pytest.mark.asyncio
 async def test_ccxt_skips_a_venue_after_rate_limit_refusal(monkeypatch):
     import aletheia.data.venue_health as health

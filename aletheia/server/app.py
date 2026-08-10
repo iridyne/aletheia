@@ -70,6 +70,10 @@ def lifecycle_task_snapshot() -> list[dict[str, object]]:
     rows = []
     for task_id, policy in LIFESPAN_TASK_CATALOG.items():
         task = _lifespan_tasks.get(task_id)
+        if task_id == "pi_daemon":
+            from aletheia.agent_runtime.pi_daemon import current_daemon_task
+
+            task = current_daemon_task()
         direct = policy["owner"] == "server.lifespan"
         rows.append(
             {
@@ -681,14 +685,15 @@ async def lifespan(app: FastAPI):
                 await _cancel_background_task(telegram_task, "Telegram polling")
             except Exception:
                 pass
-        if pi_daemon_task is not None:
-            try:
-                from aletheia.agent_runtime.pi_daemon import stop_pi_daemon
+        try:
+            from aletheia.agent_runtime.pi_daemon import current_daemon_task, stop_pi_daemon
 
+            pi_daemon_task = current_daemon_task()
+            if pi_daemon_task is not None:
                 stop_pi_daemon()
                 await _cancel_background_task(pi_daemon_task, "PI daemon")
-            except Exception:
-                pass
+        except Exception:
+            pass
         _lifespan_tasks.clear()
         # Mark the Runtime Session ended cleanly. Reaching this finally means an
         # orderly lifespan exit; a hard kill skips it, leaving ended_at NULL +

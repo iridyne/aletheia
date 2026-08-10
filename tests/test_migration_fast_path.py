@@ -608,6 +608,25 @@ def test_event_jsonl_outbox_migration_does_not_replay_historical_rows():
     connection.close()
 
 
+def test_event_jsonl_outbox_migration_rolls_back_partial_schema(monkeypatch):
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)"
+    )
+    monkeypatch.setattr(migrations, "_EVENT_JSONL_OUTBOX_INDEX_SQL", "invalid SQL")
+
+    with pytest.raises(sqlite3.OperationalError):
+        migrations._apply_event_jsonl_outbox_v22(connection)
+
+    columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(ps_event_log)")
+    }
+    assert "jsonl_mirror_status" not in columns
+    connection.close()
+
+
 def test_universe_positioning_v18_is_additive_and_idempotent():
     import aletheia.storage.migrations as migrations
 

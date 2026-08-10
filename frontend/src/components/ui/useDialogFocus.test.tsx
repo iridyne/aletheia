@@ -35,3 +35,25 @@ it('traps focus, closes on Escape, and restores the opener', () => {
   act(() => root.unmount())
   expect(document.activeElement).toBe(opener)
 })
+
+it('closes only the topmost nested dialog on Escape', () => {
+  const closeOuter = vi.fn()
+  const closeInner = vi.fn()
+  const host = document.createElement('div')
+  document.body.append(host)
+
+  function Dialogs() {
+    const outerRef = useRef<HTMLDivElement>(null)
+    const innerRef = useRef<HTMLDivElement>(null)
+    useDialogFocus(true, outerRef, closeOuter)
+    useDialogFocus(true, innerRef, closeInner)
+    return <div ref={outerRef} tabIndex={-1}><div ref={innerRef} tabIndex={-1} /></div>
+  }
+
+  const root = createRoot(host)
+  act(() => root.render(<Dialogs />))
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  expect(closeInner).toHaveBeenCalledOnce()
+  expect(closeOuter).not.toHaveBeenCalled()
+  act(() => root.unmount())
+})

@@ -4616,22 +4616,30 @@ def _apply_lesson_reviewer_attempts_v21(db: sqlite3.Connection) -> None:
 def _apply_event_jsonl_outbox_v22(db: sqlite3.Connection) -> None:
     """Make the existing EventStore JSONL mirror retryable after DB commit."""
 
-    existing = {
-        str(row[1]) for row in db.execute("PRAGMA table_info(ps_event_log)").fetchall()
-    }
-    status_was_missing = "jsonl_mirror_status" not in existing
-    for column, table, column_type in _EVENT_JSONL_OUTBOX_COLUMNS:
-        if column not in existing:
-            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
-            existing.add(column)
-    if status_was_missing:
-        # Existing rows were already handled by the legacy dual-write path. Do not
-        # replay the entire historical ledger merely because retry facts are new.
-        db.execute(
-            "UPDATE ps_event_log SET jsonl_mirror_status='mirrored', "
-            "jsonl_mirrored_at=created_at"
-        )
-    db.executescript(_EVENT_JSONL_OUTBOX_INDEX_SQL)
+    db.execute("SAVEPOINT event_jsonl_outbox_v22")
+    try:
+        existing = {
+            str(row[1])
+            for row in db.execute("PRAGMA table_info(ps_event_log)").fetchall()
+        }
+        status_was_missing = "jsonl_mirror_status" not in existing
+        for column, table, column_type in _EVENT_JSONL_OUTBOX_COLUMNS:
+            if column not in existing:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+                existing.add(column)
+        if status_was_missing:
+            # Existing rows were already handled by the legacy dual-write path. Do not
+            # replay the entire historical ledger merely because retry facts are new.
+            db.execute(
+                "UPDATE ps_event_log SET jsonl_mirror_status='mirrored', "
+                "jsonl_mirrored_at=created_at"
+            )
+        db.execute(_EVENT_JSONL_OUTBOX_INDEX_SQL)
+        db.execute("RELEASE SAVEPOINT event_jsonl_outbox_v22")
+    except Exception:
+        db.execute("ROLLBACK TO SAVEPOINT event_jsonl_outbox_v22")
+        db.execute("RELEASE SAVEPOINT event_jsonl_outbox_v22")
+        raise
 
 
 def _apply_market_signal_identity_v7(db: sqlite3.Connection) -> None:
