@@ -462,6 +462,9 @@ def _record_from_root(root: dict, *, root_type: str, ctx: dict) -> dict:
         )
     )
     forward_values = outcome_values(forward or {}, direction)
+    trade_motivation, trade_motivation_source = _structured_trade_motivation(
+        decision, parsed
+    )
 
     return {
         "lineage_id": f"{root_type}:{root_id}",
@@ -513,6 +516,8 @@ def _record_from_root(root: dict, *, root_type: str, ctx: dict) -> dict:
         "parse_warning": parsed.get("parse_warning"),
         "human_thesis": parsed.get("human_thesis"),
         "decision_meta": parsed.get("decision_meta"),
+        "trade_motivation": trade_motivation,
+        "trade_motivation_source": trade_motivation_source,
         "forward_return_pct": _round(forward_values["directional_return_pct"]),
         "forward_net_return_pct": _round(forward_values["net_return_pct"]),
         "forward_min_tradable_edge_pct": _round(forward_values["min_tradable_edge_pct"]),
@@ -568,6 +573,26 @@ def _parse_agent_rationale(raw: str | None) -> dict:
     result["bear_case"] = meta.get("bear_case")
     result["key_assumptions"] = _coerce_list(meta.get("key_assumptions"))
     return result
+
+
+def _structured_trade_motivation(
+    decision: dict | None, parsed_rationale: dict
+) -> tuple[dict | None, str | None]:
+    from aletheia.trading.trade_motivation import parse_trade_motivation
+
+    if decision:
+        try:
+            manifest = json.loads(decision.get("evidence_manifest_json") or "{}")
+        except (TypeError, ValueError):
+            manifest = {}
+        if isinstance(manifest, dict):
+            motivation = parse_trade_motivation(manifest.get("trade_motivation"))
+            if motivation is not None:
+                return motivation, "pi_decision"
+    motivation = parse_trade_motivation(
+        (parsed_rationale.get("decision_meta") or {}).get("trade_motivation")
+    )
+    return (motivation, "trade_proposal") if motivation is not None else (None, None)
 
 
 def _verdict(

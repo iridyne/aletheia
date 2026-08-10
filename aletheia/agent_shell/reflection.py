@@ -253,6 +253,9 @@ def _build_pi_decision(decision_result: dict):
     assumptions_json = (
         json.dumps(raw_assumptions) if isinstance(raw_assumptions, list) else "[]"
     )
+    evidence_manifest = dict(decision_result.get("evidence_manifest") or {})
+    if decision_result.get("trade_motivation"):
+        evidence_manifest["trade_motivation"] = decision_result["trade_motivation"]
     return PiDecision(
         symbol=record["symbol"],
         direction=record["direction"],
@@ -285,9 +288,7 @@ def _build_pi_decision(decision_result: dict):
         learning_manifest_json=json.dumps(
             decision_result.get("learning_manifest") or {}, sort_keys=True
         ),
-        evidence_manifest_json=json.dumps(
-            decision_result.get("evidence_manifest") or {}, sort_keys=True
-        ),
+        evidence_manifest_json=json.dumps(evidence_manifest, sort_keys=True),
     )
 
 

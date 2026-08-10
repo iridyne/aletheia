@@ -368,6 +368,57 @@ def test_parse_decision_meta_from_agent_rationale():
     assert record["key_assumptions"] == ["assumption"]
 
 
+def test_lineage_reads_persisted_structured_trade_motivation_from_pi_decision():
+    from aletheia.analytics.thesis_lineage import build_thesis_lineage_records
+    from aletheia.storage.sqlite import get_db
+
+    motivation = {
+        "schema_version": "structured-trade-motivation/v1",
+        "action_intent": "long",
+        "thesis": "Structured operator thesis",
+        "observed_facts": [{"fact": "volume expanded", "evidence_refs": ["snapshot:s1"]}],
+        "interpretations": ["breakout participation is broad"],
+        "supporting_evidence": ["volume expanded"],
+        "opposing_evidence": ["funding elevated"],
+        "key_assumptions": ["liquidity holds"],
+        "invalidation_conditions": ["close below breakout"],
+        "expected_horizon": {"hours": 4.0},
+        "confidence": 74,
+        "uncertainty_reason": "limited retest history",
+        "evidence_manifest": {"t0": {"source_id": "opp-lineage-34"}},
+    }
+    db = get_db()
+    _insert_opp(db, 34)
+    pid = _insert_proposal(db, 34, rationale="legacy proposal thesis")
+    _insert_decision(db, 34, proposal_id=pid)
+    db.execute(
+        "UPDATE pi_decisions SET evidence_manifest_json=? WHERE id=?",
+        (json.dumps({"trade_motivation": motivation}), "pi-lineage-34"),
+    )
+    db.commit()
+
+    record = build_thesis_lineage_records(days=7)[0]
+
+    assert record["trade_motivation"] == motivation
+    assert record["trade_motivation_source"] == "pi_decision"
+
+
+def test_lineage_legacy_rationale_has_no_invented_structured_motivation():
+    from aletheia.analytics.thesis_lineage import build_thesis_lineage_records
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, 35)
+    pid = _insert_proposal(db, 35, rationale="Legacy prose only")
+    _insert_decision(db, 35, proposal_id=pid)
+    db.commit()
+
+    record = build_thesis_lineage_records(days=7)[0]
+
+    assert record["trade_motivation"] is None
+    assert record["trade_motivation_source"] is None
+
+
 def test_parse_legacy_supporting_opposing_meta_keys():
     from aletheia.analytics.thesis_lineage import build_thesis_lineage_records
     from aletheia.storage.sqlite import get_db
