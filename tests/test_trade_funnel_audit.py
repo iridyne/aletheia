@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 
 
 def _iso(hours_ago: int = 1) -> str:
@@ -24,6 +25,25 @@ def _insert_signal(db, idx: int, action: str = "signal_pending", proposal_id: st
         "(id, symbol, direction, action, conviction, reasoning, proposal_id, opportunity_id, created_at) "
         "VALUES (?, 'BTC/USDT', 'long', ?, 70, 'test', ?, ?, ?)",
         (f"pi-funnel-{action}-{idx}", action, proposal_id, f"opp-funnel-{idx}", _iso()),
+    )
+
+
+def _insert_defer(db, idx: int, defer_until: str) -> None:
+    db.execute(
+        "INSERT INTO operator_evaluation_events "
+        "(id,dedup_key,event_kind,trigger,pending_unresolved_total,pending_visible_count,"
+        "queue_snapshot_json,data_health_json,created_at) "
+        "VALUES (?,?, 'operator_decision_deferred_unchanged_context','signal',1,1,?,?,?)",
+        (
+            f"defer-funnel-{idx}",
+            f"defer-funnel-key-{idx}",
+            json.dumps({
+                "opportunity_id": f"opp-funnel-{idx}",
+                "defer_until": defer_until,
+            }),
+            "{}",
+            _iso(0),
+        ),
     )
 
 
@@ -200,26 +220,13 @@ def test_trade_funnel_conversion_uses_linked_opportunity_cohort():
 
 def test_trade_funnel_counts_durable_operator_defer_as_evaluated():
     """A deferred carrier was consumed even though it has no terminal PI action."""
-    import json
-
     from aletheia.analytics.trade_funnel import build_trade_funnel_audit
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
     _insert_opp(db, 1)
     _insert_signal(db, 1, "signal_pending")
-    db.execute(
-        "INSERT INTO operator_evaluation_events "
-        "(id,dedup_key,event_kind,trigger,pending_unresolved_total,pending_visible_count,"
-        "queue_snapshot_json,data_health_json,created_at) "
-        "VALUES ('defer-funnel-1','defer-funnel-key-1',"
-        "'operator_decision_deferred_unchanged_context','signal',1,1,?,?,?)",
-        (
-            json.dumps({"opportunity_id": "opp-funnel-1"}),
-            "{}",
-            _iso(),
-        ),
-    )
+    _insert_defer(db, 1, (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
     db.commit()
 
     report = build_trade_funnel_audit(
@@ -229,7 +236,49 @@ def test_trade_funnel_counts_durable_operator_defer_as_evaluated():
     )
 
     assert report["causal_cohort_counts"]["system_operator_evaluated"] == 1
+    assert report["causal_cohort_counts"]["operator_deferred"] == 1
+    assert "operator_deferred" not in report["counts"]
     assert report["conversion_rates"]["signal_pending_to_evaluated"] == 1.0
+    assert report["main_choke_point"]["stage"] == "system_operator_deferred"
+    assert "remain deferred" in report["main_choke_point"]["summary"]
+
+
+def test_trade_funnel_does_not_recommend_waiting_for_an_expired_defer():
+    from aletheia.analytics.trade_funnel import build_trade_funnel_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, 1)
+    _insert_signal(db, 1, "signal_pending")
+    _insert_defer(db, 1, _iso())
+    db.commit()
+
+    report = build_trade_funnel_audit(
+        hours=24, min_sample_size=1, include_ranker_snapshot=False,
+    )
+
+    assert report["causal_cohort_counts"]["operator_deferred"] == 0
+    assert report["main_choke_point"]["stage"] == "system_operator_consumption"
+
+
+def test_trade_funnel_preserves_terminal_decisions_in_a_mixed_defer_cohort():
+    from aletheia.analytics.trade_funnel import build_trade_funnel_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for idx in (1, 2):
+        _insert_opp(db, idx)
+        _insert_signal(db, idx, "signal_pending")
+    _insert_defer(db, 1, (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
+    _insert_signal(db, 2, "skip")
+    db.commit()
+
+    report = build_trade_funnel_audit(
+        hours=24, min_sample_size=1, include_ranker_snapshot=False,
+    )
+
+    assert report["causal_cohort_counts"]["operator_deferred"] == 1
+    assert report["causal_cohort_counts"]["decisions_skip"] == 1
     assert report["main_choke_point"]["stage"] == "system_operator_decision"
 
 
