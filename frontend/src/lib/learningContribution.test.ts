@@ -71,6 +71,10 @@ function projection(
         complete_assignment_units: 999,
         cluster_members: 999,
         selected_members: 999,
+        treatment_members: 999,
+        treatment_selected_members: 999,
+        control_members: 999,
+        control_selected_members: 999,
       },
       integrity: {
         source_code_commits: ['commit'],

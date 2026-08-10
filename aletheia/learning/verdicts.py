@@ -546,6 +546,14 @@ def _harm_metrics(
     allocation_selected_member_n = sum(
         sample.selected_member_count for sample in cohort.samples
     )
+    treatment_member_n = sum(sample.member_count for sample in treatment)
+    treatment_selected_member_n = sum(
+        sample.selected_member_count for sample in treatment
+    )
+    control_member_n = sum(sample.member_count for sample in control)
+    control_selected_member_n = sum(
+        sample.selected_member_count for sample in control
+    )
     return {
         "metric_version": METRIC_VERSION,
         "stage": cohort.experiment.stage,
@@ -592,6 +600,10 @@ def _harm_metrics(
         "evidence_conflict_provenance_truncated": len(cohort.evidence_conflicts) > 20,
         "allocation_selected_member_n": allocation_selected_member_n,
         "allocation_total_member_n": allocation_total_member_n,
+        "treatment_member_n": treatment_member_n,
+        "treatment_selected_member_n": treatment_selected_member_n,
+        "control_member_n": control_member_n,
+        "control_selected_member_n": control_selected_member_n,
         "allocation_selection_rate": (
             allocation_selected_member_n / allocation_total_member_n
             if allocation_total_member_n else None

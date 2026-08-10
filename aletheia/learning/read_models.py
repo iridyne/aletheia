@@ -642,6 +642,14 @@ def _project_experiment(
             "selected_members": _safe_int(
                 metrics.get("allocation_selected_member_n")
             ),
+            "treatment_members": _safe_int(metrics.get("treatment_member_n")),
+            "treatment_selected_members": _safe_int(
+                metrics.get("treatment_selected_member_n")
+            ),
+            "control_members": _safe_int(metrics.get("control_member_n")),
+            "control_selected_members": _safe_int(
+                metrics.get("control_selected_member_n")
+            ),
         },
         "integrity": {
             "source_code_commits": [

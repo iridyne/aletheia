@@ -112,6 +112,10 @@ export interface LearningContributionProjection {
 			complete_assignment_units: number;
 			cluster_members: number;
 			selected_members: number;
+			treatment_members: number;
+			treatment_selected_members: number;
+			control_members: number;
+			control_selected_members: number;
 		};
 		integrity: {
 			source_code_commits: string[];

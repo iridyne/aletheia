@@ -229,6 +229,8 @@ function ContributionTab() {
             <ContributionRow label="Complete assignment units" value={item.samples.complete_assignment_units} />
             <ContributionRow label="Cluster members" value={item.samples.cluster_members} />
             <ContributionRow label="Selected members" value={item.samples.selected_members} />
+            <ContributionRow label="Treatment selected / members" value={`${item.samples.treatment_selected_members} / ${item.samples.treatment_members}`} />
+            <ContributionRow label="Control selected / members" value={`${item.samples.control_selected_members} / ${item.samples.control_members}`} />
           </div>
         </Card>
 
