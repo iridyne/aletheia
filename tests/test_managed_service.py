@@ -9,6 +9,18 @@ def _proc(returncode=0, stdout="", stderr=""):
     return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
+def test_runner_command_stabilizes_equivalent_python_alias(tmp_path, monkeypatch):
+    from aletheia.gateway import managed_service as service
+
+    python = tmp_path / "python"
+    python.write_text("")
+    python3 = tmp_path / "python3"
+    python3.symlink_to(python)
+    monkeypatch.setattr(service, "_resolve_real_python", lambda: (str(python3), {}))
+
+    assert service._runner_command(no_browser=True)[0] == str(python)
+
+
 def test_macos_job_is_on_demand_and_runs_runner_in_foreground(tmp_path, monkeypatch):
     from aletheia.gateway import managed_service as service
 
