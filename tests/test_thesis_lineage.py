@@ -376,7 +376,10 @@ def test_lineage_reads_persisted_structured_trade_motivation_from_pi_decision():
         "schema_version": "structured-trade-motivation/v1",
         "action_intent": "long",
         "thesis": "Structured operator thesis",
-        "observed_facts": [{"fact": "volume expanded", "evidence_refs": ["snapshot:s1"]}],
+        "observed_facts": [{
+            "fact": "volume expanded",
+            "evidence_refs": ["technical_snapshot:s1"],
+        }],
         "interpretations": ["breakout participation is broad"],
         "supporting_evidence": ["volume expanded"],
         "opposing_evidence": ["funding elevated"],
@@ -385,7 +388,10 @@ def test_lineage_reads_persisted_structured_trade_motivation_from_pi_decision():
         "expected_horizon": {"hours": 4.0},
         "confidence": 74,
         "uncertainty_reason": "limited retest history",
-        "evidence_manifest": {"t0": {"source_id": "opp-lineage-34"}},
+        "evidence_manifest": {
+            "source_chain": {"opportunity_id": "opp-lineage-34"},
+            "technical_snapshot": {"id": "s1"},
+        },
     }
     db = get_db()
     _insert_opp(db, 34)

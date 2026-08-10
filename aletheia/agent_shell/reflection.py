@@ -254,8 +254,22 @@ def _build_pi_decision(decision_result: dict):
         json.dumps(raw_assumptions) if isinstance(raw_assumptions, list) else "[]"
     )
     evidence_manifest = dict(decision_result.get("evidence_manifest") or {})
-    if decision_result.get("trade_motivation"):
-        evidence_manifest["trade_motivation"] = decision_result["trade_motivation"]
+    if isinstance(decision_result.get("trade_motivation"), dict):
+        from aletheia.trading.trade_motivation import (
+            normalize_action_intent,
+            parse_trade_motivation,
+        )
+
+        motivation = dict(decision_result["trade_motivation"])
+        motivation["action_intent"] = normalize_action_intent(
+            record.get("action"), record.get("direction")
+        )
+        motivation_manifest = dict(evidence_manifest)
+        motivation_manifest.pop("trade_motivation", None)
+        motivation["evidence_manifest"] = motivation_manifest
+        motivation = parse_trade_motivation(motivation)
+        if motivation is not None:
+            evidence_manifest["trade_motivation"] = motivation
     return PiDecision(
         symbol=record["symbol"],
         direction=record["direction"],

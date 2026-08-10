@@ -2570,11 +2570,6 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     from aletheia.agent_shell.trading_context import build_decision_evidence_manifest
     result["evidence_manifest"] = build_decision_evidence_manifest(ctx, decision)
     decision.evidence_manifest = result["evidence_manifest"]
-    from aletheia.trading.trade_motivation import build_trade_motivation
-    result["trade_motivation"] = build_trade_motivation(
-        decision, decision.evidence_manifest
-    )
-    decision.trade_motivation = result["trade_motivation"]
 
     if trade_like:
         result["proposal_status"] = "submitting"
@@ -2673,6 +2668,14 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             )
         if trade_like and result.get("proposal_reason"):
             result["proposal_error"] = result["proposal_reason"]
+
+    # Build from the terminal action after deterministic proposal brakes may
+    # have converted a model trade into a persisted skip.
+    from aletheia.trading.trade_motivation import build_trade_motivation
+    result["trade_motivation"] = build_trade_motivation(
+        decision, decision.evidence_manifest
+    )
+    decision.trade_motivation = result["trade_motivation"]
 
     # The prepared Proposal and final PiDecision become visible together in one
     # BEGIN IMMEDIATE transaction.  Risk/broker work starts only after commit.

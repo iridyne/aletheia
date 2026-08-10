@@ -16,7 +16,7 @@ def test_structured_trade_motivation_has_stable_json_round_trip():
         "observed_facts": [
             {
                 "fact": "One-hour volume is above its recent baseline.",
-                "evidence_refs": ["market_snapshot:snap-1", "opportunity:opp-1"],
+                "evidence_refs": ["technical_snapshot:snap-1", "opportunity:opp-1"],
             }
         ],
         "interpretations": ["Demand is absorbing the retest."],
@@ -27,7 +27,10 @@ def test_structured_trade_motivation_has_stable_json_round_trip():
         "expected_horizon": {"hours": 4.0},
         "confidence": 71,
         "uncertainty_reason": "Only one completed retest is available.",
-        "evidence_manifest": {"t0": {"source_id": "opp-1"}},
+        "evidence_manifest": {
+            "source_chain": {"opportunity_id": "opp-1"},
+            "technical_snapshot": {"id": "snap-1"},
+        },
     }
 
     encoded = serialize_trade_motivation(motivation)
@@ -123,3 +126,65 @@ def test_pi_decision_persists_the_same_structured_motivation_in_evidence_manifes
         "t0": {"source_id": "opp-1"},
         "trade_motivation": motivation,
     }
+
+
+def test_terminal_skip_rewrites_stale_entry_motivation_to_hold():
+    from aletheia.agent_shell.reflection import _build_pi_decision
+    from aletheia.agent_shell.trading_decision import TradingDecision
+    from aletheia.trading.trade_motivation import build_trade_motivation
+
+    stale = build_trade_motivation(TradingDecision(
+        action="trade", symbol="BTC/USDT", direction="long", conviction=60,
+        reasoning="candidate looked tradeable before the deterministic brake",
+    ))
+    persisted = _build_pi_decision({
+        "action": "skip",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "market_type": "spot",
+        "conviction": 60,
+        "reasoning": "direction overheated",
+        "proposal_status": "not_applicable",
+        "proposal_reason": "direction_overheated",
+        "evidence_manifest": {},
+        "trade_motivation": stale,
+    })
+
+    motivation = json.loads(persisted.evidence_manifest_json)["trade_motivation"]
+    assert motivation["action_intent"] == "hold"
+
+
+def test_observed_facts_keep_only_refs_resolved_by_exact_manifest():
+    from aletheia.agent_shell.trading_decision import TradingDecision
+    from aletheia.trading.trade_motivation import build_trade_motivation
+
+    decision = TradingDecision(
+        action="trade", symbol="BTC/USDT", direction="long", conviction=70,
+        reasoning="grounded setup",
+        observed_facts=[
+            {
+                "fact": "Exact opportunity and snapshot are present.",
+                "evidence_refs": [
+                    "opportunity:opp-exact",
+                    "market_snapshot:snap-invented",
+                    "technical_snapshot:snap-exact",
+                ],
+            },
+            {
+                "fact": "Invented evidence should not survive.",
+                "evidence_refs": ["news:item-invented"],
+            },
+        ],
+    )
+    motivation = build_trade_motivation(decision, {
+        "source_chain": {"opportunity_id": "opp-exact"},
+        "technical_snapshot": {"id": "snap-exact"},
+    })
+
+    assert motivation["observed_facts"] == [{
+        "fact": "Exact opportunity and snapshot are present.",
+        "evidence_refs": [
+            "opportunity:opp-exact",
+            "technical_snapshot:snap-exact",
+        ],
+    }]

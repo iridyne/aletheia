@@ -281,6 +281,11 @@ durably queued and independently retried by `outcome_hook_replay`.
   reads PiDecision first and Proposal second. Missing fields remain
   `unavailable`, empty, or `null`; readers never derive a structured object from
   legacy prose. This reuses existing JSON carriers and requires no table migration.
+  `observed_facts` retains only refs that resolve to identities in that exact
+  decision manifest; facts with no valid ref are omitted rather than presented as observed.
+  The B-class behavior is part of the Opportunity Information policy epoch via
+  `structured_trade_motivation=structured-trade-motivation/v1`, so pre/post-change
+  decisions cannot share an epoch.
 - **Side effects**: Candidate path writes `pi_decisions`; zero-pending path appends only an observation event; neither path bypasses paper_trader queue authority
 - **Attribution**: `_attach_opportunity_context` backfills `opportunity_id` + `signal_source`
   (`market_observer` Layer 1 wins on tie; `serenity` Layer 3 is the fallback). `signal_source`
