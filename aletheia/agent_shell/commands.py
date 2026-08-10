@@ -1851,10 +1851,10 @@ def _existing_deferred_context_observation(
             "AND json_extract(queue_snapshot_json, '$.market_type') = ? "
             "AND json_extract(queue_snapshot_json, '$.material_fingerprint') = ? "
             "AND event_kind LIKE 'operator_decision_deferred_%' "
+            "AND json_extract(queue_snapshot_json, '$.defer_until') > ? "
             "AND ("
-            "    (json_extract(queue_snapshot_json, '$.defer_until') > ? "
-            "     AND json_extract(queue_snapshot_json, '$.defer_reason') IN "
-            "             ('operator_low_conviction', 'debate_not_confirmed')) "
+            "    json_extract(queue_snapshot_json, '$.defer_reason') IN "
+            "             ('operator_low_conviction', 'debate_not_confirmed') "
             "    OR json_extract(queue_snapshot_json, '$.defer_reason') LIKE "
             "             'direct_skip_not_confirmed%'"
             ") "
@@ -1862,16 +1862,16 @@ def _existing_deferred_context_observation(
             (symbol, _nd(direction), _nm(market_type), material_fingerprint, now_iso),
         ).fetchone()
     else:
-        # Legacy per-opportunity match. direct_skip suppresses regardless of
-        # defer_until; conviction/debate honor the defer_until window.
+        # Legacy per-opportunity match. Every market-quiet defer suppresses only
+        # until its durable deadline; afterwards the carrier is owed a review.
         market_quiet_row = get_db().execute(
             "SELECT * FROM operator_evaluation_events "
             "WHERE json_extract(queue_snapshot_json, '$.opportunity_id') = ? "
             "AND event_kind LIKE 'operator_decision_deferred_%' "
+            "AND json_extract(queue_snapshot_json, '$.defer_until') > ? "
             "AND ("
-            "    (json_extract(queue_snapshot_json, '$.defer_until') > ? "
-            "     AND json_extract(queue_snapshot_json, '$.defer_reason') IN "
-            "             ('operator_low_conviction', 'debate_not_confirmed')) "
+            "    json_extract(queue_snapshot_json, '$.defer_reason') IN "
+            "             ('operator_low_conviction', 'debate_not_confirmed') "
             "    OR json_extract(queue_snapshot_json, '$.defer_reason') LIKE "
             "             'direct_skip_not_confirmed%'"
             ") "

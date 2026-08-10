@@ -3302,12 +3302,10 @@ def test_neutral_skip_defers_but_adjacent_qualified_negative_becomes_terminal(
     assert second["action"] == "evaluation_deferred"
     assert second["model_invoked"] is False
     assert first["operator_evaluation_event_id"] == second["operator_evaluation_event_id"]
-    # The market-quiet fast-path in _existing_deferred_context_observation suppresses
-    # re-evaluation by opportunity_id for direct_skip_not_confirmed defer reasons,
-    # regardless of b2 evidence changes. The third call therefore also defers even
-    # though evidence became qualified_negative (see GitHub issue for this gap).
-    assert third["action"] == "evaluation_deferred"
-    assert calls == {"assess": 1, "confirm": 1}  # third call suppressed by market-quiet fast-path
+    # The active defer suppresses unchanged context, but its durable deadline
+    # reopens the carrier so newly qualified adverse evidence can become terminal.
+    assert third["action"] == "skip"
+    assert calls == {"assess": 2, "confirm": 2}
 
 
 def test_candidate_specific_defer_rotates_to_next_visible_candidate(tmp_path, monkeypatch):
