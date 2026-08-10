@@ -12,7 +12,7 @@ DELETE_MERGED_WORKFLOW_PATH = WORKFLOW_DIR / "delete-merged-branch.yml"
 RELEASE_WORKFLOW_PATH = WORKFLOW_DIR / "release-please.yml"
 PINNED_ACTION_SHA_LENGTH = 40
 GITHUB_SCRIPT_ACTION = "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
-RELEASE_PLEASE_ACTION = "googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7"
+SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
 
 
 def _workflow() -> dict:
@@ -138,23 +138,31 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
         "issues": "write",
         "pull-requests": "write",
     }
-    assert len(job["steps"]) == 2
-    step, dispatch = job["steps"]
-    assert step["id"] == "release"
-    assert step["uses"] == RELEASE_PLEASE_ACTION
-    assert step["with"] == {
-        "config-file": "release-please-config.json",
-        "manifest-file": ".release-please-manifest.json",
-    }
+    assert len(job["steps"]) == 3
+    node, release, dispatch = job["steps"]
+    assert node["uses"] == SETUP_NODE_ACTION
+    assert node["with"] == {"node-version": "22"}
+    assert release["env"] == {"GITHUB_TOKEN": "${{ github.token }}"}
+    commands = release["run"]
+    assert "set -euo pipefail" in commands
+    assert "release-please@17.6.0" in commands
+    assert "release_please github-release" in commands
+    assert "release_please release-pr" in commands
+    assert '--token="$GITHUB_TOKEN"' in commands
+    assert '--repo-url="$GITHUB_REPOSITORY"' in commands
+    assert "--target-branch=master" in commands
+    assert "--config-file=release-please-config.json" in commands
+    assert "--manifest-file=.release-please-manifest.json" in commands
     assert dispatch["uses"] == GITHUB_SCRIPT_ACTION
-    assert dispatch["if"] == "steps.release.outputs.prs_created == 'true'"
-    assert dispatch["env"] == {"RELEASE_PRS": "${{ steps.release.outputs.prs }}"}
     assert dispatch["with"]["retries"] == "3"
+    assert "pulls.list" in dispatch["with"]["script"]
+    assert "autorelease: pending" in dispatch["with"]["script"]
     assert "createWorkflowDispatch" in dispatch["with"]["script"]
     assert "workflow_id: 'ci.yml'" in dispatch["with"]["script"]
-    assert "ref: pullRequest.headBranchName" in dispatch["with"]["script"]
+    assert "ref: pullRequest.head.ref" in dispatch["with"]["script"]
 
     source = RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8").lower()
+    assert "googleapis/release-please-action@" not in source
     assert "upload-artifact" not in source
     assert "deploy" not in source
     assert "publish" not in source
