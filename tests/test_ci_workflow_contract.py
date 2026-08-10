@@ -261,7 +261,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     workflow = _auto_merge_workflow()
     triggers = workflow["on"]
 
-    assert set(triggers) == {"pull_request_target", "repository_dispatch"}
+    assert set(triggers) == {"pull_request_target", "repository_dispatch", "workflow_run"}
     assert triggers["pull_request_target"]["branches"] == ["master"]
     assert triggers["pull_request_target"]["types"] == [
         "opened",
@@ -274,9 +274,18 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "closed",
     ]
     assert triggers["repository_dispatch"]["types"] == ["auto_merge_update"]
+    assert triggers["workflow_run"] == {
+        "workflows": ["Aletheia CI"],
+        "types": ["completed"],
+    }
     assert workflow["permissions"] == {"contents": "read"}
 
-    assert set(workflow["jobs"]) == {"schedule", "update", "release"}
+    assert set(workflow["jobs"]) == {
+        "schedule",
+        "release-candidate",
+        "update",
+        "release",
+    }
     schedule = workflow["jobs"]["schedule"]
     assert schedule["name"] == "Schedule auto-merge update"
     assert schedule["runs-on"] == [
@@ -301,6 +310,24 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "auto_merge_update" in schedule_script
     assert "pull_request_number" in schedule_script
     assert "process.env.OPERATION" in schedule_script
+
+    release_candidate = workflow["jobs"]["release-candidate"]
+    assert release_candidate["permissions"] == {
+        "contents": "write",
+        "issues": "write",
+        "pull-requests": "read",
+    }
+    release_guard = release_candidate["if"]
+    assert "workflow_run.event == 'workflow_dispatch'" in release_guard
+    assert "workflow_run.conclusion == 'success'" in release_guard
+    assert "release-please--branches--master" in release_guard
+    candidate_script = release_candidate["steps"][0]["with"]["script"]
+    assert "pullRequest.head.sha === run.head_sha" in candidate_script
+    assert "autorelease: pending" in candidate_script
+    assert "do-not-auto-merge" in candidate_script
+    assert "issues.removeLabel" in candidate_script
+    assert "event_type: 'auto_merge_update'" in candidate_script
+    assert "expected_head_sha: run.head_sha" in candidate_script
 
     update = workflow["jobs"]["update"]
     assert update["name"] == "Apply auto-merge update"

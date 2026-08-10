@@ -25,11 +25,13 @@ def test_product_version_has_one_source_and_all_build_readers_agree() -> None:
 
 
 def test_release_automation_tracks_the_product_without_component_versions() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     config = json.loads((ROOT / "release-please-config.json").read_text(encoding="utf-8"))
     manifest = json.loads((ROOT / ".release-please-manifest.json").read_text(encoding="utf-8"))
 
     assert config["release-type"] == "python"
     assert config["include-v-in-tag"] is True
+    assert config["include-component-in-tag"] is False
     assert config["bump-minor-pre-major"] is True
     assert config["draft-pull-request"] is False
     assert config["label"] == "autorelease: pending"
@@ -37,6 +39,11 @@ def test_release_automation_tracks_the_product_without_component_versions() -> N
         {"type": "generic", "path": "aletheia/__init__.py"}
     ]
     assert manifest == {".": __version__}
+
+    assert pyproject["tool"]["uv"]["cache-keys"] == [
+        {"file": "pyproject.toml"},
+        {"file": "aletheia/__init__.py"},
+    ]
 
     configured_paths = json.dumps(config)
     assert "frontend/package.json" not in configured_paths
