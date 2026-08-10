@@ -29,6 +29,14 @@ _TECHNICAL_FIXTURE = (
 )
 
 
+def test_technical_fixture_contains_only_production_rendered_block() -> None:
+    fixture = json.loads(_TECHNICAL_FIXTURE.read_text(encoding="utf-8"))
+    technical = fixture["technical_context"]
+
+    assert technical.endswith("\n")
+    assert "deterministic derived facts" not in technical
+
+
 class _PairProvider(ModelProvider):
     name = "fixture-provider"
     model = "fixed-fixture-model"
@@ -207,7 +215,7 @@ async def test_technical_context_pair_reuses_harness_and_stays_content_free(
 
     db = get_db()
     calls = db.execute(
-        "SELECT caller,metadata_json FROM llm_inference_calls WHERE "
+        "SELECT caller,context_adapter_id,metadata_json FROM llm_inference_calls WHERE "
         "json_extract(metadata_json,'$.evaluation_pair_id')=?",
         (report["evaluation_pair_id"],),
     ).fetchall()
@@ -215,10 +223,15 @@ async def test_technical_context_pair_reuses_harness_and_stays_content_free(
         "evaluation.technical_context.control",
         "evaluation.technical_context.treatment",
     }
+    adapter_by_caller = {row["caller"]: row["context_adapter_id"] for row in calls}
+    assert adapter_by_caller == {
+        "evaluation.technical_context.control": "none",
+        "evaluation.technical_context.treatment": "technical-context-v1",
+    }
     artifacts = db.execute(
         "SELECT evaluation_arm,kind,stable_id,rendered_chars "
         "FROM llm_context_artifacts WHERE evaluation_pair_id=? "
-        "AND stable_id LIKE '%:technical'",
+        "AND stable_id LIKE 'technical-context-v1:fixture:%'",
         (report["evaluation_pair_id"],),
     ).fetchall()
     assert {row["evaluation_arm"] for row in artifacts} == {"control", "treatment"}

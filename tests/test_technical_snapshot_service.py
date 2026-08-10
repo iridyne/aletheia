@@ -69,6 +69,6 @@ def test_fixed_size_provider_window_uses_suffix_overlap_not_rebuild() -> None:
         second, exchange="bitget", symbol="BTC/USDT", market_type="perp", timeframe="1h"
     )
 
-    assert snapshot.bar_close_ts == second[-1].ts
+    assert snapshot.bar_close_ts == second[-1].ts + 3_600_000
     assert service.stats()["incremental_bar_updates"] == 1
     assert service.stats()["bounded_rebuilds"] == 1

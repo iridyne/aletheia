@@ -113,13 +113,14 @@ def test_relative_strength_rank_handles_none_returns():
 class _FakeCandle:
     is_closed = True
 
-    def __init__(self, ts, o, h, l, c, v):
+    def __init__(self, ts, o, h, l, c, v, exchange=None):
         self.timestamp = ts
         self.open = o
         self.high = h
         self.low = l
         self.close = c
         self.volume = v
+        self.exchange = exchange
 
 
 class _FakeProvider:
@@ -150,6 +151,7 @@ class _FakeProvider:
                 l=99.5 + seed + i * 0.1,
                 c=100.0 + seed + i * 0.1,
                 v=1000.0 + i * 5,
+                exchange=getattr(symbol, "exchange", None),
             )
             for i in range(limit)
         ]
@@ -168,8 +170,12 @@ def test_build_context_renders_markdown_tables():
     ctx, debug = asyncio.run(build_market_context(["BTCUSDT", "ETHUSDT"], provider=provider))
     assert "Verified market data snapshot" in ctx
     assert "BTCUSDT" in ctx and "ETHUSDT" in ctx
-    # Multi-timeframe: header row should appear once per symbol.
-    assert ctx.count("| TF | Close | SMA20 |") == 2
+    # One normalized technical-context-v1 bundle per symbol.
+    assert ctx.count("technical-context-v1") == 2
+    assert "trend=" in ctx and "vwap=" in ctx and "donchian=" in ctx
+    assert "last 10 1h closes" not in ctx
+    # Daily history is intentionally too short for the 50-bar contract.
+    assert "unavailable:warmup(30)" in ctx
     # Glossary always present.
     assert "Indicator glossary" in ctx
     # Cross-asset RS table.
@@ -177,7 +183,81 @@ def test_build_context_renders_markdown_tables():
     assert ctx.count("Cross-asset relative strength") == 1
     # Debug info populated.
     assert "BTCUSDT" in debug["symbols"]
+    technical = debug["technical_context"]
+    assert technical["adapter_id"] == "technical-context-v1"
+    assert len(technical["artifacts"]) == 2
+    assert all(
+        item["stable_id"].startswith("technical-context-v1:")
+        for item in technical["artifacts"]
+    )
+    assert all(item["observed_at"] for item in technical["artifacts"])
     assert debug["fallback"] is False
+
+
+def test_build_context_uses_returned_candle_venue_for_identity():
+    from aletheia.data.cache import get_cache
+    from aletheia.trading.market_context import build_market_context
+
+    class FallbackVenueProvider(_FakeProvider):
+        async def get_ohlcv(self, symbol, timeframe, limit):
+            candles = await super().get_ohlcv(symbol, timeframe, limit)
+            for candle in candles:
+                candle.exchange = "okx"
+            return candles
+
+    get_cache().invalidate()
+    ctx, debug = asyncio.run(build_market_context(
+        ["BTC/USDT"], exchange="bitget", provider=FallbackVenueProvider(),
+    ))
+
+    assert "technical-context-v1 (okx spot; closed bars)" in ctx
+    assert debug["technical_context"]["artifacts"][0]["stable_id"].startswith(
+        "technical-context-v1:okx:"
+    )
+
+
+def test_build_context_fails_closed_on_inconsistent_timeframe_venues():
+    from aletheia.data.cache import get_cache
+    from aletheia.trading.market_context import build_market_context
+
+    class MixedVenueProvider(_FakeProvider):
+        async def get_ohlcv(self, symbol, timeframe, limit):
+            candles = await super().get_ohlcv(symbol, timeframe, limit)
+            venue = "okx" if timeframe == "4h" else "bitget"
+            for candle in candles:
+                candle.exchange = venue
+            return candles
+
+    get_cache().invalidate()
+    ctx, debug = asyncio.run(build_market_context(
+        ["BTC/USDT"], exchange="bitget", provider=MixedVenueProvider(),
+    ))
+
+    assert debug["fallback"] is True
+    assert debug["technical_context"]["artifacts"] == []
+    assert any("inconsistent_timeframe_venues" in error for error in debug["errors"])
+    assert "technical-context-v1 (bitget" not in ctx
+
+
+def test_build_context_marks_missing_timeframe_in_partial_bundle():
+    from aletheia.data.cache import get_cache
+    from aletheia.trading.market_context import build_market_context
+
+    class MissingTimeframeProvider(_FakeProvider):
+        async def get_ohlcv(self, symbol, timeframe, limit):
+            if timeframe == "4h":
+                return []
+            return await super().get_ohlcv(symbol, timeframe, limit)
+
+    get_cache().invalidate()
+    ctx, debug = asyncio.run(build_market_context(
+        ["BTC/USDT"], exchange="bitget", provider=MissingTimeframeProvider(),
+    ))
+    artifact = debug["technical_context"]["artifacts"][0]
+
+    assert "- 4h q=unavailable:no_candles close=n/a" in ctx
+    assert artifact["quality_state"] == "partial"
+    assert artifact["timeframes"] == ["1h", "4h", "1d"]
 
 
 def test_build_context_falls_back_on_total_failure(tmp_path, monkeypatch):
@@ -279,6 +359,15 @@ def test_build_context_preserves_instrument_identity_and_cache_scope():
 
 # === Observer integration ===
 
+
+def test_observer_system_prompt_matches_normalized_technical_fields():
+    from aletheia.agents.market_observer import _SYSTEM_PROMPT
+
+    for token in ("trend:", "atr: ATR14 as a percentage", "bb:", "vwap:", "donchian H/L:", "obv"):
+        assert token in _SYSTEM_PROMPT
+    assert "price > SMA" not in _SYSTEM_PROMPT
+    assert "ATR14: average true range (price units)" not in _SYSTEM_PROMPT
+
 def _setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
@@ -345,16 +434,34 @@ def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
 
     # Force the structured-LLM path to fail.
     import aletheia.agents.market_observer as mo
+    captured_calls = []
 
     async def fake_llm_structured(*a, **kw):
+        captured_calls.append(kw)
         return None, "llm_unavailable: simulated"
     monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
     monkeypatch.setattr(mo, "_has_sufficient_signal", lambda ctx: True)
 
     # Stub build_market_context so observer doesn't need network.
     async def fake_builder(symbols, market_type="spot", **kw):
-        return ("BTCUSDT verified snapshot here", {"fallback": False, "errors": [],
-                                                    "symbols": {}})
+        artifact = {
+            "stable_id": "technical-context-v1:bitget:BTC/USDT:spot:abc",
+            "source": "technical-analysis-v1",
+            "quality_state": "complete",
+            "rendered_chars": 32,
+        }
+        return (
+            "BTCUSDT verified snapshot here",
+            {
+                "fallback": False,
+                "errors": [],
+                "symbols": {},
+                "technical_context": {
+                    "adapter_id": "technical-context-v1",
+                    "artifacts": [artifact],
+                },
+            },
+        )
     monkeypatch.setattr(mo, "build_market_context", fake_builder, raising=False)
     # Patch via the module import used inside the agent body.
     import aletheia.trading.market_context as mc
@@ -371,6 +478,15 @@ def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
     assert any("market_read_input" in a for a in actions)
     # LLM-skip behavior: when LLM fails, records "market_read_skipped" not "market_read_output"
     assert any("market_read_skipped" in a for a in actions)
+    assert captured_calls
+    assert all(call["context_adapter"] == "technical-context-v1" for call in captured_calls)
+    assert all(
+        any(
+            item["stable_id"].startswith("technical-context-v1:")
+            for item in call["context_artifacts"]
+        )
+        for call in captured_calls
+    )
 
     # Cleanup the in-process step counter.
     from aletheia.agents.helpers import _release_run_counter

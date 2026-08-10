@@ -27,9 +27,11 @@ Governance red lines:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from aletheia.trading.indicators import (
     sma, rsi, atr, bollinger, momentum_pct, zscore_last, relative_strength_rank,
@@ -62,6 +64,24 @@ class _IndicatorSnap:
     volume_zscore_20: float | None
     timeframe: str
     bars_used: int
+    ema_20: float | None = None
+    ema_50: float | None = None
+    atr_pct: float | None = None
+    bb_width_pct: float | None = None
+    volume_ratio_20: float | None = None
+    vwap_20: float | None = None
+    donchian_high_20: float | None = None
+    donchian_low_20: float | None = None
+    obv_normalized: float | None = None
+    exchange: str = "unknown"
+    symbol: str = ""
+    market_type: str = "spot"
+    bar_close_ts: int | None = None
+    warmup_complete: bool = False
+    data_quality: str = "unknown"
+    quality_reasons: tuple[str, ...] = ()
+    algorithm_version: str = "unknown"
+    input_fingerprint: str = ""
 
 
 def _compute_snap(closes: list[float], highs: list[float], lows: list[float],
@@ -119,6 +139,53 @@ def _indicator_snap_from_shared(snapshot) -> _IndicatorSnap:
         volume_zscore_20=values.get("volume_zscore_20"),
         timeframe=snapshot.timeframe,
         bars_used=snapshot.bars_used,
+        ema_20=values.get("ema_20"),
+        ema_50=values.get("ema_50"),
+        atr_pct=values.get("atr_pct"),
+        bb_width_pct=values.get("bb_width_pct"),
+        volume_ratio_20=values.get("volume_ratio_20"),
+        vwap_20=values.get("vwap_20"),
+        donchian_high_20=values.get("donchian_high_20"),
+        donchian_low_20=values.get("donchian_low_20"),
+        obv_normalized=values.get("obv_normalized"),
+        exchange=snapshot.exchange,
+        symbol=snapshot.symbol,
+        market_type=snapshot.market_type,
+        bar_close_ts=snapshot.bar_close_ts,
+        warmup_complete=snapshot.warmup_complete,
+        data_quality=snapshot.data_quality,
+        quality_reasons=snapshot.quality_reasons,
+        algorithm_version=snapshot.algorithm_version,
+        input_fingerprint=snapshot.input_fingerprint,
+    )
+
+
+def _unavailable_snap(
+    timeframe: str,
+    reason: str,
+    *,
+    exchange: str,
+    symbol: str,
+    market_type: str,
+) -> _IndicatorSnap:
+    return _IndicatorSnap(
+        last_close=None,
+        sma_20=None,
+        sma_50=None,
+        rsi_14=None,
+        atr_14=None,
+        bb_lower=None,
+        bb_upper=None,
+        bb_pct_b=None,
+        momentum_10=None,
+        volume_zscore_20=None,
+        timeframe=timeframe,
+        bars_used=0,
+        exchange=exchange,
+        symbol=symbol,
+        market_type=market_type,
+        data_quality="missing",
+        quality_reasons=(reason,),
     )
 
 
@@ -132,36 +199,104 @@ def _fmt(value: float | None, fmt: str = "{:.2f}") -> str:
         return "n/a"
 
 
-def _render_snap_table(symbol: str, snaps: list[_IndicatorSnap]) -> str:
-    """Markdown table — one row per timeframe, columns = indicators.
+def _pct_delta(value: float | None, baseline: float | None) -> float | None:
+    if value is None or baseline is None or baseline == 0:
+        return None
+    return (value - baseline) / baseline * 100.0
 
-    Wide-format keeps cross-timeframe agreement visually obvious (the model
-    sees "1h RSI 68 / 4h RSI 62 / 1d RSI 58" lined up and can reason about it).
-    """
+
+def _atr_distance(value: float | None, baseline: float | None, atr_value: float | None) -> float | None:
+    if value is None or baseline is None or atr_value is None or atr_value <= 0:
+        return None
+    return (value - baseline) / atr_value
+
+
+def _trend(snap: _IndicatorSnap) -> str:
+    spread = _pct_delta(snap.ema_20, snap.ema_50)
+    if None in (snap.last_close, snap.ema_20, snap.ema_50):
+        return "n/a"
+    if snap.last_close > snap.ema_20 > snap.ema_50:
+        state = "up"
+    elif snap.last_close < snap.ema_20 < snap.ema_50:
+        state = "down"
+    else:
+        state = "mixed"
+    return f"{state}({_fmt(spread, '{:+.2f}%')})"
+
+
+def _quality(snap: _IndicatorSnap) -> str:
+    if snap.data_quality in {"missing", "empty"}:
+        reasons = ",".join(snap.quality_reasons[:2]) or snap.data_quality
+        return f"unavailable:{reasons[:60]}"
+    if not snap.warmup_complete:
+        return f"unavailable:warmup({snap.bars_used})"
+    if snap.data_quality != "complete":
+        reasons = ",".join(snap.quality_reasons[:2]) or snap.data_quality
+        return f"unavailable:{reasons[:60]}"
+    return "complete"
+
+
+def _render_snap_table(symbol: str, snaps: list[_IndicatorSnap]) -> str:
+    """Render one bounded, normalized technical-context-v1 bundle."""
     if not snaps:
         return f"### {symbol}\n_no data_\n"
-    rows = [
-        "| TF | Close | SMA20 | SMA50 | RSI14 | ATR14 | BB% | Mom10 | Vol z |",
-        "|----|------:|------:|------:|------:|------:|----:|------:|------:|",
-    ]
+    identity = next((snap for snap in snaps if snap.data_quality != "missing"), snaps[0])
+    rows = []
     for s in snaps:
+        quality = _quality(s)
+        if quality != "complete":
+            rows.append(f"- {s.timeframe} q={quality} close={_fmt(s.last_close)}")
+            continue
+        vwap_atr = _atr_distance(s.last_close, s.vwap_20, s.atr_14)
+        high_atr = _atr_distance(s.donchian_high_20, s.last_close, s.atr_14)
+        low_atr = _atr_distance(s.last_close, s.donchian_low_20, s.atr_14)
         rows.append(
-            f"| {s.timeframe} | {_fmt(s.last_close)} | {_fmt(s.sma_20)} | "
-            f"{_fmt(s.sma_50)} | {_fmt(s.rsi_14, '{:.1f}')} | "
-            f"{_fmt(s.atr_14)} | {_fmt(s.bb_pct_b, '{:.2f}')} | "
-            f"{_fmt(s.momentum_10, '{:+.2f}%')} | "
-            f"{_fmt(s.volume_zscore_20, '{:+.2f}')} |"
+            f"- {s.timeframe} q=ok close={_fmt(s.last_close)} trend={_trend(s)} "
+            f"rsi={_fmt(s.rsi_14, '{:.1f}')} mom={_fmt(s.momentum_10, '{:+.2f}%')} "
+            f"atr={_fmt(s.atr_pct, '{:.2f}%')} "
+            f"bb={_fmt(s.bb_pct_b, '{:.2f}')}/{_fmt(s.bb_width_pct, '{:.2f}%')} "
+            f"vwap={_fmt(vwap_atr, '{:+.2f}')}ATR "
+            f"donchian=H{_fmt(high_atr, '{:.2f}')}/L{_fmt(low_atr, '{:.2f}')}ATR "
+            f"vol={_fmt(s.volume_zscore_20, '{:+.2f}')}z/{_fmt(s.volume_ratio_20, '{:.2f}x')} "
+            f"obv={_fmt(s.obv_normalized, '{:+.2f}')}"
         )
-    return f"### {symbol}\n" + "\n".join(rows) + "\n"
+    return (
+        f"### {symbol} technical-context-v1 ({identity.exchange} {identity.market_type}; closed bars)\n"
+        + "\n".join(rows)
+        + "\n"
+    )
 
 
-def _render_recent_closes(symbol: str, closes: list[float], take: int = 10) -> str:
-    """Last N closes inline so the model can see the shape of the move."""
-    if not closes:
-        return ""
-    tail = closes[-take:]
-    series = ", ".join(_fmt(c) for c in tail)
-    return f"- {symbol} last {len(tail)} 1h closes: [{series}]\n"
+def _technical_context_artifact(symbol: str, snaps: list[_IndicatorSnap], rendered: str) -> dict:
+    identity = next((snap for snap in snaps if snap.data_quality != "missing"), snaps[0])
+    latest_bar_ts = max(
+        (snap.bar_close_ts for snap in snaps if snap.bar_close_ts is not None),
+        default=None,
+    )
+    fingerprint = hashlib.sha256(
+        "|".join(
+            f"{snap.timeframe}:{snap.bar_close_ts}:{snap.input_fingerprint}"
+            for snap in snaps
+        ).encode("utf-8")
+    ).hexdigest()
+    complete = sum(_quality(snap) == "complete" for snap in snaps)
+    quality = "complete" if complete == len(snaps) else ("partial" if complete else "unavailable")
+    return {
+        "adapter_id": "technical-context-v1",
+        "stable_id": (
+            f"technical-context-v1:{identity.exchange}:{identity.symbol or symbol}:"
+            f"{identity.market_type}:{fingerprint}"
+        ),
+        "source": identity.algorithm_version,
+        "observed_at": (
+            datetime.fromtimestamp(latest_bar_ts / 1000, tz=timezone.utc).isoformat()
+            if latest_bar_ts is not None
+            else None
+        ),
+        "rendered_chars": len(rendered),
+        "quality_state": quality,
+        "timeframes": [snap.timeframe for snap in snaps],
+    }
 
 
 def _render_relative_strength(returns_24h: dict[str, float | None]) -> str:
@@ -182,12 +317,14 @@ def _render_relative_strength(returns_24h: dict[str, float | None]) -> str:
 
 _INDICATOR_GLOSSARY = """\
 ### Indicator glossary (use these meanings; don't invent rules)
-- **SMA20 / SMA50** — simple moving averages. Price > SMA50 is uptrend; price < SMA50 is downtrend; price between is mixed.
+- **EMA trend** — up means close > EMA20 > EMA50; down is the mirror; the percentage is EMA20 vs EMA50.
 - **RSI14** — momentum oscillator 0–100. >70 overbought, <30 oversold; 50 = neutral. In strong trends RSI can stay extreme — confirm with trend direction.
-- **ATR14** — average true range, in price units. Bigger ATR = wider expected swings; useful for sizing stops, not for direction.
-- **BB%** — position within Bollinger band (0=lower, 1=upper). >1 or <0 = outside the band (rare).
+- **ATR%** — ATR14 normalized by close. Bigger ATR = wider expected swings; it is not directional.
+- **BB pos/width** — Bollinger percent-B and normalized band width.
 - **Mom10** — % change over the last 10 bars. Positive trending up, negative trending down.
-- **Vol z** — volume z-score vs last 20 bars. >+1 = unusually high volume; <-1 = unusually low.
+- **VWAP ΔATR** — close minus rolling VWAP20 in ATR units.
+- **Donchian H/L ATR** — ATR distance below the 20-bar high / above the 20-bar low.
+- **Vol z/x** — volume z-score and ratio to its 20-bar mean. **OBVn** is normalized OBV.
 """
 
 
@@ -223,7 +360,11 @@ async def build_market_context(
     from aletheia.data.cache import get_cache
     cache = get_cache()
 
-    debug: dict = {"symbols": {}, "errors": []}
+    debug: dict = {
+        "symbols": {},
+        "errors": [],
+        "technical_context": {"adapter_id": "technical-context-v1", "artifacts": []},
+    }
     sections: list[str] = []
     returns_24h: dict[str, float | None] = {}
     technical_service = get_technical_snapshot_service()
@@ -248,13 +389,14 @@ async def build_market_context(
         for sym in symbols:
             sym_debug: dict = {}
             snaps: list[_IndicatorSnap] = []
-            closes_1h: list[float] = []
             # Strings lose the selected market type inside MarketDataProvider.
             # Keep identity intact through the provider and its cache.
             instrument = InstrumentId.from_parts(
                 data_exchange, sym, instrument_market_type,
             )
             for tf, limit in _TIMEFRAMES:
+                candles = None
+                missing_reason = None
                 try:
                     candles = cache.get(
                         instrument.symbol, tf, limit,
@@ -268,8 +410,24 @@ async def build_market_context(
                 except Exception as e:
                     debug["errors"].append(f"{sym}/{tf}: {e}")
                     logger.warning("OHLCV fetch failed %s/%s: %s", sym, tf, e)
-                    continue
-                if not candles:
+                    missing_reason = "fetch_failed"
+                if not missing_reason and not candles:
+                    missing_reason = "no_candles"
+                if missing_reason:
+                    snaps.append(_unavailable_snap(
+                        tf,
+                        missing_reason,
+                        exchange=instrument.exchange,
+                        symbol=instrument.symbol,
+                        market_type=instrument.market_type,
+                    ))
+                    sym_debug[tf] = {
+                        "bars": 0,
+                        "technical_snapshot": {
+                            "data_quality": "missing",
+                            "quality_reasons": [missing_reason],
+                        },
+                    }
                     continue
                 # Sort oldest→newest (providers should guarantee this, but be defensive)
                 candles = sorted(candles, key=lambda c: c.timestamp)
@@ -279,14 +437,52 @@ async def build_market_context(
                 # ATR, and momentum, especially for daily candles.
                 closed_candles = [c for c in candles if c.is_closed]
                 if not closed_candles:
+                    snaps.append(_unavailable_snap(
+                        tf,
+                        "no_closed_bars",
+                        exchange=instrument.exchange,
+                        symbol=instrument.symbol,
+                        market_type=instrument.market_type,
+                    ))
+                    sym_debug[tf] = {
+                        "bars": 0,
+                        "technical_snapshot": {
+                            "data_quality": "missing",
+                            "quality_reasons": ["no_closed_bars"],
+                        },
+                    }
                     continue
+                candle_exchanges = {
+                    str(candle.exchange).lower()
+                    for candle in closed_candles
+                    if getattr(candle, "exchange", None)
+                }
+                if len(candle_exchanges) > 1:
+                    reason = "mixed_candle_venues"
+                    debug["errors"].append(f"{sym}/{tf}: {reason}")
+                    snaps.append(_unavailable_snap(
+                        tf,
+                        reason,
+                        exchange=instrument.exchange,
+                        symbol=instrument.symbol,
+                        market_type=instrument.market_type,
+                    ))
+                    sym_debug[tf] = {
+                        "bars": 0,
+                        "technical_snapshot": {
+                            "data_quality": "missing",
+                            "quality_reasons": [reason],
+                        },
+                    }
+                    continue
+                candle_exchange = next(iter(candle_exchanges), instrument.exchange)
                 closes = [c.close for c in closed_candles]
                 highs = [c.high for c in closed_candles]
                 lows = [c.low for c in closed_candles]
                 volumes = [c.volume for c in closed_candles]
                 technical_snapshot = technical_service.snapshot_from_bars(
                     closed_candles,
-                    exchange=instrument.exchange,
+                    exchange=candle_exchange,
                     symbol=instrument.symbol,
                     market_type=instrument.market_type,
                     timeframe=tf,
@@ -317,7 +513,6 @@ async def build_market_context(
                     },
                 }
                 if tf == "1h":
-                    closes_1h = closes
                     if len(closes) >= 25 and all(
                         math.isfinite(close) for close in closes
                     ):
@@ -327,9 +522,18 @@ async def build_market_context(
                             returns_24h[sym] = (last - past) / past * 100
                     else:
                         returns_24h[sym] = None
-            if snaps:
-                sections.append(_render_snap_table(sym, snaps))
-                sections.append(_render_recent_closes(sym, closes_1h, take=10))
+            available_snaps = [snap for snap in snaps if snap.data_quality != "missing"]
+            venues = {snap.exchange for snap in available_snaps}
+            if len(venues) > 1:
+                reason = "inconsistent_timeframe_venues"
+                debug["errors"].append(f"{sym}: {reason}")
+                logger.warning("Technical context unavailable %s: %s", sym, reason)
+            elif available_snaps:
+                rendered = _render_snap_table(sym, snaps)
+                sections.append(rendered)
+                debug["technical_context"]["artifacts"].append(
+                    _technical_context_artifact(sym, snaps, rendered)
+                )
             debug["symbols"][sym] = sym_debug
     finally:
         if _owned_provider:

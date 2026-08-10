@@ -49,6 +49,7 @@ class ContextAdapter(StrEnum):
 
     NONE = "none"
     MINIMAL_V1 = "minimal-v1"
+    TECHNICAL_CONTEXT_V1 = "technical-context-v1"
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,10 @@ def render_context_adapter(system: str, *, adapter: ContextAdapter | str) -> str
         return system
     if selected is ContextAdapter.MINIMAL_V1:
         return build_harness_context().render(system)
+    if selected is ContextAdapter.TECHNICAL_CONTEXT_V1:
+        # Dynamic technical facts live in the caller's user context; the
+        # adapter registers identity without invalidating the static system prompt.
+        return system
     raise AssertionError(f"unhandled context adapter: {selected}")
 
 
@@ -131,6 +136,7 @@ def _prepare_context_adapter(
     *,
     include: bool | None = None,
     adapter: ContextAdapter | str | None = None,
+    context_artifacts: list[dict] | None = None,
 ) -> tuple[str, str, dict[str, object]]:
     if adapter is None:
         from aletheia.config.loader import load_config
@@ -145,6 +151,20 @@ def _prepare_context_adapter(
         selected = ContextAdapter(adapter)
     if selected is ContextAdapter.NONE:
         return system, selected.value, {"model_visible": False, "adapter_id": selected.value}
+    if selected is ContextAdapter.TECHNICAL_CONTEXT_V1:
+        artifact_ids = [
+            str(item.get("stable_id"))
+            for item in (context_artifacts or [])
+            if str(item.get("stable_id") or "").startswith("technical-context-v1:")
+        ][:8]
+        if not artifact_ids:
+            raise ValueError("technical-context-v1 requires a linked technical artifact")
+        return system, selected.value, {
+            "model_visible": True,
+            "adapter_id": selected.value,
+            "placement": "caller_user_context",
+            "artifact_ids": artifact_ids,
+        }
     context = build_harness_context()
     return context.render(system), selected.value, context.manifest()
 
@@ -243,6 +263,7 @@ async def llm_complete(
         system,
         include=include_harness_header,
         adapter=context_adapter,
+        context_artifacts=context_artifacts,
     )
     messages = [{"role": "user", "content": user}]
     inference_call = build_inference_call(
@@ -671,6 +692,7 @@ async def llm_structured(
             system,
             include=include_harness_header,
             adapter=context_adapter,
+            context_artifacts=context_artifacts,
         )
         structured_system = f"/no_think\n{caller_system}" if caller_system else "/no_think"
         inference_call = build_inference_call(
