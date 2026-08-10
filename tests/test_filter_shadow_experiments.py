@@ -251,6 +251,70 @@ def test_observer_replay_without_ready_alternatives_is_skipped():
     assert rows[0] == 0
 
 
+def test_ranker_confidence_replay_registers_and_rebuilds_prospectively(monkeypatch):
+    from aletheia.counterfactual import filter_experiments
+    from aletheia.storage.sqlite import get_db
+
+    start = datetime(2026, 8, 10, 3, 0, tzinfo=timezone.utc)
+    replay = {
+        "filter_name": "ranker_confidence_gate",
+        "filter_version": "ranker-fixed-v1",
+        "stage": "paper_ranker",
+        "scanner_family": "mean_reversion",
+        "direction": "long",
+        "market_type": "perp",
+        "horizon": "4h",
+        "current_minimum_confidence": "high",
+        "candidate_cap_reached": False,
+        "min_samples": 20,
+        "alternatives": [
+            {
+                "minimum_confidence": "speculative",
+                "readiness": "ready_for_controlled_experiment",
+            },
+            {
+                "minimum_confidence": "medium",
+                "readiness": "ready_for_controlled_experiment",
+            },
+        ],
+    }
+    assert filter_experiments.register_replay_ready_experiments(
+        [replay], now=start
+    )["registered"] == 1
+
+    calls = []
+    monkeypatch.setattr(
+        filter_experiments,
+        "build_ranker_confidence_replay",
+        lambda **kwargs: calls.append(kwargs) or {
+            "current_pass": {
+                "candidate_count": 20, "settled_n": 20,
+                "outcome_coverage": 1.0, "raw_avg_net_pct": 0.0,
+            },
+            "alternatives": [{
+                "minimum_confidence": "medium",
+                "candidate_count": 20,
+                "settled_n": 20,
+                "outcome_coverage": 1.0,
+                "raw_avg_net_pct": 0.4,
+                "shrunk_avg_net_pct": 0.2,
+            }],
+        },
+    )
+    summary = filter_experiments.evaluate_active_shadow_experiments(
+        now=start + timedelta(hours=5)
+    )
+    experiment = get_db().execute(
+        "SELECT * FROM filter_shadow_experiments"
+    ).fetchone()
+
+    assert summary["ready_for_review"] == 1
+    assert experiment["production_mutation_allowed"] == 0
+    assert experiment["control_parameter"] == '{"minimum_confidence":"high"}'
+    assert experiment["treatment_parameter"] == '{"minimum_confidence":"medium"}'
+    assert calls[0]["evaluated_after"] == start.isoformat(timespec="microseconds")
+
+
 def test_shadow_experiment_invalidates_when_production_filter_version_changes():
     from aletheia.counterfactual.filter_experiments import (
         evaluate_active_shadow_experiments,

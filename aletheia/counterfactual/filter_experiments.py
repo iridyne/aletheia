@@ -5,7 +5,7 @@ registration and uses only future first exposures. Reaching an evidence gate
 changes analytical status to ``ready_for_review``; production settings are
 never changed here.
 
-Two filter kinds currently register experiments:
+Three filter kinds currently register experiments:
 
 - ``family_ttl`` — 1-D TTL treatments. Ready marker is
   ``ready_for_controlled_experiment``; the least-permissive winner is the
@@ -14,6 +14,8 @@ Two filter kinds currently register experiments:
   ``ready_for_prospective_shadow``; the least-permissive winner is the grid
   cell closest to the aggressive control (largest RSI and ATR values) still
   meeting the evidence gate.
+- ``ranker_confidence_gate`` — categorical confidence treatments. The shadow
+  treatment is the least-permissive lower confidence threshold with support.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from typing import Any, Callable, Iterable
 from aletheia.counterfactual.filter_replay import (
     build_family_ttl_replay,
     build_observer_pre_filter_replay,
+    build_ranker_confidence_replay,
 )
 from aletheia.storage import repositories as repo
 from aletheia.storage.repositories import transaction
@@ -413,6 +416,56 @@ def _observer_rebuild(
     return control, treatment
 
 
+_CONFIDENCE_LADDER = ("speculative", "medium", "high")
+
+
+def _ranker_select(alternatives: list[dict[str, Any]]) -> dict[str, Any] | None:
+    ready = [
+        alt for alt in alternatives
+        if alt.get("readiness") == "ready_for_controlled_experiment"
+        and alt.get("minimum_confidence") in _CONFIDENCE_LADDER
+    ]
+    return max(
+        ready,
+        key=lambda alt: _CONFIDENCE_LADDER.index(alt["minimum_confidence"]),
+    ) if ready else None
+
+
+def _ranker_check(
+    replay: dict[str, Any], alternative: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    control = str(replay.get("current_minimum_confidence") or "").lower()
+    treatment = str(alternative.get("minimum_confidence") or "").lower()
+    if control not in _CONFIDENCE_LADDER or treatment not in _CONFIDENCE_LADDER:
+        return None
+    if _CONFIDENCE_LADDER.index(treatment) >= _CONFIDENCE_LADDER.index(control):
+        return None
+    return {"minimum_confidence": control}, {"minimum_confidence": treatment}
+
+
+def _ranker_rebuild(
+    experiment: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    treatment = str(
+        _json_dict(experiment["treatment_parameter"]).get("minimum_confidence") or ""
+    )
+    replay = build_ranker_confidence_replay(
+        filter_version=experiment["filter_version"],
+        stage=experiment["stage"],
+        scanner_family=experiment["scanner_family"],
+        direction=experiment["direction"],
+        market_type=experiment["market_type"],
+        horizon=experiment["horizon"],
+        evaluated_after=experiment["started_at"],
+        min_samples=int(experiment["min_samples"]),
+    )
+    match = next((
+        alt for alt in replay.get("alternatives") or []
+        if alt.get("minimum_confidence") == treatment
+    ), None)
+    return (replay["current_pass"], match) if match is not None else (None, None)
+
+
 _ADAPTERS: dict[str, _FilterAdapter] = {
     "family_ttl": _FilterAdapter(
         ready_marker="ready_for_controlled_experiment",
@@ -425,6 +478,12 @@ _ADAPTERS: dict[str, _FilterAdapter] = {
         select=_observer_select,
         check=_observer_check,
         rebuild=_observer_rebuild,
+    ),
+    "ranker_confidence_gate": _FilterAdapter(
+        ready_marker="ready_for_controlled_experiment",
+        select=_ranker_select,
+        check=_ranker_check,
+        rebuild=_ranker_rebuild,
     ),
 }
 
