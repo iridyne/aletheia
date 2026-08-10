@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
+import random
 from typing import Any
 
 from aletheia.storage import repositories as repo
@@ -28,6 +29,8 @@ COST_MODEL_VERSION = "paper-fill-close-bar-v1"
 TRIGGER_RETURN_PCT = 1.5
 _BAR_MS = 60_000
 _MAX_BARS = 10_000
+_REPORT_BOOTSTRAP_SEED = 20260810
+_REPORT_BOOTSTRAP_REPLICATES = 20_000
 
 
 def _canonical_json(value: Any) -> str:
@@ -425,9 +428,20 @@ def build_exit_breakeven_shadow_report(
             if (closed_at := _parse_utc(row.get("actual_closed_at"))) is not None
             and closed_at >= cutoff
         ]
+    rows.sort(key=lambda row: str(row["position_id"]))
     available = [row for row in rows if row["status"] != "unavailable"]
     changed = [row for row in available if bool(row["treatment_changed"])]
     deltas = [float(row["incremental_net_pnl"]) for row in available]
+    mean_ci_95 = None
+    if len(deltas) >= 2:
+        rng = random.Random(_REPORT_BOOTSTRAP_SEED)
+        size = len(deltas)
+        means = sorted(
+            sum(rng.choices(deltas, k=size)) / size
+            for _ in range(_REPORT_BOOTSTRAP_REPLICATES)
+        )
+        last = len(means) - 1
+        mean_ci_95 = [means[int(0.025 * last)], means[int(0.975 * last)]]
     by_close_reason = []
     for close_reason in sorted({str(row.get("close_reason") or "unknown") for row in rows}):
         reason_rows = [
@@ -456,9 +470,14 @@ def build_exit_breakeven_shadow_report(
         "outcome_count": len(rows),
         "available_count": len(available),
         "unavailable_count": len(rows) - len(available),
+        "outcome_coverage": len(available) / len(rows) if rows else None,
         "changed_count": len(changed),
         "incremental_net_pnl_total": sum(deltas) if deltas else None,
         "incremental_net_pnl_mean": (sum(deltas) / len(deltas)) if deltas else None,
+        "incremental_net_pnl_mean_ci_95": mean_ci_95,
+        "bootstrap_method": "position_percentile_bootstrap/v1",
+        "bootstrap_seed": _REPORT_BOOTSTRAP_SEED,
+        "bootstrap_replicates": _REPORT_BOOTSTRAP_REPLICATES,
         "positive_increment_count": sum(1 for value in deltas if value > 0),
         "close_reason_breakdown": by_close_reason,
         "close_reason_attribution_available": any(

@@ -165,7 +165,7 @@ def _empty_layer(name: str, reason: str) -> dict:
 
 def _empty_exit_paired_evidence(reason: str) -> dict:
     return {
-        "contract_version": "exit-paired-evidence/v1",
+        "contract_version": "exit-paired-evidence/v2",
         "experiment_version": "exit-breakeven-shadow/v1",
         "treatment_id": "entry-lock-after-1.5pct/v1",
         "cost_model_version": "paper-fill-close-bar-v1",
@@ -180,9 +180,14 @@ def _empty_exit_paired_evidence(reason: str) -> dict:
         "outcome_count": 0,
         "available_count": 0,
         "unavailable_count": 0,
+        "outcome_coverage": None,
         "changed_count": 0,
         "incremental_net_pnl_total": None,
         "incremental_net_pnl_mean": None,
+        "incremental_net_pnl_mean_ci_95": None,
+        "bootstrap_method": "position_percentile_bootstrap/v1",
+        "bootstrap_seed": 20260810,
+        "bootstrap_replicates": 20_000,
         "positive_increment_count": 0,
         "close_reason_breakdown": [],
         "close_reason_attribution_available": False,
@@ -482,7 +487,7 @@ def _exit_paired_evidence(cutoff: str) -> dict:
             **report,
         }
     return {
-        "contract_version": "exit-paired-evidence/v1",
+        "contract_version": "exit-paired-evidence/v2",
         **report,
         "contribution_verdict": "insufficient_data",
         "measurement_status": "treatment_specific_paired_evidence",
@@ -667,8 +672,10 @@ def render_alpha_audit(report: dict) -> str:
         f"Exit paired evidence: {paired.get('measurement_status', 'not_measured')}",
         "  "
         f"available={paired.get('available_count', 0)} "
+        f"coverage={_fmt_metric(paired.get('outcome_coverage'))} "
         f"changed={paired.get('changed_count', 0)} "
         f"mean_delta={_fmt_metric(paired.get('incremental_net_pnl_mean'))}",
+        f"  mean_delta_ci95={paired.get('incremental_net_pnl_mean_ci_95')}",
         f"  {paired.get('reason', 'Exit paired evidence is unavailable.')}",
     ])
     for item in paired.get("close_reason_breakdown") or []:
