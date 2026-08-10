@@ -408,7 +408,10 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
     if guard_candidates:
         outputs.append(f"guard_candidates_created:{len(guard_candidates)}")
 
-    return {"outputs": outputs, "errors": errors, "output_artifacts": artifact_refs}
+    result = {"outputs": outputs, "errors": errors}
+    if artifact_refs:
+        result["output_artifacts"] = artifact_refs
+    return result
 
 
 def _run_case_builder_safe(run_id: str | None) -> tuple[list, list]:

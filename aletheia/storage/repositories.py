@@ -428,9 +428,7 @@ def insert_agent_run_artifacts(artifacts: list[AgentRunArtifact]) -> None:
     """Persist current-run artifact references without rewriting legacy outputs."""
     if not artifacts:
         return
-    db = get_db()
-    was_in_tx = db.in_transaction
-    db.executemany(
+    execute_many_write(
         "INSERT OR IGNORE INTO agent_run_artifacts "
         "(run_id, artifact_type, artifact_id) VALUES (?, ?, ?)",
         [
@@ -438,8 +436,6 @@ def insert_agent_run_artifacts(artifacts: list[AgentRunArtifact]) -> None:
             for artifact in artifacts
         ],
     )
-    if not was_in_tx:
-        db.commit()
 
 
 def update_agent_run(run_id: str, **kwargs) -> None:
