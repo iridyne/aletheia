@@ -7,10 +7,14 @@ import json
 from typing import Any
 
 
+HYPOTHESIS_FINGERPRINT_SCHEMA_VERSION = 1
+
+
 def hypothesis_fingerprint(
     *, path_id: str, scope: dict[str, Any], action: dict[str, Any],
     target_horizon: str, source_cohort: str,
-    behavior_contract_version: str | None = None, schema_version: int = 1,
+    behavior_contract_version: str | None = None,
+    schema_version: int = HYPOTHESIS_FINGERPRINT_SCHEMA_VERSION,
 ) -> str:
     payload = {
         "path_id": path_id.lower(),

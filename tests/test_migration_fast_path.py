@@ -525,6 +525,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     connection = _connection(tmp_path / "v9.db")
     connection.executescript(
         """
+        CREATE TABLE learning_hypotheses (hypothesis_id TEXT PRIMARY KEY);
         CREATE TABLE learning_experiments (experiment_id TEXT PRIMARY KEY);
         CREATE TABLE learning_contribution_verdicts (
             verdict_id TEXT PRIMARY KEY,
@@ -576,14 +577,43 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260810_0019_agent_usage_storage_v20",
-        "aletheia-sqlite-v20",
+        "20260810_0020_learning_hypothesis_identity_v21",
+        "aletheia-sqlite-v21",
     )
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "
         "FROM learning_contribution_verdicts WHERE verdict_id='legacy-positive'"
     ).fetchone()
     assert tuple(legacy) == ("monitoring", 0)
+    connection.close()
+
+
+def test_learning_hypothesis_identity_v21_is_additive_and_idempotent():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE learning_hypotheses (hypothesis_id TEXT PRIMARY KEY)"
+    )
+    connection.execute("INSERT INTO learning_hypotheses VALUES ('legacy')")
+
+    migrations._apply_learning_hypothesis_identity_v21(connection)
+    migrations._apply_learning_hypothesis_identity_v21(connection)
+
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(learning_hypotheses)")
+    }
+    assert {
+        "behavior_contract_version",
+        "fingerprint_schema_version",
+    } <= columns
+    assert tuple(
+        connection.execute(
+            "SELECT behavior_contract_version, fingerprint_schema_version "
+            "FROM learning_hypotheses WHERE hypothesis_id='legacy'"
+        ).fetchone()
+    ) == (None, None)
     connection.close()
 
 

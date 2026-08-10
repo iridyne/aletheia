@@ -19,6 +19,8 @@ def _now() -> str:
 class LearningHypothesis(BaseModel):
     hypothesis_id: str = Field(default_factory=_id)
     fingerprint: str
+    behavior_contract_version: str | None = None
+    fingerprint_schema_version: int | None = None
     cohort_id: str
     path_id: str
     overlap_group: str

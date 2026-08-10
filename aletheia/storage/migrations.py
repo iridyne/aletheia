@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v20"
+SCHEMA_VERSION = "aletheia-sqlite-v21"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3403,6 +3403,17 @@ _AGENT_USAGE_STORAGE_CHECKSUM = hashlib.sha256(
         repr(_AGENT_USAGE_STORAGE_COLUMNS)
         + _AGENT_RUN_ARTIFACTS_SQL
         + "\nadditive_agent_usage_storage_v1"
+    ).encode("utf-8")
+).hexdigest()
+
+_LEARNING_HYPOTHESIS_IDENTITY_COLUMNS = (
+    ("behavior_contract_version", "learning_hypotheses", "TEXT"),
+    ("fingerprint_schema_version", "learning_hypotheses", "INTEGER"),
+)
+_LEARNING_HYPOTHESIS_IDENTITY_CHECKSUM = hashlib.sha256(
+    (
+        repr(_LEARNING_HYPOTHESIS_IDENTITY_COLUMNS)
+        + "\nadditive_learning_hypothesis_identity_v1"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -4457,6 +4468,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260810_0017_universe_positioning_v18": (
         "public positioning ratios and isolated Relative Rank Shadow evidence"
     ),
+    "20260810_0020_learning_hypothesis_identity_v21": (
+        "explicit behavior-contract and fingerprint-schema hypothesis provenance"
+    ),
 }
 
 
@@ -4568,6 +4582,17 @@ def _apply_agent_usage_storage_v20(db: sqlite3.Connection) -> None:
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.executescript(_AGENT_RUN_ARTIFACTS_SQL)
+
+
+def _apply_learning_hypothesis_identity_v21(db: sqlite3.Connection) -> None:
+    """Persist future fingerprint inputs without rewriting historical identity."""
+
+    for column, table, column_type in _LEARNING_HYPOTHESIS_IDENTITY_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
 def _apply_market_signal_identity_v7(db: sqlite3.Connection) -> None:
@@ -4923,8 +4948,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260810_0019_agent_usage_storage_v20",
         checksum=_AGENT_USAGE_STORAGE_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v20",
         apply=_apply_agent_usage_storage_v20,
+    ),
+    MigrationStep(
+        migration_id="20260810_0020_learning_hypothesis_identity_v21",
+        checksum=_LEARNING_HYPOTHESIS_IDENTITY_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_learning_hypothesis_identity_v21,
     ),
 )
 
