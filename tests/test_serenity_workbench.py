@@ -1224,11 +1224,12 @@ def test_enqueue_crash_preserves_empty_timeout_type(monkeypatch):
     monkeypatch.setattr(
         worker,
         "_mark_failed",
-        lambda run_id, error_type, error_message, stage: recorded.update(
+        lambda run_id, error_type, error_message, stage, *, allow_queued=False: recorded.update(
             run_id=run_id,
             error_type=error_type,
             error_message=error_message,
             stage=stage,
+            allow_queued=allow_queued,
         ),
     )
 
@@ -1238,3 +1239,4 @@ def test_enqueue_crash_preserves_empty_timeout_type(monkeypatch):
     assert recorded["error_type"] == "provider_timeout"
     assert recorded["error_message"] == "TimeoutError"
     assert recorded["stage"] is None
+    assert recorded["allow_queued"] is True
