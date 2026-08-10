@@ -866,6 +866,57 @@ def test_paused_does_not_block_stop_loss(tmp_path, monkeypatch):
     )
 
 
+def test_scheduler_logs_safe_position_manager_error_facts(monkeypatch):
+    import aletheia.agent_runtime.scheduler as sched
+    import aletheia.portfolio.position_manager as position_manager
+    import aletheia.portfolio.protective_barrier as protective_barrier
+
+    monkeypatch.setattr(
+        protective_barrier,
+        "run_due_position_protection_cycle",
+        lambda: {
+            "errors": [{
+                "position_id": "pos-1",
+                "code": "protective_barrier_failed",
+                "error_type": "RuntimeError",
+                "message": "do-not-log-provider-detail",
+            }],
+        },
+    )
+    monkeypatch.setattr(
+        position_manager,
+        "evaluate_open_positions",
+        lambda: {
+            "errors": [{
+                "instrument": "binance:BTC/USDT:perp",
+                "code": "protective_ohlcv_refresh_failed",
+                "message": "do-not-log-provider-detail",
+            }],
+        },
+    )
+    warnings = []
+    monkeypatch.setattr(sched.logger, "warning", lambda *args: warnings.append(args))
+    monkeypatch.setattr(sched, "_record_job_failure", lambda *args: None)
+
+    sched._run_position_manager()
+
+    assert warnings == [(
+        "position_manager completed with %d reported errors: %s",
+        2,
+        [
+            {
+                "code": "protective_barrier_failed",
+                "position_id": "pos-1",
+                "error_type": "RuntimeError",
+            },
+            {
+                "code": "protective_ohlcv_refresh_failed",
+                "instrument": "binance:BTC/USDT:perp",
+            },
+        ],
+    )]
+
+
 @spec_claim(
     SpecClaim(
         "PL-PM-14",
