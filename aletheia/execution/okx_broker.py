@@ -45,7 +45,8 @@ _OKX_ACCOUNT_MODES = {
 }
 _OPEN_CLOSE_STATES = {
     "pending", "submitted", "partial", "partially_filled", "submission_unknown",
-    "materialization_missing", "position_absence_unverified", "overfilled",
+    "submission_rejected", "materialization_missing", "position_absence_unverified",
+    "overfilled",
 }
 _RETRY_SUPPRESSING_ORDER_STATES = (
     "pending", "submitted", "partial", "partially_filled", "submission_unknown",
@@ -738,7 +739,7 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
             })
         else:
             update_order(close_order.id, status="error", error_reason="close_submission_rejected")
-            update_position(position_id, pending_close_status="error")
+            update_position(position_id, pending_close_status="submission_rejected")
         raise
     finally:
         try:

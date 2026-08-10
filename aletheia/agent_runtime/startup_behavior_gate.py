@@ -265,6 +265,7 @@ def _check_pending_closes(cfg, state_store) -> tuple[bool, str]:
 
         immediate_reconciliation_states = {
             "submission_unknown",
+            "submission_rejected",
             "materialization_missing",
             "position_absence_unverified",
             "overfilled",
