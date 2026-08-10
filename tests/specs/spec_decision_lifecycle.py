@@ -3007,6 +3007,41 @@ def test_qualified_negative_b2_remains_a_valid_adjacent_terminal_skip(monkeypatc
     assert "equity" not in decision.reasoning.lower()
 
 
+def test_validated_risk_reward_renders_decision_values():
+    from types import SimpleNamespace
+
+    from aletheia.agent_shell.decision_facts import (
+        render_validated_adverse_judgment,
+        validate_adverse_claims,
+    )
+
+    decision = SimpleNamespace(
+        opportunity_id="opp-risk-reward",
+        adverse_reason_codes=["invalid_risk_reward"],
+        stop_price=90.0,
+        take_profit=105.0,
+        validated_adverse_claims=[],
+    )
+    ctx = {
+        "layer1": {"feature_index": {"spot:BTC/USDT": {
+            "symbol": "BTC/USDT", "market_type": "spot", "price": 100.0,
+        }}},
+        "layer2": {"pending_signals": [{
+            "opportunity_id": "opp-risk-reward", "symbol": "BTC/USDT",
+            "direction": "long", "market_type": "spot",
+        }]},
+    }
+
+    claims, error = validate_adverse_claims(decision, ctx)
+    assert error is None
+    decision.validated_adverse_claims = claims
+    _, evidence = render_validated_adverse_judgment(decision, ctx)
+    assert evidence == [
+        "invalid_risk_reward: technical.price=100.0, "
+        "decision.stop_price=90.0, decision.take_profit=105.0"
+    ]
+
+
 def test_missing_returns_are_not_rendered_as_zero():
     from aletheia.agent_shell.trading_decision import _fmt_feature_line
 
