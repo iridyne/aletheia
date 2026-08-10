@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 
 from aletheia.config.loader import _PROJECT_ROOT, load_config, save_config
@@ -212,13 +213,29 @@ def _restore_frontend_build(had_previous: bool) -> None:
 
 
 def _restart_gateway() -> dict:
-    """Use the managed lifecycle, including its preflight and readiness proof."""
-    from aletheia.gateway import lifecycle
+    """Restart from a fresh interpreter so pulled migrations are visible."""
     try:
-        lifecycle.do_stop()
-        lifecycle.do_start(no_browser=True)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from aletheia.gateway.lifecycle import do_start, do_stop; "
+                "do_stop(); raise SystemExit(0 if do_start(no_browser=True) is not False else 2)",
+            ],
+            cwd=str(_PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=90,
+            **_no_window_kwargs(),
+        )
     except Exception as exc:
         return {"ok": False, "reason": type(exc).__name__}
+    if result.returncode:
+        return {
+            "ok": False,
+            "reason": "gateway_restart_failed",
+            "detail": (result.stderr or result.stdout).strip()[-500:],
+        }
     return {"ok": True}
 
 
@@ -424,6 +441,34 @@ def apply_update(*, restart: bool = False) -> dict:
         frontend_built = True
         restarted = _restart_gateway()
         if not restarted.get("ok"):
+            if "aletheia/storage/migrations.py" in changed_files:
+                cfg.update.current_commit = new
+                save_config(cfg)
+                write_audit(
+                    {
+                        "actor": "human",
+                        "source": "api",
+                        "event_type": "update_restart_failed_after_schema_change",
+                        "entity_type": "system_update",
+                        "entity_id": new,
+                        "before": {"commit": old},
+                        "after": {"commit": new},
+                        "message": (
+                            "Gateway restart failed after a schema-bearing update; "
+                            "new code was retained because database migrations are not reversible"
+                        ),
+                    }
+                )
+                return {
+                    "applied": False,
+                    "rolled_back": False,
+                    "reason": "gateway_restart_failed_after_schema_change",
+                    "mode": "development",
+                    "old_commit": old,
+                    "attempted_commit": new,
+                    "restart_error": restarted.get("reason"),
+                    "message": "New code retained; inspect migration and gateway logs, then retry start.",
+                }
             _restore_frontend_build(had_previous_static)
             rollback = git_ops.reset_hard(old)
             if python_deps_changed:

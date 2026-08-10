@@ -317,6 +317,31 @@ def test_apply_restart_builds_changed_frontend_and_restarts(tmp_path, monkeypatc
     assert calls == ["build", "activate", "restart"]
 
 
+def test_restart_gateway_uses_fresh_interpreter(monkeypatch):
+    from aletheia.update import applier
+
+    seen = {}
+
+    def run(command, **kwargs):
+        seen["command"] = command
+        seen["cwd"] = kwargs["cwd"]
+        return _FakeProc()
+
+    monkeypatch.setattr(applier.subprocess, "run", run)
+
+    assert applier._restart_gateway() == {"ok": True}
+    assert seen["command"] == [
+        applier.sys.executable,
+        "-c",
+        "from aletheia.gateway.lifecycle import do_start, do_stop; "
+        "do_stop(); raise SystemExit(0 if do_start(no_browser=True) is not False else 2)",
+    ]
+    assert seen["cwd"] == str(applier._PROJECT_ROOT)
+
+    monkeypatch.setattr(applier.subprocess, "run", lambda *_args, **_kwargs: _FakeProc(returncode=2))
+    assert applier._restart_gateway()["ok"] is False
+
+
 def test_apply_restart_discards_consumed_dashboard_backup(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import applier
@@ -358,6 +383,31 @@ def test_apply_restart_restores_old_release_on_restart_failure(tmp_path, monkeyp
     assert result["recovery_started"] is True
     assert restored == [True]
     assert resets == ["old111"]
+
+
+def test_apply_restart_keeps_new_code_after_schema_change(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier, git_ops
+
+    _stub_clean_pull(
+        monkeypatch,
+        changed_files=["aletheia/storage/migrations.py"],
+    )
+    monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True})
+    monkeypatch.setattr(applier, "_build_frontend", lambda: {"ok": True})
+    monkeypatch.setattr(applier, "_activate_frontend_build", lambda: True)
+    monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": False})
+    monkeypatch.setattr(
+        git_ops,
+        "reset_hard",
+        lambda _commit: pytest.fail("schema-bearing update must not roll code back"),
+    )
+
+    result = applier.apply_update(restart=True)
+
+    assert result["applied"] is False
+    assert result["rolled_back"] is False
+    assert result["reason"] == "gateway_restart_failed_after_schema_change"
 
 
 def test_apply_restart_rebuilds_frontend_without_source_changes(tmp_path, monkeypatch):
