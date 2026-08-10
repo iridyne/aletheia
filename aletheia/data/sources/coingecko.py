@@ -1,27 +1,20 @@
-"""CoinGecko public API adapter — third-tier fallback for tickers and OHLCV.
+"""CoinGecko public API adapter — third-tier fallback for tickers.
 
 Rate limit: free tier allows 10-30 req/min. Conservative 1 req/6s throttle.
 Only called when both CCXT primary and CCXT fallback have failed.
 
-Supported timeframes: "4h" (via /coins/{id}/ohlc?days=7) and "1d" (days=31+).
-"1h" requests mapped to 4h. Finer timeframes (1m/5m/15m) raise NotImplementedError.
+The public ``/coins/{id}/ohlc`` endpoint is not an OHLCV source: its candle
+granularity is range-dependent and its rows contain no volume. ``get_ohlcv``
+therefore reports unsupported instead of relabeling coarse OHLC or synthesizing
+zero volume.
 """
 
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 
-from aletheia.data.providers import (
-    OHLCVAttempt,
-    OHLCVResult,
-    Ticker,
-    classify_ohlcv_outcome,
-    parse_ohlcv_candle,
-)
-
-logger = logging.getLogger("aletheia.data.sources.coingecko")
+from aletheia.data.providers import OHLCVResult, Ticker
 
 _BASE_URL = "https://api.coingecko.com/api/v3"
 _MIN_INTERVAL_SEC = 6.0
@@ -107,58 +100,9 @@ class CoinGeckoProvider:
         limit: int = 100,
         since: int | None = None,
     ) -> OHLCVResult:
-        from aletheia.data.symbols import canonical_of
-        from aletheia.net import httpx_client
-
-        if timeframe in ("1m", "5m", "15m"):
-            raise NotImplementedError(
-                f"CoinGecko does not support {timeframe} candles"
-            )
-
-        canon = canonical_of(symbol)
-        cg_id = _to_coingecko_id(canon)
-        if cg_id is None:
-            raise ValueError(f"CoinGecko has no slug mapping for {canon}")
-
-        if timeframe in ("1h", "4h"):
-            days = 7
-        else:
-            days = max(limit, 31)
-
-        await _throttle()
-        async with httpx_client(timeout=15) as client:
-            resp = await client.get(
-                f"{_BASE_URL}/coins/{cg_id}/ohlc",
-                params={"vs_currency": "usd", "days": str(days)},
-            )
-            resp.raise_for_status()
-            rows = resp.json()
-
-        parsed = [
-            parse_ohlcv_candle(
-                row,
-                provider="coingecko",
-                exchange=self.venue_name,
-                volume_index=None,
-            )
-            for row in rows
-        ]
-        candles = [candle for candle in parsed if candle is not None]
-        rejected = len(parsed) - len(candles)
-        if limit and len(candles) > limit:
-            candles = candles[-limit:]
-        attempt = OHLCVAttempt(
-            provider="coingecko",
-            outcome=classify_ohlcv_outcome(
-                accepted=len(candles), rejected=rejected, requested=limit,
-            ),
-            accepted=len(candles),
-            rejected=rejected,
-        )
-        if rejected:
-            logger.warning("ohlcv quality rejected %d/%d CoinGecko row(s)", rejected, len(parsed))
-        return OHLCVResult(
-            candles, requested=limit, rejected=rejected, attempts=(attempt,),
+        raise NotImplementedError(
+            "CoinGecko public OHLC has range-dependent intervals and no volume; "
+            f"exact {timeframe} OHLCV is unsupported"
         )
 
     async def close(self) -> None:

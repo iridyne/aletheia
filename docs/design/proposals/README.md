@@ -43,3 +43,6 @@ Proposal as stable decision history.
 - [Model provider profiles and access methods](model_provider_profiles_and_access_methods.md):
   API profile instances, CLI harness integrations, OAuth connections, and the
   staged retirement of the legacy model-settings mutation path.
+- [OHLCV Provider Observation/Result](ohlcv_provider_observation_result.md):
+  exact-timeframe and real-OHLCV result semantics, source/venue identity, and
+  explicit rejection of coarse or field-incomplete fallback data.

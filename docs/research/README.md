@@ -38,6 +38,14 @@ Research files are evidence, audits, and explorations. They can guide work but d
   records the shared dashboard presentation vocabulary, the first explicit
   DataTable consumer, focused verification, and tables intentionally left for
   endpoint-by-endpoint migration.
+- [TickFlow Wave B-01 retrospective contract review — 2026-08-10](explorations/TICKFLOW_WAVE_B_01_RETROSPECTIVE_CONTRACT_REVIEW_2026-08-10.md)
+  reconstructs the missed owner-review gate, separates production-backed states
+  from dormant presentation branches, and records the owner-approved narrow
+  outcome without authorizing production caller migration.
+- [TickFlow Wave B-03 dataset readiness evidence — 2026-08-10](explorations/TICKFLOW_WAVE_B_03_DATASET_READINESS_EVIDENCE_2026-08-10.md)
+  records why exact OHLCV needs no consumer fallback matrix, formalizes the
+  existing collector/coverage boundary, and defers generic publication
+  completeness until a named derived dataset exists.
 
 ## Agent Rule
 

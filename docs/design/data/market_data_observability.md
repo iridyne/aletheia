@@ -1,5 +1,9 @@
 # Market Data Observability
 
+Normative current behavior is owned by the
+[Market Data Coverage and Collector Health Contract](../contracts/market_data_coverage_contract.md).
+This document explains the implementation and operator presentation.
+
 ## Two different questions
 
 Market-data operations have two independent truths:

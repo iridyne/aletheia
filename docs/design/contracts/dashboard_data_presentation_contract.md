@@ -2,10 +2,10 @@
 
 ## Purpose and current scope
 
-This contract owns the dashboard vocabulary used to distinguish a successful
-empty read from loading, degraded, unavailable, unconfigured, or
-permission-limited data. It currently applies to the shared `DataTable` and its
-Learning Knowledge consumer. It does not define backend business states.
+This contract owns the Learning Knowledge vocabulary used to distinguish a
+successful empty read from loading, an unavailable initial read, or a failed
+refresh with retained data. It applies to the shared `DataTable` only through
+that production consumer. It does not define backend business states.
 
 ## Entry points
 
@@ -17,9 +17,9 @@ Learning Knowledge consumer. It does not define backend business states.
 
 ## Durable state and consumers
 
-The presentation state is not durable. Callers derive it from authoritative
-API fields, explicit configuration or permission facts, and TanStack Query's
-request/cache facts. The dashboard operator is the final consumer.
+The presentation state is not durable. Learning Knowledge derives it from
+TanStack Query's loading, error, and retained-data facts plus the successful
+result length. The dashboard operator is the final consumer.
 
 ## Observable result
 
@@ -28,22 +28,15 @@ request/cache facts. The dashboard operator is the final consumer.
 | `loading` | Initial request has no retained data | Show loading state; hide rows |
 | `available` | Successful complete read | Show returned rows |
 | `empty` | Successful read confirmed zero rows | Show honest empty copy; hide table |
-| `stale` | Backend stale fact, or refresh failed with retained data | Show warning and retained rows |
-| `partial` | Explicit coverage or section failure fact | Show warning and available rows |
-| `unavailable` | Read failed with no retained data, or backend says unavailable | Show alert; hide rows |
-| `not-configured` | Explicit configuration/capability fact | Show configuration state; hide rows |
-| `permission-limited` | Explicit permission fact | Show permission state; hide rows |
+| `stale` | Refresh failed with retained data | Show warning and retained rows |
+| `unavailable` | Read failed with no retained data | Show alert; hide rows |
 
 ## Invariants and trust boundaries
 
-- An empty array alone cannot prove `unavailable`, `stale`, `partial`,
-  `not-configured`, or `permission-limited`.
-- Client age may produce `stale` only when the caller owns an explicit age
-  threshold; transport connection state is not freshness.
-- `partial` requires an explicit coverage or failed-section fact; non-empty is
-  not equivalent to complete.
-- `DataTable` presents caller facts and does not infer backend availability,
-  configuration, permission, or business health.
+- An empty array alone cannot prove `unavailable` or `stale`.
+- Transport connection state does not prove data freshness.
+- `DataTable` presents caller facts and does not infer backend availability or
+  business health.
 - Existing callers that omit `state` retain compatibility: zero rows render as
   `empty`, and non-zero rows render as `available`.
 
@@ -59,10 +52,16 @@ successful read replaces the degraded presentation with `available` or
 - `frontend/src/components/DataTable.test.tsx` proves unavailable-versus-empty
   separation and stale-row retention.
 - `frontend/src/lib/learningWorkbench.test.ts` proves Query facts map to
-  loading, unavailable, stale, partial, and available states.
+  loading, unavailable, stale, and available states.
+- `frontend/src/pages/Learning.tsx` is the production caller that converts a
+  successful zero-row read to `empty` and supplies the resulting state to the
+  Knowledge tables.
 
 ## Current scope boundary
 
 Only the Learning Knowledge tables currently supply the explicit shared state.
 Other tables retain the compatibility behavior until their endpoint facts are
-audited and migrated separately.
+audited and approved separately. The component also contains presentation
+branches for `partial`, `not-configured`, and `permission-limited`, but no
+audited production `DataTable` caller supplies the facts required by those
+branches. They are not guarantees of this current Contract.
