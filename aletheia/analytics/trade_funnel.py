@@ -217,6 +217,7 @@ def render_trade_funnel_audit(report: dict) -> str:
         "ranker_eligible",
         "signal_pending_written",
         "system_operator_evaluated",
+        "operator_deferred",
         "decisions_trade",
         "decisions_watch",
         "decisions_skip",
