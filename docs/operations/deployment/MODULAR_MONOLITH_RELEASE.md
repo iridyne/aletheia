@@ -27,11 +27,13 @@ Release Please maintains a Ready-for-review release PR from Conventional Commit
 history. A merged-PR event explicitly dispatches Release Please because merges
 performed with the repository `GITHUB_TOKEN` do not reliably start another
 workflow through a `push` event. The generated PR carries `do-not-auto-merge`
-until a human decides to release; that human also approves its CI run when
-GitHub requires approval for a workflow-created PR. Removing the label hands it
-to the normal protected squash/CI path. Merging the release PR creates the
-matching tag and a metadata-only GitHub Release. It does not publish a package,
-build an artifact, deploy a Runtime, or open an Observation window.
+until a human decides to release. Release Please explicitly dispatches the
+existing read-only CI workflow on the generated branch because its
+`GITHUB_TOKEN` cannot trigger the normal pull-request event. Removing the label
+after that CI succeeds hands the PR to the normal protected squash path. Merging
+the release PR creates the matching tag and a metadata-only GitHub Release. It
+does not publish a package, build an artifact, deploy a Runtime, or open an
+Observation window.
 
 The bootstrap manifest remains at the last released product version (`0.5.0`).
 The first generated release PR promotes the version, changelog, and manifest

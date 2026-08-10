@@ -57,10 +57,10 @@ def test_only_expected_workflows_are_active() -> None:
     ]
 
 
-def test_ci_only_validates_pull_requests_and_merge_queue_entries() -> None:
+def test_ci_only_validates_pull_requests_merge_queue_and_explicit_release_runs() -> None:
     triggers = _workflow()["on"]
 
-    assert set(triggers) == {"pull_request", "merge_group"}
+    assert set(triggers) == {"pull_request", "merge_group", "workflow_dispatch"}
     assert triggers["pull_request"]["branches"] == ["master"]
 
 
@@ -82,7 +82,6 @@ def test_ci_never_builds_or_distributes_release_artifacts() -> None:
         "build_bundle",
         "build_packaged_runtime",
         "sign_update_feed",
-        "workflow_dispatch",
         "schedule:",
     )
 
@@ -134,17 +133,26 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
     assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
     assert job["timeout-minutes"] == "10"
     assert job["permissions"] == {
+        "actions": "write",
         "contents": "write",
         "issues": "write",
         "pull-requests": "write",
     }
-    assert len(job["steps"]) == 1
-    step = job["steps"][0]
+    assert len(job["steps"]) == 2
+    step, dispatch = job["steps"]
+    assert step["id"] == "release"
     assert step["uses"] == RELEASE_PLEASE_ACTION
     assert step["with"] == {
         "config-file": "release-please-config.json",
         "manifest-file": ".release-please-manifest.json",
     }
+    assert dispatch["uses"] == GITHUB_SCRIPT_ACTION
+    assert dispatch["if"] == "steps.release.outputs.prs_created == 'true'"
+    assert dispatch["env"] == {"RELEASE_PRS": "${{ steps.release.outputs.prs }}"}
+    assert dispatch["with"]["retries"] == "3"
+    assert "createWorkflowDispatch" in dispatch["with"]["script"]
+    assert "workflow_id: 'ci.yml'" in dispatch["with"]["script"]
+    assert "ref: pullRequest.headBranchName" in dispatch["with"]["script"]
 
     source = RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8").lower()
     assert "upload-artifact" not in source
