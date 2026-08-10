@@ -32,7 +32,8 @@ logger = logging.getLogger("aletheia.position_manager")
 _PAPER_MODES = {"paper_internal", "bitget_demo", "binance_testnet", "okx_demo"}
 _OPEN_CLOSE_STATES = {
     "pending", "submitted", "partial", "partially_filled", "submission_unknown",
-    "materialization_missing", "position_absence_unverified", "overfilled",
+    "submission_rejected", "materialization_missing", "position_absence_unverified",
+    "overfilled",
 }
 _PENDING_CLOSE_STALE_HOURS = 4
 

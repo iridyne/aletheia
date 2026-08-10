@@ -910,6 +910,64 @@ def test_close_timeout_is_unknown_and_suppresses_duplicate_submission(
     assert len(repo.list_orders(limit=20)) == 1
 
 
+@pytest.mark.parametrize(
+    "broker_module, client_name, close_name, execution_mode", CLOSE_TIMEOUT_CASES
+)
+def test_close_rejection_retains_one_claim_without_resubmission(
+    tmp_path,
+    monkeypatch,
+    broker_module,
+    client_name,
+    close_name,
+    execution_mode,
+):
+    import importlib
+
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    calls: list[str] = []
+
+    class _RejectedClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def place_order(self, order):
+            calls.append(order.client_oid)
+            raise RuntimeError("venue rejected close")
+
+        async def close(self):
+            pass
+
+    broker = importlib.import_module(broker_module)
+    monkeypatch.setattr(broker, client_name, _RejectedClient)
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=101.0,
+        execution_mode=execution_mode,
+    )
+    repo.insert_position(position)
+
+    with pytest.raises(RuntimeError, match="venue rejected close"):
+        getattr(broker, close_name)(position.id, reason="stop_loss")
+
+    second = getattr(broker, close_name)(position.id, reason="stop_loss")
+    orders = repo.list_orders(limit=20)
+    stored = repo._select_one("positions", position.id)
+
+    assert second["already_pending"] is True
+    assert second["status"] == "submission_rejected"
+    assert calls == [f"close-{position.id}"]
+    assert len(orders) == 1
+    assert orders[0]["status"] == "error"
+    assert stored["pending_close_status"] == "submission_rejected"
+
+
 @spec_claim(
     SpecClaim(
         "PL-RX-11",

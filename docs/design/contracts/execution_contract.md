@@ -376,9 +376,13 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   `PL-RX-24` 进一步锁定组合链路：原 typed rejection 经两次独立完整账户视图和只读 verified-exit
   查询收敛为 administrative close 时，原 Close Order 保持唯一且被拒绝的事实，不新增 Fill、PnL、
   Outcome hook 或 Learning 样本，也不再次触达交易所下单入口。
+- **交易所明确拒单不得按 scheduler cadence 重试**：无法安全归类为“无仓位”的确定性 Close 拒单，
+  Order 保持 `error`，Position 以 `pending_close_status=submission_rejected` 保留原 claim；不得新建 Close
+  Order 或自动重发，须由既有 reconciliation 查明原因。该状态不伪装成成交或仓位消失。
 - **启动准入必须读取权威 Position 主账**：Startup Behavior Gate 的 `pending_closes` 检查不能只读取
   遗留 `ps_positions.status=unknown` 投影；它还必须读取 open `positions.pending_close_status`。
-  `submission_unknown`、`materialization_missing`、`position_absence_unverified`、`overfilled` 立即阻挡新的
+  `submission_unknown`、`submission_rejected`、`materialization_missing`、`position_absence_unverified`、
+  `overfilled` 立即阻挡新的
   AI decision/trading loop；普通 `pending` / `submitted` / partial 状态只在超过 Position Manager 既有
   stale 时限后阻挡，刚提交的正常在途 close 不得被误报。Layered pause 不得停止 Position Manager、
   Order reconciliation 或 verified-exit settlement，因而未决状态仍可在阻挡期间收敛。可执行检查：`PL-RX-23`。
