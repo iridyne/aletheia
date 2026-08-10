@@ -441,12 +441,15 @@ def _record_job_failure(job_id: str, error: str, error_class: str | None = None)
     _JOB_RUN_STATE.failure_recorded = True
     _consecutive_failures[job_id] = _consecutive_failures.get(job_id, 0) + 1
     from aletheia.learning.control import record_learning_job_failure
-    record_learning_job_failure(
-        job_id,
-        error,
-        error_class=error_class,
-        attempt_id=getattr(_JOB_RUN_STATE, "learning_attempt_id", None),
-    )
+    if job_id == "lesson_reviewer":
+        record_learning_job_failure(
+            job_id,
+            error,
+            error_class=error_class,
+            attempt_id=getattr(_JOB_RUN_STATE, "learning_attempt_id", None),
+        )
+    else:
+        record_learning_job_failure(job_id, error)
     count = _consecutive_failures[job_id]
     if count >= _FAILURE_ALERT_THRESHOLD:
         from aletheia.infra.events import emit_infra_event
@@ -563,10 +566,13 @@ def _run_job_guarded(job_id: str, fn):
                     f"experiment_lifecycle_failed:{failed_experiments}",
                 )
             else:
-                record_learning_job_success(
-                    job_id,
-                    attempt_id=getattr(_JOB_RUN_STATE, "learning_attempt_id", None),
-                )
+                if job_id == "lesson_reviewer":
+                    record_learning_job_success(
+                        job_id,
+                        attempt_id=getattr(_JOB_RUN_STATE, "learning_attempt_id", None),
+                    )
+                else:
+                    record_learning_job_success(job_id)
         return result
     except Exception as e:
         logger.warning("%s job failed outside wrapper: %s", job_id, e)
