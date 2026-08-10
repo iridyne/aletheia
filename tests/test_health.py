@@ -381,6 +381,8 @@ def test_exchange_no_probe_is_unknown_not_healthy(tmp_path, monkeypatch):
     """No cached exchange probe must NOT be treated as reachable (issue #393)."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config(); cfg.exchange.paper_execution_mode = "okx_demo"; save_config(cfg)
     # Override the default exchange patch to return None (unknown / no probe).
     monkeypatch.setattr(health, "_exchange_reachable", lambda cfg=None: None)
     h = health.compute_health()
@@ -390,10 +392,23 @@ def test_exchange_no_probe_is_unknown_not_healthy(tmp_path, monkeypatch):
     assert not any("exchange_unreachable" in i for i in h["issues"])
 
 
+def test_paper_internal_does_not_require_exchange_probe(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    monkeypatch.setattr(
+        health,
+        "_exchange_reachable",
+        lambda cfg=None: (_ for _ in ()).throw(AssertionError("unexpected probe")),
+    )
+    assert health.compute_health()["status"] == "healthy"
+
+
 def test_exchange_confirmed_unreachable_is_degraded(tmp_path, monkeypatch):
     """A cached probe that reported failure must surface as degraded, not unknown."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config(); cfg.exchange.paper_execution_mode = "okx_demo"; save_config(cfg)
     monkeypatch.setattr(health, "_exchange_reachable", lambda cfg=None: False)
     h = health.compute_health()
     assert h["status"] == "degraded"
