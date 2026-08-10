@@ -142,7 +142,10 @@ class TestShadowTrades:
 
         candidates = [
             {"opportunity_id": "opp1", "symbol": "BTC/USDT", "direction": "long",
-             "scanner_family": "momentum", "trade_score": 80.0},
+             "scanner_family": "momentum", "trade_score": 80.0,
+             "learning_score_trace": [
+                 {"path_id": "ranker_case_score", "proposed_delta": -4.0}
+             ]},
             {"opportunity_id": "opp2", "symbol": "ETH/USDT", "direction": "short",
              "scanner_family": "mean_reversion", "trade_score": 60.0},
             {"opportunity_id": "opp3", "symbol": "SOL/USDT", "direction": "long",
@@ -160,6 +163,9 @@ class TestShadowTrades:
         selected_shadows = [s for s in shadows if s["was_selected"]]
         assert len(selected_shadows) == 1
         assert selected_shadows[0]["opportunity_id"] == "opp1"
+        assert json.loads(selected_shadows[0]["learning_score_trace_json"]) == [
+            {"path_id": "ranker_case_score", "proposed_delta": -4.0}
+        ]
         # All should share the same batch_id
         batch_ids = {s["batch_id"] for s in shadows}
         assert len(batch_ids) == 1

@@ -11,6 +11,7 @@ creation time using live market data and the latest macro snapshot.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 from datetime import datetime, timedelta, timezone
@@ -122,6 +123,11 @@ def persist_shadow_batch(
             regime_tag=regime,
             was_selected=(opp_id is not None and opp_id in selected_opp_ids),
             policy_epoch_id=policy_epoch_id,
+            learning_score_trace_json=json.dumps(
+                candidate.get("learning_score_trace") or [],
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
         )
         try:
             insert_shadow_trade(shadow)

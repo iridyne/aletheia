@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v16"
+SCHEMA_VERSION = "aletheia-sqlite-v17"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4281,6 +4281,15 @@ _EXECUTION_REFERENCE_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+_SHADOW_LEARNING_TRACE_COLUMNS = (
+    ("learning_score_trace_json", "shadow_trades", "TEXT"),
+)
+_SHADOW_LEARNING_TRACE_CHECKSUM = hashlib.sha256(
+    (repr(_SHADOW_LEARNING_TRACE_COLUMNS) + "\nadditive_shadow_learning_trace_v1").encode(
+        "utf-8"
+    )
+).hexdigest()
+
 _SERENITY_RETRY_IDEMPOTENCY_SQL = (
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_serenity_retry_attempt_identity "
     "ON serenity_research_runs(parent_run_id, retry_count) "
@@ -4362,6 +4371,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260809_0015_execution_reference_v16": (
         "immutable pre-fill reference prices for paired Paper execution accounting"
+    ),
+    "20260810_0016_shadow_learning_trace_v17": (
+        "prospective Ranker Learning score trace on existing Shadow rows"
     ),
 }
 
@@ -4661,6 +4673,18 @@ def _apply_execution_reference_v16(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_shadow_learning_trace_v17(db: sqlite3.Connection) -> None:
+    """Freeze Ranker Learning inputs on existing report-only Shadow rows."""
+
+    for column, table, column_type in _SHADOW_LEARNING_TRACE_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.execute("PRAGMA optimize")
+
+
 def _apply_serenity_retry_idempotency_v15(db: sqlite3.Connection) -> None:
     """Enforce one newly-created retry attempt per parent/count identity."""
 
@@ -4756,8 +4780,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260809_0015_execution_reference_v16",
         checksum=_EXECUTION_REFERENCE_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v16",
         apply=_apply_execution_reference_v16,
+    ),
+    MigrationStep(
+        migration_id="20260810_0016_shadow_learning_trace_v17",
+        checksum=_SHADOW_LEARNING_TRACE_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_shadow_learning_trace_v17,
     ),
 )
 
