@@ -611,18 +611,29 @@ def run_supervised(spawn_fn=None) -> dict:
             except (ValueError, OSError):
                 pass
         _stop_vite_watch(vite_proc)
-        # Tear down backend and collector unconditionally.  Frontdoor gets special
-        # treatment on a gave_up exit: leave it alive so it can serve 503s while
-        # the watchdog or recovery task restarts the full gateway.  A subsequent
-        # `gateway start` detects it as an orphan and cleans it up before spawning
-        # a fresh supervisor.  On clean shutdown or signal, kill everything.
-        for holder in (backend_holder, collector_holder):
-            proc = holder[0]
-            if proc is not None:
+        # On POSIX, let uvicorn finish its lifespan cleanup (including closing
+        # the durable runtime session) before the supervisor exits. Windows
+        # terminate() is a hard TerminateProcess, so retain the existing tree kill.
+        proc = backend_holder[0]
+        if proc is not None:
+            if platform.system() == "Windows":
                 try:
                     kill_pid_tree(proc.pid)
                 except Exception:
                     pass
+            else:
+                _stop_vite_watch(proc)
+        # Tear down the collector unconditionally.  Frontdoor gets special
+        # treatment on a gave_up exit: leave it alive so it can serve 503s while
+        # the watchdog or recovery task restarts the full gateway.  A subsequent
+        # `gateway start` detects it as an orphan and cleans it up before spawning
+        # a fresh supervisor.  On clean shutdown or signal, kill everything.
+        proc = collector_holder[0]
+        if proc is not None:
+            try:
+                kill_pid_tree(proc.pid)
+            except Exception:
+                pass
         if not gave_up_flag[0]:
             proc = frontdoor_holder[0]
             if proc is not None:
