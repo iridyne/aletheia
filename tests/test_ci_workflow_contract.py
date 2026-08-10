@@ -111,6 +111,11 @@ def test_ci_jobs_use_self_hosted_runners_and_minimum_permissions() -> None:
         assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
         setup_uv = next(step for step in job["steps"] if str(step.get("uses", "")).startswith("astral-sh/setup-uv@"))
         assert setup_uv["with"]["enable-cache"] == "false"
+    setup_node = next(
+        step for step in workflow["jobs"]["review"]["steps"]
+        if step.get("uses") == SETUP_NODE_ACTION
+    )
+    assert setup_node["with"] == {"node-version": "22"}
 
 
 def test_third_party_actions_are_pinned_to_full_commit_shas() -> None:
