@@ -315,10 +315,12 @@ def compute_health() -> dict:
                 # age is None → no opportunities this session; that is a valid
                 # zero-eligible result when the run completed cleanly.
 
-    # Exchange connectivity: no cached probe → unknown (initializing), not healthy.
-    # paper_internal has no external endpoint so its probe resolves quickly;
-    # until then it is initializing rather than assumed reachable.
-    if not cfg.runtime.paused:
+    # Local paper fills never call an exchange, so connectivity is not applicable.
+    # External paper/demo/live modes still require a confirmed cached probe.
+    if (
+        not cfg.runtime.paused
+        and cfg.exchange.paper_execution_mode != "paper_internal"
+    ):
         reachable = _exchange_reachable(cfg)
         if reachable is None:
             initializing.append("exchange_connectivity_unknown")
