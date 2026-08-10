@@ -678,6 +678,8 @@ def test_candidate_skip_without_exact_entry_snapshot_rolls_back(tmp_path, monkey
     )
 )
 def test_doctor_surfaces_skip_halt_evidence_gaps_read_only(tmp_path, monkeypatch):
+    import json
+
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
@@ -694,6 +696,12 @@ def test_doctor_surfaces_skip_halt_evidence_gaps_read_only(tmp_path, monkeypatch
         opportunity_id="candidate-skip-source",
         signal_source="market_observer",
         reasoning="legacy direct skip missing trace",
+        evidence_manifest_json=json.dumps({
+            "operator_rationale": {
+                "validated_adverse_claims": [{"fact_refs": ["decision.stop_price"]}],
+                "adverse_evidence": ["decision.stop_price=null"],
+            }
+        }),
     ))
     insert_pi_decision(PiDecision(
         id="unscoped-heartbeat-skip",
@@ -717,6 +725,7 @@ def test_doctor_surfaces_skip_halt_evidence_gaps_read_only(tmp_path, monkeypatch
     assert "unscoped_heartbeat_skips=1" in check.detail
     assert "no_evaluable_candidate_events=0" in check.detail
     assert "deferred_unchanged_context_events=0" in check.detail
+    assert "current_epoch_unreconstructable_adverse_evidence=1" in check.detail
     assert "finding=recording_incident" in check.detail
     assert "does not change PI, config, Risk, or execution" in check.fix_hint
 
