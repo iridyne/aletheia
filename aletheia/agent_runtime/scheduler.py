@@ -2274,9 +2274,19 @@ def _run_position_manager():
         if isinstance(summary, dict):
             reported_errors.extend(summary.get("errors") or [])
         if reported_errors:
+            error_facts = [
+                {
+                    key: item[key]
+                    for key in ("code", "position_id", "instrument", "error_type")
+                    if item.get(key) is not None
+                }
+                for item in reported_errors[:20]
+                if isinstance(item, dict)
+            ]
             logger.warning(
-                "position_manager completed with %d reported errors",
+                "position_manager completed with %d reported errors: %s",
                 len(reported_errors),
+                error_facts,
             )
             _record_job_failure(
                 "position_manager", "position_manager_reported_errors"
