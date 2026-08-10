@@ -328,7 +328,7 @@ Output a structured market read. Calibration:
   if you have any actionable read at all.
 
 - key_observations: 2-4 short bullets, each citing a specific number from
-  the snapshot (e.g. "BTC 1h RSI 68 + price > SMA_20: short-term overbought").
+  the snapshot (e.g. "BTC 1h trend=up(+0.65%) with rsi=68.1").
   Empty list signals "no concrete evidence to point at".
 
 CRITICAL: Output ONLY the raw JSON object. No markdown fences, no explanation
@@ -336,12 +336,14 @@ before or after, no "Here is..." preamble. Just the JSON starting with { and
 ending with }.
 
 Indicator meanings (single source of truth — do not invent rules):
-- SMA20/SMA50: simple moving averages. Price > SMA50 = uptrend; < SMA50 = downtrend.
+- trend: up means close > EMA20 > EMA50; down is the mirror; the percentage is EMA20 vs EMA50.
 - RSI14: momentum 0-100. >70 overbought, <30 oversold, 50 = neutral. Can stay extreme in strong trends.
-- ATR14: average true range (price units). Bigger = wider swings; use for stops, not direction.
-- BB%: position in Bollinger band (0=lower, 1=upper). >1 or <0 = outside band.
-- Mom10: % change over last 10 bars. Positive = trending up.
-- Vol z: volume z-score vs 20 bars. >+1 = unusually high, <-1 = unusually low.
+- mom: 10-bar percentage change. Positive is upward momentum.
+- atr: ATR14 as a percentage of close; larger means wider swings, not direction.
+- bb: Bollinger percent-B / normalized band width percentage.
+- vwap: close minus rolling VWAP20 in ATR units.
+- donchian H/L: ATR distance below the 20-bar high / above the 20-bar low.
+- vol: volume z-score / ratio to its 20-bar mean; obv is normalized OBV.
 
 Not financial advice."""
 

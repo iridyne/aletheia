@@ -29,6 +29,14 @@ _TECHNICAL_FIXTURE = (
 )
 
 
+def test_technical_fixture_contains_only_production_rendered_block() -> None:
+    fixture = json.loads(_TECHNICAL_FIXTURE.read_text(encoding="utf-8"))
+    technical = fixture["technical_context"]
+
+    assert technical.endswith("\n")
+    assert "deterministic derived facts" not in technical
+
+
 class _PairProvider(ModelProvider):
     name = "fixture-provider"
     model = "fixed-fixture-model"

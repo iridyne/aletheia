@@ -160,6 +160,35 @@ def _indicator_snap_from_shared(snapshot) -> _IndicatorSnap:
     )
 
 
+def _unavailable_snap(
+    timeframe: str,
+    reason: str,
+    *,
+    exchange: str,
+    symbol: str,
+    market_type: str,
+) -> _IndicatorSnap:
+    return _IndicatorSnap(
+        last_close=None,
+        sma_20=None,
+        sma_50=None,
+        rsi_14=None,
+        atr_14=None,
+        bb_lower=None,
+        bb_upper=None,
+        bb_pct_b=None,
+        momentum_10=None,
+        volume_zscore_20=None,
+        timeframe=timeframe,
+        bars_used=0,
+        exchange=exchange,
+        symbol=symbol,
+        market_type=market_type,
+        data_quality="missing",
+        quality_reasons=(reason,),
+    )
+
+
 def _fmt(value: float | None, fmt: str = "{:.2f}") -> str:
     """None-safe number formatter for markdown table cells."""
     if value is None:
@@ -196,6 +225,9 @@ def _trend(snap: _IndicatorSnap) -> str:
 
 
 def _quality(snap: _IndicatorSnap) -> str:
+    if snap.data_quality in {"missing", "empty"}:
+        reasons = ",".join(snap.quality_reasons[:2]) or snap.data_quality
+        return f"unavailable:{reasons[:60]}"
     if not snap.warmup_complete:
         return f"unavailable:warmup({snap.bars_used})"
     if snap.data_quality != "complete":
@@ -208,7 +240,7 @@ def _render_snap_table(symbol: str, snaps: list[_IndicatorSnap]) -> str:
     """Render one bounded, normalized technical-context-v1 bundle."""
     if not snaps:
         return f"### {symbol}\n_no data_\n"
-    first = snaps[0]
+    identity = next((snap for snap in snaps if snap.data_quality != "missing"), snaps[0])
     rows = []
     for s in snaps:
         quality = _quality(s)
@@ -229,14 +261,14 @@ def _render_snap_table(symbol: str, snaps: list[_IndicatorSnap]) -> str:
             f"obv={_fmt(s.obv_normalized, '{:+.2f}')}"
         )
     return (
-        f"### {symbol} technical-context-v1 ({first.exchange} {first.market_type}; closed bars)\n"
+        f"### {symbol} technical-context-v1 ({identity.exchange} {identity.market_type}; closed bars)\n"
         + "\n".join(rows)
         + "\n"
     )
 
 
 def _technical_context_artifact(symbol: str, snaps: list[_IndicatorSnap], rendered: str) -> dict:
-    first = snaps[0]
+    identity = next((snap for snap in snaps if snap.data_quality != "missing"), snaps[0])
     latest_bar_ts = max(
         (snap.bar_close_ts for snap in snaps if snap.bar_close_ts is not None),
         default=None,
@@ -252,10 +284,10 @@ def _technical_context_artifact(symbol: str, snaps: list[_IndicatorSnap], render
     return {
         "adapter_id": "technical-context-v1",
         "stable_id": (
-            f"technical-context-v1:{first.exchange}:{first.symbol or symbol}:"
-            f"{first.market_type}:{fingerprint}"
+            f"technical-context-v1:{identity.exchange}:{identity.symbol or symbol}:"
+            f"{identity.market_type}:{fingerprint}"
         ),
-        "source": first.algorithm_version,
+        "source": identity.algorithm_version,
         "observed_at": (
             datetime.fromtimestamp(latest_bar_ts / 1000, tz=timezone.utc).isoformat()
             if latest_bar_ts is not None
@@ -363,6 +395,8 @@ async def build_market_context(
                 data_exchange, sym, instrument_market_type,
             )
             for tf, limit in _TIMEFRAMES:
+                candles = None
+                missing_reason = None
                 try:
                     candles = cache.get(
                         instrument.symbol, tf, limit,
@@ -376,8 +410,24 @@ async def build_market_context(
                 except Exception as e:
                     debug["errors"].append(f"{sym}/{tf}: {e}")
                     logger.warning("OHLCV fetch failed %s/%s: %s", sym, tf, e)
-                    continue
-                if not candles:
+                    missing_reason = "fetch_failed"
+                if not missing_reason and not candles:
+                    missing_reason = "no_candles"
+                if missing_reason:
+                    snaps.append(_unavailable_snap(
+                        tf,
+                        missing_reason,
+                        exchange=instrument.exchange,
+                        symbol=instrument.symbol,
+                        market_type=instrument.market_type,
+                    ))
+                    sym_debug[tf] = {
+                        "bars": 0,
+                        "technical_snapshot": {
+                            "data_quality": "missing",
+                            "quality_reasons": [missing_reason],
+                        },
+                    }
                     continue
                 # Sort oldest→newest (providers should guarantee this, but be defensive)
                 candles = sorted(candles, key=lambda c: c.timestamp)
@@ -387,14 +437,52 @@ async def build_market_context(
                 # ATR, and momentum, especially for daily candles.
                 closed_candles = [c for c in candles if c.is_closed]
                 if not closed_candles:
+                    snaps.append(_unavailable_snap(
+                        tf,
+                        "no_closed_bars",
+                        exchange=instrument.exchange,
+                        symbol=instrument.symbol,
+                        market_type=instrument.market_type,
+                    ))
+                    sym_debug[tf] = {
+                        "bars": 0,
+                        "technical_snapshot": {
+                            "data_quality": "missing",
+                            "quality_reasons": ["no_closed_bars"],
+                        },
+                    }
                     continue
+                candle_exchanges = {
+                    str(candle.exchange).lower()
+                    for candle in closed_candles
+                    if getattr(candle, "exchange", None)
+                }
+                if len(candle_exchanges) > 1:
+                    reason = "mixed_candle_venues"
+                    debug["errors"].append(f"{sym}/{tf}: {reason}")
+                    snaps.append(_unavailable_snap(
+                        tf,
+                        reason,
+                        exchange=instrument.exchange,
+                        symbol=instrument.symbol,
+                        market_type=instrument.market_type,
+                    ))
+                    sym_debug[tf] = {
+                        "bars": 0,
+                        "technical_snapshot": {
+                            "data_quality": "missing",
+                            "quality_reasons": [reason],
+                        },
+                    }
+                    continue
+                candle_exchange = next(iter(candle_exchanges), instrument.exchange)
                 closes = [c.close for c in closed_candles]
                 highs = [c.high for c in closed_candles]
                 lows = [c.low for c in closed_candles]
                 volumes = [c.volume for c in closed_candles]
                 technical_snapshot = technical_service.snapshot_from_bars(
                     closed_candles,
-                    exchange=instrument.exchange,
+                    exchange=candle_exchange,
                     symbol=instrument.symbol,
                     market_type=instrument.market_type,
                     timeframe=tf,
@@ -434,7 +522,13 @@ async def build_market_context(
                             returns_24h[sym] = (last - past) / past * 100
                     else:
                         returns_24h[sym] = None
-            if snaps:
+            available_snaps = [snap for snap in snaps if snap.data_quality != "missing"]
+            venues = {snap.exchange for snap in available_snaps}
+            if len(venues) > 1:
+                reason = "inconsistent_timeframe_venues"
+                debug["errors"].append(f"{sym}: {reason}")
+                logger.warning("Technical context unavailable %s: %s", sym, reason)
+            elif available_snaps:
                 rendered = _render_snap_table(sym, snaps)
                 sections.append(rendered)
                 debug["technical_context"]["artifacts"].append(

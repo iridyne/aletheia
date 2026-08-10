@@ -37,7 +37,9 @@ Market Observer consumes the shared snapshot directly and renders one bounded
 algorithm version and a bundle input fingerprint in its linked Harness artifact;
 model-visible rows contain normalized trend, momentum, volatility, location and
 participation facts. Insufficient-warmup or degraded timeframes expose only an
-unavailable quality state, not partial indicator values. Universe scanners use
+unavailable quality state, not partial indicator values. Bundle quality is
+measured against every configured timeframe, and the venue comes from returned
+candles; inconsistent venues fail closed. Universe scanners use
 projected RSI/ATR/Bollinger/volume facts. System Operator consumes the persisted
 feature row and includes technical version/input identity in its material
 decision fingerprint.
@@ -62,7 +64,10 @@ Donchian location are normalized so the model does not need to calculate them.
 - Exact instrument identity includes venue, canonical symbol, market type, and
   timeframe; spot and derivatives states never alias.
 - Missing intervals are reported as degraded data, never silently interpreted
-  as a continuous series.
+  as a continuous series. The degraded state clears after the gap leaves the
+  bounded retained window.
+- `bar_close_ts` is the interval end (`CCXT open timestamp + timeframe`), not
+  the candle-open timestamp.
 - Duplicate, revised, or out-of-order bars trigger a bounded rebuild and an
   explicit quality reason.
 - Algorithm-version changes and 1h input-fingerprint changes alter the Operator

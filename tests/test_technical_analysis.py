@@ -59,6 +59,8 @@ def test_incremental_snapshot_matches_independent_batch_reference() -> None:
 
     assert actual.algorithm_version == TECHNICAL_ANALYSIS_VERSION
     assert actual.input_fingerprint == expected.input_fingerprint
+    assert actual.bar_close_ts == bars[-1].ts + 3_600_000
+    assert expected.bar_close_ts == bars[-1].ts + 3_600_000
     assert actual.warmup_complete is True
     _assert_value_maps_close(actual.values, expected.values)
     assert incremental.verify()["ok"] is True
@@ -155,6 +157,42 @@ def test_forming_bar_is_ignored_and_gap_is_explicit() -> None:
     gapped = incremental.update(gap)
     assert gapped.data_quality == "degraded"
     assert "timeframe_gap_detected" in gapped.quality_reasons
+
+
+def test_gap_quality_recovers_after_gap_leaves_retained_window() -> None:
+    bars = _bars(20)
+    incremental = IncrementalTechnicalAnalyzer(
+        exchange="bitget",
+        symbol="BTC/USDT",
+        market_type="spot",
+        timeframe="1h",
+        max_history=64,
+    )
+    incremental.extend(bars)
+    template = bars[-1]
+    gap = TechnicalBar(
+        ts=template.ts + 3 * 3_600_000,
+        open=template.close,
+        high=template.close + 1,
+        low=template.close - 1,
+        close=template.close + 0.2,
+        volume=template.volume,
+    )
+    assert incremental.update(gap).data_quality == "degraded"
+
+    for index in range(1, 65):
+        value = gap.close + index * 0.1
+        recovered = incremental.update(TechnicalBar(
+            ts=gap.ts + index * 3_600_000,
+            open=value,
+            high=value + 1,
+            low=value - 1,
+            close=value,
+            volume=gap.volume + index,
+        ))
+
+    assert recovered.data_quality == "complete"
+    assert "timeframe_gap_detected" not in recovered.quality_reasons
 
 
 def test_invalid_ohlc_is_rejected() -> None:
