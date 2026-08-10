@@ -28,6 +28,7 @@ _OBSERVER_MIN_EDGE_DELTA_PCT = 0.25
 _OBSERVER_MAX_CONCENTRATION = 0.30
 _OBSERVER_MAX_COMPANION_DEGRADATION_PCT = 0.25
 _OBSERVER_BOOTSTRAP_ROUNDS = 500
+_CONFIDENCE_LADDER = ("speculative", "medium", "high")
 
 
 def build_family_ttl_replay(
@@ -69,6 +70,7 @@ def build_family_ttl_replay(
     sample_gate = max(1, int(min_samples))
     alternatives = _bounded_alternatives(current_ttl, alternative_ttls)
     passed_rows, passed_capped = _load_first_exposure_rows(
+        filter_name="family_ttl",
         decision="passed",
         filter_version=version,
         stage=stage_s,
@@ -81,6 +83,7 @@ def build_family_ttl_replay(
         cap=candidate_cap,
     )
     rejected_rows, rejected_capped = _load_first_exposure_rows(
+        filter_name="family_ttl",
         decision="rejected",
         filter_version=version,
         stage=stage_s,
@@ -162,6 +165,133 @@ def build_family_ttl_replay(
             "Gate-only replay; downstream ranker, risk, execution and portfolio conflicts are not replayed.",
             "Alternative cohorts are nested and observational, not randomized experiments.",
             "No threshold or configuration is mutated.",
+        ],
+    }
+
+
+def build_ranker_confidence_replay(
+    *,
+    filter_version: str,
+    stage: str,
+    scanner_family: str,
+    direction: str,
+    market_type: str,
+    horizon: str,
+    evaluated_since: str | None = None,
+    min_samples: int = 20,
+    max_candidates: int = _MAX_CANDIDATES,
+) -> dict[str, Any]:
+    """Replay lower confidence gates against fixed-version rejected candidates."""
+    version = str(filter_version or "").strip()
+    family = str(scanner_family or "").strip()
+    stage_s = str(stage or "").strip()
+    side = str(direction or "").strip().lower()
+    market = str(market_type or "").strip().lower()
+    horizon_s = str(horizon or "").strip()
+    if not version:
+        raise ValueError("filter_version is required for a causal replay")
+    if not all((stage_s, family, side, market, horizon_s)):
+        raise ValueError("stage, scanner_family, direction, market_type and horizon are required")
+
+    candidate_cap = max(1, min(int(max_candidates), _MAX_CANDIDATES))
+    sample_gate = max(1, int(min_samples))
+    common = {
+        "filter_name": "ranker_confidence_gate",
+        "filter_version": version,
+        "stage": stage_s,
+        "scanner_family": family,
+        "direction": side,
+        "market_type": market,
+        "horizon": horizon_s,
+        "evaluated_since": evaluated_since,
+        "evaluated_after": None,
+        "cap": candidate_cap,
+    }
+    passed_rows, passed_capped = _load_first_exposure_rows(
+        decision="passed", **common
+    )
+    rejected_rows, rejected_capped = _load_first_exposure_rows(
+        decision="rejected", **common
+    )
+    minimum_values = [
+        _confidence_value(_json_dict(row.get("parameter_snapshot")).get("minimum"))
+        for row in (*passed_rows, *rejected_rows)
+    ]
+    minimums = set(minimum_values)
+    current_minimum = (
+        next(iter(minimums))
+        if minimum_values and None not in minimums and len(minimums) == 1
+        else None
+    )
+    current_metrics = _outcome_metrics(passed_rows)
+    prior_mean = float(current_metrics["raw_avg_net_pct"] or 0.0)
+    invalid_inputs = 0
+    alternatives: list[dict[str, Any]] = []
+
+    if current_minimum is not None:
+        current_rank = _CONFIDENCE_LADDER.index(current_minimum)
+        for alternative_rank in range(current_rank - 1, -1, -1):
+            minimum = _CONFIDENCE_LADDER[alternative_rank]
+            admitted = []
+            for row in rejected_rows:
+                confidence = _confidence_value(
+                    _json_dict(row.get("input_snapshot")).get("confidence")
+                )
+                if confidence is None:
+                    invalid_inputs += 1
+                    continue
+                rank = _CONFIDENCE_LADDER.index(confidence)
+                if alternative_rank <= rank < current_rank:
+                    admitted.append(row)
+            metrics = _outcome_metrics(admitted)
+            shrunk = _shrunk_mean(metrics, prior_mean)
+            delta = _metric_delta(shrunk, current_metrics["raw_avg_net_pct"])
+            readiness = "insufficient_data"
+            if (
+                int(metrics["settled_n"]) >= sample_gate
+                and float(metrics["outcome_coverage"]) >= _MIN_COVERAGE
+                and shrunk is not None
+                and delta is not None
+            ):
+                readiness = (
+                    "ready_for_controlled_experiment"
+                    if shrunk > 0 and delta >= _MIN_EDGE_DELTA_PCT
+                    else "no_support"
+                )
+            alternatives.append({
+                "minimum_confidence": minimum,
+                "newly_admitted_candidates": len(admitted),
+                **metrics,
+                "shrunk_avg_net_pct": shrunk,
+                "delta_vs_current_pass_pct": delta,
+                "readiness": readiness,
+            })
+
+    return {
+        "read_only": True,
+        "gate_only": True,
+        "filter_name": "ranker_confidence_gate",
+        "filter_version": version,
+        "stage": stage_s,
+        "scanner_family": family,
+        "direction": side,
+        "market_type": market,
+        "horizon": horizon_s,
+        "evaluated_since": evaluated_since,
+        "assignment_policy": "first_exposure",
+        "current_minimum_confidence": current_minimum,
+        "identity_status": "exact" if current_minimum is not None else "invalid",
+        "candidate_cap": candidate_cap,
+        "candidate_cap_reached": passed_capped or rejected_capped,
+        "min_samples": sample_gate,
+        "current_pass": current_metrics,
+        "rejected_candidates": len(rejected_rows),
+        "invalid_replay_inputs": invalid_inputs,
+        "alternatives": alternatives,
+        "limitations": [
+            "Gate-only replay; downstream ranker, risk, execution and portfolio conflicts are not replayed.",
+            "Historical alternatives are observational; readiness authorizes only a prospective controlled experiment.",
+            "No confidence threshold or configuration is mutated.",
         ],
     }
 
@@ -373,7 +503,7 @@ def build_bounded_filter_replays(
         0 if (
             row.get("filter_name") == "observer_pre_filter"
             and row.get("horizon") == "24h"
-        ) else 1,
+        ) else 1 if row.get("filter_name") == "ranker_confidence_gate" else 2,
         -abs(float(row.get("error_signal") or 0.0)),
         str(row.get("filter_name") or ""),
         str(row.get("scanner_family") or ""),
@@ -399,6 +529,22 @@ def build_bounded_filter_replays(
                 min_samples=max(_OBSERVER_MIN_SAMPLES, int(min_samples)),
             ))
             observer_replay_count += 1
+            if len(reports) >= replay_cap:
+                break
+            continue
+        if filter_name == "ranker_confidence_gate":
+            if not row.get("filter_version"):
+                continue
+            reports.append(build_ranker_confidence_replay(
+                filter_version=str(row["filter_version"]),
+                stage=str(row.get("stage") or ""),
+                scanner_family=str(row.get("scanner_family") or "unknown"),
+                direction=str(row.get("direction") or ""),
+                market_type=str(row.get("market_type") or ""),
+                horizon=str(row.get("horizon") or ""),
+                evaluated_since=evaluated_since,
+                min_samples=min_samples,
+            ))
             if len(reports) >= replay_cap:
                 break
             continue
@@ -468,6 +614,7 @@ def _load_observer_first_exposure_rows(
 
 def _load_first_exposure_rows(
     *,
+    filter_name: str,
     decision: str,
     filter_version: str,
     stage: str,
@@ -486,7 +633,14 @@ def _load_first_exposure_rows(
     else:
         time_clause = ""
     params: list[Any] = [
-        horizon, decision, filter_version, stage, scanner_family, direction, market_type,
+        horizon,
+        filter_name,
+        decision,
+        filter_version,
+        stage,
+        scanner_family,
+        direction,
+        market_type,
     ]
     if evaluated_after or evaluated_since:
         params.append(evaluated_after or evaluated_since)
@@ -498,7 +652,7 @@ def _load_first_exposure_rows(
         "FROM ranked_filter_decisions fd "
         "LEFT JOIN filter_candidate_outcomes fo "
         " ON fo.outcome_candidate_key=fd.outcome_candidate_key AND fo.horizon=? "
-        "WHERE fd.exposure_rank=1 AND fd.filter_name='family_ttl' "
+        "WHERE fd.exposure_rank=1 AND fd.filter_name=? "
         " AND fd.decision=? AND fd.filter_version=? AND fd.stage=? "
         " AND COALESCE(fd.scanner_family,'unknown')=? "
         " AND fd.direction=? AND fd.market_type=? "
@@ -655,6 +809,11 @@ def _ttl_from_snapshot(value: Any) -> int | None:
         return ttl if ttl > 0 else None
     except (TypeError, ValueError):
         return None
+
+
+def _confidence_value(value: Any) -> str | None:
+    confidence = str(value or "").strip().lower()
+    return confidence if confidence in _CONFIDENCE_LADDER else None
 
 
 def _json_dict(value: Any) -> dict[str, Any]:
