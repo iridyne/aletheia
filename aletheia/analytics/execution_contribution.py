@@ -217,6 +217,8 @@ def _paired_position_cost(
     closes = [row for row in chain if str(row.get("order_close_reason") or "").strip()]
     if not entries or len(closes) != 1:
         return None, "incomplete_execution_order_chain"
+    if len(entries) != 1:
+        return None, "unsupported_execution_multi_entry"
 
     for row in chain:
         reason = _order_fill_exclusion(row, position)

@@ -597,5 +597,7 @@ reference price 零费用成交；treatment 使用真实 local Fill 与 fee。�
 Paper 执行价格影响与费用，单位同时报告 `net_return_pct` 和 quote-currency PnL。
 
 该结果不证明当前 router 相对另一算法的正向价值，不覆盖 exchange/demo/live、legacy、
-partial close 或 adopted Position，不授权改变 slippage、fee、broker、Risk 或 Live 配置；
+multi-entry、partial close 或 adopted Position；multi-entry 以
+`unsupported_execution_multi_entry` 明确排除，不伪装成数据链缺失。该测量不授权改变
+slippage、fee、broker、Risk 或 Live 配置；
 任一身份/经济字段缺失均为 `insufficient_data`。

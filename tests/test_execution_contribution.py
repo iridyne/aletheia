@@ -165,6 +165,33 @@ def test_execution_cost_is_paired_against_frictionless_reference(monkeypatch):
     assert evidence["details"]["routing_value_measured"] is False
 
 
+def test_execution_cost_reports_multi_entry_as_unsupported():
+    from aletheia.analytics.execution_contribution import _paired_position_cost
+
+    rows = [
+        {"order_id": "entry-1", "order_close_reason": None},
+        {"order_id": "entry-2", "order_close_reason": None},
+        {"order_id": "close", "order_close_reason": "take_profit"},
+    ]
+
+    class _Db:
+        def execute(self, *_args):
+            return self
+
+        def fetchall(self):
+            return rows
+
+    position = {
+        "id": "position",
+        "source": "native",
+        "closed_runtime_session_id": "session",
+        "closed_producer_commit": "commit",
+        "closed_behavior_fingerprint": "behavior",
+    }
+    _record, reason = _paired_position_cost(_Db(), position)
+    assert reason == "unsupported_execution_multi_entry"
+
+
 def test_execution_cost_fails_closed_without_prospective_close_reference():
     from aletheia.analytics.execution_contribution import (
         build_execution_cost_contribution,
