@@ -176,6 +176,14 @@ jobs:
                     `GitHub declined protected merge: ${mergeResult.data.message || 'unknown reason'}`,
                   );
                 }
+                await github.rest.repos.createDispatchEvent({
+                  ...context.repo,
+                  event_type: 'release_please',
+                  client_payload: {
+                    merged_pull_request: pullRequestNumber,
+                    merge_commit_sha: mergeResult.data.sha,
+                  },
+                });
                 return;
               }
               if (!autoMergeStates.has(pullRequest.mergeStateStatus)) {

@@ -378,6 +378,9 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     assert "github.rest.pulls.merge" in update_script
     assert "sha: expectedHeadSha" in update_script
     assert "merge_method: 'squash'" in update_script
+    assert "createDispatchEvent" in update_script
+    assert "event_type: 'release_please'" in update_script
+    assert "merge_commit_sha: mergeResult.data.sha" in update_script
     assert "const autoMergeStates = new Set(['BEHIND', 'BLOCKED', 'HAS_HOOKS'])" in update_script
     assert "enablePullRequestAutoMerge" in update_script
     assert "mergeMethod: SQUASH" in update_script
