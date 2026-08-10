@@ -23,6 +23,7 @@ _COUNT_KEYS = (
     "ranker_eligible",
     "signal_pending_written",
     "system_operator_evaluated",
+    "operator_deferred",
     "decisions_trade",
     "decisions_watch",
     "decisions_skip",
@@ -464,6 +465,7 @@ def _causal_cohort_counts(db, cutoff: str) -> dict[str, int | None]:
             if action in {"trade", "scale_in", "flip"}
         }
         counts["system_operator_evaluated"] = len(set(latest_action) | observed_ids)
+        counts["operator_deferred"] = len(observed_ids - set(latest_action))
         for action, key in (
             ("trade", "decisions_trade"),
             ("watch", "decisions_watch"),
@@ -813,6 +815,13 @@ def _main_choke_point(
             "Inspect the structured proposal-submission reasons before changing System Operator behavior.",
         )
     if int(counts["system_operator_evaluated"] or 0) >= min_sample_size and trade_decisions == 0:
+        if int(counts["operator_deferred"] or 0) > 0:
+            return _choke(
+                "system_operator_deferred",
+                "warn",
+                f"{counts['operator_deferred']} observed signals remain deferred with 0 terminal decisions.",
+                "Await the durable defer deadlines or inspect defer reasons before changing System Operator behavior.",
+            )
         return _choke(
             "system_operator_decision",
             "warn",

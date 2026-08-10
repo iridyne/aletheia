@@ -229,8 +229,10 @@ def test_trade_funnel_counts_durable_operator_defer_as_evaluated():
     )
 
     assert report["causal_cohort_counts"]["system_operator_evaluated"] == 1
+    assert report["causal_cohort_counts"]["operator_deferred"] == 1
     assert report["conversion_rates"]["signal_pending_to_evaluated"] == 1.0
-    assert report["main_choke_point"]["stage"] == "system_operator_decision"
+    assert report["main_choke_point"]["stage"] == "system_operator_deferred"
+    assert "remain deferred" in report["main_choke_point"]["summary"]
 
 
 def test_trade_funnel_uses_persisted_ranker_and_submission_evidence():
