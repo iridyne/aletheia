@@ -78,21 +78,36 @@ def _usage_for_call(call_id: str) -> dict[str, Any]:
     ).fetchall()
     totals = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     models: list[str] = []
+    usage_available_attempts = 0
     for row in rows:
         models.append(str(row["model_or_tool"] or ""))
         try:
             normalized = json.loads(row["usage_json"] or "{}").get("normalized") or {}
         except (TypeError, json.JSONDecodeError):
             normalized = {}
-        for field in totals:
+        input_tokens = normalized.get("input_tokens")
+        output_tokens = normalized.get("output_tokens")
+        usage_available = all(
+            isinstance(value, (int, float)) and value >= 0
+            for value in (input_tokens, output_tokens)
+        )
+        if usage_available:
+            usage_available_attempts += 1
+        for field in ("input_tokens", "output_tokens"):
             value = normalized.get(field)
-            if isinstance(value, (int, float)):
+            if isinstance(value, (int, float)) and value >= 0:
                 totals[field] += int(value)
+        total_tokens = normalized.get("total_tokens")
+        if isinstance(total_tokens, (int, float)) and total_tokens >= 0:
+            totals["total_tokens"] += int(total_tokens)
+        elif usage_available:
+            totals["total_tokens"] += int(input_tokens) + int(output_tokens)
     return {
         **totals,
         "physical_attempts": len(rows),
+        "usage_available_attempts": usage_available_attempts,
         "models": models,
-        "all_attempts_succeeded": all(row["status"] == "success" for row in rows),
+        "all_attempts_succeeded": bool(rows) and all(row["status"] == "success" for row in rows),
     }
 
 
@@ -108,6 +123,7 @@ def _pair_metrics(pair_id: str) -> dict[str, Any]:
         final_model = call.get("final_model") or (usage["models"][-1] if usage["models"] else None)
         by_arm[arm] = {
             "logical_call_id": call["logical_call_id"],
+            "caller": call.get("caller"),
             "blind_label": metadata.get("blind_label"),
             "status": call["status"],
             "parse_valid": call["parse_valid"],
@@ -126,6 +142,10 @@ def _pair_metrics(pair_id: str) -> dict[str, Any]:
                 reasons.append(f"{arm}_not_schema_valid")
             if metrics["fallback_used"]:
                 reasons.append(f"{arm}_fallback_used")
+            if metrics["physical_attempts"] < 1:
+                reasons.append(f"{arm}_missing_attempt_telemetry")
+            elif metrics["usage_available_attempts"] != metrics["physical_attempts"]:
+                reasons.append(f"{arm}_incomplete_token_telemetry")
         identities = {
             (metrics["final_provider"], metrics["final_model"])
             for metrics in by_arm.values()
@@ -224,6 +244,7 @@ async def _run_context_pair(
             "context_artifacts": artifacts,
             "context_symbol": fixture["symbol"],
             "evaluation": evaluation,
+            "reasoning_effort": "none",
         }
         if treatment_field == "learning_context" and arm == "control":
             result, error = await llm_structured(
@@ -343,13 +364,25 @@ def _record_context_pair_review(
     scores_path: Path,
     rubric_version: str,
     pair_label: str,
+    pair_prefix: str,
+    expected_callers: dict[str, str],
+    reject_ungrounded_treatment: bool = False,
 ) -> dict[str, Any]:
     """Persist aggregate blind scores; never copy review-packet outputs."""
     payload = json.loads(scores_path.read_text(encoding="utf-8"))
+    if not pair_id.startswith(pair_prefix):
+        raise ValueError(f"{pair_label} pair identity mismatch")
+    if payload.get("rubric_version") != rubric_version:
+        raise ValueError(f"{pair_label} rubric version mismatch")
     scores = payload.get("scores") or {}
     metrics = _pair_metrics(pair_id)
-    if set(metrics["arms"]) != {"control", "treatment"}:
-        raise ValueError(f"{pair_label} pair is incomplete")
+    if not metrics["valid_pair"]:
+        raise ValueError(f"{pair_label} pair is invalid")
+    if any(
+        metrics["arms"][arm].get("caller") != expected_callers[arm]
+        for arm in ("control", "treatment")
+    ):
+        raise ValueError(f"{pair_label} caller identity mismatch")
     by_label = {
         arm_metrics["blind_label"]: arm
         for arm, arm_metrics in metrics["arms"].items()
@@ -376,7 +409,19 @@ def _record_context_pair_review(
     control = normalized["control"]
     treatment = normalized["treatment"]
     delta = treatment["quality_score"] - control["quality_score"]
-    verdict = "treatment_better" if delta > 0 else "control_better" if delta < 0 else "tie"
+    gate_failures: list[str] = []
+    if reject_ungrounded_treatment:
+        if treatment["context_harm"]:
+            gate_failures.append("treatment_context_harm")
+        if treatment["grounded_use"] != "yes":
+            gate_failures.append("treatment_not_grounded")
+    verdict = (
+        "control_better"
+        if gate_failures
+        else "treatment_better" if delta > 0
+        else "control_better" if delta < 0
+        else "tie"
+    )
     calls = metrics["arms"]
     fixture_id = next(
         (
@@ -398,7 +443,7 @@ def _record_context_pair_review(
         (
             pair_id,
             fixture_id,
-            str(payload.get("rubric_version") or rubric_version),
+            rubric_version,
             str(payload.get("reviewer") or "owner")[:80],
             calls["control"]["logical_call_id"],
             calls["treatment"]["logical_call_id"],
@@ -410,7 +455,10 @@ def _record_context_pair_review(
             int(treatment["context_harm"]),
             verdict,
             _utcnow(),
-            json.dumps({"quality_delta": delta}, sort_keys=True),
+            json.dumps(
+                {"quality_delta": delta, "gate_failures": gate_failures},
+                sort_keys=True,
+            ),
         ),
     )
     if not was_in_tx:
@@ -421,6 +469,7 @@ def _record_context_pair_review(
         "fixture_id": fixture_id,
         "quality_delta": delta,
         "verdict": verdict,
+        "gate_failures": gate_failures,
         "control": control,
         "treatment": treatment,
     }
@@ -432,6 +481,11 @@ def record_learning_b_review(*, pair_id: str, scores_path: Path) -> dict[str, An
         scores_path=scores_path,
         rubric_version=_LEARNING_RUBRIC_VERSION,
         pair_label="Learning B",
+        pair_prefix="learning_b_",
+        expected_callers={
+            "control": "evaluation.learning_b.control",
+            "treatment": "evaluation.learning_b.treatment",
+        },
     )
 
 
@@ -443,6 +497,12 @@ def record_technical_context_review(
         scores_path=scores_path,
         rubric_version=_TECHNICAL_RUBRIC_VERSION,
         pair_label="Technical context",
+        pair_prefix="technical_context_",
+        expected_callers={
+            "control": "evaluation.technical_context.control",
+            "treatment": "evaluation.technical_context.treatment",
+        },
+        reject_ungrounded_treatment=True,
     )
 
 
