@@ -2245,11 +2245,12 @@ def cancel_serenity_run(run_id: str):
     if status not in ("cancel_requested", "cancelled"):
         raise HTTPException(409, "Run finished before cancellation could be requested")
     if changed:
+        transitioned_run = repo.get_serenity_research_run(run_id) or run
         repo.insert_serenity_run_event(
             SerenityRunEvent(
                 run_id=run_id,
                 event_type=f"run.{status}",
-                stage=run.get("stage"),
+                stage=transitioned_run.get("stage"),
                 message=(
                     "Cancelled before worker start"
                     if status == "cancelled"

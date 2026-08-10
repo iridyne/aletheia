@@ -4492,6 +4492,24 @@ def claim_serenity_research_run(run_id: str, *, now: str) -> bool:
     return cursor.rowcount == 1
 
 
+def fail_unclaimed_serenity_research_run(
+    run_id: str,
+    *,
+    error_type: str,
+    error_message: str | None,
+    error_stage: str | None,
+    now: str,
+) -> bool:
+    """Fail a queued run when worker startup crashes before the claim commits."""
+    cursor = execute_write(
+        "UPDATE serenity_research_runs SET status = 'failed', error_type = ?, "
+        "error_message = ?, error_stage = ?, finished_at = ?, updated_at = ? "
+        "WHERE id = ? AND status = 'queued'",
+        (error_type, error_message, error_stage, now, now, run_id),
+    )
+    return cursor.rowcount == 1
+
+
 def request_serenity_research_run_cancel(run_id: str, *, now: str) -> tuple[str | None, bool]:
     """Cancel queued work or request cooperative cancellation of running work."""
     queued = execute_write(

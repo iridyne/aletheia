@@ -38,6 +38,8 @@ Goals:
   acknowledges it;
 - completion, failure, and rate-limit writes cannot overwrite a concurrent
   cancellation request;
+- a worker startup failure before claim can terminalize only the still-queued
+  run, so an unclaimed row cannot occupy the active slot indefinitely;
 - restart recovery acknowledges an outstanding cancellation after the old
   process and worker are gone;
 - current stage and last progress time are visible without adding fake percent
@@ -100,6 +102,8 @@ Focused evidence must prove:
 6. status/detail/list responses expose stage and last progress time;
 7. the frontend keeps `cancel_requested` active and does not request terminal
    artifacts early.
+8. a pre-claim worker startup failure moves the still-queued run to `failed`,
+   and cancellation audit events use the stage reread after the accepted CAS.
 
 ## Rollout and rollback
 

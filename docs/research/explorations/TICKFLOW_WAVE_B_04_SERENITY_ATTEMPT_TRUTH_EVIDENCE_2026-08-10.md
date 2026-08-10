@@ -25,6 +25,8 @@ CAS ownership, not a new table, queue, event bus, or progress framework.
 - Running cancellation becomes active `cancel_requested` without `finished_at`.
 - Worker completion, failure, and rate-limit writes require current `running`
   status and cannot overwrite a cancellation request.
+- The outer worker crash path has a separate queued-only failure CAS, preventing
+  a pre-claim database/bootstrap error from stranding an active queued row.
 - Worker checkpoints acknowledge `cancel_requested→cancelled` and retain the
   last stage plus partial artifacts.
 - Startup recovery acknowledges `cancel_requested` after the previous process is
@@ -45,6 +47,8 @@ CAS ownership, not a new table, queue, event bus, or progress framework.
   outstanding cancellation from interrupted queued/running work.
 - Focused worker tests preserve normal success, generic failure, and rate-limit
   outcomes after introducing guarded terminal writes.
+- Review regressions cover queued-only pre-claim failure and cancellation-event
+  stage freshness after the accepted transition.
 - The production frontend build proves the new active state is accepted by the
   existing Serenity page and shared status badge.
 

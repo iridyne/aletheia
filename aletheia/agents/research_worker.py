@@ -554,7 +554,7 @@ def enqueue_research_run(run_id: str) -> None:
             detail = _error_detail(e)
             logger.error("Research run %s crashed: %s", run_id, detail)
             try:
-                _mark_failed(run_id, _classify_error(e), detail, None)
+                _mark_failed(run_id, _classify_error(e), detail, None, allow_queued=True)
             except Exception:
                 pass
 
@@ -1067,7 +1067,14 @@ def _emit_event(run_id: str, event_type: str, stage: str | None = None,
         logger.warning("Failed to emit event for run %s: %s", run_id, e)
 
 
-def _mark_failed(run_id: str, error_type: str, error_message: str, error_stage: str | None) -> None:
+def _mark_failed(
+    run_id: str,
+    error_type: str,
+    error_message: str,
+    error_stage: str | None,
+    *,
+    allow_queued: bool = False,
+) -> None:
     now = datetime.now(timezone.utc).isoformat()
     finished = repo.finish_serenity_research_run(
         run_id,
@@ -1078,6 +1085,14 @@ def _mark_failed(run_id: str, error_type: str, error_message: str, error_stage: 
         finished_at=now,
         updated_at=now,
     )
+    if not finished and allow_queued:
+        finished = repo.fail_unclaimed_serenity_research_run(
+            run_id,
+            error_type=error_type,
+            error_message=error_message[:500] if error_message else None,
+            error_stage=error_stage,
+            now=now,
+        )
     if not finished:
         _acknowledge_cancellation(run_id)
         return

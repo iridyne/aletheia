@@ -593,6 +593,20 @@ def test_active_run_detection(tmp_path, monkeypatch):
     reset_db()
 
 
+def test_unclaimed_worker_failure_does_not_strand_queued_run(db):
+    run = SerenityResearchRun(status="queued")
+    repo.insert_serenity_research_run(run)
+
+    from aletheia.agents.research_worker import _mark_failed
+
+    _mark_failed(run.id, "database_error", "claim failed", None, allow_queued=True)
+
+    failed = repo.get_serenity_research_run(run.id)
+    assert failed["status"] == "failed"
+    assert failed["finished_at"] is not None
+    assert repo.get_active_serenity_research_run() is None
+
+
 # --- Phase H: Comprehensive Tests ---
 
 
@@ -778,7 +792,7 @@ async def test_cancel_queued_run(client):
 
 
 @pytest.mark.anyio
-async def test_cancel_running_run(client):
+async def test_cancel_running_run(client, monkeypatch):
     run = SerenityResearchRun(
         status="running",
         stage="collect_evidence",
@@ -786,6 +800,14 @@ async def test_cancel_running_run(client):
         updated_at="2026-06-13T00:01:00Z",
     )
     repo.insert_serenity_research_run(run)
+
+    request_cancel = repo.request_serenity_research_run_cancel
+
+    def advance_stage_then_cancel(run_id: str, *, now: str):
+        repo.update_serenity_research_run(run_id, stage="extract_claims")
+        return request_cancel(run_id, now=now)
+
+    monkeypatch.setattr(repo, "request_serenity_research_run_cancel", advance_stage_then_cancel)
 
     resp = await client.post(f"/api/serenity/runs/{run.id}/cancel")
     assert resp.status_code == 200
@@ -811,10 +833,10 @@ async def test_cancel_running_run(client):
     }
 
     status = (await client.get("/api/serenity/status")).json()
-    assert status["currentRun"]["stage"] == "collect_evidence"
+    assert status["currentRun"]["stage"] == "extract_claims"
     assert status["currentRun"]["lastProgressAt"] == requested["updated_at"]
     listed = (await client.get("/api/serenity/runs")).json()["items"][0]
-    assert listed["stage"] == "collect_evidence"
+    assert listed["stage"] == "extract_claims"
     assert listed["lastProgressAt"] == requested["updated_at"]
 
     from aletheia.agents.research_worker import _acknowledge_cancellation
@@ -823,7 +845,9 @@ async def test_cancel_running_run(client):
     cancelled = repo.get_serenity_research_run(run.id)
     assert cancelled["status"] == "cancelled"
     assert cancelled["finished_at"] is not None
-    assert repo.list_serenity_run_events(run.id)[-1]["event_type"] == "run.cancelled"
+    events = repo.list_serenity_run_events(run.id)
+    assert events[-2]["stage"] == "extract_claims"
+    assert events[-1]["event_type"] == "run.cancelled"
 
 
 @pytest.mark.anyio
