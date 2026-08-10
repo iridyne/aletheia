@@ -57,7 +57,9 @@ jobs:
               base: 'master',
             });
             for (const pullRequest of pullRequests) {
-              if (!pullRequest.labels.some(({name}) => name === 'autorelease: pending')) {
+              if (!pullRequest.labels.some(({name}) =>
+                ['autorelease: pending', 'autorelease: pending,do-not-auto-merge'].includes(name),
+              )) {
                 continue;
               }
               await github.rest.actions.createWorkflowDispatch({
