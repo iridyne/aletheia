@@ -229,12 +229,8 @@ jobs:
                 return;
               }
               if (pullRequest.autoMergeRequest) {
-                if (attempt === maxAttempts) {
-                  throw new Error(`auto-merge did not complete after ${maxAttempts} checks`);
-                }
-                core.info('auto-merge is enabled; waiting for the merged commit');
-                await new Promise((resolve) => setTimeout(resolve, 5000));
-                continue;
+                core.info('auto-merge is enabled; GitHub will merge when required checks pass');
+                return;
               }
               if (['UNKNOWN', 'UNSTABLE'].includes(pullRequest.mergeStateStatus)) {
                 if (attempt === maxAttempts) {
@@ -281,9 +277,8 @@ jobs:
                   }`,
                   { pullRequestId: pullRequest.id },
                 );
-                core.info('auto-merge enabled; waiting for the merged commit');
-                await new Promise((resolve) => setTimeout(resolve, 5000));
-                continue;
+                core.info('auto-merge enabled; GitHub will merge when required checks pass');
+                return;
               } catch (error) {
                 if (
                   attempt < maxAttempts &&
