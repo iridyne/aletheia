@@ -35,7 +35,7 @@ import time
 from datetime import datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool
@@ -60,7 +60,7 @@ _SHORT_RE = re.compile(r"\bshorts?\b", re.IGNORECASE)
 
 class _LessonJudgment(BaseModel):
     decision: Literal["accept", "reject", "defer"]
-    reasoning: str = Field(default="", max_length=200)
+    reasoning: str = ""
 
 
 def _fetch_evidence(lesson) -> dict:
@@ -231,8 +231,8 @@ def _evidence_block(evidence: dict) -> str:
     return "\n".join(lines)
 
 
-async def _judge(lesson, evidence: dict, run_id: str | None) -> tuple[str, str]:
-    """Ask the LLM to judge a lesson against its evidence. Returns (decision, reasoning).
+async def _judge(lesson, evidence: dict, run_id: str | None) -> tuple[str, str, bool]:
+    """Return the decision, bounded reasoning, and whether inference failed.
 
     decision ∈ {accept, reject, defer}; defaults to 'defer' on any failure.
     """
@@ -260,8 +260,8 @@ async def _judge(lesson, evidence: dict, run_id: str | None) -> tuple[str, str]:
     )
     log_tool(run_id, "llm_judge_lesson", "observe", err is None)
     if err or payload is None:
-        return "defer", f"llm_error:{err or 'empty_payload'}"
-    return str(payload["decision"]), str(payload.get("reasoning") or "")[:200]
+        return "defer", str(err or "empty_payload")[:200], True
+    return str(payload["decision"]), str(payload.get("reasoning") or "")[:200], False
 
 
 def _deterministic_demote(evidence: dict) -> bool:
@@ -321,7 +321,7 @@ async def run_lesson_reviewer(
             continue
         if evidence["exact_scope"]["total"] < _MIN_SETTLED_EVIDENCE:
             continue
-        decision, reason = await _judge(lesson, evidence, run_id)
+        decision, reason, judgment_failed = await _judge(lesson, evidence, run_id)
         if decision == "reject":
             started_at = time.monotonic()
             store.reject(lesson.lesson_id)
@@ -335,7 +335,7 @@ async def run_lesson_reviewer(
                 output=f"{lesson.lesson_id}:{reason}",
                 duration_ms=elapsed_ms(started_at),
             )
-        elif reason.startswith("llm_error:"):
+        elif judgment_failed:
             errors.append(f"judgment_failed:{lesson.lesson_id}:{reason}")
 
     # ── Step B: promote — judge proposed lessons ──
@@ -356,7 +356,7 @@ async def run_lesson_reviewer(
         if evidence["exact_scope"]["total"] < _MIN_SETTLED_EVIDENCE:
             deferred += 1
             continue
-        decision, reason = await _judge(lesson, evidence, run_id)
+        decision, reason, judgment_failed = await _judge(lesson, evidence, run_id)
         if decision == "accept":
             started_at = time.monotonic()
             store.accept(lesson.lesson_id)
@@ -385,7 +385,7 @@ async def run_lesson_reviewer(
             )
         else:
             deferred += 1
-            if reason.startswith("llm_error:"):
+            if judgment_failed:
                 errors.append(f"judgment_failed:{lesson.lesson_id}:{reason}")
 
     # ── Step C: apply — fold accepted lessons (this run + any stuck from prior runs) ──

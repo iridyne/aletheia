@@ -563,10 +563,42 @@ async def test_lesson_reviewer_surfaces_structured_judgment_failure(monkeypatch)
 
     assert LessonStore().get(lesson.lesson_id).status == "proposed"
     assert result["errors"] == [
-        f"judgment_failed:{lesson.lesson_id}:llm_error:structured_empty_content"
+        f"judgment_failed:{lesson.lesson_id}:structured_empty_content"
     ]
     assert call.await_args.kwargs["schema"] is lr._LessonJudgment
     assert call.await_args.kwargs["reasoning_effort"] == "none"
+    assert len(lr._LessonJudgment(
+        decision="accept", reasoning="x" * 201,
+    ).reasoning) == 201
+
+
+async def test_lesson_reviewer_does_not_treat_model_reasoning_as_transport_failure(
+    monkeypatch,
+):
+    from unittest.mock import AsyncMock
+
+    from aletheia.learning.lessons import LessonStore
+    import aletheia.agents.lesson_reviewer as lr
+
+    lesson = LessonStore().create("scoped", "trade_case_study", "case-1")
+    monkeypatch.setattr(
+        lr, "_fetch_evidence",
+        lambda _lesson: {
+            "aggregate": {"total": 20, "win_rate": 50.0, "avg_return": 0.1},
+            "exact_scope": {"total": 20, "win_rate": 50.0, "avg_return": 0.1},
+        },
+    )
+    monkeypatch.setattr(
+        lr, "llm_structured",
+        AsyncMock(return_value=({
+            "decision": "defer", "reasoning": "llm_error: is part of the evidence",
+        }, None)),
+    )
+
+    result = await lr.run_lesson_reviewer(run_id="test")
+
+    assert result["errors"] == []
+    assert LessonStore().get(lesson.lesson_id).status == "proposed"
 
 
 async def test_lesson_reviewer_reuses_policy_after_partial_apply_failure():
