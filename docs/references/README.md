@@ -15,3 +15,9 @@ Use this directory for external systems, papers, captured pages, and benchmark c
 ## Agent Rule
 
 When borrowing from a reference, create or update a plan and check governance boundaries first.
+
+## Current paper analyses
+
+- [CLQT and F²Agent methodology analysis (2026-08-10)](papers-and-benchmarks/agent-diagnostics-and-evidence-fusion-2026-08-10.md)
+  separates reusable Agent diagnostics and evidence-fusion experiments from
+  unproven architecture or implementation claims.
