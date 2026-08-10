@@ -91,11 +91,23 @@ def _text(value: object) -> str | None:
 
 
 def _cost_known(row: dict[str, Any]) -> bool:
-    return row.get("estimated_cost_usd") is not None and row.get("cost_status") != "unknown"
+    return row.get("estimated_cost_usd") is not None and row.get("cost_status") == "known"
+
+
+def _cost_estimated(row: dict[str, Any]) -> bool:
+    return row.get("estimated_cost_usd") is not None and row.get("cost_status") == "estimated"
+
+
+def _cost_priced(row: dict[str, Any]) -> bool:
+    return _cost_known(row) or _cost_estimated(row)
 
 
 def _cost_value(row: dict[str, Any]) -> float:
     return _number(row.get("estimated_cost_usd")) if _cost_known(row) else 0.0
+
+
+def _estimated_cost_value(row: dict[str, Any]) -> float:
+    return _number(row.get("estimated_cost_usd")) if _cost_estimated(row) else 0.0
 
 
 def _quantile(values: list[float], probability: float) -> float | None:
@@ -197,8 +209,9 @@ def _token_mix(llm_rows: list[dict[str, Any]]) -> tuple[dict[str, Any], int]:
                 totals[field] += value
                 available[field] += 1
     total = len(llm_rows)
-    status = _status(total, usable_rows)
-    reason = None if status == "available" else "No normalized token usage is recorded in this window." if total == 0 or usable_rows == 0 else "Some LLM events lack normalized token usage."
+    field_coverage = {field: _pct(available[field], total) for field in fields}
+    status = _status(total, min(available.values(), default=0))
+    reason = None if status == "available" else "No normalized token usage is recorded in this window." if total == 0 or usable_rows == 0 else "Some displayed token fields are absent from one or more LLM events."
     return (
         _section(
             status,
@@ -208,6 +221,7 @@ def _token_mix(llm_rows: list[dict[str, Any]]) -> tuple[dict[str, Any], int]:
             reasoning_tokens=_number(totals["reasoning_tokens"]) if available["reasoning_tokens"] else None,
             cached_tokens=_number(totals["cached_tokens"]) if available["cached_tokens"] else None,
             event_count=total or None,
+            field_coverage_pct=field_coverage,
         ),
         usable_rows,
     )
@@ -218,8 +232,8 @@ def _pricing(runtime_rows: list[dict[str, Any]]) -> tuple[dict[str, Any], int]:
     priced = 0
     gaps: Counter[tuple[str, str, str]] = Counter()
     for row in runtime_rows:
-        value = _cost_value(row)
-        if value or _cost_known(row):
+        value = _number(row.get("estimated_cost_usd")) if _cost_priced(row) else 0.0
+        if _cost_priced(row):
             priced += 1
             if row.get("cost_status") == "known":
                 known += value
@@ -257,6 +271,9 @@ def _attribution(db: sqlite3.Connection, llm_rows: list[dict[str, Any]], tables:
         bucket["event_count"] += 1
         if _cost_known(row):
             bucket["known_cost_usd"] += _cost_value(row)
+        elif _cost_estimated(row):
+            bucket.setdefault("estimated_cost_usd", 0.0)
+            bucket["estimated_cost_usd"] += _estimated_cost_value(row)
         else:
             bucket["unknown_cost_event_count"] += 1
 
@@ -286,6 +303,8 @@ def _attribution(db: sqlite3.Connection, llm_rows: list[dict[str, Any]], tables:
     rows = []
     for bucket in buckets.values():
         bucket["known_cost_usd"] = _number(bucket["known_cost_usd"])
+        if "estimated_cost_usd" in bucket:
+            bucket["estimated_cost_usd"] = _number(bucket["estimated_cost_usd"])
         rows.append(bucket)
     rows.sort(key=lambda row: (str(row["axis"]), json.dumps(row, sort_keys=True, default=str)))
     total = len(llm_rows)
@@ -337,7 +356,12 @@ def _tools(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[str
         bucket["event_count"] += 1
         bucket["permitted_count" if call.get("permitted") else "denied_count"] += 1
         event = runtime_by_call.get("tool_" + str(call["id"]))
-        price = _cost_value(event) if event is not None and _cost_known(event) else _effective_tool_price(profiles, name, str(call.get("created_at") or ""))
+        if event is not None and _cost_known(event):
+            price = _cost_value(event)
+        elif call.get("permitted"):
+            price = _effective_tool_price(profiles, name, str(call.get("created_at") or ""))
+        else:
+            price = 0.0
         if price is not None:
             priced_calls += 1
             bucket["priced_event_count"] += 1
@@ -505,20 +529,21 @@ def _budgets(db: sqlite3.Connection, tables: set[str], end: datetime) -> tuple[d
             rows.append({**base, "status": "not_available", "reason": unavailable_reason, "known_spent_usd": None, "unknown_event_count": None, "headroom_usd": None, "forecast_status": "not_available", "forecast_reason": unavailable_reason, "forecast_usd": None, "forecast_headroom_usd": None})
             continue
         known = sum(_cost_value(row) for row in window_events)
-        unknown = sum(not _cost_known(row) for row in window_events)
+        estimated = sum(_estimated_cost_value(row) for row in window_events)
+        non_known = sum(not _cost_known(row) for row in window_events)
         elapsed = max((end - start).total_seconds(), 1)
         forecast_reason = None
         forecast = None
-        if unknown:
-            forecast_reason = "Unknown-price events prevent an honest forecast."
+        if non_known:
+            forecast_reason = "Estimated or unknown-price events prevent an honest forecast."
         elif not window_events:
             forecast_reason = "No priced events are recorded for this rolling window."
         else:
             forecast = known * duration.total_seconds() / elapsed
-        status = "available" if not unknown else "partial"
-        reason = None if not unknown else "Known spend is a lower bound because some events lack prices."
+        status = "available" if not non_known else "partial"
+        reason = None if not non_known else "Known spend excludes estimated and unknown-price events."
         calculable += 1
-        rows.append({**base, "status": status, "reason": reason, "known_spent_usd": _number(known), "unknown_event_count": unknown, "headroom_usd": _number(float(policy["usd_cap"]) - known) if not unknown else None, "forecast_status": "available" if forecast is not None else "not_available", "forecast_reason": forecast_reason, "forecast_usd": _number(forecast) if forecast is not None else None, "forecast_headroom_usd": _number(float(policy["usd_cap"]) - forecast) if forecast is not None else None})
+        rows.append({**base, "status": status, "reason": reason, "known_spent_usd": _number(known), "estimated_spent_usd": _number(estimated), "unknown_event_count": sum(not _cost_priced(row) for row in window_events), "headroom_usd": _number(float(policy["usd_cap"]) - known) if not non_known else None, "forecast_status": "available" if forecast is not None else "not_available", "forecast_reason": forecast_reason, "forecast_usd": _number(forecast) if forecast is not None else None, "forecast_headroom_usd": _number(float(policy["usd_cap"]) - forecast) if forecast is not None else None})
     status = "available" if calculable == len(policies) else "partial" if calculable else "not_available"
     reason = None if status == "available" else "Some budget scopes cannot be reconstructed from durable history." if calculable else "No budget scope can be reconstructed from durable history."
     return _section(status, reason, rows=rows), calculable, len(policies)
@@ -531,9 +556,19 @@ def _traced_intervals(db: sqlite3.Connection, tables: set[str], start: datetime,
         return [], {"status": "not_available", "reason": "Runtime sessions predate the tracing-state snapshot.", "session_count": 0, "traced_session_count": 0, "legacy_or_untraced_session_count": 0}
     intervals: list[tuple[datetime, datetime]] = []
     session_count = traced = legacy_or_untraced = 0
-    for row in _query_rows(db, "SELECT started_at,ended_at,economics_tracing_enabled FROM runtime_sessions", ()):
+    try:
+        from aletheia.agent_runtime.runtime_session import current_session_id
+        active_session_id = current_session_id()
+    except Exception:
+        active_session_id = None
+    for row in _query_rows(db, "SELECT session_id,started_at,ended_at,economics_tracing_enabled FROM runtime_sessions", ()):
         started_at = _iso(row.get("started_at"))
-        ended_at = _iso(row.get("ended_at")) or end
+        ended_at = _iso(row.get("ended_at"))
+        if ended_at is None:
+            if row.get("session_id") != active_session_id:
+                legacy_or_untraced += 1
+                continue
+            ended_at = end
         if started_at is None or ended_at <= start or started_at >= end:
             continue
         session_count += 1
@@ -591,7 +626,7 @@ def _trends(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[st
         days.append({"date": cursor.isoformat(), "event_count": total, "known_cost_usd": _number(sum(_cost_value(row) for row in entries)), "unknown_event_count": total - priced, "pricing_coverage_pct": _pct(priced, total), "full_window_day": full, "trace_coverage_pct": trace_coverage_pct, "zero_observation_status": zero_status, "zero_observation_reason": zero_reason, "anomaly_eligible": False, "cost_anomaly_z_score": None, "cost_anomaly": None})
         cursor += timedelta(days=1)
     full_days = [row for row in days if row["full_window_day"]]
-    baseline_days = [row for row in full_days if row["trace_coverage_pct"] == 100]
+    baseline_days = [row for row in full_days if row["trace_coverage_pct"] == 100 and row["pricing_coverage_pct"] == 100]
     baseline = None
     if len(baseline_days) >= _BASELINE_MIN_FULL_DAYS:
         values = [float(row["known_cost_usd"]) for row in baseline_days]
@@ -601,7 +636,7 @@ def _trends(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[st
         baseline = {"full_day_count": len(values), "mean_known_cost_usd": _number(mean), "stddev_known_cost_usd": _number(deviation), "anomaly_threshold_z": _ANOMALY_Z_THRESHOLD}
         if deviation > 0:
             for row in days:
-                if row["full_window_day"] and row["trace_coverage_pct"] == 100:
+                if row["full_window_day"] and row["trace_coverage_pct"] == 100 and row["pricing_coverage_pct"] == 100:
                     score = (float(row["known_cost_usd"]) - mean) / deviation
                     row["anomaly_eligible"] = True
                     row["cost_anomaly_z_score"] = round(score, 4)
@@ -633,13 +668,13 @@ def _trends(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[st
     return _section(status, reason, daily=days, baseline=baseline, trace_coverage=trace_coverage), len(baseline_days), len(full_days)
 
 
-def _lineage_row(db: sqlite3.Connection, artifact_type: str, table: str, stage: str, tables: set[str], window: tuple[str, str]) -> dict[str, Any]:
+def _lineage_row(db: sqlite3.Connection, artifact_type: str, table: str, stage: str, tables: set[str], window: tuple[str, str], target_key: str = "id") -> dict[str, Any]:
     if table not in tables:
         return {"stage": stage, "artifact_type": artifact_type, "status": "not_available", "reason": f"The {table} table is not available.", "referenced_count": 0, "factual_record_count": None, "missing_record_count": None}
     row = db.execute(
-        "SELECT COUNT(*) AS referenced_count, COUNT(target.id) AS factual_record_count "
+        f"SELECT COUNT(*) AS referenced_count, COUNT(target.{target_key}) AS factual_record_count "
         "FROM agent_run_artifacts artifact JOIN agent_runs run ON run.id=artifact.run_id "
-        f"LEFT JOIN {table} target ON target.id=artifact.artifact_id "
+        f"LEFT JOIN {table} target ON target.{target_key}=artifact.artifact_id "
         "WHERE artifact.artifact_type=? AND " + _window_sql("run.started_at"),
         (artifact_type, *window),
     ).fetchone()
@@ -730,10 +765,21 @@ def _research_yield(db: sqlite3.Connection, tables: set[str], window: tuple[str,
         window,
     )
     lineage = [
-        _lineage_row(db, "opportunity", "opportunities", "opportunity", tables, window),
-        _lineage_row(db, "filter_decision", "filter_decisions", "decision", tables, window),
-        _lineage_row(db, "pi_decision", "pi_decisions", "decision", tables, window),
-        _lineage_row(db, "serenity_evidence", "serenity_evidence", "serenity_evidence", tables, window),
+        _lineage_row(db, artifact_type, table, stage, tables, window, target_key)
+        for artifact_type, table, stage, target_key in (
+            ("opportunity", "opportunities", "opportunity", "id"),
+            ("filter_decision", "filter_decisions", "decision", "id"),
+            ("pi_decision", "pi_decisions", "decision", "id"),
+            ("serenity_evidence", "serenity_evidence", "serenity_evidence", "id"),
+            ("research_note", "knowledge_items", "research_note", "id"),
+            ("portfolio_snapshot", "portfolio_snapshots", "portfolio_snapshot", "id"),
+            ("post_trade_review", "knowledge_items", "post_trade_review", "id"),
+            ("lesson", "ps_lessons", "lesson", "lesson_id"),
+            ("dreaming_log", "knowledge_items", "dreaming_log", "id"),
+            ("daily_review", "knowledge_items", "daily_review", "id"),
+            ("policy_version", "ps_policy_versions", "policy_version", "policy_version_id"),
+            ("draft_skill", "ps_skills", "draft_skill", "skill_id"),
+        )
     ]
     lineage.extend(_decision_proposal_lineage(db, tables, window))
     referenced = sum(_count(row.get("referenced_count")) for row in lineage)

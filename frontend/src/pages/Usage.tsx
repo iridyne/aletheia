@@ -59,10 +59,7 @@ const fmtCount = (value: number | null | undefined) =>
 
 function fmtTokens(value: number | null | undefined): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return 'N/A'
-  const bytes = value * 4
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`
-  return `${bytes} B`
+  return `${value.toLocaleString()} tokens`
 }
 
 function formatKey(key: string) {
@@ -74,7 +71,14 @@ function formatValue(value: unknown): string {
   if (typeof value === 'number') return Number.isFinite(value) ? value.toLocaleString() : 'N/A'
   if (typeof value === 'boolean') return value ? 'yes' : 'no'
   if (typeof value === 'string') return value.trim() || 'unknown'
-  if (Array.isArray(value)) return value.length ? `${value.length} item(s)` : 'none'
+  if (Array.isArray(value)) {
+    if (!value.length) return 'none'
+    return value.map(item => (
+      typeof item === 'object' && item != null && 'error_type' in item && 'event_count' in item
+        ? `${String(item.error_type)}: ${String(item.event_count)}`
+        : typeof item === 'string' ? item : 'item'
+    )).join(', ')
+  }
   return 'unknown'
 }
 
@@ -284,6 +288,7 @@ export default function Usage() {
                 </ResponsiveContainer>
               ) : <p className="hint">N/A — no measured token mix in this window.</p>}
             </Card>
+            <InsightFacts title="Token field coverage" facts={insights.token_mix.field_coverage_pct} />
           </UsageSection>
 
           <UsageSection title={`Pricing (${windowLabel})`} section={insights.pricing}>
@@ -327,7 +332,7 @@ export default function Usage() {
             </div>
           </UsageSection>
 
-          <UsageSection title={`Budgets (${windowLabel})`} section={insights.budgets}>
+          <UsageSection title="Budgets (current policy windows)" section={insights.budgets}>
             <InsightTable title="Budget observations" rows={insights.budgets.rows} empty="N/A — no budget observations reported in this window." />
           </UsageSection>
 

@@ -555,6 +555,7 @@ export interface UsageInsightsResponse {
 		reasoning_tokens: number | null;
 		cached_tokens: number | null;
 		event_count: number | null;
+		field_coverage_pct: Record<string, number | null>;
 	};
 	pricing: UsageInsightsSection & {
 		known_cost_usd: number | null;
