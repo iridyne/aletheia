@@ -500,3 +500,43 @@ def test_paper_funding_cli_and_doctor_expose_guarded_reconciliation(
     assert check.severity == "blocker"
     assert "recoverable=1" in check.detail
     assert "ledger_mismatch=1" in check.detail
+
+
+def test_paper_funding_doctor_warns_when_clean_sample_is_truncated(monkeypatch):
+    from aletheia.diagnostics.doctor import Report, _probe_paper_funding_accounting
+    from aletheia.maintenance import paper_funding_reconciliation
+
+    summary = {
+        name: 0
+        for name in (
+            "funding_identity_mismatch",
+            "recoverable_null_pnl",
+            "terminal_now_recoverable",
+            "duplicate_settlement_numeric_mismatch",
+            "close_event_projection_mismatch",
+            "paper_cash_ledger_mismatch",
+            "outcome_projection_mismatch",
+            "missing_outcome_hooks",
+            "still_incomplete",
+        )
+    }
+    monkeypatch.setattr(
+        paper_funding_reconciliation,
+        "paper_funding_diagnostic_summary",
+        lambda **_: {
+            "accounting_version": "local-paper-funding-v2",
+            "summary": summary,
+            "scanned": 100,
+            "truncated": True,
+        },
+    )
+
+    report = Report()
+    _probe_paper_funding_accounting(report)
+    check = next(
+        item for item in report.checks if item.name == "accounting.paper_funding"
+    )
+
+    assert check.severity == "warn"
+    assert "truncated=true" in check.detail
+    assert "complete dry run" in check.fix_hint
