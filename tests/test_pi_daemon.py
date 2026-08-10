@@ -160,6 +160,56 @@ async def test_daemon_drains_reported_pending_backlog():
     assert eval_count == 3
 
 
+async def test_no_model_defer_backlog_does_not_wait_for_llm_cooldown():
+    """Durable no-model defers do not wait for the full LLM cooldown."""
+    remaining = [2, 1, 0]
+    eval_count = 0
+
+    async def fake_evaluate(_params):
+        nonlocal eval_count
+        value = remaining[min(eval_count, len(remaining) - 1)]
+        eval_count += 1
+        return {
+            "action": "evaluation_deferred",
+            "model_invoked": False,
+            "pending_queue_remaining": value,
+        }
+
+    with patch(
+        "aletheia.agent_shell.commands.evaluate_trading_opportunity",
+        new=fake_evaluate,
+    ), patch("aletheia.config.loader.load_config") as mock_cfg, patch.object(
+        pd, "_NO_MODEL_COOLDOWN_MAX_SEC", 0.01
+    ):
+        mock_cfg.return_value.runtime.paused = False
+        mock_cfg.return_value.agent.permission_mode = "Paper"
+
+        task = start_pi_daemon(
+            loop=asyncio.get_running_loop(),
+            debounce_sec=0.0,
+            cooldown_sec=1.0,
+            heartbeat_sec=999.0,
+        )
+        await asyncio.sleep(0.02)
+        notify_pi_daemon(source="no_model_defer_backlog_test")
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    assert eval_count == 3
+
+
+def test_no_model_defer_backlog_keeps_a_delay_when_cooldown_is_zero(monkeypatch):
+    monkeypatch.setattr(pd, "_NO_MODEL_COOLDOWN_MAX_SEC", 0.25)
+
+    assert pd._evaluation_cooldown_delay(pd._EVALUATION_NO_MODEL_PENDING, 0.0) == 0.25
+    assert pd._evaluation_cooldown_delay(pd._EVALUATION_NO_MODEL_PENDING, 60.0) == 0.25
+    assert pd._evaluation_cooldown_delay(1, 0.0) == 0.0
+
+
 async def test_failed_evaluation_rearms_daemon_signal():
     """A failed evaluation must be retried without waiting for another producer."""
     results = [-1, 0]
