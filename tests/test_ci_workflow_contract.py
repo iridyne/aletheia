@@ -170,7 +170,9 @@ def test_python_regression_excludes_nightly_simulation_and_isolates_state() -> N
     assert "--ignore=tests/simulation" in commands
     assert "--ignore=tests/test_auto_resume.py" in commands
     assert "--ignore=tests/test_operator_cli.py" in commands
+    assert "--ignore=tests/test_pause_ownership.py" in commands
     assert "tests/test_auto_resume.py tests/test_operator_cli.py" in commands
+    assert "tests/test_pause_ownership.py" in commands
     assert "-n 2 --dist loadfile" in commands
     assert "--dist loadfile" in commands
     assert "ALETHEIA_DATA_DIR=$RUNNER_TEMP" in commands
