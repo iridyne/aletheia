@@ -165,6 +165,54 @@ async def test_lesson_extraction_persists_schema_valid_lesson(
     assert json.loads(row["evidence_json"])["supporting_factor_keys"] == []
 
 
+async def test_lesson_extraction_links_each_lesson_to_its_supporting_case(
+    tmp_path, monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from pathlib import Path
+
+    from aletheia.agents import dreaming_agent
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc).isoformat()
+    db = get_db()
+    for case_id, factor in (("case-1", "momentum:BTC/USDT:long"),
+                            ("case-2", "volatility:ETH/USDT:short")):
+        path = Path(tmp_path) / f"{case_id}.md"
+        path.write_text(f"---\nfactor_key: {factor}\n---\n", encoding="utf-8")
+        db.execute(
+            "INSERT INTO knowledge_items "
+            "(id,item_type,title,status,confidence,file_path,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (case_id, "trade_case_study", case_id, "active", "high_confidence",
+             str(path), now, now),
+        )
+    db.commit()
+
+    async def _structured_success(*_args, **_kwargs):
+        return {"lessons": [
+            {"summary": "Momentum lesson", "supporting_factor_keys": ["momentum:BTC/USDT:long"]},
+            {"summary": "Volatility lesson", "supporting_factor_keys": ["volatility:ETH/USDT:short"]},
+        ]}, None
+
+    monkeypatch.setattr(dreaming_agent, "llm_structured", _structured_success)
+    outputs: list[str] = []
+    errors: list[str] = []
+    await dreaming_agent._extract_lessons(None, outputs, errors)
+
+    rows = db.execute(
+        "SELECT summary,source_id,evidence_json FROM ps_lessons ORDER BY summary"
+    ).fetchall()
+    assert errors == []
+    assert [(row["summary"], row["source_id"]) for row in rows] == [
+        ("Momentum lesson", "case-1"),
+        ("Volatility lesson", "case-2"),
+    ]
+    assert [json.loads(row["evidence_json"])["supporting_source_ids"] for row in rows] == [
+        ["case-1"], ["case-2"],
+    ]
+
+
 async def test_dreaming_review_includes_learning_ledger(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _mock_llm_unavailable(monkeypatch)

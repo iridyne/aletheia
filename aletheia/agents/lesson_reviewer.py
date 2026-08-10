@@ -361,15 +361,24 @@ async def run_lesson_reviewer(
     if all_to_apply:
         try:
             policy_store = PolicyStore()
-            pv = policy_store.create_version(
-                policy_type="lesson_policy",
-                policy={
-                    "accepted_lesson_ids": all_to_apply,
-                    "reviewed_at": datetime.now(timezone.utc).isoformat(),
-                    "basis": "settled outcomes, last 30d, 24h horizon",
-                },
-                created_by="lesson_reviewer",
-            )
+            pending_ids = set(all_to_apply)
+            pv = next((
+                version for version in policy_store.list_versions("lesson_policy")
+                if version.status == "active"
+                and pending_ids.issubset(set(
+                    json.loads(version.policy_json).get("accepted_lesson_ids") or []
+                ))
+            ), None)
+            if pv is None:
+                pv = policy_store.create_version(
+                    policy_type="lesson_policy",
+                    policy={
+                        "accepted_lesson_ids": all_to_apply,
+                        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+                        "basis": "settled outcomes, last 30d, 24h horizon",
+                    },
+                    created_by="lesson_reviewer",
+                )
             outputs.append(f"policy_version:{pv.policy_version_id}:{len(all_to_apply)}_applied")
             log_tool(run_id, "apply_lessons_to_policy", "observe", True,
                      output=f"{pv.policy_version_id}:{len(all_to_apply)}")
