@@ -42,11 +42,10 @@ class _RetryWakeState:
     attempt: int
     not_before: float
 
-
 # Module-level state — set at start_pi_daemon(), cleared at stop_pi_daemon().
 _daemon_task: asyncio.Task | None = None
-_signal_event: asyncio.Event | None = None  # created inside the daemon loop
-_eval_lock: asyncio.Lock | None = None  # prevents self-overlap
+_signal_event: asyncio.Event | None = None    # created inside the daemon loop
+_eval_lock: asyncio.Lock | None = None        # prevents self-overlap
 _uvicorn_loop: asyncio.AbstractEventLoop | None = None  # captured at startup
 # Wake-event pipeline (exit-intent plan M1.5). Events carry a position_id/kind/
 # priority payload and flow through per-position coalescing + a token-bucket rate
@@ -58,7 +57,7 @@ _retry_wake_batches: dict[str, _RetryWakeState] = {}
 _generic_wake_pending: bool = False
 # Runtime tracking: updated by start/stop, exposed via daemon_status().
 _task_generation: int = 0
-_started_at: float | None = None  # monotonic timestamp of last start
+_started_at: float | None = None   # monotonic timestamp of last start
 _active_params: dict | None = None  # debounce/cooldown/heartbeat in effect
 _last_error_summary: str | None = None  # bounded, non-secret operator diagnostic
 
@@ -74,14 +73,17 @@ _EVALUATION_NO_MODEL_PENDING = -2
 
 def _evaluation_cooldown_delay(remaining: int, configured_sec: float) -> float:
     if remaining == _EVALUATION_NO_MODEL_PENDING:
-        return min(configured_sec, _NO_MODEL_COOLDOWN_MAX_SEC) if configured_sec > 0 else _NO_MODEL_COOLDOWN_MAX_SEC
+        return (
+            min(configured_sec, _NO_MODEL_COOLDOWN_MAX_SEC)
+            if configured_sec > 0
+            else _NO_MODEL_COOLDOWN_MAX_SEC
+        )
     return max(configured_sec, 0.0)
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-
 
 def notify_pi_daemon(source: str = "unknown", event: WakeEvent | None = None) -> bool:
     """Signal the daemon to wake up and evaluate.
@@ -155,25 +157,16 @@ def start_pi_daemon(
     }
     _daemon_task = loop.create_task(
         _pi_daemon_loop(
-            debounce_sec,
-            cooldown_sec,
-            heartbeat_sec,
-            coalesce_window_sec,
-            wake_capacity,
-            wake_refill_per_hour,
+            debounce_sec, cooldown_sec, heartbeat_sec,
+            coalesce_window_sec, wake_capacity, wake_refill_per_hour,
         ),
         name="pi_daemon",
     )
     logger.info(
         "pi_daemon: started (gen=%d, debounce=%.0fs, cooldown=%.0fs, heartbeat=%.0fs, "
         "coalesce=%.1fs, wake_bucket=%.0f/%.0fh)",
-        _task_generation,
-        debounce_sec,
-        cooldown_sec,
-        heartbeat_sec,
-        coalesce_window_sec,
-        wake_capacity,
-        wake_refill_per_hour,
+        _task_generation, debounce_sec, cooldown_sec, heartbeat_sec,
+        coalesce_window_sec, wake_capacity, wake_refill_per_hour,
     )
     return _daemon_task
 
@@ -226,14 +219,12 @@ async def reconfigure_pi_daemon(
     # Gates must pass before starting or restarting.
     try:
         from aletheia.config.loader import load_config
-
         cfg = load_config()
     except Exception as exc:
         return {"configured": True, "running": currently_running, "blocker": f"config_load_error:{exc}"}
 
     try:
         from aletheia.agent_runtime.startup_behavior_gate import gate_allows_startup
-
         if not gate_allows_startup(cfg):
             logger.info("pi_daemon: enable blocked by startup_behavior_gate")
             return {"configured": True, "running": False, "blocker": "startup_behavior_gate"}
@@ -283,7 +274,6 @@ async def reconfigure_pi_daemon(
 # ---------------------------------------------------------------------------
 # Internal loop
 # ---------------------------------------------------------------------------
-
 
 async def _pi_daemon_loop(
     debounce_sec: float,
@@ -336,7 +326,9 @@ async def _pi_daemon_loop(
                 key=lambda item: item[0],
             )
             try:
-                await asyncio.wait_for(asyncio.shield(_signal_event.wait()), timeout=wait_timeout)
+                await asyncio.wait_for(
+                    asyncio.shield(_signal_event.wait()), timeout=wait_timeout
+                )
                 triggered_by = "signal"
             except asyncio.TimeoutError:
                 triggered_by = timeout_trigger
@@ -349,10 +341,11 @@ async def _pi_daemon_loop(
             _signal_event.clear()
 
         # Check runtime guards before acquiring lock
-        defer_guard_backoff = min(max(heartbeat_sec, 0.05), _DEFER_GUARD_BACKOFF_MAX_SEC)
+        defer_guard_backoff = min(
+            max(heartbeat_sec, 0.05), _DEFER_GUARD_BACKOFF_MAX_SEC
+        )
         try:
             from aletheia.config.loader import load_config
-
             cfg = load_config()
             if cfg.runtime.paused:
                 logger.debug("pi_daemon: skipped (runtime.paused=True)")
@@ -398,7 +391,11 @@ async def _pi_daemon_loop(
         # Evaluate on: a legacy generic wake, a heartbeat, or at least one position
         # whose events passed the rate limit. Purely rate-limited/coalescing events
         # (no ready batch) do NOT wake the LLM this cycle.
-        if not (generic or triggered_by in {"heartbeat", "defer_deadline"} or wake_batches):
+        if not (
+            generic
+            or triggered_by in {"heartbeat", "defer_deadline"}
+            or wake_batches
+        ):
             continue
 
         wake_context = _build_wake_context(triggered_by, wake_batches)
@@ -409,17 +406,22 @@ async def _pi_daemon_loop(
         # period remain set, and a reported queue backlog schedules the next item
         # instead of silently discarding work.
         cooldown_delay = _evaluation_cooldown_delay(
-            pending_queue_remaining,
-            cooldown_sec,
+            pending_queue_remaining, cooldown_sec,
         )
         if cooldown_delay > 0:
             await asyncio.sleep(cooldown_delay)
-        if pending_queue_remaining == _EVALUATION_RETRY_PENDING and not _retry_wake_batches:
+        if (
+            pending_queue_remaining == _EVALUATION_RETRY_PENDING
+            and not _retry_wake_batches
+        ):
             # Generic entry-evaluation failures have no exact portfolio batch to
             # schedule, so preserve their existing cooldown-bounded retry path.
             _generic_wake_pending = True
             _signal_event.set()
-        elif pending_queue_remaining != _EVALUATION_RETRY_PENDING and pending_queue_remaining != 0:
+        elif (
+            pending_queue_remaining != _EVALUATION_RETRY_PENDING
+            and pending_queue_remaining != 0
+        ):
             _generic_wake_pending = True
             _signal_event.set()
 
@@ -468,7 +470,10 @@ def _build_wake_context(triggered_by: str, batches: list) -> dict:
     """Assemble the context handed to one evaluation from the coalesced batches."""
     ctx: dict = {"trigger": triggered_by}
     if batches:
-        ctx["wake_batches"] = [batch if isinstance(batch, dict) else batch.to_context() for batch in batches]
+        ctx["wake_batches"] = [
+            batch if isinstance(batch, dict) else batch.to_context()
+            for batch in batches
+        ]
     return ctx
 
 
@@ -476,9 +481,11 @@ def _wake_batch_key(batch: dict) -> str | None:
     position_id = str(batch.get("position_id") or "").strip()
     if not position_id:
         return None
-    kinds = sorted(
-        {str(event.get("kind") or "unknown") for event in (batch.get("events") or []) if isinstance(event, dict)}
-    )
+    kinds = sorted({
+        str(event.get("kind") or "unknown")
+        for event in (batch.get("events") or [])
+        if isinstance(event, dict)
+    })
     return f"{position_id}|{','.join(kinds) or 'unknown'}"
 
 
@@ -567,8 +574,7 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
 
         logger.info(
             "pi_daemon: evaluating (trigger=%s, positions=%d)",
-            triggered_by,
-            len((wake_context or {}).get("wake_batches", [])),
+            triggered_by, len((wake_context or {}).get("wake_batches", [])),
         )
         evaluation_params = dict(wake_context or {})
         evaluation_params["_trigger"] = triggered_by
@@ -579,7 +585,9 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
             trigger=triggered_by,
         ):
             evaluator = (
-                review_portfolio_state if evaluation_params.get("wake_batches") else evaluate_trading_opportunity
+                review_portfolio_state
+                if evaluation_params.get("wake_batches")
+                else evaluate_trading_opportunity
             )
             result = await asyncio.wait_for(evaluator(evaluation_params), timeout=300.0)
         action = result.get("action", "unknown") if isinstance(result, dict) else "unknown"
@@ -588,7 +596,9 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
             remaining = 1 if _has_pending_signal_work() else 0
         logger.info("pi_daemon: evaluation done (trigger=%s, action=%s)", triggered_by, action)
         is_portfolio_review = bool(evaluation_params.get("wake_batches"))
-        review_completed = result.get("review_completed") if isinstance(result, dict) else None
+        review_completed = (
+            result.get("review_completed") if isinstance(result, dict) else None
+        )
         if is_portfolio_review and review_completed is not True:
             from aletheia.agent_runtime.scheduler import _record_job_failure
 
@@ -598,7 +608,9 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
                 if action == "review_unavailable"
                 else "operator_position_review_incomplete"
             )
-            _record_job_failure("pi_trading_decision", failure_reason)
+            _record_job_failure(
+                "pi_trading_decision", failure_reason
+            )
             error_code = (
                 str(result.get("review_error_code") or "review_incomplete")[:80]
                 if isinstance(result, dict)
@@ -606,7 +618,8 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
             )
             _last_error_summary = f"portfolio_review:{error_code}"
             logger.warning(
-                "pi_daemon: portfolio review incomplete (action=%s, restored=%d, next_retry_sec=%.1f)",
+                "pi_daemon: portfolio review incomplete "
+                "(action=%s, restored=%d, next_retry_sec=%.1f)",
                 action,
                 restored,
                 _next_retry_delay(asyncio.get_running_loop().time()) or 0.0,
@@ -626,7 +639,6 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
         return max(int(remaining or 0), 0)
     except asyncio.TimeoutError:
         from aletheia.agent_runtime.scheduler import _record_job_failure
-
         logger.warning("pi_daemon: evaluate_trading_opportunity timed out after 300s")
         _last_error_summary = "evaluation_timeout"
         _record_job_failure("pi_trading_decision", "daemon_evaluation_timeout")
@@ -636,7 +648,6 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
         raise  # propagate shutdown
     except Exception as exc:
         from aletheia.agent_runtime.scheduler import _record_job_failure
-
         logger.warning("pi_daemon: evaluation failed: %s", exc)
         _last_error_summary = f"{type(exc).__name__}"[:120]
         _record_job_failure("pi_trading_decision", "daemon_evaluation_failed")
@@ -646,7 +657,6 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
         # Release thread-local SQLite connection to prevent WAL lock across cooldown
         try:
             from aletheia.storage.sqlite import rollback_if_in_transaction, close_db
-
             rollback_if_in_transaction()
             close_db()
         except Exception:
