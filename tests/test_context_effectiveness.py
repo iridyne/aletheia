@@ -29,6 +29,14 @@ _TECHNICAL_FIXTURE = (
 )
 
 
+def test_technical_fixture_contains_only_production_rendered_block() -> None:
+    fixture = json.loads(_TECHNICAL_FIXTURE.read_text(encoding="utf-8"))
+    technical = fixture["technical_context"]
+
+    assert technical.endswith("\n")
+    assert "deterministic derived facts" not in technical
+
+
 class _PairProvider(ModelProvider):
     name = "fixture-provider"
     model = "fixed-fixture-model"
@@ -51,6 +59,18 @@ class _PairProvider(ModelProvider):
             usage={"input_tokens": 100, "output_tokens": 40},
             raw={"usage": {"input_tokens": 100, "output_tokens": 40}},
         )
+
+
+class _CapturingPairProvider(_PairProvider):
+    def __init__(self):
+        super().__init__()
+        self.requests: dict[str, list[str]] = {}
+
+    async def complete(self, request):
+        caller = request.inference.caller.caller_id
+        rendered = "\n".join(str(item.get("content") or "") for item in request.messages)
+        self.requests.setdefault(caller, []).append(rendered)
+        return await super().complete(request)
 
 
 async def _direct_complete(request, *, provider=None, provider_name=None):
@@ -207,7 +227,7 @@ async def test_technical_context_pair_reuses_harness_and_stays_content_free(
 
     db = get_db()
     calls = db.execute(
-        "SELECT caller,metadata_json FROM llm_inference_calls WHERE "
+        "SELECT caller,context_adapter_id,metadata_json FROM llm_inference_calls WHERE "
         "json_extract(metadata_json,'$.evaluation_pair_id')=?",
         (report["evaluation_pair_id"],),
     ).fetchall()
@@ -215,10 +235,15 @@ async def test_technical_context_pair_reuses_harness_and_stays_content_free(
         "evaluation.technical_context.control",
         "evaluation.technical_context.treatment",
     }
+    adapter_by_caller = {row["caller"]: row["context_adapter_id"] for row in calls}
+    assert adapter_by_caller == {
+        "evaluation.technical_context.control": "none",
+        "evaluation.technical_context.treatment": "technical-context-v1",
+    }
     artifacts = db.execute(
         "SELECT evaluation_arm,kind,stable_id,rendered_chars "
         "FROM llm_context_artifacts WHERE evaluation_pair_id=? "
-        "AND stable_id LIKE '%:technical'",
+        "AND stable_id LIKE 'technical-context-v1:fixture:%'",
         (report["evaluation_pair_id"],),
     ).fetchall()
     assert {row["evaluation_arm"] for row in artifacts} == {"control", "treatment"}
@@ -281,3 +306,90 @@ async def test_technical_context_pair_reuses_harness_and_stays_content_free(
         "control_missing_attempt_telemetry",
         "treatment_missing_attempt_telemetry",
     }
+
+
+@pytest.mark.asyncio
+async def test_context_ablation_omits_only_named_modality(tmp_path, monkeypatch):
+    from aletheia.agents import helpers
+    from aletheia.economics import context_effectiveness as effectiveness
+
+    fixture_path = tmp_path / "ablation.json"
+    fixture_path.write_text(
+        json.dumps(
+            {
+                "fixture_id": "context-ablation-news-v1",
+                "symbol": "BTC/USDT",
+                "market_context": "TECHNICAL_BLOCK\nLEARNING_BLOCK",
+                "modality_context": "NEWS_BLOCK",
+            }
+        ),
+        encoding="utf-8",
+    )
+    provider = _CapturingPairProvider()
+    monkeypatch.setattr(
+        effectiveness,
+        "_provider_preflight",
+        lambda _name: ("fixture-provider", None),
+    )
+    with (
+        patch.object(helpers, "get_provider", lambda _name: provider),
+        patch.object(helpers, "complete_with_fallback", _direct_complete),
+    ):
+        report = await effectiveness.run_context_ablation_pair(
+            fixture_path=fixture_path,
+            modality_id="news",
+            review_output=tmp_path / "blind-ablation.json",
+        )
+
+    assert report["status"] == "awaiting_owner_review"
+    assert report["modality_id"] == "news"
+    control = next(
+        item
+        for item in provider.requests["evaluation.context_ablation.control"]
+        if "TECHNICAL_BLOCK" in item
+    )
+    treatment = next(
+        item
+        for item in provider.requests["evaluation.context_ablation.treatment"]
+        if "TECHNICAL_BLOCK" in item
+    )
+    assert "NEWS_BLOCK" not in control
+    assert "NEWS_BLOCK" in treatment
+
+    rows = get_db().execute(
+        "SELECT evaluation_arm,rendered_chars FROM llm_context_artifacts "
+        "WHERE evaluation_pair_id=? AND stable_id LIKE '%:news'",
+        (report["evaluation_pair_id"],),
+    ).fetchall()
+    assert {row["evaluation_arm"]: row["rendered_chars"] for row in rows} == {
+        "control": 0,
+        "treatment": len("NEWS_BLOCK"),
+    }
+
+    scores_path = tmp_path / "ablation-scores.json"
+    scores = {
+        report["metrics"]["arms"]["control"]["blind_label"]: {
+            "quality_score": 3,
+            "grounded_use": "not_applicable",
+            "context_harm": False,
+        },
+        report["metrics"]["arms"]["treatment"]["blind_label"]: {
+            "quality_score": 4,
+            "grounded_use": "yes",
+            "context_harm": False,
+        },
+    }
+    scores_path.write_text(
+        json.dumps(
+            {
+                "rubric_version": "context-ablation-owner-v1",
+                "scores": scores,
+            }
+        ),
+        encoding="utf-8",
+    )
+    review = effectiveness.record_context_ablation_review(
+        pair_id=report["evaluation_pair_id"], scores_path=scores_path
+    )
+    assert review["verdict"] == "treatment_better"
+    assert review["modality_id"] == "news"

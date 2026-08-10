@@ -173,6 +173,12 @@ class TradingDecision:
     # P1 (2026-06-28, AI Berkshire belief decomposition): the critical assumptions
     # this decision depends on. At most 3 items, kept concise. Empty = not provided.
     key_assumptions: list[str] = field(default_factory=list)
+    observed_facts: list[dict] = field(default_factory=list)
+    interpretations: list[str] = field(default_factory=list)
+    invalidation_conditions: list[str] = field(default_factory=list)
+    uncertainty_reason: str = ""
+    evidence_manifest: dict = field(default_factory=dict)
+    trade_motivation: dict = field(default_factory=dict)
     # Append-only observation facts for the exact gates evaluated in this call.
     # Persisted only after the authoritative PiDecision row is written.
     filter_trace: list[dict] = field(default_factory=list)
@@ -259,6 +265,20 @@ _DECISION_SCHEMA = {
         "adverse_evidence": {"type": "array", "items": {"type": "string"}},
         # P1: structured assumption list — at most 3, kept concise
         "key_assumptions": {"type": "array", "items": {"type": "string"}},
+        "observed_facts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "fact": {"type": "string"},
+                    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["fact", "evidence_refs"],
+            },
+        },
+        "interpretations": {"type": "array", "items": {"type": "string"}},
+        "invalidation_conditions": {"type": "array", "items": {"type": "string"}},
+        "uncertainty_reason": {"type": "string"},
     },
     "required": ["action", "conviction", "reasoning", "bear_case"],
     # The lightweight structured-output validator supports allOf/oneOf/const.
@@ -1480,6 +1500,12 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         # silently changed without breaking the Trading-as-Git chain.
         "entry_parameters": entry_parameters,
     }
+    from aletheia.trading.trade_motivation import build_trade_motivation
+
+    decision.trade_motivation = build_trade_motivation(
+        decision, decision.evidence_manifest
+    )
+    decision_meta["trade_motivation"] = decision.trade_motivation
     # Cap ONLY the human thesis; append the full JSON AFTER capping so the JSON
     # is always whole. Do NOT re-truncate the combined string (the old `[:500]`
     # bug sliced the JSON into unparseable garbage — see _MAX_RATIONALE_TEXT).
@@ -2603,7 +2629,10 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "reasoning, bear_case (required: strongest concrete reason this decision can fail), "
         "risk_factors, supporting_signals, opposing_signals, "
         "skip_kind, adverse_reason_codes, adverse_evidence, "
-        "key_assumptions (array of ≤3 short strings: critical premises this decision rests on).",
+        "key_assumptions (array of ≤3 short strings: critical premises this decision rests on), "
+        "observed_facts (fact plus evidence_refs copied from the supplied context), "
+        "interpretations, invalidation_conditions, and uncertainty_reason. "
+        "Use empty arrays or unavailable when facts or refs are absent; never invent them.",
         "",
         "For every trade action, stop_price and take_profit are mandatory finite positive "
         "absolute prices authored from the exact candidate facts above. For a long use "
@@ -2893,6 +2922,10 @@ def _parse_decision(raw: dict) -> TradingDecision:
         adverse_reason_codes=adverse_reason_codes,
         adverse_evidence=adverse_evidence,
         key_assumptions=key_assumptions,
+        observed_facts=raw.get("observed_facts", []),
+        interpretations=raw.get("interpretations", []),
+        invalidation_conditions=raw.get("invalidation_conditions", []),
+        uncertainty_reason=str(raw.get("uncertainty_reason") or "")[:600],
         parameter_rationale=parameter_rationale,
         parameter_rationale_required=True,
     )

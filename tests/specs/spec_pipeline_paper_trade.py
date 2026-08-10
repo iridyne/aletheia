@@ -970,6 +970,69 @@ def test_signal_batch_plan_priority_replacement_evicts_lower_score_occupant():
     assert plan.decisions["opp-weak"] == ("signal_queue_evicted", "evicted")
 
 
+def test_priority_replacement_persists_eviction_without_terminalizing_source(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.agents.paper_trader import run_paper_trader
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+
+    init_tool_registry()
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.pi_daemon.notify_pi_daemon",
+        lambda source=None: None,
+        raising=False,
+    )
+    queued_ids = []
+    for index in range(5):
+        symbol = f"LOW{index}/USDT"
+        opportunity_id = _insert_opportunity(
+            conn, symbol=symbol, confidence_score=50, status="queued"
+        )
+        queued_ids.append(opportunity_id)
+        insert_pi_decision(
+            PiDecision(
+                symbol=symbol,
+                direction="long",
+                market_type="spot",
+                action="signal_pending",
+                conviction=1,
+                opportunity_id=opportunity_id,
+            )
+        )
+    high_id = _insert_opportunity(
+        conn, symbol="BTC/USDT", confidence_score=90
+    )
+    _insert_market_snapshot(conn, "BTC/USDT", price=60_000.0)
+    conn.commit()
+
+    import asyncio
+
+    result = asyncio.run(run_paper_trader(permission_mode="Paper"))
+
+    evictions = conn.execute(
+        "SELECT opportunity_id FROM pi_decisions "
+        "WHERE action='signal_queue_evicted' ORDER BY created_at"
+    ).fetchall()
+    assert len(evictions) == 1, result
+    evicted_id = evictions[0]["opportunity_id"]
+    assert evicted_id in queued_ids
+    assert conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (evicted_id,)
+    ).fetchone()[0] == "open"
+    assert not conn.execute(
+        "SELECT 1 FROM opportunities WHERE id IN (?,?,?,?,?) AND status='reviewed'",
+        queued_ids,
+    ).fetchone()
+    assert conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (high_id,)
+    ).fetchone()[0] == "queued"
+    assert f"evicted_low_priority:{evicted_id}" in result["outputs"]
+
+
 @spec_claim(
     SpecClaim(
         "PL-PT-22",

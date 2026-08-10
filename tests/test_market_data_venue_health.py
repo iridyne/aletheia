@@ -4,6 +4,7 @@ from aletheia.data.ccxt_provider import CCXTProvider
 from aletheia.data.sources.binance_public import BinancePublicProvider
 from aletheia.data.sources.chain import FallbackChainProvider
 from aletheia.data.venue_health import (
+    get_provider_capability_snapshot,
     get_venue_health_snapshot,
     record_venue_failure,
     reset_venue_health,
@@ -30,6 +31,30 @@ def test_venue_refusal_opens_process_wide_cooldown(monkeypatch):
     assert snapshot[0]["venue"] == "binance"
     assert snapshot[0]["cooling_down"] is True
     assert events[0]["code"] == "market_data_venue_cooldown"
+
+
+def test_provider_capability_snapshot_keeps_policy_and_health_separate(monkeypatch):
+    import aletheia.data.venue_health as health
+
+    monkeypatch.setattr(health, "emit_infra_event", lambda **_kwargs: None)
+    record_venue_failure("binance", RuntimeError("429 rate limit"))
+
+    rows = get_provider_capability_snapshot(provider="ccxt", primary="binance", fallback="bybit")
+
+    assert rows[0]["venue"] == "binance"
+    assert rows[0]["configured"] is True
+    assert rows[0]["entitled"] is True
+    assert rows[0]["healthy"] is False
+    assert rows[0]["permitted"] is True
+    assert rows[1]["healthy"] is None
+
+
+def test_provider_capability_snapshot_keeps_same_venue_primary():
+    rows = get_provider_capability_snapshot(
+        provider="ccxt", primary="binance", fallback="binance"
+    )
+
+    assert [(row["venue"], row["role"]) for row in rows] == [("binance", "primary")]
 
 
 @pytest.mark.asyncio

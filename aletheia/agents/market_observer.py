@@ -298,29 +298,22 @@ def _is_perp_structure_fresh(row: dict | None) -> bool:
     )
 
 
-# ROUND 2 SIGNAL-INTRODUCTION DECISION (per plan §8.6.2, spec MS-S15):
-# Round 2 introduced new enriched_context signals — LSR (long_short_ratio) via the
-# derivatives table's "| LSR |" column, F&G via the macro block's "Fear & Greed:" line,
-# and a "24h movers:" line from CoinGecko top movers. _SYSTEM_PROMPT BELOW IS DELIBERATELY
-# NOT UPDATED to brief the LLM on these field semantics. Injecting field-specific priors
-# (e.g. "LSR>1 means retail futures crowded long — typically a contra-signal") would be
-# the exact kind of intervention Round 1 was terminated for (hallucinated learning loop,
-# see [[aletheia-round1-terminated-fix-batch]]). The LLM reads the markdown table headers
-# and lines directly; the "Use this snapshot as your single source of truth" rule below
-# already constrains it. Re-evaluate this decision after one Round 2 experiment window.
+# ROUND 2 decision: keep LSR/F&G field-specific priors out of _SYSTEM_PROMPT.
+# The static prompt names the technical-context-v1 categories, while numeric
+# definitions remain in the versioned renderer and Risk/Execution retain their
+# independent authority.
 _SYSTEM_PROMPT = """\
 You are a crypto market observer for Aletheia paper-trading.
 
-You will receive a verified market snapshot for ONE symbol containing:
-latest price, multi-timeframe technical indicators (SMA/RSI/ATR/Bollinger/
-momentum), recent close series. Use this snapshot as your single source of
-truth — do not invent numbers or claim levels not in the data.
+You receive one verified one-symbol snapshot. When technical-context-v1 is
+present, it uses closed bars: treat correlated fields as one evidence bundle,
+and unavailable TFs as having no usable facts. The snapshot is the source of
+truth — do not invent numbers or levels.
 
 Output a structured market read. Calibration:
 
 - direction_bias:
-  - "long" if multiple indicators across timeframes point up — e.g. price > SMA_50,
-    RSI 50-70 with positive slope, positive 4h momentum, leading relative-strength rank.
+  - "long" if distinct trend, momentum, location and participation facts align.
   - "short" mirror.
   - "neutral" only when signals genuinely conflict OR the data is too thin
     (mention which in rationale). Do not default to neutral; commit if you have evidence.
@@ -335,7 +328,7 @@ Output a structured market read. Calibration:
   if you have any actionable read at all.
 
 - key_observations: 2-4 short bullets, each citing a specific number from
-  the snapshot (e.g. "BTC 1h RSI 68 + price > SMA_20: short-term overbought").
+  the snapshot (e.g. "BTC 1h trend=up(+0.65%) with rsi=68.1").
   Empty list signals "no concrete evidence to point at".
 
 CRITICAL: Output ONLY the raw JSON object. No markdown fences, no explanation
@@ -343,12 +336,14 @@ before or after, no "Here is..." preamble. Just the JSON starting with { and
 ending with }.
 
 Indicator meanings (single source of truth — do not invent rules):
-- SMA20/SMA50: simple moving averages. Price > SMA50 = uptrend; < SMA50 = downtrend.
+- trend: up means close > EMA20 > EMA50; down is the mirror; the percentage is EMA20 vs EMA50.
 - RSI14: momentum 0-100. >70 overbought, <30 oversold, 50 = neutral. Can stay extreme in strong trends.
-- ATR14: average true range (price units). Bigger = wider swings; use for stops, not direction.
-- BB%: position in Bollinger band (0=lower, 1=upper). >1 or <0 = outside band.
-- Mom10: % change over last 10 bars. Positive = trending up.
-- Vol z: volume z-score vs 20 bars. >+1 = unusually high, <-1 = unusually low.
+- mom: 10-bar percentage change. Positive is upward momentum.
+- atr: ATR14 as a percentage of close; larger means wider swings, not direction.
+- bb: Bollinger percent-B / normalized band width percentage.
+- vwap: close minus rolling VWAP20 in ATR units.
+- donchian H/L: ATR distance below the 20-bar high / above the 20-bar low.
+- vol: volume z-score / ratio to its 20-bar mean; obv is normalized OBV.
 
 Not financial advice."""
 
@@ -547,17 +542,30 @@ def _news_rendered_source(row: dict) -> dict:
 
 def _record_observer_context_artifacts(
     *, run_id, symbol, context, learning_text, learning_manifest, rendered_sources,
+    technical_context,
 ) -> list[dict]:
     """Build prompt-free metadata; the helper links it to the exact LLM call."""
     news = rendered_sources.get("news") or []
+    technical = (technical_context or {}).get("artifacts") or []
     artifacts = [{
         "kind": "environment", "stable_id": f"market_context:{symbol}",
         "source": "market_observer", "selected_reason": "required_environment",
         "trust_class": "first_party_observed", "freshness_status": "unknown",
         "rendered_chars": max(
-            0, len(context) - sum(int(item.get("rendered_chars") or 0) for item in news),
+            0,
+            len(context)
+            - sum(int(item.get("rendered_chars") or 0) for item in news)
+            - sum(int(item.get("rendered_chars") or 0) for item in technical),
         ),
     }]
+    artifacts.extend({
+        "kind": "environment", "stable_id": item.get("stable_id"),
+        "source": item.get("source"),
+        "selected_reason": f"closed_bar_bundle:{item.get('quality_state', 'unknown')}",
+        "trust_class": "deterministic_derived_fact", "freshness_status": "unknown",
+        "observed_at": item.get("observed_at"),
+        "rendered_chars": item.get("rendered_chars"),
+    } for item in technical if item.get("stable_id"))
     artifacts.extend({
         "kind": "news", "stable_id": f"news_item:{item['id']}",
         "source": item.get("source"), "selected_reason": item.get("selection_reason"),
@@ -1426,6 +1434,12 @@ async def _analyze_symbol(
         learning_text=authorized_learning,
         learning_manifest=learning_manifest,
         rendered_sources=rendered_sources,
+        technical_context=ctx_debug.get("technical_context"),
+    )
+    technical_adapter = (
+        "technical-context-v1"
+        if (ctx_debug.get("technical_context") or {}).get("artifacts")
+        else "none"
     )
     record_step(
         run_id,
@@ -1457,6 +1471,7 @@ async def _analyze_symbol(
         max_tokens=2048,
         provider=get_provider_for_tier("deep"),
         caller="market_observer.market_read",
+        context_adapter=technical_adapter,
         context_artifacts=context_artifacts,
         context_symbol=symbol,
         deadline=llm_deadline,

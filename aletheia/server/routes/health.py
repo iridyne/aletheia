@@ -317,6 +317,26 @@ def status():
         logger.debug("status OHLCV cache snapshot failed: %s", e)
         ohlcv_cache = None
 
+    try:
+        from aletheia.data.venue_health import get_provider_capability_snapshot
+
+        market_data_providers = get_provider_capability_snapshot(
+            provider=cfg.market_data.provider,
+            primary=(cfg.market_data.ccxt_exchange if cfg.market_data.provider == "ccxt" else cfg.market_data.provider),
+            fallback=(cfg.market_data.ccxt_fallback if cfg.market_data.provider == "ccxt" else None),
+        )
+    except Exception as e:
+        logger.debug("status provider capability snapshot failed: %s", e)
+        market_data_providers = []
+
+    try:
+        from aletheia.server.app import lifecycle_task_snapshot
+
+        lifecycle_tasks = lifecycle_task_snapshot()
+    except Exception as e:
+        logger.debug("status lifecycle task snapshot failed: %s", e)
+        lifecycle_tasks = []
+
     return {
         "gateway_running": True,  # if we can respond, we are running
         "paused": cfg.runtime.paused,
@@ -338,6 +358,8 @@ def status():
         "scheduler_job_count": sched["job_count"],
         "scheduler_last_tick": sched.get("last_tick"),
         "ohlcv_cache": ohlcv_cache,
+        "market_data_providers": market_data_providers,
+        "lifecycle_tasks": lifecycle_tasks,
         "startup_failure_policy": startup_policy_snapshot(),
         "model_provider": cfg.models.default_provider,
         "external_connectivity": external_connectivity,

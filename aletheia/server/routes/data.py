@@ -2036,10 +2036,12 @@ def get_serenity_status():
         return {
             "id": r["id"],
             "status": r["status"],
+            "stage": r.get("stage"),
             "triggerType": r.get("trigger_type"),
             "mode": r.get("mode"),
             "startedAt": r.get("started_at"),
             "finishedAt": r.get("finished_at"),
+            "lastProgressAt": r.get("updated_at"),
             "errorType": r.get("error_type"),
             "errorMessage": r.get("error_message"),
             "artifactCounts": json.loads(r.get("artifact_counts") or "{}"),
@@ -2139,10 +2141,12 @@ def list_serenity_runs(
             {
                 "id": r["id"],
                 "status": r["status"],
+                "stage": r.get("stage"),
                 "triggerType": r.get("trigger_type"),
                 "mode": r.get("mode"),
                 "startedAt": r.get("started_at"),
                 "finishedAt": r.get("finished_at"),
+                "lastProgressAt": r.get("updated_at"),
                 "errorType": r.get("error_type"),
                 "artifactCounts": json.loads(r.get("artifact_counts") or "{}"),
                 "createdAt": r.get("created_at"),
@@ -2168,6 +2172,7 @@ def get_serenity_run_detail(run_id: str):
             "stage": run.get("stage"),
             "startedAt": run.get("started_at"),
             "finishedAt": run.get("finished_at"),
+            "lastProgressAt": run.get("updated_at"),
             "errorType": run.get("error_type"),
             "errorMessage": run.get("error_message"),
             "retryCount": run.get("retry_count", 0),
@@ -2230,15 +2235,30 @@ def cancel_serenity_run(run_id: str):
     run = repo.get_serenity_research_run(run_id)
     if not run:
         raise HTTPException(404, "Run not found")
+    if run["status"] in ("cancel_requested", "cancelled"):
+        return {"runId": run_id, "status": run["status"], "deduplicated": True}
     if run["status"] not in ("queued", "running"):
         raise HTTPException(400, "Only queued or running runs can be cancelled")
 
     now = datetime.now(timezone.utc).isoformat()
-    repo.update_serenity_research_run(run_id, status="cancelled", finished_at=now, updated_at=now)
-    repo.insert_serenity_run_event(
-        SerenityRunEvent(run_id=run_id, event_type="run.cancelled", message="Cancelled by user")
-    )
-    return {"runId": run_id, "status": "cancelled"}
+    status, changed = repo.request_serenity_research_run_cancel(run_id, now=now)
+    if status not in ("cancel_requested", "cancelled"):
+        raise HTTPException(409, "Run finished before cancellation could be requested")
+    if changed:
+        transitioned_run = repo.get_serenity_research_run(run_id) or run
+        repo.insert_serenity_run_event(
+            SerenityRunEvent(
+                run_id=run_id,
+                event_type=f"run.{status}",
+                stage=transitioned_run.get("stage"),
+                message=(
+                    "Cancelled before worker start"
+                    if status == "cancelled"
+                    else "Cancellation requested by user"
+                ),
+            )
+        )
+    return {"runId": run_id, "status": status, "deduplicated": not changed}
 
 
 @router.get("/serenity/profile")

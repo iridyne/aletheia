@@ -37,7 +37,7 @@ across structured repair retries and model fallback attempts.
 | Environment | permission mode, paper execution mode, live state, logical agent/run identities, and explicitly bound evaluation/opportunity/decision/proposal IDs when already known |
 | Request | requested provider, temperature, max tokens, fallback policy |
 | Output | output mode, schema identity/SHA-256, parse-valid and schema-valid outcomes; on terminal structured failure only, a fixed response-shape enum plus bounded schema error class |
-| Evaluation | bounded pair, arm, and fixture IDs when the call belongs to an offline evaluation |
+| Evaluation | bounded pair, arm, fixture, and optional modality IDs when the call belongs to an offline evaluation |
 
 Prompt text, response text, source bodies, credentials, and secrets are not
 stored in this envelope. Structured-failure diagnostics never store model
@@ -53,7 +53,10 @@ hashes expose an unversioned rendered change without retaining its content.
 
 The context adapter is independently identified. `none` preserves the caller
 system prompt byte-for-byte. `minimal-v1` is default-off and renders only its
-bounded truthful manifest. Text cannot grant a permission.
+bounded truthful manifest. `technical-context-v1` leaves the static system
+prompt unchanged, identifies the Market Observer's dynamic closed-bar block,
+and requires at least one linked technical artifact ID. Text cannot grant a
+permission.
 
 ## Tool control
 
@@ -91,10 +94,12 @@ A direct daemon evaluation also keeps `run_id` absent unless an actual `AgentRun
 is already bound; the evaluation ID must not be relabelled as an AgentRun foreign
 key.
 
-Selected News, Learning, and environment artifacts are recorded as content-free
-`ContextArtifact` rows linked to the exact logical call. Evaluation rows also
-carry pair, arm, and fixture identities. A zero-character or absent Learning
-artifact is not evidence that the model used Learning.
+Selected News, Learning, technical, and environment artifacts are recorded as
+content-free `ContextArtifact` rows linked to the exact logical call. Technical
+facts retain their bundle fingerprint and algorithm identity in the stable ID
+and source without storing the rendered body. Evaluation rows also carry pair,
+arm, and fixture identities. A zero-character or absent artifact is not evidence
+that the model used it.
 
 ## Output validation
 
@@ -124,7 +129,7 @@ that provider-side reasoning was disabled.
 | `llm_inference_calls` | one content-free row per logical call | harness audit, caller coverage, context-effectiveness evaluation |
 | `runtime_cost_events` (`event_type='llm'`) | one row per physical provider attempt | token/cost/reliability analysis |
 | `llm_context_artifacts` | selected context identities and rendered sizes | context audit and paired evaluation |
-| `llm_context_pair_reviews` | aggregate blinded owner scores only | Learning B evidence summary |
+| `llm_context_pair_reviews` | aggregate blinded owner scores only | paired context evidence summary |
 | `agent_tool_calls.inference_call_id` | task-local tool association | AgentRun/tool-cost audit |
 | `agent_shell_commands.inference_call_id` | exact operator-turn command origin | command audit |
 
@@ -176,6 +181,8 @@ the Contract spec.
 | `dreaming.lesson_extraction` | `dreaming.lesson_extraction` | `v1` | `structured` | `none` |
 | `dreaming.nightly_consolidation` | `dreaming.nightly_consolidation` | `v1` | `text` | `none` |
 | `equity_observer.market_read` | `equity_observer.market_read` | `v1` | `structured` | `none` |
+| `evaluation.context_ablation.control` | `market_observer.market_read` | `v1` | `structured` | `none` |
+| `evaluation.context_ablation.treatment` | `market_observer.market_read` | `v1` | `structured` | `none` |
 | `evaluation.learning_b.control` | `market_observer.market_read` | `v1` | `structured` | `none` |
 | `evaluation.learning_b.treatment` | `market_observer.market_read` | `v1` | `structured` | `none` |
 | `evaluation.technical_context.control` | `market_observer.market_read` | `v1` | `structured` | `none` |

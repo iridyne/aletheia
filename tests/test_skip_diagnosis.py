@@ -21,6 +21,7 @@ def _add_candidate(
     now: datetime,
     complete: bool = True,
     pending: bool = False,
+    evidence_manifest_json: str | None = None,
 ) -> None:
     from aletheia.storage.models import FilterCandidateOutcome, FilterDecision, PiDecision
     from aletheia.storage.repositories import (
@@ -31,7 +32,7 @@ def _add_candidate(
 
     opportunity_id = f"opp-{key}"
     if action == "rejected":
-        insert_pi_decision(PiDecision(
+        decision_kwargs = dict(
             id=key.removeprefix("pi_decision:"),
             action="skip",
             symbol="BTC/USDT",
@@ -40,7 +41,10 @@ def _add_candidate(
             opportunity_id=opportunity_id,
             signal_source="market_observer",
             created_at=now.isoformat(),
-        ))
+        )
+        if evidence_manifest_json is not None:
+            decision_kwargs["evidence_manifest_json"] = evidence_manifest_json
+        insert_pi_decision(PiDecision(**decision_kwargs))
     insert_filter_decision(FilterDecision(
         id=f"trace-{key}",
         dedup_key=f"dedup-{key}",
@@ -191,6 +195,41 @@ def test_missing_trace_or_four_horizon_seed_is_recording_incident(tmp_path, monk
     assert report.finding == "recording_incident"
     assert report.counts["candidate_skips"] == 1
     assert report.counts["missing_outcome_seed"] == 1
+
+
+def test_unreconstructable_validated_adverse_evidence_is_recording_incident(
+    tmp_path, monkeypatch,
+):
+    import json
+
+    _setup(tmp_path, monkeypatch)
+    from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
+
+    now = datetime.now(timezone.utc)
+    _add_candidate(
+        key="pi_decision:null-risk-reward-evidence",
+        action="rejected",
+        net=1.0,
+        now=now,
+        evidence_manifest_json=json.dumps({"operator_rationale": {
+            "validated_adverse_claims": [{
+                "reason_code": "invalid_risk_reward",
+                "fact_refs": [
+                    "technical.price", "decision.stop_price",
+                    "decision.take_profit",
+                ],
+            }],
+            "adverse_evidence": [
+                "invalid_risk_reward: technical.price=100.0, "
+                "decision.stop_price=null, decision.take_profit=null"
+            ],
+        }}),
+    )
+
+    report = diagnose_skip_halt(now=now)
+
+    assert report.finding == "recording_incident"
+    assert report.counts["unreconstructable_adverse_evidence"] == 1
 
 
 def test_complete_but_unsettled_skip_cohort_awaits_outcomes(tmp_path, monkeypatch):

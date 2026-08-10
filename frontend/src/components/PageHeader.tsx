@@ -1,6 +1,6 @@
 import { useId } from 'react'
 import { useLocation } from 'react-router-dom'
-import { NAV } from '../App'
+import { NAV } from '../routeManifest'
 
 /**
  * PageHeader — title + a one-line role descriptor stating what this surface is for in the

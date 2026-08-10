@@ -9,8 +9,10 @@ WORKFLOW_DIR = Path(__file__).resolve().parents[1] / ".github" / "workflows"
 WORKFLOW_PATH = WORKFLOW_DIR / "ci.yml"
 AUTO_MERGE_WORKFLOW_PATH = WORKFLOW_DIR / "auto-merge.yml"
 DELETE_MERGED_WORKFLOW_PATH = WORKFLOW_DIR / "delete-merged-branch.yml"
+RELEASE_WORKFLOW_PATH = WORKFLOW_DIR / "release-please.yml"
 PINNED_ACTION_SHA_LENGTH = 40
 GITHUB_SCRIPT_ACTION = "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
+SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
 
 
 def _workflow() -> dict:
@@ -31,6 +33,13 @@ def _delete_merged_workflow() -> dict:
     )
 
 
+def _release_workflow() -> dict:
+    return yaml.load(
+        RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+
 def _run_commands(job: dict) -> str:
     return "\n".join(
         str(step.get("run") or "")
@@ -44,22 +53,37 @@ def test_only_expected_workflows_are_active() -> None:
         "auto-merge.yml",
         "ci.yml",
         "delete-merged-branch.yml",
+        "release-please.yml",
     ]
 
 
-def test_ci_only_validates_pull_requests_and_merge_queue_entries() -> None:
+def test_ci_only_validates_pull_requests_merge_queue_and_explicit_release_runs() -> None:
     triggers = _workflow()["on"]
 
-    assert set(triggers) == {"pull_request", "merge_group"}
+    assert set(triggers) == {"pull_request", "merge_group", "workflow_dispatch"}
     assert triggers["pull_request"]["branches"] == ["master"]
 
 
-def test_ci_has_two_review_focused_jobs() -> None:
+def test_ci_has_two_review_jobs_and_verified_release_handoff() -> None:
     jobs = _workflow()["jobs"]
 
-    assert set(jobs) == {"review", "tests"}
+    assert set(jobs) == {"review", "tests", "release-candidate"}
     assert jobs["review"]["name"] == "Review checks"
     assert jobs["tests"]["name"] == "Python regression"
+    handoff = jobs["release-candidate"]
+    assert handoff["name"] == "Hand off verified release candidate"
+    assert handoff["needs"] == ["review", "tests"]
+    assert "event_name == 'workflow_dispatch'" in handoff["if"]
+    assert "release-please--branches--master" in handoff["if"]
+    assert handoff["permissions"] == {"contents": "write"}
+    assert handoff["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
+    assert len(handoff["steps"]) == 1
+    step = handoff["steps"][0]
+    assert step["uses"] == GITHUB_SCRIPT_ACTION
+    assert step["with"]["retries"] == "3"
+    assert "release_candidate_verified" in step["with"]["script"]
+    assert "head_branch" in step["with"]["script"]
+    assert "head_sha: context.sha" in step["with"]["script"]
 
 
 def test_ci_never_builds_or_distributes_release_artifacts() -> None:
@@ -72,37 +96,99 @@ def test_ci_never_builds_or_distributes_release_artifacts() -> None:
         "build_bundle",
         "build_packaged_runtime",
         "sign_update_feed",
-        "workflow_dispatch",
         "schedule:",
     )
 
     assert not [token for token in forbidden if token in source]
 
 
-def test_all_jobs_use_self_hosted_runners_and_read_only_permissions() -> None:
+def test_ci_jobs_use_self_hosted_runners_and_minimum_permissions() -> None:
     workflow = _workflow()
 
     assert workflow["permissions"] == {"contents": "read"}
-    for job in workflow["jobs"].values():
+    for job_name in ("review", "tests"):
+        job = workflow["jobs"][job_name]
         assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
         setup_uv = next(step for step in job["steps"] if str(step.get("uses", "")).startswith("astral-sh/setup-uv@"))
         assert setup_uv["with"]["enable-cache"] == "false"
+    setup_node = next(
+        step for step in workflow["jobs"]["review"]["steps"]
+        if step.get("uses") == SETUP_NODE_ACTION
+    )
+    assert setup_node["with"] == {"node-version": "22"}
 
 
 def test_third_party_actions_are_pinned_to_full_commit_shas() -> None:
     failures: list[str] = []
-    for job_name, job in _workflow()["jobs"].items():
-        for step in job.get("steps", []):
-            uses = step.get("uses") if isinstance(step, dict) else None
-            if not uses or uses.startswith("./"):
-                continue
-            reference = uses.rsplit("@", 1)[-1]
-            if len(reference) != PINNED_ACTION_SHA_LENGTH or not all(
-                character in "0123456789abcdef" for character in reference
-            ):
-                failures.append(f"{job_name}: {uses}")
+    for workflow_path in WORKFLOW_DIR.glob("*.yml"):
+        workflow = yaml.load(workflow_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        for job_name, job in workflow["jobs"].items():
+            for step in job.get("steps", []):
+                uses = step.get("uses") if isinstance(step, dict) else None
+                if not uses or uses.startswith("./"):
+                    continue
+                reference = uses.rsplit("@", 1)[-1]
+                if len(reference) != PINNED_ACTION_SHA_LENGTH or not all(
+                    character in "0123456789abcdef" for character in reference
+                ):
+                    failures.append(f"{workflow_path.name}/{job_name}: {uses}")
 
     assert not failures, "Actions must use full immutable commit SHAs:\n" + "\n".join(failures)
+
+
+def test_release_please_is_metadata_only_and_human_gated() -> None:
+    workflow = _release_workflow()
+    triggers = workflow["on"]
+
+    assert set(triggers) == {"repository_dispatch", "workflow_dispatch"}
+    assert triggers["repository_dispatch"]["types"] == ["release_please"]
+    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["concurrency"] == {
+        "group": "release-please-master",
+        "cancel-in-progress": "false",
+    }
+
+    assert set(workflow["jobs"]) == {"release"}
+    job = workflow["jobs"]["release"]
+    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
+    assert job["timeout-minutes"] == "10"
+    assert job["permissions"] == {
+        "actions": "write",
+        "contents": "write",
+        "issues": "write",
+        "pull-requests": "write",
+    }
+    assert len(job["steps"]) == 3
+    node, release, dispatch = job["steps"]
+    assert node["uses"] == SETUP_NODE_ACTION
+    assert node["with"] == {"node-version": "22"}
+    assert release["env"] == {"GITHUB_TOKEN": "${{ github.token }}"}
+    commands = release["run"]
+    assert "set -euo pipefail" in commands
+    assert "release-please@17.6.0" in commands
+    assert "release_please github-release" in commands
+    assert "release_please release-pr" in commands
+    assert '--token="$GITHUB_TOKEN"' in commands
+    assert '--repo-url="$GITHUB_REPOSITORY"' in commands
+    assert "--target-branch=master" in commands
+    assert "--config-file=release-please-config.json" in commands
+    assert "--manifest-file=.release-please-manifest.json" in commands
+    assert dispatch["uses"] == GITHUB_SCRIPT_ACTION
+    assert dispatch["with"]["retries"] == "3"
+    assert "pulls.list" in dispatch["with"]["script"]
+    assert "autorelease: pending" in dispatch["with"]["script"]
+    assert "issues.addLabels" in dispatch["with"]["script"]
+    assert "labels: ['do-not-auto-merge']" in dispatch["with"]["script"]
+    assert "createWorkflowDispatch" in dispatch["with"]["script"]
+    assert "workflow_id: 'ci.yml'" in dispatch["with"]["script"]
+    assert "ref: pullRequest.head.ref" in dispatch["with"]["script"]
+
+    source = RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8").lower()
+    assert "googleapis/release-please-action@" not in source
+    assert "upload-artifact" not in source
+    assert "deploy" not in source
+    assert "publish" not in source
+    assert "actions/checkout" not in source
 
 
 def test_secret_scanner_download_is_versioned_and_checksum_verified() -> None:
@@ -195,7 +281,11 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     workflow = _auto_merge_workflow()
     triggers = workflow["on"]
 
-    assert set(triggers) == {"pull_request_target", "repository_dispatch"}
+    assert set(triggers) == {
+        "pull_request_target",
+        "repository_dispatch",
+        "workflow_run",
+    }
     assert triggers["pull_request_target"]["branches"] == ["master"]
     assert triggers["pull_request_target"]["types"] == [
         "opened",
@@ -205,11 +295,25 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "synchronize",
         "labeled",
         "unlabeled",
+        "closed",
     ]
-    assert triggers["repository_dispatch"]["types"] == ["auto_merge_update"]
+    assert triggers["repository_dispatch"]["types"] == [
+        "auto_merge_update",
+        "release_candidate_verified",
+    ]
+    assert triggers["workflow_run"] == {
+        "workflows": ["Aletheia CI"],
+        "types": ["completed"],
+    }
     assert workflow["permissions"] == {"contents": "read"}
 
-    assert set(workflow["jobs"]) == {"schedule", "update"}
+    assert set(workflow["jobs"]) == {
+        "schedule",
+        "release-candidate",
+        "update",
+        "release",
+        "release-after-ci",
+    }
     schedule = workflow["jobs"]["schedule"]
     assert schedule["name"] == "Schedule auto-merge update"
     assert schedule["runs-on"] == [
@@ -219,6 +323,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "ubuntu-24.04",
     ]
     assert "event_name == 'pull_request_target'" in schedule["if"]
+    assert "action != 'closed'" in schedule["if"]
     assert "draft == false" in schedule["if"]
     assert schedule["permissions"] == {"contents": "write"}
     assert set(schedule["env"]) == {"OPERATION", "PR_NUMBER", "EXPECTED_HEAD_SHA"}
@@ -234,6 +339,24 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "pull_request_number" in schedule_script
     assert "process.env.OPERATION" in schedule_script
 
+    release_candidate = workflow["jobs"]["release-candidate"]
+    assert release_candidate["permissions"] == {
+        "contents": "write",
+        "issues": "write",
+        "pull-requests": "write",
+    }
+    release_guard = release_candidate["if"]
+    assert "event.action == 'release_candidate_verified'" in release_guard
+    assert "release-please--branches--master" in release_guard
+    candidate_script = release_candidate["steps"][0]["with"]["script"]
+    assert "context.payload.client_payload" in candidate_script
+    assert "pullRequest.head.sha === run.head_sha" in candidate_script
+    assert "autorelease: pending" in candidate_script
+    assert "do-not-auto-merge" in candidate_script
+    assert "issues.removeLabel" in candidate_script
+    assert "event_type: 'auto_merge_update'" in candidate_script
+    assert "expected_head_sha: run.head_sha" in candidate_script
+
     update = workflow["jobs"]["update"]
     assert update["name"] == "Apply auto-merge update"
     assert update["runs-on"] == [
@@ -243,6 +366,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "ubuntu-24.04",
     ]
     assert "event_name == 'repository_dispatch'" in update["if"]
+    assert "event.action == 'auto_merge_update'" in update["if"]
     assert update["permissions"] == {
         "contents": "write",
         "pull-requests": "write",
@@ -258,13 +382,53 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "repository(owner:" in update_script
     assert "pullRequest(number:" in update_script
     assert "mergeStateStatus" in update_script
+    assert "mergeCommit { oid }" in update_script
     assert "autoMergeRequest" in update_script
     assert "UNSTABLE" in update_script
     assert "setTimeout" in update_script
     assert "enablePullRequestAutoMerge" in update_script
     assert "disablePullRequestAutoMerge" in update_script
 
-    # Both phases carry write-capable base-repository tokens. Keep them
+    release = workflow["jobs"]["release"]
+    assert release["name"] == "Dispatch release management after merge"
+    assert release["runs-on"] == [
+        "self-hosted",
+        "Linux",
+        "X64",
+        "ubuntu-24.04",
+    ]
+    assert "action == 'closed'" in release["if"]
+    assert "merged == true" in release["if"]
+    assert "merged_by.login != 'github-actions[bot]'" in release["if"]
+    assert release["permissions"] == {"contents": "write"}
+    assert len(release["steps"]) == 1
+    release_step = release["steps"][0]
+    assert release_step["uses"] == GITHUB_SCRIPT_ACTION
+    assert release_step["with"]["retries"] == "3"
+    release_script = release_step["with"]["script"]
+    assert "createDispatchEvent" in release_script
+    assert "event_type: 'release_please'" in release_script
+    assert "merge_commit_sha" in release_script
+
+    release_after_ci = workflow["jobs"]["release-after-ci"]
+    assert release_after_ci["name"] == "Dispatch bot auto-merge release after CI"
+    assert release_after_ci["runs-on"] == [
+        "self-hosted",
+        "Linux",
+        "X64",
+        "ubuntu-24.04",
+    ]
+    assert release_after_ci["permissions"] == {
+        "contents": "write",
+        "pull-requests": "read",
+    }
+    followup_script = release_after_ci["steps"][0]["with"]["script"]
+    assert "context.payload.workflow_run" in followup_script
+    assert "pullRequest.head.sha !== run.head_sha" in followup_script
+    assert "pullRequest.merged_by?.login !== 'github-actions[bot]'" in followup_script
+    assert "event_type: 'release_please'" in followup_script
+
+    # All phases carry write-capable base-repository tokens. Keep them
     # metadata-only: never check out or execute pull-request content.
     assert not any(
         str(step.get("uses", "")).startswith("actions/checkout@")
@@ -292,6 +456,15 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     assert "github.rest.pulls.merge" in update_script
     assert "sha: expectedHeadSha" in update_script
     assert "merge_method: 'squash'" in update_script
+    assert "const dispatchRelease" in update_script
+    assert "createDispatchEvent" in update_script
+    assert "event_type: 'release_please'" in update_script
+    assert "await dispatchRelease(mergeResult.data.sha)" in update_script
+    assert "pullRequest.state === 'MERGED'" in update_script
+    assert "await dispatchRelease(pullRequest.mergeCommit?.oid)" in update_script
+    assert "auto-merge is enabled; GitHub will merge when required checks pass" in update_script
+    assert "if (!/^[0-9a-f]{40}$/.test(mergeCommitSha || ''))" in update_script
+    assert "auto-merge did not complete" not in update_script
     assert "const autoMergeStates = new Set(['BEHIND', 'BLOCKED', 'HAS_HOOKS'])" in update_script
     assert "enablePullRequestAutoMerge" in update_script
     assert "mergeMethod: SQUASH" in update_script

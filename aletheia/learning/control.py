@@ -6,8 +6,17 @@ from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from aletheia.config.loader import load_config
-from aletheia.learning.ledger import get_job_health, upsert_job_health
-from aletheia.learning.models import LearningJobHealth
+from aletheia.learning.ledger import (
+    finish_lesson_reviewer_attempt,
+    get_record,
+    get_job_health,
+    insert_record,
+    latest_lesson_reviewer_attempt,
+    running_lesson_reviewer_attempts,
+    upsert_job_health,
+)
+from aletheia.learning.models import LearningJobHealth, LessonReviewerAttempt
+from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
 
 
@@ -293,9 +302,9 @@ def _lesson_backlog() -> tuple[int, str | None]:
     return int(row[0] or 0), row[1]
 
 
-def record_learning_job_started(job_id: str) -> None:
+def record_learning_job_started(job_id: str) -> str | None:
     if not is_autonomous_learning_job(job_id):
-        return
+        return None
     now = utc_now()
     health = get_learning_job_health(job_id).model_copy(update={
         "last_started_at": now.isoformat(),
@@ -303,10 +312,33 @@ def record_learning_job_started(job_id: str) -> None:
         "last_error": None,
         "updated_at": now.isoformat(),
     })
-    upsert_job_health(health)
+    attempt_id = None
+    with transaction():
+        if job_id == "lesson_reviewer":
+            watermark = current_daily_window(job_id, now=now)
+            assert watermark is not None
+            for unfinished in running_lesson_reviewer_attempts():
+                finish_lesson_reviewer_attempt(
+                    unfinished["attempt_id"],
+                    finished_at=now.isoformat(),
+                    outcome="failed",
+                    error_class="InterruptedError",
+                    error_message="process_restart_before_completion",
+                )
+            previous = latest_lesson_reviewer_attempt(watermark)
+            retry = previous if previous and previous["outcome"] == "failed" else None
+            attempt = LessonReviewerAttempt(
+                input_watermark=watermark,
+                started_at=now.isoformat(),
+                retry_of_attempt_id=retry["attempt_id"] if retry else None,
+            )
+            insert_record("learning_lesson_reviewer_attempts", attempt)
+            attempt_id = attempt.attempt_id
+        upsert_job_health(health)
+    return attempt_id
 
 
-def record_learning_job_success(job_id: str) -> None:
+def record_learning_job_success(job_id: str, *, attempt_id: str | None = None) -> None:
     if not is_autonomous_learning_job(job_id):
         return
     now = utc_now()
@@ -322,14 +354,30 @@ def record_learning_job_success(job_id: str) -> None:
     window = current_daily_window(job_id, now=now)
     if window is not None:
         updates["input_watermark"] = window
+    if job_id == "lesson_reviewer" and attempt_id is not None:
+        attempt = get_record("learning_lesson_reviewer_attempts", attempt_id)
+        if attempt is None:
+            raise RuntimeError(f"lesson reviewer attempt is missing: {attempt_id}")
+        updates["input_watermark"] = attempt["input_watermark"]
     if job_id in {"dreaming_daily", "lesson_reviewer"}:
         count, oldest = _lesson_backlog()
         updates["backlog_count"] = count
         updates["oldest_backlog_at"] = oldest
-    upsert_job_health(health.model_copy(update=updates))
+    with transaction():
+        upsert_job_health(health.model_copy(update=updates))
+        if job_id == "lesson_reviewer" and attempt_id is not None:
+            finish_lesson_reviewer_attempt(
+                attempt_id, finished_at=now.isoformat(), outcome="succeeded"
+            )
 
 
-def record_learning_job_failure(job_id: str, error: str) -> None:
+def record_learning_job_failure(
+    job_id: str,
+    error: str,
+    *,
+    error_class: str | None = None,
+    attempt_id: str | None = None,
+) -> None:
     if not is_autonomous_learning_job(job_id):
         return
     now = utc_now()
@@ -337,16 +385,26 @@ def record_learning_job_failure(job_id: str, error: str) -> None:
     count, oldest = (health.backlog_count, health.oldest_backlog_at)
     if job_id in {"dreaming_daily", "lesson_reviewer"}:
         count, oldest = _lesson_backlog()
-    upsert_job_health(health.model_copy(update={
-        "backlog_count": count,
-        "oldest_backlog_at": oldest,
-        "consecutive_failures": health.consecutive_failures + 1,
-        "status": "failed",
-        "last_error": str(error)[:1000],
-        "last_failed_at": now.isoformat(),
-        "last_failure_reason": str(error)[:1000],
-        "updated_at": now.isoformat(),
-    }))
+    message = str(error)[:1000]
+    with transaction():
+        upsert_job_health(health.model_copy(update={
+            "backlog_count": count,
+            "oldest_backlog_at": oldest,
+            "consecutive_failures": health.consecutive_failures + 1,
+            "status": "failed",
+            "last_error": message,
+            "last_failed_at": now.isoformat(),
+            "last_failure_reason": message,
+            "updated_at": now.isoformat(),
+        }))
+        if job_id == "lesson_reviewer" and attempt_id is not None:
+            finish_lesson_reviewer_attempt(
+                attempt_id,
+                finished_at=now.isoformat(),
+                outcome="failed",
+                error_class=error_class or "Error",
+                error_message=message,
+            )
 
 
 def record_learning_job_skipped(job_id: str, reason: str) -> None:

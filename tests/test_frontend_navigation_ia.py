@@ -11,8 +11,9 @@ def _read(rel: str) -> str:
 
 def test_sidebar_uses_trading_desk_ia_with_global_entries():
     app = _read("App.tsx")
-    nav = re.search(r"export const NAV: NavGroup\[\] = \[(.*?)\n\]", app, re.S)
-    assert nav, "App.tsx must expose the data-driven NAV array"
+    assert "import { NAV } from './routeManifest'" in app
+    nav = re.search(r"export const NAV: NavGroup\[\] = \[(.*?)\n\]", _read("routeManifest.ts"), re.S)
+    assert nav, "routeManifest.ts must expose the data-driven NAV array"
     nav_text = nav.group(1)
 
     assert "group: 'Observe'" not in nav_text

@@ -180,8 +180,12 @@ Without a public key and feed URL, the installed runtime remains fully usable bu
 
 ### Owner dogfood publication channel
 
-The repository's `Build Packaged Tray CLI Runtime` workflow is also the release publisher.
-Run it manually from the `master` branch with `publish=true`. A publishing run:
+The signed publication tooling below exists, but no active GitHub Actions workflow
+currently builds or publishes these artifacts. The Release Please workflow only creates
+product tags and metadata-only GitHub Releases. Therefore the owner dogfood publication
+channel is currently **not configured**.
+
+If an owner publication workflow is restored, a publishing run must:
 
 1. checks out the exact `master` SHA selected by the workflow run;
 2. builds and smokes the self-contained `darwin-arm64` Runtime, stable CLI, and Tray app;
@@ -191,17 +195,16 @@ Run it manually from the `master` branch with `publish=true`. A publishing run:
 5. deploys the signed Feed, immutable Runtime archive, checksums, and fresh-install App ZIP
    to the public GitHub Pages endpoint.
 
-Publishing uses the repository's dedicated Apple Silicon self-hosted Runner labels:
+Publication must use the repository's dedicated Apple Silicon self-hosted Runner labels:
 
 ```text
 self-hosted, macOS, ARM64, aletheia-release
 ```
 
-This keeps manual owner releases available when GitHub-hosted Actions minutes are exhausted.
-Pull-request builds do not select this Runner; only an explicit `workflow_dispatch` on
-`master` with `publish=true` can run release code on the owner machine.
+Pull-request builds must not select this Runner. Only an explicit `workflow_dispatch` on
+`master` with `publish=true` may run release code on the owner machine.
 
-Stable endpoints:
+Intended stable endpoints when that channel is configured:
 
 ```text
 Feed:       https://iridite.github.io/aletheia/update-feed.json

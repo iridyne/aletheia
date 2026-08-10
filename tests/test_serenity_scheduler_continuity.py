@@ -122,15 +122,21 @@ def test_gateway_startup_recovers_all_interrupted_runs():
 
     queued = SerenityResearchRun(status="queued")
     running = SerenityResearchRun(status="running")
+    cancelling = SerenityResearchRun(status="cancel_requested", stage="extract_claims")
     repo.insert_serenity_research_run(queued)
     repo.insert_serenity_research_run(running)
+    repo.insert_serenity_research_run(cancelling)
 
     recovered = _recover_interrupted_serenity_run()
 
-    assert set(recovered) == {queued.id, running.id}
+    assert set(recovered) == {queued.id, running.id, cancelling.id}
     assert repo.get_active_serenity_research_run() is None
     assert repo.get_serenity_research_run(queued.id)["status"] == "failed"
     assert repo.get_serenity_research_run(running.id)["status"] == "failed"
+    cancelled = repo.get_serenity_research_run(cancelling.id)
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["error_type"] is None
+    assert repo.list_serenity_run_events(cancelling.id)[-1]["event_type"] == "run.cancelled"
 
 
 def test_doctor_does_not_treat_recent_failure_as_fresh(monkeypatch):

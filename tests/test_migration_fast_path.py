@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 22)
+        f"aletheia-sqlite-v{version}" for version in range(2, 24)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v21"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v23"
     connection.close()
 
 
@@ -545,6 +545,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE agent_tool_calls (id TEXT PRIMARY KEY);
         CREATE TABLE agent_shell_commands (id TEXT PRIMARY KEY);
         CREATE TABLE runtime_sessions (session_id TEXT PRIMARY KEY);
+        CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
         INSERT INTO learning_experiments VALUES ('legacy-experiment');
         INSERT INTO learning_contribution_verdicts
         VALUES ('legacy-positive', 'legacy-experiment');
@@ -577,8 +578,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260810_0020_learning_hypothesis_identity_v21",
-        "aletheia-sqlite-v21",
+        "20260810_0022_learning_hypothesis_identity_v23",
+        "aletheia-sqlite-v23",
     )
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "
@@ -588,7 +589,46 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     connection.close()
 
 
-def test_learning_hypothesis_identity_v21_is_additive_and_idempotent():
+def test_event_jsonl_outbox_migration_does_not_replay_historical_rows():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)"
+    )
+    connection.execute("INSERT INTO ps_event_log VALUES ('old', '2026-08-01T00:00:00+00:00')")
+
+    migrations._apply_event_jsonl_outbox_v22(connection)
+    migrations._apply_event_jsonl_outbox_v22(connection)
+
+    row = connection.execute(
+        "SELECT jsonl_mirror_status, jsonl_attempt_count, jsonl_mirrored_at "
+        "FROM ps_event_log WHERE event_id='old'"
+    ).fetchone()
+    assert tuple(row) == ("mirrored", 0, "2026-08-01T00:00:00+00:00")
+    connection.close()
+
+
+def test_event_jsonl_outbox_migration_rolls_back_partial_schema(monkeypatch):
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)"
+    )
+    monkeypatch.setattr(migrations, "_EVENT_JSONL_OUTBOX_INDEX_SQL", "invalid SQL")
+
+    with pytest.raises(sqlite3.OperationalError):
+        migrations._apply_event_jsonl_outbox_v22(connection)
+
+    columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(ps_event_log)")
+    }
+    assert "jsonl_mirror_status" not in columns
+    connection.close()
+
+
+def test_learning_hypothesis_identity_v23_is_additive_and_idempotent():
     import aletheia.storage.migrations as migrations
 
     connection = sqlite3.connect(":memory:")
@@ -597,8 +637,8 @@ def test_learning_hypothesis_identity_v21_is_additive_and_idempotent():
     )
     connection.execute("INSERT INTO learning_hypotheses VALUES ('legacy')")
 
-    migrations._apply_learning_hypothesis_identity_v21(connection)
-    migrations._apply_learning_hypothesis_identity_v21(connection)
+    migrations._apply_learning_hypothesis_identity_v23(connection)
+    migrations._apply_learning_hypothesis_identity_v23(connection)
 
     columns = {
         row[1]

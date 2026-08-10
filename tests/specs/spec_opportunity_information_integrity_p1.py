@@ -41,6 +41,35 @@ def test_information_integrity_policy_epoch_is_durable_and_idempotent():
     assert opportunity_information_policy_context()["operator_evidence_manifest"] == (
         "operator-candidate-v3"
     )
+    assert opportunity_information_policy_context()["structured_trade_motivation"] == (
+        "structured-trade-motivation/v1"
+    )
+
+
+def test_structured_trade_motivation_rotates_information_policy_epoch():
+    from aletheia.learning.opportunity_information_policy import (
+        _AFFECTED_PATHS,
+        opportunity_information_policy_context,
+    )
+    from aletheia.learning.policy_epochs import build_policy_epoch
+
+    current_values = opportunity_information_policy_context()
+    legacy_values = dict(current_values)
+    legacy_values.pop("structured_trade_motivation")
+    current = build_policy_epoch(
+        "opportunity_information_integrity",
+        current_values,
+        affected_path_ids=_AFFECTED_PATHS,
+    )
+    legacy = build_policy_epoch(
+        "opportunity_information_integrity",
+        legacy_values,
+        affected_path_ids=tuple(
+            path for path in _AFFECTED_PATHS if path != "structured_trade_motivation"
+        ),
+    )
+
+    assert current.epoch_hash != legacy.epoch_hash
 
 
 @pytest.mark.real_db

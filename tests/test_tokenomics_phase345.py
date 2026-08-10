@@ -8,6 +8,7 @@ from aletheia.model_provider.fallback import BudgetExceededError, _enforce_budge
 from aletheia.model_provider.guardrails import detect_prompt_secrets
 from aletheia.agents.helpers import (
     ContextAdapter,
+    _prepare_context_adapter,
     build_harness_context,
     prepend_environment_header,
     render_context_adapter,
@@ -86,6 +87,22 @@ def test_context_adapter_registry_preserves_disabled_prompts(monkeypatch):
     assert "Harness minimal-v1" in prepend_environment_header(
         "caller prompt", adapter="minimal-v1"
     )
+
+
+def test_technical_context_adapter_links_dynamic_artifact_without_static_prompt_churn():
+    artifact = {
+        "stable_id": "technical-context-v1:bitget:BTC/USDT:perp:abc",
+    }
+    rendered, adapter_id, manifest = _prepare_context_adapter(
+        "caller prompt",
+        adapter="technical-context-v1",
+        context_artifacts=[artifact],
+    )
+    assert rendered == "caller prompt"
+    assert adapter_id == "technical-context-v1"
+    assert manifest["artifact_ids"] == [artifact["stable_id"]]
+    with pytest.raises(ValueError, match="requires a linked technical artifact"):
+        _prepare_context_adapter("caller prompt", adapter="technical-context-v1")
 
 
 def test_minimal_context_has_a_versioned_truthful_contract(monkeypatch):

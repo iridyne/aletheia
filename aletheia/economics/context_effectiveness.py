@@ -7,6 +7,7 @@ written solely to an owner-selected review packet outside the repository.
 from __future__ import annotations
 
 import json
+import re
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,7 @@ from aletheia.economics.schema import ensure_economics_schema
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _LEARNING_RUBRIC_VERSION = "learning-b-owner-v1"
 _TECHNICAL_RUBRIC_VERSION = "technical-context-owner-v1"
+_ABLATION_RUBRIC_VERSION = "context-ablation-owner-v1"
 
 
 def _utcnow() -> str:
@@ -125,6 +127,8 @@ def _pair_metrics(pair_id: str) -> dict[str, Any]:
             "logical_call_id": call["logical_call_id"],
             "caller": call.get("caller"),
             "blind_label": metadata.get("blind_label"),
+            "fixture_id": metadata.get("fixture_id"),
+            "modality_id": metadata.get("modality_id"),
             "status": call["status"],
             "parse_valid": call["parse_valid"],
             "schema_valid": call["schema_valid"],
@@ -172,6 +176,7 @@ async def _run_context_pair(
     treatment_artifact_suffix: str,
     treatment_artifact_source: str,
     treatment_trust_class: str,
+    modality_id: str | None = None,
 ) -> dict[str, Any]:
     """Run one frozen control/treatment pair and create a blinded review packet."""
     fixture = _load_fixture(
@@ -200,6 +205,7 @@ async def _run_context_pair(
     call_errors: dict[str, str] = {}
 
     for arm in arms:
+        is_technical_pair = treatment_field == "technical_context"
         treatment = fixture[treatment_field] if arm == "treatment" else ""
         rendered_context = fixture["market_context"]
         if treatment:
@@ -214,6 +220,8 @@ async def _run_context_pair(
             "fixture_id": fixture["fixture_id"],
             "blind_label": label_by_arm[arm],
         }
+        if modality_id:
+            evaluation["modality_id"] = modality_id
         artifacts = [
             {
                 "kind": "environment",
@@ -226,7 +234,11 @@ async def _run_context_pair(
             },
             {
                 "kind": treatment_artifact_kind,
-                "stable_id": f"fixture:{fixture['fixture_id']}:{treatment_artifact_suffix}",
+                "stable_id": (
+                    f"technical-context-v1:fixture:{fixture['fixture_id']}"
+                    if is_technical_pair
+                    else f"fixture:{fixture['fixture_id']}:{treatment_artifact_suffix}"
+                ),
                 "source": treatment_artifact_source,
                 "selected_reason": "paired_treatment" if treatment else "control_omission",
                 "trust_class": treatment_trust_class,
@@ -245,6 +257,11 @@ async def _run_context_pair(
             "context_symbol": fixture["symbol"],
             "evaluation": evaluation,
             "reasoning_effort": "none",
+            "context_adapter": (
+                "technical-context-v1"
+                if is_technical_pair and arm == "treatment"
+                else "none"
+            ),
         }
         if treatment_field == "learning_context" and arm == "control":
             result, error = await llm_structured(
@@ -254,13 +271,21 @@ async def _run_context_pair(
             result, error = await llm_structured(
                 **call_kwargs, caller="evaluation.learning_b.treatment"
             )
-        elif arm == "control":
+        elif treatment_field == "technical_context" and arm == "control":
             result, error = await llm_structured(
                 **call_kwargs, caller="evaluation.technical_context.control"
             )
-        else:
+        elif treatment_field == "technical_context":
             result, error = await llm_structured(
                 **call_kwargs, caller="evaluation.technical_context.treatment"
+            )
+        elif arm == "control":
+            result, error = await llm_structured(
+                **call_kwargs, caller="evaluation.context_ablation.control"
+            )
+        else:
+            result, error = await llm_structured(
+                **call_kwargs, caller="evaluation.context_ablation.treatment"
             )
         if error or result is None:
             call_errors[arm] = error or "empty_result"
@@ -273,6 +298,7 @@ async def _run_context_pair(
             "status": "invalid_pair",
             "evaluation_pair_id": pair_id,
             "fixture_id": fixture["fixture_id"],
+            "modality_id": modality_id,
             "errors": call_errors,
             "metrics": metrics,
             "effectiveness_conclusion": None,
@@ -282,6 +308,7 @@ async def _run_context_pair(
         "protocol": protocol,
         "evaluation_pair_id": pair_id,
         "fixture_id": fixture["fixture_id"],
+        "modality_id": modality_id,
         "rubric_version": rubric_version,
         "instructions": (
             "Score A and B independently. Do not inspect the economics database until "
@@ -304,6 +331,7 @@ async def _run_context_pair(
         "status": "awaiting_owner_review",
         "evaluation_pair_id": pair_id,
         "fixture_id": fixture["fixture_id"],
+        "modality_id": modality_id,
         "review_packet": str(review_path),
         "metrics": metrics,
         "effectiveness_conclusion": None,
@@ -355,6 +383,37 @@ async def run_technical_context_pair(
         treatment_artifact_suffix="technical",
         treatment_artifact_source="frozen_technical_evaluation_fixture",
         treatment_trust_class="deterministic_derived_fact",
+    )
+
+
+async def run_context_ablation_pair(
+    *,
+    fixture_path: Path,
+    modality_id: str,
+    review_output: Path,
+    provider_name: str | None = None,
+) -> dict[str, Any]:
+    """Compare one frozen base context with the same case plus one modality."""
+    modality = modality_id.strip().lower()
+    if not re.fullmatch(r"[a-z0-9_-]{1,64}", modality):
+        raise ValueError(f"invalid context modality id: {modality_id}")
+    return await _run_context_pair(
+        fixture_path=fixture_path,
+        review_output=review_output,
+        provider_name=provider_name,
+        treatment_field="modality_context",
+        treatment_heading=modality.replace("_", " ").title(),
+        fixture_label="Context ablation",
+        pair_prefix="context_ablation_",
+        protocol="context-ablation-owner-blind-review-v1",
+        rubric_version=_ABLATION_RUBRIC_VERSION,
+        treatment_artifact_kind=(
+            modality if modality in {"news", "learning"} else "environment"
+        ),
+        treatment_artifact_suffix=modality,
+        treatment_artifact_source="owner_authorized_evaluation_fixture",
+        treatment_trust_class="first_party_fixture",
+        modality_id=modality,
     )
 
 
@@ -423,14 +482,8 @@ def _record_context_pair_review(
         else "tie"
     )
     calls = metrics["arms"]
-    fixture_id = next(
-        (
-            call["metadata"].get("fixture_id")
-            for call in list_inference_calls(evaluation_pair_id=pair_id, days=3650, limit=10)
-            if call.get("metadata")
-        ),
-        "unknown",
-    )
+    fixture_id = calls["control"].get("fixture_id") or "unknown"
+    modality_id = calls["control"].get("modality_id")
     db = ensure_economics_schema()
     was_in_tx = db.in_transaction
     db.execute(
@@ -456,7 +509,11 @@ def _record_context_pair_review(
             verdict,
             _utcnow(),
             json.dumps(
-                {"quality_delta": delta, "gate_failures": gate_failures},
+                {
+                    "quality_delta": delta,
+                    "gate_failures": gate_failures,
+                    "modality_id": modality_id,
+                },
                 sort_keys=True,
             ),
         ),
@@ -467,6 +524,7 @@ def _record_context_pair_review(
         "status": "review_recorded",
         "evaluation_pair_id": pair_id,
         "fixture_id": fixture_id,
+        "modality_id": modality_id,
         "quality_delta": delta,
         "verdict": verdict,
         "gate_failures": gate_failures,
@@ -501,6 +559,23 @@ def record_technical_context_review(
         expected_callers={
             "control": "evaluation.technical_context.control",
             "treatment": "evaluation.technical_context.treatment",
+        },
+        reject_ungrounded_treatment=True,
+    )
+
+
+def record_context_ablation_review(
+    *, pair_id: str, scores_path: Path
+) -> dict[str, Any]:
+    return _record_context_pair_review(
+        pair_id=pair_id,
+        scores_path=scores_path,
+        rubric_version=_ABLATION_RUBRIC_VERSION,
+        pair_label="Context ablation",
+        pair_prefix="context_ablation_",
+        expected_callers={
+            "control": "evaluation.context_ablation.control",
+            "treatment": "evaluation.context_ablation.treatment",
         },
         reject_ungrounded_treatment=True,
     )

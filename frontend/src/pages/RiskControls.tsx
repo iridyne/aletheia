@@ -7,6 +7,7 @@ import type { StatusTone } from '../components/ui'
 import { fmtSigned, fmtNum, humanize, fmtSymbol } from '../lib/format'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
 import { deriveMasterState } from '../lib/systemState'
+import { positionFreshness, positionKeys } from '../lib/queryKeys'
 
 /** Extract a human-readable error from a fetch/mutation failure. */
 function errMsg(e: any): string {
@@ -39,7 +40,7 @@ export default function RiskControls() {
   // fmtSymbol can't tell perp from spot, and the rule says "never guess": it falls back to
   // the canonical (slashed) form, briefly displaying "ETH/USDT" for a USDT-perp until the
   // positions query settles. That violates the immutable owner rule (CLAUDE.md 2026-06-26).
-  const { data: positions = [], isLoading: positionsLoading } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
+  const { data: positions = [], isLoading: positionsLoading } = useQuery({ queryKey: positionKeys.all, queryFn: api.getPositions, ...positionFreshness })
   // 24h pipeline counts — surfaces "the system IS guarding" in the healthy state.
   // Refetches every 60s; the underlying SQL is a single COUNT GROUP BY so it's cheap.
   const { data: funnel } = useQuery({ queryKey: ['pipeline-funnel-24h'], queryFn: () => api.getPipelineFunnel(24), refetchInterval: 60_000 })

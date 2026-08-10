@@ -36,8 +36,12 @@
 | **AlphaQuanter** | 2510.14264 | 工具编排式 agentic RL 交易框架（verl 栈） | 已克隆（[[INDEX.md]]）；透明工具调用 + 从反馈优化 |
 | **Sophia**（持久数字生命体） | 2512.18202 | 叙事记忆/自我模型/长程适应 | 研究级远期（[[north_star.md]] §5） |
 | **ALMA**（meta-learning agentic memory） | 2602.07755 | 记忆 schema 可进化、影响未来检索 | 研究级远期；与我们"固定 Pydantic schema"正相反 |
+| **CLQT** | 2606.29771v2 | 以可重算决策轨迹诊断 Coherence / Acuity / Composure / Discipline / Reliability，而非只按收益排名 | **高价值方法论**：能力证明与成本后经济证明分离；不照搬其六 Agent、记忆或新 hash ledger |
+| **F²Agent** | 2608.05668v1 | 四类专用模态模块 + adaptive fusion + consistency regularization | 借鉴结构化 evidence packet 与单模态扰动消融；暂不引入 learned fusion |
+| **AI Governance for Institutional Readiness in Finance** | 2608.02311v1 | Policy / Engineering / Composition / Systemic 四层治理 | 辅助治理检查表；poll 与合成模拟证据有限，不直接采用定量阈值 |
 
 > 已收录的外部综述（非单一系统）：《Agent Framework Research Report 2025–2026》对照见 [agent_framework_research_2025_2026.md](agent_framework_research_2025_2026.md)。
+> CLQT、F²Agent 与治理论文的 Aletheia 映射见 [agent-diagnostics-and-evidence-fusion-2026-08-10.md](agent-diagnostics-and-evidence-fusion-2026-08-10.md)。
 
 ---
 

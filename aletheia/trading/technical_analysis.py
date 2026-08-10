@@ -234,7 +234,11 @@ class BatchTechnicalAnalyzer:
             symbol=str(symbol),
             market_type=str(market_type or "spot").lower(),
             timeframe=str(timeframe),
-            bar_close_ts=canonical[-1].ts if canonical else None,
+            bar_close_ts=(
+                canonical[-1].ts + _TIMEFRAME_MS[timeframe]
+                if canonical and timeframe in _TIMEFRAME_MS
+                else None
+            ),
             bars_used=len(canonical),
             history_bars_retained=len(canonical),
             warmup_complete=len(canonical) >= 50,
@@ -306,7 +310,7 @@ class IncrementalTechnicalAnalyzer:
         self._atr14: float | None = None
         self._atr_seed: list[float] = []
         self._previous_close: float | None = None
-        self._gap_count = 0
+        self._gap_right_timestamps: deque[int] = deque()
         self._digest = hashlib.sha256()
 
     @staticmethod
@@ -408,7 +412,7 @@ class IncrementalTechnicalAnalyzer:
             if interval is not None and self._bars:
                 tolerance = max(1_000, interval // 10)
                 if bar.ts - self._bars[-1].ts > interval + tolerance:
-                    self._gap_count += 1
+                    self._gap_right_timestamps.append(bar.ts)
 
         self._update_ema(bar.close, 20)
         self._update_ema(bar.close, 50)
@@ -471,6 +475,18 @@ class IncrementalTechnicalAnalyzer:
             self._append_fast(bar)
             self._bars.append(bar)
             self._append_count += 1
+        self._prune_retired_gaps()
+
+    def _prune_retired_gaps(self) -> None:
+        if not self._bars:
+            self._gap_right_timestamps.clear()
+            return
+        first_retained_ts = self._bars[0].ts
+        while (
+            self._gap_right_timestamps
+            and self._gap_right_timestamps[0] <= first_retained_ts
+        ):
+            self._gap_right_timestamps.popleft()
 
     @property
     def bars(self) -> tuple[TechnicalBar, ...]:
@@ -492,6 +508,7 @@ class IncrementalTechnicalAnalyzer:
             self._append_fast(bar)
             self._bars.append(bar)
             self._append_count += 1
+            self._prune_retired_gaps()
         else:
             by_ts = {existing.ts: existing for existing in self._bars}
             by_ts[bar.ts] = bar
@@ -532,7 +549,7 @@ class IncrementalTechnicalAnalyzer:
             vol_sd = math.sqrt(vol_var)
             vol_z = (self._volume20[-1] - vol_mean) / vol_sd if vol_sd else 0.0
         reasons: list[str] = []
-        if self._gap_count:
+        if self._gap_right_timestamps:
             reasons.append("timeframe_gap_detected")
         if self._revision_count:
             reasons.append("bounded_rebuild_after_revision")
@@ -571,7 +588,11 @@ class IncrementalTechnicalAnalyzer:
             symbol=self.symbol,
             market_type=self.market_type,
             timeframe=self.timeframe,
-            bar_close_ts=self._bars[-1].ts if self._bars else None,
+            bar_close_ts=(
+                self._bars[-1].ts + _TIMEFRAME_MS[self.timeframe]
+                if self._bars and self.timeframe in _TIMEFRAME_MS
+                else None
+            ),
             bars_used=bars_used,
             history_bars_retained=history_bars_retained,
             warmup_complete=bars_used >= 50,

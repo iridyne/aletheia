@@ -1851,10 +1851,10 @@ def _existing_deferred_context_observation(
             "AND json_extract(queue_snapshot_json, '$.market_type') = ? "
             "AND json_extract(queue_snapshot_json, '$.material_fingerprint') = ? "
             "AND event_kind LIKE 'operator_decision_deferred_%' "
+            "AND json_extract(queue_snapshot_json, '$.defer_until') > ? "
             "AND ("
-            "    (json_extract(queue_snapshot_json, '$.defer_until') > ? "
-            "     AND json_extract(queue_snapshot_json, '$.defer_reason') IN "
-            "             ('operator_low_conviction', 'debate_not_confirmed')) "
+            "    json_extract(queue_snapshot_json, '$.defer_reason') IN "
+            "             ('operator_low_conviction', 'debate_not_confirmed') "
             "    OR json_extract(queue_snapshot_json, '$.defer_reason') LIKE "
             "             'direct_skip_not_confirmed%'"
             ") "
@@ -1862,16 +1862,16 @@ def _existing_deferred_context_observation(
             (symbol, _nd(direction), _nm(market_type), material_fingerprint, now_iso),
         ).fetchone()
     else:
-        # Legacy per-opportunity match. direct_skip suppresses regardless of
-        # defer_until; conviction/debate honor the defer_until window.
+        # Legacy per-opportunity match. Every market-quiet defer suppresses only
+        # until its durable deadline; afterwards the carrier is owed a review.
         market_quiet_row = get_db().execute(
             "SELECT * FROM operator_evaluation_events "
             "WHERE json_extract(queue_snapshot_json, '$.opportunity_id') = ? "
             "AND event_kind LIKE 'operator_decision_deferred_%' "
+            "AND json_extract(queue_snapshot_json, '$.defer_until') > ? "
             "AND ("
-            "    (json_extract(queue_snapshot_json, '$.defer_until') > ? "
-            "     AND json_extract(queue_snapshot_json, '$.defer_reason') IN "
-            "             ('operator_low_conviction', 'debate_not_confirmed')) "
+            "    json_extract(queue_snapshot_json, '$.defer_reason') IN "
+            "             ('operator_low_conviction', 'debate_not_confirmed') "
             "    OR json_extract(queue_snapshot_json, '$.defer_reason') LIKE "
             "             'direct_skip_not_confirmed%'"
             ") "
@@ -2569,6 +2569,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     }
     from aletheia.agent_shell.trading_context import build_decision_evidence_manifest
     result["evidence_manifest"] = build_decision_evidence_manifest(ctx, decision)
+    decision.evidence_manifest = result["evidence_manifest"]
 
     if trade_like:
         result["proposal_status"] = "submitting"
@@ -2667,6 +2668,14 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             )
         if trade_like and result.get("proposal_reason"):
             result["proposal_error"] = result["proposal_reason"]
+
+    # Build from the terminal action after deterministic proposal brakes may
+    # have converted a model trade into a persisted skip.
+    from aletheia.trading.trade_motivation import build_trade_motivation
+    result["trade_motivation"] = build_trade_motivation(
+        decision, decision.evidence_manifest
+    )
+    decision.trade_motivation = result["trade_motivation"]
 
     # The prepared Proposal and final PiDecision become visible together in one
     # BEGIN IMMEDIATE transaction.  Risk/broker work starts only after commit.

@@ -159,10 +159,7 @@ async def test_status_reports_actual_scheduler_and_health(client, monkeypatch):
     assert data["scheduler_enabled"] is True
     assert data["scheduler_last_tick"] == "2026-08-09T00:00:00+00:00"
     assert data["ohlcv_cache"]["max_entries"] == 256
-    assert any(
-        item["stage"] == "database_migration_verification"
-        for item in data["startup_failure_policy"]
-    )
+    assert any(item["stage"] == "database_migration_verification" for item in data["startup_failure_policy"])
     assert data["health_status"] == "degraded"
     assert data["health_issues"] == ["code_updated_pending_restart:old..new"]
     assert data["boot_commit"] == "old"
@@ -209,3 +206,15 @@ async def test_status_reports_execution_and_data_exchange_divergence(client):
     assert data["market_data_exchange"] == "binance"
     assert data["exchange_alignment"] == "diverged"
     assert data["exchange_diverged"] is True
+
+
+def test_lifecycle_task_registry_separates_direct_and_module_owned_work():
+    from aletheia.server.app import lifecycle_task_snapshot
+
+    rows = {row["task_id"]: row for row in lifecycle_task_snapshot()}
+
+    assert rows["startup_exchange_sync"]["ownership"] == "direct"
+    assert rows["startup_exchange_sync"]["state"] == "not_started"
+    assert rows["exchange_auto_resume"]["ownership"] == "module_owned"
+    assert rows["exchange_auto_resume"]["state"] == "module_owned"
+    assert all(row["stop_timeout_sec"] is None for row in rows.values())

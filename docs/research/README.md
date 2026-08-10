@@ -46,6 +46,10 @@ Research files are evidence, audits, and explorations. They can guide work but d
   records why exact OHLCV needs no consumer fallback matrix, formalizes the
   existing collector/coverage boundary, and defers generic publication
   completeness until a named derived dataset exists.
+- [TickFlow Wave B-04 Serenity attempt truth evidence — 2026-08-10](explorations/TICKFLOW_WAVE_B_04_SERENITY_ATTEMPT_TRUTH_EVIDENCE_2026-08-10.md)
+  records cooperative cancellation acknowledgement, guarded terminal writes,
+  durable stage visibility, and restart reconciliation without a generic job
+  framework.
 
 ## Agent Rule
 

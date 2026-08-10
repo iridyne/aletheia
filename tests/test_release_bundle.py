@@ -23,13 +23,13 @@ def _fake_repository(root: Path) -> None:
         root / "pyproject.toml",
         """[project]
 name = "aletheia-trading-os"
-version = "9.9.9"
+dynamic = ["version"]
 requires-python = ">=3.12"
 """,
     )
     _write(root / "uv.lock", "version = 1\n")
     _write(root / "README.md", "release fixture\n")
-    _write(root / "aletheia" / "__init__.py", "")
+    _write(root / "aletheia" / "__init__.py", '__version__ = "9.9.9"\n')
     _write(root / "aletheia" / "app.py", "VALUE = 1\n")
     _write(root / "aletheia" / "dashboard_static" / "index.html", "<html></html>\n")
     _write(root / "aletheia" / "dashboard_static" / "assets" / "app.js", "console.log('ok')\n")

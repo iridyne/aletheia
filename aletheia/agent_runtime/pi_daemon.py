@@ -33,6 +33,7 @@ logger = logging.getLogger("aletheia.pi_daemon")
 _PORTFOLIO_RETRY_BASE_SEC = 300.0
 _PORTFOLIO_RETRY_MAX_SEC = 1800.0
 _DEFER_GUARD_BACKOFF_MAX_SEC = 1.0
+_NO_MODEL_COOLDOWN_MAX_SEC = 1.0
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,19 @@ _last_error_summary: str | None = None  # bounded, non-secret operator diagnosti
 # transient evaluation failure is retried after cooldown without requiring a
 # fresh producer notification.
 _EVALUATION_RETRY_PENDING = -1
+# A no-model defer does not need the LLM cooldown. Keep a short bounded delay so
+# a due cohort drains without waiting the LLM interval or busy-spinning.
+_EVALUATION_NO_MODEL_PENDING = -2
+
+
+def _evaluation_cooldown_delay(remaining: int, configured_sec: float) -> float:
+    if remaining == _EVALUATION_NO_MODEL_PENDING:
+        return (
+            min(configured_sec, _NO_MODEL_COOLDOWN_MAX_SEC)
+            if configured_sec > 0
+            else _NO_MODEL_COOLDOWN_MAX_SEC
+        )
+    return max(configured_sec, 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +121,10 @@ def notify_pi_daemon(source: str = "unknown", event: WakeEvent | None = None) ->
 
 def is_daemon_running() -> bool:
     return _daemon_task is not None and not _daemon_task.done()
+
+
+def current_daemon_task() -> asyncio.Task | None:
+    return _daemon_task
 
 
 def daemon_status() -> dict:
@@ -391,8 +409,11 @@ async def _pi_daemon_loop(
         # Cooldown bounds LLM cadence. Notifications that arrive during the rest
         # period remain set, and a reported queue backlog schedules the next item
         # instead of silently discarding work.
-        if cooldown_sec > 0:
-            await asyncio.sleep(cooldown_sec)
+        cooldown_delay = _evaluation_cooldown_delay(
+            pending_queue_remaining, cooldown_sec,
+        )
+        if cooldown_delay > 0:
+            await asyncio.sleep(cooldown_delay)
         if (
             pending_queue_remaining == _EVALUATION_RETRY_PENDING
             and not _retry_wake_batches
@@ -612,6 +633,13 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
             _clear_retry_wake_context(wake_context)
         _record_job_success("pi_trading_decision")
         _last_error_summary = None
+        if (
+            not is_portfolio_review
+            and isinstance(result, dict)
+            and result.get("model_invoked") is False
+            and int(remaining or 0) > 0
+        ):
+            return _EVALUATION_NO_MODEL_PENDING
         return max(int(remaining or 0), 0)
     except asyncio.TimeoutError:
         from aletheia.agent_runtime.scheduler import _record_job_failure

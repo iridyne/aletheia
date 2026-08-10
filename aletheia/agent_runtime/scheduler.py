@@ -437,11 +437,19 @@ def _record_job_success(job_id: str) -> None:
     _consecutive_failures[job_id] = 0
 
 
-def _record_job_failure(job_id: str, error: str) -> None:
+def _record_job_failure(job_id: str, error: str, error_class: str | None = None) -> None:
     _JOB_RUN_STATE.failure_recorded = True
     _consecutive_failures[job_id] = _consecutive_failures.get(job_id, 0) + 1
     from aletheia.learning.control import record_learning_job_failure
-    record_learning_job_failure(job_id, error)
+    if job_id == "lesson_reviewer":
+        record_learning_job_failure(
+            job_id,
+            error,
+            error_class=error_class,
+            attempt_id=getattr(_JOB_RUN_STATE, "learning_attempt_id", None),
+        )
+    else:
+        record_learning_job_failure(job_id, error)
     count = _consecutive_failures[job_id]
     if count >= _FAILURE_ALERT_THRESHOLD:
         from aletheia.infra.events import emit_infra_event
@@ -542,7 +550,7 @@ def _run_job_guarded(job_id: str, fn):
                 record_learning_job_skipped(job_id, gate_reason)
                 logger.info("Learning job %s skipped: %s", job_id, gate_reason)
                 return None
-            record_learning_job_started(job_id)
+            _JOB_RUN_STATE.learning_attempt_id = record_learning_job_started(job_id)
         result = fn()
         if not getattr(_JOB_RUN_STATE, "failure_recorded", False):
             _record_job_success(job_id)
@@ -558,17 +566,23 @@ def _run_job_guarded(job_id: str, fn):
                     f"experiment_lifecycle_failed:{failed_experiments}",
                 )
             else:
-                record_learning_job_success(job_id)
+                if job_id == "lesson_reviewer":
+                    record_learning_job_success(
+                        job_id,
+                        attempt_id=getattr(_JOB_RUN_STATE, "learning_attempt_id", None),
+                    )
+                else:
+                    record_learning_job_success(job_id)
         return result
     except Exception as e:
         logger.warning("%s job failed outside wrapper: %s", job_id, e)
-        _record_job_failure(job_id, str(e))
+        _record_job_failure(job_id, str(e), type(e).__name__)
     finally:
         with _SCHEDULER_JOB_LOCK:
             if rollback_if_in_transaction():
                 logger.warning("Rolled back leaked SQLite transaction after scheduler job %s", job_id)
             close_db()
-        for attr in ("job_id", "failure_recorded"):
+        for attr in ("job_id", "failure_recorded", "learning_attempt_id"):
             try:
                 delattr(_JOB_RUN_STATE, attr)
             except AttributeError:
@@ -737,7 +751,7 @@ def _parse_scheduler_timestamp(value: str | None) -> datetime | None:
 
 
 def _recover_interrupted_serenity_run() -> list[str]:
-    """Mark research work owned by the previous gateway process as failed."""
+    """Reconcile research work owned by the previous gateway process."""
     try:
         from aletheia.storage import repositories as repo
         from aletheia.storage.models import SerenityRunEvent
@@ -749,6 +763,23 @@ def _recover_interrupted_serenity_run() -> list[str]:
         recovered: list[str] = []
         for run in active_runs:
             run_id = run["id"]
+            if run["status"] == "cancel_requested":
+                if repo.acknowledge_serenity_research_run_cancel(run_id, now=now):
+                    recovered.append(run_id)
+                    try:
+                        repo.insert_serenity_run_event(SerenityRunEvent(
+                            run_id=run_id,
+                            event_type="run.cancelled",
+                            stage=run.get("stage"),
+                            message="Gateway restart confirmed cancellation after worker exit",
+                        ))
+                    except Exception as event_exc:
+                        logger.warning(
+                            "Could not record cancellation event for Serenity run %s: %s",
+                            run_id,
+                            event_exc,
+                        )
+                continue
             repo.update_serenity_research_run(
                 run_id,
                 status="failed",
@@ -1998,10 +2029,10 @@ def _run_lesson_reviewer():
             "lesson_reviewer job timed out after %.0fs",
             _ASYNC_JOB_TIMEOUT_SEC["lesson_reviewer"],
         )
-        _record_job_failure("lesson_reviewer", "timeout")
+        _record_job_failure("lesson_reviewer", "timeout", "TimeoutError")
     except Exception as e:
         logger.warning("lesson_reviewer job failed: %s", e)
-        _record_job_failure("lesson_reviewer", str(e))
+        _record_job_failure("lesson_reviewer", str(e), type(e).__name__)
 
 
 def _run_shadow_resolver():
@@ -2057,6 +2088,11 @@ def _run_reconciliation():
             _record_job_failure(
                 "reconciliation", "reconciliation_reported_errors"
             )
+        from aletheia.storage.event_store import get_event_store
+
+        mirror = get_event_store().reconcile_jsonl(limit=100)
+        if mirror["attempted"]:
+            logger.info("event JSONL mirror reconciliation: %s", mirror)
     except Exception as e:
         logger.warning("reconciliation job failed: %s", e)
         _record_job_failure("reconciliation", str(e))
@@ -2257,9 +2293,19 @@ def _run_position_manager():
         if isinstance(summary, dict):
             reported_errors.extend(summary.get("errors") or [])
         if reported_errors:
+            error_facts = [
+                {
+                    key: item[key]
+                    for key in ("code", "position_id", "instrument", "error_type")
+                    if item.get(key) is not None
+                }
+                for item in reported_errors[:20]
+                if isinstance(item, dict)
+            ]
             logger.warning(
-                "position_manager completed with %d reported errors",
+                "position_manager completed with %d reported errors: %s",
                 len(reported_errors),
+                error_facts,
             )
             _record_job_failure(
                 "position_manager", "position_manager_reported_errors"

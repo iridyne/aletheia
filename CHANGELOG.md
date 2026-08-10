@@ -1,6 +1,42 @@
 # Changelog
 
-## [Unreleased] - 2026-08-08 — Versioned incremental technical analysis
+All notable product changes are recorded here. Aletheia uses Semantic Versioning
+for the product release, while build identities and data/behavior contracts keep
+their own independent versions.
+
+## [0.6.0](https://github.com/iridite/aletheia/compare/v0.5.0...v0.6.0) (2026-08-10)
+
+
+### Features
+
+* **agent:** structure trade motivation ([#856](https://github.com/iridite/aletheia/issues/856)) ([f55094f](https://github.com/iridite/aletheia/commit/f55094fd21e61570445a709d1089ec35afe0cafc))
+* **observer:** add compact technical context ([dbed0ac](https://github.com/iridite/aletheia/commit/dbed0acb178f3c02ff98ae49f1ab002613eb836c))
+* **observer:** add technical-context-v1 ([#853](https://github.com/iridite/aletheia/issues/853)) ([a91f49e](https://github.com/iridite/aletheia/commit/a91f49e5d41dd2a6967e4de3313576b5abf89f35))
+* **release:** establish product version closure ([#855](https://github.com/iridite/aletheia/issues/855)) ([99b0467](https://github.com/iridite/aletheia/commit/99b046703bcb6cb427722ecc77a21327381e4ecc))
+
+
+### Bug Fixes
+
+* **analytics:** count deferred operator observations in funnel ([#868](https://github.com/iridite/aletheia/issues/868)) ([98b3dfa](https://github.com/iridite/aletheia/commit/98b3dfa7ce506a986d8e35e149a708f9e3cdbc11))
+* **doctor:** disclose truncated funding probe ([#861](https://github.com/iridite/aletheia/issues/861)) ([feaea43](https://github.com/iridite/aletheia/commit/feaea439ef8f13336210baca2c0a76bc7863262e))
+* **gateway:** stabilize service python path ([#873](https://github.com/iridite/aletheia/issues/873)) ([9ca98b1](https://github.com/iridite/aletheia/commit/9ca98b186b7e8630a2dd25ad84a208c5df9117b6))
+* **llm:** enforce context evaluation integrity ([9d65765](https://github.com/iridite/aletheia/commit/9d657659d73e38b8db54299e4b82783b22c30df6))
+* **observer:** preserve macro prompt decision ([30f8a7f](https://github.com/iridite/aletheia/commit/30f8a7fc2cbde52e498ab118861fa21009052459))
+* **observer:** preserve technical context integrity ([c7aea4a](https://github.com/iridite/aletheia/commit/c7aea4a54342e78a197c566623afbf377572e439))
+* **operator:** drain no-model defer backlog promptly ([#870](https://github.com/iridite/aletheia/issues/870)) ([c935c47](https://github.com/iridite/aletheia/commit/c935c47e7a5ae1d9d1cef5c3d301bcd990046171))
+* **persistence:** report dormant gateway status honestly ([#863](https://github.com/iridite/aletheia/issues/863)) ([7d52bcf](https://github.com/iridite/aletheia/commit/7d52bcf62891332bd04b1a1bad1cefd61d04b466))
+* **release:** allow candidate hold removal ([#876](https://github.com/iridite/aletheia/issues/876)) ([83cfd56](https://github.com/iridite/aletheia/commit/83cfd56b64b4b6fec0ded352545aa1ab70dd93a5))
+* **release:** automate verified release closure ([#871](https://github.com/iridite/aletheia/issues/871)) ([1c788e0](https://github.com/iridite/aletheia/commit/1c788e04838f78c4b87961824b876b7630dc98e3))
+* **release:** dispatch after trusted merge ([#862](https://github.com/iridite/aletheia/issues/862)) ([03d5739](https://github.com/iridite/aletheia/commit/03d5739d5264d784c68fa3d77e9237a108bf3087))
+* **release:** hand off verified candidate explicitly ([#874](https://github.com/iridite/aletheia/issues/874)) ([623dd10](https://github.com/iridite/aletheia/commit/623dd106d36090ea42d483bba25de025f86fea7f))
+* **release:** honor actions allowlist ([#860](https://github.com/iridite/aletheia/issues/860)) ([7db5a1f](https://github.com/iridite/aletheia/commit/7db5a1f744b216d7c6a2f6063f69a7c2dffff2a1))
+* **release:** preserve generated PR hold ([#866](https://github.com/iridite/aletheia/issues/866)) ([5aae48a](https://github.com/iridite/aletheia/commit/5aae48a9d5bf996fb65d042a0b4bd6e0bc0853c4))
+* **scheduler:** expose position manager error facts ([#865](https://github.com/iridite/aletheia/issues/865)) ([e689769](https://github.com/iridite/aletheia/commit/e689769e098c4afa03233c2bd7d075b60040fded))
+* **serenity:** make cancellation lifecycle truthful ([#854](https://github.com/iridite/aletheia/issues/854)) ([2df1b0e](https://github.com/iridite/aletheia/commit/2df1b0ec550ab1ce27024bab81c19c7734d3747e))
+
+## [Unreleased]
+
+### Versioned incremental technical analysis
 
 - Added a batch reference analyzer and append-fast incremental engine for
   closed-bar SMA/EMA, RSI, ATR, Bollinger, momentum, volume, VWAP, Donchian, and
@@ -14,7 +50,7 @@
   remains the hot authority; ZSTD and the BLOB-vs-file choice remain deferred.
 - Added a repeatable micro-benchmark and focused contract/integration coverage.
 
-## [Unreleased] - 2026-07-17 — Cascade opportunity expiry when parent snapshot is superseded
+### Cascade opportunity expiry when parent snapshot is superseded
 
 Fixes an unbounded-growth backlog exposed by the change-suppression valid_until
 slide + soft-TTL filter fixes: after the pre-restart baseline of 52 open
@@ -37,7 +73,7 @@ indefinitely at `status='open'`.
   expire_opportunities_from_superseded_snapshots as f; print(f('crypto'))"`.
   Post-restart the running gateway will keep the pool tidy on its own.
 
-## [Unreleased] - 2026-07-17 — Gateway CLI: no-browser as default
+### Gateway CLI: no-browser as default
 
 Flips the `gateway start` / `gateway restart` default: the browser no longer
 pops open on every restart. Owner has to explicitly opt in with `--browser`,
@@ -50,13 +86,13 @@ or use the already-existing `aletheia gateway open-dashboard` helper any time.
   short-circuits it. To restore auto-open on start, pass `--browser`
   explicitly or invoke `aletheia gateway open-dashboard` after boot.
 
-## [Unreleased] - 2026-07-17 — Approval Desk records final-stage rejections
+### Approval Desk records final-stage rejections
 
 Closes the loop on "why didn't this reach me?" once a candidate crosses into
 the operator stage — the Funnel card covers everything BEFORE that boundary,
 the Approval Desk now records everything AFTER.
 
-### feat(overview): Approval Desk Recent decisions section + trace drawer
+#### feat(overview): Approval Desk Recent decisions section + trace drawer
 
 - Adds a collapsible "Recent" section beneath the pending approval list.
   Shows outcome counts (trade / operator_skip / user_reject / auto_reject /
@@ -71,7 +107,7 @@ the Approval Desk now records everything AFTER.
   joining trade_proposals with audit_events (actor='human' → user, else
   auto). Users see clearly whether *they* pressed reject or the system did.
 
-### feat(api): two new analytics endpoints
+#### feat(api): two new analytics endpoints
 
 - `GET /api/analytics/operator-decisions?hours=24&limit=50` — merges
   pi_decisions (action IN 'trade'/'skip'/'watch'/'flip'/'scale_in') with
@@ -82,11 +118,11 @@ the Approval Desk now records everything AFTER.
   CLI trace builder (`aletheia opportunity trace --id`) with no logic
   duplication.
 
-### docs
+#### docs
 
 - `api_reference.md`: two new endpoint rows.
 
-## [Unreleased] - 2026-07-17 — Inline paper_trader nudge on universe events
+### Inline paper_trader nudge on universe events
 
 Cuts new-opportunity → ranker-review latency from up to 3 minutes to ~1
 second, without introducing a daemon. Debounced (3s) and gated by
@@ -107,13 +143,13 @@ surface; Tier 3 — full event-driven daemon) filed as a plan at
 `docs/archive/legacy/plans/trading-pipeline/ranker_on_demand_upgrade_plan_2026-07-17.md`
 with explicit observation gates to prevent premature escalation.
 
-## [Unreleased] - 2026-07-17 — Opportunity funnel Tier-2: change-suppression TTL slide, ranker cadence, soft TTL, dashboard redesign
+### Opportunity funnel Tier-2: change-suppression TTL slide, ranker cadence, soft TTL, dashboard redesign
 
 Follows the initial funnel card (commit 25a886d8) with a redesigned UI and three
 root-cause fixes for the "everything expires before review" pattern the funnel
 made visible.
 
-### fix(universe): change-suppression must refresh valid_until (service.py, repositories.py)
+#### fix(universe): change-suppression must refresh valid_until (service.py, repositories.py)
 
 - `repositories.refresh_active_snapshot_ttls(snapshot_id, now)` batches
   `UPDATE universe_members.expires_at` and `UPDATE opportunities.valid_until`
@@ -125,12 +161,12 @@ made visible.
   ranker scan — even though the same working set had just been reconfirmed.
   Reuse is now a genuine no-op, not a wall-clock cliff.
 
-### chore(scheduler): paper_trader cadence 5min → 3min (scheduler.py)
+#### chore(scheduler): paper_trader cadence 5min → 3min (scheduler.py)
 
 - Momentum (30min TTL) now gets ~10 review passes (was 6); mean_reversion (60min
   TTL) gets ~20 (was 12). Well below the `agents` executor budget.
 
-### feat(ranker): soft-TTL filter with score decay (paper_trader_ranker.py)
+#### feat(ranker): soft-TTL filter with score decay (paper_trader_ranker.py)
 
 - New `_ttl_soft_penalty_factor` returns `0.5 ** (expired_sec / family_ttl_sec)`
   — half-life = family TTL. Applied multiplicatively to `trade_score` at end of
@@ -144,7 +180,7 @@ made visible.
   entirely; now they degrade gracefully so a late-arriving ranker can still
   consider them when there's nothing fresher.
 
-### feat(overview): funnel card redesign per ASCII spec (Overview.tsx, index.css)
+#### feat(overview): funnel card redesign per ASCII spec (Overview.tsx, index.css)
 
 - Three sections: (1) top diagnosis headline ("Idle: all N open signals expired
   before review" / "Confidence gate rejected all N candidates" / "Healthy"); (2)
@@ -157,7 +193,7 @@ made visible.
   `universe_snapshot_age` so the change-suppression interaction with TTL is
   visible to the operator.
 
-### feat(api): /analytics/opportunity-funnel payload enrichments (analytics.py, trading_context.py, paper_trader_ranker.py)
+#### feat(api): /analytics/opportunity-funnel payload enrichments (analytics.py, trading_context.py, paper_trader_ranker.py)
 
 - Adds `reviewed_count` / `still_open_count` / `universe_snapshot_age_sec` /
   `family_ttl_sec` (map).
@@ -166,7 +202,7 @@ made visible.
 - `paper_trader_ranker._make_candidate` and `trading_context.ranker_candidates`
   propagate `valid_until` end-to-end.
 
-### docs
+#### docs
 
 - `scheduler_contract.md`, `agent_contracts.md`, `SYSTEM_MAP.md`: paper_trader
   cadence 5min → 3min.
@@ -178,9 +214,9 @@ made visible.
 
 ---
 
-## [Unreleased] - 2026-07-17 — Universe scanner signal improvements + filter closed-loop feedback
+### Universe scanner signal improvements + filter closed-loop feedback
 
-### Universe Scanner — Signal Quality (scanners.py)
+#### Universe Scanner — Signal Quality (scanners.py)
 
 Five targeted fixes to scanner scoring quality and correctness:
 
@@ -202,7 +238,7 @@ Five targeted fixes to scanner scoring quality and correctness:
    penalty was then effectively cancelled by subsequent additions. Moved to end of signal
    accumulation in both scanners; added `score *= 0.7` for unknown volume.
 
-### Universe Filter — Two-Pass Architecture + Depth Gate (filters.py, service.py)
+#### Universe Filter — Two-Pass Architecture + Depth Gate (filters.py, service.py)
 
 - **`apply_coarse_tradability_filters`** (pre-scan, spread threshold 3× max_spread_bps):
   runs before scanners assign families. Borderline spread assets (2×–3×) survive.
@@ -214,7 +250,7 @@ Five targeted fixes to scanner scoring quality and correctness:
 - **Depth scoring in `_compute_tradability_score`**: +10 for deep (≥3× min), +5 for
   adequate (≥min), 0 for marginal (≥25% min), −10 for critically shallow (<25% min).
 
-### Filter Feedback Loop — filter_advisor (filter_advisor.py, repositories.py)
+#### Filter Feedback Loop — filter_advisor (filter_advisor.py, repositories.py)
 
 Closes the feedback gap where filter-rejected candidates had no path back to scanner
 calibration. Fine-filter rejections now populate `filter_candidate_outcomes` with
@@ -230,7 +266,7 @@ calibration. Fine-filter rejections now populate `filter_candidate_outcomes` wit
 - **`filter_advisor.get_family_filter_pressure_summary()`**: surfaced in
   `operator_loop.SystemAssessment.filter_pressure` and logged by `outcome_recorder`.
 
-### Dashboard — Opportunity Funnel Card (Overview.tsx, analytics.py)
+#### Dashboard — Opportunity Funnel Card (Overview.tsx, analytics.py)
 
 New `OpportunityFunnelCard` in Overview surfaces why opportunities don't reach the
 operator: emitted → proposed cumulative counts + point-in-time ranker snapshot (excluded

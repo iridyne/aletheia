@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
+import { useDialogFocus } from './ui/useDialogFocus'
 
 interface DetailDrawerProps {
   open: boolean
@@ -10,37 +11,7 @@ interface DetailDrawerProps {
 export function DetailDrawer({ open, onClose, title, children }: DetailDrawerProps) {
   const panelRef = useRef<HTMLElement>(null)
 
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [open, onClose])
-
-  // Focus trap: keep Tab cycling inside the drawer
-  useEffect(() => {
-    if (!open || !panelRef.current) return
-    const panel = panelRef.current
-    panel.focus()
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'Tab') return
-      const focusable = panel.querySelectorAll<HTMLElement>(
-        'a[href], button, textarea, input, select, [tabindex]:not([tabindex="-1"])'
-      )
-      if (focusable.length === 0) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault()
-        last.focus()
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault()
-        first.focus()
-      }
-    }
-    panel.addEventListener('keydown', handler)
-    return () => panel.removeEventListener('keydown', handler)
-  }, [open])
+  useDialogFocus(open, panelRef, onClose)
 
   if (!open) return null
 

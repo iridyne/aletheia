@@ -208,6 +208,25 @@ def _diagnose(
         )
 
     placeholders = ",".join("?" for _ in candidate_ids)
+    unreconstructable_adverse_evidence = int(db.execute(
+        f"""SELECT COUNT(*) FROM pi_decisions decision
+            WHERE decision.id IN ({placeholders})
+              AND EXISTS (
+                  SELECT 1
+                  FROM json_each(
+                      decision.evidence_manifest_json,
+                      '$.operator_rationale.validated_adverse_claims'
+                  ) claim,
+                  json_each(claim.value, '$.fact_refs') ref,
+                  json_each(
+                      decision.evidence_manifest_json,
+                      '$.operator_rationale.adverse_evidence'
+                  ) evidence
+                  WHERE ref.value LIKE 'decision.%'
+                    AND instr(evidence.value, ref.value || '=null') > 0
+              )""",
+        tuple(candidate_ids),
+    ).fetchone()[0] or 0)
     trace_rows = db.execute(
         f"""SELECT outcome_candidate_key, reason_code
             FROM filter_decisions
@@ -235,8 +254,9 @@ def _diagnose(
     counts.update({
         "missing_trace": missing_trace,
         "missing_outcome_seed": missing_seed,
+        "unreconstructable_adverse_evidence": unreconstructable_adverse_evidence,
     })
-    if missing_trace or missing_seed:
+    if missing_trace or missing_seed or unreconstructable_adverse_evidence:
         return _report(
             "recording_incident", "create_recording_repair_task", start, end,
             counts=counts, metrics={}, reason_codes=dict(reason_codes), policy_epoch_id=policy_epoch_id,

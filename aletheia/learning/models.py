@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -179,6 +180,17 @@ class LearningJobHealth(BaseModel):
     last_failed_at: str | None = None
     last_failure_reason: str | None = None
     updated_at: str = Field(default_factory=_now)
+
+
+class LessonReviewerAttempt(BaseModel):
+    attempt_id: str = Field(default_factory=_id)
+    input_watermark: str
+    started_at: str = Field(default_factory=_now)
+    finished_at: str | None = None
+    outcome: Literal["running", "succeeded", "failed"] = "running"
+    error_class: str | None = None
+    error_message: str | None = None
+    retry_of_attempt_id: str | None = None
 
 
 class LearningPolicyEpoch(BaseModel):

@@ -112,6 +112,16 @@ CALLER_SPECS: dict[str, InferenceCallerSpec] = {
             OutputMode.STRUCTURED,
             prompt_template_id="market_observer.market_read",
         ),
+        _spec(
+            "evaluation.context_ablation.control",
+            OutputMode.STRUCTURED,
+            prompt_template_id="market_observer.market_read",
+        ),
+        _spec(
+            "evaluation.context_ablation.treatment",
+            OutputMode.STRUCTURED,
+            prompt_template_id="market_observer.market_read",
+        ),
         # Compatibility for direct helper-level tests.  Executable coverage
         # forbids this caller in application code.
         _spec("unregistered", OutputMode.TEXT),
@@ -305,6 +315,7 @@ def build_inference_call(
             "evaluation_arm",
             "fixture_id",
             "blind_label",
+            "modality_id",
         }
         and value is not None
     }

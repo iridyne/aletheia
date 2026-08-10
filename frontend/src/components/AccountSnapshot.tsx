@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import MetricTile from './MetricTile'
 import { fmtNum, fmtSigned } from '../lib/format'
+import { positionFreshness, positionKeys } from '../lib/queryKeys'
 
 export default function AccountSnapshot() {
   const navigate = useNavigate()
   const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
-  const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
+  const { data: positions = [] } = useQuery({ queryKey: positionKeys.all, queryFn: api.getPositions, ...positionFreshness })
   const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
 
   const openPositions = (positions as any[]).filter(p => p.status === 'open')

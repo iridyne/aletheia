@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { humanize, fmtDelta, fmtPct, fmtSymbol } from '../lib/format'
 import { getOperatorDisplayStatus } from '../lib/systemState'
+import { positionFreshness, positionKeys } from '../lib/queryKeys'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, ListRowButton, StatusText, TableWrap, useToast } from '../components/ui'
 import type {
@@ -480,9 +481,11 @@ function HeartbeatZone({
     refetchInterval: 10000,
   })
   const { data: positions = [] } = useQuery<any[]>({
-    queryKey: ['positions'],
+    queryKey: positionKeys.all,
     queryFn: api.getPositions,
+    ...positionFreshness,
     refetchInterval: 10000,
+    staleTime: 8000,
   })
 
   const p = portfolio as any

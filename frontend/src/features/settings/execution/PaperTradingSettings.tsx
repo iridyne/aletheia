@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../api/client'
+import { positionKeys } from '../../../lib/queryKeys'
 import {
   CollapsibleSection as Collapsible,
   SaveMessage as SaveMsg,
@@ -17,7 +18,7 @@ export function PaperAccountCard({ qc }: { qc: ReturnType<typeof useQueryClient>
   const [msg, setMsg] = useState<string | null>(null)
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['paper-account'] })
-    qc.invalidateQueries({ queryKey: ['positions'] })
+    qc.invalidateQueries({ queryKey: positionKeys.all })
     qc.invalidateQueries({ queryKey: ['portfolio'] })
   }
   const mutate = useMutation({

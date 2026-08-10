@@ -1,0 +1,73 @@
+name: Prepare and tag releases
+
+on:
+  repository_dispatch:
+    types: [release_please]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please-master
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Maintain release pull request and tag approved releases
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+
+      # The repository Action policy permits GitHub-owned Actions only. Keep the
+      # release tool itself at the exact version bundled by the rejected action.
+      - name: Maintain releases and the release pull request
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_please() {
+            npm exec --yes --package=release-please@17.6.0 -- \
+              release-please "$@" \
+              --token="$GITHUB_TOKEN" \
+              --repo-url="$GITHUB_REPOSITORY" \
+              --target-branch=master \
+              --config-file=release-please-config.json \
+              --manifest-file=.release-please-manifest.json
+          }
+          release_please github-release
+          release_please release-pr
+      - name: Run CI for the release pull request
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
+        with:
+          retries: 3
+          script: |
+            const {data: pullRequests} = await github.rest.pulls.list({
+              ...context.repo,
+              state: 'open',
+              base: 'master',
+            });
+            for (const pullRequest of pullRequests) {
+              if (!pullRequest.labels.some(({name}) => name === 'autorelease: pending')) {
+                continue;
+              }
+              await github.rest.issues.addLabels({
+                ...context.repo,
+                issue_number: pullRequest.number,
+                labels: ['do-not-auto-merge'],
+              });
+              await github.rest.actions.createWorkflowDispatch({
+                ...context.repo,
+                workflow_id: 'ci.yml',
+                ref: pullRequest.head.ref,
+              });
+            }

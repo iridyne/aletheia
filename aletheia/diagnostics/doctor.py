@@ -1902,6 +1902,8 @@ def _probe_skip_halt(report: Report) -> None:
         f"mature_epoch_candidate_skips={int(scoped_counts.get('mature_candidate_skips', 0))}, "
         f"immature_epoch_candidate_skips={int(scoped_counts.get('immature_candidate_skips', 0))}, "
         f"current_epoch_pending_signals={int(scoped_counts.get('pending_signals', 0))}, "
+        f"current_epoch_unreconstructable_adverse_evidence="
+        f"{int(scoped_counts.get('unreconstructable_adverse_evidence', 0))}, "
         f"finding={diagnosis.finding}, threshold={diagnosis.threshold_version}"
     )
     fix_hint = (
@@ -2219,8 +2221,10 @@ def _probe_paper_funding_accounting(report: Report) -> None:
         missing_hooks = int(summary["missing_outcome_hooks"])
         outcome_projection = int(summary["outcome_projection_mismatch"])
         incomplete = int(summary["still_incomplete"])
+        truncated = bool(result.get("truncated"))
         detail = (
             f"version={result['accounting_version']}; scanned={result['scanned']}; "
+            f"truncated={str(truncated).lower()}; "
             f"identity_mismatch={identity}; "
             f"numeric_mismatch={numeric}; ledger_mismatch={ledgers}; "
             f"recoverable={recoverable}; incomplete={incomplete}; "
@@ -2237,10 +2241,16 @@ def _probe_paper_funding_accounting(report: Report) -> None:
             or incomplete
             or outcome_projection
             or missing_hooks
+            or truncated
         ):
             report.add(
                 "accounting.paper_funding", "warn", detail,
-                "review the dry run; apply requires explicit position IDs and fingerprint",
+                (
+                    "run the complete dry run before trusting the sampled result"
+                    if truncated
+                    else "review the dry run; apply requires explicit position IDs "
+                    "and fingerprint"
+                ),
             )
         else:
             report.add("accounting.paper_funding", "ok", detail)

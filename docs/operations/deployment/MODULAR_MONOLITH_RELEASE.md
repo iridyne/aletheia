@@ -8,6 +8,50 @@ running machine needs Python 3.12 and `uv`, but it does not need Node.js.
 The same portable source artifact is verified on Windows and macOS. Runtime state
 is never stored in the release directory.
 
+## Version identity
+
+Aletheia has one product version, expressed as SemVer `0.MINOR.PATCH` while the
+product remains in initial development. `aletheia.__version__` is the only
+hand-edited product-version source; Hatch package metadata, the CLI and health
+surfaces, `VERSION`, release manifests, Git tags, and GitHub Releases derive
+from it. Product tags use `v<version>`.
+
+The immutable build identity is `<version>+<git-sha>`. Schema, prompt, policy,
+experiment, inference-contract, and cost-model versions describe compatibility
+or evidence boundaries and remain independent of the product version. The
+private dashboard and Operator Shell packages and the stable native host also
+retain independent component versions unless they become separately shipped
+products.
+
+Release Please maintains a Ready-for-review release PR from Conventional Commit
+history. A merged-PR event explicitly dispatches Release Please because merges
+performed with the repository `GITHUB_TOKEN` do not reliably start another
+workflow through a `push` event. When the trusted auto-merge worker performs a
+clean squash merge, it emits that dispatch in the same job. Native auto-merge
+returns control immediately; after the exact PR CI run completes, a trusted
+metadata-only follow-up observes the bot merge and dispatches Release Please.
+The closed-PR path covers human merges.
+Release Please keeps its `autorelease: pending` marker on the generated PR and
+the workflow adds `do-not-auto-merge` while the candidate is unverified. Release
+Please explicitly dispatches the existing read-only CI workflow on the generated
+branch because its `GITHUB_TOKEN` cannot trigger the normal pull-request event.
+After both CI jobs succeed, a metadata-only job dispatches the exact candidate
+branch and SHA to the trusted auto-merge workflow. That workflow removes the
+hold only after matching the open Release Please PR.
+Merging the release PR creates the matching tag and a metadata-only GitHub
+Release. Failed CI leaves the candidate open and held. The release workflow does
+not publish a package, build an artifact, deploy a Runtime, or open an
+Observation window.
+
+The workflow invokes the exact `release-please@17.6.0` CLI through the
+GitHub-owned Node setup Action. This preserves the repository's restrictive
+Action allowlist; it does not require a PAT or an allowlist exception for a
+third-party Action.
+
+The bootstrap manifest remains at the last released product version (`0.5.0`).
+The first generated release PR promotes the version, changelog, and manifest
+together to the reviewed `0.6.0` baseline; only its merge may create `v0.6.0`.
+
 ## Stable runtime shape
 
 ### macOS
@@ -173,17 +217,11 @@ when omitted, Python selects the running user's `~/.aletheia`.
 
 ## CI validation
 
-`.github/workflows/build-dogfood-release.yml` proves the release input in four
-ways:
-
-1. validate the per-user runtime-home contract on Ubuntu, macOS and Windows;
-2. compile/lint the dashboard and build the deterministic artifact on Windows;
-3. extract and bootstrap the artifact in a clean Windows directory using both the
-   default home and an explicit absolute override;
-4. download that exact artifact on `macos-latest`, install it under a temporary user
-   application root, bootstrap a temporary `~/.aletheia`, start the stable gateway,
-   pass readiness and health probes, stop it, and prove no LaunchAgent plist or
-   repository-local runtime state was created.
+The active pull-request CI runs the release bundle and packaged-runtime contract
+tests but deliberately does not build or distribute release artifacts. There is
+currently no active artifact publication workflow. A future publication workflow
+must prove the exact final digest on its target platform before distribution;
+the version tag alone is not that proof.
 
 ## Migrate a legacy checkout
 

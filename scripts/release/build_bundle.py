@@ -84,10 +84,13 @@ def _resolve_git_sha(root: Path, explicit: str | None) -> str:
 
 def _project_metadata(root: Path) -> tuple[str, str]:
     pyproject = root / "pyproject.toml"
+    init_file = root / "aletheia" / "__init__.py"
     try:
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         project = data["project"]
-        return str(project["version"]), str(project["requires-python"])
+        namespace: dict[str, object] = {}
+        exec(compile(init_file.read_text(encoding="utf-8"), str(init_file), "exec"), namespace)
+        return str(namespace["__version__"]), str(project["requires-python"])
     except (OSError, KeyError, tomllib.TOMLDecodeError) as exc:
         raise BundleBuildError("pyproject.toml is missing release metadata") from exc
 

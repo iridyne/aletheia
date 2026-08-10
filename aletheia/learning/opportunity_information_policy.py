@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
+from aletheia.trading.trade_motivation import TRADE_MOTIVATION_VERSION
 
 
 POLICY_EPOCH_LABEL = "opportunity_information_integrity/v1"
@@ -24,6 +25,7 @@ _EFFECTIVE_VALUES = {
     "news_publication_time": "known-not-future",
     "opportunity_evidence_manifest": "opportunity-information-integrity-v1",
     "operator_evidence_manifest": "operator-candidate-v3",
+    "structured_trade_motivation": TRADE_MOTIVATION_VERSION,
     "manifest_sources": "rendered-only",
     "serenity_exact_carrier_context": True,
     "serenity_partial_theme_retry": True,
@@ -39,6 +41,7 @@ _AFFECTED_PATHS = (
     "news_evidence_quality",
     "opportunity_source_manifest",
     "operator_decision_evidence_manifest",
+    "structured_trade_motivation",
     "serenity_pending_context",
     "serenity_promotion_continuity",
     "post_trade_rationale_context",
