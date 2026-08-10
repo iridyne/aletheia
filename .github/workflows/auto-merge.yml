@@ -6,6 +6,9 @@ on:
     types: [opened, reopened, ready_for_review, edited, synchronize, labeled, unlabeled, closed]
   repository_dispatch:
     types: [auto_merge_update, release_candidate_verified]
+  workflow_run:
+    workflows: [Aletheia CI]
+    types: [completed]
 
 permissions:
   contents: read
@@ -299,7 +302,8 @@ jobs:
     if: >-
       github.event_name == 'pull_request_target' &&
       github.event.action == 'closed' &&
-      github.event.pull_request.merged == true
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.merged_by.login != 'github-actions[bot]'
     permissions:
       contents: write
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
@@ -317,3 +321,57 @@ jobs:
                 merge_commit_sha: context.payload.pull_request.merge_commit_sha,
               },
             });
+
+  release-after-ci:
+    name: Dispatch bot auto-merge release after CI
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request'
+    permissions:
+      contents: write
+      pull-requests: read
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    steps:
+      - name: Dispatch Release Please for bot auto-merge
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
+        with:
+          retries: 3
+          script: |
+            const run = context.payload.workflow_run;
+            const [candidate] = run.pull_requests || [];
+            if (!candidate) {
+              core.info('completed CI run is not associated with a pull request');
+              return;
+            }
+            for (let attempt = 1; attempt <= 12; attempt += 1) {
+              const {data: pullRequest} = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: candidate.number,
+              });
+              if (pullRequest.head.sha !== run.head_sha) {
+                core.info('completed CI head differs from the current pull request head');
+                return;
+              }
+              if (pullRequest.merged) {
+                if (pullRequest.merged_by?.login !== 'github-actions[bot]') {
+                  core.info('non-bot merge is handled by the closed pull-request event');
+                  return;
+                }
+                await github.rest.repos.createDispatchEvent({
+                  ...context.repo,
+                  event_type: 'release_please',
+                  client_payload: {
+                    merged_pull_request: pullRequest.number,
+                    merge_commit_sha: pullRequest.merge_commit_sha,
+                  },
+                });
+                return;
+              }
+              if (pullRequest.state !== 'open') {
+                core.info('pull request closed without merging');
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 5000));
+            }
+            throw new Error('bot auto-merge did not complete within the post-CI handoff window');

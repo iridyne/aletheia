@@ -27,9 +27,10 @@ Release Please maintains a Ready-for-review release PR from Conventional Commit
 history. A merged-PR event explicitly dispatches Release Please because merges
 performed with the repository `GITHUB_TOKEN` do not reliably start another
 workflow through a `push` event. When the trusted auto-merge worker performs a
-clean squash merge, it emits that dispatch in the same job; the closed-PR path
-also covers a human merge. If native auto-merge is enabled while checks settle,
-the worker waits for the merged commit and can replay that dispatch when rerun.
+clean squash merge, it emits that dispatch in the same job. Native auto-merge
+returns control immediately; after the exact PR CI run completes, a trusted
+metadata-only follow-up observes the bot merge and dispatches Release Please.
+The closed-PR path covers human merges.
 Release Please keeps its `autorelease: pending` marker on the generated PR and
 the workflow adds `do-not-auto-merge` while the candidate is unverified. Release
 Please explicitly dispatches the existing read-only CI workflow on the generated
