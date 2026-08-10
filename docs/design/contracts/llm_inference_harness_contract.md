@@ -178,6 +178,8 @@ the Contract spec.
 | `equity_observer.market_read` | `equity_observer.market_read` | `v1` | `structured` | `none` |
 | `evaluation.learning_b.control` | `market_observer.market_read` | `v1` | `structured` | `none` |
 | `evaluation.learning_b.treatment` | `market_observer.market_read` | `v1` | `structured` | `none` |
+| `evaluation.technical_context.control` | `market_observer.market_read` | `v1` | `structured` | `none` |
+| `evaluation.technical_context.treatment` | `market_observer.market_read` | `v1` | `structured` | `none` |
 | `insight_synthesizer.insight` | `insight_synthesizer.insight` | `v1` | `text` | `none` |
 | `lesson_reviewer.judge` | `lesson_reviewer.judge` | `v1` | `text` | `none` |
 | `market_observer.market_read` | `market_observer.market_read` | `v1` | `structured` | `none` |

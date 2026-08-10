@@ -102,6 +102,16 @@ CALLER_SPECS: dict[str, InferenceCallerSpec] = {
             OutputMode.STRUCTURED,
             prompt_template_id="market_observer.market_read",
         ),
+        _spec(
+            "evaluation.technical_context.control",
+            OutputMode.STRUCTURED,
+            prompt_template_id="market_observer.market_read",
+        ),
+        _spec(
+            "evaluation.technical_context.treatment",
+            OutputMode.STRUCTURED,
+            prompt_template_id="market_observer.market_read",
+        ),
         # Compatibility for direct helper-level tests.  Executable coverage
         # forbids this caller in application code.
         _spec("unregistered", OutputMode.TEXT),

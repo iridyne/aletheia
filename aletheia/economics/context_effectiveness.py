@@ -1,4 +1,4 @@
-"""Paired, paper-only Learning context effectiveness evaluation.
+"""Paired, paper-only context effectiveness evaluation.
 
 The economics ledger receives only aggregate/content-free facts. Raw outputs are
 written solely to an owner-selected review packet outside the repository.
@@ -17,21 +17,24 @@ from aletheia.economics.inference_calls import list_inference_calls
 from aletheia.economics.schema import ensure_economics_schema
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_RUBRIC_VERSION = "learning-b-owner-v1"
+_LEARNING_RUBRIC_VERSION = "learning-b-owner-v1"
+_TECHNICAL_RUBRIC_VERSION = "technical-context-owner-v1"
 
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _load_fixture(path: Path) -> dict[str, Any]:
+def _load_fixture(
+    path: Path, *, treatment_field: str, fixture_label: str
+) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    required = {"fixture_id", "symbol", "market_context", "learning_context"}
+    required = {"fixture_id", "symbol", "market_context", treatment_field}
     missing = sorted(required - set(payload))
     if missing:
-        raise ValueError(f"Learning B fixture missing field: {missing[0]}")
+        raise ValueError(f"{fixture_label} fixture missing field: {missing[0]}")
     if not all(isinstance(payload[key], str) and payload[key].strip() for key in required):
-        raise ValueError("Learning B fixture fields must be non-empty strings")
+        raise ValueError(f"{fixture_label} fixture fields must be non-empty strings")
     return payload
 
 
@@ -41,7 +44,7 @@ def _review_path(path: Path) -> Path:
         resolved.relative_to(_REPO_ROOT)
     except ValueError:
         return resolved
-    raise ValueError("raw Learning B review packet must be outside the repository")
+    raise ValueError("raw context review packet must be outside the repository")
 
 
 def _provider_preflight(provider_name: str | None) -> tuple[str | None, str | None]:
@@ -134,14 +137,28 @@ def _pair_metrics(pair_id: str) -> dict[str, Any]:
     return {"valid_pair": valid and not reasons, "invalid_reasons": reasons, "arms": by_arm}
 
 
-async def run_learning_b_pair(
+async def _run_context_pair(
     *,
     fixture_path: Path,
     review_output: Path,
     provider_name: str | None = None,
+    treatment_field: str,
+    treatment_heading: str,
+    fixture_label: str,
+    pair_prefix: str,
+    protocol: str,
+    rubric_version: str,
+    treatment_artifact_kind: str,
+    treatment_artifact_suffix: str,
+    treatment_artifact_source: str,
+    treatment_trust_class: str,
 ) -> dict[str, Any]:
     """Run one frozen control/treatment pair and create a blinded review packet."""
-    fixture = _load_fixture(fixture_path)
+    fixture = _load_fixture(
+        fixture_path,
+        treatment_field=treatment_field,
+        fixture_label=fixture_label,
+    )
     review_path = _review_path(review_output)
     resolved_provider, blocker = _provider_preflight(provider_name)
     if blocker:
@@ -155,7 +172,7 @@ async def run_learning_b_pair(
     from aletheia.agents.helpers import llm_structured
     from aletheia.agents.market_observer import MarketRead, _SYSTEM_PROMPT
 
-    pair_id = "learning_b_" + uuid4().hex[:16]
+    pair_id = pair_prefix + uuid4().hex[:16]
     arms = ["control", "treatment"]
     secrets.SystemRandom().shuffle(arms)
     label_by_arm = {arm: label for arm, label in zip(arms, ("A", "B"), strict=True)}
@@ -163,10 +180,10 @@ async def run_learning_b_pair(
     call_errors: dict[str, str] = {}
 
     for arm in arms:
-        learning = fixture["learning_context"] if arm == "treatment" else ""
+        treatment = fixture[treatment_field] if arm == "treatment" else ""
         rendered_context = fixture["market_context"]
-        if learning:
-            rendered_context += "\n\n## Learning Advisory\n" + learning
+        if treatment:
+            rendered_context += f"\n\n## {treatment_heading}\n" + treatment
         user = (
             f"/no_think\nMarket data for {fixture['symbol']}:\n{rendered_context}"
             "\n\nReturn the market read JSON."
@@ -188,13 +205,13 @@ async def run_learning_b_pair(
                 "rendered_chars": len(fixture["market_context"]),
             },
             {
-                "kind": "learning",
-                "stable_id": f"fixture:{fixture['fixture_id']}:learning",
-                "source": "owner_authorized_evaluation_fixture",
-                "selected_reason": "paired_treatment" if learning else "control_omission",
-                "trust_class": "learned_advisory",
+                "kind": treatment_artifact_kind,
+                "stable_id": f"fixture:{fixture['fixture_id']}:{treatment_artifact_suffix}",
+                "source": treatment_artifact_source,
+                "selected_reason": "paired_treatment" if treatment else "control_omission",
+                "trust_class": treatment_trust_class,
                 "freshness_status": "unknown",
-                "rendered_chars": len(learning),
+                "rendered_chars": len(treatment),
             },
         ]
         call_kwargs = {
@@ -208,13 +225,21 @@ async def run_learning_b_pair(
             "context_symbol": fixture["symbol"],
             "evaluation": evaluation,
         }
-        if arm == "control":
+        if treatment_field == "learning_context" and arm == "control":
             result, error = await llm_structured(
                 **call_kwargs, caller="evaluation.learning_b.control"
             )
-        else:
+        elif treatment_field == "learning_context":
             result, error = await llm_structured(
                 **call_kwargs, caller="evaluation.learning_b.treatment"
+            )
+        elif arm == "control":
+            result, error = await llm_structured(
+                **call_kwargs, caller="evaluation.technical_context.control"
+            )
+        else:
+            result, error = await llm_structured(
+                **call_kwargs, caller="evaluation.technical_context.treatment"
             )
         if error or result is None:
             call_errors[arm] = error or "empty_result"
@@ -233,10 +258,10 @@ async def run_learning_b_pair(
         }
 
     packet = {
-        "protocol": "learning-b-owner-blind-review-v1",
+        "protocol": protocol,
         "evaluation_pair_id": pair_id,
         "fixture_id": fixture["fixture_id"],
-        "rubric_version": _RUBRIC_VERSION,
+        "rubric_version": rubric_version,
         "instructions": (
             "Score A and B independently. Do not inspect the economics database until "
             "both scores are fixed. Delete this packet after importing aggregate scores."
@@ -264,13 +289,67 @@ async def run_learning_b_pair(
     }
 
 
-def record_learning_b_review(*, pair_id: str, scores_path: Path) -> dict[str, Any]:
+async def run_learning_b_pair(
+    *,
+    fixture_path: Path,
+    review_output: Path,
+    provider_name: str | None = None,
+) -> dict[str, Any]:
+    return await _run_context_pair(
+        fixture_path=fixture_path,
+        review_output=review_output,
+        provider_name=provider_name,
+        treatment_field="learning_context",
+        treatment_heading="Learning Advisory",
+        fixture_label="Learning B",
+        pair_prefix="learning_b_",
+        protocol="learning-b-owner-blind-review-v1",
+        rubric_version=_LEARNING_RUBRIC_VERSION,
+        treatment_artifact_kind="learning",
+        treatment_artifact_suffix="learning",
+        treatment_artifact_source="owner_authorized_evaluation_fixture",
+        treatment_trust_class="learned_advisory",
+    )
+
+
+async def run_technical_context_pair(
+    *,
+    fixture_path: Path,
+    review_output: Path,
+    provider_name: str | None = None,
+) -> dict[str, Any]:
+    return await _run_context_pair(
+        fixture_path=fixture_path,
+        review_output=review_output,
+        provider_name=provider_name,
+        treatment_field="technical_context",
+        treatment_heading="Technical Context",
+        fixture_label="Technical context",
+        pair_prefix="technical_context_",
+        protocol="technical-context-owner-blind-review-v1",
+        rubric_version=_TECHNICAL_RUBRIC_VERSION,
+        # Reuse the current durable artifact vocabulary; the stable ID retains
+        # the semantic distinction without a schema migration.
+        treatment_artifact_kind="environment",
+        treatment_artifact_suffix="technical",
+        treatment_artifact_source="frozen_technical_evaluation_fixture",
+        treatment_trust_class="deterministic_derived_fact",
+    )
+
+
+def _record_context_pair_review(
+    *,
+    pair_id: str,
+    scores_path: Path,
+    rubric_version: str,
+    pair_label: str,
+) -> dict[str, Any]:
     """Persist aggregate blind scores; never copy review-packet outputs."""
     payload = json.loads(scores_path.read_text(encoding="utf-8"))
     scores = payload.get("scores") or {}
     metrics = _pair_metrics(pair_id)
     if set(metrics["arms"]) != {"control", "treatment"}:
-        raise ValueError("Learning B pair is incomplete")
+        raise ValueError(f"{pair_label} pair is incomplete")
     by_label = {
         arm_metrics["blind_label"]: arm
         for arm, arm_metrics in metrics["arms"].items()
@@ -319,7 +398,7 @@ def record_learning_b_review(*, pair_id: str, scores_path: Path) -> dict[str, An
         (
             pair_id,
             fixture_id,
-            str(payload.get("rubric_version") or _RUBRIC_VERSION),
+            str(payload.get("rubric_version") or rubric_version),
             str(payload.get("reviewer") or "owner")[:80],
             calls["control"]["logical_call_id"],
             calls["treatment"]["logical_call_id"],
@@ -347,9 +426,32 @@ def record_learning_b_review(*, pair_id: str, scores_path: Path) -> dict[str, An
     }
 
 
+def record_learning_b_review(*, pair_id: str, scores_path: Path) -> dict[str, Any]:
+    return _record_context_pair_review(
+        pair_id=pair_id,
+        scores_path=scores_path,
+        rubric_version=_LEARNING_RUBRIC_VERSION,
+        pair_label="Learning B",
+    )
+
+
+def record_technical_context_review(
+    *, pair_id: str, scores_path: Path
+) -> dict[str, Any]:
+    return _record_context_pair_review(
+        pair_id=pair_id,
+        scores_path=scores_path,
+        rubric_version=_TECHNICAL_RUBRIC_VERSION,
+        pair_label="Technical context",
+    )
+
+
 def summarize_learning_b_reviews() -> dict[str, Any]:
     db = ensure_economics_schema()
-    rows = db.execute("SELECT * FROM llm_context_pair_reviews ORDER BY reviewed_at").fetchall()
+    rows = db.execute(
+        "SELECT * FROM llm_context_pair_reviews "
+        "WHERE substr(evaluation_pair_id,1,11)='learning_b_' ORDER BY reviewed_at"
+    ).fetchall()
     deltas = []
     for row in rows:
         deltas.append(int(row["treatment_quality_score"]) - int(row["control_quality_score"]))

@@ -19,6 +19,14 @@ _FIXTURE = (
     / "fixtures"
     / "learning_b_market_observer_v1.json"
 )
+_TECHNICAL_FIXTURE = (
+    Path(__file__).parent.parent
+    / "docs"
+    / "research"
+    / "llm_harness"
+    / "fixtures"
+    / "technical_context_market_observer_v1.json"
+)
 
 
 class _PairProvider(ModelProvider):
@@ -156,3 +164,86 @@ def test_learning_b_refuses_raw_review_packet_inside_repository():
 
     with pytest.raises(ValueError, match="outside the repository"):
         _review_path(_FIXTURE.parent / "raw-output.json")
+
+
+@pytest.mark.asyncio
+async def test_technical_context_pair_reuses_harness_and_stays_content_free(
+    tmp_path, monkeypatch
+):
+    from aletheia.agents import helpers
+    from aletheia.economics import context_effectiveness as effectiveness
+
+    provider = _PairProvider()
+    review_path = tmp_path / "technical-review.json"
+    monkeypatch.setattr(
+        effectiveness,
+        "_provider_preflight",
+        lambda _name: ("fixture-provider", None),
+    )
+    with (
+        patch.object(helpers, "get_provider", lambda _name: provider),
+        patch.object(helpers, "complete_with_fallback", _direct_complete),
+    ):
+        report = await effectiveness.run_technical_context_pair(
+            fixture_path=_TECHNICAL_FIXTURE,
+            review_output=review_path,
+        )
+
+    assert report["status"] == "awaiting_owner_review"
+    assert report["evaluation_pair_id"].startswith("technical_context_")
+    assert report["metrics"]["valid_pair"] is True
+    packet = json.loads(review_path.read_text(encoding="utf-8"))
+    assert packet["protocol"] == "technical-context-owner-blind-review-v1"
+    assert packet["rubric_version"] == "technical-context-owner-v1"
+
+    db = get_db()
+    calls = db.execute(
+        "SELECT caller,metadata_json FROM llm_inference_calls WHERE "
+        "json_extract(metadata_json,'$.evaluation_pair_id')=?",
+        (report["evaluation_pair_id"],),
+    ).fetchall()
+    assert {row["caller"] for row in calls} == {
+        "evaluation.technical_context.control",
+        "evaluation.technical_context.treatment",
+    }
+    artifacts = db.execute(
+        "SELECT evaluation_arm,kind,stable_id,rendered_chars "
+        "FROM llm_context_artifacts WHERE evaluation_pair_id=? "
+        "AND stable_id LIKE '%:technical'",
+        (report["evaluation_pair_id"],),
+    ).fetchall()
+    assert {row["evaluation_arm"] for row in artifacts} == {"control", "treatment"}
+    assert {row["kind"] for row in artifacts} == {"environment"}
+    assert sorted(row["rendered_chars"] for row in artifacts)[0] == 0
+
+    scores_path = tmp_path / "technical-scores.json"
+    scores_path.write_text(
+        json.dumps(
+            {
+                "rubric_version": "technical-context-owner-v1",
+                "scores": {
+                    "A": {
+                        "quality_score": 3,
+                        "grounded_use": "not_applicable",
+                        "context_harm": False,
+                    },
+                    "B": {
+                        "quality_score": 4,
+                        "grounded_use": "yes",
+                        "context_harm": False,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    review = effectiveness.record_technical_context_review(
+        pair_id=report["evaluation_pair_id"], scores_path=scores_path
+    )
+    assert review["status"] == "review_recorded"
+    stored_rubric = db.execute(
+        "SELECT rubric_version FROM llm_context_pair_reviews WHERE evaluation_pair_id=?",
+        (report["evaluation_pair_id"],),
+    ).fetchone()[0]
+    assert stored_rubric == "technical-context-owner-v1"
+    assert effectiveness.summarize_learning_b_reviews()["reviewed_pairs"] == 0
