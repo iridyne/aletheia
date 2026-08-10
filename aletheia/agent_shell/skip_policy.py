@@ -28,7 +28,7 @@ def _material_dedup_killed() -> bool:
 
 _EPOCH_KIND = "system_operator_skip_remediation"
 _EFFECTIVE_VALUES = {
-    "version": "b1.6",
+    "version": "b1.7",
     "aggregate_signal_health_candidate_veto": False,
     "zero_pending_heartbeat_trading_evaluation": False,
     "aggregate_signal_health_config_tightening": False,
@@ -55,6 +55,9 @@ _EFFECTIVE_VALUES = {
     "blind_direct_skip_counterfactual": True,
     "missing_numeric_values_are_unknown": True,
     "decision_evidence_manifest": "operator-candidate-v3",
+    # B1.7: validated claims that reference decision-authored values persist
+    # those exact values instead of rendering them as unavailable context facts.
+    "validated_decision_fact_values": True,
     # B1.4: exact technical delivery and Learning attribution happen at the
     # same durable carrier scope. Missing technical facts defer before inference;
     # a new exact feature snapshot changes the fingerprint and reopens the call.
@@ -119,7 +122,7 @@ _AFFECTED_PATHS = (
 
 
 def ensure_skip_remediation_policy_epoch() -> str:
-    """Return the durable B1.4 policy epoch, rotating only if policy changes."""
+    """Return the durable B1.7 policy epoch, rotating only if policy changes."""
     epoch = build_policy_epoch(
         _EPOCH_KIND,
         _EFFECTIVE_VALUES,
