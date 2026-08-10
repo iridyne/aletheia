@@ -612,6 +612,10 @@ async def _fetch_single_feature(
     funding_rate = fr_row["funding_rate"] if fr_row else None
     open_interest = oi_row["open_interest_usd"] if oi_row else None
     oi_delta_1h = oi_row["oi_change_1h_pct"] if oi_row else None
+    long_short_ratio = oi_row["long_short_ratio"] if oi_row else None
+    top_trader_position_ratio = (
+        oi_row["top_trader_position_ratio"] if oi_row else None
+    )
 
     # P1a: Real-time funding rate for perp-eligible symbols overrides the fresh DB fallback.
     # P2: Taker buy/sell ratio for perp symbols
@@ -710,6 +714,8 @@ async def _fetch_single_feature(
         "funding_rate": funding_rate,
         "open_interest": open_interest,
         "oi_delta_1h": oi_delta_1h,
+        "long_short_ratio": long_short_ratio,
+        "top_trader_position_ratio": top_trader_position_ratio,
         "data_freshness_sec": data_freshness_sec,
         "last_price": last_price,
         "vol_ratio": vol_ratio,
@@ -757,6 +763,8 @@ async def _fetch_single_feature(
         funding_rate=funding_rate,
         open_interest=open_interest,
         oi_delta_1h=oi_delta_1h,
+        long_short_ratio=long_short_ratio,
+        top_trader_position_ratio=top_trader_position_ratio,
         data_freshness_sec=data_freshness_sec,
         btc_beta=btc_beta,
         taker_buy_ratio=taker_buy_ratio,

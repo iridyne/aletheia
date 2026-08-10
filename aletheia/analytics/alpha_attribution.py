@@ -107,6 +107,7 @@ def build_alpha_attribution_audit(days: int = 30, min_sample_size: int = MIN_SAM
         **outcome_window_metadata(),
         "verdicts": verdicts,
         "universe_twin_evidence": _universe_twin_evidence(db, cutoff),
+        "universe_relative_rank_evidence": _universe_relative_rank_evidence(db, cutoff),
         "exit_paired_evidence": _exit_paired_evidence(cutoff),
         "risk_policy_evidence": _risk_policy_evidence(db, cutoff, min_sample_size),
         "execution_cost_evidence": _execution_cost_evidence(
@@ -130,6 +131,7 @@ def _empty_report(generated_at: str, days: int, reason: str) -> dict:
         **outcome_window_metadata(),
         "verdicts": verdicts,
         "universe_twin_evidence": _empty_universe_twin_evidence(reason),
+        "universe_relative_rank_evidence": _empty_relative_rank_evidence(reason),
         "exit_paired_evidence": _empty_exit_paired_evidence(reason),
         "risk_policy_evidence": _empty_risk_policy_evidence(reason),
         "execution_cost_evidence": _empty_execution_cost_evidence(reason),
@@ -327,6 +329,98 @@ def _universe_twin_evidence(db, cutoff: str) -> dict:
     }
 
 
+def _empty_relative_rank_evidence(reason: str) -> dict:
+    return {
+        **_empty_universe_twin_evidence(reason),
+        "contract_version": "universe-relative-rank-evidence/v1",
+    }
+
+
+def _universe_relative_rank_evidence(db, cutoff: str) -> dict:
+    try:
+        latest = db.execute(
+            "SELECT policy_epoch_id FROM universe_relative_rank_shadow_batches "
+            "WHERE datetime(captured_at) >= datetime(?) "
+            "ORDER BY datetime(captured_at) DESC LIMIT 1",
+            (cutoff,),
+        ).fetchone()
+    except sqlite3.DatabaseError as exc:
+        return _empty_relative_rank_evidence(
+            f"Relative-rank evidence storage is unavailable: {type(exc).__name__}."
+        )
+    if latest is None:
+        return _empty_relative_rank_evidence(
+            "No prospective relative-rank policy epoch is available in the audit window."
+        )
+    policy_epoch_id = str(latest["policy_epoch_id"])
+    bounds = db.execute(
+        "SELECT MIN(captured_at) AS window_start, MAX(captured_at) AS window_end "
+        "FROM universe_relative_rank_shadow_batches WHERE policy_epoch_id=?",
+        (policy_epoch_id,),
+    ).fetchone()
+    window_start = bounds["window_start"] if bounds else None
+    window_end = bounds["window_end"] if bounds else None
+    start_at = _parse_dt(window_start)
+    end_at = _parse_dt(window_end)
+    cutoff_at = _parse_dt(cutoff)
+    if (
+        start_at is None
+        or end_at is None
+        or cutoff_at is None
+        or start_at < cutoff_at
+        or end_at < start_at
+    ):
+        return {
+            **_empty_relative_rank_evidence(
+                "The exact relative-rank epoch falls outside the requested audit window."
+            ),
+            "policy_epoch_id": policy_epoch_id,
+            "window_start": window_start,
+            "window_end": window_end,
+            "audit_window_compatible": False,
+        }
+    try:
+        from aletheia.universe.relative_rank_evaluation import (
+            evaluate_relative_rank_shadow_epoch,
+        )
+
+        report = evaluate_relative_rank_shadow_epoch(policy_epoch_id)
+    except Exception as exc:
+        return {
+            **_empty_relative_rank_evidence(
+                f"Relative-rank evaluation is unavailable: {type(exc).__name__}."
+            ),
+            "policy_epoch_id": policy_epoch_id,
+            "window_start": window_start,
+            "window_end": window_end,
+            "audit_window_compatible": True,
+        }
+    complete = int(report.get("complete_cluster_n") or 0)
+    return {
+        **report,
+        "contract_version": "universe-relative-rank-evidence/v1",
+        "behavior_authority": False,
+        "contribution_verdict": "insufficient_data",
+        "measurement_status": (
+            "invalid_evidence"
+            if report.get("verdict") == "invalid"
+            else "prospective_shadow_diagnostic" if complete else "not_measured"
+        ),
+        "evidence_type": "prospective_randomized_cluster_shadow",
+        "causal_grade": "prospective_cluster_shadow_only",
+        "statistical_unit": "scanner_run_id",
+        "economic_unit": "cluster_mean_assigned_net_return_pct_unselected_zero",
+        "window_scope": "exact_policy_epoch",
+        "window_start": window_start,
+        "window_end": window_end,
+        "audit_window_compatible": True,
+        "reason": (
+            "Relative-rank evidence is diagnostic only; Step-v1 remains authoritative "
+            "and promotion is not authorized."
+        ),
+    }
+
+
 def _exit_paired_evidence(cutoff: str) -> dict:
     from aletheia.analytics.exit_breakeven_shadow import (
         build_exit_breakeven_shadow_report,
@@ -479,6 +573,19 @@ def render_alpha_audit(report: dict) -> str:
         f"delta={_fmt_metric(twin.get('observed_cluster_utility_delta'))} "
         f"contribution={twin.get('contribution_verdict', 'insufficient_data')}",
         f"  {twin.get('reason', 'Universe Twin evidence is unavailable.')}",
+    ])
+    relative = report.get("universe_relative_rank_evidence") or {}
+    lines.extend([
+        "",
+        "Universe relative-rank evidence: "
+        f"{relative.get('measurement_status', 'not_measured')}",
+        "  "
+        f"complete_clusters={relative.get('complete_cluster_n', 0)}/"
+        f"{relative.get('expected_cluster_n', 0)} "
+        f"treatment={relative.get('treatment_cluster_n', 0)} "
+        f"control={relative.get('control_cluster_n', 0)} "
+        f"delta={_fmt_metric(relative.get('observed_cluster_utility_delta'))}",
+        f"  {relative.get('reason', 'Relative-rank evidence is unavailable.')}",
     ])
     paired = report.get("exit_paired_evidence") or {}
     lines.extend([

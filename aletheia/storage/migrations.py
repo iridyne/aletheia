@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v17"
+SCHEMA_VERSION = "aletheia-sqlite-v18"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4290,6 +4290,55 @@ _SHADOW_LEARNING_TRACE_CHECKSUM = hashlib.sha256(
     )
 ).hexdigest()
 
+_UNIVERSE_POSITIONING_COLUMNS = (
+    ("long_short_ratio", "universe_feature_snapshots", "REAL"),
+    ("top_trader_position_ratio", "universe_feature_snapshots", "REAL"),
+    ("top_trader_position_ratio", "open_interest_snapshots", "REAL"),
+)
+_UNIVERSE_RELATIVE_RANK_SHADOW_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS universe_relative_rank_shadow_batches (
+    scanner_run_id TEXT PRIMARY KEY,
+    authority_snapshot_id TEXT,
+    experiment_id TEXT NOT NULL,
+    policy_epoch_id TEXT NOT NULL,
+    behavior_contract_hash TEXT NOT NULL,
+    assignment_unit_key TEXT NOT NULL,
+    assignment_contract_version TEXT NOT NULL,
+    assignment_arm TEXT NOT NULL CHECK (assignment_arm IN ('control', 'treatment')),
+    assignment_propensity REAL NOT NULL CHECK (assignment_propensity > 0 AND assignment_propensity <= 1),
+    treatment_coefficient REAL NOT NULL CHECK (treatment_coefficient IN (0, 1)),
+    treatment_policy TEXT NOT NULL,
+    control_policy TEXT NOT NULL,
+    primary_horizon TEXT NOT NULL,
+    outcome_contract_version TEXT NOT NULL,
+    metric_version TEXT NOT NULL,
+    feature_source_fingerprint TEXT NOT NULL,
+    record_version TEXT NOT NULL,
+    behavior_version TEXT NOT NULL,
+    min_candidate_count INTEGER NOT NULL CHECK (min_candidate_count >= 2),
+    candidate_count INTEGER NOT NULL CHECK (candidate_count >= 0),
+    eligible_count INTEGER NOT NULL CHECK (eligible_count >= 0),
+    available INTEGER NOT NULL CHECK (available IN (0, 1)),
+    promotion_eligible INTEGER NOT NULL DEFAULT 0 CHECK (promotion_eligible = 0),
+    blocking_reasons_json TEXT NOT NULL DEFAULT '[]',
+    records_json TEXT NOT NULL,
+    batch_hash TEXT NOT NULL,
+    captured_at TEXT NOT NULL
+)
+"""
+_UNIVERSE_RELATIVE_RANK_SHADOW_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_relative_rank_shadow_epoch_captured "
+    "ON universe_relative_rank_shadow_batches(policy_epoch_id, captured_at)"
+)
+_UNIVERSE_POSITIONING_CHECKSUM = hashlib.sha256(
+    (
+        repr(_UNIVERSE_POSITIONING_COLUMNS)
+        + _UNIVERSE_RELATIVE_RANK_SHADOW_TABLE_SQL
+        + _UNIVERSE_RELATIVE_RANK_SHADOW_INDEX_SQL
+        + "\nadditive_universe_positioning_relative_rank_v1"
+    ).encode("utf-8")
+).hexdigest()
+
 _SERENITY_RETRY_IDEMPOTENCY_SQL = (
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_serenity_retry_attempt_identity "
     "ON serenity_research_runs(parent_run_id, retry_count) "
@@ -4374,6 +4423,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260810_0016_shadow_learning_trace_v17": (
         "prospective Ranker Learning score trace on existing Shadow rows"
+    ),
+    "20260810_0017_universe_positioning_v18": (
+        "public positioning ratios and isolated Relative Rank Shadow evidence"
     ),
 }
 
@@ -4685,6 +4737,20 @@ def _apply_shadow_learning_trace_v17(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_universe_positioning_v18(db: sqlite3.Connection) -> None:
+    """Persist public positioning ratios and isolated Shadow clusters."""
+
+    for column, table, column_type in _UNIVERSE_POSITIONING_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.execute(_UNIVERSE_RELATIVE_RANK_SHADOW_TABLE_SQL)
+    db.execute(_UNIVERSE_RELATIVE_RANK_SHADOW_INDEX_SQL)
+    db.execute("PRAGMA optimize")
+
+
 def _apply_serenity_retry_idempotency_v15(db: sqlite3.Connection) -> None:
     """Enforce one newly-created retry attempt per parent/count identity."""
 
@@ -4786,8 +4852,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260810_0016_shadow_learning_trace_v17",
         checksum=_SHADOW_LEARNING_TRACE_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v17",
         apply=_apply_shadow_learning_trace_v17,
+    ),
+    MigrationStep(
+        migration_id="20260810_0017_universe_positioning_v18",
+        checksum=_UNIVERSE_POSITIONING_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_universe_positioning_v18,
     ),
 )
 

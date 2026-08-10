@@ -28,6 +28,7 @@ second source of behavioral authority.
 | [06_task4_twin_wiring_review_2026-08-07.md](06_task4_twin_wiring_review_2026-08-07.md) | Step-authoritative in-memory Twin wiring, isolation proof, unavailable fields, performance baseline, and task-4 verdict |
 | [07_task5_persistence_replay_review_2026-08-08.md](07_task5_persistence_replay_review_2026-08-08.md) | Bounded hourly Twin evidence, rejected high-volume draft, replay identities, capacity guards, and task-5 verdict |
 | [08_task6_prospective_shadow_review_2026-08-08.md](08_task6_prospective_shadow_review_2026-08-08.md) | Prospective policy epoch, scanner-cluster assignment, full-candidate 4h outcomes, read-only evaluation, blockers, and task-6 verdict |
+| [relative-rank-candidate/](relative-rank-candidate/) | 2026-08-10 external research, data-source audit, and owner-approved design history for the separate Relative Rank Shadow; current behavior is owned by the [runtime contract](../../contracts/universe_relative_rank_shadow_contract.md) |
 
 Read the Proposal first for the accepted direction, then file 02 when
 implementing exact curves. Files 01 and 03 explain why the constraints exist;

@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 18)
+        f"aletheia-sqlite-v{version}" for version in range(2, 19)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v17"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v18"
     connection.close()
 
 
@@ -496,6 +496,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
             experiment_id TEXT NOT NULL REFERENCES learning_experiments(experiment_id)
         );
         CREATE TABLE universe_feature_snapshots (id TEXT PRIMARY KEY);
+        CREATE TABLE open_interest_snapshots (id TEXT PRIMARY KEY);
         CREATE TABLE serenity_research_runs (
             id TEXT PRIMARY KEY,
             parent_run_id TEXT,
@@ -518,7 +519,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         "VALUES (?, ?, ?, '2026-08-08T00:00:00+00:00', 0)",
         [
             (step.migration_id, step.checksum, step.schema_version)
-            for step in migrations._MIGRATIONS[:-4]
+            for step in migrations._MIGRATIONS[:-5]
         ],
     )
     connection.commit()
@@ -536,14 +537,41 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260810_0016_shadow_learning_trace_v17",
-        "aletheia-sqlite-v17",
+        "20260810_0017_universe_positioning_v18",
+        "aletheia-sqlite-v18",
     )
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "
         "FROM learning_contribution_verdicts WHERE verdict_id='legacy-positive'"
     ).fetchone()
     assert tuple(legacy) == ("monitoring", 0)
+    connection.close()
+
+
+def test_universe_positioning_v18_is_additive_and_idempotent():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE universe_feature_snapshots (id TEXT PRIMARY KEY)")
+    connection.execute("CREATE TABLE open_interest_snapshots (id TEXT PRIMARY KEY)")
+
+    migrations._apply_universe_positioning_v18(connection)
+    migrations._apply_universe_positioning_v18(connection)
+
+    feature_columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(universe_feature_snapshots)")
+    }
+    oi_columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(open_interest_snapshots)")
+    }
+    assert {"long_short_ratio", "top_trader_position_ratio"} <= feature_columns
+    assert "top_trader_position_ratio" in oi_columns
+    assert connection.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
+        "AND name='universe_relative_rank_shadow_batches'"
+    ).fetchone()[0] == 1
     connection.close()
 
 
