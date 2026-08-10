@@ -6,12 +6,6 @@ their own independent versions.
 
 ## [Unreleased]
 
-## [0.6.0] - 2026-08-10 — First formal versioned release baseline
-
-This is the first release managed as one product version and Git tag. It adopts
-the existing packaged-runtime identity (`version+git_sha`) without changing any
-schema, prompt, experiment, policy, or cost-model version.
-
 ### Versioned incremental technical analysis
 
 - Added a batch reference analyzer and append-fast incremental engine for

@@ -121,8 +121,8 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
     workflow = _release_workflow()
     triggers = workflow["on"]
 
-    assert set(triggers) == {"push", "workflow_dispatch"}
-    assert triggers["push"]["branches"] == ["master"]
+    assert set(triggers) == {"repository_dispatch", "workflow_dispatch"}
+    assert triggers["repository_dispatch"]["types"] == ["release_please"]
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["concurrency"] == {
         "group": "release-please-master",
@@ -253,11 +253,12 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "synchronize",
         "labeled",
         "unlabeled",
+        "closed",
     ]
     assert triggers["repository_dispatch"]["types"] == ["auto_merge_update"]
     assert workflow["permissions"] == {"contents": "read"}
 
-    assert set(workflow["jobs"]) == {"schedule", "update"}
+    assert set(workflow["jobs"]) == {"schedule", "update", "release"}
     schedule = workflow["jobs"]["schedule"]
     assert schedule["name"] == "Schedule auto-merge update"
     assert schedule["runs-on"] == [
@@ -267,6 +268,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "ubuntu-24.04",
     ]
     assert "event_name == 'pull_request_target'" in schedule["if"]
+    assert "action != 'closed'" in schedule["if"]
     assert "draft == false" in schedule["if"]
     assert schedule["permissions"] == {"contents": "write"}
     assert set(schedule["env"]) == {"OPERATION", "PR_NUMBER", "EXPECTED_HEAD_SHA"}
@@ -312,7 +314,27 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "enablePullRequestAutoMerge" in update_script
     assert "disablePullRequestAutoMerge" in update_script
 
-    # Both phases carry write-capable base-repository tokens. Keep them
+    release = workflow["jobs"]["release"]
+    assert release["name"] == "Dispatch release management after merge"
+    assert release["runs-on"] == [
+        "self-hosted",
+        "Linux",
+        "X64",
+        "ubuntu-24.04",
+    ]
+    assert "action == 'closed'" in release["if"]
+    assert "merged == true" in release["if"]
+    assert release["permissions"] == {"contents": "write"}
+    assert len(release["steps"]) == 1
+    release_step = release["steps"][0]
+    assert release_step["uses"] == GITHUB_SCRIPT_ACTION
+    assert release_step["with"]["retries"] == "3"
+    release_script = release_step["with"]["script"]
+    assert "createDispatchEvent" in release_script
+    assert "event_type: 'release_please'" in release_script
+    assert "merge_commit_sha" in release_script
+
+    # All phases carry write-capable base-repository tokens. Keep them
     # metadata-only: never check out or execute pull-request content.
     assert not any(
         str(step.get("uses", "")).startswith("actions/checkout@")

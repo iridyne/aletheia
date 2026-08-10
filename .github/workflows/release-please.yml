@@ -1,8 +1,8 @@
 name: Prepare and tag releases
 
 on:
-  push:
-    branches: [master]
+  repository_dispatch:
+    types: [release_please]
   workflow_dispatch:
 
 permissions:
