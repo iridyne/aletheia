@@ -1121,6 +1121,7 @@ async def update_health_config(req: HealthConfigUpdate):
 class RetentionConfigUpdate(SettingsRequest):
     agent_runs_days: Optional[int] = None
     tool_calls_days: Optional[int] = None
+    runtime_sessions_days: Optional[int] = None
     run_steps_days: Optional[int] = None
     market_snapshots_days: Optional[int] = None
     portfolio_snapshots_days: Optional[int] = None
@@ -1130,8 +1131,9 @@ class RetentionConfigUpdate(SettingsRequest):
 
 
 _RETENTION_BOUNDS: dict[str, tuple[float, float]] = {
-    "agent_runs_days": (1, 365),
-    "tool_calls_days": (1, 365),
+    "agent_runs_days": (1, 90),
+    "tool_calls_days": (1, 90),
+    "runtime_sessions_days": (1, 90),
     "run_steps_days": (1, 365),
     "market_snapshots_days": (1, 365),
     "portfolio_snapshots_days": (1, 1825),

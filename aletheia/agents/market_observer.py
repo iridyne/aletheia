@@ -17,7 +17,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import llm_structured, log_tool, record_step
+from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool, record_step
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.data.freshness import fresh_row
 from aletheia.model_provider.router import get_provider_for_tier
@@ -112,6 +112,7 @@ class _SymbolPrefetch:
     oi_delta_val: float | None
     rendered_sources: dict[str, list[dict]] = field(default_factory=dict)
     failed: bool = False  # True if exchange context fetch raised
+    context_duration_ms: int | None = None
 
 
 def _observer_learning_candidate_key(
@@ -761,6 +762,7 @@ async def _prefetch_symbol(
 
     # Phase A: async exchange OHLCV (the expensive wall-clock part)
     try:
+        context_started_at = _time.monotonic()
         context, ctx_debug = await build_market_context(
             [symbol],
             market_type=market_type,
@@ -768,6 +770,7 @@ async def _prefetch_symbol(
             provider=provider,
             include_glossary=False,
         )
+        context_duration_ms = elapsed_ms(context_started_at)
     except Exception as e:
         logger.warning("[MO prefetch] %s: build_market_context failed: %s", symbol, e)
         return _SymbolPrefetch(
@@ -939,6 +942,7 @@ async def _prefetch_symbol(
         oi_delta_val=oi_delta_val,
         rendered_sources=_bounded_rendered_sources(rendered_sources),
         failed=False,
+        context_duration_ms=context_duration_ms,
     )
 
 
@@ -1042,6 +1046,7 @@ async def _analyze_symbol(
             "observe",
             True,
             output=f"{symbol} prefetched=True fallback={_prefetched.debug.get('fallback')}",
+            duration_ms=_prefetched.context_duration_ms,
         )
     else:
         from aletheia.trading.market_context import build_market_context
@@ -1062,6 +1067,7 @@ async def _analyze_symbol(
                 "observe",
                 True,
                 output=f"{symbol} fallback={ctx_debug.get('fallback')} errs={len(ctx_debug.get('errors', []))}",
+                duration_ms=elapsed_ms(_t0),
             )
             logger.debug(
                 "[MO] %s (%s): build_market_context done in %.1fs, fallback=%s",
@@ -1077,8 +1083,16 @@ async def _analyze_symbol(
             logger.warning(
                 "[MO] %s (%s): market_context build FAILED after %.1fs — %s", symbol, market_type, _total_duration, e
             )
+            snapshot_started_at = _time.monotonic()
             snap = latest_snapshot(symbol)
-            log_tool(run_id, "get_market_snapshot", "observe", True, output=symbol)
+            log_tool(
+                run_id,
+                "get_market_snapshot",
+                "observe",
+                True,
+                output=symbol,
+                duration_ms=elapsed_ms(snapshot_started_at),
+            )
             if snap:
                 context = f"{symbol}: price={snap['price']} 24h_change={snap.get('change_pct_24h')}%"
             else:
@@ -1640,7 +1654,9 @@ async def _analyze_symbol(
             updates["confidence"] = confidence
         if direction != "neutral" and not scanner_owned:
             updates["direction_bias"] = direction
+        started_at = _time.monotonic()
         enriched = update_open_opportunity(existing["id"], **updates)
+        duration_ms = elapsed_ms(started_at)
         if not enriched:
             log_tool(
                 run_id,
@@ -1648,9 +1664,17 @@ async def _analyze_symbol(
                 "observe",
                 True,
                 output=existing["id"],
+                duration_ms=duration_ms,
             )
             return existing["id"], llm_error
-        log_tool(run_id, "annotate_opportunity", "observe", True, output=existing["id"])
+        log_tool(
+            run_id,
+            "annotate_opportunity",
+            "observe",
+            True,
+            output=existing["id"],
+            duration_ms=duration_ms,
+        )
         return existing["id"], llm_error
 
     # If a deterministic opportunity already exists for this symbol+snapshot+market,
@@ -1735,6 +1759,7 @@ async def _analyze_symbol(
 
         persisted = None
         created = True
+        started_at = _time.monotonic()
         with atomic_opportunity_evidence():
             if universe_snapshot_id:
                 persisted, created = insert_opportunity_once_by_snapshot(opp)
@@ -1754,6 +1779,7 @@ async def _analyze_symbol(
                     confidence=confidence,
                     confidence_score=confidence_score,
                 )
+        duration_ms = elapsed_ms(started_at)
         if not created:
             return _reuse_existing_opportunity(persisted)
     except Exception as exc:
@@ -1766,7 +1792,14 @@ async def _analyze_symbol(
         notify_paper_trader(source="market_observer_opportunity")
     except Exception:
         logger.debug("Failed to notify Ranker after Opportunity commit", exc_info=True)
-    log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
+    log_tool(
+        run_id,
+        "create_opportunity",
+        "observe",
+        True,
+        output=opp.id,
+        duration_ms=duration_ms,
+    )
     _total_duration = _time.monotonic() - _t_start
     _step_times["total"] = _total_duration
     logger.info(
@@ -1783,6 +1816,8 @@ async def _analyze_symbol(
 @register_agent("market_observer")
 async def run_market_observer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Observe market state and create one Opportunity per symbol."""
+    import time as _time
+
     from aletheia.learning.opportunity_information_policy import (
         ensure_opportunity_information_policy_epoch,
     )
@@ -1796,6 +1831,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     outputs: list[str] = []
     errors: list[str] = []
     warnings: list[str] = []
+    artifact_refs: list[dict[str, str]] = []
     _success_count = 0
     _fail_count = 0
     _skip_count = 0
@@ -1873,12 +1909,20 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
         # on symbol + scanner_family, absent here where we only have a symbol LIST —
         # this is why the old guard_context={"symbols": [...]} never matched, 断口F).
         # The run-level block carries only symbol-agnostic lessons / case studies.
+        started_at = _time.monotonic()
         memory_block = build_advisory_context(
             role="market_observer",
             query=f"{' '.join(symbols)} market regime risk funding volatility",
             k=3,
         )
-        log_tool(run_id, "retrieve_lessons", "observe", True, output=f"lessons:{1 if memory_block else 0}")
+        log_tool(
+            run_id,
+            "retrieve_lessons",
+            "observe",
+            True,
+            output=f"lessons:{1 if memory_block else 0}",
+            duration_ms=elapsed_ms(started_at),
+        )
     except Exception:
         pass
 
@@ -1942,8 +1986,6 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     # Capping the loop wall-clock < the job timeout makes the coroutine ALWAYS return
     # normally before cancellation → clean teardown, no leak. Skipped instruments are
     # picked up next 10-minute cycle (logged, not silent).
-    import time as _time
-
     # MO-14: compute force_full ONCE per run (load_config has no cache; per-symbol
     # calls were a file read + YAML parse each iteration).
     _force_full = getattr(getattr(cfg, "observer", None), "force_full_scan", False)
@@ -2212,6 +2254,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 if opp_id:
                     async with _rr_lock:
                         outputs.append(f"opportunity:{opp_id}")
+                        artifact_refs.append({"artifact_type": "opportunity", "artifact_id": opp_id})
                         _success_count += 1
                 elif err and "pre_filter_skip" in err:
                     async with _rr_lock:
@@ -2270,4 +2313,9 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             _MARKET_OBSERVER_LOOP_BUDGET_SEC,
         )
 
-    return {"outputs": outputs, "errors": errors, "warnings": warnings}
+    return {
+        "outputs": outputs,
+        "errors": errors,
+        "warnings": warnings,
+        "output_artifacts": artifact_refs,
+    }

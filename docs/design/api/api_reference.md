@@ -286,7 +286,7 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/agent-runs` | List agent run history. Preserves raw `outputs_created` and adds `output_events` for Paper Trader output semantics; those Ranker/queue/carrier events explicitly carry `is_operator_decision=false`. |
+| GET | `/agent-runs` | List agent run history. `?days=1..90` applies a UTC started-at window; `limit` remains bounded. Preserves raw `outputs_created` and adds `output_events` for Paper Trader output semantics; those Ranker/queue/carrier events explicitly carry `is_operator_decision=false`. |
 | GET | `/agent-runs/{id}` | Run detail (status, raw outputs, additive Paper Trader `output_events`, errors) |
 | GET | `/agent-runs/{id}/tool-calls` | Tool calls made during run |
 | GET | `/agent-runs/{id}/steps` | Step-by-step execution trace |
@@ -312,6 +312,7 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/economics/status` | Token/cost tracing and viability-audit kill-switch state. |
+| GET | `/economics/usage-insights?days=7\|30\|90` | Aggregate-only, read-only Usage projection for one exact UTC window: token/pricing/attribution/tool/reliability/budget/trend/research-yield facts plus coverage. No prompts, responses, raw errors, event limit, cache, or writes. `current_model_cooldown` is explicitly a current in-process fact, not window history; empty days are zero only when trace-enabled runtime-session coverage proves them observed. |
 | GET | `/economics/tokens` | Token-first LLM usage summary for a day window, optionally filtered by `run_id`. Reports provider-supplied input/output/cache/reasoning totals and field availability without requiring a USD price snapshot. |
 | GET | `/economics/costs` | Windowed cost summary; USD remains nullable when no immutable price snapshot applies. |
 | GET | `/economics/budgets` | Read-only declared budget policies. |
@@ -335,7 +336,7 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | POST | `/settings/operator` | Operator loop config |
 | POST | `/settings/regime` | Regime classifier config |
 | POST | `/settings/health-config` | Health check thresholds |
-| POST | `/settings/retention` | Data retention policies |
+| POST | `/settings/retention` | Data retention policies. `agent_runs_days`, `tool_calls_days`, and `runtime_sessions_days` each accept 1–90 days (default 90); other retention fields keep their own bounds. |
 | POST | `/settings/telegram` | Telegram bot config |
 | POST | `/settings/webhook` | Webhook notification config |
 | POST | `/settings/update-config` | Auto-update settings |

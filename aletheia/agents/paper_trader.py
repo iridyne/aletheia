@@ -446,6 +446,7 @@ def _plan_signal_batch(
 async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     outputs: list[str] = []
     errors: list[str] = []
+    artifact_refs: list[dict[str, str]] = []
 
     cfg = load_config()
 
@@ -458,6 +459,16 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     # runs already supply an AgentRun id; direct/manual callers get an internal
     # id rather than an empty batch identity.
     evaluation_run_id = run_id or f"paper-trader-{uuid4().hex}"
+
+    def _result() -> dict:
+        return {
+            "outputs": outputs,
+            "errors": errors,
+            "output_artifacts": [
+                *artifact_refs,
+                *_filter_evidence_artifact_refs(evaluation_run_id),
+            ],
+        }
 
     execution_mode = _resolve_execution_mode(cfg.exchange.paper_execution_mode)
 
@@ -560,10 +571,10 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         if not evidence_persisted:
             errors.append("workset_filter_evidence_failed")
             outputs.append("no_signals_written")
-            return {"outputs": outputs, "errors": errors}
+            return _result()
         if not outputs:
             outputs.append("no_ranked_candidate")
-        return {"outputs": outputs, "errors": errors}
+        return _result()
 
     try:
         queue_depth = count_unresolved_signal_pending(_PENDING_SIGNAL_MAX_AGE_MINUTES)
@@ -614,7 +625,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         else:
             errors.append("selection_filter_evidence_failed:no_selected_candidate")
         outputs.append("no_signals_written")
-        return {"outputs": outputs, "errors": errors}
+        return _result()
     for candidate in eligible:
         opp_id = str(candidate.get("opportunity_id") or "")
         filter_name, verdict = plan.decisions.get(opp_id, ("", ""))
@@ -670,6 +681,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                 transition_queued_opportunity_to_open(evicted_opp_id)
                 insert_pi_decision(eviction_dec)
             outputs.append(f"evicted_low_priority:{evicted_opp_id}")
+            artifact_refs.append({"artifact_type": "pi_decision", "artifact_id": eviction_dec.id})
         except Exception as exc:
             errors.append(f"eviction_failed:{evicted_opp_id}")
             logger.warning("signal_pending eviction failed for %s: %s", evicted_opp_id, type(exc).__name__)
@@ -728,6 +740,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                 continue
             if direction:
                 recent_signal_pairs.add((sym, direction))
+            artifact_refs.append({"artifact_type": "pi_decision", "artifact_id": pi_dec.id})
             signals_written += 1
             emitted_candidates.append(candidate)
             try:
@@ -761,7 +774,29 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     else:
         outputs.append("no_signals_written")
 
-    return {"outputs": outputs, "errors": errors}
+    return _result()
+
+
+def _filter_evidence_artifact_refs(run_id: str) -> list[dict[str, str]]:
+    """Return only facts written under this exact evaluation identity."""
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    refs = [
+        {"artifact_type": "filter_decision", "artifact_id": str(row[0])}
+        for row in db.execute(
+            "SELECT id FROM filter_decisions WHERE run_id=? ORDER BY evaluated_at, id",
+            (run_id,),
+        ).fetchall()
+    ]
+    refs.extend(
+        {"artifact_type": "filter_decision_batch", "artifact_id": str(row[0])}
+        for row in db.execute(
+            "SELECT id FROM filter_decision_batches WHERE run_id=? ORDER BY evaluated_at, id",
+            (run_id,),
+        ).fetchall()
+    )
+    return refs
 
 
 def _finalize_permanent_skip(

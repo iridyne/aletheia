@@ -4,6 +4,7 @@ import asyncio
 import logging
 import json
 import re
+import time
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -1104,6 +1105,7 @@ def log_tool(
     output: str | None = None,
     input_data: str | None = None,
     inference_call_id: str | None = None,
+    duration_ms: int | None = None,
 ) -> None:
     """Best-effort tool-call logging (never raises).
 
@@ -1115,6 +1117,10 @@ def log_tool(
     """
     if not run_id:
         return
+    try:
+        duration_ms = max(0, int(duration_ms)) if duration_ms is not None else None
+    except (TypeError, ValueError, OverflowError):
+        duration_ms = None
     _buffer_telemetry(
         run_id,
         {
@@ -1126,8 +1132,14 @@ def log_tool(
             "output_data": output,
             "input_data": input_data,
             "inference_call_id": inference_call_id or current_inference_call_id(),
+            "duration_ms": duration_ms,
         },
     )
+
+
+def elapsed_ms(started_at: float) -> int:
+    """Return non-negative elapsed milliseconds from the monotonic clock."""
+    return max(0, int((time.monotonic() - started_at) * 1000))
 
 
 def record_step(run_id: str | None, action: str, input_data: str | None = None, output_data: str | None = None) -> None:

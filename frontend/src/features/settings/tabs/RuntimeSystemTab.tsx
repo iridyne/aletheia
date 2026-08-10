@@ -293,23 +293,26 @@ function RetentionCard({ settings, qc }: any) {
 
   const set = (k: string, v: any) => { setVals(prev => ({ ...prev, [k]: v })); setMsg(null) }
 
-  const mut = useMutation({
-    mutationFn: () => api.updateRetentionConfig(vals as any),
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
-
-  if (!retention) return null
-
   const RETENTION_FIELDS: NumField[] = [
-    { key: 'agent_runs_days',          label: 'Agent runs',          unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
-    { key: 'tool_calls_days',          label: 'Tool calls',          unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
+    { key: 'agent_runs_days',          label: 'Agent runs',          unit: 'days', min: 1, max: 90, step: 1, isInt: true },
+    { key: 'runtime_sessions_days',    label: 'Runtime sessions',    unit: 'days', min: 1, max: 90, step: 1, isInt: true },
+    { key: 'tool_calls_days',          label: 'Tool calls',          unit: 'days', min: 1, max: 90, step: 1, isInt: true },
     { key: 'run_steps_days',           label: 'Run steps',           unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
     { key: 'market_snapshots_days',    label: 'Market snapshots',    unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
     { key: 'portfolio_snapshots_days', label: 'Portfolio snapshots', unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
     { key: 'opportunity_ttl_hours',    label: 'Opportunity TTL',     unit: 'hours', min: 1, max: 720, step: 1, isInt: true },
     { key: 'jsonl_max_mb',             label: 'JSONL max size',      unit: 'MB',   min: 1, max: 99999, step: 10, isInt: true },
   ]
+
+  const mut = useMutation({
+    mutationFn: () => api.updateRetentionConfig(
+      Object.fromEntries(RETENTION_FIELDS.map(({ key }) => [key, vals[key]])) as any,
+    ),
+    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+
+  if (!retention) return null
 
   return (
     <div className="card mb-0">

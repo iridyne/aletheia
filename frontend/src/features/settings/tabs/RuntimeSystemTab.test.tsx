@@ -48,6 +48,12 @@ describe('RuntimeSystemTab', () => {
     expect(html).toContain('Test Connection')
   })
 
+  it('limits Usage-dependent retention to 90 days', () => {
+    expect(SRC).toContain("key: 'agent_runs_days',          label: 'Agent runs',          unit: 'days', min: 1, max: 90")
+    expect(SRC).toContain("key: 'tool_calls_days',          label: 'Tool calls',          unit: 'days', min: 1, max: 90")
+    expect(SRC).toContain("key: 'runtime_sessions_days',    label: 'Runtime sessions',    unit: 'days', min: 1, max: 90")
+  })
+
   it('projects Remote Control Token browser-storage success and failure', () => {
     expect(SRC).toContain('const [remoteTokenMessage, setRemoteTokenMessage]')
     expect(SRC).toContain('const result = api.setRemoteControlToken(remoteToken)')

@@ -332,7 +332,7 @@ def test_prompt_template_hash_is_separate_from_rendered_context():
     assert first.rendered_prompt_sha256 != second.rendered_prompt_sha256
 
 
-def test_economics_schema_tolerates_pre_migration_tool_table():
+def test_economics_schema_tolerates_pre_duration_tool_table():
     from aletheia.economics.schema import ensure_economics_schema
 
     db = sqlite3.connect(":memory:")
@@ -340,7 +340,8 @@ def test_economics_schema_tolerates_pre_migration_tool_table():
     db.execute(
         "CREATE TABLE agent_tool_calls ("
         "id TEXT PRIMARY KEY, run_id TEXT NOT NULL, tool_name TEXT NOT NULL, "
-        "tool_class TEXT NOT NULL, permitted INTEGER NOT NULL, created_at TEXT NOT NULL)"
+        "tool_class TEXT NOT NULL, input_data TEXT, output_data TEXT, "
+        "permitted INTEGER NOT NULL, inference_call_id TEXT, created_at TEXT NOT NULL)"
     )
 
     ensure_economics_schema(db)

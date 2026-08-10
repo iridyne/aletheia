@@ -65,6 +65,19 @@ async def execute_typed_command(
     params = parameters or {}
     text = (user_input or command_name).strip() or command_name
     start_time = time.time()
+    started_monotonic = time.monotonic()
+
+    def record(permitted: bool, response: str) -> None:
+        record_command(
+            session_id,
+            command_name,
+            params,
+            permitted,
+            response,
+            inference_call_id,
+            duration_ms=max(0, int((time.monotonic() - started_monotonic) * 1000)),
+        )
+
     if get_session(session_id) is None:
         create_session_record(session_id=session_id, user_input=text, kind="command_session")
 
@@ -79,9 +92,7 @@ async def execute_typed_command(
     cmd_def = COMMANDS.get(command_name)
     if not cmd_def:
         response = f"Unknown command: {command_name}"
-        record_command(
-            session_id, command_name, params, False, response, inference_call_id
-        )
+        record(False, response)
         close_session(
             session_id,
             intent=command_name,
@@ -118,9 +129,7 @@ async def execute_typed_command(
 
     if not allowed:
         response = denial or "Permission denied."
-        record_command(
-            session_id, command_name, params, False, response, inference_call_id
-        )
+        record(False, response)
         close_session(
             session_id,
             intent=command_name,
@@ -149,9 +158,7 @@ async def execute_typed_command(
             f"'{command_name}' requires confirmation. Re-send the command with "
             f"parameter confirm=true to execute."
         )
-        record_command(
-            session_id, command_name, params, False, response, inference_call_id
-        )
+        record(False, response)
         close_session(
             session_id,
             intent=command_name,
@@ -172,9 +179,7 @@ async def execute_typed_command(
     handler = HANDLERS.get(command_name)
     if not handler:
         response = f"Command '{command_name}' has no handler implemented."
-        record_command(
-            session_id, command_name, params, False, response, inference_call_id
-        )
+        record(False, response)
         close_session(
             session_id,
             intent=command_name,
@@ -194,9 +199,7 @@ async def execute_typed_command(
 
     result = await handler(params)
     response = _format_fallback(result)
-    record_command(
-        session_id, command_name, params, True, response, inference_call_id
-    )
+    record(True, response)
     close_session(
         session_id,
         intent=command_name,

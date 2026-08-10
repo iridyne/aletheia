@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 19)
+        f"aletheia-sqlite-v{version}" for version in range(2, 21)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v18"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v20"
     connection.close()
 
 
@@ -310,6 +310,41 @@ def test_position_protection_v9_migration_is_additive_and_idempotent():
         "trg_position_protection_triggers_no_update",
         "trg_position_protection_triggers_no_delete",
     } <= triggers
+    connection.close()
+
+
+def test_agent_usage_storage_v20_is_additive_and_keeps_legacy_null():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        """
+        CREATE TABLE agent_runs (id TEXT PRIMARY KEY);
+        CREATE TABLE runtime_sessions (session_id TEXT PRIMARY KEY);
+        INSERT INTO runtime_sessions VALUES ('legacy-session');
+        """
+    )
+
+    migrations._apply_agent_usage_storage_v20(connection)
+    migrations._apply_agent_usage_storage_v20(connection)
+
+    assert connection.execute(
+        "SELECT economics_tracing_enabled FROM runtime_sessions "
+        "WHERE session_id='legacy-session'"
+    ).fetchone()[0] is None
+    assert connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='agent_run_artifacts'"
+    ).fetchone()
+    assert connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='index' "
+        "AND name='idx_agent_run_artifacts_artifact'"
+    ).fetchone()
+    artifact_columns = {
+        row[1]: row for row in connection.execute("PRAGMA table_info(agent_run_artifacts)")
+    }
+    assert artifact_columns["created_at"][3] == 1
+    assert "datetime('now')" in str(artifact_columns["created_at"][4])
     connection.close()
 
 
@@ -505,6 +540,10 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         );
         CREATE TABLE orders (id TEXT PRIMARY KEY);
         CREATE TABLE shadow_trades (id TEXT PRIMARY KEY);
+        CREATE TABLE agent_runs (id TEXT PRIMARY KEY);
+        CREATE TABLE agent_tool_calls (id TEXT PRIMARY KEY);
+        CREATE TABLE agent_shell_commands (id TEXT PRIMARY KEY);
+        CREATE TABLE runtime_sessions (session_id TEXT PRIMARY KEY);
         INSERT INTO learning_experiments VALUES ('legacy-experiment');
         INSERT INTO learning_contribution_verdicts
         VALUES ('legacy-positive', 'legacy-experiment');
@@ -537,8 +576,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260810_0017_universe_positioning_v18",
-        "aletheia-sqlite-v18",
+        "20260810_0019_agent_usage_storage_v20",
+        "aletheia-sqlite-v20",
     )
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "

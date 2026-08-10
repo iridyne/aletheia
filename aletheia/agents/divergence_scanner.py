@@ -12,10 +12,11 @@ import json
 import logging
 import math
 import re
+import time
 from datetime import datetime, timezone, timedelta
 
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import log_tool, record_step
+from aletheia.agents.helpers import elapsed_ms, log_tool, record_step
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.data.ccxt_provider import get_market_data_provider
 from aletheia.data.symbols import MARKET_SPOT
@@ -272,6 +273,7 @@ async def run_divergence_scanner(
     ensure_opportunity_information_policy_epoch()
     outputs: list[str] = []
     errors: list[str] = []
+    artifact_refs: list[dict[str, str]] = []
 
     if not is_tool_permitted("get_market_snapshot", permission_mode):
         errors.append("get_market_snapshot not permitted")
@@ -598,6 +600,7 @@ async def run_divergence_scanner(
                     },
                 }),
             )
+            started_at = time.monotonic()
             try:
                 # A created Opportunity and the producer's terminal fact are one
                 # causal write.  An outer transaction makes the repository helper's
@@ -658,6 +661,7 @@ async def run_divergence_scanner(
                         f"{_prediction_candidate_key(row)}:{type(exc).__name__}"
                     )
                 continue
+            duration_ms = elapsed_ms(started_at)
             if not owner_created:
                 evidence_error = _record_divergence_decision(
                     row=row,
@@ -684,8 +688,16 @@ async def run_divergence_scanner(
                     "Failed to notify Ranker after divergence Opportunity commit",
                     exc_info=True,
                 )
-            log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
+            log_tool(
+                run_id,
+                "create_opportunity",
+                "observe",
+                True,
+                output=opp.id,
+                duration_ms=duration_ms,
+            )
             outputs.append(f"opportunity:{opp.id}")
+            artifact_refs.append({"artifact_type": "opportunity", "artifact_id": opp.id})
             opps_created += 1
             logger.info(
                 "divergence signal: %s %s (score=%d) from '%s'",
@@ -698,4 +710,4 @@ async def run_divergence_scanner(
     finally:
         await provider.close()  # #255: always close per-call provider
 
-    return {"outputs": outputs, "errors": errors}
+    return {"outputs": outputs, "errors": errors, "output_artifacts": artifact_refs}

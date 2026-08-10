@@ -42,6 +42,7 @@ class RuntimeSession(BaseModel):
     schema_version: str | None = None
     active_scope_id: str | None = None
     execution_mode: str | None = None
+    economics_tracing_enabled: bool | None = None
     started_at: str = Field(default_factory=_utcnow)
     ended_at: str | None = None
     shutdown_clean: int = 0
@@ -74,6 +75,33 @@ class AgentRun(BaseModel):
     outputs_created: str = "[]"
     errors: str = "[]"
     cost_estimate: float | None = None
+
+
+class AgentArtifactRef(BaseModel):
+    """A current-run reference to a durable record returned by an agent."""
+
+    artifact_type: Literal[
+        "opportunity",
+        "filter_decision",
+        "filter_decision_batch",
+        "pi_decision",
+        "portfolio_snapshot",
+        "research_note",
+        "serenity_evidence",
+        "post_trade_review",
+        "lesson",
+        "dreaming_log",
+        "daily_review",
+        "policy_version",
+        "draft_skill",
+    ]
+    artifact_id: str = Field(min_length=1, max_length=128)
+
+
+class AgentRunArtifact(AgentArtifactRef):
+    """Persisted AgentRun-to-artifact relation; never inferred from legacy output."""
+
+    run_id: str
 
 
 class Opportunity(_Provenanced):

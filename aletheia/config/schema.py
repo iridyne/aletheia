@@ -866,8 +866,8 @@ class HealthConfig(BaseModel):
 
 class RetentionConfig(BaseModel):
     # Telemetry pruning (days). Trust-bearing records are NEVER pruned.
-    agent_runs_days: int = 30
-    tool_calls_days: int = 30
+    agent_runs_days: int = 90
+    tool_calls_days: int = 90
     run_steps_days: int = 30
     market_snapshots_days: int = 30
     portfolio_snapshots_days: int = 90
@@ -931,7 +931,7 @@ class RetentionConfig(BaseModel):
     market_regimes_days: int = 60
     serenity_evidence_days: int = 60
     serenity_run_events_days: int = 60
-    runtime_sessions_days: int = 30
+    runtime_sessions_days: int = 90
     backtest_runs_days: int = 60
 
     # market_ohlcv per-timeframe TTL. Newer, denser bars decay fastest;

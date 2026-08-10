@@ -45,6 +45,17 @@ describe('Remote Control Token browser storage', () => {
 })
 
 describe('API errors', () => {
+  it('requests usage insights for the selected supported window', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ window: { days: 30 } }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(api.getUsageInsights(30)).resolves.toEqual({ window: { days: 30 } })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/economics/usage-insights?days=30',
+      expect.objectContaining({ headers: expect.objectContaining({ 'Content-Type': 'application/json' }) }),
+    )
+  })
+
   it('throws ApiError from the shared transport', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       detail: { code: 'rate_limited', message: 'Try later' },

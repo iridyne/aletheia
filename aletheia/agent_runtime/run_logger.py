@@ -3,8 +3,13 @@
 from datetime import datetime, timezone, timedelta
 import json
 
-from aletheia.storage.models import AgentRun
-from aletheia.storage.repositories import insert_agent_run, update_agent_run
+from aletheia.storage.models import AgentArtifactRef, AgentRun, AgentRunArtifact
+from aletheia.storage.repositories import (
+    insert_agent_run,
+    insert_agent_run_artifacts,
+    transaction,
+    update_agent_run,
+)
 from aletheia.storage.sqlite import get_db
 from aletheia.files.jsonl import write_agent_run_log, write_audit
 
@@ -76,7 +81,13 @@ def begin_queued_run(run: AgentRun, *, permission_mode: str, model_provider: str
     write_agent_run_log({"event": "run_started", **run.model_dump()})
 
 
-def end_run(run: AgentRun, status: str = "completed", outputs: list[str] | None = None, errors: list[str] | None = None) -> None:
+def end_run(
+    run: AgentRun,
+    status: str = "completed",
+    outputs: list[str] | None = None,
+    errors: list[str] | None = None,
+    artifact_refs: list[AgentArtifactRef] | None = None,
+) -> None:
     try:
         from aletheia.agents.helpers import flush_run_telemetry
 
@@ -98,7 +109,16 @@ def end_run(run: AgentRun, status: str = "completed", outputs: list[str] | None 
     }
     if cost_summary.get("final_model"):
         update_data["model_name"] = cost_summary["final_model"]
-    update_agent_run(run.id, **update_data)
+    with transaction():
+        update_agent_run(run.id, **update_data)
+        insert_agent_run_artifacts([
+            AgentRunArtifact(
+                run_id=run.id,
+                artifact_type=artifact.artifact_type,
+                artifact_id=artifact.artifact_id,
+            )
+            for artifact in artifact_refs or []
+        ])
     write_agent_run_log({
         "event": "run_ended",
         "run_id": run.id,

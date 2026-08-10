@@ -1,9 +1,10 @@
 """Research Agent — creates research notes and strategy hypotheses."""
 
+import time
 from datetime import datetime, timedelta, timezone
 
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import llm_complete, log_tool
+from aletheia.agents.helpers import elapsed_ms, llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.knowledge.manager import create_research_note
 
@@ -43,6 +44,7 @@ async def run_research_agent(permission_mode: str = "Observe", run_id: str | Non
     """Generate a research note using the model provider (graceful if unavailable)."""
     outputs: list[str] = []
     errors: list[str] = []
+    artifact_refs: list[dict[str, str]] = []
 
     if not is_tool_permitted("create_research_note", permission_mode):
         errors.append("create_research_note not permitted in current mode")
@@ -75,14 +77,17 @@ async def run_research_agent(permission_mode: str = "Observe", run_id: str | Non
             "will not enter the retrieval gate until a substantive note replaces it."
         )
 
+    started_at = time.monotonic()
     item = create_research_note(title, content, confidence="speculative",
                                 metadata={"source": "research_agent",
                                           "prediction_context_included": bool(pred_context)})
     log_tool(run_id, "create_research_note", "observe", item is not None,
-             output=item.id if item else "quality_gate_rejected")
+             output=item.id if item else "quality_gate_rejected",
+             duration_ms=elapsed_ms(started_at))
     if item is None:
         errors.append("create_research_note:quality_gate_rejected")
-        return {"outputs": outputs, "errors": errors}
+        return {"outputs": outputs, "errors": errors, "output_artifacts": artifact_refs}
     outputs.append(f"research_note:{item.id}")
+    artifact_refs.append({"artifact_type": "research_note", "artifact_id": item.id})
 
-    return {"outputs": outputs, "errors": errors}
+    return {"outputs": outputs, "errors": errors, "output_artifacts": artifact_refs}

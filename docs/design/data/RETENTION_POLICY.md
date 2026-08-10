@@ -91,7 +91,7 @@ Windows below are the Phase 3 defaults; each is wired through the new
 | `agent_shell_tasks` | 14d completed / 30d failed+cancelled | `completed_at` | `prune_agent_shell_tasks` (NEW) | cascade `agent_shell_events` + `agent_shell_artifacts` referencing `task_id` first | archive metadata to `agent_shell_ledger.jsonl.gz` | Exempts `status IN ('running','pending')` or `completed_at IS NULL`. |
 | `agent_shell_sessions` | 14d (30d if session has proposal/report/daily_summary artifact) | `created_at` | `prune_agent_shell_sessions` (NEW) | cascade `_messages`, `_events`, `_artifacts`, `_commands`, `_tasks` first | archive metadata to `agent_shell_ledger.jsonl.gz` | Parent window ≥ max child window; children pruned before parent. |
 | `agent_shell_commands` | 14d | `created_at` | `prune_agent_shell_commands` (NEW) | none | hard delete | Aligns with agent_shell_events. |
-| `runtime_sessions` | 30d | `started_at` | `prune_runtime_sessions` (NEW) | none | hard delete | Pure boot ledger; `runtime_id` is free-form TEXT, not FK. |
+| `runtime_sessions` | 90d | `started_at` | `prune_runtime_sessions` (NEW) | none | hard delete | Pure boot ledger; `runtime_id` is free-form TEXT, not FK. |
 
 ### 3.2 Market data (time-series)
 

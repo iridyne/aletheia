@@ -189,13 +189,14 @@ A metric-version change appends new verdicts; it does not rewrite or delete olde
 | `coingecko_top_snapshots` (Round 2 Step 3) | Top-N coins by market cap pulled every Phase B tick | coin_id, symbol, price_usd, market_cap_usd, market_cap_rank, volume_24h_usd, price_change_1h_pct, price_change_24h_pct, price_change_7d_pct, observed_at |
 | `onchain_snapshots` (datasrc overhaul) | DefiLlama on-chain regime (zero-key); folded into the LLM macro block | source, metric_type (`stablecoin_mcap` / `chain_tvl` / `dex_volume`), total_usd, change_24h_pct, top_entries (JSON), raw_summary (JSON), observed_at |
 
-### E. Agent Runtime and schema control (16 tables)
+### E. Agent Runtime and schema control (17 tables)
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `agent_runs` | Agent execution records | agent_name, trigger_type, status, outputs (JSON) |
 | `agent_run_steps` | Step-by-step agent traces | run_id, step_number, action, result |
-| `agent_tool_calls` | Tool invocation log | run_id, inference_call_id, tool_name, arguments (JSON), result |
+| `agent_tool_calls` | Tool invocation log | run_id, inference_call_id, tool_name, arguments (JSON), result, nullable `duration_ms` measured only for a real current operation |
+| `agent_run_artifacts` | Typed current-run links to durable output records; never parsed from legacy output text | run_id, artifact_type, artifact_id, created_at |
 | `llm_inference_calls` | Content-free logical inference envelope | logical_call_id, caller, prompt/context/tool/schema identities and hashes, existing causal identities in environment metadata, validation outcome, retry/fallback summary |
 | `runtime_cost_events` | Physical LLM/tool/data cost attempts | call_id, attempt_index, provider/model/tool, opportunity/decision/proposal IDs when explicitly known, usage, price snapshot, cost status |
 | `llm_context_artifacts` | Content-free selected-context manifest | logical_call_id, caller, evaluation pair/arm/fixture, kind, stable_id, freshness, rendered_chars |
@@ -207,7 +208,7 @@ A metric-version change appends new verdicts; it does not rewrite or delete olde
 | `runtime_events` | Event bus persistence | event_type, payload (JSON), emitted_at |
 | `runtime_exclusive_lock` | Distributed lock (single-writer) | lock_name, holder, acquired_at, expires_at |
 | `runtime_ownership` | Task ownership tracking | task_id, owner, claimed_at |
-| `runtime_sessions` | One row per Gateway PROCESS lifecycle (session_id under a runtime_id). Core trading facts reference `session_id` via `runtime_session_id` | session_id, runtime_id, boot_commit, config_hash, behavior_fingerprint, schema_version, active_scope_id, execution_mode, started_at, ended_at, shutdown_clean |
+| `runtime_sessions` | One row per Gateway PROCESS lifecycle (session_id under a runtime_id). Core trading facts reference `session_id` via `runtime_session_id` | session_id, runtime_id, boot_commit, config_hash, behavior_fingerprint, schema_version, active_scope_id, execution_mode, nullable `economics_tracing_enabled` boot snapshot, started_at, ended_at, shutdown_clean |
 | `aletheia_schema_migrations` | Immutable per-database proof that one named migration implementation completed successfully | migration_id, checksum, schema_version, applied_at, duration_ms |
 
 **Runtime Session provenance (expand-only, nullable).** The seven core trading-fact
@@ -225,7 +226,7 @@ and spec `AR-S08`.
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `agent_shell_sessions` | User interaction sessions | session_id, mode, started_at |
-| `agent_shell_commands` | All commands issued | session_id, inference_call_id, command, response, latency_ms |
+| `agent_shell_commands` | All commands issued | session_id, inference_call_id, command, response, nullable `duration_ms` |
 | `agent_shell_messages` | Chat-style messages | session_id, role, content |
 | `agent_shell_tasks` | Background tasks | session_id, task_type, status, result |
 | `agent_shell_artifacts` | Generated artifacts | task_id, artifact_type, content |
@@ -452,6 +453,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 14. Schema v11 adds retained `exit_breakeven_shadow_assignments` and `exit_breakeven_shadow_outcomes` through migration `20260808_0010_exit_breakeven_shadow_v11`. It performs no historical backfill and grants no trading or Learning authority.
 15. Schema v12 rebuilds only `learning_inference_decisions` to admit immutable `ufc-fixed-look/v2` plans while retaining every v1 row, foreign key, index, write-once trigger, and no-delete trigger. Migration `20260808_0011_learning_randomization_inference_v12` changes no exposure, verdict, trading, Risk, Execution, or Live fact.
 16. Schema v13 adds prospective Universe Twin experiment, assignment, and canonical outcome-linkage columns through migration `20260809_0012_universe_twin_prospective_v13`. It preserves step-v1 authority, records no Learning exposure or verdict, and installs no Paper, Risk, Execution, or Live consumer.
+17. Schema v20 adds nullable tool/shell `duration_ms`, nullable `runtime_sessions.economics_tracing_enabled`, and `agent_run_artifacts` through additive migrations. Historical values stay NULL and legacy output is not backfilled; current-run artifact links are removed before their pruned AgentRun parent.
 
 Automatic readers must use indexed, bounded keys or a declared retained evidence window. User-requested export/backup may traverse a complete dataset, but it must stream through a cursor/disk-backed archive rather than materialize a table or archive in process memory.
 
@@ -473,7 +475,8 @@ current defaults; see `RETENTION_POLICY.md` for rationale and cascade details.
 
 | Table | Retention | Function |
 |-------|-----------|----------|
-| `agent_runs` / `agent_run_steps` / `agent_tool_calls` | 14d (`agent_run_steps`, was 30d) | `prune_agent_runs` (cascade), `prune_run_steps` |
+| `agent_runs` / `agent_tool_calls` / `agent_run_artifacts` | 90d (configurable 1–90); artifact links are deleted before their AgentRun parent | `prune_agent_runs` (cascade), `prune_tool_calls` |
+| `agent_run_steps` | 30d | `prune_run_steps` |
 | `market_snapshots` | 30d | existing |
 | `portfolio_snapshots` | 90d | existing |
 | `orderbook_snapshots` / `liquidation_events` | 7d | existing |
@@ -504,7 +507,7 @@ current defaults; see `RETENTION_POLICY.md` for rationale and cascade details.
 | `agent_shell_tasks` | 14d completed / 30d failed+cancelled; exempt `running`/`pending` | `prune_agent_shell_tasks` (new, cascade) |
 | `agent_shell_sessions` | 14d (30d if session has proposal/report/daily_summary artifact) | `prune_agent_shell_sessions` (new, cascade — children first) |
 | `agent_shell_commands` | 14d | `prune_agent_shell_commands` (new) |
-| `runtime_sessions` | 30d | `prune_runtime_sessions` (new) |
+| `runtime_sessions` | 90d (configurable 1–90) | `prune_runtime_sessions` (new) |
 | `serenity_evidence` / `serenity_run_events` | 60d | `prune_serenity_evidence` (new) / `prune_serenity_run_events` (new) |
 | `backtest_runs` / `backtest_trades` | 60d (parent cascade) | `prune_backtest_runs` (new, cascade) |
 | `opportunities` (open) | 48h → `expired` | existing |

@@ -21,6 +21,7 @@ from aletheia.storage.sqlite import (
 )
 from aletheia.storage.models import (
     AuditEvent,
+    AgentRunArtifact,
     AgentRun,
     Opportunity,
     TradeProposal,
@@ -423,12 +424,35 @@ def insert_agent_run(run: AgentRun) -> None:
     _insert("agent_runs", run.model_dump())
 
 
+def insert_agent_run_artifacts(artifacts: list[AgentRunArtifact]) -> None:
+    """Persist current-run artifact references without rewriting legacy outputs."""
+    if not artifacts:
+        return
+    execute_many_write(
+        "INSERT OR IGNORE INTO agent_run_artifacts "
+        "(run_id, artifact_type, artifact_id) VALUES (?, ?, ?)",
+        [
+            (artifact.run_id, artifact.artifact_type, artifact.artifact_id)
+            for artifact in artifacts
+        ],
+    )
+
+
 def update_agent_run(run_id: str, **kwargs) -> None:
     _update("agent_runs", run_id, kwargs)
 
 
-def list_agent_runs(limit: int = 50) -> list[dict]:
-    return _select_all("agent_runs", limit=limit)
+def list_agent_runs(limit: int = 50, *, days: int | None = None) -> list[dict]:
+    if days is None:
+        return _select_all("agent_runs", limit=limit)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return _select_all(
+        "agent_runs",
+        where="replace(started_at,' ','T') >= replace(?,' ','T')",
+        params=(cutoff,),
+        order="replace(started_at,' ','T') DESC",
+        limit=limit,
+    )
 
 
 def get_agent_run(run_id: str) -> dict | None:
@@ -4851,6 +4875,7 @@ def insert_tool_call(
     input_data: str | None = None,
     output_data: str | None = None,
     inference_call_id: str | None = None,
+    duration_ms: int | None = None,
 ) -> None:
     from aletheia.storage.models import new_id
 
@@ -4865,6 +4890,7 @@ def insert_tool_call(
             "output_data": output_data,
             "permitted": 1 if permitted else 0,
             "inference_call_id": inference_call_id,
+            "duration_ms": duration_ms,
             "created_at": _step_timestamp(),
         },
     )
@@ -4933,6 +4959,7 @@ def insert_agent_telemetry_batch(events: list[dict]) -> int:
                     "output_data": event.get("output_data"),
                     "permitted": 1 if event.get("permitted") else 0,
                     "inference_call_id": event.get("inference_call_id"),
+                    "duration_ms": event.get("duration_ms"),
                     "created_at": created_at,
                 }
             )
@@ -5176,7 +5203,7 @@ def _delete_market_ohlcv_batches(
     return total
 
 
-def prune_agent_runs(days: int = 30) -> int:
+def prune_agent_runs(days: int = 90) -> int:
     # agent_run_steps and agent_tool_calls have FK → agent_runs with no ON DELETE CASCADE.
     # Delete children first in the same transaction to avoid IntegrityError.
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
@@ -5195,6 +5222,10 @@ def prune_agent_runs(days: int = 30) -> int:
         placeholders = ",".join("?" * len(run_ids))
         started = time.monotonic()
         with transaction():
+            execute_write(
+                f"DELETE FROM agent_run_artifacts WHERE run_id IN ({placeholders})",
+                run_ids,
+            )
             execute_write(
                 f"DELETE FROM agent_run_steps WHERE run_id IN ({placeholders})",
                 run_ids,
@@ -5224,7 +5255,7 @@ def prune_run_steps(days: int = 14) -> int:
     return _delete_old_rows("agent_run_steps", days)
 
 
-def prune_tool_calls(days: int = 30) -> int:
+def prune_tool_calls(days: int = 90) -> int:
     return _delete_old_rows("agent_tool_calls", days)
 
 
@@ -8380,7 +8411,7 @@ def prune_serenity_run_events(days: int = 60) -> int:
     return _delete_by_rowid_batches("serenity_run_events", "created_at < ?", (cutoff,))
 
 
-def prune_runtime_sessions(days: int = 30) -> int:
+def prune_runtime_sessions(days: int = 90) -> int:
     """Prune finished runtime_sessions older than ``days`` (by started_at).
 
     Only rows with ``ended_at IS NOT NULL`` are eligible so a still-running boot

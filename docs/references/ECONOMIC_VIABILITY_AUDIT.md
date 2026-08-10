@@ -33,11 +33,13 @@ Streaming providers are recorded when the stream terminates. A cancelled or fail
 
 ### Tool calls
 
-Existing durable `agent_tool_calls` are mirrored into the economics ledger. Because the current Tool Call contract does not contain start time, end time, latency, retry, or external billing, the compatibility record is honest:
+Existing durable `agent_tool_calls` are mirrored into the economics ledger. Current real Agent tool operations record nullable monotonic `duration_ms`, which is mirrored as tool-event latency; legacy rows and bookkeeping rows with no operation remain `NULL`. The record is still intentionally limited:
 
 - per-call cost comes from an immutable Tool Cost Profile when configured;
 - no matching profile means `cost_status=unknown`;
-- latency remains `NULL` instead of being fabricated.
+- a missing duration remains `NULL` instead of being fabricated;
+- tool calls carry no LLM token usage and are never allocated LLM tokens;
+- retry and external billing facts remain unavailable unless their own durable contracts record them.
 
 Explicitly free local tools must be configured with a per-call cost of `0`. External APIs can use their actual or allocated per-call rate.
 
@@ -200,7 +202,7 @@ Disabling tracing stops new cost facts. Disabling viability blocks report genera
 
 ## Known V1 limits
 
-- Existing Tool Calls lack measured latency; V1 exposes this gap as `NULL`.
+- Historical and no-operation Tool Calls lack measured latency; Usage exposes this gap as `NULL` rather than a synthetic zero.
 - Provider pricing must be entered before a call; unknown historical calls are not retroactively guessed.
 - Fixed data/infrastructure allocations are supplied per report rather than fetched from cloud billing APIs.
 - Operator runtime cost is charged at the audit-window level; V1 does not claim a perfect per-Proposal allocation for every skipped or multi-call decision.

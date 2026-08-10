@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v18"
+SCHEMA_VERSION = "aletheia-sqlite-v20"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3374,6 +3374,36 @@ _LLM_INFERENCE_LINKAGE_COLUMNS = (
 )
 _LLM_INFERENCE_LINKAGE_CHECKSUM = hashlib.sha256(
     (repr(_LLM_INFERENCE_LINKAGE_COLUMNS) + "\nadditive_columns_v1").encode("utf-8")
+).hexdigest()
+
+_AGENT_DURATION_COLUMNS = (
+    ("duration_ms", "agent_tool_calls", "INTEGER"),
+    ("duration_ms", "agent_shell_commands", "INTEGER"),
+)
+_AGENT_DURATION_CHECKSUM = hashlib.sha256(
+    (repr(_AGENT_DURATION_COLUMNS) + "\nadditive_columns_v1").encode("utf-8")
+).hexdigest()
+
+_AGENT_USAGE_STORAGE_COLUMNS = (
+    ("economics_tracing_enabled", "runtime_sessions", "INTEGER"),
+)
+_AGENT_RUN_ARTIFACTS_SQL = """
+CREATE TABLE IF NOT EXISTS agent_run_artifacts (
+    run_id TEXT NOT NULL REFERENCES agent_runs(id),
+    artifact_type TEXT NOT NULL,
+    artifact_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (run_id, artifact_type, artifact_id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_run_artifacts_artifact
+ON agent_run_artifacts(artifact_type, artifact_id);
+"""
+_AGENT_USAGE_STORAGE_CHECKSUM = hashlib.sha256(
+    (
+        repr(_AGENT_USAGE_STORAGE_COLUMNS)
+        + _AGENT_RUN_ARTIFACTS_SQL
+        + "\nadditive_agent_usage_storage_v1"
+    ).encode("utf-8")
 ).hexdigest()
 
 _MARKET_SIGNAL_IDENTITY_COLUMNS = (
@@ -4517,6 +4547,29 @@ def _apply_llm_inference_linkage_v6(db: sqlite3.Connection) -> None:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
+def _apply_agent_duration_v19(db: sqlite3.Connection) -> None:
+    """Add nullable elapsed-time fields without rewriting historical records."""
+
+    for column, table, column_type in _AGENT_DURATION_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
+def _apply_agent_usage_storage_v20(db: sqlite3.Connection) -> None:
+    """Add current-run artifact links and optional tracing snapshots without backfill."""
+
+    for column, table, column_type in _AGENT_USAGE_STORAGE_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.executescript(_AGENT_RUN_ARTIFACTS_SQL)
+
+
 def _apply_market_signal_identity_v7(db: sqlite3.Connection) -> None:
     """Add structured evidence without changing legacy wake-summary fields."""
 
@@ -4858,8 +4911,20 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260810_0017_universe_positioning_v18",
         checksum=_UNIVERSE_POSITIONING_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v18",
         apply=_apply_universe_positioning_v18,
+    ),
+    MigrationStep(
+        migration_id="20260810_0018_agent_duration_v19",
+        checksum=_AGENT_DURATION_CHECKSUM,
+        schema_version="aletheia-sqlite-v19",
+        apply=_apply_agent_duration_v19,
+    ),
+    MigrationStep(
+        migration_id="20260810_0019_agent_usage_storage_v20",
+        checksum=_AGENT_USAGE_STORAGE_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_agent_usage_storage_v20,
     ),
 )
 

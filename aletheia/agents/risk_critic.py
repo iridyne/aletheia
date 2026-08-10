@@ -1,7 +1,9 @@
 """Risk Critic agent — reviews recent proposals/strategies and writes risk lessons."""
 
+import time
+
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import llm_complete, log_tool
+from aletheia.agents.helpers import elapsed_ms, llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.knowledge.manager import create_research_note
@@ -13,14 +15,16 @@ async def run_risk_critic(permission_mode: str = "Observe", run_id: str | None =
     """Critique recent risk decisions and record a risk-lesson note."""
     outputs: list[str] = []
     errors: list[str] = []
+    artifact_refs: list[dict[str, str]] = []
 
     if not is_tool_permitted("create_research_note", permission_mode):
         errors.append("create_research_note not permitted in current mode")
         return {"outputs": outputs, "errors": errors}
 
+    started_at = time.monotonic()
     proposals = list_trade_proposals(limit=20)
     decisions = list_risk_decisions(limit=20)
-    log_tool(run_id, "get_risk_boundaries", "observe", True)
+    log_tool(run_id, "get_risk_boundaries", "observe", True, duration_ms=elapsed_ms(started_at))
 
     # C2: include per-rejection violation details so the LLM critique is actionable
     rejected = [d for d in decisions if not d.get("approved")]
@@ -66,10 +70,19 @@ async def run_risk_critic(permission_mode: str = "Observe", run_id: str | None =
     # this agent stays advisory. Kept as medium_confidence so the audit trail
     # exists but retrieve_lessons() cannot serve it to a decision prompt.
     confidence = "medium_confidence"
+    started_at = time.monotonic()
     item = create_research_note("Risk Lesson", content, confidence=confidence,
                                 metadata={"source": "risk_critic", "subtype": "risk_lesson"})
     if item:
-        log_tool(run_id, "create_research_note", "observe", True, output=item.id)
+        log_tool(
+            run_id,
+            "create_research_note",
+            "observe",
+            True,
+            output=item.id,
+            duration_ms=elapsed_ms(started_at),
+        )
         outputs.append(f"research_note:{item.id}")
+        artifact_refs.append({"artifact_type": "research_note", "artifact_id": item.id})
 
-    return {"outputs": outputs, "errors": errors}
+    return {"outputs": outputs, "errors": errors, "output_artifacts": artifact_refs}

@@ -27,13 +27,14 @@ Design notes:
 
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import llm_structured, log_tool, record_step, observer_llm_deadline
+from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool, record_step, observer_llm_deadline
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.data.symbols import ticker_to_stock_tokens, stock_token_exchange
 from aletheia.storage.models import Opportunity
@@ -276,17 +277,19 @@ async def _analyze_equity(
     import asyncio as _asyncio
 
     loop = _asyncio.get_event_loop()
+    started_at = time.monotonic()
     data = await loop.run_in_executor(None, _fetch_equity_indicators, ticker)
+    duration_ms = elapsed_ms(started_at)
 
     if isinstance(data, _FetchError):
-        log_tool(run_id, "get_equity_snapshot", "observe", False, output=ticker)
+        log_tool(run_id, "get_equity_snapshot", "observe", False, output=ticker, duration_ms=duration_ms)
         return None, f"hard:{data.reason}:{ticker}"
 
     if data is None:
-        log_tool(run_id, "get_equity_snapshot", "observe", False, output=ticker)
+        log_tool(run_id, "get_equity_snapshot", "observe", False, output=ticker, duration_ms=duration_ms)
         return None, f"soft:empty_data:{ticker}"
 
-    log_tool(run_id, "get_equity_snapshot", "observe", True, output=ticker)
+    log_tool(run_id, "get_equity_snapshot", "observe", True, output=ticker, duration_ms=duration_ms)
 
     # Stock token cross-validation (optional): fetch real-time on-chain proxy price.
     # ticker_to_stock_tokens() returns tokens in priority order (r-series first, then
@@ -451,14 +454,23 @@ async def _analyze_equity(
         valid_until=(datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
         metadata=json.dumps(meta),
     )
+    started_at = time.monotonic()
     insert_opportunity(opp)
+    duration_ms = elapsed_ms(started_at)
     try:
         from aletheia.agent_runtime.scheduler import notify_paper_trader
 
         notify_paper_trader(source="equity_observer_opportunity")
     except Exception:
         logger.debug("Failed to notify Ranker after equity Opportunity commit", exc_info=True)
-    log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
+    log_tool(
+        run_id,
+        "create_opportunity",
+        "observe",
+        True,
+        output=opp.id,
+        duration_ms=duration_ms,
+    )
     return opp.id, llm_error
 
 
@@ -467,6 +479,7 @@ async def run_equity_observer(permission_mode: str = "Observe", run_id: str | No
     """Observe US equities via yfinance daily bars + Bitget xStocks real-time price."""
     outputs: list[str] = []
     errors: list[str] = []
+    artifact_refs: list[dict[str, str]] = []
 
     if not is_tool_permitted("get_market_snapshot", permission_mode):
         errors.append("get_market_snapshot not permitted in current mode")
@@ -504,6 +517,7 @@ async def run_equity_observer(permission_mode: str = "Observe", run_id: str | No
             )
             if opp_id:
                 outputs.append(f"opportunity:{opp_id}")
+                artifact_refs.append({"artifact_type": "opportunity", "artifact_id": opp_id})
             if err:
                 if err.startswith("hard:"):
                     hard_errors.append(err)
@@ -520,4 +534,4 @@ async def run_equity_observer(permission_mode: str = "Observe", run_id: str | No
     if soft_warnings:
         outputs.append(f"soft_skipped:{len(soft_warnings)}")
 
-    return {"outputs": outputs, "errors": errors}
+    return {"outputs": outputs, "errors": errors, "output_artifacts": artifact_refs}

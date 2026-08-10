@@ -83,7 +83,7 @@ def _uptime_hours() -> float | None:
     """Hours since the earliest agent_run we still have on file. None if no runs.
 
     A pragmatic "operational lifetime" signal — north-star §7 stage-0 wants 7-14
-    days of clean uptime. Bounded by retention (default agent_runs_days=30).
+    days of clean uptime. Bounded by retention (default agent_runs_days=90).
     """
     runs = list_agent_runs(limit=2000)
     if not runs:

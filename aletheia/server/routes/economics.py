@@ -26,6 +26,7 @@ from aletheia.economics.context_artifacts import (
     summarize_context_artifacts,
 )
 from aletheia.economics.schema import ensure_economics_schema
+from aletheia.economics.usage_insights import build_usage_insights
 from aletheia.economics.tracing import (
     list_cost_breakdown_by_provider,
     list_cost_breakdown_by_tool,
@@ -41,6 +42,14 @@ from aletheia.economics.viability import (
 from aletheia.model_provider.fallback import get_model_health_snapshot
 
 router = APIRouter(prefix="/api/economics", tags=["economics"])
+
+
+@router.get("/usage-insights")
+def usage_insights(days: int = Query(7)) -> dict:
+    """Exact aggregate-only usage projection; never reads prompts or responses."""
+    if days not in {7, 30, 90}:
+        raise HTTPException(status_code=422, detail="days must be one of 7, 30, or 90")
+    return build_usage_insights(days=days)
 
 
 @router.get("/status")
