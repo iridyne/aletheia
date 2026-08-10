@@ -4,6 +4,8 @@ summarize_closures is a pure function over closed-position rows, so these tests
 use synthetic rows and assert the reason/category counts directly — no DB.
 """
 
+from datetime import datetime, timedelta, timezone
+
 from aletheia.analytics.exit_attribution import summarize_closures
 from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
 
@@ -114,11 +116,17 @@ def test_db_roundtrip_filters_and_report():
     from aletheia.analytics.exit_attribution import attribution_report
 
     db = get_db()
-    _insert_closed(db, pid="p1", reason="stop_loss", closed_at="2026-07-12T00:00:00+00:00")
+    now = datetime.now(timezone.utc)
+    _insert_closed(
+        db,
+        pid="p1",
+        reason="stop_loss",
+        closed_at=(now - timedelta(days=1)).isoformat(),
+    )
     _insert_closed(db, pid="p2", reason="take_profit", mode="bitget_demo",
-                   closed_at="2026-07-11T00:00:00+00:00")
+                   closed_at=(now - timedelta(days=2)).isoformat())
     _insert_closed(db, pid="p3", reason="reconciled_gone", strategy=False,
-                   closed_at="2026-01-01T00:00:00+00:00")
+                   closed_at=(now - timedelta(days=31)).isoformat())
     # An OPEN position must never appear in closed-position analytics.
     db.execute(
         "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
