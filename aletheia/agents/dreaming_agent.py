@@ -306,11 +306,20 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         if review_ids:
             placeholders = ",".join("?" for _ in review_ids)
             processed_rows = db.execute(
-                f"SELECT DISTINCT source_id FROM ps_lessons "
+                f"SELECT source_id, evidence_json FROM ps_lessons "
                 f"WHERE source_type = 'trade_case_study' AND source_id IN ({placeholders})",
                 tuple(review_ids),
             ).fetchall()
             processed = {row["source_id"] for row in processed_rows}
+            for row in processed_rows:
+                try:
+                    processed.update(
+                        json.loads(row["evidence_json"] or "{}").get(
+                            "supporting_source_ids", []
+                        )
+                    )
+                except (TypeError, ValueError):
+                    pass
             if processed:
                 reviews = [r for r in reviews if r.get("id") not in processed]
     except Exception:
@@ -401,6 +410,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         pnls: list[float] = []
         factors: list[str] = []
         scanners: list[str] = []
+        factor_source_ids: dict[str, list[str]] = {}
         for r in reviews[:10]:
             fpath = r.get("file_path")
             if fpath:
@@ -415,7 +425,10 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
                         except (ValueError, TypeError):
                             pass
                     if meta.get("factor_key"):
-                        factors.append(meta["factor_key"])
+                        factor_key = str(meta["factor_key"])
+                        factors.append(factor_key)
+                        if r.get("id"):
+                            factor_source_ids.setdefault(factor_key, []).append(str(r["id"]))
                     if meta.get("scanner_family"):
                         scanners.append(meta["scanner_family"])
                 except Exception:
@@ -438,10 +451,22 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         # Merge LLM-supplied evidence with deterministic aggregate; deterministic wins.
         llm_evidence = lesson.get("evidence") or {}
         evidence = {**llm_evidence, **agg_evidence}
-        evidence["supporting_factor_keys"] = [
+        supporting_factor_keys = [
             key for key in dict.fromkeys(lesson.get("supporting_factor_keys") or [])
             if key in agg_evidence.get("factor_keys", [])
         ]
+        evidence["supporting_factor_keys"] = supporting_factor_keys
+        supporting_source_ids = list(dict.fromkeys(
+            source_id
+            for key in supporting_factor_keys
+            for source_id in factor_source_ids.get(key, [])
+        ))
+        if not supporting_source_ids:
+            if len(reviews) != 1 or not reviews[0].get("id"):
+                errors.append("lesson_extraction_ambiguous_source")
+                continue
+            supporting_source_ids = [str(reviews[0]["id"])]
+        evidence["supporting_source_ids"] = supporting_source_ids
         # Phase 1c: deterministic recommendation fallback when LLM omits it.
         # If aggregate evidence shows a clear loss pattern for a specific scanner,
         # propose block_scanner for guard shadow evaluation (never Risk authority).
@@ -456,7 +481,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
                     "(block_scanner=%s, loss_rate=%d/%d)",
                     rec["scanner"], losses, total,
                 )
-        source_id = reviews[0].get("id", "unknown")
+        source_id = supporting_source_ids[0]
         if rec and rec.get("action") in {"block_scanner", "block_direction", "block_symbol"}:
             from aletheia.learning.guard_routing import route_automatic_block_recommendation
             rec = route_automatic_block_recommendation(

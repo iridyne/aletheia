@@ -543,6 +543,31 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
     assert skills[0].name == f"lesson:{lesson.lesson_id}"
 
 
+async def test_lesson_reviewer_reuses_policy_after_partial_apply_failure():
+    from aletheia.learning.lessons import LessonStore
+    from aletheia.policies.store import PolicyStore
+    import aletheia.agents.lesson_reviewer as lr
+
+    store = LessonStore()
+    first = store.create("first", "trade_case_study", "case-1")
+    second = store.create("second", "trade_case_study", "case-2")
+    store.accept(first.lesson_id)
+    store.accept(second.lesson_id)
+
+    policies = PolicyStore()
+    version = policies.create_version(
+        "lesson_policy",
+        {"accepted_lesson_ids": [first.lesson_id, second.lesson_id]},
+        created_by="lesson_reviewer",
+    )
+    store.mark_applied(first.lesson_id, version.policy_version_id)
+
+    await lr.run_lesson_reviewer(run_id="test")
+
+    assert store.get(second.lesson_id).applied_policy_version == version.policy_version_id
+    assert len(policies.list_versions("lesson_policy")) == 1
+
+
 # ---------------------------------------------------------------------------
 # LP-S12 — Ranker routes proposed memo/case deltas through its authority boundary;
 #           they must NOT reach risk_engine or sizing (§8.1 invariant)
