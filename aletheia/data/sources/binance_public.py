@@ -85,7 +85,11 @@ class BinancePublicProvider:
 
         canon = canonical_of(symbol)
         bn_sym = to_binance(canon)
-        interval = _TF_MAP.get(timeframe, timeframe)
+        interval = _TF_MAP.get(timeframe)
+        if interval is None:
+            raise NotImplementedError(
+                f"Binance public does not support {timeframe} candles"
+            )
 
         params: dict = {
             "symbol": bn_sym,
