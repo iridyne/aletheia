@@ -68,12 +68,6 @@ def _macos_target() -> str:
 def _runner_command(*, no_browser: bool) -> list[str]:
     script = Path(__file__).resolve().parent.parent / "_gateway_runner.py"
     real_python, _ = _resolve_real_python()
-    stable_python = Path(real_python).with_name("python")
-    try:
-        if stable_python.exists() and stable_python.samefile(real_python):
-            real_python = str(stable_python)
-    except OSError:
-        pass
     return gateway_runner_command(
         script=script,
         real_python=real_python,
