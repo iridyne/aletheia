@@ -329,7 +329,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert release_candidate["permissions"] == {
         "contents": "write",
         "issues": "write",
-        "pull-requests": "read",
+        "pull-requests": "write",
     }
     release_guard = release_candidate["if"]
     assert "event.action == 'release_candidate_verified'" in release_guard
