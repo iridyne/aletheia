@@ -278,6 +278,13 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     assert item["lifecycle"]["authority_enabled"] is False
 
 
+def test_optional_count_does_not_invent_zero() -> None:
+    from aletheia.learning.read_models import _safe_optional_int
+
+    assert _safe_optional_int(None) is None
+    assert _safe_optional_int(2) == 2
+
+
 def test_lco_projection_never_recommends_promotion_from_monitoring_positive(
     tmp_path,
     monkeypatch,
