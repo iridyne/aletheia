@@ -4,6 +4,36 @@ All notable product changes are recorded here. Aletheia uses Semantic Versioning
 for the product release, while build identities and data/behavior contracts keep
 their own independent versions.
 
+## [0.6.0](https://github.com/iridite/aletheia/compare/v0.5.0...v0.6.0) (2026-08-10)
+
+
+### Features
+
+* **agent:** structure trade motivation ([#856](https://github.com/iridite/aletheia/issues/856)) ([f55094f](https://github.com/iridite/aletheia/commit/f55094fd21e61570445a709d1089ec35afe0cafc))
+* **observer:** add compact technical context ([dbed0ac](https://github.com/iridite/aletheia/commit/dbed0acb178f3c02ff98ae49f1ab002613eb836c))
+* **observer:** add technical-context-v1 ([#853](https://github.com/iridite/aletheia/issues/853)) ([a91f49e](https://github.com/iridite/aletheia/commit/a91f49e5d41dd2a6967e4de3313576b5abf89f35))
+* **release:** establish product version closure ([#855](https://github.com/iridite/aletheia/issues/855)) ([99b0467](https://github.com/iridite/aletheia/commit/99b046703bcb6cb427722ecc77a21327381e4ecc))
+
+
+### Bug Fixes
+
+* **analytics:** count deferred operator observations in funnel ([#868](https://github.com/iridite/aletheia/issues/868)) ([98b3dfa](https://github.com/iridite/aletheia/commit/98b3dfa7ce506a986d8e35e149a708f9e3cdbc11))
+* **doctor:** disclose truncated funding probe ([#861](https://github.com/iridite/aletheia/issues/861)) ([feaea43](https://github.com/iridite/aletheia/commit/feaea439ef8f13336210baca2c0a76bc7863262e))
+* **gateway:** stabilize service python path ([#873](https://github.com/iridite/aletheia/issues/873)) ([9ca98b1](https://github.com/iridite/aletheia/commit/9ca98b186b7e8630a2dd25ad84a208c5df9117b6))
+* **llm:** enforce context evaluation integrity ([9d65765](https://github.com/iridite/aletheia/commit/9d657659d73e38b8db54299e4b82783b22c30df6))
+* **observer:** preserve macro prompt decision ([30f8a7f](https://github.com/iridite/aletheia/commit/30f8a7fc2cbde52e498ab118861fa21009052459))
+* **observer:** preserve technical context integrity ([c7aea4a](https://github.com/iridite/aletheia/commit/c7aea4a54342e78a197c566623afbf377572e439))
+* **operator:** drain no-model defer backlog promptly ([#870](https://github.com/iridite/aletheia/issues/870)) ([c935c47](https://github.com/iridite/aletheia/commit/c935c47e7a5ae1d9d1cef5c3d301bcd990046171))
+* **persistence:** report dormant gateway status honestly ([#863](https://github.com/iridite/aletheia/issues/863)) ([7d52bcf](https://github.com/iridite/aletheia/commit/7d52bcf62891332bd04b1a1bad1cefd61d04b466))
+* **release:** allow candidate hold removal ([#876](https://github.com/iridite/aletheia/issues/876)) ([83cfd56](https://github.com/iridite/aletheia/commit/83cfd56b64b4b6fec0ded352545aa1ab70dd93a5))
+* **release:** automate verified release closure ([#871](https://github.com/iridite/aletheia/issues/871)) ([1c788e0](https://github.com/iridite/aletheia/commit/1c788e04838f78c4b87961824b876b7630dc98e3))
+* **release:** dispatch after trusted merge ([#862](https://github.com/iridite/aletheia/issues/862)) ([03d5739](https://github.com/iridite/aletheia/commit/03d5739d5264d784c68fa3d77e9237a108bf3087))
+* **release:** hand off verified candidate explicitly ([#874](https://github.com/iridite/aletheia/issues/874)) ([623dd10](https://github.com/iridite/aletheia/commit/623dd106d36090ea42d483bba25de025f86fea7f))
+* **release:** honor actions allowlist ([#860](https://github.com/iridite/aletheia/issues/860)) ([7db5a1f](https://github.com/iridite/aletheia/commit/7db5a1f744b216d7c6a2f6063f69a7c2dffff2a1))
+* **release:** preserve generated PR hold ([#866](https://github.com/iridite/aletheia/issues/866)) ([5aae48a](https://github.com/iridite/aletheia/commit/5aae48a9d5bf996fb65d042a0b4bd6e0bc0853c4))
+* **scheduler:** expose position manager error facts ([#865](https://github.com/iridite/aletheia/issues/865)) ([e689769](https://github.com/iridite/aletheia/commit/e689769e098c4afa03233c2bd7d075b60040fded))
+* **serenity:** make cancellation lifecycle truthful ([#854](https://github.com/iridite/aletheia/issues/854)) ([2df1b0e](https://github.com/iridite/aletheia/commit/2df1b0ec550ab1ce27024bab81c19c7734d3747e))
+
 ## [Unreleased]
 
 ### Versioned incremental technical analysis
