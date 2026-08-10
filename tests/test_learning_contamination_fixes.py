@@ -161,6 +161,11 @@ def test_lesson_evidence_ignores_gross_only_history(tmp_path, monkeypatch):
         source_id="gross-only",
         category="entry_timing",
         severity="warning",
+        evidence={
+            "supporting_factor_keys": [
+                "momentum:BTC/USDT:long:medium_confidence:clean",
+            ],
+        },
     )
     db = sq.get_db()
     db.execute(
@@ -174,3 +179,6 @@ def test_lesson_evidence_ignores_gross_only_history(tmp_path, monkeypatch):
 
     evidence = _fetch_evidence(lesson)
     assert evidence["aggregate"]["total"] == 0
+    assert evidence["exact_scope_dimensions"] == {
+        "symbol": "BTC/USDT", "direction": "long", "scanner_family": "momentum",
+    }

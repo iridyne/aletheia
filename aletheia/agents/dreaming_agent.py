@@ -37,6 +37,7 @@ class _ExtractedLesson(BaseModel):
         "general",
     ] = "general"
     severity: Literal["info", "warning", "critical"] = "info"
+    supporting_factor_keys: list[str] = Field(default_factory=list)
     evidence: dict[str, object] = Field(default_factory=dict)
     recommendation: dict[str, object] | None = None
 
@@ -354,6 +355,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
             '"summary" (one sentence referencing specific metrics), '
             '"category" (one of: risk_sizing, entry_timing, exit_timing, symbol_selection, general), '
             '"severity" (info|warning|critical), '
+            '"supporting_factor_keys" (only the exact factor_key strings from the input cases that support this lesson), '
             '"evidence" (object with fields: outcome_counts (dict), avg_pnl_pct (float or null), '
             'factor_keys (list of strings), scanner_families (list of strings)), '
             '"recommendation" (optional — include ONLY when evidence strongly supports a specific '
@@ -436,6 +438,10 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         # Merge LLM-supplied evidence with deterministic aggregate; deterministic wins.
         llm_evidence = lesson.get("evidence") or {}
         evidence = {**llm_evidence, **agg_evidence}
+        evidence["supporting_factor_keys"] = [
+            key for key in dict.fromkeys(lesson.get("supporting_factor_keys") or [])
+            if key in agg_evidence.get("factor_keys", [])
+        ]
         # Phase 1c: deterministic recommendation fallback when LLM omits it.
         # If aggregate evidence shows a clear loss pattern for a specific scanner,
         # propose block_scanner for guard shadow evaluation (never Risk authority).

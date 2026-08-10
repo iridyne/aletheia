@@ -85,9 +85,14 @@ def _derive_scope(action: str, recommendation: dict, evidence: dict) -> dict | N
     # Extract symbols and scanner families from factor_key evidence strings.
     symbols: list[str] = []
     scanners_from_keys: list[str] = []
-    for fk in (evidence.get("factor_keys") or []):
+    factor_keys = (
+        evidence["supporting_factor_keys"]
+        if "supporting_factor_keys" in evidence
+        else evidence.get("factor_keys") or []
+    )
+    for fk in factor_keys:
         parts = str(fk).split(":")
-        if len(parts) >= 2:
+        if len(parts) == 5:
             sc, sym = parts[0], parts[1]
             if sym and sym != "unknown":
                 symbols.append(sym)
