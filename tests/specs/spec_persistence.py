@@ -10,6 +10,7 @@ Claim prefix: PR
 """
 
 import ast
+import asyncio
 import sqlite3
 from pathlib import Path
 
@@ -126,6 +127,15 @@ def test_recovery_fsm_not_yet_wired_into_lifecycle():
         "Verify gateway_recovery.md, add executable recovery acceptance, and update "
         "the current persistence Contract before claiming the safety net is active."
     )
+
+
+def test_gateway_status_does_not_invent_dormant_recovery_state():
+    from aletheia.server.routes.persistence import get_gateway_status
+
+    assert asyncio.run(get_gateway_status()) == {
+        "status": "not_available",
+        "freeze_reason": None,
+    }
 
 
 # ---------------------------------------------------------------------------

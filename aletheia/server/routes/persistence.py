@@ -71,11 +71,8 @@ def _path_is_within(candidate: Path, root: Path) -> bool:
 
 @router.get("/gateway/status")
 async def get_gateway_status():
-    """Current gateway state machine status."""
-    from aletheia.gateway.state_machine import GatewayStateMachine
-
-    sm = GatewayStateMachine()
-    return {"status": sm.status.value, "freeze_reason": sm.freeze_reason}
+    """PS recovery status is unavailable until its lifecycle is wired."""
+    return {"status": "not_available", "freeze_reason": None}
 
 
 @router.get("/gateway/sessions")
