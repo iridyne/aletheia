@@ -96,6 +96,10 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
             "unique_assignment_unit_n": 9,
             "cluster_member_n": 27,
             "allocation_selected_member_n": 7,
+            "treatment_member_n": 12,
+            "treatment_selected_member_n": 2,
+            "control_member_n": 15,
+            "control_selected_member_n": 5,
             "mirrored_universe_row_n": 7,
             "outcome_source_member_counts": {
                 "filter_candidate_outcomes": 27,
@@ -249,6 +253,10 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
         "complete_assignment_units": 9,
         "cluster_members": 27,
         "selected_members": 7,
+        "treatment_members": 12,
+        "treatment_selected_members": 2,
+        "control_members": 15,
+        "control_selected_members": 5,
     }
     assert item["integrity"]["outcome_source_member_counts"] == {
         "filter_candidate_outcomes": 27,
@@ -268,6 +276,13 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     assert item["lifecycle"]["recommended_action"] == "admit_trial"
     assert item["lifecycle"]["mutation_available"] is False
     assert item["lifecycle"]["authority_enabled"] is False
+
+
+def test_optional_count_does_not_invent_zero() -> None:
+    from aletheia.learning.read_models import _safe_optional_int
+
+    assert _safe_optional_int(None) is None
+    assert _safe_optional_int(2) == 2
 
 
 def test_lco_projection_never_recommends_promotion_from_monitoring_positive(

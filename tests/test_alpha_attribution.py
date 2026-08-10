@@ -765,6 +765,10 @@ def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monk
             "treatment_assignment_units": 0,
             "control_assignment_units": 0,
             "actual_intervention_treatment_units": 0,
+            "treatment_members": 6,
+            "treatment_selected_members": 1,
+            "control_members": 25,
+            "control_selected_members": 4,
         },
         "integrity": {
             "actual_intervention_state": "none",
@@ -806,6 +810,7 @@ def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monk
     assert f"Learning experiment: id={experiment.experiment_id} stage=paper_10" in rendered
     assert "exposed_interventions=1 settled_interventions=0" in rendered
     assert 'exclusions={"unsettled": 21}' in rendered
+    assert "Learning selection: treatment=1/6 control=4/25" in rendered
 
     item["measurement"].update(
         state="positive",

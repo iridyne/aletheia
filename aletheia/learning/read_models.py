@@ -642,6 +642,14 @@ def _project_experiment(
             "selected_members": _safe_int(
                 metrics.get("allocation_selected_member_n")
             ),
+            "treatment_members": _safe_optional_int(metrics.get("treatment_member_n")),
+            "treatment_selected_members": _safe_optional_int(
+                metrics.get("treatment_selected_member_n")
+            ),
+            "control_members": _safe_optional_int(metrics.get("control_member_n")),
+            "control_selected_members": _safe_optional_int(
+                metrics.get("control_selected_member_n")
+            ),
         },
         "integrity": {
             "source_code_commits": [
@@ -988,6 +996,15 @@ def _safe_int(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _safe_optional_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _safe_float(value: Any) -> float | None:

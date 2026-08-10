@@ -452,6 +452,13 @@ def render_alpha_audit(report: dict) -> str:
                     "exclusions="
                     f"{json.dumps(details.get('exclusion_reasons') or {}, sort_keys=True)}"
                 )
+                lines.append(
+                    "  Learning selection: "
+                    f"treatment={_fmt_metric(details.get('treatment_selected_members'))}/"
+                    f"{_fmt_metric(details.get('treatment_members'))} "
+                    f"control={_fmt_metric(details.get('control_selected_members'))}/"
+                    f"{_fmt_metric(details.get('control_members'))}"
+                )
         modules = item.get("suspected_modules") or []
         if (
             item.get("contribution_verdict") == "negative"
@@ -1119,6 +1126,12 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
                 "raw_exposures": int(samples.get("raw_exposures") or 0),
                 "unique_treatment_n": int(samples.get("treatment_assignment_units") or 0),
                 "unique_control_n": int(samples.get("control_assignment_units") or 0),
+                "treatment_members": samples.get("treatment_members"),
+                "treatment_selected_members": samples.get(
+                    "treatment_selected_members"
+                ),
+                "control_members": samples.get("control_members"),
+                "control_selected_members": samples.get("control_selected_members"),
                 "actual_intervention_treatment_units": int(
                     samples.get("actual_intervention_treatment_units") or 0
                 ),

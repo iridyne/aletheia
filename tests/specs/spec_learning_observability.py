@@ -78,6 +78,10 @@ def test_lco_cluster_integrity_projection_is_distinct(tmp_path, monkeypatch):
         "complete_assignment_units": 9,
         "cluster_members": 27,
         "selected_members": 7,
+        "treatment_members": 12,
+        "treatment_selected_members": 2,
+        "control_members": 15,
+        "control_selected_members": 5,
     }
     assert item["integrity"]["exclusion_reasons"] == {"unsettled": 2}
     assert item["integrity"]["invalid_reasons"] == {}

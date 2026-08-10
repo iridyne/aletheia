@@ -359,7 +359,11 @@ Each item contains:
     "required_per_arm": 50,
     "complete_assignment_units": 0,
     "cluster_members": 0,
-    "selected_members": 0
+    "selected_members": 0,
+    "treatment_members": 0,
+    "treatment_selected_members": 0,
+    "control_members": 0,
+    "control_selected_members": 0
   },
   "integrity": {
     "canonical_members": 0,
@@ -393,7 +397,8 @@ The `exposed_*` counts are identity-valid assignment units observed before
 outcome settlement; the unprefixed treatment/control counts remain complete
 economic measurement units. Exposure telemetry never satisfies a verdict gate.
 `raw_exposures` and `cluster_members` must never be displayed as treatment/control
-sample size.
+sample size. The arm-specific member and selected-member counts explain allocation
+utility composition only; assignment units remain the statistical sample.
 
 `mutation_available=true` is readiness information only. It requires a current
 identity-matched `admit_trial` recommendation plus all default-closed paper

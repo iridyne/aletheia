@@ -16,6 +16,11 @@ then read only the `@` guide whose scope matches the task.
   unchanged. Analysis-only work does not authorize code changes. Stop if a task
   weakens an invariant, changes trading safety without approval, or cannot be
   proved safely.
+- Keep implementation and verification proportional. Default to one root-cause
+  change and the smallest runnable regression that proves it. Do not duplicate
+  the same edge-case test across DB, API, CLI, and UI layers unless they have
+  independent failure modes; expand proof only for money, safety, permission,
+  data-loss, or irreversible-state boundaries.
 - Orders reach exchanges only through the backend Execution Gateway. Live is
   off by default, and Risk approval always precedes execution.
 - Never read, reveal, log, prompt, or commit credentials. Never expand agent

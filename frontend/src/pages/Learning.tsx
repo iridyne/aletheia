@@ -229,6 +229,8 @@ function ContributionTab() {
             <ContributionRow label="Complete assignment units" value={item.samples.complete_assignment_units} />
             <ContributionRow label="Cluster members" value={item.samples.cluster_members} />
             <ContributionRow label="Selected members" value={item.samples.selected_members} />
+            <ContributionRow label="Treatment selected / members" value={armSelectionLabel(item.samples.treatment_selected_members, item.samples.treatment_members)} />
+            <ContributionRow label="Control selected / members" value={armSelectionLabel(item.samples.control_selected_members, item.samples.control_members)} />
           </div>
         </Card>
 
@@ -328,6 +330,10 @@ function ContributionRow({ label, value }: { label: string; value: ReactNode }) 
       <strong>{value}</strong>
     </div>
   )
+}
+
+function armSelectionLabel(selected: number | null, members: number | null) {
+  return selected == null || members == null ? 'Unavailable' : `${selected} / ${members}`
 }
 
 function CohortProgress({ label, value, required, pct }: { label: string; value: number; required: number; pct: number }) {

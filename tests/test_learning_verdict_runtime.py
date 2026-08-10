@@ -450,6 +450,10 @@ def test_full_arm_metric_measures_allocation_utility_not_exogenous_candidate_mea
     assert verdict.delta == pytest.approx(0.75)
     assert metrics["allocation_selected_member_n"] == 2
     assert metrics["allocation_total_member_n"] == 4
+    assert metrics["treatment_selected_member_n"] == 1
+    assert metrics["treatment_member_n"] == 2
+    assert metrics["control_selected_member_n"] == 1
+    assert metrics["control_member_n"] == 2
 
 
 def test_normal_sibling_horizons_do_not_create_wrong_horizon_evidence():
