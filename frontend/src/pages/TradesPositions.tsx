@@ -39,6 +39,7 @@ import {
 	marketBadgeTone,
 	isPerpMarket,
 } from "../lib/format";
+import { positionFreshness, positionKeys } from "../lib/queryKeys";
 import TradeAnalyticsPanel from "../charts/TradeAnalyticsPanel";
 const TradeInsightsPanel = lazy(() => import("../charts/TradeInsightsPanel"));
 
@@ -265,7 +266,7 @@ function useManualClose(onSuccess?: () => void) {
 	const mutation = useMutation({
 		mutationFn: (position: Position) => api.closePosition(position.id),
 		onSuccess: (_data, position) => {
-			qc.invalidateQueries({ queryKey: ["positions"] });
+			qc.invalidateQueries({ queryKey: positionKeys.all });
 			qc.invalidateQueries({ queryKey: ["trades"] });
 			toast(
 				"success",
@@ -322,15 +323,16 @@ export default function TradesPositions() {
 	const [searchParams] = useSearchParams();
 	const initialTab = searchParams.get("tab") || "blotter";
 	const { data: positions = [] } = useQuery({
-		queryKey: ["positions"],
+		queryKey: positionKeys.all,
 		queryFn: api.getPositions,
+		...positionFreshness,
 	});
 	const { data: orders = [] } = useQuery({
 		queryKey: ["trades"],
 		queryFn: api.getTrades,
 	});
 	const { data: reconciliation } = useQuery({
-		queryKey: ["positions-reconciliation"],
+		queryKey: positionKeys.reconciliation,
 		queryFn: api.getPositionsReconciliation,
 	});
 	const [sel, setSel] = useState<Selection>(null);
@@ -907,7 +909,7 @@ function ClosePositionPanel({
 				limit_price: price,
 			}),
 		onSuccess: (_data, price) => {
-			qc.invalidateQueries({ queryKey: ["positions"] });
+			qc.invalidateQueries({ queryKey: positionKeys.all });
 			toast("success", `Limit exit set at ${fmtNum(price)} USDT`);
 			setShowLimit(false);
 			setLimitPrice("");

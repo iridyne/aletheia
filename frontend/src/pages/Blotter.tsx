@@ -7,6 +7,7 @@ import { Badge, Button, Card, StatusText } from '../components/ui'
 import { DataTable } from '../components/DataTable'
 import { DecisionTraceDrawer } from '../components/DecisionTraceDrawer'
 import { humanize, fmtSymbol, fmtAge, fmtTimestamp } from '../lib/format'
+import { positionKeys } from '../lib/queryKeys'
 
 type OperatorDecisionRow = Awaited<ReturnType<typeof api.getOperatorDecisions>>['items'][number]
 
@@ -378,7 +379,7 @@ function SignoffPanel() {
       }
       clearErr(id)
       qc.invalidateQueries({ queryKey: ['proposals'] })
-      qc.invalidateQueries({ queryKey: ['positions'] })
+      qc.invalidateQueries({ queryKey: positionKeys.all })
     },
     onError: (e: any, id) => setErr(id, String(e?.message || 'approve failed')),
     onSettled: () => setBusyId(null),
