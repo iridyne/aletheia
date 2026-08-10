@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v20"
+SCHEMA_VERSION = "aletheia-sqlite-v21"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3404,6 +3404,24 @@ _AGENT_USAGE_STORAGE_CHECKSUM = hashlib.sha256(
         + _AGENT_RUN_ARTIFACTS_SQL
         + "\nadditive_agent_usage_storage_v1"
     ).encode("utf-8")
+).hexdigest()
+
+_LESSON_REVIEWER_ATTEMPTS_SQL = """
+CREATE TABLE IF NOT EXISTS learning_lesson_reviewer_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    input_watermark TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    outcome TEXT NOT NULL CHECK (outcome IN ('running', 'succeeded', 'failed')),
+    error_class TEXT,
+    error_message TEXT,
+    retry_of_attempt_id TEXT REFERENCES learning_lesson_reviewer_attempts(attempt_id)
+);
+CREATE INDEX IF NOT EXISTS idx_learning_lesson_reviewer_attempts_watermark
+ON learning_lesson_reviewer_attempts(input_watermark, started_at DESC);
+"""
+_LESSON_REVIEWER_ATTEMPTS_CHECKSUM = hashlib.sha256(
+    _LESSON_REVIEWER_ATTEMPTS_SQL.encode("utf-8")
 ).hexdigest()
 
 _MARKET_SIGNAL_IDENTITY_COLUMNS = (
@@ -4570,6 +4588,12 @@ def _apply_agent_usage_storage_v20(db: sqlite3.Connection) -> None:
     db.executescript(_AGENT_RUN_ARTIFACTS_SQL)
 
 
+def _apply_lesson_reviewer_attempts_v21(db: sqlite3.Connection) -> None:
+    """Add append-only execution history for the mutating lesson reviewer."""
+
+    db.executescript(_LESSON_REVIEWER_ATTEMPTS_SQL)
+
+
 def _apply_market_signal_identity_v7(db: sqlite3.Connection) -> None:
     """Add structured evidence without changing legacy wake-summary fields."""
 
@@ -4923,8 +4947,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260810_0019_agent_usage_storage_v20",
         checksum=_AGENT_USAGE_STORAGE_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v20",
         apply=_apply_agent_usage_storage_v20,
+    ),
+    MigrationStep(
+        migration_id="20260810_0020_lesson_reviewer_attempts_v21",
+        checksum=_LESSON_REVIEWER_ATTEMPTS_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_lesson_reviewer_attempts_v21,
     ),
 )
 

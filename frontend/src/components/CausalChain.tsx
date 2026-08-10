@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
+import { positionFreshness, positionKeys } from '../lib/queryKeys'
 import type { Order, Position, TradeProposal } from '../types'
 import { fmtSymbol } from '../lib/format'
 
@@ -143,7 +144,7 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
   const { data: orders = [] } = useQuery({ queryKey: ['trades'], queryFn: api.getTrades })
   // Needed for an order anchor to find the resulting position. React Query shares
   // this request with TradesPositions, so this is normally a cache read.
-  const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
+  const { data: positions = [] } = useQuery({ queryKey: positionKeys.all, queryFn: api.getPositions, ...positionFreshness })
 
   const proposalId = anchor.kind === 'order'
     ? anchor.order.proposal_id

@@ -16,6 +16,7 @@ _TABLE_ID = {
     "learning_inference_decisions": "experiment_id",
     "learning_lifecycle_events": "event_id",
     "learning_job_health": "job_id",
+    "learning_lesson_reviewer_attempts": "attempt_id",
     "learning_policy_epochs": "epoch_id",
 }
 
@@ -130,6 +131,45 @@ def upsert_job_health(record) -> None:
 
 def get_job_health(job_id: str) -> dict | None:
     return get_record("learning_job_health", job_id)
+
+
+def latest_lesson_reviewer_attempt(input_watermark: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM learning_lesson_reviewer_attempts "
+        "WHERE input_watermark=? ORDER BY started_at DESC, rowid DESC LIMIT 1",
+        (input_watermark,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def running_lesson_reviewer_attempts() -> list[dict]:
+    rows = get_db().execute(
+        "SELECT * FROM learning_lesson_reviewer_attempts "
+        "WHERE outcome='running' ORDER BY started_at"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def finish_lesson_reviewer_attempt(
+    attempt_id: str,
+    *,
+    finished_at: str,
+    outcome: str,
+    error_class: str | None = None,
+    error_message: str | None = None,
+) -> None:
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cursor = db.execute(
+        "UPDATE learning_lesson_reviewer_attempts SET "
+        "finished_at=?, outcome=?, error_class=?, error_message=? "
+        "WHERE attempt_id=? AND outcome='running'",
+        (finished_at, outcome, error_class, error_message, attempt_id),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError(f"lesson reviewer attempt is not running: {attempt_id}")
+    if not was_in_tx:
+        db.commit()
 
 
 def get_hypothesis_by_fingerprint(fingerprint: str) -> dict | None:

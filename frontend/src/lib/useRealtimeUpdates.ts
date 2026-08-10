@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { positionKeys } from './queryKeys'
 
 /**
  * Maps backend data-category keys (pushed via /api/ws) to React Query cache
@@ -15,7 +16,14 @@ import { useQueryClient } from '@tanstack/react-query'
  *   status, health, kill-switch, model-health, uta/state,
  *   exchange connectivity tests, OAuth flows (codex-login-status, openai-oauth-status)
  */
-const CHANGE_MAP: Record<string, readonly unknown[][]> = {
+type QueryKeyPrefix = readonly unknown[]
+
+const POSITION_CHANGE_MAP = {
+  positions: [positionKeys.all, ['portfolio'], ['equity-curve']],
+  fills: [positionKeys.all, ['portfolio'], ['equity-curve']],
+} satisfies Record<'positions' | 'fills', readonly QueryKeyPrefix[]>
+
+const CHANGE_MAP: Record<string, readonly QueryKeyPrefix[]> = {
   // ── Alert tier (100 ms — highest priority) ───────────────────────────────
   infra_events: [
     ['infra-events'],
@@ -45,16 +53,7 @@ const CHANGE_MAP: Record<string, readonly unknown[][]> = {
     ['operator-decisions'],
     ['pipeline-funnel-24h'],
   ],
-  positions: [
-    ['positions'],
-    ['portfolio'],
-    ['equity-curve'],
-  ],
-  fills: [
-    ['positions'],
-    ['portfolio'],
-    ['equity-curve'],
-  ],
+  ...POSITION_CHANGE_MAP,
   risk_decisions: [
     ['risk-status'],
     ['pipeline-funnel-24h'],

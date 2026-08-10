@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseRealtimeFrame, queryKeysForChanged } from './useRealtimeUpdates'
+import { positionFreshness, positionKeys } from './queryKeys'
 
 describe('realtime frame boundary', () => {
   it('rejects malformed frames and accepts the current backend envelope', () => {
@@ -15,5 +16,14 @@ describe('realtime frame boundary', () => {
     expect(queryKeysForChanged(['positions', 'positions', 'fills']))
       .toEqual([['positions'], ['portfolio'], ['equity-curve']])
     expect(queryKeysForChanged(['unknown'])).toEqual([])
+  })
+
+  it('shares one positions identity and bounded polling fallback', () => {
+    expect(positionKeys.all).toEqual(['positions'])
+    expect(positionFreshness).toMatchObject({
+      staleTime: 28_000,
+      refetchInterval: 30_000,
+      refetchIntervalInBackground: false,
+    })
   })
 })

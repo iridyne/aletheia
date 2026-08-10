@@ -151,6 +151,69 @@ def test_reviewer_backlog_and_failure_are_durable(monkeypatch):
     assert control.promotion_refreeze_reason() == "reviewer_backlog_stale"
 
 
+def test_lesson_reviewer_attempt_history_links_retry(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.learning import control
+    from aletheia.learning.ledger import list_records
+
+    monkeypatch.setattr(
+        control,
+        "load_config",
+        lambda: SimpleNamespace(
+            agent=SimpleNamespace(autonomous_learning=True),
+            runtime=SimpleNamespace(paused=False),
+        ),
+    )
+    now = datetime(2026, 8, 10, 1, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(control, "utc_now", lambda: now)
+
+    scheduler._run_job_guarded(
+        "lesson_reviewer",
+        lambda: (_ for _ in ()).throw(RuntimeError("provider unavailable")),
+    )
+    scheduler._run_job_guarded("lesson_reviewer", lambda: None)
+
+    attempts = list_records("learning_lesson_reviewer_attempts", limit=2)
+    assert [attempt["outcome"] for attempt in attempts] == ["succeeded", "failed"]
+    assert attempts[0]["retry_of_attempt_id"] == attempts[1]["attempt_id"]
+    assert attempts[1]["error_class"] == "RuntimeError"
+    assert attempts[0]["input_watermark"] == "lesson_reviewer:2026-08-10"
+
+
+def test_lesson_reviewer_restart_and_boundary_keep_attempt_truth(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.learning import control
+    from aletheia.learning.ledger import list_records
+
+    monkeypatch.setattr(
+        control,
+        "load_config",
+        lambda: SimpleNamespace(
+            agent=SimpleNamespace(autonomous_learning=True),
+            runtime=SimpleNamespace(paused=False),
+        ),
+    )
+    clock = {"now": datetime(2026, 8, 10, 18, 59, tzinfo=timezone.utc)}
+    monkeypatch.setattr(control, "utc_now", lambda: clock["now"])
+
+    orphan_id = control.record_learning_job_started("lesson_reviewer")
+
+    def cross_schedule_boundary():
+        clock["now"] = datetime(2026, 8, 10, 19, 1, tzinfo=timezone.utc)
+
+    scheduler._run_job_guarded("lesson_reviewer", cross_schedule_boundary)
+
+    attempts = list_records("learning_lesson_reviewer_attempts", limit=2)
+    assert attempts[1]["attempt_id"] == orphan_id
+    assert attempts[1]["outcome"] == "failed"
+    assert attempts[1]["error_class"] == "InterruptedError"
+    assert attempts[0]["retry_of_attempt_id"] == orphan_id
+    assert attempts[0]["input_watermark"] == "lesson_reviewer:2026-08-10"
+    assert control.get_learning_job_health("lesson_reviewer").input_watermark == (
+        "lesson_reviewer:2026-08-10"
+    )
+
+
 @spec_claim(SpecClaim(
     "LE-B31", "learning_evolution", "§10 evaluator restart deadline", "L2b",
     "Gateway restart preserves the sole contribution evaluator's durable future "

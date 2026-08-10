@@ -223,3 +223,13 @@
 - 派生分析数据只能单向、可重建，不得成为第二写入源；
 - credential 必须 write-only/status-only，诊断和制品不得泄漏；
 - 大型测试、目标平台 packaging 和回滚证据应留给对应 CI/runner，不在 macOS 分析阶段反复运行。
+
+## 实施状态补记（2026-08-10）
+
+- #11、#12、#15 已以 `positions` 域完成首个 typed identity/change/freshness
+  pilot；没有扩成全站 query registry。
+- #42 已以 mutating `lesson_reviewer` 完成首个 durable attempt history，包含
+  frozen input watermark、outcome、错误分类和同窗口 retry linkage；#43 的通用
+  durable scheduling 仍保持实验项。
+- 实现与聚焦证据见
+  `TICKFLOW_WAVE_B_05_LEARNING_ATTEMPT_AND_POSITION_QUERY_IDENTITY_EVIDENCE_2026-08-10.md`。
