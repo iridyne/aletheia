@@ -178,6 +178,7 @@ def build_ranker_confidence_replay(
     market_type: str,
     horizon: str,
     evaluated_since: str | None = None,
+    evaluated_after: str | None = None,
     min_samples: int = 20,
     max_candidates: int = _MAX_CANDIDATES,
 ) -> dict[str, Any]:
@@ -192,6 +193,8 @@ def build_ranker_confidence_replay(
         raise ValueError("filter_version is required for a causal replay")
     if not all((stage_s, family, side, market, horizon_s)):
         raise ValueError("stage, scanner_family, direction, market_type and horizon are required")
+    if evaluated_since and evaluated_after:
+        raise ValueError("evaluated_since and evaluated_after are mutually exclusive")
 
     candidate_cap = max(1, min(int(max_candidates), _MAX_CANDIDATES))
     sample_gate = max(1, int(min_samples))
@@ -204,7 +207,7 @@ def build_ranker_confidence_replay(
         "market_type": market,
         "horizon": horizon_s,
         "evaluated_since": evaluated_since,
-        "evaluated_after": None,
+        "evaluated_after": evaluated_after,
         "cap": candidate_cap,
     }
     passed_rows, passed_capped = _load_first_exposure_rows(
@@ -278,6 +281,7 @@ def build_ranker_confidence_replay(
         "market_type": market,
         "horizon": horizon_s,
         "evaluated_since": evaluated_since,
+        "evaluated_after": evaluated_after,
         "assignment_policy": "first_exposure",
         "current_minimum_confidence": current_minimum,
         "identity_status": "exact" if current_minimum is not None else "invalid",
