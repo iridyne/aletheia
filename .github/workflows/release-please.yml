@@ -1,0 +1,29 @@
+name: Prepare and tag releases
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please-master
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Maintain release pull request and tag approved releases
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Run Release Please
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
