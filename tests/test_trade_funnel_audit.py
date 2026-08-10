@@ -220,7 +220,10 @@ def test_trade_funnel_conversion_uses_linked_opportunity_cohort():
 
 def test_trade_funnel_counts_durable_operator_defer_as_evaluated():
     """A deferred carrier was consumed even though it has no terminal PI action."""
-    from aletheia.analytics.trade_funnel import build_trade_funnel_audit
+    from aletheia.analytics.trade_funnel import (
+        build_trade_funnel_audit,
+        render_trade_funnel_audit,
+    )
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -241,6 +244,7 @@ def test_trade_funnel_counts_durable_operator_defer_as_evaluated():
     assert report["conversion_rates"]["signal_pending_to_evaluated"] == 1.0
     assert report["main_choke_point"]["stage"] == "system_operator_deferred"
     assert "remain deferred" in report["main_choke_point"]["summary"]
+    assert "operator_deferred: 1" in render_trade_funnel_audit(report)
 
 
 def test_trade_funnel_does_not_recommend_waiting_for_an_expired_defer():
