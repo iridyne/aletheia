@@ -255,7 +255,11 @@ def render_validated_adverse_judgment(decision: Any, ctx: dict[str, Any]) -> tup
         values = []
         for ref in claim.get("fact_refs") or []:
             section, _, key = str(ref).partition(".")
-            value = (facts.get(section) or {}).get(key)
+            value = (
+                getattr(decision, key, None)
+                if section == "decision"
+                else (facts.get(section) or {}).get(key)
+            )
             values.append(f"{ref}={json.dumps(value, sort_keys=True, default=str)}")
         evidence.append(f"{claim.get('reason_code')}: " + ", ".join(values))
     reasoning = "Deterministic selected-candidate facts support terminal skip: " + "; ".join(evidence)
