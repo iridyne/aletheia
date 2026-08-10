@@ -1902,6 +1902,8 @@ def _probe_skip_halt(report: Report) -> None:
         f"mature_epoch_candidate_skips={int(scoped_counts.get('mature_candidate_skips', 0))}, "
         f"immature_epoch_candidate_skips={int(scoped_counts.get('immature_candidate_skips', 0))}, "
         f"current_epoch_pending_signals={int(scoped_counts.get('pending_signals', 0))}, "
+        f"current_epoch_unreconstructable_adverse_evidence="
+        f"{int(scoped_counts.get('unreconstructable_adverse_evidence', 0))}, "
         f"finding={diagnosis.finding}, threshold={diagnosis.threshold_version}"
     )
     fix_hint = (
