@@ -2088,6 +2088,11 @@ def _run_reconciliation():
             _record_job_failure(
                 "reconciliation", "reconciliation_reported_errors"
             )
+        from aletheia.storage.event_store import get_event_store
+
+        mirror = get_event_store().reconcile_jsonl(limit=100)
+        if mirror["attempted"]:
+            logger.info("event JSONL mirror reconciliation: %s", mirror)
     except Exception as e:
         logger.warning("reconciliation job failed: %s", e)
         _record_job_failure("reconciliation", str(e))

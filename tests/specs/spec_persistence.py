@@ -155,6 +155,8 @@ def test_gateway_status_does_not_invent_dormant_recovery_state():
 )
 def test_event_store_idempotency_single_append(tmp_path, monkeypatch):
     """#247: duplicate idempotency_key → return existing event, one DB row, one JSONL line."""
+    from concurrent.futures import ThreadPoolExecutor
+
     from tests.test_entry_logic import setup_env
     setup_env(tmp_path, monkeypatch)
 
@@ -175,18 +177,21 @@ def test_event_store_idempotency_single_append(tmp_path, monkeypatch):
     from aletheia.storage.event_store import EventStore, make_event
 
     store = EventStore()
-    ev = make_event(
-        "test_event", "order", "order-1",
-        payload={"x": 1},
-        idempotency_key="idem-key-1",
-    )
-
-    first = store.append(ev)
-    second = store.append(
-        make_event("test_event", "order", "order-1",
-                   payload={"x": 99},
-                   idempotency_key="idem-key-1")
-    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(
+                store.append,
+                make_event(
+                    "test_event",
+                    "order",
+                    "order-1",
+                    payload={"x": value},
+                    idempotency_key="idem-key-1",
+                ),
+            )
+            for value in (1, 99)
+        ]
+        first, second = [future.result() for future in futures]
 
     assert first.event_id == second.event_id, (
         "both calls must return the same event_id on idempotency conflict"
@@ -203,6 +208,46 @@ def test_event_store_idempotency_single_append(tmp_path, monkeypatch):
     assert len(idem_lines) == 1, (
         f"expected exactly 1 JSONL line for idempotency_key, got {len(idem_lines)}"
     )
+
+
+def test_event_store_reconciles_failed_jsonl_mirror(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    monkeypatch.setattr("aletheia.storage.event_store.get_data_dir", lambda: tmp_path)
+
+    from aletheia.storage.event_store import EventStore, make_event
+    from aletheia.storage.sqlite import get_db
+
+    store = EventStore()
+    write_jsonl = store._write_jsonl
+    monkeypatch.setattr(store, "_write_jsonl", lambda _event: (_ for _ in ()).throw(OSError()))
+    event = store.append(make_event("mirror_test", "test", "one"))
+
+    row = get_db().execute(
+        "SELECT jsonl_mirror_status, jsonl_attempt_count, jsonl_next_attempt_at, "
+        "jsonl_last_error_class FROM ps_event_log WHERE event_id=?",
+        (event.event_id,),
+    ).fetchone()
+    assert tuple(row[:2]) == ("failed", 1)
+    assert row[2] is not None
+    assert row[3] == "OSError"
+
+    get_db().execute(
+        "UPDATE ps_event_log SET jsonl_next_attempt_at='2000-01-01T00:00:00+00:00' "
+        "WHERE event_id=?",
+        (event.event_id,),
+    )
+    get_db().commit()
+    monkeypatch.setattr(store, "_write_jsonl", write_jsonl)
+    path = tmp_path / "events" / "event_log_2026-08.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"null\n\xff\n")
+
+    assert store.reconcile_jsonl() == {"attempted": 1, "mirrored": 1, "failed": 0}
+    assert store.reconcile_jsonl() == {"attempted": 0, "mirrored": 0, "failed": 0}
+    payload = list((tmp_path / "events").glob("event_log_*.jsonl"))[0].read_bytes()
+    assert payload.count(event.event_id.encode()) == 1
 
 
 @spec_claim(

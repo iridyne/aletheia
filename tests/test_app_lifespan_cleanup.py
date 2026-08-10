@@ -5,7 +5,12 @@ import threading
 
 import pytest
 
-from aletheia.server.app import _cancel_background_task, _run_startup_sync
+from aletheia.server.app import (
+    _cancel_background_task,
+    _lifespan_tasks,
+    _run_startup_sync,
+    lifecycle_task_snapshot,
+)
 
 
 @pytest.mark.asyncio
@@ -41,3 +46,24 @@ async def test_cancelled_startup_sync_does_not_own_default_executor():
         await asyncio.wait_for(task, timeout=0.5)
 
     release.set()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_snapshot_reads_current_pi_daemon_task(monkeypatch):
+    stale = asyncio.create_task(asyncio.sleep(0))
+    await stale
+    current = asyncio.create_task(asyncio.Event().wait())
+    _lifespan_tasks["pi_daemon"] = stale
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.pi_daemon.current_daemon_task", lambda: current
+    )
+    try:
+        row = next(
+            item for item in lifecycle_task_snapshot() if item["task_id"] == "pi_daemon"
+        )
+        assert row["state"] == "running"
+    finally:
+        current.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await current
+        _lifespan_tasks.clear()

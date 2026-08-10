@@ -322,7 +322,11 @@ export function extractApiError(status: number, body: string): string {
 // stuck for minutes when the backend is slow to respond after a restart.
 const _FETCH_TIMEOUT_MS = 15_000;
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+async function fetchJson<T>(
+	path: string,
+	init?: RequestInit,
+	decode?: (body: unknown, headers: Headers) => T,
+): Promise<T> {
 	const timeoutCtrl = new AbortController();
 	const timer = setTimeout(() => timeoutCtrl.abort(), _FETCH_TIMEOUT_MS);
 
@@ -352,7 +356,8 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 			signal: timeoutCtrl.signal,
 		});
 		if (!res.ok) throw parseApiError(res.status, await res.text(), res.headers);
-		return res.json();
+		const body: unknown = await res.json();
+		return decode ? decode(body, res.headers) : body as T;
 	} finally {
 		clearTimeout(timer);
 	}
@@ -375,6 +380,69 @@ function put<T>(path: string, body?: unknown): Promise<T> {
 export interface KeyStatus {
 	configured: boolean;
 	last4: string | null;
+}
+
+export interface OhlcvCandle {
+	time: number;
+	open: number;
+	high: number;
+	low: number;
+	close: number;
+	volume: number;
+}
+
+export interface OhlcvResult {
+	candles: OhlcvCandle[];
+	meta: {
+		source: string;
+		instrument: string | null;
+		asOf: string | null;
+		ageMs: number | null;
+		stale: boolean | null;
+	};
+}
+
+function timeframeMs(timeframe: string): number | null {
+	const match = /^(\d+)([mhd])$/.exec(timeframe);
+	if (!match) return null;
+	const units = { m: 60_000, h: 3_600_000, d: 86_400_000 };
+	return Number(match[1]) * units[match[2] as keyof typeof units];
+}
+
+export function decodeOhlcvResponse(
+	body: unknown,
+	headers: Headers,
+	timeframe: string,
+	nowMs = Date.now(),
+): OhlcvResult {
+	if (!Array.isArray(body)) throw new TypeError("Invalid OHLCV response");
+	const candles = body.map((row): OhlcvCandle => {
+		if (!row || typeof row !== "object") throw new TypeError("Invalid OHLCV candle");
+		const value = row as Record<string, unknown>;
+		for (const field of ["time", "open", "high", "low", "close", "volume"] as const) {
+			if (typeof value[field] !== "number" || !Number.isFinite(value[field])) {
+				throw new TypeError("Invalid OHLCV candle");
+			}
+		}
+		const candle = {
+			time: value.time, open: value.open, high: value.high,
+			low: value.low, close: value.close, volume: value.volume,
+		};
+		return candle as OhlcvCandle;
+	});
+	const lastTime = candles[candles.length - 1]?.time;
+	const ageMs = lastTime === undefined ? null : Math.max(0, nowMs - lastTime * 1000);
+	const intervalMs = timeframeMs(timeframe);
+	return {
+		candles,
+		meta: {
+			source: headers.get("X-Aletheia-Data-Source") || "unknown",
+			instrument: headers.get("X-Aletheia-Data-Instrument"),
+			asOf: lastTime === undefined ? null : new Date(lastTime * 1000).toISOString(),
+			ageMs,
+			stale: ageMs === null || intervalMs === null ? null : ageMs > intervalMs * 2,
+		},
+	};
 }
 
 // ── Economics (token-usage ledger) ───────────────────────────────────────────
@@ -2247,6 +2315,24 @@ export const api = {
 			...(marketType !== "spot" ? { market_type: marketType } : {}),
 		});
 		return fetchJson<any>(`/market/ohlcv?${params}`);
+	},
+	getOhlcvWithMeta: (
+		symbol: string,
+		timeframe = "1h",
+		limit = 100,
+		marketType = "spot",
+	) => {
+		const params = new URLSearchParams({
+			symbol,
+			timeframe,
+			limit: String(limit),
+			...(marketType !== "spot" ? { market_type: marketType } : {}),
+		});
+		return fetchJson<OhlcvResult>(
+			`/market/ohlcv?${params}`,
+			undefined,
+			(body, headers) => decodeOhlcvResponse(body, headers, timeframe),
+		);
 	},
 	getPortfolioHistory: (days?: number) =>
 		fetchJson<any[]>(`/market/portfolio-history${days ? `?days=${days}` : ""}`),

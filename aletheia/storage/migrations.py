@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v21"
+SCHEMA_VERSION = "aletheia-sqlite-v22"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3422,6 +3422,25 @@ ON learning_lesson_reviewer_attempts(input_watermark, started_at DESC);
 """
 _LESSON_REVIEWER_ATTEMPTS_CHECKSUM = hashlib.sha256(
     _LESSON_REVIEWER_ATTEMPTS_SQL.encode("utf-8")
+).hexdigest()
+
+_EVENT_JSONL_OUTBOX_COLUMNS = (
+    ("jsonl_mirror_status", "ps_event_log", "TEXT NOT NULL DEFAULT 'pending'"),
+    ("jsonl_attempt_count", "ps_event_log", "INTEGER NOT NULL DEFAULT 0"),
+    ("jsonl_next_attempt_at", "ps_event_log", "TEXT"),
+    ("jsonl_last_error_class", "ps_event_log", "TEXT"),
+    ("jsonl_mirrored_at", "ps_event_log", "TEXT"),
+)
+_EVENT_JSONL_OUTBOX_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_ps_event_jsonl_outbox
+ON ps_event_log(jsonl_mirror_status, jsonl_next_attempt_at, created_at);
+"""
+_EVENT_JSONL_OUTBOX_CHECKSUM = hashlib.sha256(
+    (
+        repr(_EVENT_JSONL_OUTBOX_COLUMNS)
+        + _EVENT_JSONL_OUTBOX_INDEX_SQL
+        + "\nadditive_event_jsonl_outbox_v1"
+    ).encode("utf-8")
 ).hexdigest()
 
 _MARKET_SIGNAL_IDENTITY_COLUMNS = (
@@ -4594,6 +4613,35 @@ def _apply_lesson_reviewer_attempts_v21(db: sqlite3.Connection) -> None:
     db.executescript(_LESSON_REVIEWER_ATTEMPTS_SQL)
 
 
+def _apply_event_jsonl_outbox_v22(db: sqlite3.Connection) -> None:
+    """Make the existing EventStore JSONL mirror retryable after DB commit."""
+
+    db.execute("SAVEPOINT event_jsonl_outbox_v22")
+    try:
+        existing = {
+            str(row[1])
+            for row in db.execute("PRAGMA table_info(ps_event_log)").fetchall()
+        }
+        status_was_missing = "jsonl_mirror_status" not in existing
+        for column, table, column_type in _EVENT_JSONL_OUTBOX_COLUMNS:
+            if column not in existing:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+                existing.add(column)
+        if status_was_missing:
+            # Existing rows were already handled by the legacy dual-write path. Do not
+            # replay the entire historical ledger merely because retry facts are new.
+            db.execute(
+                "UPDATE ps_event_log SET jsonl_mirror_status='mirrored', "
+                "jsonl_mirrored_at=created_at"
+            )
+        db.execute(_EVENT_JSONL_OUTBOX_INDEX_SQL)
+        db.execute("RELEASE SAVEPOINT event_jsonl_outbox_v22")
+    except Exception:
+        db.execute("ROLLBACK TO SAVEPOINT event_jsonl_outbox_v22")
+        db.execute("RELEASE SAVEPOINT event_jsonl_outbox_v22")
+        raise
+
+
 def _apply_market_signal_identity_v7(db: sqlite3.Connection) -> None:
     """Add structured evidence without changing legacy wake-summary fields."""
 
@@ -4953,8 +5001,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260810_0020_lesson_reviewer_attempts_v21",
         checksum=_LESSON_REVIEWER_ATTEMPTS_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v21",
         apply=_apply_lesson_reviewer_attempts_v21,
+    ),
+    MigrationStep(
+        migration_id="20260810_0021_event_jsonl_outbox_v22",
+        checksum=_EVENT_JSONL_OUTBOX_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_event_jsonl_outbox_v22,
     ),
 )
 

@@ -123,6 +123,10 @@ def is_daemon_running() -> bool:
     return _daemon_task is not None and not _daemon_task.done()
 
 
+def current_daemon_task() -> asyncio.Task | None:
+    return _daemon_task
+
+
 def daemon_status() -> dict:
     return {
         "running": is_daemon_running(),
