@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 from contextvars import ContextVar
 from functools import partial
+import json
 import logging
 import queue
 import threading
@@ -23,6 +24,9 @@ logger = logging.getLogger("aletheia.scheduler")
 
 _scheduler: BackgroundScheduler | None = None
 _scheduler_last_tick: str | None = None
+_universe_scanner_startup_cutoff: str | None = None
+_universe_scanner_startup_recovery_done = False
+_universe_scanner_audit_mirror_done = False
 _SCHEDULER_JOB_LOCK = threading.RLock()
 _JOB_RUN_STATE = threading.local()
 
@@ -813,6 +817,124 @@ def _recover_interrupted_serenity_run() -> list[str]:
         return []
 
 
+def _recover_interrupted_universe_scanner_runs(
+    *, started_before: str,
+) -> list[str] | None:
+    """Atomically fail scanner work that predates this Gateway process."""
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
+    from aletheia.storage.sqlite import run_write
+
+    recovery_reason = "gateway_restart_interrupted"
+    completed_at = datetime.now(timezone.utc).isoformat()
+    cutoff = _parse_scheduler_timestamp(started_before)
+    if cutoff is None:
+        logger.warning("Universe scanner startup cutoff is invalid: %r", started_before)
+        return None
+
+    def reconcile(db) -> list[str]:
+        rows = db.execute(
+            "SELECT id, started_at, errors FROM universe_scanner_runs "
+            "WHERE status = 'running' ORDER BY started_at, id"
+        ).fetchall()
+        recovered: list[str] = []
+        for row in rows:
+            started_at = _parse_scheduler_timestamp(row["started_at"])
+            if started_at is None or started_at >= cutoff:
+                continue
+            try:
+                errors = json.loads(row["errors"] or "[]")
+            except (TypeError, json.JSONDecodeError):
+                errors = [str(row["errors"])] if row["errors"] else []
+            if not isinstance(errors, list):
+                errors = [str(errors)]
+            if recovery_reason not in errors:
+                errors.append(recovery_reason)
+            result = db.execute(
+                "UPDATE universe_scanner_runs "
+                "SET status = 'failed', completed_at = ?, errors = ? "
+                "WHERE id = ? AND status = 'running'",
+                (completed_at, json.dumps(errors), row["id"]),
+            )
+            if not result.rowcount:
+                continue
+            repo.insert_audit_event_once(AuditEvent(
+                id=f"universe-scanner-restart:{row['id']}",
+                timestamp=completed_at,
+                actor="system",
+                source="scheduler",
+                event_type="universe_scanner_run_interrupted",
+                entity_type="universe_scanner_run",
+                entity_id=row["id"],
+                before_state=json.dumps({"status": "running"}, sort_keys=True),
+                after_state=json.dumps({
+                    "status": "failed",
+                    "reason": recovery_reason,
+                    "completed_at": completed_at,
+                }, sort_keys=True),
+                message=(
+                    f"Gateway restart interrupted Universe scanner run {row['id']}"
+                ),
+            ))
+            recovered.append(row["id"])
+        return recovered
+
+    try:
+        recovered = run_write(reconcile, immediate=True)
+    except Exception as exc:
+        logger.warning("Universe scanner startup recovery failed (non-fatal): %s", exc)
+        return None
+
+    if recovered:
+        logger.warning(
+            "Recovered %d interrupted Universe scanner run(s) from the previous process",
+            len(recovered),
+        )
+    return recovered
+
+
+def _mirror_universe_scanner_recovery_audits() -> bool:
+    """Retry the hash-chain mirror from durable SQLite audit identities."""
+    try:
+        from aletheia.files.jsonl import write_audits_deduplicated
+        from aletheia.storage.sqlite import get_db
+
+        rows = get_db().execute(
+            "SELECT id, timestamp, actor, source, event_type, entity_type, "
+            "entity_id, before_state, after_state, message FROM audit_events "
+            "WHERE source = 'scheduler' "
+            "AND event_type = 'universe_scanner_run_interrupted' "
+            "ORDER BY timestamp, id"
+        ).fetchall()
+        events = [{
+            "id": row["id"],
+            "timestamp": row["timestamp"],
+            "actor": row["actor"],
+            "source": row["source"],
+            "event_type": row["event_type"],
+            "entity_type": row["entity_type"],
+            "entity_id": row["entity_id"],
+            "reason": "gateway_restart_interrupted",
+            "before": json.loads(row["before_state"]),
+            "after": json.loads(row["after_state"]),
+            "message": row["message"],
+        } for row in rows]
+        mirrored = write_audits_deduplicated(events)
+    except Exception as exc:
+        logger.warning("Universe scanner audit mirror failed (non-fatal): %s", exc)
+        return False
+
+    expected = {event["id"] for event in events}
+    if mirrored != expected:
+        logger.warning(
+            "Universe scanner audit mirror incomplete: %d of %d durable event(s)",
+            len(mirrored),
+            len(expected),
+        )
+        return False
+    return True
+
+
 def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
     """Enqueue at most one durable research attempt for the latest CST batch."""
     from aletheia.storage import repositories as repo
@@ -976,6 +1098,24 @@ def init_scheduler() -> BackgroundScheduler | None:
     Returns None if scheduler is disabled in config. Honors runtime.paused at boot.
     """
     global _scheduler, _scheduler_last_tick
+    global _universe_scanner_startup_cutoff
+    global _universe_scanner_startup_recovery_done
+    global _universe_scanner_audit_mirror_done
+    if _universe_scanner_startup_cutoff is None:
+        _universe_scanner_startup_cutoff = datetime.now(timezone.utc).isoformat()
+    if not _universe_scanner_startup_recovery_done:
+        recovered = _recover_interrupted_universe_scanner_runs(
+            started_before=_universe_scanner_startup_cutoff,
+        )
+        if recovered is not None:
+            _universe_scanner_startup_recovery_done = True
+    if (
+        _universe_scanner_startup_recovery_done
+        and not _universe_scanner_audit_mirror_done
+    ):
+        _universe_scanner_audit_mirror_done = (
+            _mirror_universe_scanner_recovery_audits()
+        )
     if _scheduler is not None:
         return _scheduler
 
