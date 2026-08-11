@@ -59,6 +59,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "learning_contribution_evaluator",
     "learning_measurement_startup_catchup",
     "learning_lifecycle_audit_reconciler",
+    "universe_scanner_audit_reconciler",
 }
 
 # Market snapshot collection cadence. Exposed as a module constant so consumers
@@ -935,6 +936,30 @@ def _mirror_universe_scanner_recovery_audits() -> bool:
     return True
 
 
+def _run_universe_scanner_audit_reconciler() -> bool:
+    """Retry a pending recovery audit mirror once on each reconciler tick."""
+    global _universe_scanner_audit_mirror_done
+    try:
+        if (
+            not _universe_scanner_startup_recovery_done
+            or _universe_scanner_audit_mirror_done
+        ):
+            return _universe_scanner_audit_mirror_done
+        _universe_scanner_audit_mirror_done = (
+            _mirror_universe_scanner_recovery_audits()
+        )
+        if not _universe_scanner_audit_mirror_done:
+            _record_job_failure(
+                "universe_scanner_audit_reconciler",
+                "audit_mirror_pending",
+            )
+        return _universe_scanner_audit_mirror_done
+    except Exception as e:
+        logger.warning("universe_scanner_audit_reconciler failed: %s", e)
+        _record_job_failure("universe_scanner_audit_reconciler", str(e))
+        return False
+
+
 def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
     """Enqueue at most one durable research attempt for the latest CST batch."""
     from aletheia.storage import repositories as repo
@@ -1347,6 +1372,15 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("universe_refresh", _run_universe_refresh), "interval", minutes=10,
         id="universe_refresh", misfire_grace_time=120, max_instances=1, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=90),
+    )
+    _scheduler.add_job(
+        _guarded(
+            "universe_scanner_audit_reconciler",
+            _run_universe_scanner_audit_reconciler,
+        ),
+        "interval", minutes=5, id="universe_scanner_audit_reconciler",
+        misfire_grace_time=120, max_instances=1, coalesce=True, executor="io",
+        next_run_time=datetime.now() + timedelta(minutes=5),
     )
     # Independent outcome settler — settles overdue forward-outcome rows that feed
     # the learning pipeline.  Runs unconditionally (not gated on universe.enabled)
