@@ -241,6 +241,11 @@ def test_scheduler_retries_failed_universe_recovery_audit_mirror(monkeypatch):
         "_recover_interrupted_universe_scanner_runs",
         lambda **_: pytest.fail("periodic audit retry repeated DB recovery"),
     )
+    monkeypatch.setattr(
+        scheduler,
+        "_run_sync_with_timeout",
+        lambda _job, fn: fn(),
+    )
 
     assert scheduler._run_universe_scanner_audit_reconciler() is True
     assert scheduler._run_universe_scanner_audit_reconciler() is True
@@ -251,6 +256,41 @@ def test_scheduler_retries_failed_universe_recovery_audit_mirror(monkeypatch):
         if event.get("id") == "universe-scanner-restart:periodic-audit-retry"
     ]
     assert len(mirrored) == 1
+
+
+def test_universe_audit_timeout_preserves_failure_and_shared_io_progress(
+    monkeypatch,
+):
+    from aletheia.agent_runtime import scheduler
+
+    job_id = "universe_scanner_audit_reconciler"
+    timeout_calls = []
+    shared_io_calls = []
+
+    def time_out(job, fn):
+        timeout_calls.append((job, fn))
+        raise TimeoutError("audit retry timed out")
+
+    monkeypatch.setattr(scheduler, "_run_sync_with_timeout", time_out)
+    monkeypatch.setattr(scheduler, "_universe_scanner_startup_recovery_done", True)
+    monkeypatch.setattr(scheduler, "_universe_scanner_audit_mirror_done", False)
+    monkeypatch.setitem(scheduler._consecutive_failures, job_id, 0)
+
+    assert scheduler._run_job_guarded(
+        job_id,
+        scheduler._run_universe_scanner_audit_reconciler,
+    ) is False
+    assert timeout_calls == [
+        (job_id, scheduler._mirror_universe_scanner_recovery_audits)
+    ]
+    assert scheduler._universe_scanner_audit_mirror_done is False
+    assert scheduler._consecutive_failures[job_id] == 1
+
+    scheduler._run_job_guarded(
+        "health_check",
+        lambda: shared_io_calls.append("ran"),
+    )
+    assert shared_io_calls == ["ran"]
 
 def test_stale_agent_cleanup_parses_iso_timestamps():
     from aletheia.agent_runtime import scheduler

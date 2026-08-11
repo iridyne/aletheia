@@ -121,6 +121,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "learning_contribution_evaluator": 60.0,
     "learning_lifecycle_controller": 60.0,
     "learning_lifecycle_audit_reconciler": 30.0,
+    "universe_scanner_audit_reconciler": 15.0,
     # #90 fix: tpsl_fill_check runs every 90s and calls Bitget via
     # asyncio.run() internally. Without a bound, a stuck exchange session can
     # block the scheduler pool for the full IOCP drain (~255s on Windows) and
@@ -504,6 +505,9 @@ _EXECUTOR_WORKERS = {
     # more reliable than parallel scheduled writers that frequently collide and
     # cascade into ``database is locked`` across unrelated jobs.
     "io": 1,
+    # Hash-chain scans and cross-process audit locks must never occupy the
+    # single operational IO worker while their bounded sync lane times out.
+    "audit": 1,
     "fast_io": 1,
     # Protective lifecycle checks must not queue behind 60--300 second market,
     # reconciliation, or settlement jobs.  The position manager is the only job
@@ -945,8 +949,11 @@ def _run_universe_scanner_audit_reconciler() -> bool:
             or _universe_scanner_audit_mirror_done
         ):
             return _universe_scanner_audit_mirror_done
-        _universe_scanner_audit_mirror_done = (
-            _mirror_universe_scanner_recovery_audits()
+        _universe_scanner_audit_mirror_done = bool(
+            _run_sync_with_timeout(
+                "universe_scanner_audit_reconciler",
+                _mirror_universe_scanner_recovery_audits,
+            )
         )
         if not _universe_scanner_audit_mirror_done:
             _record_job_failure(
@@ -1379,7 +1386,7 @@ def init_scheduler() -> BackgroundScheduler | None:
             _run_universe_scanner_audit_reconciler,
         ),
         "interval", minutes=5, id="universe_scanner_audit_reconciler",
-        misfire_grace_time=120, max_instances=1, coalesce=True, executor="io",
+        misfire_grace_time=120, max_instances=1, coalesce=True, executor="audit",
         next_run_time=datetime.now() + timedelta(minutes=5),
     )
     # Independent outcome settler — settles overdue forward-outcome rows that feed
