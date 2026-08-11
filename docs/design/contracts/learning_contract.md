@@ -237,7 +237,11 @@ loop contributes positively. Current behavior has these contract-relevant limita
 - every measurement-supported path declares a versioned behavior contract. The secret-free
   `behavior_contract_hash` combines that version with policy epoch, horizon, outcome contract and
   metric/statistical-unit version. A behavior version change starts a new from-zero cohort even on
-  the same commit; an unrelated commit does not. Historical rows without a behavior hash remain
+  the same commit; an unrelated commit does not. New hypothesis rows persist the exact
+  `behavior_contract_version` and fingerprint schema version used to create their opaque
+  fingerprint; legacy rows remain NULL rather than receiving a guessed backfill. These provenance
+  fields do not merge, close, or reclassify historical experiments and do not grant authority.
+  Historical rows without a behavior hash remain
   auditable but cannot pool with or authorize a current cohort.
 - historical experiments/exposures created before measurement-support enforcement remain immutable
   and visible for audit, but cannot produce a current verdict or authority.

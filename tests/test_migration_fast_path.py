@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 24)
+        f"aletheia-sqlite-v{version}" for version in range(2, 25)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v23"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v24"
     connection.close()
 
 
@@ -525,6 +525,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     connection = _connection(tmp_path / "v9.db")
     connection.executescript(
         """
+        CREATE TABLE learning_hypotheses (hypothesis_id TEXT PRIMARY KEY);
         CREATE TABLE learning_experiments (experiment_id TEXT PRIMARY KEY);
         CREATE TABLE learning_contribution_verdicts (
             verdict_id TEXT PRIMARY KEY,
@@ -579,8 +580,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260811_0022_exit_trailing_recovery_v23",
-        "aletheia-sqlite-v23",
+        "20260811_0023_learning_hypothesis_identity_v24",
+        "aletheia-sqlite-v24",
     )
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "
@@ -659,6 +660,35 @@ def test_event_jsonl_outbox_migration_rolls_back_partial_schema(monkeypatch):
         row[1] for row in connection.execute("PRAGMA table_info(ps_event_log)")
     }
     assert "jsonl_mirror_status" not in columns
+    connection.close()
+
+
+def test_learning_hypothesis_identity_v24_is_additive_and_idempotent():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE learning_hypotheses (hypothesis_id TEXT PRIMARY KEY)"
+    )
+    connection.execute("INSERT INTO learning_hypotheses VALUES ('legacy')")
+
+    migrations._apply_learning_hypothesis_identity_v24(connection)
+    migrations._apply_learning_hypothesis_identity_v24(connection)
+
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(learning_hypotheses)")
+    }
+    assert {
+        "behavior_contract_version",
+        "fingerprint_schema_version",
+    } <= columns
+    assert tuple(
+        connection.execute(
+            "SELECT behavior_contract_version, fingerprint_schema_version "
+            "FROM learning_hypotheses WHERE hypothesis_id='legacy'"
+        ).fetchone()
+    ) == (None, None)
     connection.close()
 
 

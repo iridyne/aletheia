@@ -1673,6 +1673,13 @@ def test_refrozen_hypothesis_reopens_only_for_new_behavior_contract(monkeypatch)
     assert first.experiment_id is not None
 
     db = get_db()
+    first_hypothesis = get_record("learning_hypotheses", first.hypothesis_id)
+    assert first_hypothesis["behavior_contract_version"] == (
+        experiments.get_learning_path(
+            "universe_family_calibration"
+        ).behavior_contract_version
+    )
+    assert first_hypothesis["fingerprint_schema_version"] == 1
     first_exposure = get_record("learning_exposures", first.exposure_id)
     epoch = first_exposure["concurrent_policy_epoch"]
     experiment = SimpleNamespace(
@@ -1737,7 +1744,14 @@ def test_refrozen_hypothesis_reopens_only_for_new_behavior_contract(monkeypatch)
     assert successor.applied is False
     assert successor.value == 1.0
     assert successor.reason == "baseline:experiment_stage_not_paper"
-    assert get_record("learning_hypotheses", successor.hypothesis_id)["status"] == "shadow"
+    successor_hypothesis = get_record(
+        "learning_hypotheses", successor.hypothesis_id
+    )
+    assert successor_hypothesis["status"] == "shadow"
+    assert successor_hypothesis["behavior_contract_version"] == (
+        "universe-family-calibration/successor-test"
+    )
+    assert successor_hypothesis["fingerprint_schema_version"] == 1
     assert db.execute(
         "SELECT COUNT(*) FROM learning_experiments WHERE hypothesis_id=?",
         (successor.hypothesis_id,),

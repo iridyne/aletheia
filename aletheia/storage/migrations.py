@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v23"
+SCHEMA_VERSION = "aletheia-sqlite-v24"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3476,6 +3476,17 @@ _EXIT_TRAILING_RECOVERY_CHECKSUM = hashlib.sha256(
         repr(_EXIT_TRAILING_RECOVERY_COLUMNS)
         + _EXIT_TRAILING_RECOVERY_SQL
         + "\nadditive_exit_trailing_recovery_v1"
+    ).encode("utf-8")
+).hexdigest()
+
+_LEARNING_HYPOTHESIS_IDENTITY_COLUMNS = (
+    ("behavior_contract_version", "learning_hypotheses", "TEXT"),
+    ("fingerprint_schema_version", "learning_hypotheses", "INTEGER"),
+)
+_LEARNING_HYPOTHESIS_IDENTITY_CHECKSUM = hashlib.sha256(
+    (
+        repr(_LEARNING_HYPOTHESIS_IDENTITY_COLUMNS)
+        + "\nadditive_learning_hypothesis_identity_v1"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -4533,6 +4544,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260811_0022_exit_trailing_recovery_v23": (
         "write-once trailing recovery evidence on frozen protection identity"
     ),
+    "20260811_0023_learning_hypothesis_identity_v24": (
+        "explicit behavior-contract and fingerprint-schema hypothesis provenance"
+    ),
 }
 
 
@@ -4694,6 +4708,17 @@ def _apply_exit_trailing_recovery_v23(db: sqlite3.Connection) -> None:
             existing.add(column)
     db.executescript(_EXIT_TRAILING_RECOVERY_SQL)
     db.execute("PRAGMA optimize")
+
+
+def _apply_learning_hypothesis_identity_v24(db: sqlite3.Connection) -> None:
+    """Persist future fingerprint inputs without rewriting historical identity."""
+
+    for column, table, column_type in _LEARNING_HYPOTHESIS_IDENTITY_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
 def _apply_market_signal_identity_v7(db: sqlite3.Connection) -> None:
@@ -5067,8 +5092,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260811_0022_exit_trailing_recovery_v23",
         checksum=_EXIT_TRAILING_RECOVERY_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v23",
         apply=_apply_exit_trailing_recovery_v23,
+    ),
+    MigrationStep(
+        migration_id="20260811_0023_learning_hypothesis_identity_v24",
+        checksum=_LEARNING_HYPOTHESIS_IDENTITY_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_learning_hypothesis_identity_v24,
     ),
 )
 

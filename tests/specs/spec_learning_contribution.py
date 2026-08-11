@@ -218,9 +218,13 @@ def _iso(days_ago: int) -> str:
         status="partial",
     )
 )
-def test_learning_alpha_deduplicates_duplicate_lessons_and_reports_raw_counts():
-    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+def test_learning_alpha_deduplicates_duplicate_lessons_and_reports_raw_counts(monkeypatch):
+    import aletheia.analytics.alpha_attribution as alpha_attribution
+
     from aletheia.storage.sqlite import get_db
+
+    audit_now = datetime.fromisoformat("2026-07-13T07:10:01+00:00")
+    monkeypatch.setattr(alpha_attribution, "_utcnow", lambda: audit_now)
 
     db = get_db()
     event_at = _iso(10)
@@ -240,7 +244,7 @@ def test_learning_alpha_deduplicates_duplicate_lessons_and_reports_raw_counts():
         )
     db.commit()
 
-    learning = build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+    learning = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
     assert learning["sample_size"] == 5
     assert learning["details"]["raw_event_count"] == 6
     assert learning["details"]["unique_event_count"] == 1

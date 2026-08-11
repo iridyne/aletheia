@@ -18,7 +18,10 @@ _log = logging.getLogger(__name__)
 _LAST_SUCCESS_POLICY_VALUES: dict[str, dict] = {}
 
 from aletheia.config.loader import load_config
-from aletheia.learning.hypotheses import hypothesis_fingerprint
+from aletheia.learning.hypotheses import (
+    HYPOTHESIS_FINGERPRINT_SCHEMA_VERSION,
+    hypothesis_fingerprint,
+)
 from aletheia.learning.behavior_contracts import current_behavior_contract_hash
 from aletheia.learning.ledger import (
     get_record,
@@ -145,6 +148,8 @@ def _ensure_experiment(
     if row is None:
         hypothesis = LearningHypothesis(
             fingerprint=fingerprint,
+            behavior_contract_version=path.behavior_contract_version,
+            fingerprint_schema_version=HYPOTHESIS_FINGERPRINT_SCHEMA_VERSION,
             cohort_id=hashlib.sha256(source_cohort.encode("utf-8")).hexdigest()[:16],
             path_id=path_id,
             overlap_group=path.overlap_group,
