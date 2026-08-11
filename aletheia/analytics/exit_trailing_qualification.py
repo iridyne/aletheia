@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 from datetime import datetime, timezone
 import hashlib
@@ -11,7 +12,7 @@ from statistics import mean
 from typing import Any
 
 from aletheia.analytics.trade_path import build_post_exit_path_observation
-from aletheia.data.symbols import to_canonical
+from aletheia.data.symbols import InstrumentId, to_canonical
 from aletheia.portfolio.protective_barrier import (
     _TRAILING_QUALIFICATION_VERSION,
     _TRAILING_RECOVERY_THRESHOLD_PCT,
@@ -216,6 +217,47 @@ def _recovery_observation(
     )
 
 
+def _refresh_recovery_window(
+    row: dict[str, Any],
+    assignment: dict[str, Any],
+) -> None:
+    """Fetch the frozen post-close range without crossing venue identity."""
+
+    frozen_symbol = str(row.get("protection_symbol") or "").strip()
+    if to_canonical(str(row.get("symbol") or "")) != frozen_symbol:
+        raise RuntimeError("trailing recovery instrument identity mismatch")
+    closed = _parse_utc(row.get("closed_at"))
+    if closed is None:
+        raise RuntimeError("trailing recovery close timestamp is unavailable")
+    start_ms = ((int(closed.timestamp() * 1000) + 59_999) // 60_000) * 60_000
+    bars = int(assignment["recovery_window_bars"])
+    instrument = InstrumentId.from_parts(
+        str(row.get("protection_venue") or ""),
+        frozen_symbol,
+        str(row.get("protection_market_type") or ""),
+    )
+
+    async def _fetch() -> None:
+        from aletheia.data.ccxt_provider import get_market_data_provider
+
+        provider = get_market_data_provider(
+            exchange=instrument.exchange,
+            native_ccxt=True,
+            fallback_exchange=instrument.exchange,
+        )
+        try:
+            await provider.get_ohlcv(
+                instrument,
+                timeframe="1m",
+                limit=min(500, bars + 1),
+                since=start_ms,
+            )
+        finally:
+            await provider.close()
+
+    asyncio.run(_fetch())
+
+
 def _qualified_item(row: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     try:
         plan = json.loads(row["qualification_plan_json"])
@@ -334,16 +376,25 @@ def materialize_exit_trailing_recovery(position: dict[str, Any]) -> dict[str, An
     stored = _stored_recovery_observation(row, assignment)
     if stored is not None:
         return {**stored, "materialized": False}
-    recovery = item.get("_recovery_observation") or _live_recovery_observation(
-        row,
-        assignment,
-    )
+    recovery = item.get("_recovery_observation") or {}
+    if (
+        recovery.get("status") == "unavailable"
+        and recovery.get("reason") != "recovery_instrument_identity_mismatch"
+    ):
+        _refresh_recovery_window(row, assignment)
+        refreshed, refreshed_invalid = _qualified_item(row)
+        if refreshed_invalid or refreshed is None:
+            raise RuntimeError("trailing recovery qualification changed during refresh")
+        recovery = refreshed.get("_recovery_observation") or {}
     if recovery.get("status") == "pending":
         raise RuntimeError("trailing recovery window is not mature")
     if recovery.get("reason") == "recovery_instrument_identity_mismatch":
         return {**recovery, "materialized": False}
-    if recovery.get("status") not in {"available", "unavailable"}:
-        raise RuntimeError("trailing recovery observation status is invalid")
+    if recovery.get("status") != "available":
+        raise RuntimeError(
+            "trailing recovery exact window remains unavailable: "
+            f"{recovery.get('reason') or 'unknown'}"
+        )
     recovery_mfe = _finite(recovery.get("mfe_pct"), nonnegative=True)
     observed_at = datetime.now(timezone.utc).isoformat()
     payload = {
@@ -369,7 +420,7 @@ def materialize_exit_trailing_recovery(position: dict[str, Any]) -> dict[str, An
         "recovery_threshold_pct": assignment["recovery_threshold_pct"],
         "recovery_truncated": (
             recovery_mfe >= float(assignment["recovery_threshold_pct"])
-            if recovery["status"] == "available" and recovery_mfe is not None
+            if recovery_mfe is not None
             else None
         ),
     }

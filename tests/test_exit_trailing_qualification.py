@@ -124,6 +124,8 @@ def test_report_keeps_exact_build_cohort_and_cost_complete_arm_economics(
         provenance="deterministic_trailing_v2",
     )
     observed_rows = []
+    refresh_attempts = []
+    refresh_succeeded = []
 
     def available_recovery(row, **_kwargs):
         observed_rows.append(row)
@@ -131,7 +133,7 @@ def test_report_keeps_exact_build_cohort_and_cost_complete_arm_economics(
             datetime.fromisoformat(row["closed_at"]).timestamp() * 1000
         )
         start_ms = ((closed_ms + 59_999) // 60_000) * 60_000
-        return {
+        observation = {
             "status": "available",
             "reason": "complete_post_exit_1m_bars",
             "bars_observed": 30,
@@ -140,10 +142,29 @@ def test_report_keeps_exact_build_cohort_and_cost_complete_arm_economics(
             "mfe_pct": 1.2,
             "mae_pct": -0.4,
         }
+        if not refresh_succeeded:
+            observation.update({
+                "status": "unavailable",
+                "reason": "post_exit_coverage_unavailable",
+                "bars_observed": 0,
+                "mfe_pct": None,
+                "mae_pct": None,
+            })
+        return observation
 
     monkeypatch.setattr(
         "aletheia.analytics.exit_trailing_qualification.build_post_exit_path_observation",
         available_recovery,
+    )
+    def refresh_recovery(*_args, **_kwargs):
+        refresh_attempts.append(True)
+        if len(refresh_attempts) == 1:
+            raise RuntimeError("provider temporarily unavailable")
+        refresh_succeeded.append(True)
+
+    monkeypatch.setattr(
+        "aletheia.analytics.exit_trailing_qualification._refresh_recovery_window",
+        refresh_recovery,
     )
     closed_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     _close(treatment_id, 2.0, eligible=True, closed_at=closed_at)
@@ -165,16 +186,27 @@ def test_report_keeps_exact_build_cohort_and_cost_complete_arm_economics(
         "_load_eligible_position",
         lambda _position_id: (repo.get_position(treatment_id), "eligible"),
     )
-    delivery = outcome_hooks.process_outcome_hook_jobs(
+    failed_delivery = outcome_hooks.process_outcome_hook_jobs(
         position_id=treatment_id,
         hook_type=outcome_hooks.EXIT_TRAILING_RECOVERY_HOOK,
     )
+    assert failed_delivery["failed"] == 1
+    assert repo.get_position_protection_state(treatment_id)[
+        "recovery_observation_json"
+    ] is None
+    delivery = outcome_hooks.process_outcome_hook_jobs(
+        position_id=treatment_id,
+        hook_type=outcome_hooks.EXIT_TRAILING_RECOVERY_HOOK,
+        now=(datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat(),
+    )
     assert delivery["completed"] == 1
+    assert refresh_attempts == [True, True]
+    assert refresh_succeeded == [True]
     stored = json.loads(
         repo.get_position_protection_state(treatment_id)["recovery_observation_json"]
     )
     assert stored["status"] == "available"
-    assert observed_rows[0]["symbol"] == "BTC/USDT"
+    assert {row["symbol"] for row in observed_rows} == {"BTC/USDT"}
 
     monkeypatch.setattr(
         "aletheia.analytics.exit_trailing_qualification.build_post_exit_path_observation",
