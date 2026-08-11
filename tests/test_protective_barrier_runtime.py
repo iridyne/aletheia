@@ -69,6 +69,44 @@ def _set_trailing_test_defaults(*, trail_pct: float = 10.0) -> None:
     save_config(cfg)
 
 
+def _treatment_position(
+    tmp_path,
+    monkeypatch,
+    *,
+    direction: str = "long",
+    stop: float = 98.0,
+    target: float = 110.0,
+):
+    import aletheia.portfolio.protective_barrier as barrier
+
+    assign = barrier._trailing_qualification_assignment
+    monkeypatch.setattr(
+        barrier,
+        "_trailing_qualification_assignment",
+        lambda position_id: {**assign(position_id), "arm": "treatment"},
+    )
+    setup_env(tmp_path, monkeypatch)
+    _set_trailing_test_defaults()
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    cursor = ((now_ms // 60_000) - 1) * 60_000
+    position = _position_with_entry_chain(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction=direction,
+        quantity=1.0,
+        entry_price=100.0,
+        entry_fee=0.06,
+        stop_price=stop,
+        take_profit_price=target,
+        opened_at=datetime.fromtimestamp(
+            (cursor - 30_000) / 1000, timezone.utc
+        ).isoformat(),
+    )
+    record_position_opened(position.id)
+    activate_new_paper_position(position.id)
+    return position, cursor
+
+
 def test_new_short_term_paper_position_authors_default_trailing_plan(
     tmp_path, monkeypatch,
 ):
@@ -122,32 +160,13 @@ def test_new_short_term_paper_position_authors_default_trailing_plan(
 def test_completed_bar_trailing_uses_net_balance_not_entry(
     tmp_path, monkeypatch, direction, stop, target, high, low,
 ):
-    import aletheia.portfolio.protective_barrier as barrier
-
-    assign = barrier._trailing_qualification_assignment
-    monkeypatch.setattr(
-        barrier,
-        "_trailing_qualification_assignment",
-        lambda position_id: {**assign(position_id), "arm": "treatment"},
-    )
-    setup_env(tmp_path, monkeypatch)
-    _set_trailing_test_defaults()
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    cursor = ((now_ms // 60_000) - 1) * 60_000
-    opened_at = datetime.fromtimestamp((cursor - 30_000) / 1000, timezone.utc).isoformat()
-    position = _position_with_entry_chain(
-        symbol="BTC/USDT",
-        market_type="spot",
+    position, cursor = _treatment_position(
+        tmp_path,
+        monkeypatch,
         direction=direction,
-        quantity=1.0,
-        entry_price=100.0,
-        entry_fee=0.06,
-        stop_price=stop,
-        take_profit_price=target,
-        opened_at=opened_at,
+        stop=stop,
+        target=target,
     )
-    record_position_opened(position.id)
-    activate_new_paper_position(position.id)
     _bar(cursor, high=high, low=low)
 
     summary = evaluate_due_position_protection()
@@ -169,6 +188,53 @@ def test_completed_bar_trailing_uses_net_balance_not_entry(
     assert stored["exit_plan_version"] == 2
     assert stored["status"] == "open"
     assert repo.get_position_protection_trigger(position.id) is None
+
+
+def test_completed_bar_trailing_uses_activation_venue_after_config_change(
+    tmp_path, monkeypatch,
+):
+    import aletheia.portfolio.position_manager as position_manager
+    from aletheia.config.loader import load_config, save_config
+
+    position, cursor = _treatment_position(tmp_path, monkeypatch)
+    frozen_venue = repo.get_position_protection_state(position.id)["venue"]
+    cfg = load_config()
+    cfg.market_data.ccxt_exchange = "okx"
+    save_config(cfg)
+    seen_venues = []
+    monkeypatch.setattr(
+        position_manager,
+        "_get_atr_observation",
+        lambda *_args, **kwargs: seen_venues.append(kwargs["protection_venue"]),
+    )
+    _bar(cursor, high=102.0, low=99.0, exchange=frozen_venue)
+
+    summary = evaluate_due_position_protection()
+
+    assert summary["errors"] == []
+    assert seen_venues == [frozen_venue]
+
+
+def test_trailing_cas_conflict_does_not_consume_completed_bar(tmp_path, monkeypatch):
+    import aletheia.portfolio.protective_barrier as barrier
+
+    position, cursor = _treatment_position(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        barrier,
+        "persist_position_exit_plan",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            repo.PositionProtectionConflict("stale plan")
+        ),
+    )
+    _bar(cursor, high=102.0, low=99.0)
+
+    summary = evaluate_due_position_protection()
+
+    state = repo.get_position_protection_state(position.id)
+    assert summary["bars_evaluated"] == 0
+    assert summary["errors"][0]["error_type"] == "PositionProtectionConflict"
+    assert state["next_bar_open_ms"] == cursor
+    assert state["last_evaluated_bar_open_ms"] is None
 
 
 def test_net_balance_stop_includes_complete_futures_funding(monkeypatch):

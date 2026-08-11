@@ -625,6 +625,7 @@ def _evaluate_state(state: dict, *, now_ms: int, detected_at: str) -> dict:
                     (cursor + 60_000) / 1000,
                     timezone.utc,
                 ).isoformat(),
+                protection_venue=str(state["venue"]),
             )
         repo.advance_position_protection_cursor(
             state["position_id"],

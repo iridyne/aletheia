@@ -17,6 +17,7 @@ import hashlib
 import json
 import logging
 import math
+import sqlite3
 from datetime import datetime, timezone
 
 from aletheia.config.loader import load_config
@@ -431,12 +432,13 @@ def _get_atr_observation(
     cfg,
     *,
     observed_at: str | None,
+    protection_venue: str | None = None,
 ) -> dict | None:
     """Return one exact, completed 1h ATR observation available at decision time."""
     observed = _parse_dt(observed_at) if observed_at is not None else datetime.now(timezone.utc)
     if observed is None:
         return None
-    venue = protective_price_venue(
+    venue = str(protection_venue).lower() if protection_venue else protective_price_venue(
         position.get("execution_mode"),
         configured_data_venue=cfg.market_data.ccxt_exchange,
     )
@@ -490,7 +492,14 @@ def _get_atr_observation(
             "atr_pct": atr_pct,
             "observed_at": observed.isoformat(),
         }
-    except (KeyError, TypeError, ValueError, OverflowError, json.JSONDecodeError):
+    except (
+        sqlite3.Error,
+        KeyError,
+        TypeError,
+        ValueError,
+        OverflowError,
+        json.JSONDecodeError,
+    ):
         return None
     return None
 
@@ -581,6 +590,7 @@ def _maybe_update_trailing_stop(
     *,
     completed_bar: bool = False,
     effective_at: str | None = None,
+    protection_venue: str | None = None,
 ) -> bool:
     """Update stop_price for trailing stop and breakeven logic. Writes DB on change.
 
@@ -658,6 +668,7 @@ def _maybe_update_trailing_stop(
             position,
             cfg,
             observed_at=effective_at,
+            protection_venue=protection_venue,
         )
         if atr_observation is not None:
             trail_distance = price * (atr_observation["atr_pct"] / 100.0) * tc["atr_mult"]
@@ -706,23 +717,15 @@ def _maybe_update_trailing_stop(
                 **(persisted_plan.trailing or {}),
                 "last_runtime_observation": runtime_observation,
             }
-            try:
-                persist_position_exit_plan(
-                    position["id"],
-                    persisted_plan,
-                    provenance="deterministic_trailing_v2",
-                    extra_position_updates={
-                        key: value for key, value in updates.items() if key != "stop_price"
-                    },
-                    effective_at=effective_at,
-                )
-            except PositionProtectionConflict as exc:
-                logger.info(
-                    "trailing ExitPlan revision lost compare-and-set pos=%s: %s",
-                    position.get("id"),
-                    exc,
-                )
-                return False
+            persist_position_exit_plan(
+                position["id"],
+                persisted_plan,
+                provenance="deterministic_trailing_v2",
+                extra_position_updates={
+                    key: value for key, value in updates.items() if key != "stop_price"
+                },
+                effective_at=effective_at,
+            )
             position["stop_price"] = float(new_stop)
         else:
             from aletheia.storage.repositories import update_position

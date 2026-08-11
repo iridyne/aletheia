@@ -728,6 +728,31 @@ def test_atr_observation_has_exact_causal_instrument_identity(tmp_path, monkeypa
     assert result["market_type"] == "spot"
 
 
+def test_atr_observation_storage_error_uses_frozen_fallback(monkeypatch):
+    import sqlite3
+
+    from aletheia.portfolio.position_manager import _get_atr_observation
+
+    class UnavailableDb:
+        def execute(self, *_args, **_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr("aletheia.storage.sqlite.get_db", lambda: UnavailableDb())
+
+    result = _get_atr_observation(
+        {
+            "execution_mode": "paper_internal",
+            "symbol": "BTC/USDT",
+            "market_type": "spot",
+        },
+        SimpleNamespace(market_data=SimpleNamespace(ccxt_exchange="okx")),
+        observed_at="2026-08-11T03:30:00+00:00",
+        protection_venue="bitget",
+    )
+
+    assert result is None
+
+
 # ---------------------------------------------------------------------------
 # PL-PM-06  L2b  xfail  audit_events_table  (captures PM-2)
 # ---------------------------------------------------------------------------
