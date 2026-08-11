@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import math
 from statistics import mean, median
 from typing import Iterable
 
@@ -65,7 +66,7 @@ def build_sizing_counterfactual(
     if stop_trades:
         stop_actual = [trade["actual_notional"] for trade in stop_trades]
         observed_cap = max(stop_actual)
-        stop_notionals = _risk_at_stop_notionals(stop_trades)
+        stop_notionals = _risk_at_stop_notionals(stop_trades, cap=observed_cap)
         report["stop_paired_policies"] = {
             "normalization": {
                 "target_total_notional_usdt": round(sum(stop_actual), 8),
@@ -75,7 +76,10 @@ def build_sizing_counterfactual(
             "actual": _metrics(stop_trades, stop_actual),
             "risk_at_stop_equalized": _metrics(stop_trades, stop_notionals),
         }
-        report["robustness_slices"] = _chronological_halves(stop_trades)
+        report["robustness_slices"] = _chronological_halves(
+            stop_trades,
+            cap=observed_cap,
+        )
     else:
         report["stop_paired_policies"] = {
             "status": "insufficient_data",
@@ -126,7 +130,12 @@ def _trade(row: dict) -> dict | None:
     except (KeyError, TypeError, ValueError, OverflowError):
         return None
     notional = entry * quantity
-    if entry <= 0 or quantity <= 0 or notional <= 0:
+    if (
+        not all(math.isfinite(value) for value in (entry, quantity, pnl, notional))
+        or entry <= 0
+        or quantity <= 0
+        or notional <= 0
+    ):
         return None
     stop_distance = None
     try:
@@ -135,8 +144,10 @@ def _trade(row: dict) -> dict | None:
         valid_geometry = (direction in {"long", "buy"} and stop < entry) or (
             direction in {"short", "sell"} and stop > entry
         )
-        if stop > 0 and valid_geometry:
-            stop_distance = abs(entry - stop) / entry
+        if stop > 0 and math.isfinite(stop) and valid_geometry:
+            candidate_distance = abs(entry - stop) / entry
+            if math.isfinite(candidate_distance) and candidate_distance > 0:
+                stop_distance = candidate_distance
     except (TypeError, ValueError, OverflowError):
         pass
     conviction = row.get("conviction")
@@ -154,10 +165,18 @@ def _trade(row: dict) -> dict | None:
     }
 
 
-def _risk_at_stop_notionals(trades: list[dict]) -> list[float]:
+def _risk_at_stop_notionals(
+    trades: list[dict],
+    *,
+    cap: float | None = None,
+) -> list[float]:
     actual = [trade["actual_notional"] for trade in trades]
     raw = [1.0 / trade["stop_distance"] for trade in trades]
-    return _match_total_exposure(raw, target_total=sum(actual), cap=max(actual))
+    return _match_total_exposure(
+        raw,
+        target_total=sum(actual),
+        cap=max(actual) if cap is None else cap,
+    )
 
 
 def _match_total_exposure(raw: list[float], *, target_total: float, cap: float) -> list[float]:
@@ -178,14 +197,14 @@ def _match_total_exposure(raw: list[float], *, target_total: float, cap: float) 
     return [min(cap, value * high) for value in raw]
 
 
-def _chronological_halves(trades: list[dict]) -> list[dict]:
+def _chronological_halves(trades: list[dict], *, cap: float) -> list[dict]:
     if len(trades) < 4:
         return []
     split = len(trades) // 2
     result = []
     for name, subset in (("earlier_half", trades[:split]), ("later_half", trades[split:])):
         actual = [trade["actual_notional"] for trade in subset]
-        candidate = _risk_at_stop_notionals(subset)
+        candidate = _risk_at_stop_notionals(subset, cap=cap)
         result.append(
             {
                 "name": name,
