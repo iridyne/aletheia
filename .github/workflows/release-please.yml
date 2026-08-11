@@ -23,6 +23,16 @@ jobs:
       issues: write
       pull-requests: write
     steps:
+      - name: Create release bot token
+        id: release-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
@@ -32,7 +42,7 @@ jobs:
       # release tool itself at the exact version bundled by the rejected action.
       - name: Maintain releases and the release pull request
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ steps.release-token.outputs.token }}
         run: |
           set -euo pipefail
           release_please() {
@@ -49,6 +59,7 @@ jobs:
       - name: Run CI for the release pull request
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
         with:
+          github-token: ${{ steps.release-token.outputs.token }}
           retries: 3
           script: |
             const {data: pullRequests} = await github.rest.pulls.list({
