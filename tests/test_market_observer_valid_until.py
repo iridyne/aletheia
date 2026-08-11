@@ -36,6 +36,7 @@ async def test_observer_preserves_scanner_valid_until(tmp_path, monkeypatch):
         metadata=json.dumps({
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v2",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",

@@ -105,7 +105,7 @@ async def test_observer_ranker_pending_operator_defer_keeps_one_causal_identity(
         universe_member_id="observer-operator-member",
         scanner_family="momentum",
         valid_until=expires_at,
-        metadata='{"evidence_manifest":{"t0":{"direction":"long","market_type":"spot","status":"available","symbol":"BTC/USDT","trigger_type":"universe_scanner","universe_member_id":"observer-operator-member","universe_snapshot_id":"observer-operator-universe"},"version":"opportunity-information-integrity-v1"}}',
+        metadata='{"evidence_manifest":{"policy_epoch":"opportunity_information_integrity/v2","t0":{"direction":"long","market_type":"spot","status":"available","symbol":"BTC/USDT","trigger_type":"universe_scanner","universe_member_id":"observer-operator-member","universe_snapshot_id":"observer-operator-universe"},"version":"opportunity-information-integrity-v1"}}',
     )
     repo.insert_opportunity(scanner_opportunity)
     from aletheia.analytics.filter_evidence import record_filter_decision

@@ -558,7 +558,7 @@ def test_paper_trader_on_demand_sources_and_fallback_are_wired():
 
     root = Path(__file__).parent.parent.parent
     expected = {
-        "aletheia/agents/market_observer.py": "market_observer_opportunity",
+        "aletheia/universe/service.py": "universe_refresh_new_snapshot",
         "aletheia/agents/equity_observer.py": "equity_observer_opportunity",
         "aletheia/agents/prediction_observer.py": "prediction_observer_opportunity",
         "aletheia/agents/divergence_scanner.py": "divergence_scanner_opportunity",

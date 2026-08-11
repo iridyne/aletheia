@@ -35,8 +35,37 @@ def _patch_admitted_workset(monkeypatch, observer, instruments):
     monkeypatch.setattr(
         observer,
         "_admitted_observer_workset",
-        lambda _cfg: (instruments, owners, "snapshot-test"),
+        lambda _cfg: (instruments, owners, "snapshot-test", []),
     )
+
+
+@pytest.mark.asyncio
+async def test_empty_workset_reports_retryable_attestation_failure(
+    tmp_path, monkeypatch,
+):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.agents import market_observer as observer
+
+    init_tool_registry()
+    monkeypatch.setattr(
+        observer,
+        "_admitted_observer_workset",
+        lambda _cfg: (
+            [],
+            {},
+            "snapshot-attestation-failed",
+            ["producer_attestation_unavailable:opp-1"],
+        ),
+    )
+
+    result = await observer.run_market_observer(
+        permission_mode="Observe",
+        run_id="attestation-failed",
+    )
+
+    assert result["outputs"] == []
+    assert result["errors"] == ["producer_attestation_unavailable:opp-1"]
 
 
 # ---------------------------------------------------------------------------

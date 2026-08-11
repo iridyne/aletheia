@@ -1,16 +1,23 @@
 """Tests for the entry-logic upgrade (Component 2).
 
-Goal: trades stop being noise. market_observer produces a real structured
-direction/confidence; paper_trader skips neutral and low-confidence signals BUT
-still records the opportunity; a stop_price is computed and reaches the proposal.
-LLM calls degrade gracefully (never raise).
+Goal: trades stop being noise. The deterministic emitter owns Opportunity
+admission; market_observer adds structured advisory context; paper_trader skips
+neutral and low-confidence signals while preserving lifecycle evidence.
 """
 
+from datetime import datetime, timedelta, timezone
+import json
 import sqlite3
 
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
-from aletheia.storage.models import Opportunity, MarketSnapshot
+from aletheia.storage.models import (
+    MarketSnapshot,
+    Opportunity,
+    UniverseAsset,
+    UniverseMember,
+    UniverseSnapshot,
+)
 from aletheia.storage import repositories as repo
 from aletheia.agent_runtime.tool_registry import init_tool_registry
 from aletheia.agent_runtime.orchestrator import run_agent
@@ -41,6 +48,99 @@ def _set_paperauto(monkeypatch):
     save_config(cfg)
 
 
+def _seed_admitted_opportunity(
+    *,
+    symbol: str = "BTC/USDT",
+    market_type: str = "spot",
+    direction: str = "long",
+    confidence: str = "high",
+) -> Opportunity:
+    from aletheia.analytics.filter_evidence import record_filter_decision
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.universe.enabled = True
+    cfg.exchange.enabled_markets = {
+        "spot": market_type == "spot",
+        "usdt_futures": market_type == "perp",
+    }
+    cfg.exchange.preferred_market_type = market_type
+    save_config(cfg)
+
+    snapshot_id = "entry-logic-universe"
+    member_id = f"entry-logic-member-{market_type}"
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    repo.upsert_universe_asset(UniverseAsset(
+        id=f"entry-logic-asset-{market_type}",
+        venue=cfg.market_data.ccxt_exchange,
+        market_type=market_type,
+        symbol=symbol,
+    ))
+    repo.insert_universe_snapshot(UniverseSnapshot(
+        id=snapshot_id,
+        market_type="crypto",
+        status="active",
+        expires_at=expires_at,
+    ))
+    repo.insert_universe_member(UniverseMember(
+        id=member_id,
+        snapshot_id=snapshot_id,
+        asset_id=f"entry-logic-asset-{market_type}",
+        symbol=symbol,
+        market_type=market_type,
+        rank=1,
+        total_score=60.0,
+        scanner_family="momentum",
+        scanner_direction=direction,
+        expires_at=expires_at,
+        entry_price_usd=60_000.0,
+    ))
+    opportunity = Opportunity(
+        id=f"entry-logic-opportunity-{market_type}",
+        symbol=symbol,
+        market="spot" if market_type == "spot" else "usdt_futures",
+        direction_bias=direction,
+        confidence=confidence,
+        confidence_score=60,
+        source_agent="universe_scanner",
+        universe_snapshot_id=snapshot_id,
+        universe_member_id=member_id,
+        scanner_family="momentum",
+        valid_until=expires_at,
+        metadata=json.dumps({
+            "evidence_manifest": {
+                "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v2",
+                "t0": {
+                    "status": "available",
+                    "trigger_type": "universe_scanner",
+                    "universe_snapshot_id": snapshot_id,
+                    "universe_member_id": member_id,
+                    "symbol": symbol,
+                    "market_type": market_type,
+                    "direction": direction,
+                },
+            },
+        }),
+    )
+    repo.insert_opportunity(opportunity)
+    record_filter_decision(
+        candidate_key=f"universe_member:{member_id}",
+        candidate_kind="universe_member",
+        filter_name="opportunity_emission",
+        stage="signal_emitter",
+        decision="passed",
+        reason_code="opportunity_emitted",
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+        opportunity_id=opportunity.id,
+        universe_snapshot_id=snapshot_id,
+        universe_member_id=member_id,
+    )
+    return opportunity
+
+
 # --- llm_structured graceful degradation ---
 
 async def test_llm_structured_degrades_gracefully(tmp_path, monkeypatch):
@@ -57,41 +157,43 @@ async def test_llm_structured_degrades_gracefully(tmp_path, monkeypatch):
     assert err is not None
 
 
-# --- market_observer writes real structured values ---
+# --- market_observer enriches an admitted deterministic owner ---
 
 async def test_observer_writes_structured_direction(tmp_path, monkeypatch):
-    # Configure a single symbol so we get exactly 1 opportunity.
     setup_env(tmp_path, monkeypatch)
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    cfg.market_data.observed_symbols = ["BTC/USDT"]
-    cfg.market_data.observed_xstocks = []
-    # Spot-only for this test so a single symbol yields exactly one opportunity
-    # (with usdt_futures enabled the observer also emits the perp — covered elsewhere).
-    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
-    save_config(cfg)
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
+    owner = _seed_admitted_opportunity()
 
     structured_kwargs = {}
 
     async def fake_structured(system, user, *, schema, max_tokens=400, **kw):
         structured_kwargs.update(kw)
-        return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
+        return {
+            "direction_bias": "long",
+            "confidence": "high",
+            "confidence_score": 88,
+            "rationale": "uptrend",
+        }, None
 
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
     monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
     result = await run_agent("market_observer", trigger_type="manual")
     opps = repo.list_opportunities()
     assert len(opps) == 1
+    assert opps[0]["id"] == owner.id
+    assert opps[0]["source_agent"] == "universe_scanner"
     assert opps[0]["direction_bias"] == "long"
     assert opps[0]["confidence"] == "high"
     assert opps[0]["symbol"] == "BTC/USDT"  # stored in canonical format
+    assessment = json.loads(opps[0]["metadata"])["observer_assessment"]
+    assert assessment["direction_bias"] == "long"
+    assert assessment["confidence_score"] == 88
+    assert result["errors"] == []
     assert structured_kwargs["reasoning_effort"] == "none"
 
 
 async def test_observer_skips_opportunity_on_llm_failure(tmp_path, monkeypatch):
-    # LLM-skip behavior: when LLM is unavailable, market_observer does NOT
-    # create neutral noise. Opportunities come from deterministic paths instead.
+    # Without an admitted deterministic owner, Observer must stop before LLM.
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
@@ -100,45 +202,15 @@ async def test_observer_skips_opportunity_on_llm_failure(tmp_path, monkeypatch):
     save_config(cfg)
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
 
-    async def fake_structured(system, user, *, schema, max_tokens=400, **kw):
-        return None, "llm_unavailable"
+    async def fake_structured(*_args, **_kwargs):
+        raise AssertionError("Observer must not call the LLM without an admitted owner")
 
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
     monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
     result = await run_agent("market_observer", trigger_type="manual")
     opps = repo.list_opportunities()
-    assert len(opps) == 0  # no neutral noise created
-    assert any("llm_unavailable" in e for e in result.get("errors", []))
-
-
-async def test_observer_dedups_same_symbol_when_both_markets_enabled(tmp_path, monkeypatch):
-    """With both spot+usdt_futures enabled, a single symbol yields ONE
-    opportunity (market == preferred_market_type which defaults to "auto" → perp).
-
-    Previously this emitted a redundant perp for every spot — running the LLM
-    twice for the same ETH and risking duplicate positions downstream. Directional
-    analysis is instrument-agnostic: the same ETH reads 76% long whether spot or
-    perp (price ≈ identical). OD-S01/S03 lock the dedup behavior."""
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    cfg.market_data.observed_symbols = ["BTC/USDT"]
-    cfg.market_data.observed_xstocks = []
-    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": True}
-    save_config(cfg)
-    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
-
-    async def fake_structured(system, user, *, schema, max_tokens=400, **kw):
-        return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
-
-    monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
-    monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
-    await run_agent("market_observer", trigger_type="manual")
-
-    opps = repo.list_opportunities()
-    assert len(opps) == 1, f"expected 1 opp (deduped), got {len(opps)}: {[o['market'] for o in opps]}"
-    assert opps[0]["market"] == "usdt_futures", f"expected perp (auto bias), got {opps[0]['market']}"
-    assert opps[0]["symbol"] == "BTC/USDT"
+    assert opps == []
+    assert result["errors"] == []
 
 
 # --- paper_trader honors direction + confidence; records non-traded signals ---
@@ -178,7 +250,7 @@ async def test_paper_trader_trades_directional_and_sets_stop(tmp_path, monkeypat
     _set_paperauto(monkeypatch)
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
     opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",
-                      confidence="medium", source_agent="market_observer")
+                      confidence="medium", source_agent="divergence_scanner")
     repo.insert_opportunity(opp)
 
     result = await run_agent("paper_trader", trigger_type="manual")
@@ -190,53 +262,17 @@ async def test_paper_trader_trades_directional_and_sets_stop(tmp_path, monkeypat
     assert pending[0]["symbol"] == "BTC/USDT"
 
 
-# --- Symbol format: market_observer stores canonical BTC/USDT format ---
-
-async def test_observer_stores_canonical_format_symbol(tmp_path, monkeypatch):
-    """market_observer stores opportunities in canonical BTC/USDT format
-    (matching CCXTProvider snapshot keys). paper_trader normalises tradable_symbols
-    to canonical before matching, so the filter still works."""
-    setup_env(tmp_path, monkeypatch)
-    # Snapshot stored in canonical format (as collect_market_snapshots does)
-    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
-
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    cfg.market_data.observed_symbols = ["BTC/USDT"]
-    cfg.market_data.observed_xstocks = []
-    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}  # one symbol → one opp
-    cfg.agent.permission_mode = "Full"
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    save_config(cfg)
-
-    async def fake_structured(system, user, *, schema, max_tokens=400, **kw):
-        return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
-
-    monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
-    monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
-    await run_agent("market_observer", trigger_type="manual")
-
-    opps = repo.list_opportunities()
-    assert len(opps) == 1
-    # Canonical format — not Bitget "BTCUSDT"
-    assert opps[0]["symbol"] == "BTC/USDT"
-
-
 async def test_full_observer_to_paper_trader_loop(tmp_path, monkeypatch):
-    """End-to-end: observer runs with CCXT observed_symbols, stores opportunity in
-    canonical format, then paper_trader finds and consumes it — producing a proposal."""
+    """Emitter owner → Observer enrichment → Ranker pending preserves identity."""
     setup_env(tmp_path, monkeypatch)
-    # Snapshot in canonical format (real pipeline stores it this way)
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
 
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.market_data.observed_symbols = ["BTC/USDT"]
-    cfg.market_data.observed_xstocks = []
-    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}  # one symbol → one opp
     cfg.agent.permission_mode = "Paper"
     cfg.exchange.paper_execution_mode = "paper_internal"
     save_config(cfg)
+    owner = _seed_admitted_opportunity()
 
     async def fake_structured(system, user, *, schema, max_tokens=400, **kw):
         return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
@@ -244,10 +280,12 @@ async def test_full_observer_to_paper_trader_loop(tmp_path, monkeypatch):
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
     monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
 
-    # Step 1: observer creates opportunity
+    # Step 1: Observer enriches, but does not create or relabel the owner.
     await run_agent("market_observer", trigger_type="manual")
     opps = repo.list_opportunities()
     assert len(opps) == 1
+    assert opps[0]["id"] == owner.id
+    assert opps[0]["source_agent"] == "universe_scanner"
     assert opps[0]["symbol"] == "BTC/USDT"
 
     # Step 2: paper_trader writes signal_pending for System Operator (Phase 4a)

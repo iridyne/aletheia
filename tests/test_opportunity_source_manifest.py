@@ -45,6 +45,7 @@ async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
         metadata=json.dumps({
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v2",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",
@@ -251,6 +252,7 @@ def test_scanner_manifest_without_persisted_emitter_fact_fails_closed(
         metadata=json.dumps({
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v2",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",
@@ -285,6 +287,7 @@ def test_signal_emitter_attestation_db_failure_is_retryable(monkeypatch):
         metadata=json.dumps({
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v2",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",
@@ -307,6 +310,40 @@ def test_signal_emitter_attestation_db_failure_is_retryable(monkeypatch):
     assert verify_signal_emitter_admission(
         opportunity.model_dump()
     ) == (False, "producer_attestation_unavailable")
+
+
+def test_pre_v2_scanner_carrier_fails_closed_before_fact_lookup():
+    from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
+    from aletheia.storage.models import Opportunity
+
+    opportunity = Opportunity(
+        id="pre-v2-scanner-carrier",
+        source_agent="universe_scanner",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        universe_snapshot_id="pre-v2-snapshot",
+        universe_member_id="pre-v2-member",
+        metadata=json.dumps({
+            "evidence_manifest": {
+                "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v1",
+                "t0": {
+                    "status": "available",
+                    "trigger_type": "universe_scanner",
+                    "universe_snapshot_id": "pre-v2-snapshot",
+                    "universe_member_id": "pre-v2-member",
+                    "symbol": "BTC/USDT",
+                    "market_type": "spot",
+                    "direction": "long",
+                },
+            },
+        }),
+    )
+
+    assert verify_signal_emitter_admission(
+        opportunity.model_dump()
+    ) == (False, "producer_eligibility_epoch_mismatch")
 
 
 def test_observer_workset_keeps_spot_and_perp_owners_distinct(monkeypatch):
@@ -350,9 +387,10 @@ def test_observer_workset_keeps_spot_and_perp_owners_distinct(monkeypatch):
         market_data=SimpleNamespace(ccxt_exchange="fixture"),
     )
 
-    instruments, owners, snapshot_id = observer._admitted_observer_workset(cfg)
+    instruments, owners, snapshot_id, errors = observer._admitted_observer_workset(cfg)
 
     assert snapshot_id == "snapshot-both"
+    assert errors == []
     assert [str(instrument) for instrument in instruments] == [
         "fixture:BTC/USDT:spot",
         "fixture:BTC/USDT:perp",
@@ -425,6 +463,7 @@ async def test_proposal_preflight_rejects_scanner_t0_direction_conflict(
         metadata=json.dumps({
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v2",
                 "t0": {
                         "status": "available",
                         "trigger_type": "universe_scanner",
@@ -627,6 +666,7 @@ async def test_observer_t1_names_only_sources_rendered_for_the_exact_instrument(
         metadata={
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v1",
                 "t0": {"status": "available", "feature_snapshot_id": "feature-t0"},
             }
         },
@@ -638,6 +678,7 @@ async def test_observer_t1_names_only_sources_rendered_for_the_exact_instrument(
         pre_filter=prefetched.pre_filter,
         pre_filter_evidence_id="filter-t0",
     )
+    assert manifest["policy_epoch"] == "opportunity_information_integrity/v1"
     assert manifest["t0"]["feature_snapshot_id"] == "feature-t0"
     assert manifest["t1"]["sources"] == prefetched.rendered_sources
 

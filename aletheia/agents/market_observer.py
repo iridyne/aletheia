@@ -102,10 +102,12 @@ class _SymbolPrefetch:
     context_duration_ms: int | None = None
 
 
-def _admitted_observer_workset(cfg) -> tuple[list, dict[str, dict], str | None]:
+def _admitted_observer_workset(
+    cfg,
+) -> tuple[list, dict[str, dict], str | None, list[str]]:
     """Return exact instruments with an open, emitter-attested owner."""
     if not cfg.universe.enabled:
-        return [], {}, None
+        return [], {}, None, []
 
     from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
     from aletheia.data.symbols import InstrumentId, MARKET_SPOT
@@ -116,10 +118,11 @@ def _admitted_observer_workset(cfg) -> tuple[list, dict[str, dict], str | None]:
     )
     snapshot_id = members[0].get("snapshot_id") if members else None
     if not snapshot_id:
-        return [], {}, None
+        return [], {}, None, []
 
     instruments = []
     owners: dict[str, dict] = {}
+    errors: list[str] = []
     for member in members:
         symbol = member.get("symbol", "")
         market_type = member.get("market_type", "spot") or MARKET_SPOT
@@ -130,19 +133,21 @@ def _admitted_observer_workset(cfg) -> tuple[list, dict[str, dict], str | None]:
             snapshot_id,
             market=instrument_market_to_db_market(market_type),
         )
-        if (
-            not existing
-            or existing.get("status") != "open"
-            or existing.get("universe_member_id") != member.get("id")
-            or not verify_signal_emitter_admission(existing)[0]
-        ):
+        if not existing or existing.get("status") != "open":
+            continue
+        if existing.get("universe_member_id") != member.get("id"):
+            continue
+        admitted, reason = verify_signal_emitter_admission(existing)
+        if reason == "producer_attestation_unavailable":
+            errors.append(f"{reason}:{existing.get('id')}")
+        if not admitted:
             continue
         instrument = InstrumentId.from_parts(
             cfg.market_data.ccxt_exchange, symbol, market_type
         )
         instruments.append(instrument)
         owners[str(instrument)] = member
-    return instruments, owners, snapshot_id
+    return instruments, owners, snapshot_id, errors
 
 
 def _observer_learning_candidate_key(
@@ -693,6 +698,11 @@ def _opportunity_evidence_manifest(
     from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
 
     existing = metadata.get("evidence_manifest")
+    producer_epoch = (
+        existing.get("policy_epoch")
+        if isinstance(existing, dict)
+        else POLICY_EPOCH_LABEL
+    )
     existing_t0 = existing.get("t0") if isinstance(existing, dict) else None
     t0 = (
         _bounded_t0(existing_t0)
@@ -712,7 +722,7 @@ def _opportunity_evidence_manifest(
     )
     return {
         "version": "opportunity-information-integrity-v1",
-        "policy_epoch": POLICY_EPOCH_LABEL,
+        "policy_epoch": producer_epoch,
         "t0": t0,
         "t1": {
             "status": "available",
@@ -1768,9 +1778,10 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
 
     cfg = load_config()
 
-    instruments, _universe_lookup, universe_snapshot_id = (
+    instruments, _universe_lookup, universe_snapshot_id, attestation_errors = (
         _admitted_observer_workset(cfg)
     )
+    errors.extend(attestation_errors)
 
     if not instruments:
         return {

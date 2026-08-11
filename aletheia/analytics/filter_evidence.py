@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 import zlib
 
+from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
     FilterCandidateOutcome,
@@ -243,6 +244,8 @@ def verify_signal_emitter_admission(opportunity: dict[str, Any]) -> tuple[bool, 
     t0 = manifest.get("t0") if isinstance(manifest, dict) else None
     if not isinstance(t0, dict) or t0.get("status") != "available":
         return False, "producer_eligibility_manifest_missing"
+    if manifest.get("policy_epoch") != POLICY_EPOCH_LABEL:
+        return False, "producer_eligibility_epoch_mismatch"
 
     symbol = str(opportunity.get("symbol") or "")
     market = _normalize_market(opportunity.get("market") or opportunity.get("market_type"))

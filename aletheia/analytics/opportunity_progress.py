@@ -483,6 +483,7 @@ def build_current_entry_status(
     setup_count: int,
     active_setup_count: int,
     terminal_breakdown: dict[str, int],
+    universe_enabled: bool = True,
 ) -> dict[str, Any]:
     """Build one read-only answer to where entry work is and why it stopped."""
     window_start = (now - timedelta(hours=max(1, int(window_hours)))).isoformat()
@@ -616,11 +617,19 @@ def build_current_entry_status(
         )
         next_trigger = "new_opportunity"
     else:
-        state, primary_stage = "no_candidates", "signal_emitter"
+        state, primary_stage = "no_candidates", "producer"
         headline = "No entry candidates were emitted in the selected window."
-        reason_code = "no_candidates"
-        reason = "The system is waiting for the deterministic Universe signal emitter to admit a candidate."
-        next_trigger = "new_opportunity"
+        if universe_enabled:
+            reason_code = "no_candidates"
+            reason = "No configured Opportunity producer emitted an eligible candidate."
+            next_trigger = "new_opportunity"
+        else:
+            reason_code = "universe_not_configured"
+            reason = (
+                "The deterministic Universe producer is not configured, and no "
+                "other Opportunity producer emitted a candidate."
+            )
+            next_trigger = "configuration_change_or_new_opportunity"
 
     operator_state = "waiting" if deferred else "working" if queued_total else "not_reached"
     proposal_state = "action_required" if pending_proposals else (
@@ -628,7 +637,7 @@ def build_current_entry_status(
     )
     ranker_state = "passed" if queued_total else "waiting" if open_opportunities else "idle"
     pipeline = [
-        {"stage": "producer", "label": "Universe Scanner", "state": "active" if emitted_count else "idle", "count": setup_count},
+        {"stage": "producer", "label": "Opportunity Producers", "state": "active" if emitted_count else "idle", "count": setup_count},
         {"stage": "ranker", "label": "Ranker", "state": ranker_state, "count": active_setup_count},
         {"stage": "operator", "label": "Operator", "state": operator_state, "count": queued_total},
         {"stage": "proposal", "label": "Proposal", "state": proposal_state, "count": pending_proposals},
