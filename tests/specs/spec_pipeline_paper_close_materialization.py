@@ -173,6 +173,85 @@ def _close_chain(conn, position_id: str):
 
 @spec_claim(
     SpecClaim(
+        "PL-PCM-18",
+        "pipeline_paper_close_materialization",
+        "§0 frozen trailing cost contract",
+        "L2c",
+        "A paper Position with a net-balance trailing contract uses its frozen "
+        "exit fee and slippage for the actual close Fill even after global config "
+        "changes.",
+        status="implemented",
+    )
+)
+def test_paper_close_uses_frozen_net_balance_cost_contract(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    cfg = _patch_config(monkeypatch)
+
+    from aletheia.execution.paper_broker import close_paper_position
+    from aletheia.storage import repositories as repo
+
+    _, position = _seed_open_position(
+        direction="long", stop_price=95.0, take_profit_price=120.0
+    )
+    repo.update_position(
+        position.id,
+        trailing_json=json.dumps({
+            "cost_model_version": "paper-net-balance-v1",
+            "exit_fee_rate": 0.001,
+            "slippage_bps": 25.0,
+        }),
+    )
+    cfg.trading.execution_fee_pct = 0.5
+    cfg.trading.slippage_bps = 100.0
+
+    close_paper_position(position.id, mark_price=110.0, reason="manual")
+
+    _order, close_fill = _close_chain(conn, position.id)
+    expected_fill = 110.0 * (1 - 25.0 / 10_000.0)
+    assert close_fill["fill_price"] == pytest.approx(expected_fill)
+    assert close_fill["fee"] == pytest.approx(expected_fill * 0.001)
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PCM-19",
+        "pipeline_paper_close_materialization",
+        "§0 invalid frozen trailing cost contract",
+        "L2c",
+        "A declared net-balance cost contract with unavailable economics fails "
+        "before any paper close Order or Fill is materialized.",
+        status="implemented",
+    )
+)
+def test_paper_close_rejects_incomplete_net_balance_cost_contract(
+    tmp_path, monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from aletheia.execution.paper_broker import close_paper_position
+    from aletheia.storage import repositories as repo
+
+    _, position = _seed_open_position(
+        direction="long", stop_price=95.0, take_profit_price=120.0
+    )
+    repo.update_position(
+        position.id,
+        trailing_json=json.dumps({
+            "cost_model_version": "paper-net-balance-v1",
+            "exit_fee_rate": 0.001,
+        }),
+    )
+
+    with pytest.raises(ValueError, match="paper_close_cost_contract_invalid"):
+        close_paper_position(position.id, mark_price=110.0, reason="manual")
+
+    assert repo.get_position(position.id)["status"] == "open"
+    assert _close_chain(conn, position.id) == (None, None)
+
+
+@spec_claim(
+    SpecClaim(
         "PL-PCM-00",
         "pipeline_paper_close_materialization",
         "§0 authoritative local entry evidence",

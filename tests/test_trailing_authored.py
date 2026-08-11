@@ -1,8 +1,7 @@
-"""Tests for AI-authored trailing (M4 / D2, exit-intent plan).
+"""Tests for ExitPlan-authored trailing (M4 / D2).
 
-Trailing is authored on the ExitPlan: an operator spec overrides the global default,
-'off' disables it, absence falls back to the global default (D2=A) unless
-trailing_requires_authoring (D2=B). Behavior is unchanged for unauthored positions.
+Only a frozen per-position trailing spec grants behavior authority. Global config
+controls authoring for new positions; it never retrofits an unauthored Position.
 """
 
 import json
@@ -13,13 +12,12 @@ import pytest
 import aletheia.portfolio.position_manager as pm
 
 
-def _cfg(trail_enabled=True, atr_mult=1.5, pct=1.0, requires_authoring=False, breakeven=1.5):
+def _cfg(trail_enabled=True, atr_mult=1.5, pct=1.0, breakeven=1.5):
     return SimpleNamespace(
         trading=SimpleNamespace(
             trail_enabled=trail_enabled,
             trail_atr_mult=atr_mult,
             trail_pct=pct,
-            trailing_requires_authoring=requires_authoring,
             breakeven_trigger_pct=breakeven,
         )
     )
@@ -39,21 +37,9 @@ def _no_atr(monkeypatch):
 
 # ── _resolve_trailing ────────────────────────────────────────────────────────
 
-def test_default_applies_when_unauthored():
-    tc = pm._resolve_trailing(_pos(), _cfg(trail_enabled=True))
-    assert tc is not None
-    assert tc["mode"] == "pct" and tc["pct"] == 1.0
-    assert tc["floor_at_breakeven"] is True
-    assert tc["activation_profit_pct"] is None
-
-
-def test_default_off_when_trail_disabled():
-    assert pm._resolve_trailing(_pos(), _cfg(trail_enabled=False)) is None
-
-
-def test_requires_authoring_disables_default():
-    # D2=B: no spec + requires_authoring → no trailing
-    assert pm._resolve_trailing(_pos(), _cfg(trail_enabled=True, requires_authoring=True)) is None
+@pytest.mark.parametrize("trail_enabled", [True, False])
+def test_unauthored_position_never_resolves_trailing(trail_enabled):
+    assert pm._resolve_trailing(_pos(), _cfg(trail_enabled=trail_enabled)) is None
 
 
 def test_operator_off_disables():
@@ -71,9 +57,9 @@ def test_operator_override():
     assert tc["floor_at_breakeven"] is False
 
 
-def test_authored_spec_runs_even_when_requires_authoring():
+def test_authored_spec_runs_even_when_global_authoring_is_disabled():
     pos = _pos(trailing_json=json.dumps({"mode": "pct", "distance": 0.5}))
-    tc = pm._resolve_trailing(pos, _cfg(requires_authoring=True))
+    tc = pm._resolve_trailing(pos, _cfg(trail_enabled=False))
     assert tc is not None and tc["mode"] == "pct" and tc["pct"] == 0.5
 
 
@@ -114,13 +100,11 @@ def test_activation_gate_defers(monkeypatch):
     assert calls == []
 
 
-def test_default_trail_moves_stop(monkeypatch):
+def test_unauthored_position_never_moves_stop(monkeypatch):
     calls = _capture_writes(monkeypatch)
-    pos = _pos(stop_price=90.0)  # unauthored → global default pct=1.0
+    pos = _pos(stop_price=90.0)
     pm._maybe_update_trailing_stop(pos, 110.0, _cfg(pct=1.0))
-    # trail_distance = 110 * 1% = 1.1 → new_stop = 108.9 > 90 → update
-    stops = [kw["stop_price"] for _, kw in calls if "stop_price" in kw]
-    assert 108.9 in stops
+    assert calls == []
 
 
 def test_breakeven_opt_out(monkeypatch):

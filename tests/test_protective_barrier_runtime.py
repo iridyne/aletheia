@@ -64,7 +64,6 @@ def _set_trailing_test_defaults(*, trail_pct: float = 10.0) -> None:
 
     cfg = load_config()
     cfg.trading.trail_enabled = True
-    cfg.trading.trailing_requires_authoring = True
     cfg.trading.trail_pct = trail_pct
     save_config(cfg)
 
