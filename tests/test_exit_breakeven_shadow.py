@@ -191,6 +191,9 @@ def test_long_shadow_closes_only_after_later_bar_and_reports_incremental_net(mon
     assert outcome["incremental_net_pnl"] > 0
     report = build_exit_breakeven_shadow_report()
     assert report["changed_count"] == 1
+    assert report["outcome_coverage"] == 1.0
+    assert report["incremental_net_pnl_mean_ci_95"] is None
+    assert report["bootstrap_method"] == "position_percentile_bootstrap/v1"
     assert report["close_reason_attribution_available"] is True
     assert report["close_reason_breakdown"] == [{
         "close_reason": "stop_loss",
@@ -213,12 +216,54 @@ def test_long_shadow_closes_only_after_later_bar_and_reports_incremental_net(mon
     assert paired["measurement_status"] == "treatment_specific_paired_evidence"
     assert paired["statistical_unit"] == "position_id"
     assert paired["economic_unit"] == "net_pnl_quote_currency"
+    assert paired["contract_version"] == "exit-paired-evidence/v2"
     assert paired["incremental_net_pnl_mean"] == pytest.approx(outcome["incremental_net_pnl"])
     assert paired["behavior_authority"] is False
     assert paired["contribution_verdict"] == "insufficient_data"
     assert "stop_loss: available=1 changed=1" in alpha_attribution.render_alpha_audit(
         alpha_attribution.build_alpha_attribution_audit(days=30)
     )
+
+
+def test_report_bootstrap_is_deterministic_by_position(monkeypatch):
+    rows = [
+        {
+            "position_id": "b",
+            "status": "unchanged",
+            "treatment_changed": 0,
+            "incremental_net_pnl": 2.0,
+            "close_reason": None,
+        },
+        {
+            "position_id": "a",
+            "status": "unchanged",
+            "treatment_changed": 0,
+            "incremental_net_pnl": 0.0,
+            "close_reason": None,
+        },
+    ]
+    monkeypatch.setattr(repo, "list_exit_breakeven_shadow_report_rows", lambda **_: rows)
+
+    first = build_exit_breakeven_shadow_report()
+    rows.reverse()
+    second = build_exit_breakeven_shadow_report()
+
+    assert first["incremental_net_pnl_mean_ci_95"] == [0.0, 2.0]
+    assert second["incremental_net_pnl_mean_ci_95"] == first["incremental_net_pnl_mean_ci_95"]
+
+
+def test_report_counts_closed_assignment_without_outcome_as_unsettled():
+    position = _seed_position()
+    assert repo.insert_exit_breakeven_shadow_assignment(_assignment(position))
+    _close(position["id"])
+
+    report = build_exit_breakeven_shadow_report()
+
+    assert report["outcome_count"] == 1
+    assert report["available_count"] == 0
+    assert report["unavailable_count"] == 0
+    assert report["unsettled_count"] == 1
+    assert report["outcome_coverage"] == 0.0
 
 
 def test_same_bar_trigger_and_stop_is_not_retrospectively_activated():
