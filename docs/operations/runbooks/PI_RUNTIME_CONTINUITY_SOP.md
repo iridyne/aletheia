@@ -41,7 +41,7 @@ Then create the candidate through the API or Command Center. The continuity
 update endpoint materializes a detached candidate git worktree under
 `data/runtime_bundles/<runtime_id>` and stores that path in `runtime_registry`.
 
-Legacy `update apply` remains unchanged and still pulls into the source worktree.
+The unified `update` command still pulls into a source worktree; packaged runtimes select the signed-release path.
 
 ## Shadow
 

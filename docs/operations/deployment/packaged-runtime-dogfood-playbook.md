@@ -148,7 +148,7 @@ Then test the public path from an installed Mac:
 
 ```bash
 aletheia update check
-aletheia update apply --yes
+aletheia update
 aletheia update status --json
 ```
 

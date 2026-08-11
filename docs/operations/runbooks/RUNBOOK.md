@@ -233,18 +233,17 @@ gate, atomically activates the frontend, and restarts the Gateway with readiness
 verification. A failed smoke/build/restart rolls back to the recorded pre-update
 commit when the migration boundary permits it.
 
-Useful explicit controls remain:
+Useful inspection and emergency controls remain:
 
 ```bash
 uv run aletheia update check
-uv run aletheia update apply             # confirmation plus default restart
-uv run aletheia update apply --no-restart
+uv run aletheia update --no-restart
 ```
 
-The bare command is source-checkout-only. Packaged runtimes continue through
-`aletheia update apply` and the signed-release/Tray activation path. Dirty,
-wrong-branch, ahead, or diverged source checkouts fail closed rather than
-clobbering local work or inventing a deployment state.
+The same bare command selects the safe path for the current runtime: source checkouts
+use the controlled Git deployment above, while packaged runtimes use the signed-release
+and Tray activation path. Dirty, wrong-branch, ahead, or diverged source checkouts fail
+closed rather than clobbering local work or inventing a deployment state.
 
 ## 10. Health & observability
 

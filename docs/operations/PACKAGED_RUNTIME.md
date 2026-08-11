@@ -78,7 +78,7 @@ Installed product:
 aletheia doctor
 ato gateway status
 aletheia update check
-aletheia update apply
+aletheia update
 aletheia update rollback
 ```
 
@@ -227,11 +227,11 @@ After a successful publishing run, verify from an installed package:
 
 ```bash
 aletheia update check
-aletheia update apply --yes
+aletheia update
 aletheia update status --json
 ```
 
-`update check` verifies the signed envelope before reporting a release. `update apply`
+`update check` verifies the signed envelope before reporting a release. `update`
 downloads and verifies the archive, preflights it, and leaves the short activation and
 rollback transaction to the Tray.
 

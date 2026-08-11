@@ -166,10 +166,10 @@ Preview 无权读取凭证，因此不参与该所有权竞争。
 
 ### 6.4 Source checkout 的受控更新
 
-`uv run aletheia update` 是 source checkout 的人类触发完整更新入口：命令本身即
-owner 授权，默认拉取配置分支的最新 GitHub HEAD、构建 dashboard、smoke 校验并重启
-Gateway。`update apply` 保留显式确认/`--no-restart` 控制。两者都不是 PR merge，
-也不是 Qualification admission。
+`uv run aletheia update` 是统一的人类触发更新入口：命令本身即 owner 授权。source checkout
+默认拉取配置分支的最新 GitHub HEAD、构建 dashboard、smoke 校验并重启 Gateway；packaged
+runtime 自动改走签名发布与 Tray 激活链路。`update --no-restart` 仅保留 source checkout
+的应急控制。该命令不是 PR merge，也不是 Qualification admission。
 
 - 只能在 owner 的干净 source checkout 上运行，且当前分支必须等于配置的
   `update.branch`；Worktree、feature branch、detached HEAD 都必须拒绝；
