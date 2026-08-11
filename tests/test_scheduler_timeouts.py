@@ -244,7 +244,7 @@ def test_scheduler_retries_failed_universe_recovery_audit_mirror(monkeypatch):
     monkeypatch.setattr(
         scheduler,
         "_run_sync_with_timeout",
-        lambda _job, fn: fn(),
+        lambda _job, fn, **_kwargs: fn(),
     )
 
     assert scheduler._run_universe_scanner_audit_reconciler() is True
@@ -258,17 +258,14 @@ def test_scheduler_retries_failed_universe_recovery_audit_mirror(monkeypatch):
     assert len(mirrored) == 1
 
 
-def test_universe_audit_timeout_preserves_failure_and_shared_io_progress(
-    monkeypatch,
-):
+def test_universe_audit_timeout_preserves_failure_telemetry(monkeypatch):
     from aletheia.agent_runtime import scheduler
 
     job_id = "universe_scanner_audit_reconciler"
     timeout_calls = []
-    shared_io_calls = []
 
-    def time_out(job, fn):
-        timeout_calls.append((job, fn))
+    def time_out(job, fn, *, worker=None):
+        timeout_calls.append((job, fn, worker))
         raise TimeoutError("audit retry timed out")
 
     monkeypatch.setattr(scheduler, "_run_sync_with_timeout", time_out)
@@ -280,17 +277,13 @@ def test_universe_audit_timeout_preserves_failure_and_shared_io_progress(
         job_id,
         scheduler._run_universe_scanner_audit_reconciler,
     ) is False
-    assert timeout_calls == [
-        (job_id, scheduler._mirror_universe_scanner_recovery_audits)
-    ]
+    assert timeout_calls == [(
+        job_id,
+        scheduler._mirror_universe_scanner_recovery_audits,
+        scheduler._universe_audit_timeout_worker,
+    )]
     assert scheduler._universe_scanner_audit_mirror_done is False
     assert scheduler._consecutive_failures[job_id] == 1
-
-    scheduler._run_job_guarded(
-        "health_check",
-        lambda: shared_io_calls.append("ran"),
-    )
-    assert shared_io_calls == ["ran"]
 
 def test_stale_agent_cleanup_parses_iso_timestamps():
     from aletheia.agent_runtime import scheduler
@@ -812,6 +805,37 @@ def test_sync_timeout_worker_rejects_when_capacity_is_exhausted(monkeypatch):
         worker.submit(lambda: None)
     release.set()
     assert first.result(timeout=1) is None
+
+
+def test_blocked_universe_audit_worker_does_not_starve_shared_sync_jobs():
+    from aletheia.agent_runtime import scheduler
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocked_audit():
+        started.set()
+        assert release.wait(timeout=5)
+
+    blocked = scheduler._universe_audit_timeout_worker.submit(blocked_audit)
+    try:
+        assert started.wait(timeout=1)
+        assert scheduler._run_sync_with_timeout(
+            "portfolio_snapshot",
+            lambda: "shared-io-completed",
+        ) == "shared-io-completed"
+        metrics = scheduler.scheduler_timeout_metrics_snapshot()
+        assert metrics["universe_audit_sync_pending"] == 1
+        assert metrics["sync_pending"] == 0
+        audit_workers = [
+            thread for thread in threading.enumerate()
+            if thread.name == "aletheia-universe-audit-sync"
+        ]
+        assert len(audit_workers) == 1
+        assert audit_workers[0].daemon is True
+    finally:
+        release.set()
+        assert blocked.result(timeout=1) is None
 
 
 def test_scheduler_guard_allows_concurrent_job_bodies():
