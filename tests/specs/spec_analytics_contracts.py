@@ -204,7 +204,8 @@ def test_alpha_attribution_contract_shape_on_empty_db():
     assert paired["promotion_eligible"] is False
     assert paired["contribution_verdict"] == "insufficient_data"
     trailing = report["exit_trailing_qualification"]
-    assert trailing["contract_version"] == "exit-trailing-qualification/v1"
+    assert trailing["contract_version"] == "exit-trailing-qualification/v2"
+    assert trailing["recovery_contract"]["authority"] == "diagnostic_only"
     assert trailing["cross_cohort_pooling"] is False
     assert trailing["promotion_eligible"] is False
     risk = report["risk_policy_evidence"]
