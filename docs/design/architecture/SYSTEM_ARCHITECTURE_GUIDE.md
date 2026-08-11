@@ -30,9 +30,9 @@
 
 ![Data Collection](../../diagrams/rendered/02_data_collection.png)
 
-活动主线从 Bitget crypto spot/perpetual 获取市场事实，并把 venue、market type
-和 symbol 身份保留到持久化记录。其他 adapter 或历史采集代码的存在不等于
-当前 Supported 能力。核心数据包括：
+活动主线从运行时配置并记录的 market-data venue 获取 crypto spot/perpetual 市场事实，
+并把 venue、market type 和 symbol 身份保留到持久化记录。其他 adapter 或历史采集代码
+的存在不等于当前 Supported 能力。核心数据包括：
 
 | 数据 | 内容 | 用途 |
 |------|------|------|
@@ -115,9 +115,6 @@ System Operator 由 committed event 唤醒，并保留约 15 分钟的 fallback�
 |------|------|------|
 | `trade` | 确认交易 | → 执行层下单 |
 | `skip` | 放弃信号 | 记录原因，下轮可回顾 |
-| `watch` | 先观察 | 加入观察列表 |
-| `scale_in` | 加仓 | 现有持仓追加 |
-| `flip` | 反转 | 平掉反向再开 |
 
 ---
 
@@ -147,10 +144,9 @@ stop_price = price × (1 - stop_loss_pct%)
 
 ### Step 3: 下单执行
 
-根据 `execution_mode`：
-- `paper_internal`：本地模拟成交（零延迟）
-- `bitget_demo`：交易所模拟盘（真实撮合但虚拟资金）
-- `bitget_live_limited`：实盘（**需要人工确认**）
+当前 Supported execution mode 只有 `paper_internal`，由本地 Paper broker 模拟成交。
+Exchange demo/live adapter 代码的存在不构成 Supported 能力；Live 默认关闭，且任何未来
+启用仍必须保留显式人工授权和完整 Risk/Execution 信任边界。
 
 ### Step 4: 成交链路
 ```
