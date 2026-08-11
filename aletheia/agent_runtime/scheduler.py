@@ -827,17 +827,21 @@ def _recover_interrupted_universe_scanner_runs(
 
     recovery_reason = "gateway_restart_interrupted"
     completed_at = datetime.now(timezone.utc).isoformat()
+    cutoff = _parse_scheduler_timestamp(started_before)
+    if cutoff is None:
+        logger.warning("Universe scanner startup cutoff is invalid: %r", started_before)
+        return None
 
     def reconcile(db) -> list[str]:
         rows = db.execute(
-            "SELECT id, errors FROM universe_scanner_runs "
-            "WHERE status = 'running' "
-            "AND datetime(started_at) < datetime(?) "
-            "ORDER BY started_at, id",
-            (started_before,),
+            "SELECT id, started_at, errors FROM universe_scanner_runs "
+            "WHERE status = 'running' ORDER BY started_at, id"
         ).fetchall()
         recovered: list[str] = []
         for row in rows:
+            started_at = _parse_scheduler_timestamp(row["started_at"])
+            if started_at is None or started_at >= cutoff:
+                continue
             try:
                 errors = json.loads(row["errors"] or "[]")
             except (TypeError, json.JSONDecodeError):
@@ -1105,7 +1109,10 @@ def init_scheduler() -> BackgroundScheduler | None:
         )
         if recovered is not None:
             _universe_scanner_startup_recovery_done = True
-    if not _universe_scanner_audit_mirror_done:
+    if (
+        _universe_scanner_startup_recovery_done
+        and not _universe_scanner_audit_mirror_done
+    ):
         _universe_scanner_audit_mirror_done = (
             _mirror_universe_scanner_recovery_audits()
         )

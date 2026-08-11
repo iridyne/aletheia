@@ -55,6 +55,14 @@ def test_gateway_startup_reconciles_interrupted_scanner_runs():
                 "completed",
                 "[]",
             ),
+            ("subsecond-run", "2026-08-11T11:19:00.100000+00:00", None, "running", "[]"),
+            (
+                "same-second-current",
+                "2026-08-11T11:19:00.950000+00:00",
+                None,
+                "running",
+                "[]",
+            ),
             ("current-run", "2026-08-11T11:21:00+00:00", None, "running", "[]"),
         ),
     )
@@ -62,7 +70,7 @@ def test_gateway_startup_reconciles_interrupted_scanner_runs():
     audits_before = db.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0]
 
     recovered = scheduler._recover_interrupted_universe_scanner_runs(
-        started_before="2026-08-11T11:19:00+00:00",
+        started_before="2026-08-11T11:19:00.900000+00:00",
     )
     assert scheduler._mirror_universe_scanner_recovery_audits() is True
 
@@ -72,29 +80,32 @@ def test_gateway_startup_reconciles_interrupted_scanner_runs():
             "SELECT id, status, completed_at, errors FROM universe_scanner_runs"
         ).fetchall()
     }
-    assert recovered == ["interrupted-run"]
+    assert recovered == ["interrupted-run", "subsecond-run"]
     assert rows["interrupted-run"]["status"] == "failed"
+    assert rows["subsecond-run"]["status"] == "failed"
     assert rows["interrupted-run"]["completed_at"]
     assert json.loads(rows["interrupted-run"]["errors"]) == [
         "gateway_restart_interrupted"
     ]
     assert rows["current-run"]["status"] == "running"
+    assert rows["same-second-current"]["status"] == "running"
     assert rows["completed-run"] == {
         "id": "completed-run",
         "status": "completed",
         "completed_at": "2026-08-11T11:22:04+00:00",
         "errors": "[]",
     }
-    audits = [
-        dict(row)
+    audits = {
+        row["entity_id"]: dict(row)
         for row in db.execute(
             "SELECT id, actor, source, event_type, entity_type, entity_id, message "
-            "FROM audit_events WHERE entity_id = ?",
-            ("interrupted-run",),
+            "FROM audit_events "
+            "WHERE event_type = 'universe_scanner_run_interrupted'"
         ).fetchall()
-    ]
+    }
     assert audits_before == 0
-    assert audits == [{
+    assert set(audits) == {"interrupted-run", "subsecond-run"}
+    assert audits["interrupted-run"] == {
         "id": "universe-scanner-restart:interrupted-run",
         "actor": "system",
         "source": "scheduler",
@@ -102,15 +113,20 @@ def test_gateway_startup_reconciles_interrupted_scanner_runs():
         "entity_type": "universe_scanner_run",
         "entity_id": "interrupted-run",
         "message": "Gateway restart interrupted Universe scanner run interrupted-run",
-    }]
+    }
     from aletheia.files.jsonl import read_jsonl
 
     mirrored = [
         event for event in read_jsonl("audit.jsonl")
-        if event.get("id") == "universe-scanner-restart:interrupted-run"
+        if event.get("event_type") == "universe_scanner_run_interrupted"
     ]
-    assert len(mirrored) == 1
-    assert mirrored[0]["reason"] == "gateway_restart_interrupted"
+    assert {event["id"] for event in mirrored} == {
+        "universe-scanner-restart:interrupted-run",
+        "universe-scanner-restart:subsecond-run",
+    }
+    assert all(
+        event["reason"] == "gateway_restart_interrupted" for event in mirrored
+    )
 
 
 def test_scheduler_startup_recovery_is_not_repeated_for_current_process(monkeypatch):
@@ -152,6 +168,7 @@ def test_scheduler_startup_retries_failed_recovery_with_original_cutoff(monkeypa
     from aletheia.agent_runtime import scheduler
 
     recovery_calls = []
+    mirror_calls = []
     recovery_results = iter((None, []))
 
     def recover(*, started_before):
@@ -161,8 +178,13 @@ def test_scheduler_startup_retries_failed_recovery_with_original_cutoff(monkeypa
     monkeypatch.setattr(scheduler, "_scheduler", None)
     monkeypatch.setattr(scheduler, "_universe_scanner_startup_cutoff", None)
     monkeypatch.setattr(scheduler, "_universe_scanner_startup_recovery_done", False)
-    monkeypatch.setattr(scheduler, "_universe_scanner_audit_mirror_done", True)
+    monkeypatch.setattr(scheduler, "_universe_scanner_audit_mirror_done", False)
     monkeypatch.setattr(scheduler, "_recover_interrupted_serenity_run", lambda: [])
+    monkeypatch.setattr(
+        scheduler,
+        "_mirror_universe_scanner_recovery_audits",
+        lambda: mirror_calls.append("mirror") or True,
+    )
     monkeypatch.setattr(
         scheduler,
         "_recover_interrupted_universe_scanner_runs",
@@ -178,6 +200,7 @@ def test_scheduler_startup_retries_failed_recovery_with_original_cutoff(monkeypa
     assert scheduler.init_scheduler() is None
     assert recovery_calls == [recovery_calls[0], recovery_calls[0]]
     assert scheduler._universe_scanner_startup_recovery_done is True
+    assert mirror_calls == ["mirror"]
 
 def test_stale_agent_cleanup_parses_iso_timestamps():
     from aletheia.agent_runtime import scheduler
