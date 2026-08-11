@@ -8,6 +8,7 @@ Covers:
 """
 
 import asyncio
+import json
 import sqlite3
 import math
 from datetime import datetime, timedelta, timezone
@@ -395,6 +396,9 @@ def test_observer_pre_filter_rejection_is_not_a_run_error(tmp_path, monkeypatch)
 
     import aletheia.agents.market_observer as mo
     import aletheia.trading.market_context as mc
+    from tests.observer_admission_fixture import admit_observer_instrument
+
+    admit_observer_instrument(monkeypatch, mo)
 
     async def fake_builder(symbols, market_type="spot", **kwargs):
         return ("calm verified snapshot", {"fallback": False, "errors": [], "symbols": {}})
@@ -434,6 +438,9 @@ def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
 
     # Force the structured-LLM path to fail.
     import aletheia.agents.market_observer as mo
+    from tests.observer_admission_fixture import admit_observer_instrument
+
+    admit_observer_instrument(monkeypatch, mo)
     captured_calls = []
 
     async def fake_llm_structured(*a, **kw):
@@ -494,9 +501,12 @@ def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
 
 
 def test_observer_extracts_confidence_score_when_provided(tmp_path, monkeypatch):
-    """When LLM returns the new structured shape, observer must read all fields."""
+    """When LLM returns the new structured shape, Observer enriches all fields."""
     _setup_env(tmp_path, monkeypatch)
     import aletheia.agents.market_observer as mo
+    from tests.observer_admission_fixture import admit_observer_instrument
+
+    owner = admit_observer_instrument(monkeypatch, mo)
 
     async def fake_llm_structured(*a, **kw):
         return ({
@@ -523,15 +533,19 @@ def test_observer_extracts_confidence_score_when_provided(tmp_path, monkeypatch)
     assert any(o.startswith("opportunity:") for o in out["outputs"])
 
     opps = repo.list_opportunities(limit=5)
-    assert opps, "observer must have created an opportunity"
+    assert len(opps) == 1
     opp = opps[0]
+    assert opp["id"] == owner.id
+    assert opp["source_agent"] == "universe_scanner"
     assert opp["direction_bias"] == "long"
     assert opp["confidence"] == "medium"
-    # The score is now persisted as a real column, not just embedded in thesis.
-    assert opp["confidence_score"] == 65
-    # Thesis must surface the score and observations (not just rationale).
-    assert "score=65" in opp["thesis"]
-    assert "Observations:" in opp["thesis"]
+    # Deterministic producer semantics stay immutable; Observer owns only its
+    # namespaced assessment.
+    assert opp["confidence_score"] == 60
+    assessment = json.loads(opp["metadata"])["observer_assessment"]
+    assert assessment["confidence_score"] == 65
+    assert assessment["rationale"] == "Multi-tf agreement on BTC"
+    assert len(assessment["key_observations"]) == 2
 
     from aletheia.agents.helpers import _release_run_counter
     _release_run_counter("run-mo-2")
@@ -628,6 +642,9 @@ def test_observer_includes_fresh_perp_structure_context(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     import aletheia.agents.market_observer as mo
     from aletheia.storage import repositories as repo
+    from tests.observer_admission_fixture import admit_observer_instrument
+
+    admit_observer_instrument(monkeypatch, mo, market_type="perp")
 
     repo.insert_perp_structure_snapshot({
         "id": "perp-struct-observer-1",
@@ -684,6 +701,9 @@ def test_observer_includes_compact_position_x_structure_context(tmp_path, monkey
     _setup_env(tmp_path, monkeypatch)
     import aletheia.agents.market_observer as mo
     from aletheia.storage import repositories as repo
+    from tests.observer_admission_fixture import admit_observer_instrument
+
+    admit_observer_instrument(monkeypatch, mo, market_type="perp")
 
     repo.insert_perp_structure_snapshot({
         "id": "perp-struct-observer-2",
