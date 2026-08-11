@@ -202,6 +202,56 @@ def test_scheduler_startup_retries_failed_recovery_with_original_cutoff(monkeypa
     assert scheduler._universe_scanner_startup_recovery_done is True
     assert mirror_calls == ["mirror"]
 
+
+def test_scheduler_retries_failed_universe_recovery_audit_mirror(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.files import jsonl
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO universe_scanner_runs (id, started_at, status, errors) "
+        "VALUES (?, ?, 'running', '[]')",
+        ("periodic-audit-retry", "2026-08-11T11:17:45+00:00"),
+    )
+    db.commit()
+    assert scheduler._recover_interrupted_universe_scanner_runs(
+        started_before="2026-08-11T11:18:00+00:00",
+    ) == ["periodic-audit-retry"]
+
+    real_append = jsonl._append_jsonl_line
+    append_attempts = []
+
+    def fail_first_append(path, line):
+        append_attempts.append(line)
+        if len(append_attempts) == 1:
+            raise OSError("temporary audit sink failure")
+        return real_append(path, line)
+
+    monkeypatch.setattr(jsonl, "_append_jsonl_line", fail_first_append)
+    monkeypatch.setattr(scheduler, "_universe_scanner_startup_recovery_done", True)
+    monkeypatch.setattr(scheduler, "_universe_scanner_audit_mirror_done", False)
+
+    scheduler._universe_scanner_audit_mirror_done = (
+        scheduler._mirror_universe_scanner_recovery_audits()
+    )
+    assert scheduler._universe_scanner_audit_mirror_done is False
+    monkeypatch.setattr(
+        scheduler,
+        "_recover_interrupted_universe_scanner_runs",
+        lambda **_: pytest.fail("periodic audit retry repeated DB recovery"),
+    )
+
+    assert scheduler._run_universe_scanner_audit_reconciler() is True
+    assert scheduler._run_universe_scanner_audit_reconciler() is True
+    assert len(append_attempts) == 2
+
+    mirrored = [
+        event for event in jsonl.read_jsonl("audit.jsonl")
+        if event.get("id") == "universe-scanner-restart:periodic-audit-retry"
+    ]
+    assert len(mirrored) == 1
+
 def test_stale_agent_cleanup_parses_iso_timestamps():
     from aletheia.agent_runtime import scheduler
     from aletheia.storage import repositories as repo

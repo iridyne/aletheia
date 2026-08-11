@@ -121,14 +121,21 @@ def test_scheduler_registers_separate_single_instance_learning_jobs(monkeypatch)
         evaluator = started.get_job("learning_contribution_evaluator")
         controller = started.get_job("learning_lifecycle_controller")
         audit_reconciler = started.get_job("learning_lifecycle_audit_reconciler")
+        universe_audit_reconciler = started.get_job(
+            "universe_scanner_audit_reconciler"
+        )
         assert evaluator is not None and controller is not None and audit_reconciler is not None
+        assert universe_audit_reconciler is not None
         assert job_ids.count("learning_contribution_evaluator") == 1
         assert "learning_verdict_runner" not in job_ids
         assert evaluator.max_instances == controller.max_instances == 1
         assert audit_reconciler.max_instances == 1
+        assert universe_audit_reconciler.max_instances == 1
+        assert universe_audit_reconciler.coalesce is True
         assert evaluator.coalesce is True and controller.coalesce is True
         assert evaluator.next_run_time == durable_due
         assert "learning_lifecycle_audit_reconciler" in scheduler._ESSENTIAL_JOBS
+        assert "universe_scanner_audit_reconciler" in scheduler._ESSENTIAL_JOBS
     finally:
         scheduler.stop_scheduler()
 
