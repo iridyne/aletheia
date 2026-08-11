@@ -121,6 +121,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "learning_contribution_evaluator": 60.0,
     "learning_lifecycle_controller": 60.0,
     "learning_lifecycle_audit_reconciler": 30.0,
+    "universe_scanner_audit_reconciler": 15.0,
     # #90 fix: tpsl_fill_check runs every 90s and calls Bitget via
     # asyncio.run() internally. Without a bound, a stuck exchange session can
     # block the scheduler pool for the full IOCP drain (~255s on Windows) and
@@ -171,6 +172,8 @@ def scheduler_timeout_metrics_snapshot() -> dict[str, object]:
             "news_analyzer_worker_running": _news_analyzer_timeout_worker.running,
             "news_analyzer_pending": _news_analyzer_timeout_worker.pending,
             "sync_pending": _sync_timeout_worker.pending,
+            "universe_audit_sync_pending": _universe_audit_timeout_worker.pending,
+            "universe_audit_sync_workers": _SYNC_TIMEOUT_WORKERS,
             "sync_workers": _SYNC_TIMEOUT_WORKERS,
             # Kept for compatibility with health/reporting consumers.  The new
             # design never abandons a per-invocation thread.
@@ -365,12 +368,16 @@ def _ensure_timeout_workers_ready() -> None:
 class _PersistentSyncTimeoutWorker:
     """One daemon sync worker; equivalent to ``max_workers=1`` with a hard queue cap."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        thread_name: str = "aletheia-scheduler-sync",
+    ) -> None:
         self._queue: queue.Queue[tuple[object, concurrent.futures.Future] | None] = (
             queue.Queue(maxsize=_TIMEOUT_WORKER_CAPACITY)
         )
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._thread_name = thread_name
         self._pending = 0
 
     @property
@@ -384,7 +391,7 @@ class _PersistentSyncTimeoutWorker:
                 return
             self._thread = threading.Thread(
                 target=self._worker_main,
-                name="aletheia-scheduler-sync",
+                name=self._thread_name,
                 daemon=True,
             )
             self._thread.start()
@@ -427,6 +434,9 @@ class _PersistentSyncTimeoutWorker:
 
 
 _sync_timeout_worker = _PersistentSyncTimeoutWorker()
+_universe_audit_timeout_worker = _PersistentSyncTimeoutWorker(
+    "aletheia-universe-audit-sync"
+)
 
 
 class _AsyncJobDeadline(TimeoutError):
@@ -504,6 +514,9 @@ _EXECUTOR_WORKERS = {
     # more reliable than parallel scheduled writers that frequently collide and
     # cascade into ``database is locked`` across unrelated jobs.
     "io": 1,
+    # Hash-chain scans and cross-process audit locks must never occupy the
+    # single operational IO worker while their bounded sync lane times out.
+    "audit": 1,
     "fast_io": 1,
     # Protective lifecycle checks must not queue behind 60--300 second market,
     # reconciliation, or settlement jobs.  The position manager is the only job
@@ -598,19 +611,24 @@ def _guarded(job_id: str, fn):
     return partial(_run_job_guarded, job_id, fn)
 
 
-def _run_sync_with_timeout(job_id: str, fn) -> object:
+def _run_sync_with_timeout(
+    job_id: str,
+    fn,
+    *,
+    worker: _PersistentSyncTimeoutWorker | None = None,
+) -> object:
     """Run sync work on one process-owned, capacity-bounded worker lane.
 
-    Python cannot safely interrupt a running thread.  Keeping a single fixed
-    worker therefore contains a non-cooperative call to one thread instead of
-    allocating and abandoning a new thread on every retry.  The bounded slot
-    gate also prevents an unresponsive lane from accumulating an unbounded
-    future queue.
+    Python cannot safely interrupt a running thread.  A selected fixed worker
+    contains a non-cooperative call to one thread instead of allocating and
+    abandoning a new thread on every retry.  Each lane's bounded slot gate also
+    prevents an unresponsive callable from accumulating an unbounded queue.
     """
     from aletheia.storage.sqlite import close_db, rollback_if_in_transaction
 
     timeout = _ASYNC_JOB_TIMEOUT_SEC[job_id]
     thread_timeout = timeout + 15.0
+    timeout_worker = worker or _sync_timeout_worker
 
     def _run():
         try:
@@ -621,7 +639,7 @@ def _run_sync_with_timeout(job_id: str, fn) -> object:
 
     _bump_timeout_metric("sync_submitted")
     try:
-        future = _sync_timeout_worker.submit(_run)
+        future = timeout_worker.submit(_run)
     except RuntimeError:
         _bump_timeout_metric("sync_rejected")
         raise
@@ -945,8 +963,12 @@ def _run_universe_scanner_audit_reconciler() -> bool:
             or _universe_scanner_audit_mirror_done
         ):
             return _universe_scanner_audit_mirror_done
-        _universe_scanner_audit_mirror_done = (
-            _mirror_universe_scanner_recovery_audits()
+        _universe_scanner_audit_mirror_done = bool(
+            _run_sync_with_timeout(
+                "universe_scanner_audit_reconciler",
+                _mirror_universe_scanner_recovery_audits,
+                worker=_universe_audit_timeout_worker,
+            )
         )
         if not _universe_scanner_audit_mirror_done:
             _record_job_failure(
@@ -1379,7 +1401,7 @@ def init_scheduler() -> BackgroundScheduler | None:
             _run_universe_scanner_audit_reconciler,
         ),
         "interval", minutes=5, id="universe_scanner_audit_reconciler",
-        misfire_grace_time=120, max_instances=1, coalesce=True, executor="io",
+        misfire_grace_time=120, max_instances=1, coalesce=True, executor="audit",
         next_run_time=datetime.now() + timedelta(minutes=5),
     )
     # Independent outcome settler — settles overdue forward-outcome rows that feed

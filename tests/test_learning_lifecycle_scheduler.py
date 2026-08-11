@@ -132,6 +132,7 @@ def test_scheduler_registers_separate_single_instance_learning_jobs(monkeypatch)
         assert audit_reconciler.max_instances == 1
         assert universe_audit_reconciler.max_instances == 1
         assert universe_audit_reconciler.coalesce is True
+        assert universe_audit_reconciler.executor == "audit"
         assert evaluator.coalesce is True and controller.coalesce is True
         assert evaluator.next_run_time == durable_due
         assert "learning_lifecycle_audit_reconciler" in scheduler._ESSENTIAL_JOBS
