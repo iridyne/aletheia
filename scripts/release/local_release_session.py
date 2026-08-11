@@ -295,7 +295,7 @@ def apply_via_installed_cli(
         raise LocalReleaseSessionError(f"installed CLI is not a file: {launcher}")
     env = dict(os.environ, ALETHEIA_UPDATE_FEED_URL=feed_url)
     _cli_output([str(launcher), "update", "check"], env=env)
-    _cli_output([str(launcher), "update", "apply", "--yes"], env=env)
+    _cli_output([str(launcher), "update"], env=env)
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         state = _read_update_state(launcher, env=env)

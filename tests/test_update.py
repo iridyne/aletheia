@@ -284,6 +284,24 @@ def test_cli_update_without_subcommand_stages_packaged_release(monkeypatch):
     assert "Release 0.7.0 is verified and migration-preflighted." in result.output
 
 
+def test_cli_update_rejects_no_restart_in_packaged_mode(monkeypatch):
+    from aletheia.cli import update_cmd
+    from aletheia.update import packaged_commands
+    from typer.testing import CliRunner
+
+    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: True)
+    monkeypatch.setattr(
+        packaged_commands,
+        "stage_update_blocking",
+        lambda: pytest.fail("packaged update must not start with --no-restart"),
+    )
+
+    result = CliRunner().invoke(update_cmd.update_app, ["--no-restart"])
+
+    assert result.exit_code == 1
+    assert "`--no-restart` is only available for source checkouts" in result.output
+
+
 def test_top_level_update_help_has_no_apply_subcommand():
     from aletheia.main import app
     from typer.testing import CliRunner

@@ -37,6 +37,13 @@ def update(
 
 def _run_update(*, restart: bool) -> None:
     if _is_packaged():
+        if not restart:
+            typer.echo(
+                "`--no-restart` is only available for source checkouts; "
+                "packaged updates require Tray activation and restart.",
+                err=True,
+            )
+            raise typer.Exit(1)
         from aletheia.update.packaged_commands import stage_update_blocking
 
         result = stage_update_blocking()
