@@ -175,18 +175,23 @@ interference 与 downstream Execution/Exit 不在其 estimand 内。
 
 ---
 
-## 5. 仓位计算(两条路径,诚实标注)
+## 5. 仓位计算(当前权威路径)
 
-> ⚠️ 当前有**两条并存的 sizing 路径**,这是 [execution_path_honesty §1.1](../../governance/policies/execution_path_honesty.md) 揭示的事实:
+当前新建仓位的生产消费者只有 System Operator。`paper_trader._atr_adjusted_notional()`
+仍保留为 helper，但没有生产调用者，不构成第二条权威 sizing 路径。
 
-| 路径 | 公式 | 位置 |
-|------|------|------|
-| paper_trader(规则路径) | 固定 `notional=$25 / price` | `paper_trader.py:124` |
-| System Operator(conviction 路径) | `compute_position_size(conviction, base, kelly, dd)` — conviction 0-100 映射 [0.3,2.5]× × quarter-Kelly × 回撤缩放 | `trading/sizing.py:19-64`, 调用于 `trading_decision.py:154` |
+System Operator 调用 `vol_target_size()`：先以 ATR 推导的 notional 和历史缩放上限
+确定 sizing base，再由 `compute_position_size()` 把 conviction 映射为 [0.3, 2.5]
+区间内的乘数，并应用回撤缩放。历史配置名 `vol_kelly_cap_fraction` /
+`kelly_fraction` 仅是兼容保留的 scaling factor；当前实现没有使用经校准的
+胜率、payoff odds 或收益分布，因此不是 Kelly sizing。
 
-config:`trading.default_notional_usdt=25`, `vol_kelly_cap_fraction=0.25`, `vol_sizing_enabled=True`(`schema.py:329`)。
+config：`trading.default_notional_usdt=25`、`vol_kelly_cap_fraction=0.25`、
+`vol_sizing_enabled=True`。
 
-**关键契约**:sizing 计算结果**不是**最终下单量——仍须过 §2 第 5 关(Max Position Notional)裁剪。sizing 决定"想要多少",Risk Engine 决定"允许多少"。
+**关键契约**：sizing 计算结果**不是**最终下单量；它仍须通过 §2 第 5 关
+(Max Position Notional)。sizing 提交期望 notional，Risk Engine 只能批准或拒绝，
+不会把超限请求优化或裁剪成另一个仓位。
 
 ---
 

@@ -169,7 +169,7 @@ def test_sizing_trace_detects_low_base_notional(monkeypatch):
     assert report["traces"][0]["main_reason"] == "low_base_notional"
 
 
-def test_sizing_trace_detects_sample_aware_kelly(monkeypatch):
+def test_sizing_trace_detects_sample_aware_scaling(monkeypatch):
     from aletheia.analytics.sizing_trace import build_sizing_trace_audit
     from aletheia.storage.sqlite import get_db
 
@@ -184,7 +184,9 @@ def test_sizing_trace_detects_sample_aware_kelly(monkeypatch):
     trace = report["traces"][0]
     assert trace["paper_trade_count"] == 0
     assert trace["effective_kelly"] == 0.1
-    assert trace["main_reason"] == "sample_aware_kelly"
+    assert trace["main_reason"] == "sample_aware_scaling"
+    assert trace["effective_scaling_fraction"] == 0.1
+    assert trace["legacy_parameter_name"] == "kelly_fraction"
 
 
 def test_sizing_trace_detects_risk_cap(monkeypatch):

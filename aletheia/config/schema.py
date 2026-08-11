@@ -1041,7 +1041,7 @@ def _default_personas() -> dict:
             params={
                 # Grounded initial values (owner + operator, 2026-07-02): 1% single-
                 # trade loss (classic 1% rule), leverage init 10x / HARD CAP 15x (20x
-                # buffer too thin), fractional Kelly ≤0.5, ≤3 pyramid adds. NOTE: the
+                # buffer too thin), legacy scaling ≤0.5, ≤3 pyramid adds. NOTE: the
                 # The asset-tier demo leverage cap still clamps this; the default
                 # roll persona ceiling remains deliberately lower than that boundary.
                 "notional_usdt": P(20, 50, 200),
@@ -1082,7 +1082,9 @@ class TradingConfig(BaseModel):
     # get default stops/TP from position_manager and MAY be auto-closed. LIVE
     # positions are NEVER auto-adopted regardless of this flag (human-confirmed only).
     auto_adopt_enabled: bool = True
-    # Volatility-target sizing: normalize risk per trade to ATR
+    # Conviction-weighted notional sizing with an ATR-derived cap. The historical
+    # ``vol_kelly_cap_fraction`` name is compatibility-only; it is a policy scaling
+    # factor, not a Kelly-optimal fraction.
     default_notional_usdt: float = 25.0
     vol_sizing_enabled: bool = True
     vol_target_risk_usdt: float = 25.0

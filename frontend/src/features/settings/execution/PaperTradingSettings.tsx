@@ -386,17 +386,21 @@ export function TradingParamsCard({ settings, qc, onDirty }: any) {
                 onChange={e => { setVolRiskUsdt(e.target.value); setMsg(null) }} className="mono" />
             </label>
             <label>
-              <span>ATR target (%)</span>
+              <span>Legacy ATR target (%)</span>
               <input type="number" min={0.5} max={10} step={0.1} value={volTargetPct}
                 onChange={e => { setVolTargetPct(e.target.value); setMsg(null) }} className="mono" />
             </label>
             <label>
-              <span>Kelly cap fraction</span>
-              <input type="number" min={0.05} max={1} step={0.05} value={volKellyCap}
+              <span>Legacy sizing scale</span>
+              <input type="number" min={0.05} max={0.5} step={0.05} value={volKellyCap}
                 onChange={e => { setVolKellyCap(e.target.value); setMsg(null) }} className="mono" />
             </label>
           </>)}
         </div>
+        <p className="hint mt-1">
+          Compatibility note: ATR target is not consumed by the current sizing formula, and the
+          legacy sizing scale is a bounded multiplier—not a calibrated Kelly fraction.
+        </p>
         <div className="settings-inline-note">
           <Toggle
             checked={exchangeTpslEnabled}
@@ -417,7 +421,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: any) {
             onChange={v => { setPersonaEnabled(v); setMsg(null) }}
           />
           <p className="hint mt-1">
-            When ON, entry sizing reads the active persona's notional and Kelly bounds instead of
+            When ON, entry sizing reads the active persona's notional and legacy scaling bounds instead of
             the flat fields above. Other displayed ranges are reference inputs for the separately
             gated unlock/pyramid experiments below; they do not currently change base entry leverage,
             stops, or add orders. Default OFF = legacy sizing (zero change). Risk-engine hard caps
@@ -446,7 +450,8 @@ export function TradingParamsCard({ settings, qc, onDirty }: any) {
                     ))}
                   </div>
                   <p className="hint mt-1">
-                    Active entry consumers: <code>notional_usdt</code> and <code>kelly_fraction</code>.
+                    Active entry consumers: <code>notional_usdt</code> and the legacy-named{' '}
+                    <code>kelly_fraction</code> scaling field.
                     Leverage, stop, and add parameters remain experimental/reference-only.
                   </p>
                 </div>
@@ -479,8 +484,8 @@ export function TradingParamsCard({ settings, qc, onDirty }: any) {
                 onChange={v => { setPersonaUnlockEnabled(v); setMsg(null) }}
               />
               <p className="hint mt-1">
-                Experimental: only active entry parameters (<code>notional_usdt</code> and{' '}
-                <code>kelly_fraction</code>) can unlock. The current gate counts eligible historical
+                Experimental: only active entry parameters (<code>notional_usdt</code> and the{' '}
+                legacy-named <code>kelly_fraction</code> scaling field) can unlock. The current gate counts eligible historical
                 closes globally; it does not establish a fresh Persona-specific evidence window.
                 Account distress refreezes all. Default OFF.
               </p>

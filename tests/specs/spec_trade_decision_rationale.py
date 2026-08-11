@@ -130,9 +130,41 @@ def test_proposal_rationale_carries_final_parameter_snapshot(tmp_path, monkeypat
     assert snapshot["take_profit"]["value_source"] == "default_config"
     assert snapshot["notional_usdt"]["actual_value"] == 25.0
     assert snapshot["notional_usdt"]["estimated_loss_at_stop_usdt"] > 0
+    assert snapshot["notional_usdt"]["value_source"] == "programmatic_or_legacy"
     assert snapshot["leverage"]["requested_value"] == 9
     assert snapshot["leverage"]["final_value"] == 3
     assert snapshot["leverage"]["value_source"] == "risk_cap_clamped"
+
+
+def test_sizing_policy_is_named_as_deterministic_not_ai_requested():
+    from aletheia.agent_shell.trading_decision import (
+        TradingDecision,
+        _build_entry_parameter_snapshot,
+    )
+
+    decision = TradingDecision(
+        action="trade",
+        symbol="BTC/USDT",
+        direction="long",
+        conviction=80,
+        reasoning="test",
+        position_size_usdt=25.0,
+        sizing_trace={"policy_version": "conviction-weighted-notional/v1"},
+    )
+
+    snapshot = _build_entry_parameter_snapshot(
+        decision=decision,
+        market_type="spot",
+        entry_price=100.0,
+        quantity=0.25,
+        stop_price=98.0,
+        take_profit=104.0,
+        requested_notional=25.0,
+        leverage=None,
+        leverage_cap=None,
+    )
+
+    assert snapshot["notional_usdt"]["value_source"] == "deterministic_sizing_policy"
 
 
 @spec_claim(

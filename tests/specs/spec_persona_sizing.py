@@ -125,6 +125,58 @@ def test_vol_target_size_uses_persona_base(monkeypatch):
     )
 
 
+def test_vol_target_size_emits_complete_non_kelly_policy_trace(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    from aletheia.trading.sizing import vol_target_size
+
+    cfg = AletheiaConfig()
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    trace: dict = {}
+
+    result = vol_target_size(
+        "BTC/USDT",
+        conviction=80,
+        atr_pct_override=2.0,
+        paper_trade_count=0,
+        sizing_trace=trace,
+    )
+
+    assert trace["policy_version"] == "conviction-weighted-notional/v1"
+    assert trace["value_source"] == "deterministic_sizing_policy"
+    assert trace["legacy_parameter_name"] == "kelly_fraction"
+    assert trace["conviction"] == 80
+    assert trace["baseline_calculation"]["atr_pct"] == 2.0
+    assert trace["baseline_calculation"]["effective_scaling_fraction"] == 0.1
+    assert trace["baseline_calculation"]["final_notional_usdt"] == result
+
+
+def test_trading_settings_reject_invalid_legacy_sizing_scalars(tmp_path, monkeypatch):
+    import asyncio
+
+    from fastapi import HTTPException
+    import pytest
+
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.server.routes import settings as settings_routes
+
+    cfg = AletheiaConfig()
+    monkeypatch.setattr(settings_routes, "load_config", lambda: cfg)
+    monkeypatch.setattr(settings_routes, "save_config", lambda _cfg: None)
+
+    for field, value in (
+        ("default_notional_usdt", 0),
+        ("vol_target_risk_usdt", -1),
+        ("vol_target_pct", 0),
+        ("vol_kelly_cap_fraction", 0.75),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(settings_routes.update_trading_config(
+                settings_routes.TradingConfigUpdate(**{field: value})
+            ))
+        assert exc.value.status_code == 400
+
+
 @spec_claim(
     SpecClaim(
         "PS-S14", "persona_sizing", "§6 persona sizing reaches Proposal quantity", "L2b",

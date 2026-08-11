@@ -1610,6 +1610,12 @@ def _build_entry_parameter_snapshot(
 
     actual_notional = round(quantity * entry_price, 8)
     estimated_loss = round(quantity * abs(entry_price - stop_price), 8)
+    if decision.sizing_trace:
+        notional_source = "deterministic_sizing_policy"
+    elif decision.position_size_usdt is not None:
+        notional_source = "programmatic_or_legacy"
+    else:
+        notional_source = "default_config"
     requested_leverage = decision.leverage if market_type == "usdt_futures" else None
     final_leverage = leverage or 1
     if market_type != "usdt_futures":
@@ -1650,7 +1656,7 @@ def _build_entry_parameter_snapshot(
             "requested_value": requested_notional,
             "actual_value": actual_notional,
             "estimated_loss_at_stop_usdt": estimated_loss,
-            "value_source": "ai_requested" if decision.position_size_usdt is not None else "default_config",
+            "value_source": notional_source,
             "reason": reason_for("notional_usdt"),
         },
         "leverage": {
@@ -1929,7 +1935,7 @@ def _compute_position_size(
     """Compute notional position size from conviction score (0-100).
 
     P1-5: paper_trade_count is passed through to vol_target_size so new strategies
-    start at 0.1 Kelly and ramp up as evidence accumulates (30+ trades = full Kelly).
+    start at a 0.1 legacy scaling factor and ramp to the configured factor.
     """
     from aletheia.config.loader import load_config
     cfg = load_config()
@@ -1953,7 +1959,7 @@ def _compute_position_size(
 
 
 def _get_strategy_paper_trade_count(strategy_id: str | None) -> int:
-    """Return closed paper/demo positions count for a strategy — used for sample-aware Kelly."""
+    """Return eligible paper/demo outcomes used for sample-aware scaling."""
     if not strategy_id:
         return 0
     try:
