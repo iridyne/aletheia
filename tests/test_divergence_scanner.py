@@ -209,7 +209,7 @@ async def test_divergence_scanner_creates_opportunity(tmp_path, monkeypatch):
     assert meta["prediction_polarity_version"] == "polarity-v1"
     manifest = meta["evidence_manifest"]
     assert manifest["version"] == "opportunity-information-integrity-v1"
-    assert manifest["policy_epoch"] == "opportunity_information_integrity/v1"
+    assert manifest["policy_epoch"] == "opportunity_information_integrity/v2"
     assert manifest["t0"]["trigger_type"] == "prediction_divergence"
     assert manifest["t0"]["prediction_market_id"] == "pm_test_001"
     assert manifest["t0"]["prediction_updated_at"] == now

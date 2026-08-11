@@ -58,7 +58,7 @@ Discovery surfaces:
 
 | ID | Capability | Product promise | Entry surfaces | Primary discovery evidence |
 |---|---|---|---|---|
-| DC-01 | Market Observer opportunity generation | Convert current market evidence into attributable opportunity generations | Scheduler, Agent Activity | `aletheia/agents/market_observer.py`, `scheduler.py:market_observer` |
+| DC-01 | Deterministic Universe opportunity generation | Admit attributable Universe opportunities deterministically; Observer may add advisory context only | Scheduler, Agent Activity | `aletheia/universe/signal_emitter.py`, `aletheia/agents/market_observer.py` |
 | DC-02 | Paper Ranker admission | Rank open opportunities, apply eligibility evidence, and queue bounded candidates | Scheduler, Blotter | `aletheia/agents/paper_trader_ranker.py`, `scheduler.py:paper_trader` |
 | DC-03 | System Operator trading decision | Make the sole terminal trade/skip/watch/flip/scale decision with durable reasoning | Blotter, Command Center, scheduler | `aletheia/agent_shell/trading_decision.py`, `pi_daemon.py` |
 | DC-04 | PI scheduled decision fallback | Run decision assessments even when no event wake is received | Scheduler, Agent Activity | `scheduler.py:pi_trading_decision` |

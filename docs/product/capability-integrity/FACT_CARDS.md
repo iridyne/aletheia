@@ -57,7 +57,7 @@ Notation:
 
 | ID | Runtime path and durable state → final consumer/result | Visible / recovery | Evidence and verdict | Review |
 |---|---|---|---|---|
-| DC-01 | scheduler → Market Observer → opportunity/generation rows → ranker/Operator → candidate evidence | Agent Activity; durable failure | E1+E2, Supported | E2 crosses observer-to-Operator seam. |
+| DC-01 | Universe refresh → deterministic emitter pass + Opportunity → optional Observer enrichment → ranker/Operator | Agent Activity; durable failure | E1+E2, Supported | Emitter fact is execution admission; Observer is advisory. |
 | DC-02 | paper job → ranker → admission/evidence rows → Operator queue → bounded candidate | Blotter; terminal reject reasons | E1+E2, Supported | Ranker is admission, not strategy authority. |
 | DC-03 | wake/schedule → System Operator → decision row → proposal/terminal ledger → trade/skip | Blotter/Command Center; retryable pending | E1+E2, Supported | Sole-authority and dedup constraints asserted. |
 | DC-04 | scheduler → PI daemon → pending scan/wake → Operator → decision even without event | Agent Activity; timeout/retry | E1+E2, Supported | Scheduled fallback has production trigger and tests. |

@@ -1181,6 +1181,30 @@ def _opportunity_evidence_from_metadata(value: Any) -> dict | None:
     return manifest
 
 
+def _observer_assessment_from_metadata(value: Any) -> dict | None:
+    try:
+        metadata = json.loads(value or "{}") if isinstance(value, str) else value
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    assessment = metadata.get("observer_assessment") if isinstance(metadata, dict) else None
+    if not isinstance(assessment, dict):
+        return None
+    return {
+        "version": assessment.get("version"),
+        "direction_bias": assessment.get("direction_bias"),
+        "confidence": assessment.get("confidence"),
+        "confidence_score": assessment.get("confidence_score"),
+        "rationale": str(assessment.get("rationale") or "")[:500],
+        "key_observations": [
+            str(item)[:200]
+            for item in (assessment.get("key_observations") or [])[:4]
+            if item
+        ],
+        "scanner_direction": assessment.get("scanner_direction"),
+        "direction_conflict": bool(assessment.get("direction_conflict")),
+    }
+
+
 def _feature_context_row(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Project one persisted feature row into the Operator context schema."""
     from aletheia.data.price_feed import get_cached_price_with_meta
@@ -1370,6 +1394,9 @@ def _hydrate_pending_candidate_context(
                 "thesis": (opportunity.get("thesis") or "")[:220],
                 "key_observations": _top_observations(
                     opportunity.get("key_observations")
+                ),
+                "observer_assessment": _observer_assessment_from_metadata(
+                    opportunity.get("metadata")
                 ),
                 "evidence_manifest": (
                     _opportunity_evidence_from_metadata(opportunity.get("metadata"))
@@ -1775,6 +1802,9 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 # here; the PI was previously blind to it (only the truncated thesis
                 # surfaced). Expose the top observations so the decision can cite them.
                 "key_observations": _top_observations(o.get("key_observations")),
+                "observer_assessment": _observer_assessment_from_metadata(
+                    o.get("metadata")
+                ),
                 "evidence_manifest": (
                     _opportunity_evidence_from_metadata(o.get("metadata"))
                     or {"status": "unavailable"}

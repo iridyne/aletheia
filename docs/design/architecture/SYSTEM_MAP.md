@@ -45,7 +45,7 @@
 
 | Job ID | 频率 | 输入数据 | 输出数据 | 下游 | 管道 |
 |--------|------|---------|---------|------|------|
-| `market_observer` | 10min | exact-instrument snapshots + structured RSI/ATR + quality-gated news/context | opportunities（metadata 含 T0/T1 source manifest + observer Learning manifest）, knowledge_items(research) | paper_trader_ranker | ✅ source identities 只记录实际渲染行；spot 不消费 perp context |
+| `market_observer` | 10min | 已通过 deterministic emitter 的 open Opportunity + exact-instrument context | namespaced `metadata.observer_assessment` advisory enrichment | 无阻塞下游；scanner 已独立唤醒 Ranker | ✅ exact snapshot/member/instrument + emitter pass fact；不新建 Opportunity |
 | `paper_trader` | 3min fallback + on-demand | open Opportunity generations + PiDecision + guards | 每轮最多 3 个新 `signal_pending`，全局最多 5 个 unresolved queued carriers；随后由 System Operator 决定是否形成 Proposal | ✅ 新 Opportunity/config/Guard/queue-slot/Universe 事实提交后合并唤醒；active carrier 与 30min cooldown 分开；队列满时 generation 保持 open 重试 |
 | `pi_trading_decision` | ~15min | market context + one Learning bundle（reflection/memo/reasoning/calibration/cases/lessons） | PiDecision（含 opportunity/proposal 因果 id + learning_manifest_json） | paper_trader(消费 decision) | ✅ |
 | `position_manager` | 5min | open positions + market prices + exit_rules | close proposals / TP-SL updates | ✅ |

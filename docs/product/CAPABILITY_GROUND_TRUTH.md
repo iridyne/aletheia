@@ -85,7 +85,7 @@ Outside these canonical tables, use the full capability name.
 
 | ID | Capability | Evidence | Status | Gap | Core |
 |---|---|---|---|---|---|
-| DC-01 | Market Observer opportunity generation | E1+E2 | Supported | None in tested contract | Yes |
+| DC-01 | Deterministic Universe opportunity generation + Observer advisory enrichment | E1+E2 | Supported | None in tested producer-authority contract | Yes |
 | DC-02 | Paper Ranker admission | E1+E2 | Supported | None in tested contract | Yes |
 | DC-03 | System Operator trading decision | E1+E2 | Supported | None in tested contract | Yes |
 | DC-04 | PI scheduled decision fallback | E1+E2 | Supported | None in tested contract | Yes |
@@ -191,7 +191,8 @@ The first supported profile is intentionally narrower than the product map:
 ```text
 Runtime start/recovery and scheduler observability
 → current market data and active universe
-→ Market Observer opportunity
+→ deterministic Universe Opportunity
+→ optional Market Observer enrichment
 → Paper Ranker admission
 → System Operator decision
 → deterministic Risk decision

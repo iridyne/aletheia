@@ -616,10 +616,10 @@ def build_current_entry_status(
         )
         next_trigger = "new_opportunity"
     else:
-        state, primary_stage = "no_candidates", "market_observer"
+        state, primary_stage = "no_candidates", "signal_emitter"
         headline = "No entry candidates were emitted in the selected window."
         reason_code = "no_candidates"
-        reason = "The system is waiting for Market Observer to emit a candidate."
+        reason = "The system is waiting for the deterministic Universe signal emitter to admit a candidate."
         next_trigger = "new_opportunity"
 
     operator_state = "waiting" if deferred else "working" if queued_total else "not_reached"
@@ -628,7 +628,7 @@ def build_current_entry_status(
     )
     ranker_state = "passed" if queued_total else "waiting" if open_opportunities else "idle"
     pipeline = [
-        {"stage": "observer", "label": "Observer", "state": "active" if emitted_count else "idle", "count": setup_count},
+        {"stage": "producer", "label": "Universe Scanner", "state": "active" if emitted_count else "idle", "count": setup_count},
         {"stage": "ranker", "label": "Ranker", "state": ranker_state, "count": active_setup_count},
         {"stage": "operator", "label": "Operator", "state": operator_state, "count": queued_total},
         {"stage": "proposal", "label": "Proposal", "state": proposal_state, "count": pending_proposals},

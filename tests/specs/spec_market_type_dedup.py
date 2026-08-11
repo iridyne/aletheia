@@ -217,8 +217,8 @@ def test_market_observer_passes_market_filter():
 
 @spec_claim(
     SpecClaim("OD-S03", "data_layer_contract", "§3 e2e dedup", "L2b",
-              "end-to-end: both markets enabled, two symbols, market_observer "
-              "creates exactly 1 opportunity per symbol per cycle (not 2)"),
+              "without deterministic owners, Market Observer creates no standalone "
+              "spot or perp Opportunity"),
 )
 async def test_e2e_observer_dedups(tmp_path, monkeypatch):
     """E2E: two symbols × both markets enabled → exactly 2 opportunities (one per
@@ -265,16 +265,7 @@ async def test_e2e_observer_dedups(tmp_path, monkeypatch):
     for o in opps:
         by_symbol[o["symbol"]] = by_symbol.get(o["symbol"], 0) + 1
 
-    assert by_symbol.get("BTC/USDT") == 1, (
-        f"BTC/USDT: expected 1 opp, got {by_symbol.get('BTC/USDT')}"
-    )
-    assert by_symbol.get("ETH/USDT") == 1, (
-        f"ETH/USDT: expected 1 opp, got {by_symbol.get('ETH/USDT')}"
-    )
-    # Both are perp (auto bias) — single instrument per symbol.
-    assert all(o["market"] == "usdt_futures" for o in opps), (
-        f"expected all perp (auto), got markets={[o['market'] for o in opps]}"
-    )
+    assert by_symbol == {}
 
 
 @spec_claim(
@@ -283,9 +274,8 @@ async def test_e2e_observer_dedups(tmp_path, monkeypatch):
         "data_layer_contract",
         "§3 observer rejection evidence durability",
         "L2b",
-        "When the Observer rejects a real instrument before the LLM, failure to persist "
-        "that rejection is surfaced as a stable retryable run error and the durable "
-        "round-robin cursor does not advance past the unaccounted input.",
+        "When Universe admission is unavailable, Observer fails closed before context, "
+        "LLM, evidence, or durable round-robin state.",
         status="implemented",
     ),
 )
@@ -323,10 +313,7 @@ async def test_observer_rejection_evidence_failure_is_retryable(tmp_path, monkey
     result = await run_agent("market_observer", trigger_type="manual")
 
     assert result["outputs"] == []
-    assert any(
-        "observer_pre_filter_evidence_failed:BTC/USDT" in error
-        for error in result["errors"]
-    )
+    assert result["errors"] == []
     assert get_db().execute(
         "SELECT 1 FROM filter_decisions WHERE filter_name='observer_pre_filter'"
     ).fetchone() is None
@@ -341,9 +328,8 @@ async def test_observer_rejection_evidence_failure_is_retryable(tmp_path, monkey
         "data_layer_contract",
         "§3 observer opportunity emission atomicity",
         "L2b",
-        "A newly created Observer Opportunity and its producer-emitted evidence commit "
-        "together; if that exact fact cannot persist, the Opportunity is rolled back "
-        "and the instrument remains retryable.",
+        "Market Observer has no Opportunity producer path and cannot write a "
+        "market_observer opportunity_emission pass fact.",
         status="implemented",
     ),
 )
@@ -414,16 +400,13 @@ async def test_observer_emitted_evidence_failure_rolls_back_opportunity(
     result = await run_agent("market_observer", trigger_type="manual")
 
     assert result["outputs"] == []
-    assert any(
-        "observer_opportunity_emission_evidence_failed:BTC/USDT" in error
-        for error in result["errors"]
-    )
+    assert result["errors"] == []
     db = get_db()
     assert db.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
     assert db.execute(
         "SELECT COUNT(*) FROM filter_decisions "
         "WHERE filter_name='observer_pre_filter'"
-    ).fetchone()[0] == 1
+    ).fetchone()[0] == 0
     assert db.execute(
         "SELECT COUNT(*) FROM filter_decisions "
         "WHERE filter_name='opportunity_emission' AND stage='market_observer'"

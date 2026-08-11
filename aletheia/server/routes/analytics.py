@@ -1128,7 +1128,7 @@ def get_opportunity_funnel_current_snapshot(hours: int = 24, response: Response 
 
 @router.get("/opportunity-funnel")
 def get_opportunity_funnel(hours: int = 24, response: Response = None):
-    """Market Observer → Operator funnel: exposes WHY opportunities don't reach the operator.
+    """Deterministic Opportunity → Operator funnel: exposes admission blockers.
 
     Causal cohort counts (window):
       - emitted_count: per-snapshot Opportunity generations created in window

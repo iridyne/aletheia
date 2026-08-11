@@ -61,7 +61,9 @@ aletheia-trading-os/
     ↓
 Data Collectors（每5min）→ universe_feature_snapshots
     ↓
-Market Observer（每10min）→ LLM 分析 → opportunities
+Universe signal emitter → deterministic eligibility → opportunities
+    ↓
+Market Observer（每10min）→ 可选 LLM advisory enrichment
     ↓
 Ranker（5层过滤）→ signal_pending → pi_decisions
     ↓
