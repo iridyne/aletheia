@@ -57,7 +57,7 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     cfg.market_data.observed_xstocks = []
     cfg.market_data.observed_stock_tokens = []
     cfg.market_data.prediction_enabled = False
-    cfg.universe.enabled = False
+    cfg.universe.enabled = True
     save_config(cfg)
 
     # Session A owns everything produced in this boot (opportunity → position).
@@ -90,9 +90,17 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
         "observed_at": datetime.now(timezone.utc).isoformat(),
     })
 
-    # The public market/LLM boundaries are deterministic, but the production
-    # Observer must create the Opportunity.  This prevents the Golden Path from
-    # starting in the middle of the business chain with a hand-built row.
+    # The public market/LLM boundaries are deterministic. The fixture starts at
+    # the deterministic producer admission boundary; Observer may only enrich
+    # that existing lifecycle owner.
+    import aletheia.agents.market_observer as market_observer
+    from tests.observer_admission_fixture import admit_observer_instrument
+
+    admitted_owner = admit_observer_instrument(
+        monkeypatch,
+        market_observer,
+    )
+
     async def deterministic_market_context(
         symbols, *, market_type="spot", exchange=None, **_kwargs
     ):
@@ -140,6 +148,8 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     produced = repo.list_opportunities(limit=10)
     assert len(produced) == 1
     opportunity = Opportunity.model_validate(produced[0])
+    assert opportunity.id == admitted_owner.id
+    assert opportunity.source_agent == "universe_scanner"
     assert observer_result["outputs"] == [f"opportunity:{opportunity.id}"]
 
     # The Operator may consume only the durable Filter/Ranker queue carrier.
