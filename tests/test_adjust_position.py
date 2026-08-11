@@ -5,6 +5,8 @@ without closing it: validates the stop against the catastrophic bound, bumps the
 version, re-marks provenance, re-arms the horizon wake, and syncs the exchange stop.
 """
 
+import json
+
 import pytest
 
 import aletheia.portfolio.position_manager as pm
@@ -170,6 +172,38 @@ def test_adjust_updates_plan_and_bumps_version(monkeypatch):
     assert row["exit_plan_version"] == 1
 
 
+def test_trailing_adjustment_preserves_frozen_system_contract():
+    from aletheia.storage.sqlite import get_db
+
+    _insert_authorized("frozen-trailing", entry=100.0, stop=98.0)
+    frozen = {
+        "mode": "atr",
+        "distance": 1.5,
+        "activation_profit_pct": 1.5,
+        "floor_at_breakeven": True,
+        "fallback_pct": 1.0,
+        "floor_mode": "net_balance",
+        "observation": "completed_1m",
+        "cost_model_version": "paper-net-balance-v1",
+        "exit_fee_rate": 0.001,
+        "slippage_bps": 25.0,
+    }
+    get_db().execute(
+        "UPDATE positions SET trailing_json=? WHERE id=?",
+        (json.dumps(frozen), "frozen-trailing"),
+    )
+
+    result = pm.apply_operator_adjustment(
+        "frozen-trailing",
+        new_trailing={"mode": "pct", "distance": 2.0},
+        reason="widen behavior without changing accounting identity",
+    )
+
+    assert result["updated"] is True
+    persisted = json.loads(_select_one("positions", "frozen-trailing")["trailing_json"])
+    assert persisted == {**frozen, "mode": "pct", "distance": 2.0}
+
+
 @pytest.mark.parametrize(
     ("direction", "old_stop", "profit_stop", "mark"),
     [
@@ -326,6 +360,7 @@ def test_stop_cannot_loosen_existing_finite_protection(
         ({"new_trailing": {"activation_profit_pct": 0.0}}, "invalid_new_trailing"),
         ({"new_trailing": {"floor_at_breakeven": 1}}, "invalid_new_trailing"),
         ({"new_trailing": {"mode": "mystery"}}, "invalid_new_trailing"),
+        ({"new_trailing": {"exit_fee_rate": 0.0}}, "invalid_new_trailing"),
     ],
 )
 def test_invalid_adjustment_values_fail_before_any_write(kwargs, expected_error):

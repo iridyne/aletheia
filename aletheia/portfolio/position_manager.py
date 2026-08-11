@@ -449,13 +449,7 @@ def _get_atr_pct(symbol: str) -> float | None:
 
 
 def _resolve_trailing(position: dict, cfg) -> dict | None:
-    """Resolve the effective trailing config for a position (M4/D2).
-
-    Operator-authored ExitPlan.trailing overrides the global default; mode 'off'
-    disables trailing; absence falls back to the global default (D2=A) unless
-    trading.trailing_requires_authoring is set (D2=B). Returns a resolved dict
-    {mode, atr_mult, pct, activation_profit_pct, floor_at_breakeven} or None to skip.
-    """
+    """Resolve only the trailing contract frozen on this Position's ExitPlan."""
     trading = cfg.trading
     spec = load_exit_plan(position).trailing
     if spec is not None:
@@ -477,23 +471,7 @@ def _resolve_trailing(position: dict, cfg) -> dict | None:
             "exit_fee_rate": spec.get("exit_fee_rate"),
             "slippage_bps": spec.get("slippage_bps"),
         }
-    # Not operator-authored.
-    if getattr(trading, "trailing_requires_authoring", False):
-        return None  # D2=B: no default trailing without operator authoring
-    if not trading.trail_enabled:
-        return None  # D2=A: global default off
-    return {
-        "mode": "atr" if _get_atr_pct(position.get("symbol", "")) else "pct",
-        "atr_mult": trading.trail_atr_mult,
-        "pct": trading.trail_pct,
-        "fallback_pct": trading.trail_pct,
-        "activation_profit_pct": None,
-        "floor_at_breakeven": True,
-        "floor_mode": "entry",
-        "observation": "sampled_mark",
-        "exit_fee_rate": None,
-        "slippage_bps": None,
-    }
+    return None
 
 
 def _net_balance_stop(
@@ -1442,12 +1420,6 @@ _TRAILING_ADJUSTMENT_KEYS = {
     "distance",
     "activation_profit_pct",
     "floor_at_breakeven",
-    "fallback_pct",
-    "floor_mode",
-    "observation",
-    "cost_model_version",
-    "exit_fee_rate",
-    "slippage_bps",
 }
 _TRAILING_MODES = {"atr", "pct", "off", "none", "disabled"}
 
@@ -1479,21 +1451,6 @@ def _validated_trailing_adjustment(value: object) -> dict | None:
             if number is None:
                 return None
             validated[field] = number
-    for field in ("fallback_pct", "exit_fee_rate", "slippage_bps"):
-        if field in validated:
-            number = validated[field]
-            if isinstance(number, bool) or not isinstance(number, (int, float)):
-                return None
-            number = float(number)
-            if not math.isfinite(number) or number < 0:
-                return None
-            validated[field] = number
-    if validated.get("floor_mode", "entry") not in {"entry", "net_balance"}:
-        return None
-    if validated.get("observation", "sampled_mark") not in {"sampled_mark", "completed_1m"}:
-        return None
-    if "cost_model_version" in validated and not isinstance(validated["cost_model_version"], str):
-        return None
     return validated
 
 
@@ -1643,8 +1600,10 @@ def apply_operator_adjustment(
     Targets additionally require the original Risk-authorized entry-plan reward:risk
     envelope. A stop may never loosen the current effective protection or the Layer-0
     catastrophic bound; it may cross entry to lock profit while remaining behind the
-    mark. Successful changes bump the ExitPlan version, re-mark provenance 'operator',
-    re-arm a changed horizon, sync the exchange stop bracket, and write an audit event.
+    mark. Trailing changes preserve the position's system-authored observation and
+    accounting contract. Successful changes bump the ExitPlan version, re-mark
+    provenance 'operator', re-arm a changed horizon, sync the exchange stop bracket,
+    and write an audit event.
     """
     from aletheia.storage.repositories import get_position
 
@@ -1702,6 +1661,8 @@ def apply_operator_adjustment(
         new_trailing = validated_trailing
 
     plan = load_exit_plan(pos)
+    if new_trailing is not None and isinstance(plan.trailing, dict):
+        new_trailing = {**plan.trailing, **new_trailing}
     current_stop = _positive_adjustment_number(
         effective_exit_plan(pos, cfg).stop_price
     )

@@ -1093,9 +1093,8 @@ class TradingConfig(BaseModel):
     trail_atr_mult: float = 1.5
     trail_pct: float = 1.0
     breakeven_trigger_pct: float = 1.5
-    # Exit-intent plan M4/D2: new eligible Paper positions freeze these defaults into
-    # their ExitPlan. Unauthored legacy/existing positions remain unchanged.
-    trailing_requires_authoring: bool = True
+    # New eligible Paper positions freeze these defaults into their ExitPlan.
+    # Unauthored legacy/existing positions never receive trailing behavior.
     # Exit-intent plan M5/D5: on thesis invalidation (serenity opportunity dismissed),
     # default is to auto-close (D5 option 2, current behavior). Set False to instead
     # WAKE the Operator to review/veto (the AI review path) rather than auto-closing.
