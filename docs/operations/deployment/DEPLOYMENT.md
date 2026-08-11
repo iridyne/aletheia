@@ -49,11 +49,13 @@ Fedora 是当前长期运行实例；macOS 只用于开发和控制。合并 Rea
 owner 选定的 `origin/master` HEAD（通常就是该 PR 的 merge SHA），再从 Mac 执行现有的一键更新入口：
 
 ```sh
-ssh fedora 'cd /home/admin/aletheia && uv run aletheia update apply --yes --restart'
+ssh fedora 'cd /home/admin/aletheia && uv run aletheia update'
 ```
 
-这个命令负责 fast-forward、依赖同步、把前端完整构建到 staging 目录、Smoke、
-Gateway 重启以及启动期 Migration/SQLite 校验；不要再包一层部署脚本。完成后只做以下验收：
+这个 source-checkout 命令固定执行 fast-forward、按需依赖同步、把前端完整构建到
+staging 目录、Smoke、Gateway 重启以及启动期 Migration/SQLite 校验；不要再包一层部署脚本。
+`update apply --yes --restart` 保留为显式控制兼容入口；packaged runtime 仍只接受签名发布流程。
+完成后只做以下验收：
 
 1. Fedora `git rev-parse HEAD` 等于预期 merge SHA；
 2. `/api/status` 的 `boot_commit == current_commit ==` 预期 SHA；
@@ -124,11 +126,12 @@ Migration，也不会在 Gateway 启动或首次部署时自动执行。
 
 ## 前端部署
 
-生产更新优先使用一键受控流程；带 `--restart` 时总是在未服务的 staging 目录完成一次
-前端构建，只有 dependency lock 变化时才额外执行 `npm ci`，Smoke 通过后才切换静态产物并重启：
+生产 source-checkout 更新使用 `uv run aletheia update`；它总是在未服务的 staging
+目录完成一次前端构建，只有 dependency lock 变化时才额外执行 `npm ci`，
+Smoke 通过后才切换静态产物并重启：
 
 ```powershell
-uv run aletheia update apply --yes --restart
+uv run aletheia update
 ```
 
 构建产物先写入未服务的 staging 目录；构建、烟测或重启失败会保留/恢复旧版本，不会把半成品 UI 暴露给用户。手动维护时，前端代码改动仍必须重新 build：
@@ -182,7 +185,7 @@ uv run aletheia doctor --bundle data/diagnostics/doctor.json
 
 ## 启动顺序（首次 / 恢复）
 
-1. `uv run aletheia update apply --yes --restart`（拉取、按需安装依赖、构建前端、显式迁移/验证并重启）
+1. `uv run aletheia update`（拉取最新 `origin/<update.branch>` HEAD、按需安装依赖、构建前端、显式迁移/验证并重启）
 2. 手动部署或数据库恢复时先运行 `uv run aletheia data migrate`；重复执行在账本 current 时是 no-op
 3. `uv run aletheia doctor`（确认健康）
 4. 打开 `http://127.0.0.1:8787/`

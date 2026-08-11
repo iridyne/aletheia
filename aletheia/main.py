@@ -72,7 +72,11 @@ app.add_typer(secrets_app, name="secrets", help="[deprecated → Settings] Secre
 app.add_typer(risk_app, name="risk", help="[deprecated → Risk panel] Risk / kill-switch commands.")
 
 # Update crosses the running dashboard process boundary, so its CLI remains supported.
-app.add_typer(update_app, name="update", help="Code self-upgrade commands.")
+app.add_typer(
+    update_app,
+    name="update",
+    help="Pull, verify, rebuild, and restart source runtime; manage packaged releases.",
+)
 
 
 @app.command()

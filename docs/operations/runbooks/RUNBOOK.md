@@ -220,21 +220,31 @@ manager. Treat enabling live as a separate, deliberate decision.
 
 ## 9. Updating the code (on-demand self-upgrade)
 
-Not a daemon — you trigger it. It pulls from git, reinstalls deps only if
-`pyproject.toml` changed, runs a smoke check (import gate + fast test subset), and
-**rolls back** (controlled `git reset --hard` to the pre-pull commit, audited) if
-the smoke check fails. It never auto-restarts — it tells you to.
-
-Primary: dashboard **Settings → Update**. CLI (deprecated, still works):
+This is owner-triggered, not a daemon. In a source checkout, the primary command is:
 
 ```bash
-uv run aletheia update check     # is a newer commit available?
-uv run aletheia update apply     # pull + verify (+ rollback on failure)
-uv run aletheia gateway restart  # load the new code after a successful apply
+uv run aletheia update
 ```
 
-If the worktree has uncommitted changes, `apply` refuses (to avoid clobbering
-local edits).
+That single command fetches and fast-forwards to the configured
+`origin/<update.branch>` HEAD, reinstalls changed Python/frontend dependencies,
+builds the complete dashboard into an unserved staging directory, runs the smoke
+gate, atomically activates the frontend, and restarts the Gateway with readiness
+verification. A failed smoke/build/restart rolls back to the recorded pre-update
+commit when the migration boundary permits it.
+
+Useful explicit controls remain:
+
+```bash
+uv run aletheia update check
+uv run aletheia update apply             # confirmation plus default restart
+uv run aletheia update apply --no-restart
+```
+
+The bare command is source-checkout-only. Packaged runtimes continue through
+`aletheia update apply` and the signed-release/Tray activation path. Dirty,
+wrong-branch, ahead, or diverged source checkouts fail closed rather than
+clobbering local work or inventing a deployment state.
 
 ## 10. Health & observability
 

@@ -98,16 +98,34 @@ def changed_files(old: str, new: str) -> list[str]:
 
 
 def pull(branch: str = "master") -> dict:
-    """Fast-forward only merge from origin. Rejects force-pushes and diverged history."""
+    """Fast-forward to the exact fetched origin HEAD, rejecting local-only commits."""
     if not git_available():
         return {"ok": False, "reason": "git_unavailable"}
     r = _git("fetch", "origin", branch)
     if r.returncode != 0:
         return {"ok": False, "reason": "fetch_failed", "stderr": r.stderr.strip()}
+
+    ahead = ahead_count(branch)
+    if ahead < 0:
+        return {"ok": False, "reason": "remote_state_unavailable"}
+    if ahead:
+        return {"ok": False, "reason": "local_ahead", "ahead_count": ahead}
+
+    target = remote_commit(branch)
+    if not target:
+        return {"ok": False, "reason": "remote_state_unavailable"}
     r = _git("merge", "--ff-only", f"origin/{branch}")
     if r.returncode != 0:
         return {"ok": False, "reason": "ff_only_rejected", "stderr": r.stderr.strip()}
-    return {"ok": True, "output": r.stdout.strip()}
+    current = current_commit()
+    if current != target:
+        return {
+            "ok": False,
+            "reason": "source_not_at_remote_head",
+            "current_commit": current,
+            "remote_commit": target,
+        }
+    return {"ok": True, "output": r.stdout.strip(), "remote_commit": target}
 
 
 def reset_hard(commit: str) -> dict:

@@ -61,6 +61,55 @@ def test_behind_count_parses_rev_list(tmp_path, monkeypatch):
     assert git_ops.behind_count("master") == 0
 
 
+def test_pull_rejects_local_ahead_before_merge(monkeypatch):
+    from aletheia.update import git_ops
+
+    calls = []
+
+    def fake_git(*args):
+        calls.append(args)
+        if args[0] == "fetch":
+            return _FakeProc()
+        if args[0] == "rev-list":
+            return _FakeProc(stdout="1\n")
+        pytest.fail(f"unexpected git call: {args}")
+
+    monkeypatch.setattr(git_ops, "git_available", lambda: True)
+    monkeypatch.setattr(git_ops, "_git", fake_git)
+
+    result = git_ops.pull("master")
+
+    assert result == {"ok": False, "reason": "local_ahead", "ahead_count": 1}
+    assert not any(call[0] == "merge" for call in calls)
+
+
+def test_pull_finishes_at_exact_fetched_remote_head(monkeypatch):
+    from aletheia.update import git_ops
+
+    calls = []
+
+    def fake_git(*args):
+        calls.append(args)
+        if args[0] in {"fetch", "merge"}:
+            return _FakeProc(stdout="updated\n")
+        if args[0] == "rev-list":
+            return _FakeProc(stdout="0\n")
+        if args == ("rev-parse", "origin/master"):
+            return _FakeProc(stdout="new222\n")
+        if args == ("rev-parse", "HEAD"):
+            return _FakeProc(stdout="new222\n")
+        pytest.fail(f"unexpected git call: {args}")
+
+    monkeypatch.setattr(git_ops, "git_available", lambda: True)
+    monkeypatch.setattr(git_ops, "_git", fake_git)
+
+    result = git_ops.pull("master")
+
+    assert result["ok"] is True
+    assert result["remote_commit"] == "new222"
+    assert ("merge", "--ff-only", "origin/master") in calls
+
+
 def test_check_for_update_writes_last_check(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import applier, git_ops
@@ -203,6 +252,58 @@ def test_cli_update_apply_restarts_by_default(tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert seen["restart"] is True
     assert "Gateway restarted and readiness verified." in result.output
+
+
+def test_cli_update_runs_full_source_deployment_without_subcommand(
+    tmp_path, monkeypatch
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.cli import update_cmd
+    from aletheia.update import applier
+    from typer.testing import CliRunner
+
+    seen = {}
+
+    def apply(*, restart):
+        seen["restart"] = restart
+        return {
+            "applied": True,
+            "old_commit": "old111",
+            "new_commit": "new222",
+            "deps_reinstalled": False,
+        }
+
+    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
+    monkeypatch.setattr(applier, "apply_update", apply)
+
+    result = CliRunner().invoke(update_cmd.update_app, [])
+
+    assert result.exit_code == 0
+    assert seen["restart"] is True
+    assert "Updated old111 -> new222" in result.output
+    assert "Gateway restarted and readiness verified." in result.output
+
+
+def test_cli_update_without_subcommand_rejects_packaged_mode(monkeypatch):
+    from aletheia.cli import update_cmd
+    from typer.testing import CliRunner
+
+    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: True)
+
+    result = CliRunner().invoke(update_cmd.update_app, [])
+
+    assert result.exit_code == 1
+    assert "Direct Git HEAD updates are unavailable in packaged mode." in result.output
+
+
+def test_top_level_update_help_describes_complete_deployment():
+    from aletheia.main import app
+    from typer.testing import CliRunner
+
+    result = CliRunner().invoke(app, ["update", "--help"])
+
+    assert result.exit_code == 0
+    assert "Pull, verify, rebuild, and restart source runtime" in result.output
 
 
 def test_cli_update_check_smoke(tmp_path, monkeypatch):

@@ -6,13 +6,32 @@ import json
 
 import typer
 
-update_app = typer.Typer(no_args_is_help=True)
+update_app = typer.Typer(
+    no_args_is_help=False,
+    invoke_without_command=True,
+    help="Update a source checkout end to end or manage packaged releases.",
+)
 
 
 def _is_packaged() -> bool:
     from aletheia.update.packaged_commands import is_packaged_mode
 
     return is_packaged_mode()
+
+@update_app.callback(invoke_without_command=True)
+def update(ctx: typer.Context) -> None:
+    """Pull, verify, activate, and restart a source-checkout runtime."""
+
+    if ctx.invoked_subcommand is not None:
+        return
+    if _is_packaged():
+        typer.echo(
+            "Direct Git HEAD updates are unavailable in packaged mode. "
+            "Run `aletheia update apply` for the signed-release workflow.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    apply(yes=True, restart=True)
 
 
 @update_app.command()
@@ -70,7 +89,7 @@ def check():
         typer.echo(
             f"  current: {result['current_commit'][:8]}  remote: {result['remote_commit'][:8]}"
         )
-        typer.echo("Run `aletheia update apply` to rebuild the dashboard and restart the gateway.")
+        typer.echo("Run `aletheia update` for the complete pull, build, and restart.")
     else:
         typer.echo(f"Up to date on origin/{result['branch']} ({result['current_commit'][:8]}).")
 
@@ -80,7 +99,7 @@ def apply(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
     restart: bool = typer.Option(True, "--restart/--no-restart", help="Rebuild dashboard assets and restart after verification."),
 ):
-    """Stage an installed release or apply the development Git update."""
+    """Apply with explicit confirmation and restart controls."""
 
     if _is_packaged():
         if not yes and not typer.confirm(
