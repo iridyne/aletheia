@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -334,6 +334,162 @@ def test_structure_source_status_is_honest_without_owner_import():
     assert status["mode"] == "owner_aggregate_import"
     assert status["automatic_source_configured"] is False
     assert status["decision_authority"] == "observation_only"
+    assert status["accepted_inputs"] == ["aggregate_rows", "sanitized_holder_batch"]
+
+
+def test_sanitized_holder_batch_persists_only_aggregate_evidence(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+    from tests.test_position_structure_features import _position_x_markets
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.data.collectors.vergex_structure import ingest_owner_aggregate
+    from aletheia.storage.sqlite import get_db
+
+    result = ingest_owner_aggregate({
+        "source_ref": "owner-sanitized-batch-2026-08-11",
+        "markets": _position_x_markets(),
+    })
+
+    assert result["input_mode"] == "sanitized_holder_batch"
+    assert result["snapshots_inserted"] == 3
+    assert result["shadow_outcomes_seeded"] == 9
+    assert result["universe_size"] == 3
+    assert result["mean_coverage_ratio"] == 0.9
+    assert len(result["batch_id"]) == 64
+    db = get_db()
+    snapshots = db.execute(
+        "SELECT raw_json, dimension_scores_json, risk_context_json "
+        "FROM perp_structure_snapshots"
+    ).fetchall()
+    assert len(snapshots) == 3
+    persisted = "".join(value for row in snapshots for value in row)
+    assert "holders" not in persisted
+    assert "entry_price" not in persisted
+    assert "liquidation_price" not in persisted
+    assert result["batch_id"] in persisted
+
+
+def test_sanitized_holder_batch_validation_is_atomic(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+    from tests.test_position_structure_features import _position_x_markets
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.data.collectors.vergex_structure import ingest_owner_aggregate
+    from aletheia.storage.sqlite import get_db
+
+    markets = _position_x_markets()
+    markets[1]["holders"][0]["wallet_address"] = "must-not-enter-runtime"
+    with pytest.raises(ValueError, match="forbidden sensitive field"):
+        ingest_owner_aggregate({"source_ref": "unsafe-holder-batch", "markets": markets})
+
+    assert get_db().execute("SELECT COUNT(*) FROM perp_structure_snapshots").fetchone()[0] == 0
+
+
+def _insert_position_x_evaluation_fixture(*, retrospective: bool = False):
+    from aletheia.storage import repositories as repo
+
+    start = datetime(2026, 7, 20, tzinfo=timezone.utc)
+    for index, (score, percentile, raw_return) in enumerate([
+        (1.0, 100.0, 10.0),
+        (0.0, 50.0, 0.0),
+        (-1.0, 0.0, -10.0),
+    ]):
+        as_of = start + timedelta(minutes=index)
+        due = as_of + timedelta(hours=1)
+        observed = due + timedelta(minutes=1) if retrospective else as_of + timedelta(minutes=1)
+        snapshot_id = f"p3-snapshot-{index}"
+        source_hash = f"p3-source-{index}"
+        dimensions = {
+            name: {"raw": score, "percentile": percentile, "direction": "neutral"}
+            for name in ("cgo", "vap", "skw", "lfa", "wp")
+        }
+        repo.insert_perp_structure_snapshot({
+            "id": snapshot_id,
+            "symbol": f"P3-{index}/USDT",
+            "venue": "hyperliquid",
+            "source": "owner_aggregate",
+            "source_hash": source_hash,
+            "as_of_time": as_of.isoformat(),
+            "observed_at": observed.isoformat(),
+            "reference_price": 100.0,
+            "data_quality": "complete",
+            "structure_bias": "bullish" if score > 0 else "bearish" if score < 0 else "neutral",
+            "composite_z": score,
+            "dimension_scores_json": json.dumps(dimensions),
+            "risk_context_json": json.dumps({
+                "benchmark_version": "position-x-p1-v1",
+                "availability_stratum": "cgo+vap+skw+lfa+wp",
+                "equal_weight_score": score / 2,
+                "batch_id": "p3-batch",
+                "parameters": {"price_bin_width_pct": 0.0025},
+            }),
+        })
+        repo.insert_perp_structure_shadow_outcome({
+            "id": f"p3-outcome-{index}",
+            "snapshot_id": snapshot_id,
+            "symbol": f"P3-{index}/USDT",
+            "venue": "hyperliquid",
+            "market_type": "perp",
+            "direction": "long",
+            "horizon": "1h",
+            "entry_price_usd": 100.0,
+            "entry_ts": as_of.isoformat(),
+            "due_at": due.isoformat(),
+            "settled_at": (due + timedelta(minutes=1)).isoformat(),
+            "exit_price_usd": 100.0 * (1 + raw_return / 100.0),
+            "directional_return_pct": raw_return,
+            "settlement_price_source": "fixture_ohlcv",
+            "settlement_lag_sec": 60.0,
+            "status": "settled",
+            "policy_epoch_id": "p3-epoch",
+            "source_hash": source_hash,
+        })
+
+
+def test_position_x_p3_evaluator_compares_gross_baselines_without_authority(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    _insert_position_x_evaluation_fixture()
+    from aletheia.data.perp_structure_shadow import evaluate_position_x_shadow
+
+    result = evaluate_position_x_shadow(
+        policy_epoch_id="p3-epoch",
+        horizons=("1h",),
+        minimum_samples=3,
+        now=datetime(2026, 8, 11, tzinfo=timezone.utc),
+    )
+
+    horizon = result["horizons"]["1h"]
+    assert result["status"] == "ready_for_research_review"
+    assert result["decision_influence"] == "disabled"
+    assert horizon["eligible"] == 3
+    assert horizon["feature_contracts_consistent"] is True
+    assert horizon["baselines"]["weighted_prior"]["spearman_ic"] == 1.0
+    assert horizon["baselines"]["weighted_prior"]["mean_directional_return_pct"] == pytest.approx(6.666667)
+    assert horizon["baselines"]["no_structure"]["mean_directional_return_pct"] == 0.0
+    assert result["economics"]["cost_aware_status"] == "unavailable"
+
+
+def test_position_x_p3_evaluator_rejects_post_outcome_imports(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    _insert_position_x_evaluation_fixture(retrospective=True)
+    from aletheia.data.perp_structure_shadow import evaluate_position_x_shadow
+
+    result = evaluate_position_x_shadow(
+        policy_epoch_id="p3-epoch",
+        horizons=("1h",),
+        minimum_samples=1,
+        minimum_days=0,
+        now=datetime(2026, 8, 11, tzinfo=timezone.utc),
+    )
+
+    horizon = result["horizons"]["1h"]
+    assert result["status"] == "insufficient_data"
+    assert horizon["eligible"] == 0
+    assert horizon["exclusions"] == {"ingestion_lag_exceeded": 3}
 
 
 def test_owner_aggregate_rejects_sensitive_account_fields(tmp_path, monkeypatch):

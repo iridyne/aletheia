@@ -1041,7 +1041,7 @@ def _default_personas() -> dict:
             params={
                 # Grounded initial values (owner + operator, 2026-07-02): 1% single-
                 # trade loss (classic 1% rule), leverage init 10x / HARD CAP 15x (20x
-                # buffer too thin), fractional Kelly ≤0.5, ≤3 pyramid adds. NOTE: the
+                # buffer too thin), legacy scaling ≤0.5, ≤3 pyramid adds. NOTE: the
                 # The asset-tier demo leverage cap still clamps this; the default
                 # roll persona ceiling remains deliberately lower than that boundary.
                 "notional_usdt": P(20, 50, 200),
@@ -1082,22 +1082,21 @@ class TradingConfig(BaseModel):
     # get default stops/TP from position_manager and MAY be auto-closed. LIVE
     # positions are NEVER auto-adopted regardless of this flag (human-confirmed only).
     auto_adopt_enabled: bool = True
-    # Volatility-target sizing: normalize risk per trade to ATR
+    # Conviction-weighted notional sizing with an ATR-derived cap. The historical
+    # ``vol_kelly_cap_fraction`` name is compatibility-only; it is a policy scaling
+    # factor, not a Kelly-optimal fraction.
     default_notional_usdt: float = 25.0
     vol_sizing_enabled: bool = True
     vol_target_risk_usdt: float = 25.0
     vol_target_pct: float = 1.5
     vol_kelly_cap_fraction: float = 0.25
     # Trailing stop / breakeven
-    trail_enabled: bool = False
+    trail_enabled: bool = True
     trail_atr_mult: float = 1.5
     trail_pct: float = 1.0
     breakeven_trigger_pct: float = 1.5
-    # Exit-intent plan M4/D2: trailing is authored on the ExitPlan (per position) —
-    # an operator spec overrides these globals, "off" disables it. D2=A (default):
-    # when a position has NO trailing spec, the globals above still apply (behavior
-    # preserved). Set True for D2=B — trailing runs ONLY when the operator authored it.
-    trailing_requires_authoring: bool = False
+    # New eligible Paper positions freeze these defaults into their ExitPlan.
+    # Unauthored legacy/existing positions never receive trailing behavior.
     # Exit-intent plan M5/D5: on thesis invalidation (serenity opportunity dismissed),
     # default is to auto-close (D5 option 2, current behavior). Set False to instead
     # WAKE the Operator to review/veto (the AI review path) rather than auto-closing.

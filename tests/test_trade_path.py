@@ -13,6 +13,7 @@ from aletheia.analytics.trade_path import (
     _classify_path_bucket,
     _iso_to_ms,
     _resolve_instrument_identity,
+    build_post_exit_path_observation,
 )
 
 
@@ -257,6 +258,58 @@ def test_trade_path_uses_exact_1m_identity_and_separate_post_exit_window(monkeyp
     assert result["post_exit_noncausal_observation"] == "post_exit_favorable_continuation"
     assert result["path_bucket"] == "uncategorized"
     assert result["path_bucket"] != "take_profit_too_early"
+
+
+def test_post_exit_observation_waits_for_and_requires_complete_exact_window(monkeypatch):
+    calls = []
+    candles = [
+        _candle(_BASE_TS + 2 * _BAR_MS, high=102.0, low=100.0, close=101.0),
+        _candle(_BASE_TS + 3 * _BAR_MS, high=103.0, low=99.5, close=102.0),
+    ]
+
+    def fake_get(*args, **kwargs):
+        calls.append((args, kwargs))
+        return candles
+
+    monkeypatch.setattr("aletheia.analytics.trade_path.repo.get_ohlcv_candles", fake_get)
+
+    pending = build_post_exit_path_observation(
+        _row(),
+        post_exit_bars=2,
+        observed_at_ms=_BASE_TS + 3 * _BAR_MS,
+    )
+    available = build_post_exit_path_observation(
+        _row(),
+        post_exit_bars=2,
+        observed_at_ms=_BASE_TS + 4 * _BAR_MS,
+    )
+    candles.pop()
+    unavailable = build_post_exit_path_observation(
+        _row(),
+        post_exit_bars=2,
+        observed_at_ms=_BASE_TS + 4 * _BAR_MS,
+    )
+
+    assert pending["status"] == "pending"
+    assert pending["reason"] == "post_exit_window_not_mature"
+    assert available["status"] == "available"
+    assert available["bars_observed"] == 2
+    assert available["mfe_pct"] == pytest.approx(1.9801980198)
+    assert available["venue"] == "okx"
+    assert unavailable["status"] == "unavailable"
+    assert unavailable["reason"] == "post_exit_coverage_unavailable"
+    assert unavailable["mfe_pct"] is None
+    assert calls == 2 * [
+        (
+            ("BTC/USDT", "1m"),
+            {
+                "limit": 2,
+                "exchange": "okx",
+                "market_type": "perp",
+                "before_ts": _BASE_TS + 4 * _BAR_MS,
+            },
+        )
+    ]
 
 
 def test_trade_path_marks_exit_bar_threshold_order_ambiguous(monkeypatch):

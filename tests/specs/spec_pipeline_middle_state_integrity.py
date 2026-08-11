@@ -738,6 +738,7 @@ def test_trailing_does_not_invent_native_null_stop(tmp_path, monkeypatch):
         proposal_id=proposal.id,
         source="native",
         stop_price=None,
+        trailing_json=json.dumps({"mode": "pct", "distance": 1.0}),
     )
     repo.insert_position(position)
 

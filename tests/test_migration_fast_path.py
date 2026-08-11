@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 24)
+        f"aletheia-sqlite-v{version}" for version in range(2, 25)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v23"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v24"
     connection.close()
 
 
@@ -546,6 +546,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE agent_shell_commands (id TEXT PRIMARY KEY);
         CREATE TABLE runtime_sessions (session_id TEXT PRIMARY KEY);
         CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
+        CREATE TABLE positions (id TEXT PRIMARY KEY);
         INSERT INTO learning_experiments VALUES ('legacy-experiment');
         INSERT INTO learning_contribution_verdicts
         VALUES ('legacy-positive', 'legacy-experiment');
@@ -553,6 +554,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     )
     migrations._apply_learning_fixed_look_v10(connection)
     migrations._apply_universe_twin_shadow_evidence_v8(connection)
+    migrations._apply_position_protection_state_v9(connection)
     connection.executescript(migrations._MIGRATION_LEDGER_DDL)
     connection.executemany(
         "INSERT INTO aletheia_schema_migrations "
@@ -578,8 +580,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260810_0022_learning_hypothesis_identity_v23",
-        "aletheia-sqlite-v23",
+        "20260811_0023_learning_hypothesis_identity_v24",
+        "aletheia-sqlite-v24",
     )
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "
@@ -609,6 +611,39 @@ def test_event_jsonl_outbox_migration_does_not_replay_historical_rows():
     connection.close()
 
 
+def test_exit_trailing_recovery_v23_is_additive_idempotent_and_write_once():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE position_protection_state (position_id TEXT PRIMARY KEY)"
+    )
+    connection.execute("INSERT INTO position_protection_state VALUES ('position-1')")
+
+    migrations._apply_exit_trailing_recovery_v23(connection)
+    migrations._apply_exit_trailing_recovery_v23(connection)
+
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(position_protection_state)")
+    }
+    assert {
+        "recovery_observation_json",
+        "recovery_observation_hash",
+    } <= columns
+    connection.execute(
+        "UPDATE position_protection_state SET recovery_observation_json='{}', "
+        "recovery_observation_hash=? WHERE position_id='position-1'",
+        ("a" * 64,),
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        connection.execute(
+            "UPDATE position_protection_state SET recovery_observation_json='[]' "
+            "WHERE position_id='position-1'"
+        )
+    connection.close()
+
+
 def test_event_jsonl_outbox_migration_rolls_back_partial_schema(monkeypatch):
     import aletheia.storage.migrations as migrations
 
@@ -628,7 +663,7 @@ def test_event_jsonl_outbox_migration_rolls_back_partial_schema(monkeypatch):
     connection.close()
 
 
-def test_learning_hypothesis_identity_v23_is_additive_and_idempotent():
+def test_learning_hypothesis_identity_v24_is_additive_and_idempotent():
     import aletheia.storage.migrations as migrations
 
     connection = sqlite3.connect(":memory:")
@@ -637,8 +672,8 @@ def test_learning_hypothesis_identity_v23_is_additive_and_idempotent():
     )
     connection.execute("INSERT INTO learning_hypotheses VALUES ('legacy')")
 
-    migrations._apply_learning_hypothesis_identity_v23(connection)
-    migrations._apply_learning_hypothesis_identity_v23(connection)
+    migrations._apply_learning_hypothesis_identity_v24(connection)
+    migrations._apply_learning_hypothesis_identity_v24(connection)
 
     columns = {
         row[1]

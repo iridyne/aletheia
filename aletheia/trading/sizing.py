@@ -1,7 +1,12 @@
-"""Conviction-based position sizing.
+"""Conviction-weighted notional sizing.
 
-Fractional Kelly formula adapted for conviction scores:
+Legacy formula retained for policy compatibility:
   size = base_notional * kelly_fraction * conviction_ratio * drawdown_scale
+
+Despite the historical ``kelly_fraction`` field name, this module does not
+estimate Kelly-optimal exposure: it consumes neither calibrated win probability
+nor payoff odds/return distributions.  The field is a bounded policy scaling
+factor until a separately measured Kelly policy exists.
 
 Used by System Operator (evaluate_trading_opportunity) and can be called from
 paper_trader for RuleSet-driven entries. Does NOT touch risk engine limits
@@ -10,7 +15,7 @@ paper_trader for RuleSet-driven entries. Does NOT touch risk engine limits
 from __future__ import annotations
 
 
-_DEFAULT_KELLY_FRACTION = 0.25   # quarter-Kelly: conservative, reduces variance
+_DEFAULT_KELLY_FRACTION = 0.25   # legacy name: conviction-policy scaling factor
 _MIN_MULTIPLIER = 0.3            # floor: $25 base → $7.50 minimum at lowest conviction
 _MAX_MULTIPLIER = 2.5            # cap: $25 base → $62.50 maximum at peak conviction
 _CONVICTION_MIDPOINT = 70.0      # conviction at which multiplier = 1.0 (base notional)
@@ -31,7 +36,7 @@ def compute_position_size(
         conviction: 0-100 int representing trade confidence
         base_notional: base USDT amount (e.g. 25.0 from config)
         drawdown_pct: current portfolio drawdown % (0-100); scales size down
-        kelly_fraction: fraction of full Kelly to use (default 0.25 = quarter-Kelly)
+        kelly_fraction: legacy-named policy scaling factor (default 0.25)
         min_multiplier: floor on the size multiplier
         max_multiplier: cap on the size multiplier
 
@@ -50,7 +55,7 @@ def compute_position_size(
         t = (conviction_clamped - _CONVICTION_MIDPOINT) / (100.0 - _CONVICTION_MIDPOINT)
         multiplier = 1.0 + t * (max_multiplier - 1.0)
 
-    # Apply Kelly fraction
+    # Apply the legacy-named policy scaling factor. This is not a Kelly estimate.
     multiplier *= kelly_fraction * 4  # 4× so that at kelly_fraction=0.25 the midpoint stays at 1.0
 
     # Drawdown scale: linear from 1.0 at 0% DD to 0.5 at 10%+ DD
@@ -65,7 +70,7 @@ def compute_position_size(
 
 
 def conviction_to_multiplier(conviction: int) -> float:
-    """Quick multiplier lookup without Kelly/drawdown adjustments. Used for display."""
+    """Quick multiplier lookup without policy-scaling/drawdown adjustments."""
     result = compute_position_size(conviction, 1.0)
     return round(result, 3)
 
@@ -83,10 +88,10 @@ def vol_target_size(
     opportunity_id: str | None = None,
     sizing_trace: dict | None = None,
 ) -> float:
-    """Unified volatility-target sizing with sample-aware Kelly fraction.
+    """Unified volatility-target sizing with sample-aware legacy scaling.
 
-    P1-5: paper_trade_count adjusts the effective Kelly fraction:
-      < 10 trades  → effective_kelly = 0.10 (one-tenth Kelly — new strategies start small)
+    P1-5: paper_trade_count adjusts the effective legacy scaling fraction:
+      < 10 trades  → effective_kelly = 0.10 (new strategies start small)
       10-30 trades → linear ramp from 0.10 to base_kelly
       >= 30 trades → base_kelly unchanged (backward compatible)
 
@@ -97,7 +102,7 @@ def vol_target_size(
     from aletheia.trading.persona import effective_sizing_params
 
     cfg = load_config()
-    # Persona seam (P1/P2): base notional + kelly come from the active persona
+    # Persona seam (P1/P2): base notional + legacy scaling come from the active persona
     # (P2: context-decided within range for operator_decidable params; else init);
     # persona OFF → legacy flat config (default_notional_usdt / vol_kelly_cap_fraction),
     # zero behavior change. `symbol` feeds the P2 sizing context (regime/F&G/vol).
@@ -114,7 +119,7 @@ def vol_target_size(
     if cfg.trading.vol_sizing_enabled and atr_pct is None:
         atr_pct = _lookup_atr_pct(symbol)
 
-    def _from_params(params: dict) -> float:
+    def _from_params(params: dict) -> tuple[float, dict]:
         base = float(params["notional_usdt"])
         base_kelly = float(params["kelly_fraction"])
         if paper_trade_count < 10:
@@ -130,17 +135,32 @@ def vol_target_size(
             raw_size = risk_budget / (atr_pct / 100.0)
             kelly_cap = base * (effective_kelly * 4) * _MAX_MULTIPLIER
             sizing_base = min(raw_size, kelly_cap)
-        return compute_position_size(
+        notional = compute_position_size(
             conviction, sizing_base, drawdown_pct=drawdown_pct,
             kelly_fraction=effective_kelly,
         )
+        return notional, {
+            "base_notional_usdt": base,
+            "legacy_scaling_fraction": base_kelly,
+            "effective_scaling_fraction": effective_kelly,
+            "paper_trade_count": paper_trade_count,
+            "atr_pct": atr_pct,
+            "raw_vol_notional_usdt": raw_size
+            if cfg.trading.vol_sizing_enabled and atr_pct and atr_pct > 0
+            else None,
+            "legacy_scaling_cap_usdt": kelly_cap
+            if cfg.trading.vol_sizing_enabled and atr_pct and atr_pct > 0
+            else None,
+            "sizing_base_usdt": sizing_base,
+            "final_notional_usdt": notional,
+        }
 
-    baseline_notional = _from_params(static_params)
-    # Phase 1 exposes one learned parameter only: base notional. Kelly, stops,
+    baseline_notional, baseline_calculation = _from_params(static_params)
+    # Phase 1 exposes one learned parameter only: base notional. Legacy scaling, stops,
     # leverage and pyramiding remain at their static/persona values.
     learned_notional_params = dict(static_params)
     learned_notional_params["notional_usdt"] = learned_params["notional_usdt"]
-    learned_notional = _from_params(learned_notional_params)
+    learned_notional, learned_calculation = _from_params(learned_notional_params)
     from aletheia.trading.sizing_policy import resolve_learned_notional
     trace = resolve_learned_notional(
         baseline_notional=baseline_notional,
@@ -152,6 +172,17 @@ def vol_target_size(
         outcome_candidate_key=outcome_candidate_key,
         opportunity_id=opportunity_id,
     )
+    trace.update({
+        "policy_version": "conviction-weighted-notional/v1",
+        "value_source": "deterministic_sizing_policy",
+        "conviction": conviction,
+        "drawdown_pct": drawdown_pct,
+        "vol_sizing_enabled": bool(cfg.trading.vol_sizing_enabled),
+        "persona": static_params.get("_persona", "legacy"),
+        "legacy_parameter_name": "kelly_fraction",
+        "baseline_calculation": baseline_calculation,
+        "learned_calculation": learned_calculation,
+    })
     if sizing_trace is not None:
         sizing_trace.clear()
         sizing_trace.update(trace)

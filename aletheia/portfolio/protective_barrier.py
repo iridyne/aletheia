@@ -7,6 +7,7 @@ fresh mark and remains the sole source of the simulated fill.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import uuid
@@ -22,6 +23,30 @@ from aletheia.storage.models import (
 
 logger = logging.getLogger("aletheia.protective_barrier")
 _UNSET = object()
+_TRAILING_QUALIFICATION_VERSION = "paper-dynamic-profit-protection/v2"
+_TRAILING_TREATMENT_ID = "atr1.5-balance1.5-completed1m/v1"
+_TRAILING_TREATMENT_BPS = 9_000
+_TRAILING_RECOVERY_WINDOW_BARS = 30
+_TRAILING_RECOVERY_THRESHOLD_PCT = 1.0
+
+
+def _trailing_qualification_assignment(position_id: str) -> dict:
+    """Return the immutable 90/10 treatment/control assignment for one Position."""
+    digest = hashlib.sha256(
+        f"{_TRAILING_QUALIFICATION_VERSION}:{position_id}".encode("utf-8")
+    ).hexdigest()
+    bucket = int(digest[:8], 16) % 10_000
+    return {
+        "policy_version": _TRAILING_QUALIFICATION_VERSION,
+        "treatment_id": _TRAILING_TREATMENT_ID,
+        "assignment_unit": position_id,
+        "assignment_hash": digest,
+        "arm": "treatment" if bucket < _TRAILING_TREATMENT_BPS else "control",
+        "treatment_allocation_bps": _TRAILING_TREATMENT_BPS,
+        "control_holdout_bps": 10_000 - _TRAILING_TREATMENT_BPS,
+        "recovery_window_bars": _TRAILING_RECOVERY_WINDOW_BARS,
+        "recovery_threshold_pct": _TRAILING_RECOVERY_THRESHOLD_PCT,
+    }
 
 
 def _now() -> datetime:
@@ -50,6 +75,7 @@ def _plan_payload(
     take_profit_price: float | None,
     exit_limit_price: float | None,
     exit_limit_source: str | None,
+    trailing: dict | None = None,
 ) -> str:
     return json.dumps(
         {
@@ -57,6 +83,7 @@ def _plan_payload(
             "take_profit_price": take_profit_price,
             "exit_limit_price": exit_limit_price,
             "exit_limit_source": exit_limit_source,
+            "trailing": trailing,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -72,7 +99,7 @@ def activate_new_paper_position(position_id: str) -> dict:
     return _activate_paper_position(
         position_id,
         effective_at=str(position.get("opened_at") or ""),
-        provenance="paper_entry_protection_v1",
+        provenance="paper_entry_protection_v2",
         assign_shadow=True,
     )
 
@@ -103,6 +130,29 @@ def _activate_paper_position(
 
     cfg = load_config()
     resolved = effective_exit_plan(position, cfg)
+    if (
+        assign_shadow
+        and resolved.trailing is None
+        and getattr(cfg.trading, "trail_enabled", False)
+        and position.get("trade_school") == "short_term"
+        and position.get("source") == "native"
+    ):
+        qualification = _trailing_qualification_assignment(position_id)
+        treatment = qualification["arm"] == "treatment"
+        resolved.trailing = {
+            "enabled": treatment,
+            "mode": "atr" if treatment else "off",
+            "distance": float(cfg.trading.trail_atr_mult),
+            "fallback_pct": float(cfg.trading.trail_pct),
+            "activation_profit_pct": float(cfg.trading.breakeven_trigger_pct),
+            "floor_at_breakeven": True,
+            "floor_mode": "net_balance",
+            "observation": "completed_1m",
+            "cost_model_version": "paper-net-balance-v1",
+            "exit_fee_rate": float(cfg.trading.execution_fee_pct) / 100.0,
+            "slippage_bps": float(cfg.trading.slippage_bps),
+            "qualification": qualification,
+        }
     if resolved.stop_price is None and resolved.target_price is None:
         # Paper historically permits an approved native Proposal without an SL/TP.
         # There is no barrier to evaluate, so preserve that entry contract without
@@ -123,6 +173,7 @@ def _activate_paper_position(
         take_profit_price=resolved.target_price,
         exit_limit_price=position.get("exit_limit_price"),
         exit_limit_source=position.get("exit_limit_source"),
+        trailing=resolved.trailing,
     )
     plan = PositionExitPlanVersion(
         position_id=position_id,
@@ -155,9 +206,14 @@ def _activate_paper_position(
             take_profit_price=resolved.target_price,
             stop_source=resolved.provenance,
             exit_plan_version=1,
+            trailing_json=(
+                json.dumps(resolved.trailing, sort_keys=True)
+                if resolved.trailing is not None
+                else None
+            ),
         )
         repo.insert_position_protection_state(state)
-        if assign_shadow:
+        if assign_shadow and resolved.trailing is None:
             try:
                 from aletheia.analytics.exit_breakeven_shadow import (
                     assign_new_protected_position,
@@ -236,11 +292,13 @@ def persist_position_exit_plan(
     plan,
     *,
     provenance: str,
+    expected_version: int | None = None,
     exit_limit_price: object = _UNSET,
     exit_limit_source: object = _UNSET,
     extra_position_updates: dict | None = None,
+    effective_at: str | None = None,
 ):
-    """Atomically update flat intent and append its protected immutable version."""
+    """Update intent, rejecting a protected caller whose base version is stale."""
 
     from aletheia.portfolio.exit_plan import ExitPlan, save_exit_plan
 
@@ -265,7 +323,18 @@ def persist_position_exit_plan(
     current = repo.get_current_position_exit_plan(position_id)
     if current is None:
         raise ValueError("protected Position has no current immutable ExitPlan")
-    effective = _now()
+    caller_version = int(plan.version) if expected_version is None else int(expected_version)
+    if caller_version != int(current["version"]):
+        raise repo.PositionProtectionConflict(
+            "ExitPlan caller version compare-and-set failed"
+        )
+    effective = (
+        _now()
+        if effective_at is None
+        else datetime.fromisoformat(effective_at.replace("Z", "+00:00"))
+    )
+    if effective.tzinfo is None:
+        raise ValueError("ExitPlan effective_at requires a timezone")
     previous = datetime.fromisoformat(str(current["effective_at"]).replace("Z", "+00:00"))
     if effective <= previous:
         effective = previous + timedelta(microseconds=1)
@@ -287,6 +356,7 @@ def persist_position_exit_plan(
         take_profit_price=stored_plan.target_price,
         exit_limit_price=resolved_limit,
         exit_limit_source=resolved_source,
+        trailing=stored_plan.trailing,
     )
     immutable = PositionExitPlanVersion(
         position_id=position_id,
@@ -535,6 +605,32 @@ def _evaluate_state(state: dict, *, now_ms: int, detected_at: str) -> dict:
         return {"blocked": True, "reason": "unsupported_position_direction"}
 
     if not stop_hit and not target_hit:
+        try:
+            trailing = json.loads(plan["plan_json"]).get("trailing")
+        except (KeyError, TypeError, ValueError):
+            trailing = None
+        if isinstance(trailing, dict) and trailing.get("observation") == "completed_1m":
+            from aletheia.config.loader import load_config
+            from aletheia.portfolio.position_manager import _maybe_update_trailing_stop
+
+            position_for_bar = dict(position)
+            position_for_bar["trailing_json"] = json.dumps(trailing, sort_keys=True)
+            favorable_price = (
+                float(bar["high"])
+                if direction in {"long", "buy"}
+                else float(bar["low"])
+            )
+            _maybe_update_trailing_stop(
+                position_for_bar,
+                favorable_price,
+                load_config(),
+                completed_bar=True,
+                effective_at=datetime.fromtimestamp(
+                    (cursor + 60_000) / 1000,
+                    timezone.utc,
+                ).isoformat(),
+                protection_venue=str(state["venue"]),
+            )
         repo.advance_position_protection_cursor(
             state["position_id"],
             expected_next_bar_open_ms=cursor,

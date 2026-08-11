@@ -171,7 +171,7 @@ def compact_database_command(
 def ingest_perp_structure(
     path: Path = typer.Argument(..., exists=True, readable=True, dir_okay=False),
 ):
-    """Import an owner-authorized aggregate Position X export (observation-only)."""
+    """Import aggregate rows or a sanitized holder batch (observation-only)."""
     from aletheia.data.collectors.vergex_structure import ingest_owner_aggregate
     from aletheia.storage.migrations import assert_migrations_current
 
@@ -179,6 +179,27 @@ def ingest_perp_structure(
     payload = json.loads(path.read_text(encoding="utf-8"))
     typer.echo(json.dumps(
         ingest_owner_aggregate(payload), indent=2, ensure_ascii=False, sort_keys=True,
+    ))
+
+
+@data_app.command("evaluate-perp-structure")
+def evaluate_perp_structure(
+    policy_epoch_id: str | None = typer.Option(None, "--policy-epoch-id"),
+    minimum_samples: int = typer.Option(30, "--minimum-samples", min=1),
+):
+    """Evaluate settled Position X shadows without changing decision authority."""
+    from aletheia.data.perp_structure_shadow import evaluate_position_x_shadow
+    from aletheia.storage.migrations import assert_migrations_current
+
+    assert_migrations_current()
+    typer.echo(json.dumps(
+        evaluate_position_x_shadow(
+            policy_epoch_id=policy_epoch_id,
+            minimum_samples=minimum_samples,
+        ),
+        indent=2,
+        ensure_ascii=False,
+        sort_keys=True,
     ))
 
 

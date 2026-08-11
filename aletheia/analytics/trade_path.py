@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from aletheia.analytics.trade_attribution import build_trade_attribution_rows
@@ -50,6 +51,101 @@ def build_trade_path_rows(limit: int = 500, post_exit_bars: int = 0) -> list[dic
     """
     attribution_rows = build_trade_attribution_rows(limit=limit)
     return [_analyze_path(row, post_exit_bars) for row in attribution_rows]
+
+
+def build_post_exit_path_observation(
+    row: dict[str, Any],
+    *,
+    post_exit_bars: int,
+    observed_at_ms: int | None = None,
+) -> dict[str, Any]:
+    """Measure one mature, exact-instrument post-exit 1m window read-only."""
+    result: dict[str, Any] = {
+        "status": "unavailable",
+        "reason": None,
+        "bars_requested": post_exit_bars,
+        "bars_observed": 0,
+        "window_start_ts_ms": None,
+        "window_end_ts_ms": None,
+        "mfe_pct": None,
+        "mae_pct": None,
+        "venue": None,
+        "market_type": None,
+    }
+    if (
+        not isinstance(post_exit_bars, int)
+        or isinstance(post_exit_bars, bool)
+        or post_exit_bars < 1
+        or post_exit_bars > _MAX_PATH_BARS
+    ):
+        result["reason"] = "invalid_post_exit_bars"
+        return result
+    exit_ts = _iso_to_ms(row.get("closed_at"))
+    exit_price = _positive_float(row.get("exit_price"))
+    direction = str(row.get("direction") or "").strip().lower()
+    identity, identity_error = _resolve_instrument_identity(row)
+    if (
+        exit_ts is None
+        or exit_price is None
+        or direction not in {"long", "short"}
+        or identity is None
+    ):
+        result["reason"] = identity_error or "post_exit_identity_unavailable"
+        return result
+    start_ts = _ceil_bar(exit_ts)
+    end_ts = start_ts + post_exit_bars * _BAR_MS
+    result.update({
+        "window_start_ts_ms": start_ts,
+        "window_end_ts_ms": end_ts,
+        "venue": identity.exchange,
+        "market_type": identity.market_type,
+    })
+    observed_ms = (
+        int(datetime.now(timezone.utc).timestamp() * 1000)
+        if observed_at_ms is None
+        else observed_at_ms
+    )
+    if observed_ms < end_ts:
+        result.update({"status": "pending", "reason": "post_exit_window_not_mature"})
+        return result
+    try:
+        candles = repo.get_ohlcv_candles(
+            str(row.get("symbol") or ""),
+            _DEFAULT_TIMEFRAME,
+            limit=post_exit_bars,
+            exchange=identity.exchange,
+            market_type=identity.market_type,
+            before_ts=end_ts,
+        )
+    except Exception:
+        result["reason"] = "post_exit_ohlcv_read_unavailable"
+        return result
+    candle_by_ts, candle_error = _validated_candle_map(
+        candles,
+        start_ts=start_ts,
+        end_ts=end_ts,
+        identity=identity,
+    )
+    if candle_by_ts is None:
+        result["reason"] = candle_error or "invalid_post_exit_ohlcv"
+        return result
+    evidence: dict[str, Any] = {}
+    status, mfe, mae = _analyze_post_exit(
+        evidence,
+        candle_by_ts,
+        post_start_ts=start_ts,
+        post_exit_bars=post_exit_bars,
+        direction=direction,
+        exit_price=exit_price,
+    )
+    result.update({
+        "status": status,
+        "reason": evidence.get("post_exit_path_reason"),
+        "bars_observed": evidence.get("post_exit_bars_observed", 0),
+        "mfe_pct": mfe,
+        "mae_pct": mae,
+    })
+    return result
 
 
 def _analyze_path(row: dict, post_exit_bars: int) -> dict:

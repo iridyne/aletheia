@@ -11,6 +11,12 @@
 > `persona_rollout` 现为只读 safety hold，不再自动打开 progressive unlock 或 persona learning；
 > GitHub #409 跟踪真正的逐步授权证据缺口。
 >
+> **2026-08-11 sizing 语义校正**:当前实现中的 `kelly_fraction` /
+> `vol_kelly_cap_fraction` 是历史命名的 conviction-policy scaling factor，不是
+> Kelly 估计。它没有消费经校准的胜率、payoff odds 或收益分布。本文中涉及
+> 现有字段的“Kelly”均应按历史名称理解；真正的 fractional Kelly 仍是未实现、
+> 需要独立校准与样本外证据才能授权的未来策略。
+>
 > **owner 开启顺序建议**:先 `persona_sizing_enabled`(选 persona,静态 init)→ 跑一段干净窗 →
 > 开 progressive_unlock(逐个解冻)→ 数据够了开 persona_learning → 最后(单独授权)接金字塔实盘。
 > 每步先 demo、看 doctor `loop.sizing_policy` + 干净窗指标,退化则关回。
@@ -51,7 +57,7 @@ final = clamp(  Operator.decide(context)  ,  persona_bounds  ,  risk_envelope  )
 |---|---|---|---|---|
 | 基准仓位(占权益%) | `default_notional_usdt=$25` 固定 | {min%, init%, max%} | 当次 % | `max_*_position_notional_usdt` |
 | 杠杆倍数 | 主5/中3/山寨2 固定 | {min, init, max} | 当次倍数 | `max_futures_leverage_*` |
-| Kelly 分数 | 0.10–0.25 | {min, init, max} | 当次 kelly | 全下注上限 |
+| 历史 `kelly_fraction` 缩放因子 | 0.10–0.25 | {min, init, max} | 当次 scaling | notional 硬上限 |
 | 加仓(金字塔)次数 | 无 | {0, init, **max_adds**} | 当次加几次 | 总敞口上限 |
 | 每次加仓的浮盈滚入比 | 无 | {min, init, max} | 当次比例 | 总敞口上限 |
 | 单笔最大亏损 | `default_stop_loss_pct=2%` | {init, **max_loss**} | 当次止损带 | 单笔·日亏 kill |

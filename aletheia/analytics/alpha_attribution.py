@@ -109,6 +109,7 @@ def build_alpha_attribution_audit(days: int = 30, min_sample_size: int = MIN_SAM
         "universe_twin_evidence": _universe_twin_evidence(db, cutoff),
         "universe_relative_rank_evidence": _universe_relative_rank_evidence(db, cutoff),
         "exit_paired_evidence": _exit_paired_evidence(cutoff),
+        "exit_trailing_qualification": _exit_trailing_qualification(cutoff),
         "risk_policy_evidence": _risk_policy_evidence(db, cutoff, min_sample_size),
         "execution_cost_evidence": _execution_cost_evidence(
             db, cutoff, min_sample_size
@@ -133,6 +134,7 @@ def _empty_report(generated_at: str, days: int, reason: str) -> dict:
         "universe_twin_evidence": _empty_universe_twin_evidence(reason),
         "universe_relative_rank_evidence": _empty_relative_rank_evidence(reason),
         "exit_paired_evidence": _empty_exit_paired_evidence(reason),
+        "exit_trailing_qualification": _empty_exit_trailing_qualification(reason),
         "risk_policy_evidence": _empty_risk_policy_evidence(reason),
         "execution_cost_evidence": _empty_execution_cost_evidence(reason),
         "main_bottleneck": _main_bottleneck(verdicts),
@@ -184,6 +186,46 @@ def _empty_exit_paired_evidence(reason: str) -> dict:
         "positive_increment_count": 0,
         "close_reason_breakdown": [],
         "close_reason_attribution_available": False,
+        "reason": reason,
+    }
+
+
+def _empty_exit_trailing_qualification(reason: str) -> dict:
+    from aletheia.portfolio.protective_barrier import (
+        _TRAILING_QUALIFICATION_VERSION,
+        _TRAILING_RECOVERY_THRESHOLD_PCT,
+        _TRAILING_RECOVERY_WINDOW_BARS,
+    )
+
+    return {
+        "contract_version": "exit-trailing-qualification/v2",
+        "policy_version": _TRAILING_QUALIFICATION_VERSION,
+        "measurement_status": "not_measured",
+        "causal_grade": "insufficient",
+        "assignment_count": 0,
+        "treatment_assignment_count": 0,
+        "control_assignment_count": 0,
+        "closed_count": 0,
+        "available_count": 0,
+        "unavailable_count": 0,
+        "changed_count": 0,
+        "cohort_count": 0,
+        "cohorts": [],
+        "cross_cohort_pooling": False,
+        "recovery_contract": {
+            "contract_version": "post-exit-recovery/v1",
+            "observation": "complete_post_exit_1m_bars",
+            "window_bars": _TRAILING_RECOVERY_WINDOW_BARS,
+            "threshold_pct": _TRAILING_RECOVERY_THRESHOLD_PCT,
+            "authority": "diagnostic_only",
+        },
+        "recovery_available_count": 0,
+        "recovery_pending_count": 0,
+        "recovery_unavailable_count": 0,
+        "recovery_truncation_count": 0,
+        "recovery_truncation_rate": None,
+        "recovery_truncation_reason": "no_mature_treatment_changing_close",
+        "promotion_eligible": False,
         "reason": reason,
     }
 
@@ -455,6 +497,38 @@ def _exit_paired_evidence(cutoff: str) -> dict:
     }
 
 
+def _exit_trailing_qualification(cutoff: str) -> dict:
+    from aletheia.analytics.exit_trailing_qualification import (
+        build_exit_trailing_qualification_report,
+    )
+
+    try:
+        report = build_exit_trailing_qualification_report(opened_after=cutoff)
+    except sqlite3.OperationalError as exc:
+        return _empty_exit_trailing_qualification(
+            f"Required ExitPlan evidence table is unavailable: {exc}"
+        )
+    if not report["assignment_count"]:
+        return {
+            **_empty_exit_trailing_qualification(
+                "No prospective dynamic-trailing treatment/control assignments are available in the audit window."
+            ),
+            **report,
+        }
+    return {
+        **report,
+        "measurement_status": (
+            "prospective_randomized_holdout"
+            if report["available_count"] else "prospective_assignments_only"
+        ),
+        "causal_grade": "prospective_position_randomized_holdout",
+        "reason": (
+            "Exact-build treatment/control outcomes are descriptive until a separate "
+            "fixed qualification gate is registered and satisfied."
+        ),
+    }
+
+
 def _empty_risk_policy_evidence(reason: str) -> dict:
     from aletheia.analytics.risk_contribution import empty_risk_policy_contribution
 
@@ -604,6 +678,19 @@ def render_alpha_audit(report: dict) -> str:
             f"total_delta={_fmt_metric(item['incremental_net_pnl_total'])} "
             f"mean_delta={_fmt_metric(item['incremental_net_pnl_mean'])}"
         )
+    trailing = report.get("exit_trailing_qualification") or {}
+    lines.extend([
+        "",
+        "Exit trailing qualification: "
+        f"{trailing.get('measurement_status', 'not_measured')}",
+        "  "
+        f"assignments={trailing.get('assignment_count', 0)} "
+        f"treatment={trailing.get('treatment_assignment_count', 0)} "
+        f"control={trailing.get('control_assignment_count', 0)} "
+        f"available={trailing.get('available_count', 0)} "
+        f"changed={trailing.get('changed_count', 0)}",
+        f"  {trailing.get('reason', 'Exit trailing qualification is unavailable.')}",
+    ])
     risk = report.get("risk_policy_evidence") or {}
     lines.extend([
         "",

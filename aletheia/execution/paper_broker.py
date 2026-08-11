@@ -25,6 +25,31 @@ def _apply_slippage(price: float, direction: str, slippage_bps: float) -> float:
     return round(price * (1 - slip), 8)
 
 
+def _paper_close_costs(position: dict, cfg) -> tuple[float, float]:
+    """Resolve legacy config costs or the Position's frozen net-balance contract."""
+    fee_rate = float(cfg.trading.execution_fee_pct) / 100.0
+    slippage_bps = float(cfg.trading.slippage_bps)
+    try:
+        trailing = json.loads(position.get("trailing_json") or "null")
+    except (TypeError, json.JSONDecodeError):
+        trailing = None
+    if not isinstance(trailing, dict) or trailing.get("cost_model_version") != "paper-net-balance-v1":
+        return fee_rate, slippage_bps
+    try:
+        fee_rate = float(trailing["exit_fee_rate"])
+        slippage_bps = float(trailing["slippage_bps"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("paper_close_cost_contract_invalid") from exc
+    if (
+        not math.isfinite(fee_rate)
+        or not 0 <= fee_rate < 1
+        or not math.isfinite(slippage_bps)
+        or not 0 <= slippage_bps < 10_000
+    ):
+        raise ValueError("paper_close_cost_contract_invalid")
+    return fee_rate, slippage_bps
+
+
 def execute_paper_order(
     proposal_id: str,
     risk_decision_id: str,
@@ -366,8 +391,7 @@ def close_paper_position(
     if not math.isfinite(mark) or mark <= 0:
         raise ValueError("paper close mark_price must be finite and positive")
     cfg = load_config()
-    slippage_bps = float(cfg.trading.slippage_bps)
-    fee_rate = float(cfg.trading.execution_fee_pct) / 100.0
+    fee_rate, slippage_bps = _paper_close_costs(row, cfg)
     close_side = "sell" if row["direction"] in ("long", "buy") else "buy"
     fill_price = _apply_slippage(mark, close_side, slippage_bps)
     quantity = float(row["quantity"])

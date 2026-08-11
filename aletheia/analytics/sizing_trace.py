@@ -226,11 +226,14 @@ def _build_traces(db, cutoff: str, cfg) -> list[dict]:
             "status": proposal.get("status"),
             "conviction": conviction,
             "base_notional_usdt": sizing["base_notional_usdt"],
+            "effective_scaling_fraction": sizing["effective_kelly"],
             "effective_kelly": sizing["effective_kelly"],
             "paper_trade_count": paper_trade_count,
             "atr_pct": atr_pct,
             "raw_vol_size": sizing["raw_vol_size"],
+            "legacy_scaling_cap_usdt": sizing["kelly_cap"],
             "kelly_cap": sizing["kelly_cap"],
+            "legacy_parameter_name": "kelly_fraction",
             # Compatibility field now carries the persisted historical proposal
             # notional. The current config reconstruction has its own honest name.
             "intended_position_size_usdt": proposal_notional,
@@ -429,8 +432,8 @@ def _reason(
         notes.append(f"System Operator conviction is {conviction}.")
         return "low_conviction", notes
     if paper_trade_count < 10 and effective_kelly == 0.1:
-        notes.append("Fewer than 10 closed paper samples compress effective Kelly to 0.1.")
-        return "sample_aware_kelly", notes
+        notes.append("Fewer than 10 closed paper samples compress the legacy scaling factor to 0.1.")
+        return "sample_aware_scaling", notes
     if atr_pct is not None and atr_pct >= 6.0:
         notes.append(f"ATR is high at {atr_pct}%.")
         return "high_atr", notes
@@ -478,7 +481,7 @@ def _compression_reasons(traces: list[dict]) -> list[dict]:
 
 def _reason_evidence(reason: str, traces: list[dict]) -> str:
     subset = [t for t in traces if t.get("main_reason") == reason]
-    if reason == "sample_aware_kelly":
+    if reason == "sample_aware_scaling":
         counts = [t.get("paper_trade_count") for t in subset if t.get("paper_trade_count") is not None]
         return f"{len(subset)} trace(s) have paper_trade_count below 10; min={min(counts) if counts else 'n/a'}."
     if reason == "low_base_notional":
@@ -506,7 +509,7 @@ def _main_sizing_bottleneck(report: dict, min_sample_size: int) -> dict:
         )
     reasons = report.get("compression_reasons") or []
     top = reasons[0] if reasons else {"reason": "unknown", "count": 0, "evidence": ""}
-    severity = "warn" if top["reason"] in {"sample_aware_kelly", "low_base_notional", "risk_cap", "low_conviction"} else "info"
+    severity = "warn" if top["reason"] in {"sample_aware_scaling", "low_base_notional", "risk_cap", "low_conviction"} else "info"
     median_exec = summary.get("median_executed_notional_usdt")
     tiny = median_exec is not None and median_exec <= _TINY_EXECUTED_NOTIONAL_USDT
     if top["reason"] == "unknown" and not tiny:
@@ -523,14 +526,14 @@ def _main_sizing_bottleneck(report: dict, min_sample_size: int) -> dict:
 
 def _next_action(reason: str) -> str:
     return {
-        "sample_aware_kelly": "Do not change risk blindly. Review funnel throughput, then run a controlled sample-building experiment.",
+        "sample_aware_scaling": "Do not change risk blindly. Review funnel throughput, then run a controlled sample-building experiment.",
         "low_base_notional": "Inspect trading.default_notional_usdt or active persona init values before changing risk caps.",
         "low_conviction": "Inspect System Operator decision evidence; sizing is reflecting low conviction rather than failing downstream.",
         "risk_cap": "Inspect risk rejection reasons and leverage/notional caps; do not auto-raise caps from doctor.",
         "high_atr": "Inspect ATR source and volatility-target settings; high volatility may be intentionally compressing size.",
         "persona_conservative": "Confirm whether conservative persona is intended; doctor must not switch persona automatically.",
         "exchange_minimum": "Compare proposal notional to fills and demo exchange minimum behavior.",
-    }.get(reason, "Review traces before changing sizing, leverage, Kelly, or persona settings.")
+    }.get(reason, "Review traces before changing sizing, leverage, legacy scaling, or persona settings.")
 
 
 def _bottleneck(
