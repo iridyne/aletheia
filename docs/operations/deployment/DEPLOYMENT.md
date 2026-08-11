@@ -52,8 +52,8 @@ owner 选定的 `origin/master` HEAD（通常就是该 PR 的 merge SHA），再
 ssh fedora 'cd /home/admin/aletheia && uv run aletheia update apply --yes --restart'
 ```
 
-这个命令已经负责 fast-forward、依赖同步、前端构建、Migration/SQLite 校验、Gateway
-重启和 readiness；不要再包一层部署脚本。完成后只做以下验收：
+这个命令负责 fast-forward、依赖同步、把前端完整构建到 staging 目录、Smoke、
+Gateway 重启以及启动期 Migration/SQLite 校验；不要再包一层部署脚本。完成后只做以下验收：
 
 1. Fedora `git rev-parse HEAD` 等于预期 merge SHA；
 2. `/api/status` 的 `boot_commit == current_commit ==` 预期 SHA；
@@ -66,6 +66,34 @@ ssh fedora 'cd /home/admin/aletheia && uv run aletheia update apply --yes --rest
 选择、仓位、Risk、成本模型或实验 identity 的代码时，按
 [Experiment Protocol](../../product/experiments/EXPERIMENT_PROTOCOL.md) 关闭受影响窗口并从首次
 eligible exposure 开新窗口。PR merge 本身不等于部署。
+
+### 无人值守升级：当前边界与推荐目标
+
+**当前尚未实现无人值守升级。** `UpdateConfig` 明确把 source-checkout updater
+定义为 human-triggered；因此不能把上面的 SSH 命令直接塞进 `systemd timer` 就宣称完成。
+现有路径缺少跨进程 update lock、CI 候选 SHA 授权、自动 provenance/settlement 验收，
+而 schema 变更后的失败也不能安全地用 Git 回退。
+
+推荐目标是把 Fedora 从“在线修改 source checkout”迁到**签名的不可变 Linux Runtime**：
+
+1. Release workflow 只对通过既有 CI 和 owner release gate 的确切 SHA 构建
+   `linux-x86_64` artifact；backend 与已构建的 `dashboard_static` 必须在同一 manifest，
+   由同一 Ed25519 feed 签名，禁止前后端分别漂移。
+2. 增加无 GUI 的 Linux stable host（当前 `aletheia-tray` 仅支持 macOS），由
+   `systemd --user` 长驻并唯一拥有 stop / select / migrate / start / rollback 权限。
+3. updater timer 只做 signed-feed check 和 staging：下载、校验 manifest/hash/signature、
+   创建并验证数据库备份、在数据副本上预演 migration，然后原子写
+   `update-request.json`。网络、签名、空间或 preflight 失败均保持旧 Runtime 运行。
+4. stable host 读取 request 后暂停新工作，切换不可变 release，应用已预演 migration，
+   启动并完成 health soak。验收必须同时证明 exact commit、schema ledger、provider、
+   scheduler、outcome settlement、`paper_internal` 和 `live_disabled`；任一项不满足就
+   在可逆边界内恢复 previous release 与 pre-update backup，并留下 durable failure state。
+5. timer 使用单实例锁、`Persistent=true`、随机延迟和有界退避；默认先
+   `check-only`，再 canary 自动 staging，最后才允许自动 activation。不得自动打开 live、
+   改 Risk、切 provider、开启 Observation window 或吞掉失败告警。
+
+在 Linux stable host、Linux release artifact、签名 feed 和上述端到端恢复演练全部落地前，
+Fedora 继续使用本节的 owner-triggered 精确部署 SOP。
 
 ## 数据库迁移边界
 
@@ -111,7 +139,8 @@ Migration，也不会在 Gateway 启动或首次部署时自动执行。
 
 ## 前端部署
 
-生产更新优先使用一键受控流程；它仅在 `frontend/` 有变动时构建静态产物，完成 smoke check 后才重启：
+生产更新优先使用一键受控流程；带 `--restart` 时总是在未服务的 staging 目录完成一次
+前端构建，只有 dependency lock 变化时才额外执行 `npm ci`，Smoke 通过后才切换静态产物并重启：
 
 ```powershell
 uv run aletheia update apply --yes --restart

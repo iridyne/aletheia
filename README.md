@@ -71,13 +71,22 @@ AGENTS.md contains the deeper *Read when needed* task-to-document routing.
 
 [![Complete Aletheia architecture map](docs/diagrams/rendered/readme_complete_architecture.svg)](https://iridite.github.io/aletheia/docs/diagrams/interactive/)
 
-- Python 3.12 backend (FastAPI + Typer CLI), Bitget spot + USDT futures (BTC/ETH/SOL)
-- SQLite + JSONL + Markdown storage; secrets in OS keyring / encrypted file (never in config or logs)
-- React/Vite dashboard served from localhost — primary control surface
-- APScheduler-driven agent runtime (market-data loop, market observer, dreaming)
-- 7 agents call a configurable LLM (OpenAI-compatible / Anthropic-compatible / Codex CLI)
-- Risk Engine enforces the full §21.3 check matrix + a global kill switch; every order flows through the Execution Gateway (paper broker or live Bitget broker)
-- Paper/demo first; live strictly gated behind explicit human unlock, with order reconciliation against the exchange
+Current support truth lives in
+[`ACTIVE_RUNTIME_SCOPE.md`](docs/product/ACTIVE_RUNTIME_SCOPE.md) and
+[`CAPABILITY_GROUND_TRUTH.md`](docs/product/CAPABILITY_GROUND_TRUTH.md);
+the summary below does not widen those contracts.
+
+- Python 3.12 backend (FastAPI + Typer CLI) with an active Bitget crypto
+  spot/perpetual evidence path
+- Local-first SQLite state plus JSONL/Markdown artifacts; secrets stay in the
+  OS keyring or encrypted secret store, never in config or logs
+- React/Vite dashboard served from localhost as the primary control surface
+- APScheduler and committed-event nudges drive bounded workers; System Operator
+  is the sole supported entry-strategy decision maker
+- Risk Engine approval always precedes Execution Gateway execution, and every
+  causal proposal/risk/order/fill/position link is persisted
+- The supported core execution mode is `paper_internal`; external demo/live
+  adapters remain outside the Supported core, and live is off by default
 
 ### 1. System overview — one durable trading cognition loop
 
