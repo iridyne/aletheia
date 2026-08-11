@@ -939,15 +939,25 @@ def _mirror_universe_scanner_recovery_audits() -> bool:
 def _run_universe_scanner_audit_reconciler() -> bool:
     """Retry a pending recovery audit mirror once on each reconciler tick."""
     global _universe_scanner_audit_mirror_done
-    if (
-        not _universe_scanner_startup_recovery_done
-        or _universe_scanner_audit_mirror_done
-    ):
+    try:
+        if (
+            not _universe_scanner_startup_recovery_done
+            or _universe_scanner_audit_mirror_done
+        ):
+            return _universe_scanner_audit_mirror_done
+        _universe_scanner_audit_mirror_done = (
+            _mirror_universe_scanner_recovery_audits()
+        )
+        if not _universe_scanner_audit_mirror_done:
+            _record_job_failure(
+                "universe_scanner_audit_reconciler",
+                "audit_mirror_pending",
+            )
         return _universe_scanner_audit_mirror_done
-    _universe_scanner_audit_mirror_done = (
-        _mirror_universe_scanner_recovery_audits()
-    )
-    return _universe_scanner_audit_mirror_done
+    except Exception as e:
+        logger.warning("universe_scanner_audit_reconciler failed: %s", e)
+        _record_job_failure("universe_scanner_audit_reconciler", str(e))
+        return False
 
 
 def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
