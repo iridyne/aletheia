@@ -49,3 +49,7 @@ Proposal as stable decision history.
 - [Serenity Research Attempt Truth](serenity_research_attempt_truth.md):
   cooperative cancellation acknowledgement, guarded terminal transitions,
   durable progress facts, and restart reconciliation for Serenity runs.
+
+- [Fedora immutable Runtime updates](fedora_immutable_runtime_updates.md):
+  signed Linux releases, headless activation ownership, migration preflight,
+  health-gated activation, and bounded recovery.

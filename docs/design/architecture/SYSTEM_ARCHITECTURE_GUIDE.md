@@ -1,7 +1,9 @@
 # Aletheia Trading OS — 系统架构全景图
 
-> 本文档用图示 + 故事的方式完整说明系统的每个环节。
-> 所有流程图源文件位于 `docs/diagrams/*.mmd`，可用 `mmdc` 重新渲染。
+> 本文档是解释性导览，不是能力或运行状态权威。
+> 当前支持边界只认 [`ACTIVE_RUNTIME_SCOPE.md`](../../product/ACTIVE_RUNTIME_SCOPE.md)
+> 与 [`CAPABILITY_GROUND_TRUTH.md`](../../product/CAPABILITY_GROUND_TRUTH.md)；
+> 图示若与这两份文件或可执行证据冲突，以后者为准。
 
 ---
 
@@ -13,14 +15,14 @@
 
 | 角色 | 组件 | 职责 | 自治权 |
 |------|------|------|--------|
-| 基金经理 | **System Operator** | 所有买卖决策最终由他拍板 | 唯一决策者 |
-| 研究员 | Market Observer | 验证并补充 deterministic Opportunity 的 context | 只写 namespaced advisory assessment，不下单 |
-| 交易员助理 | Paper Trader | 收集信号交给老板 | 只写 signal_pending，不下单 |
-| 量化工程师 | Strategy Designer | 设计新策略+回测 | 升阶止于 paper_candidate |
-| 风控主管 | Operator Loop | 建议淘汰/降级策略 | 只写 recommend_*，不直接执行 |
-| 安全保镖 | Position Manager | 止损/止盈/追踪止损 | **唯一自治执行权**（钱不等人） |
+| 入场决策者 | **System Operator** | 对确切候选输出 `trade` / `skip` | 唯一受支持的入场策略决策主体 |
+| 市场观察 | Market Observer | 对 emitter-admitted Opportunity 做可选 LLM advisory enrichment | 只写 namespaced assessment，不下单 |
+| 候选整理 | Paper Ranker / Paper Trader | 确定性筛选并写 `signal_pending` | 不调用 LLM，不提交 Proposal |
+| 运行评估 | Python Operator assessment | 有界配置建议、通知和仍存在的委派 | 不是交易策略主体 |
+| 保护性持仓管理 | Position Manager | 止损、止盈、追踪和受控平仓 | 只缩减既有授权持仓 |
 
-**核心原则**：所有"动脑子"的决定由 System Operator 一人做；其他组件只产出信号和建议。
+**核心原则**：System Operator 是唯一受支持的入场策略决策主体；Risk Engine
+和 Execution Gateway 仍是独立硬边界，任何组件都不能绕过它们。
 
 ---
 
@@ -28,16 +30,18 @@
 
 ![Data Collection](../../diagrams/rendered/02_data_collection.png)
 
-系统每 5 分钟从三家交易所（Bitget / Binance / OKX）通过 CCXT 统一接口拉取 6 种数据：
+活动主线从运行时配置并记录的 market-data venue 获取 crypto spot/perpetual 市场事实，
+并把 venue、market type 和 symbol 身份保留到持久化记录。其他 adapter 或历史采集代码
+的存在不等于当前 Supported 能力。核心数据包括：
 
 | 数据 | 内容 | 用途 |
 |------|------|------|
-| OHLCV | 1h+4h 各 168 根 K线 | 计算 RSI、布林带、成交量比 |
-| Funding Rate | 多空费率 | 反映杠杆偏向（拥挤度） |
-| Taker Ratio | 主动买/卖比 | 市场情绪确认 |
-| Open Interest | 持仓量变化 | 结合价格计算 OI-Price 背离 |
-| Liquidation | 大额爆仓事件 | 极端情绪检测 |
-| Price Snapshot | 实时价格、24h 变化 | 基础快照 |
+| OHLCV | 多周期 K 线 | 结构化技术上下文 |
+| Funding Rate | 永续资金费率 | 杠杆拥挤度证据 |
+| Taker Ratio | 主动买/卖比 | 市场结构上下文 |
+| Open Interest | 持仓量变化 | OI 与价格关系 |
+| Liquidation | 爆仓事件 | 极端市场上下文 |
+| Price Snapshot | 带 venue/market type 的价格事实 | 估值与新鲜度检查 |
 
 原始数据经特征计算引擎加工后存入 `universe_feature_snapshots` 表：
 - `vol_ratio`：当前成交量 / 均值（放量检测）
@@ -51,35 +55,23 @@
 
 ![Signal Discovery](../../diagrams/rendered/03_signal_discovery.png)
 
-系统有两条并行信号管线，殊途同归汇入 `pi_decisions` 表：
-
-### Path B：机会发现管线（适合新标的/新机会）
+当前受支持的入场候选只有一条因果链：
 
 ```
 Market Observer (10min)
-  → LLM 分析每个 symbol → 输出方向+信心
+  → LLM 读取确切 instrument 的有来源市场事实
   → 写入 Opportunity
-  → Ranker 消费 → 5层过滤 + 多维评分
-  → Top 3 → signal_pending
+  → Paper Ranker 确定性筛选
+  → Paper Trader（3min fallback + committed-event nudge）
+  → 写入 signal_pending PiDecision
+  → System Operator（事件驱动 + ~15min fallback）
+  → 输出 trade / skip
+  → trade 才形成不可变 Proposal，随后进入 Risk 与 Execution
 ```
 
-**Ranker 评分维度**：
-- confidence_score（LLM 给出的信心分）
-- scanner_family bonus（来源加成）
-- strategy_evidence（策略历史表现）
-- factor_feedback（因子历史胜率）
-- blocked_candidate 惩罚（-50 分）
-
-### Path A：策略触发管线（已有策略的自动触发）
-
-```
-Paper Trader (5min)
-  → 扫描所有 paper_running 策略的 RuleSet
-  → 检查技术指标条件（如 RSI<30 且 BB squeeze）
-  → 条件满足 → signal_pending
-```
-
-**关键：两条路径都只写信号到 `pi_decisions` 表，绝不下单。**
+Paper Trader 不调用 LLM、不提交 Proposal，也不直接平仓。旧的
+`paper_running RuleSet → 自动触发` 路径已经删除；表名、旧记录或历史图中仍出现
+这些状态，不构成当前产品能力。
 
 ---
 
@@ -87,7 +79,8 @@ Paper Trader (5min)
 
 ![System Operator Decision](../../diagrams/rendered/04_pi_agent_decision.png)
 
-每 5 分钟，System Operator 醒来。面前摆着三层信息：
+System Operator 由 committed event 唤醒，并保留约 15 分钟的 fallback。每次只处理
+一个确切 pending candidate，面前是三层信息：
 
 ### Layer 1: 市场现在长什么样
 - 所有币的价格快照
@@ -122,9 +115,6 @@ Paper Trader (5min)
 |------|------|------|
 | `trade` | 确认交易 | → 执行层下单 |
 | `skip` | 放弃信号 | 记录原因，下轮可回顾 |
-| `watch` | 先观察 | 加入观察列表 |
-| `scale_in` | 加仓 | 现有持仓追加 |
-| `flip` | 反转 | 平掉反向再开 |
 
 ---
 
@@ -154,10 +144,9 @@ stop_price = price × (1 - stop_loss_pct%)
 
 ### Step 3: 下单执行
 
-根据 `execution_mode`：
-- `paper_internal`：本地模拟成交（零延迟）
-- `bitget_demo`：交易所模拟盘（真实撮合但虚拟资金）
-- `bitget_live_limited`：实盘（**需要人工确认**）
+当前 Supported execution mode 只有 `paper_internal`，由本地 Paper broker 模拟成交。
+Exchange demo/live adapter 代码的存在不构成 Supported 能力；Live 默认关闭，且任何未来
+启用仍必须保留显式人工授权和完整 Risk/Execution 信任边界。
 
 ### Step 4: 成交链路
 ```
@@ -187,30 +176,26 @@ Proposal → Order → Fill → Position → Exchange TPSL 挂单
 
 ---
 
-## 第七章：反馈闭环 — 每笔交易让系统变聪明
+## 第七章：反馈闭环 — 结果先成为证据，再允许影响决策
 
 ![Feedback Loop](../../diagrams/rendered/07_feedback_loop.png)
 
-交易结束后触发三条学习通路：
+交易结束后，系统先持久化真实 close、净结果和因果归因，再运行后续消费者：
 
-### 1. Factor Feedback（因子反馈）
-- 找到对应 factor_key（scanner_family + direction + symbol 类型）
-- 更新统计：胜率、期望收益、交易次数
-- 状态升阶：`watch` → `active` → `preferred`
-- **下轮效果**：Ranker 给 `preferred` 因子 +20 分，`blocked_candidate` -50 分
+### 1. Outcome 与 Attribution
+- 只接纳能回溯到 Opportunity、Proposal、RiskDecision、Order、Fill 和 Position 的结果
+- 区分未验证、部分结算和已验证 genuine outcome，不用缺失数据补造胜负
 
-### 2. Knowledge Lesson（知识教训）
-- 自动分析本次交易的成功/失败原因
-- 写入知识库
-- **下轮效果**：System Operator Layer 3 看到最近教训
+### 2. Review 与 Knowledge
+- Post-trade review 和 lesson review 可以产生持久化知识
+- 知识只有在明确声明的 consumer 路径中才参与后续上下文；存在一条记录不等于已生效
 
-### 3. Strategy Evidence（策略证据）
-- paper_trades 计数 +1
-- paper_expectancy 更新
-- 检查 promotion_gates：≥5 笔 + 期望为正？
-- **下轮效果**：满足条件 → Operator 可以推荐升级
+### 3. Measured Learning
+- 受支持的 exposure / treatment / control 路径写入固定身份与 outcome contract
+- measurement-unsupported 的 ranker、persona 等 hook 保持静态 fallback，不创建正式 exposure
+- 旧 Strategy promotion / demotion 链已经删除，不会因交易计数或期望值自动恢复
 
-这三条路径在 5 分钟后的下一轮 System Operator 决策中生效——正反馈循环。
+因此，反馈是可审计、可归因的后续输入，不承诺“下一轮必然生效”，也不把相关性冒充因果改进。
 
 ---
 
@@ -244,11 +229,11 @@ Python Operator assessment 只保留有界配置调整、通知和仍存在的�
 | 原则 | 实现 |
 |------|------|
 | **System Operator 是入场决策者** | 当前候选只产生 `trade` / `skip`；Risk 与 Execution 仍是独立硬边界 |
-| **其他组件只产出信号** | Observer 写 Opportunity，Paper Trader 写 `signal_pending`，System Operator 写最终候选决策 |
-| **安全层自治** | 止损/止盈/追踪不等审批，秒级执行保护资金 |
-| **正反馈循环** | 每笔交易的结果在 5 分钟内影响下一个决策 |
+| **其他组件只产出候选事实** | Observer 写 Opportunity，Paper Trader 写 `signal_pending`；二者都不提交 Proposal |
+| **保护层自治但不扩权** | Position Manager 只能缩减既有授权持仓，仍保留因果链和审计 |
+| **反馈先测量后影响** | verified outcome、归因与正式 exposure 先落账；unsupported hook 保持静态 fallback |
 | **策略生命周期不冒充能力** | 旧 RuleSet 升阶/退役链已删除；未来恢复必须重新证明完整链路 |
-| **Risk Engine 是硬墙** | 无论 System Operator 多有信心，5 关审批不通过就不下单 |
+| **Risk Engine 是硬墙** | System Operator 的 `trade` 仍须通过独立 Risk 审批才能执行 |
 
 ---
 
@@ -258,8 +243,8 @@ Python Operator assessment 只保留有界配置调整、通知和仍存在的�
 |------|------|--------|
 | Market Data Collector | 5 min | 拉取价格/FR/OI/Taker/Liquidation |
 | Market Observer | 10 min | 对 emitter-admitted Opportunity 做可选 LLM enrichment |
-| Paper Trader | 5 min | 信号收集 → 写 signal_pending |
+| Paper Trader | 3 min fallback + committed-event nudge | 确定性候选整理 → 写 signal_pending |
 | System Operator trading decision | event-driven + ~15 min fallback | 读确切 pending candidate → `trade` / `skip` |
-| Position Manager | 1 min | 追踪止损 / 检查平仓条件 |
+| Position Manager | 30 sec protective cycle（另有 exchange TP/SL fill check） | 追踪保护 / 检查平仓条件 |
 | Python Operator assessment | 4 h | 有界 config 调整、通知和当前委派 |
 | TS operator-shell | continuous supervision | 状态监督、Command Registry 编排和受控自愈 |

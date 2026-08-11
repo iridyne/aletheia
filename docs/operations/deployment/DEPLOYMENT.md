@@ -52,8 +52,8 @@ owner 选定的 `origin/master` HEAD（通常就是该 PR 的 merge SHA），再
 ssh fedora 'cd /home/admin/aletheia && uv run aletheia update apply --yes --restart'
 ```
 
-这个命令已经负责 fast-forward、依赖同步、前端构建、Migration/SQLite 校验、Gateway
-重启和 readiness；不要再包一层部署脚本。完成后只做以下验收：
+这个命令负责 fast-forward、依赖同步、把前端完整构建到 staging 目录、Smoke、
+Gateway 重启以及启动期 Migration/SQLite 校验；不要再包一层部署脚本。完成后只做以下验收：
 
 1. Fedora `git rev-parse HEAD` 等于预期 merge SHA；
 2. `/api/status` 的 `boot_commit == current_commit ==` 预期 SHA；
@@ -66,6 +66,19 @@ ssh fedora 'cd /home/admin/aletheia && uv run aletheia update apply --yes --rest
 选择、仓位、Risk、成本模型或实验 identity 的代码时，按
 [Experiment Protocol](../../product/experiments/EXPERIMENT_PROTOCOL.md) 关闭受影响窗口并从首次
 eligible exposure 开新窗口。PR merge 本身不等于部署。
+
+### 无人值守升级边界
+
+**当前尚未实现无人值守升级。** `UpdateConfig` 明确把 source-checkout updater
+定义为 human-triggered；因此不能把上面的 SSH 命令直接塞进 `systemd timer` 就宣称完成。
+现有路径缺少跨进程 update lock、CI 候选 SHA 授权、自动 provenance/settlement 验收，
+而 schema 变更后的失败也不能安全地用 Git 回退。
+
+签名不可变 Linux Runtime、headless stable host、自动 activation 和 recovery 的未来设计
+只记录在 draft
+[Fedora immutable Runtime updates Proposal](../../design/proposals/fedora_immutable_runtime_updates.md)
+中。在该 Proposal 被接受、实现并通过恢复演练前，Fedora 继续使用本节的
+owner-triggered 精确部署 SOP。
 
 ## 数据库迁移边界
 
@@ -111,7 +124,8 @@ Migration，也不会在 Gateway 启动或首次部署时自动执行。
 
 ## 前端部署
 
-生产更新优先使用一键受控流程；它仅在 `frontend/` 有变动时构建静态产物，完成 smoke check 后才重启：
+生产更新优先使用一键受控流程；带 `--restart` 时总是在未服务的 staging 目录完成一次
+前端构建，只有 dependency lock 变化时才额外执行 `npm ci`，Smoke 通过后才切换静态产物并重启：
 
 ```powershell
 uv run aletheia update apply --yes --restart
