@@ -132,7 +132,9 @@ def _trade(row: dict) -> dict | None:
     try:
         stop = float(row.get("entry_stop_price", row.get("stop_price")) or 0)
         direction = str(row.get("direction") or "").lower()
-        valid_geometry = (direction == "long" and stop < entry) or (direction == "short" and stop > entry)
+        valid_geometry = (direction in {"long", "buy"} and stop < entry) or (
+            direction in {"short", "sell"} and stop > entry
+        )
         if stop > 0 and valid_geometry:
             stop_distance = abs(entry - stop) / entry
     except (TypeError, ValueError, OverflowError):

@@ -71,6 +71,19 @@ def test_counterfactual_rejects_wrong_side_stop_geometry():
     assert _trade(row)["stop_distance"] is None
 
 
+def test_counterfactual_accepts_supported_direction_aliases():
+    from aletheia.analytics.sizing_counterfactual import _trade
+
+    buy = _row(1, notional=100, return_pct=2, stop_pct=1, conviction=70)
+    buy["direction"] = "buy"
+    sell = _row(2, notional=100, return_pct=2, stop_pct=1, conviction=70)
+    sell["direction"] = "sell"
+    sell["entry_stop_price"] = 101.0
+
+    assert _trade(buy)["stop_distance"] == 0.01
+    assert _trade(sell)["stop_distance"] == 0.01
+
+
 def test_counterfactual_robustness_halves_match_exposure_independently():
     from aletheia.analytics.sizing_counterfactual import build_sizing_counterfactual
 
