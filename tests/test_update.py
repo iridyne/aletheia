@@ -228,31 +228,6 @@ def test_apply_pull_failure_graceful(tmp_path, monkeypatch):
     assert any(e.get("event_type") == "update_failed" for e in read_jsonl("audit.jsonl"))
 
 
-def test_cli_update_apply_restarts_by_default(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier
-
-    seen = {}
-
-    def apply(*, restart):
-        seen["restart"] = restart
-        return {
-            "applied": True,
-            "old_commit": "old111",
-            "new_commit": "new222",
-            "deps_reinstalled": False,
-        }
-
-    monkeypatch.setattr(applier, "apply_update", apply)
-    from typer.testing import CliRunner
-    from aletheia.cli.update_cmd import update_app
-
-    result = CliRunner().invoke(update_app, ["apply", "--yes"])
-
-    assert result.exit_code == 0
-    assert seen["restart"] is True
-    assert "Gateway restarted and readiness verified." in result.output
-
 
 def test_cli_update_runs_full_source_deployment_without_subcommand(
     tmp_path, monkeypatch
@@ -284,26 +259,58 @@ def test_cli_update_runs_full_source_deployment_without_subcommand(
     assert "Gateway restarted and readiness verified." in result.output
 
 
-def test_cli_update_without_subcommand_rejects_packaged_mode(monkeypatch):
+def test_cli_update_without_subcommand_stages_packaged_release(monkeypatch):
     from aletheia.cli import update_cmd
+    from aletheia.update import packaged_commands
     from typer.testing import CliRunner
 
     monkeypatch.setattr(update_cmd, "_is_packaged", lambda: True)
+    monkeypatch.setattr(
+        packaged_commands,
+        "stage_update_blocking",
+        lambda: {
+            "accepted": True,
+            "state": {
+                "status": "ready",
+                "phase": "ready_to_switch",
+                "target_release": "0.7.0",
+            },
+        },
+    )
 
     result = CliRunner().invoke(update_cmd.update_app, [])
 
+    assert result.exit_code == 0
+    assert "Release 0.7.0 is verified and migration-preflighted." in result.output
+
+
+def test_cli_update_rejects_no_restart_in_packaged_mode(monkeypatch):
+    from aletheia.cli import update_cmd
+    from aletheia.update import packaged_commands
+    from typer.testing import CliRunner
+
+    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: True)
+    monkeypatch.setattr(
+        packaged_commands,
+        "stage_update_blocking",
+        lambda: pytest.fail("packaged update must not start with --no-restart"),
+    )
+
+    result = CliRunner().invoke(update_cmd.update_app, ["--no-restart"])
+
     assert result.exit_code == 1
-    assert "Direct Git HEAD updates are unavailable in packaged mode." in result.output
+    assert "`--no-restart` is only available for source checkouts" in result.output
 
 
-def test_top_level_update_help_describes_complete_deployment():
+def test_top_level_update_help_has_no_apply_subcommand():
     from aletheia.main import app
     from typer.testing import CliRunner
 
     result = CliRunner().invoke(app, ["update", "--help"])
 
     assert result.exit_code == 0
-    assert "Pull, verify, rebuild, and restart source runtime" in result.output
+    assert "Install the latest verified update for this runtime." in result.output
+    assert "apply" not in result.output
 
 
 def test_cli_update_check_smoke(tmp_path, monkeypatch):

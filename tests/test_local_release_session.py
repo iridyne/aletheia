@@ -126,7 +126,7 @@ def test_local_session_refuses_a_signer_not_trusted_by_installed_app(tmp_path):
         session.assert_installed_trust_root(public, installed_host_root=host)
 
 
-def test_local_session_uses_temporary_feed_for_check_apply_and_terminal_status(monkeypatch, tmp_path):
+def test_local_session_uses_temporary_feed_for_check_update_and_terminal_status(monkeypatch, tmp_path):
     session = _session_module()
     launcher = tmp_path / "aletheia"
     launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -149,7 +149,7 @@ def test_local_session_uses_temporary_feed_for_check_apply_and_terminal_status(m
     assert state == {"status": "success", "phase": "committed"}
     assert [call[0][1:] for call in calls] == [
         ["update", "check"],
-        ["update", "apply", "--yes"],
+        ["update"],
         ["update", "status", "--json"],
     ]
     assert all(call[1]["ALETHEIA_UPDATE_FEED_URL"].endswith("update-feed.json") for call in calls)

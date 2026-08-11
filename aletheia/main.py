@@ -75,7 +75,7 @@ app.add_typer(risk_app, name="risk", help="[deprecated → Risk panel] Risk / ki
 app.add_typer(
     update_app,
     name="update",
-    help="Pull, verify, rebuild, and restart source runtime; manage packaged releases.",
+    help="Install the latest verified update for this runtime.",
 )
 
 
@@ -83,6 +83,7 @@ app.add_typer(
 def version():
     """Show version."""
     from aletheia import __version__
+
     typer.echo(f"Aletheia Trading OS v{__version__}")
 
 

@@ -54,7 +54,7 @@ ssh fedora 'cd /home/admin/aletheia && uv run aletheia update'
 
 这个 source-checkout 命令固定执行 fast-forward、按需依赖同步、把前端完整构建到
 staging 目录、Smoke、Gateway 重启以及启动期 Migration/SQLite 校验；不要再包一层部署脚本。
-`update apply --yes --restart` 保留为显式控制兼容入口；packaged runtime 仍只接受签名发布流程。
+`update --no-restart` 仅保留 source checkout 的应急控制；packaged runtime 的同一个裸命令自动走签名发布流程。
 完成后只做以下验收：
 
 1. Fedora `git rev-parse HEAD` 等于预期 merge SHA；
@@ -90,7 +90,7 @@ owner-triggered 精确部署 SOP。
 - 新空库或没有账本的旧库会执行一次冻结的 legacy baseline。checksum 漂移、数据库含当前代码未知的 migration ID、或升级异常都会 fail closed，并保留明确的 migrate/doctor/log 指针。
 - Schema v3 会在升级阶段一次性重建 `knowledge_fts` 并建立启动/遥测热路径索引；后续普通 Gateway 启动不会再全量 reindex。需要人工修复 FTS 时使用显式 `uv run aletheia knowledge reindex`。
 - pending migration 执行时 CLI 显示步骤进度、精确 elapsed 和宽范围 ETA。ETA 会标明估算依据；超过范围时只显示仍在执行，不伪造完成百分比。重定向输出仍保留最终步骤和实际耗时。
-- 受控 `update apply` 会在激活候选版本时执行同一 migration apply/SQLite validation；普通重启在账本已 current 时仅有毫秒级核对。
+- 受控 `update` 会在激活候选版本时执行同一 migration apply/SQLite validation；普通重启在账本已 current 时仅有毫秒级核对。
 
 ## 数据库容量与空间回收
 

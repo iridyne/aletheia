@@ -18,20 +18,68 @@ def _is_packaged() -> bool:
 
     return is_packaged_mode()
 
+
 @update_app.callback(invoke_without_command=True)
-def update(ctx: typer.Context) -> None:
-    """Pull, verify, activate, and restart a source-checkout runtime."""
+def update(
+    ctx: typer.Context,
+    restart: bool = typer.Option(
+        True,
+        "--restart/--no-restart",
+        help="Rebuild dashboard assets and restart a source runtime after verification.",
+    ),
+) -> None:
+    """Install the latest verified update for this runtime."""
 
     if ctx.invoked_subcommand is not None:
         return
+    _run_update(restart=restart)
+
+
+def _run_update(*, restart: bool) -> None:
     if _is_packaged():
-        typer.echo(
-            "Direct Git HEAD updates are unavailable in packaged mode. "
-            "Run `aletheia update apply` for the signed-release workflow.",
-            err=True,
-        )
+        if not restart:
+            typer.echo(
+                "`--no-restart` is only available for source checkouts; "
+                "packaged updates require Tray activation and restart.",
+                err=True,
+            )
+            raise typer.Exit(1)
+        from aletheia.update.packaged_commands import stage_update_blocking
+
+        result = stage_update_blocking()
+        state = result.get("state") or {}
+        if not result.get("accepted"):
+            typer.echo(f"Update not started: {result.get('reason')}")
+            raise typer.Exit(1)
+        if state.get("status") == "up_to_date":
+            typer.echo("Already up to date.")
+            return
+        if state.get("status") == "failed":
+            typer.echo(f"Update staging failed: {state.get('error')}", err=True)
+            raise typer.Exit(1)
+        if state.get("phase") != "ready_to_switch":
+            typer.echo(f"Unexpected update state: {state.get('phase')}", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"Release {state.get('target_release')} is verified and migration-preflighted.")
+        typer.echo("Aletheia Tray will complete the short switch and automatic health check.")
+        return
+
+    from aletheia.update.applier import apply_update
+
+    result = apply_update(restart=restart)
+    if not result.get("applied"):
+        typer.echo(f"Update not applied: {result.get('reason')}")
+        if result.get("message"):
+            typer.echo(f"  {result['message']}")
         raise typer.Exit(1)
-    apply(yes=True, restart=True)
+    typer.echo(
+        f"Updated {result['old_commit'][:8]} -> {result['new_commit'][:8]} "
+        f"(deps reinstalled: {result['deps_reinstalled']})."
+    )
+    if restart:
+        typer.echo("Gateway restarted and readiness verified.")
+    else:
+        typer.echo("Restart the gateway to load the new code: aletheia gateway restart")
 
 
 @update_app.command()
@@ -73,83 +121,19 @@ def check():
     if result.get("mode") == "packaged":
         if result.get("has_update"):
             typer.echo(
-                f"Signed update available: {result.get('available_release')} "
-                f"({result.get('size_bytes', 0)} bytes)."
+                f"Signed update available: {result.get('available_release')} ({result.get('size_bytes', 0)} bytes)."
             )
-            typer.echo("Run `aletheia update apply` to stage and install it through Aletheia Tray.")
+            typer.echo("Run `aletheia update` to stage and install it through Aletheia Tray.")
         else:
             typer.echo(f"Up to date ({result.get('current_release')}).")
         return
 
     if result["has_update"]:
-        typer.echo(
-            f"Update available: {result['behind_count']} commit(s) behind "
-            f"origin/{result['branch']}."
-        )
-        typer.echo(
-            f"  current: {result['current_commit'][:8]}  remote: {result['remote_commit'][:8]}"
-        )
+        typer.echo(f"Update available: {result['behind_count']} commit(s) behind origin/{result['branch']}.")
+        typer.echo(f"  current: {result['current_commit'][:8]}  remote: {result['remote_commit'][:8]}")
         typer.echo("Run `aletheia update` for the complete pull, build, and restart.")
     else:
         typer.echo(f"Up to date on origin/{result['branch']} ({result['current_commit'][:8]}).")
-
-
-@update_app.command()
-def apply(
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
-    restart: bool = typer.Option(True, "--restart/--no-restart", help="Rebuild dashboard assets and restart after verification."),
-):
-    """Apply with explicit confirmation and restart controls."""
-
-    if _is_packaged():
-        if not yes and not typer.confirm(
-            "Download the signed release, preflight migrations, and let Aletheia Tray switch versions?"
-        ):
-            typer.echo("Aborted.")
-            raise typer.Exit(0)
-        from aletheia.update.packaged_commands import stage_update_blocking
-
-        result = stage_update_blocking()
-        state = result.get("state") or {}
-        if not result.get("accepted"):
-            typer.echo(f"Update not started: {result.get('reason')}")
-            raise typer.Exit(1)
-        if state.get("status") == "up_to_date":
-            typer.echo("Already up to date.")
-            return
-        if state.get("status") == "failed":
-            typer.echo(f"Update staging failed: {state.get('error')}", err=True)
-            raise typer.Exit(1)
-        if state.get("phase") != "ready_to_switch":
-            typer.echo(f"Unexpected update state: {state.get('phase')}", err=True)
-            raise typer.Exit(1)
-        typer.echo(
-            f"Release {state.get('target_release')} is verified and migration-preflighted."
-        )
-        typer.echo("Aletheia Tray will complete the short switch and automatic health check.")
-        return
-
-    if not yes:
-        confirm = typer.confirm("Pull latest code, rebuild the dashboard, and restart the gateway?")
-        if not confirm:
-            typer.echo("Aborted.")
-            raise typer.Exit(0)
-    from aletheia.update.applier import apply_update
-
-    result = apply_update(restart=restart)
-    if not result.get("applied"):
-        typer.echo(f"Update not applied: {result.get('reason')}")
-        if result.get("message"):
-            typer.echo(f"  {result['message']}")
-        raise typer.Exit(1)
-    typer.echo(
-        f"Updated {result['old_commit'][:8]} -> {result['new_commit'][:8]} "
-        f"(deps reinstalled: {result['deps_reinstalled']})."
-    )
-    if restart:
-        typer.echo("Gateway restarted and readiness verified.")
-    else:
-        typer.echo("Restart the gateway to load the new code: aletheia gateway restart")
 
 
 @update_app.command()

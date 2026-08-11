@@ -431,7 +431,7 @@ def _read_update_state(cli: Path, *, env: dict[str, str]) -> dict[str, Any]:
 def _apply_update(cli: Path, feed_url: str, timeout_sec: int) -> dict[str, Any]:
     env = dict(os.environ, ALETHEIA_UPDATE_FEED_URL=feed_url)
     _cli_run(cli, ["update", "check"], env=env)
-    _cli_run(cli, ["update", "apply", "--yes"], env=env)
+    _cli_run(cli, ["update"], env=env)
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         state = _read_update_state(cli, env=env)
