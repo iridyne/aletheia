@@ -377,10 +377,16 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     assert attribution[0]["realized_pnl"] == pytest.approx(closed["realized_pnl"])
 
     jobs = repo.list_outcome_hook_jobs(position_id=position["id"])
-    assert {job["hook_type"] for job in jobs} == {"shadow_trades"}
+    assert {job["hook_type"] for job in jobs} == {
+        "shadow_trades",
+        "exit_trailing_recovery",
+    }
     assert repo.get_exit_breakeven_shadow_assignment(position["id"]) is None
-    assert all(job["status"] == "completed" for job in jobs)
-    assert all(job["attempts"] == 1 for job in jobs)
+    jobs_by_type = {job["hook_type"]: job for job in jobs}
+    assert jobs_by_type["shadow_trades"]["status"] == "completed"
+    assert jobs_by_type["shadow_trades"]["attempts"] == 1
+    assert jobs_by_type["exit_trailing_recovery"]["status"] == "pending"
+    assert jobs_by_type["exit_trailing_recovery"]["attempts"] == 0
 
     feedback = build_factor_feedback(limit=10, min_trades=1)
     scanner_feedback = next(

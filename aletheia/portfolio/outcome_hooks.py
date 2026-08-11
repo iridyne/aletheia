@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 
 from aletheia.analytics.outcome_integrity import (
     assess_reportable_outcome,
@@ -18,6 +19,35 @@ logger = logging.getLogger("aletheia.portfolio.outcome_hooks")
 SHADOW_TRADES_HOOK = "shadow_trades"
 SERENITY_POST_MORTEM_HOOK = "serenity_post_mortem"
 EXIT_BREAKEVEN_SHADOW_HOOK = "exit_breakeven_shadow"
+EXIT_TRAILING_RECOVERY_HOOK = "exit_trailing_recovery"
+
+
+def _trailing_recovery_due_at(position: dict) -> str | None:
+    try:
+        trailing = json.loads(position.get("trailing_json") or "null")
+        assignment = trailing["qualification"]
+        from aletheia.portfolio.protective_barrier import (
+            _TRAILING_QUALIFICATION_VERSION,
+            _trailing_qualification_assignment,
+        )
+
+        if (
+            assignment.get("policy_version") != _TRAILING_QUALIFICATION_VERSION
+            or assignment.get("arm") != "treatment"
+            or assignment != _trailing_qualification_assignment(str(position["id"]))
+        ):
+            return None
+        closed = datetime.fromisoformat(
+            str(position["closed_at"]).replace("Z", "+00:00")
+        )
+        if closed.tzinfo is None:
+            return None
+        closed_ms = int(closed.astimezone(timezone.utc).timestamp() * 1000)
+        window_start_ms = ((closed_ms + 59_999) // 60_000) * 60_000
+        due_ms = window_start_ms + (int(assignment["recovery_window_bars"]) + 1) * 60_000
+        return datetime.fromtimestamp(due_ms / 1000, tz=timezone.utc).isoformat()
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
 
 
 def enqueue_outcome_hook_jobs(position: dict) -> list[dict]:
@@ -29,6 +59,13 @@ def enqueue_outcome_hook_jobs(position: dict) -> list[dict]:
         jobs.append(repo.enqueue_outcome_hook_job(
             str(position["id"]),
             EXIT_BREAKEVEN_SHADOW_HOOK,
+        ))
+    recovery_due_at = _trailing_recovery_due_at(position)
+    if recovery_due_at is not None:
+        jobs.append(repo.enqueue_outcome_hook_job(
+            str(position["id"]),
+            EXIT_TRAILING_RECOVERY_HOOK,
+            next_attempt_at=recovery_due_at,
         ))
     if position.get("trade_school") == "serenity" and position.get("opportunity_id"):
         jobs.append(repo.enqueue_outcome_hook_job(
@@ -208,6 +245,12 @@ def _hook_applicability_reason(hook_type: str, position: dict) -> str | None:
         if repo.get_exit_breakeven_shadow_assignment(str(position["id"])) is None:
             return "hook_not_applicable"
         return None
+    if hook_type == EXIT_TRAILING_RECOVERY_HOOK:
+        return (
+            None
+            if _trailing_recovery_due_at(position) is not None
+            else "hook_not_applicable"
+        )
     return "unsupported_hook_type"
 
 
@@ -235,5 +278,12 @@ def _execute_hook(hook_type: str, position: dict) -> None:
         from aletheia.analytics.exit_breakeven_shadow import settle_position_shadow
 
         settle_position_shadow(position)
+        return
+    if hook_type == EXIT_TRAILING_RECOVERY_HOOK:
+        from aletheia.analytics.exit_trailing_qualification import (
+            materialize_exit_trailing_recovery,
+        )
+
+        materialize_exit_trailing_recovery(position)
         return
     raise ValueError(f"unsupported Outcome hook type: {hook_type}")
