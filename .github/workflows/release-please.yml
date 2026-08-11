@@ -61,7 +61,6 @@ jobs:
       - name: Run CI for the release pull request
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
         with:
-          github-token: ${{ steps.release-token.outputs.token }}
           retries: 3
           script: |
             const {data: pullRequests} = await github.rest.pulls.list({
