@@ -46,6 +46,7 @@ def _protected_position(tmp_path, monkeypatch, *, direction="long"):
     record_position_opened(position.id)
     activation = activate_new_paper_position(position.id)
     assert activation["next_bar_open_ms"] == cursor
+    assert repo.get_exit_breakeven_shadow_assignment(position.id) is None
     return position, cursor
 
 

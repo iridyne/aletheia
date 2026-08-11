@@ -29,6 +29,43 @@ def enabled_cfg():
     return cfg
 
 
+def test_active_paper_learning_scope_returns_exact_single_scope():
+    from aletheia.universe.service import _active_paper_learning_scope
+
+    scope = {"family": "momentum", "direction": "long", "market_type": "spot"}
+    with (
+        patch(
+            "aletheia.learning.ledger.list_open_experiments",
+            return_value=[
+                {"stage": "shadow", "hypothesis_id": "shadow"},
+                {"stage": "paper_10", "hypothesis_id": "paper"},
+            ],
+        ),
+        patch(
+            "aletheia.learning.ledger.get_record",
+            return_value={"scope_json": json.dumps(scope)},
+        ),
+    ):
+        assert _active_paper_learning_scope(
+            "universe_family_calibration"
+        ) == (True, scope)
+
+
+def test_active_paper_learning_scope_fails_closed_on_ambiguity():
+    from aletheia.universe.service import _active_paper_learning_scope
+
+    with patch(
+        "aletheia.learning.ledger.list_open_experiments",
+        return_value=[
+            {"stage": "paper_10", "hypothesis_id": "first"},
+            {"stage": "paper_25", "hypothesis_id": "second"},
+        ],
+    ):
+        assert _active_paper_learning_scope(
+            "universe_family_calibration"
+        ) == (True, None)
+
+
 def test_fallback_when_disabled(svc, disabled_cfg):
     with patch("aletheia.universe.service.load_config", return_value=disabled_cfg):
         members = svc.get_current_universe()

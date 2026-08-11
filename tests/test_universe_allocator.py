@@ -246,6 +246,53 @@ def test_calibration_penalty_is_refrozen_without_candidate_identity(cfg):
     assert score_penalized == score_neutral
 
 
+def test_calibration_skips_scopes_outside_active_paper_loop(cfg, monkeypatch):
+    import aletheia.learning.experiments as experiments
+
+    feat = {
+        "feature_snapshot_id": "feature-1",
+        "market_type": "perp",
+        "tradability_score": 80.0,
+        "quote_volume_24h": 50_000_000,
+        "spread_bps": 5.0,
+        "data_freshness_sec": 200,
+    }
+    scanner = {
+        "opportunity_score": 70.0,
+        "scanner_family": "momentum",
+        "scanner_direction": "short",
+    }
+    baseline = compute_total_score(dict(feat), scanner, cfg)
+    monkeypatch.setattr(
+        experiments,
+        "apply_numeric_treatment",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("suppressed scope must not open an experiment")
+        ),
+    )
+    audit: dict[str, object] = {}
+
+    restricted = compute_total_score(
+        feat,
+        scanner,
+        cfg,
+        calibration={"momentum:short:perp": 1.2},
+        scoring_cohort_key="run-1",
+        scoring_audit_out=audit,
+        calibration_learning_scope={
+            "family": "momentum",
+            "direction": "long",
+            "market_type": "spot",
+        },
+        restrict_calibration_learning_scope=True,
+    )
+
+    assert restricted == baseline
+    assert audit["calibration_assignment"] == "scope_suppressed"
+    assert audit["calibration_reason"] == "outside_active_paper_scope"
+    assert "learning_candidate_key" not in feat
+
+
 def test_calibration_no_effect_on_unknown_family(cfg):
     """Calibration dict without the family key → multiplier defaults to 1.0."""
     feat = {

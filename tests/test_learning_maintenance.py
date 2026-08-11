@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 
-def _open_experiment(path_id: str, token: str) -> tuple[str, str]:
+def _open_experiment(
+    path_id: str,
+    token: str,
+    *,
+    stage: str = "shadow",
+    scope_json: str = "{}",
+) -> tuple[str, str]:
     from aletheia.learning.ledger import insert_experiment, insert_hypothesis
     from aletheia.learning.models import LearningExperiment, LearningHypothesis
 
@@ -16,7 +22,7 @@ def _open_experiment(path_id: str, token: str) -> tuple[str, str]:
         path_id=path_id,
         overlap_group="test",
         source_type="test",
-        scope_json="{}",
+        scope_json=scope_json,
         action_json="{}",
         consumer="test",
         target_horizon="4h",
@@ -25,6 +31,7 @@ def _open_experiment(path_id: str, token: str) -> tuple[str, str]:
     assert insert_experiment(LearningExperiment(
         experiment_id=experiment_id,
         hypothesis_id=hypothesis_id,
+        stage=stage,
         assignment_salt=f"salt-{token}",
         status="active",
     ))
@@ -126,3 +133,77 @@ def test_archive_reconciles_its_event_ahead_of_existing_backlog():
     statuses = {row["experiment_id"]: row["audit_mirror_status"] for row in rows}
     assert statuses[backlog_experiment] == "pending"
     assert statuses[unsupported_experiment] == "mirrored"
+
+
+
+def test_refreeze_redundant_ufc_shadows_keeps_exact_paper_loop():
+    from aletheia.learning.maintenance import (
+        refreeze_redundant_universe_family_shadows,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    keep_hypothesis, keep_experiment = _open_experiment(
+        "universe_family_calibration",
+        "keep-paper",
+        stage="paper_10",
+        scope_json='{"direction":"long","family":"momentum","market_type":"spot"}',
+    )
+    shadow_hypothesis, shadow_experiment = _open_experiment(
+        "universe_family_calibration", "redundant-shadow"
+    )
+    other_hypothesis, other_experiment = _open_experiment(
+        "operator_learning_bundle", "other-path"
+    )
+
+    planned = refreeze_redundant_universe_family_shadows(
+        keep_experiment_id=keep_experiment,
+    )
+    assert planned == {
+        "dry_run": True,
+        "keep_experiment_id": keep_experiment,
+        "refrozen_experiments": 1,
+        "refrozen_hypotheses": 1,
+    }
+
+    applied = refreeze_redundant_universe_family_shadows(
+        keep_experiment_id=keep_experiment,
+        dry_run=False,
+    )
+    assert applied == {**planned, "dry_run": False}
+    db = get_db()
+    assert tuple(db.execute(
+        "SELECT status, ended_at FROM learning_experiments WHERE experiment_id=?",
+        (keep_experiment,),
+    ).fetchone()) == ("active", None)
+    assert db.execute(
+        "SELECT status FROM learning_hypotheses WHERE hypothesis_id=?",
+        (keep_hypothesis,),
+    ).fetchone()[0] == "shadow"
+    refrozen = db.execute(
+        "SELECT status, ended_at FROM learning_experiments WHERE experiment_id=?",
+        (shadow_experiment,),
+    ).fetchone()
+    assert refrozen["status"] == "refrozen"
+    assert refrozen["ended_at"] is not None
+    assert db.execute(
+        "SELECT status FROM learning_hypotheses WHERE hypothesis_id=?",
+        (shadow_hypothesis,),
+    ).fetchone()[0] == "refrozen"
+    assert tuple(db.execute(
+        "SELECT status, ended_at FROM learning_experiments WHERE experiment_id=?",
+        (other_experiment,),
+    ).fetchone()) == ("active", None)
+    assert db.execute(
+        "SELECT status FROM learning_hypotheses WHERE hypothesis_id=?",
+        (other_hypothesis,),
+    ).fetchone()[0] == "shadow"
+    event = db.execute(
+        "SELECT action, audit_actor, audit_source, audit_mirror_status "
+        "FROM learning_lifecycle_events WHERE experiment_id=?",
+        (shadow_experiment,),
+    ).fetchone()
+    assert tuple(event) == ("refreeze", "human", "cli", "mirrored")
+    assert refreeze_redundant_universe_family_shadows(
+        keep_experiment_id=keep_experiment,
+        dry_run=False,
+    )["refrozen_experiments"] == 0

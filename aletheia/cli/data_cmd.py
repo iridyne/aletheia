@@ -303,6 +303,33 @@ def archive_unmeasurable_learning_experiments(
     ))
 
 
+@data_app.command("consolidate-ufc-learning-experiments")
+def consolidate_ufc_learning_experiments(
+    keep_experiment_id: str = typer.Option(
+        ..., "--keep-experiment-id",
+        help="Exact active UFC Paper experiment that remains open.",
+    ),
+    apply: bool = typer.Option(
+        False, "--apply",
+        help="Refreeze all other open UFC Shadow experiments. Default is dry-run.",
+    ),
+):
+    """Keep one UFC Paper loop and durably refreeze its redundant Shadow scopes."""
+    from aletheia.learning.maintenance import (
+        refreeze_redundant_universe_family_shadows,
+    )
+    from aletheia.storage.migrations import assert_migrations_current
+
+    assert_migrations_current()
+    typer.echo(json.dumps(
+        refreeze_redundant_universe_family_shadows(
+            keep_experiment_id=keep_experiment_id,
+            dry_run=not apply,
+        ),
+        indent=2, ensure_ascii=False, sort_keys=True,
+    ))
+
+
 @data_app.command("reconcile-paper-funding")
 def reconcile_paper_funding(
     position_ids: list[str] = typer.Option([], "--position-id"),

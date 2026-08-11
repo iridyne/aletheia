@@ -1450,8 +1450,8 @@ class ControllerConfig(BaseModel):
     It NEVER writes trading config. Full closed-loop actuation remains out of scope.
     See aletheia/analytics/filter_controller.py + filter_registry.py.
     """
-    # Master switch for the shadow observe job. Default ON — it is read-only and safe.
-    shadow_enabled: bool = True
+    # Opt-in switch for a diagnostic observe job with no trading consumer.
+    shadow_enabled: bool = False
     # How often the observe job runs (hours). Low-frequency: verdicts are based on
     # multi-hour forward-return horizons, so more frequent runs add no signal.
     observe_interval_hours: int = 6

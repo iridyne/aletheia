@@ -89,3 +89,108 @@ def archive_unmeasurable_experiments(*, dry_run: bool = True) -> dict[str, Any]:
         event_ids=lifecycle_event_ids,
     )
     return _summary(rows, dry_run=False)
+
+
+def _redundant_universe_family_shadows(
+    keep_experiment_id: str,
+) -> list[dict[str, Any]]:
+    from aletheia.storage.sqlite import get_db
+
+    keep = get_db().execute(
+        "SELECT e.experiment_id, e.stage, e.status, e.ended_at, h.path_id "
+        "FROM learning_experiments e "
+        "JOIN learning_hypotheses h ON h.hypothesis_id=e.hypothesis_id "
+        "WHERE e.experiment_id=?",
+        (keep_experiment_id,),
+    ).fetchone()
+    if (
+        keep is None
+        or keep["path_id"] != "universe_family_calibration"
+        or not str(keep["stage"]).startswith("paper_")
+        or keep["status"] != "active"
+        or keep["ended_at"] is not None
+    ):
+        raise ValueError("keep experiment must be one active UFC Paper experiment")
+    rows = get_db().execute(
+        "SELECT e.experiment_id, e.hypothesis_id, e.stage, h.scope_json "
+        "FROM learning_experiments e "
+        "JOIN learning_hypotheses h ON h.hypothesis_id=e.hypothesis_id "
+        "WHERE h.path_id='universe_family_calibration' "
+        "AND e.stage='shadow' AND e.ended_at IS NULL "
+        "ORDER BY e.created_at, e.experiment_id"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def refreeze_redundant_universe_family_shadows(
+    *,
+    keep_experiment_id: str,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Durably stop UFC Shadow scopes while one exact Paper trial continues."""
+    rows = _redundant_universe_family_shadows(keep_experiment_id)
+    summary = {
+        "dry_run": dry_run,
+        "keep_experiment_id": keep_experiment_id,
+        "refrozen_experiments": len(rows),
+        "refrozen_hypotheses": len(
+            {str(row["hypothesis_id"]) for row in rows}
+        ),
+    }
+    if dry_run or not rows:
+        return summary
+
+    from aletheia.learning.ledger import insert_lifecycle_event
+    from aletheia.learning.models import LearningLifecycleEvent
+    from aletheia.storage.repositories import transaction
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc).isoformat()
+    lifecycle_event_ids: list[str] = []
+    with transaction(immediate=True, savepoint=True):
+        rows = _redundant_universe_family_shadows(keep_experiment_id)
+        db = get_db()
+        for row in rows:
+            event = LearningLifecycleEvent(
+                dedup_key=(
+                    "owner_maintenance:consolidate_ufc:"
+                    f"{keep_experiment_id}:{row['experiment_id']}"
+                ),
+                hypothesis_id=str(row["hypothesis_id"]),
+                experiment_id=str(row["experiment_id"]),
+                from_stage=str(row["stage"]),
+                action="refreeze",
+                reason=(
+                    "owner_maintenance:consolidate_to_paper_experiment:"
+                    f"{keep_experiment_id}"
+                ),
+                audit_actor="human",
+                audit_source="cli",
+                created_at=now,
+            )
+            if insert_lifecycle_event(event):
+                lifecycle_event_ids.append(event.event_id)
+            db.execute(
+                "UPDATE learning_experiments SET status='refrozen', ended_at=? "
+                "WHERE experiment_id=? AND ended_at IS NULL",
+                (now, row["experiment_id"]),
+            )
+            db.execute(
+                "UPDATE learning_hypotheses "
+                "SET status='refrozen', updated_at=? WHERE hypothesis_id=?",
+                (now, row["hypothesis_id"]),
+            )
+    from aletheia.learning.lifecycle import reconcile_lifecycle_audits
+
+    reconcile_lifecycle_audits(
+        limit=min(max(len(lifecycle_event_ids), 1), 500),
+        event_ids=lifecycle_event_ids,
+    )
+    return {
+        **summary,
+        "dry_run": False,
+        "refrozen_experiments": len(rows),
+        "refrozen_hypotheses": len(
+            {str(row["hypothesis_id"]) for row in rows}
+        ),
+    }
