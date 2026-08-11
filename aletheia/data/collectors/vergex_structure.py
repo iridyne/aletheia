@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aletheia.data.models import PerpStructureSnapshot
-from aletheia.data.position_x import extract_position_x_snapshot
+from aletheia.data.position_x import compute_position_x_batch, extract_position_x_snapshot
 
 
 _ALLOWED_FIELDS = {
@@ -192,30 +192,41 @@ def structure_source_status() -> dict[str, Any]:
         "mode": "owner_aggregate_import",
         "automatic_source_configured": False,
         "decision_authority": "observation_only",
+        "accepted_inputs": ["aggregate_rows", "sanitized_holder_batch"],
         "minimum_shadow_window_days": 14,
         "note": "No trusted automatic Position X endpoint is configured.",
     }
 
 
 def ingest_owner_aggregate(payload: dict[str, Any]) -> dict[str, Any]:
-    """Persist an owner-authorized aggregate export and seed shadow outcomes.
+    """Persist an owner-authorized aggregate export or sanitized holder batch.
 
-    The import accepts only the same aggregate whitelist as the fixture parser,
-    adds immutable source provenance, and never changes ranking or execution.
+    Holder batches are reduced to the aggregate whitelist before persistence.
+    The import adds immutable source provenance and never changes execution.
     """
     from aletheia.agent_shell.vergex_policy import ensure_vergex_utilization_policy_epoch
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import AuditEvent, new_id
 
     source_ref = str(payload.get("source_ref") or "").strip()
-    rows = payload.get("rows")
     if not source_ref:
         raise ValueError("source_ref is required")
-    if not isinstance(rows, list) or not rows:
-        raise ValueError("rows must be a non-empty list")
     forbidden = _find_forbidden_key(payload)
     if forbidden:
-        raise ValueError(f"forbidden sensitive field in aggregate payload: {forbidden}")
+        raise ValueError(f"forbidden sensitive field in import payload: {forbidden}")
+    batch: dict[str, Any] | None = None
+    if payload.get("markets") is not None:
+        parameters = payload.get("parameters") or {}
+        if not isinstance(parameters, dict):
+            raise ValueError("parameters must be an object")
+        batch = compute_position_x_batch(payload["markets"], **parameters)
+        rows = batch["rows"]
+        input_mode = "sanitized_holder_batch"
+    else:
+        rows = payload.get("rows")
+        if not isinstance(rows, list) or not rows:
+            raise ValueError("rows must be a non-empty list")
+        input_mode = "aggregate_rows"
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     source_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     epoch_id = ensure_vergex_utilization_policy_epoch()
@@ -258,6 +269,10 @@ def ingest_owner_aggregate(payload: dict[str, Any]) -> dict[str, Any]:
                 "source_hash": source_hash,
                 "snapshots_inserted": inserted,
                 "shadow_outcomes_seeded": seeded,
+                "input_mode": input_mode,
+                "batch_id": batch["batch_id"] if batch else None,
+                "universe_size": batch["universe_size"] if batch else inserted,
+                "mean_coverage_ratio": batch["mean_coverage_ratio"] if batch else None,
                 "decision_authority": "observation_only",
             }, sort_keys=True),
             message="Owner-authorized aggregate structure evidence imported for shadow evaluation.",
@@ -270,6 +285,10 @@ def ingest_owner_aggregate(payload: dict[str, Any]) -> dict[str, Any]:
         "source_ref": source_ref,
         "source_hash": source_hash,
         "policy_epoch_id": epoch_id,
+        "input_mode": input_mode,
+        "batch_id": batch["batch_id"] if batch else None,
+        "universe_size": batch["universe_size"] if batch else inserted,
+        "mean_coverage_ratio": batch["mean_coverage_ratio"] if batch else None,
         "decision_authority": "observation_only",
     }
 
