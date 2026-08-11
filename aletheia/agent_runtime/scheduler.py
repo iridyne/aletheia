@@ -24,6 +24,7 @@ logger = logging.getLogger("aletheia.scheduler")
 
 _scheduler: BackgroundScheduler | None = None
 _scheduler_last_tick: str | None = None
+_universe_scanner_startup_recovery_done = False
 _SCHEDULER_JOB_LOCK = threading.RLock()
 _JOB_RUN_STATE = threading.local()
 
@@ -815,7 +816,9 @@ def _recover_interrupted_serenity_run() -> list[str]:
 
 
 def _recover_interrupted_universe_scanner_runs() -> list[str]:
-    """Fail scanner work that cannot survive the previous Gateway process."""
+    """Atomically fail scanner work owned by the previous Gateway process."""
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
     from aletheia.storage.sqlite import run_write
 
     recovery_reason = "gateway_restart_interrupted"
@@ -842,8 +845,20 @@ def _recover_interrupted_universe_scanner_runs() -> list[str]:
                 "WHERE id = ? AND status = 'running'",
                 (completed_at, json.dumps(errors), row["id"]),
             )
-            if result.rowcount:
-                recovered.append(row["id"])
+            if not result.rowcount:
+                continue
+            repo.insert_audit_event(AuditEvent(
+                timestamp=completed_at,
+                actor="system",
+                source="scheduler",
+                event_type="universe_scanner_run_interrupted",
+                entity_type="universe_scanner_run",
+                entity_id=row["id"],
+                message=(
+                    f"Gateway restart interrupted Universe scanner run {row['id']}"
+                ),
+            ))
+            recovered.append(row["id"])
         return recovered
 
     try:
@@ -852,39 +867,11 @@ def _recover_interrupted_universe_scanner_runs() -> list[str]:
         logger.warning("Universe scanner startup recovery failed (non-fatal): %s", exc)
         return []
 
-    if not recovered:
-        return []
-
-    try:
-        from aletheia.files.jsonl import write_audit
-    except Exception as audit_exc:
+    if recovered:
         logger.warning(
-            "Could not load audit writer for interrupted Universe scanner runs: %s",
-            audit_exc,
+            "Recovered %d interrupted Universe scanner run(s) from the previous process",
+            len(recovered),
         )
-    else:
-        for run_id in recovered:
-            try:
-                write_audit({
-                    "actor": "system",
-                    "source": "scheduler",
-                    "event_type": "universe_scanner_run_interrupted",
-                    "entity_type": "universe_scanner_run",
-                    "entity_id": run_id,
-                    "message": (
-                        f"Gateway restart interrupted Universe scanner run {run_id}"
-                    ),
-                })
-            except Exception as audit_exc:
-                logger.warning(
-                    "Could not audit interrupted Universe scanner run %s: %s",
-                    run_id,
-                    audit_exc,
-                )
-    logger.warning(
-        "Recovered %d interrupted Universe scanner run(s) from the previous process",
-        len(recovered),
-    )
     return recovered
 
 
@@ -1051,6 +1038,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     Returns None if scheduler is disabled in config. Honors runtime.paused at boot.
     """
     global _scheduler, _scheduler_last_tick
+    global _universe_scanner_startup_recovery_done
     if _scheduler is not None:
         return _scheduler
 
@@ -1058,7 +1046,11 @@ def init_scheduler() -> BackgroundScheduler | None:
     # Research workers are process-owned daemon threads. Their persisted active
     # rows are interrupted after any restart even when scheduling is disabled.
     _recover_interrupted_serenity_run()
-    _recover_interrupted_universe_scanner_runs()
+    # Scanner reconciliation is a process-start boundary, not a scheduler-start
+    # boundary. Do not repeat it if scheduling is enabled later in this process.
+    if not _universe_scanner_startup_recovery_done:
+        _universe_scanner_startup_recovery_done = True
+        _recover_interrupted_universe_scanner_runs()
     if not cfg.runtime.scheduler_enabled:
         logger.info("Scheduler disabled by config; not starting.")
         return None
