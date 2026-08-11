@@ -249,6 +249,6 @@ Python Operator assessment 只保留有界配置调整、通知和仍存在的�
 | Market Observer | 10 min | 对 emitter-admitted Opportunity 做可选 LLM enrichment |
 | Paper Trader | 3 min fallback + committed-event nudge | 确定性候选整理 → 写 signal_pending |
 | System Operator trading decision | event-driven + ~15 min fallback | 读确切 pending candidate → `trade` / `skip` |
-| Position Manager | 5 min（另有 exchange TP/SL fill check） | 追踪保护 / 检查平仓条件 |
+| Position Manager | 30 sec protective cycle（另有 exchange TP/SL fill check） | 追踪保护 / 检查平仓条件 |
 | Python Operator assessment | 4 h | 有界 config 调整、通知和当前委派 |
 | TS operator-shell | continuous supervision | 状态监督、Command Registry 编排和受控自愈 |
