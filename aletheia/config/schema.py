@@ -1089,15 +1089,13 @@ class TradingConfig(BaseModel):
     vol_target_pct: float = 1.5
     vol_kelly_cap_fraction: float = 0.25
     # Trailing stop / breakeven
-    trail_enabled: bool = False
+    trail_enabled: bool = True
     trail_atr_mult: float = 1.5
     trail_pct: float = 1.0
     breakeven_trigger_pct: float = 1.5
-    # Exit-intent plan M4/D2: trailing is authored on the ExitPlan (per position) —
-    # an operator spec overrides these globals, "off" disables it. D2=A (default):
-    # when a position has NO trailing spec, the globals above still apply (behavior
-    # preserved). Set True for D2=B — trailing runs ONLY when the operator authored it.
-    trailing_requires_authoring: bool = False
+    # Exit-intent plan M4/D2: new eligible Paper positions freeze these defaults into
+    # their ExitPlan. Unauthored legacy/existing positions remain unchanged.
+    trailing_requires_authoring: bool = True
     # Exit-intent plan M5/D5: on thesis invalidation (serenity opportunity dismissed),
     # default is to auto-close (D5 option 2, current behavior). Set False to instead
     # WAKE the Operator to review/veto (the AI review path) rather than auto-closing.

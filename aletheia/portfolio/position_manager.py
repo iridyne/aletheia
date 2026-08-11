@@ -469,8 +469,13 @@ def _resolve_trailing(position: dict, cfg) -> dict | None:
             "mode": mode,
             "atr_mult": float(distance) if (mode == "atr" and distance is not None) else trading.trail_atr_mult,
             "pct": float(distance) if (mode == "pct" and distance is not None) else trading.trail_pct,
+            "fallback_pct": float(spec.get("fallback_pct", trading.trail_pct)),
             "activation_profit_pct": spec.get("activation_profit_pct"),
             "floor_at_breakeven": bool(spec.get("floor_at_breakeven", True)),
+            "floor_mode": str(spec.get("floor_mode") or "entry"),
+            "observation": str(spec.get("observation") or "sampled_mark"),
+            "exit_fee_rate": spec.get("exit_fee_rate"),
+            "slippage_bps": spec.get("slippage_bps"),
         }
     # Not operator-authored.
     if getattr(trading, "trailing_requires_authoring", False):
@@ -481,12 +486,77 @@ def _resolve_trailing(position: dict, cfg) -> dict | None:
         "mode": "atr" if _get_atr_pct(position.get("symbol", "")) else "pct",
         "atr_mult": trading.trail_atr_mult,
         "pct": trading.trail_pct,
+        "fallback_pct": trading.trail_pct,
         "activation_profit_pct": None,
         "floor_at_breakeven": True,
+        "floor_mode": "entry",
+        "observation": "sampled_mark",
+        "exit_fee_rate": None,
+        "slippage_bps": None,
     }
 
 
-def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
+def _net_balance_stop(
+    position: dict,
+    trailing: dict,
+    *,
+    observed_at: str | None,
+) -> float | None:
+    """Return the stop mark that covers modeled Paper costs, or fail closed."""
+    try:
+        entry = float(position["entry_price"])
+        quantity = float(position["quantity"])
+        entry_fee = float(position["entry_fee"])
+        fee_rate = float(trailing["exit_fee_rate"])
+        slip = float(trailing["slippage_bps"]) / 10_000.0
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in (entry, quantity, entry_fee, fee_rate, slip)):
+        return None
+    if entry <= 0 or quantity <= 0 or entry_fee < 0 or not 0 <= fee_rate < 1 or not 0 <= slip < 1:
+        return None
+
+    if position.get("market_type") == "spot":
+        funding_cost = 0.0
+    else:
+        try:
+            from aletheia.portfolio.local_funding import compute_local_funding
+
+            funding = compute_local_funding(
+                position,
+                closed_at=observed_at or datetime.now(timezone.utc).isoformat(),
+            )
+        except Exception:
+            return None
+        if not funding.complete or funding.funding_cost is None:
+            return None
+        funding_cost = float(funding.funding_cost)
+        if not math.isfinite(funding_cost):
+            return None
+
+    direction = position.get("direction")
+    if direction in ("long", "buy"):
+        denominator = quantity * (1.0 - slip) * (1.0 - fee_rate)
+        balance = (quantity * entry + entry_fee + funding_cost) / denominator
+        return math.ceil(balance * 100_000_000) / 100_000_000
+    if direction not in ("short", "sell"):
+        return None
+    denominator = quantity * (1.0 + slip) * (1.0 + fee_rate)
+    numerator = quantity * entry - entry_fee - funding_cost
+    if numerator <= 0:
+        return None
+    balance = numerator / denominator
+    return math.floor(balance * 100_000_000) / 100_000_000
+
+
+def _maybe_update_trailing_stop(
+    position: dict,
+    price: float,
+    cfg,
+    *,
+    completed_bar: bool = False,
+    effective_at: str | None = None,
+) -> bool:
     """Update stop_price for trailing stop and breakeven logic. Writes DB on change.
 
     Called before _decide_exit() so the updated stop is evaluated this cycle.
@@ -500,10 +570,12 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
     ATR trails that would shake the position out of a research-grade entry.
     """
     if position.get("trade_school") == "serenity":
-        return
+        return False
     tc = _resolve_trailing(position, cfg)
     if tc is None:
-        return
+        return False
+    if (tc["observation"] == "completed_1m") != completed_bar:
+        return False
     direction = position["direction"]
     is_long = direction in ("long", "buy")
     entry = float(position["entry_price"])
@@ -518,7 +590,7 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
         if governed and proposal_stop is None:
             # A mutable trailing configuration cannot invent protection that
             # the immutable native Proposal never asked Risk to approve.
-            return
+            return False
         if governed:
             current_stop = proposal_stop
 
@@ -527,26 +599,39 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
         profit_pct = ((price - entry) / entry * 100.0) if is_long else ((entry - price) / entry * 100.0)
     # Activation gate: an operator-authored trail can defer until a profit threshold.
     if tc["activation_profit_pct"] is not None and profit_pct < tc["activation_profit_pct"]:
-        return
+        return False
 
     updates: dict = {}
 
-    # 1. Breakeven move (opt-out via floor_at_breakeven): floor stop at entry when
-    #    profit clears breakeven_trigger_pct.
+    # 1. Breakeven move (opt-out via floor_at_breakeven).
     if tc["floor_at_breakeven"] and current_stop is not None and entry > 0:
-        if profit_pct >= cfg.trading.breakeven_trigger_pct:
-            if (is_long and current_stop < entry) or (not is_long and current_stop > entry):
-                updates["stop_price"] = entry
-                position["stop_price"] = entry
-                current_stop = entry
+        floor = entry
+        if tc["floor_mode"] == "net_balance":
+            floor = _net_balance_stop(position, tc, observed_at=effective_at)
+            if floor is None:
+                logger.warning(
+                    "net balance unavailable; trailing not activated pos=%s",
+                    position.get("id"),
+                )
+                return False
+        floor_trigger = (
+            tc["activation_profit_pct"]
+            if tc["activation_profit_pct"] is not None
+            else cfg.trading.breakeven_trigger_pct
+        )
+        if profit_pct >= floor_trigger:
+            if (is_long and current_stop < floor) or (not is_long and current_stop > floor):
+                updates["stop_price"] = floor
+                position["stop_price"] = floor
+                current_stop = floor
 
     # 2. Trailing stop: keep stop within trail_distance of best seen price
-    high_water = position.get("trail_high_water")
-    high_water = float(high_water) if high_water is not None else price
+    stored_high_water = position.get("trail_high_water")
+    high_water = float(stored_high_water) if stored_high_water is not None else price
 
     if tc["mode"] == "atr":
         atr_pct = _get_atr_pct(position.get("symbol", ""))
-        trail_distance = price * (atr_pct / 100.0) * tc["atr_mult"] if atr_pct else price * (tc["pct"] / 100.0)
+        trail_distance = price * (atr_pct / 100.0) * tc["atr_mult"] if atr_pct else price * (tc["fallback_pct"] / 100.0)
     else:
         trail_distance = price * (tc["pct"] / 100.0)
 
@@ -556,7 +641,7 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
         if current_stop is None or new_stop > current_stop:
             updates["stop_price"] = round(new_stop, 8)
             position["stop_price"] = updates["stop_price"]
-        if new_hw != high_water:
+        if stored_high_water is None or new_hw != high_water:
             updates["trail_high_water"] = round(new_hw, 8)
     else:
         new_hw = min(high_water, price)
@@ -564,7 +649,7 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
         if current_stop is None or new_stop < current_stop:
             updates["stop_price"] = round(new_stop, 8)
             position["stop_price"] = updates["stop_price"]
-        if new_hw != high_water:
+        if stored_high_water is None or new_hw != high_water:
             updates["trail_high_water"] = round(new_hw, 8)
 
     if updates:
@@ -579,10 +664,11 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
             persist_position_exit_plan(
                 position["id"],
                 persisted_plan,
-                provenance="deterministic_trailing_v1",
+                provenance="deterministic_trailing_v2",
                 extra_position_updates={
                     key: value for key, value in updates.items() if key != "stop_price"
                 },
+                effective_at=effective_at,
             )
         else:
             from aletheia.storage.repositories import update_position
@@ -599,6 +685,8 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
                 replace_exchange_protective_stop(position["id"], float(new_stop))
             except Exception as e:
                 logger.warning("exchange stop sync failed pos=%s: %s", position["id"], e)
+        return True
+    return False
 
 
 def _position_risk(position: dict, cfg):
@@ -1354,6 +1442,12 @@ _TRAILING_ADJUSTMENT_KEYS = {
     "distance",
     "activation_profit_pct",
     "floor_at_breakeven",
+    "fallback_pct",
+    "floor_mode",
+    "observation",
+    "cost_model_version",
+    "exit_fee_rate",
+    "slippage_bps",
 }
 _TRAILING_MODES = {"atr", "pct", "off", "none", "disabled"}
 
@@ -1385,6 +1479,21 @@ def _validated_trailing_adjustment(value: object) -> dict | None:
             if number is None:
                 return None
             validated[field] = number
+    for field in ("fallback_pct", "exit_fee_rate", "slippage_bps"):
+        if field in validated:
+            number = validated[field]
+            if isinstance(number, bool) or not isinstance(number, (int, float)):
+                return None
+            number = float(number)
+            if not math.isfinite(number) or number < 0:
+                return None
+            validated[field] = number
+    if validated.get("floor_mode", "entry") not in {"entry", "net_balance"}:
+        return None
+    if validated.get("observation", "sampled_mark") not in {"sampled_mark", "completed_1m"}:
+        return None
+    if "cost_model_version" in validated and not isinstance(validated["cost_model_version"], str):
+        return None
     return validated
 
 

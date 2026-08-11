@@ -197,10 +197,8 @@ def test_real_gateway_paper_roundtrip_preserves_one_causal_chain(
     assert attributed["realized_pnl"] == pytest.approx(expected_net_pnl)
 
     jobs = repo.list_outcome_hook_jobs(position_id=position["id"])
-    assert {job["hook_type"] for job in jobs} == {
-        "shadow_trades",
-        "exit_breakeven_shadow",
-    }
+    assert {job["hook_type"] for job in jobs} == {"shadow_trades"}
+    assert repo.get_exit_breakeven_shadow_assignment(position["id"]) is None
     assert all(job["position_id"] == position["id"] for job in jobs)
     assert all(job["status"] == "completed" for job in jobs)
     assert all(job["attempts"] == 1 for job in jobs)
