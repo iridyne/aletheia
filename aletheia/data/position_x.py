@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 from typing import Any
@@ -236,112 +237,294 @@ def compute_position_x_features(
     mark_price: float,
     liq_band_pct: float = 0.15,
     value_area_ratio: float = 0.70,
+    price_bin_width_pct: float = 0.0025,
+    min_wall_share: float = 0.01,
+    total_market_oi_usd: float | None = None,
 ) -> dict[str, Any]:
-    """Compute a minimal offline structure feature set from holder rows."""
-    if mark_price <= 0:
+    """Compute the frozen P0 offline position-structure benchmark."""
+    if not math.isfinite(mark_price) or mark_price <= 0:
         raise ValueError("mark_price must be positive")
+    if not 0 < liq_band_pct < 1:
+        raise ValueError("liq_band_pct must be between 0 and 1")
+    if not 0 < value_area_ratio <= 1:
+        raise ValueError("value_area_ratio must be between 0 and 1")
+    if not 0 < price_bin_width_pct < 1:
+        raise ValueError("price_bin_width_pct must be between 0 and 1")
+    if not 0 < min_wall_share <= 1:
+        raise ValueError("min_wall_share must be between 0 and 1")
+    if total_market_oi_usd is not None and (not math.isfinite(total_market_oi_usd) or total_market_oi_usd <= 0):
+        raise ValueError("total_market_oi_usd must be positive when provided")
 
     long_rows = [r for r in holder_rows if str(r.get("side") or "").lower() == "long"]
     short_rows = [r for r in holder_rows if str(r.get("side") or "").lower() == "short"]
     band_low = mark_price * (1 - liq_band_pct)
     band_high = mark_price * (1 + liq_band_pct)
 
-    def _f(row: dict[str, Any], key: str) -> float:
-        try:
-            return float(row.get(key) or 0.0)
-        except (TypeError, ValueError):
-            return 0.0
-
-    short_liq_above = sum(
-        _f(r, "current_notional")
-        for r in short_rows
-        if band_low <= _f(r, "liquidation_price") <= band_high and _f(r, "liquidation_price") > mark_price
-    )
-    long_liq_below = sum(
-        _f(r, "current_notional")
-        for r in long_rows
-        if band_low <= _f(r, "liquidation_price") <= band_high and _f(r, "liquidation_price") < mark_price
-    )
-
-    long_overhang = sum(_f(r, "unrealized_pnl") for r in long_rows if _f(r, "entry_price") > mark_price)
-    short_overhang = sum(_f(r, "unrealized_pnl") for r in short_rows if _f(r, "entry_price") < mark_price)
-
-    price_weights: dict[float, float] = {}
+    notionals = [n for row in holder_rows if (n := _positive_number(row.get("current_notional"))) is not None]
+    total_notional = sum(notionals)
+    cost_bins: dict[int, float] = {}
+    support_bins: dict[int, float] = {}
+    resistance_bins: dict[int, float] = {}
     for row in holder_rows:
-        entry = _f(row, "entry_price")
-        notional = _f(row, "current_notional")
-        if entry <= 0 or notional <= 0:
+        entry = _positive_number(row.get("entry_price"))
+        notional = _positive_number(row.get("current_notional"))
+        if entry is None or notional is None:
             continue
-        price_weights[entry] = price_weights.get(entry, 0.0) + notional
-    poc = max(price_weights.items(), key=lambda item: item[1])[0] if price_weights else None
+        key = _price_bin(entry, mark_price, price_bin_width_pct)
+        cost_bins[key] = cost_bins.get(key, 0.0) + notional
+        side = str(row.get("side") or "").lower()
+        if side == "short" and entry < mark_price:
+            support_bins[key] = support_bins.get(key, 0.0) + notional
+        elif side == "long" and entry > mark_price:
+            resistance_bins[key] = resistance_bins.get(key, 0.0) + notional
 
-    total_notional = sum(price_weights.values())
-    target_notional = total_notional * value_area_ratio
-    selected_prices: list[float] = []
-    running = 0.0
-    for price, weight in sorted(price_weights.items(), key=lambda item: item[1], reverse=True):
-        selected_prices.append(price)
-        running += weight
-        if running >= target_notional:
-            break
-    value_area_low = min(selected_prices) if selected_prices else None
-    value_area_high = max(selected_prices) if selected_prices else None
+    poc_key, value_area_keys = _cost_basis_value_area(cost_bins, value_area_ratio)
+    poc = _price_bin_center(poc_key, mark_price, price_bin_width_pct) if poc_key is not None else None
+    value_area_low = (
+        _price_bin_center(min(value_area_keys), mark_price, price_bin_width_pct) if value_area_keys else None
+    )
+    value_area_high = (
+        _price_bin_center(max(value_area_keys), mark_price, price_bin_width_pct) if value_area_keys else None
+    )
+    value_area_covered_ratio = (
+        sum(cost_bins.get(key, 0.0) for key in value_area_keys) / sum(cost_bins.values()) if value_area_keys else None
+    )
 
-    support_candidates = [(abs(_f(r, "entry_price") - mark_price), _f(r, "entry_price"), _f(r, "current_notional")) for r in short_rows if _f(r, "entry_price") < mark_price]
-    resistance_candidates = [(abs(_f(r, "entry_price") - mark_price), _f(r, "entry_price"), _f(r, "current_notional")) for r in long_rows if _f(r, "entry_price") > mark_price]
-    support = min(support_candidates)[1] if support_candidates else None
-    resistance = min(resistance_candidates)[1] if resistance_candidates else None
-    support_notional = min(support_candidates)[2] if support_candidates else 0.0
-    resistance_notional = min(resistance_candidates)[2] if resistance_candidates else 0.0
+    support_walls = _qualified_walls(support_bins, total_notional, mark_price, price_bin_width_pct, min_wall_share)
+    resistance_walls = _qualified_walls(
+        resistance_bins, total_notional, mark_price, price_bin_width_pct, min_wall_share
+    )
+    support_wall = min(support_walls, key=lambda wall: abs(mark_price - wall[0]), default=None)
+    resistance_wall = min(resistance_walls, key=lambda wall: abs(mark_price - wall[0]), default=None)
+    support = support_wall[0] if support_wall else None
+    resistance = resistance_wall[0] if resistance_wall else None
+    support_notional = support_wall[1] if support_wall else 0.0
+    resistance_notional = resistance_wall[1] if resistance_wall else 0.0
+    support_distance = (mark_price - support) / mark_price if support is not None else None
+    resistance_distance = (resistance - mark_price) / mark_price if resistance is not None else None
+    support_share = support_notional / total_notional if support_wall and total_notional > 0 else None
+    resistance_share = resistance_notional / total_notional if resistance_wall and total_notional > 0 else None
+    support_strength = (
+        support_share / max(support_distance, price_bin_width_pct)
+        if support_share is not None and support_distance is not None
+        else None
+    )
+    resistance_strength = (
+        resistance_share / max(resistance_distance, price_bin_width_pct)
+        if resistance_share is not None and resistance_distance is not None
+        else None
+    )
+    skw_raw = (
+        math.log((resistance_distance + 1e-9) / (support_distance + 1e-9))
+        if support_distance is not None and resistance_distance is not None
+        else None
+    )
+    wp_raw = (
+        math.log((support_notional + 1.0) / (resistance_notional + 1.0)) if support_wall and resistance_wall else None
+    )
+    vap_raw = (
+        (mark_price - value_area_low) / (value_area_high - value_area_low)
+        if value_area_low is not None and value_area_high is not None and value_area_high > value_area_low
+        else None
+    )
 
-    liq_total = short_liq_above + long_liq_below
-    liq_clusters: dict[float, float] = {}
+    valid_liq_rows: list[tuple[str, float, float]] = []
+    liq_bins: dict[int, float] = {}
     near_liq_notional = 0.0
     for row in holder_rows:
-        liq = _f(row, "liquidation_price")
-        notional = _f(row, "current_notional")
-        if liq <= 0 or notional <= 0:
+        liq = _positive_number(row.get("liquidation_price"))
+        notional = _positive_number(row.get("current_notional"))
+        side = str(row.get("side") or "").lower()
+        if liq is None or notional is None or side not in {"long", "short"}:
             continue
+        valid_liq_rows.append((side, liq, notional))
         if band_low <= liq <= band_high:
-            liq_clusters[liq] = liq_clusters.get(liq, 0.0) + notional
+            key = _price_bin(liq, mark_price, price_bin_width_pct)
+            liq_bins[key] = liq_bins.get(key, 0.0) + notional
         if abs(liq - mark_price) / mark_price <= 0.05:
             near_liq_notional += notional
-    convexity = (max(liq_clusters.values()) / liq_total) if liq_clusters and liq_total > 0 else 0.0
-    cascade_vuln_pct = (near_liq_notional / total_notional) if total_notional > 0 else 0.0
 
-    cgo_direction = _direction_from_balance(short_overhang, abs(long_overhang))
+    short_liq_above = (
+        sum(notional for side, liq, notional in valid_liq_rows if side == "short" and mark_price < liq <= band_high)
+        if valid_liq_rows
+        else None
+    )
+    long_liq_below = (
+        sum(notional for side, liq, notional in valid_liq_rows if side == "long" and band_low <= liq < mark_price)
+        if valid_liq_rows
+        else None
+    )
+    in_band_liq = sum(liq_bins.values())
+    convexity = max(liq_bins.values()) / in_band_liq if in_band_liq > 0 else (0.0 if valid_liq_rows else None)
+    sample_cascade = near_liq_notional / total_notional if valid_liq_rows and total_notional > 0 else None
+    market_cascade = (
+        near_liq_notional / total_market_oi_usd
+        if total_market_oi_usd and total_market_oi_usd >= near_liq_notional
+        else None
+    )
+    market_cascade_status = (
+        "available" if market_cascade is not None
+        else "invalid_denominator" if total_market_oi_usd is not None
+        else "unavailable"
+    )
+
+    long_losses = [
+        abs(pnl)
+        for row in long_rows
+        if (pnl := _number(row.get("unrealized_pnl"))) is not None
+        and math.isfinite(pnl)
+        and pnl < 0
+    ]
+    short_losses = [
+        abs(pnl)
+        for row in short_rows
+        if (pnl := _number(row.get("unrealized_pnl"))) is not None
+        and math.isfinite(pnl)
+        and pnl < 0
+    ]
+    long_overhang_loss = sum(long_losses)
+    short_overhang_loss = sum(short_losses)
+    cgo_available = bool(long_losses or short_losses)
+    cgo_raw = math.log((short_overhang_loss + 1.0) / (long_overhang_loss + 1.0)) if cgo_available else None
+    cgo_direction = _direction_from_balance(short_overhang_loss, long_overhang_loss) if cgo_available else None
     vap_direction = _direction_from_vap(mark_price, value_area_low, value_area_high, poc)
     skw_direction = _direction_from_proximity(mark_price, support, resistance)
-    lfa_direction = _direction_from_balance(short_liq_above, long_liq_below)
-    wp_direction = _direction_from_balance(support_notional, resistance_notional)
+    lfa_direction = _direction_from_balance(short_liq_above, long_liq_below) if valid_liq_rows else None
+    lfa_raw = (
+        math.log((short_liq_above + 1.0) / (long_liq_below + 1.0))
+        if short_liq_above is not None and long_liq_below is not None
+        else None
+    )
+    wp_direction = (
+        _direction_from_balance(support_notional, resistance_notional) if support_wall or resistance_wall else None
+    )
 
-    weights_desc = sorted(price_weights.items(), key=lambda item: item[1], reverse=True)
-    top10_conc = sum(weight for _, weight in weights_desc[:10]) / total_notional if total_notional > 0 else None
-    top50_conc = sum(weight for _, weight in weights_desc[:50]) / total_notional if total_notional > 0 else None
+    ranked_notionals = sorted(notionals, reverse=True)
+    top10_conc = sum(ranked_notionals[:10]) / total_notional if total_notional > 0 else None
+    top50_conc = sum(ranked_notionals[:50]) / total_notional if total_notional > 0 else None
+    hhi = sum((notional / total_notional) ** 2 for notional in ranked_notionals) if total_notional > 0 else None
 
     return {
-        "short_liq_above_usd": round(short_liq_above, 2),
-        "long_liq_below_usd": round(long_liq_below, 2),
-        "long_overhang_pnl_usd": round(long_overhang, 2),
-        "short_overhang_pnl_usd": round(short_overhang, 2),
+        "short_liq_above_usd": round(short_liq_above, 2) if short_liq_above is not None else None,
+        "long_liq_below_usd": round(long_liq_below, 2) if long_liq_below is not None else None,
+        "long_overhang_pnl_usd": round(-long_overhang_loss, 2) if cgo_available else None,
+        "short_overhang_pnl_usd": round(-short_overhang_loss, 2) if cgo_available else None,
+        "cgo_raw": round(cgo_raw, 6) if cgo_raw is not None else None,
+        "lfa_raw": round(lfa_raw, 6) if lfa_raw is not None else None,
         "support": support,
         "resistance": resistance,
+        "support_wall_notional_usd": round(support_notional, 2) if support_wall else None,
+        "resistance_wall_notional_usd": round(resistance_notional, 2) if resistance_wall else None,
+        "support_wall_share": round(support_share, 6) if support_share is not None else None,
+        "resistance_wall_share": round(resistance_share, 6) if resistance_share is not None else None,
+        "support_wall_distance_pct": round(support_distance, 6) if support_distance is not None else None,
+        "resistance_wall_distance_pct": round(resistance_distance, 6) if resistance_distance is not None else None,
+        "support_wall_strength": round(support_strength, 6) if support_strength is not None else None,
+        "resistance_wall_strength": round(resistance_strength, 6) if resistance_strength is not None else None,
+        "skw_raw": round(skw_raw, 6) if skw_raw is not None else None,
+        "wp_raw": round(wp_raw, 6) if wp_raw is not None else None,
+        "vap_raw": round(vap_raw, 6) if vap_raw is not None else None,
         "poc": poc,
         "value_area_low": value_area_low,
         "value_area_high": value_area_high,
+        "cost_profile_bin_count": len(cost_bins),
+        "value_area_bin_count": len(value_area_keys),
+        "value_area_covered_notional_ratio": (
+            round(value_area_covered_ratio, 6) if value_area_covered_ratio is not None else None
+        ),
+        "support_wall_count": len(support_walls),
+        "resistance_wall_count": len(resistance_walls),
         "top10_concentration": round(top10_conc, 6) if top10_conc is not None else None,
         "top50_concentration": round(top50_conc, 6) if top50_conc is not None else None,
-        "convexity": round(convexity, 6),
-        "cascade_vuln_pct": round(cascade_vuln_pct, 6),
+        "holder_hhi": round(hhi, 6) if hhi is not None else None,
+        "effective_holder_count": round(1.0 / hhi, 6) if hhi else None,
+        "convexity": round(convexity, 6) if convexity is not None else None,
+        "cascade_vuln_pct": round(market_cascade, 6) if market_cascade is not None else None,
+        "sample_cascade_vuln_pct": round(sample_cascade, 6) if sample_cascade is not None else None,
         "cgo_direction": cgo_direction,
         "vap_direction": vap_direction,
         "skw_direction": skw_direction,
         "lfa_direction": lfa_direction,
         "wp_direction": wp_direction,
         "holder_count": len(holder_rows),
+        "covered_holder_count": len(notionals),
         "long_holder_count": len(long_rows),
         "short_holder_count": len(short_rows),
+        "availability": {
+            "cost_profile": "available" if cost_bins else "unavailable",
+            "holder_concentration": "available" if ranked_notionals else "unavailable",
+            "cost_walls": "available" if support_wall or resistance_wall else "unavailable",
+            "cgo": "available" if cgo_available else "unavailable",
+            "liquidation_structure": "available" if valid_liq_rows else "unavailable",
+            "market_cascade": market_cascade_status,
+        },
+        "parameters": {
+            "price_bin_width_pct": price_bin_width_pct,
+            "liq_band_pct": liq_band_pct,
+            "value_area_ratio": value_area_ratio,
+            "min_wall_share": min_wall_share,
+            "cgo_epsilon_usd": 1.0,
+        },
     }
+
+
+def _price_bin(price: float, reference_price: float, width_pct: float) -> int:
+    return round(math.log(price / reference_price) / math.log1p(width_pct))
+
+
+def _price_bin_center(key: int, reference_price: float, width_pct: float) -> float:
+    return reference_price * (1 + width_pct) ** key
+
+
+def _cost_basis_value_area(
+    bins: dict[int, float],
+    ratio: float,
+) -> tuple[int | None, set[int]]:
+    if not bins:
+        return None, set()
+    poc = max(bins, key=lambda key: (bins[key], -abs(key), -key))
+    selected = {poc}
+    running = bins[poc]
+    target = sum(bins.values()) * ratio
+    left = right = poc
+    lower = min(bins)
+    upper = max(bins)
+    while running < target and (left > lower or right < upper):
+        left_weight = bins.get(left - 1, 0.0) if left > lower else -1.0
+        right_weight = bins.get(right + 1, 0.0) if right < upper else -1.0
+        if left_weight >= right_weight:
+            left -= 1
+            selected.add(left)
+            running += max(left_weight, 0.0)
+        else:
+            right += 1
+            selected.add(right)
+            running += max(right_weight, 0.0)
+    return poc, selected
+
+
+def _qualified_walls(
+    bins: dict[int, float],
+    total_notional: float,
+    reference_price: float,
+    width_pct: float,
+    min_share: float,
+) -> list[tuple[float, float]]:
+    qualified = [key for key, weight in bins.items() if total_notional > 0 and weight / total_notional >= min_share]
+    if not qualified:
+        return []
+    clusters: list[list[int]] = []
+    for key in sorted(qualified):
+        if not clusters or key > clusters[-1][-1] + 1:
+            clusters.append([key])
+        else:
+            clusters[-1].append(key)
+    walls: list[tuple[float, float]] = []
+    for cluster in clusters:
+        weight = sum(bins[key] for key in cluster)
+        centroid = sum(_price_bin_center(key, reference_price, width_pct) * bins[key] for key in cluster) / weight
+        walls.append((centroid, weight))
+    return walls
 
 
 def compute_position_x_composite_z(dimension_percentiles: dict[str, float | int | None]) -> float:
@@ -356,16 +539,234 @@ def compute_position_x_composite_z(dimension_percentiles: dict[str, float | int 
 
 
 def compute_cross_sectional_percentiles(values: dict[str, float | int | None]) -> dict[str, float | None]:
-    """Return 0..100 percentile ranks for a cross-sectional metric dict."""
-    valid = [(key, float(value)) for key, value in values.items() if value is not None]
+    """Return 0..100 percentile ranks using average ranks for ties."""
+    valid = [
+        (key, float(value))
+        for key, value in values.items()
+        if value is not None and math.isfinite(float(value))
+    ]
     if not valid:
         return {key: None for key in values}
     ordered = sorted(valid, key=lambda item: item[1])
     denom = max(len(ordered) - 1, 1)
     out: dict[str, float | None] = {key: None for key in values}
-    for rank, (key, _) in enumerate(ordered):
-        out[key] = round(rank / denom * 100.0, 4)
+    start = 0
+    while start < len(ordered):
+        end = start + 1
+        while end < len(ordered) and ordered[end][1] == ordered[start][1]:
+            end += 1
+        percentile = 50.0 if len(ordered) == 1 else ((start + end - 1) / 2) / denom * 100.0
+        for key, _ in ordered[start:end]:
+            out[key] = round(percentile, 4)
+        start = end
     return out
+
+
+def compute_position_x_batch(
+    markets: list[dict[str, Any]],
+    *,
+    min_markets: int = 3,
+    min_coverage_ratio: float = 0.80,
+    max_source_skew_seconds: int = 300,
+    liq_band_pct: float = 0.15,
+    value_area_ratio: float = 0.70,
+    price_bin_width_pct: float = 0.0025,
+    min_wall_share: float = 0.01,
+) -> dict[str, Any]:
+    """Build an observation-only cross-sectional benchmark from sanitized holders."""
+    if not isinstance(markets, list):
+        raise ValueError("markets must be a list")
+    if min_markets < 1:
+        raise ValueError("min_markets must be positive")
+    if len(markets) < min_markets:
+        raise ValueError(f"markets must contain at least {min_markets} rows")
+    if not 0 < min_coverage_ratio <= 1:
+        raise ValueError("min_coverage_ratio must be between 0 and 1")
+    if max_source_skew_seconds < 0:
+        raise ValueError("max_source_skew_seconds must be non-negative")
+
+    prepared: dict[str, dict[str, Any]] = {}
+    timestamps: list[datetime] = []
+    for market in markets:
+        if not isinstance(market, dict):
+            raise ValueError("each market must be an object")
+        symbol = str(market.get("symbol") or "").strip()
+        venue = str(market.get("venue") or "hyperliquid").strip()
+        market_type = str(market.get("market_type") or "perp").strip().lower()
+        key = f"{venue}|{market_type}|{symbol}"
+        if not symbol or market_type != "perp":
+            raise ValueError("each market requires a symbol and market_type=perp")
+        if key in prepared:
+            raise ValueError(f"duplicate market: {key}")
+        coverage = _number(market.get("coverage_ratio"))
+        if coverage is None or not math.isfinite(coverage) or not min_coverage_ratio <= coverage <= 1:
+            raise ValueError(f"coverage_ratio below {min_coverage_ratio}: {key}")
+        as_of_time = str(market.get("as_of_time") or "").strip()
+        try:
+            parsed_time = datetime.fromisoformat(as_of_time.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"invalid as_of_time: {key}") from exc
+        if parsed_time.tzinfo is None:
+            parsed_time = parsed_time.replace(tzinfo=timezone.utc)
+        timestamps.append(parsed_time.astimezone(timezone.utc))
+        holders = market.get("holders")
+        if not isinstance(holders, list) or not holders or not all(isinstance(row, dict) for row in holders):
+            raise ValueError(f"holders must be a non-empty list: {key}")
+        mark_price = _positive_number(market.get("mark_price"))
+        total_oi = _positive_number(market.get("total_market_oi_usd"))
+        if mark_price is None or total_oi is None:
+            raise ValueError(f"mark_price and total_market_oi_usd must be positive: {key}")
+        prepared[key] = {
+            "market": market,
+            "features": compute_position_x_features(
+                holders,
+                mark_price=mark_price,
+                total_market_oi_usd=total_oi,
+                liq_band_pct=liq_band_pct,
+                value_area_ratio=value_area_ratio,
+                price_bin_width_pct=price_bin_width_pct,
+                min_wall_share=min_wall_share,
+            ),
+            "coverage_ratio": coverage,
+            "mark_price": mark_price,
+            "as_of_time": parsed_time.astimezone(timezone.utc).isoformat(),
+        }
+
+    if (max(timestamps) - min(timestamps)).total_seconds() > max_source_skew_seconds:
+        raise ValueError("market as_of_time values exceed max_source_skew_seconds")
+
+    percentiles = {
+        dimension: compute_cross_sectional_percentiles({
+            key: item["features"].get(f"{dimension}_raw") for key, item in prepared.items()
+        })
+        for dimension in _DIRECTIONAL_KEYS
+    }
+    scores: dict[str, tuple[float, str]] = {}
+    rows: list[dict[str, Any]] = []
+    for key, item in prepared.items():
+        features = item["features"]
+        dimensions = {
+            dimension: {
+                "raw": features.get(f"{dimension}_raw"),
+                "percentile": percentiles[dimension][key],
+                "direction": features.get(f"{dimension}_direction"),
+            }
+            for dimension in _DIRECTIONAL_KEYS
+        }
+        valid_percentiles = [
+            value["percentile"] for value in dimensions.values() if value["percentile"] is not None
+        ]
+        dimension_percentiles = {name: value["percentile"] for name, value in dimensions.items()}
+        availability_stratum = "+".join(
+            name for name, value in dimensions.items() if value["percentile"] is not None
+        ) or "none"
+        composite = compute_position_x_composite_z(dimension_percentiles) if valid_percentiles else None
+        equal_weight = round(
+            sum((value - 50.0) / 100.0 for value in valid_percentiles) / len(valid_percentiles), 4
+        ) if valid_percentiles else 0.0
+        if composite is not None:
+            scores[key] = (composite, availability_stratum)
+        market = item["market"]
+        risk_context = {
+            "benchmark_version": "position-x-p1-v1",
+            "coverage_ratio": item["coverage_ratio"],
+            "holder_hhi": features["holder_hhi"],
+            "effective_holder_count": features["effective_holder_count"],
+            "convexity": features["convexity"],
+            "market_cascade_vuln_pct": features["cascade_vuln_pct"],
+            "sample_cascade_vuln_pct": features["sample_cascade_vuln_pct"],
+            "value_area_covered_notional_ratio": features["value_area_covered_notional_ratio"],
+            "equal_weight_score": equal_weight,
+            "no_structure_score": 0.0,
+            "availability_stratum": availability_stratum,
+            "availability": features["availability"],
+            "parameters": features["parameters"],
+        }
+        rows.append({
+            "symbol": market["symbol"],
+            "venue": str(market.get("venue") or "hyperliquid"),
+            "as_of_time": item["as_of_time"],
+            "reference_price": item["mark_price"],
+            "data_quality": "complete" if len(valid_percentiles) == len(_DIRECTIONAL_KEYS) else "partial",
+            "coverage_note": f"sanitized holder coverage={item['coverage_ratio']:.4f}",
+            "poc": features["poc"],
+            "value_area_low": features["value_area_low"],
+            "value_area_high": features["value_area_high"],
+            "support": features["support"],
+            "resistance": features["resistance"],
+            "short_liq_above_usd": features["short_liq_above_usd"],
+            "long_liq_below_usd": features["long_liq_below_usd"],
+            "long_unrealized_pnl_usd": features["long_overhang_pnl_usd"],
+            "short_unrealized_pnl_usd": features["short_overhang_pnl_usd"],
+            "top10_concentration": features["top10_concentration"],
+            "top50_concentration": features["top50_concentration"],
+            "holder_count": features["holder_count"],
+            "long_holder_count": features["long_holder_count"],
+            "short_holder_count": features["short_holder_count"],
+            "cgo_direction": features["cgo_direction"],
+            "vap_direction": features["vap_direction"],
+            "lfa_direction": features["lfa_direction"],
+            "cascade_risk": features["cascade_vuln_pct"],
+            "convexity": features["convexity"],
+            "structure_bias": (
+                "bullish" if composite is not None and composite > 0
+                else "bearish" if composite is not None and composite < 0
+                else "neutral" if composite is not None
+                else None
+            ),
+            "composite_z": composite,
+            "universe_size": len(prepared),
+            "dimension_scores_json": json.dumps(dimensions, sort_keys=True, separators=(",", ":")),
+            "risk_context_json": json.dumps(risk_context, sort_keys=True, separators=(",", ":")),
+        })
+
+    parameters = {
+        "min_markets": min_markets,
+        "min_coverage_ratio": min_coverage_ratio,
+        "max_source_skew_seconds": max_source_skew_seconds,
+        "liq_band_pct": liq_band_pct,
+        "value_area_ratio": value_area_ratio,
+        "price_bin_width_pct": price_bin_width_pct,
+        "min_wall_share": min_wall_share,
+    }
+    canonical = json.dumps(
+        {
+            "markets": sorted(
+                markets,
+                key=lambda market: (
+                    str(market.get("venue") or "hyperliquid"),
+                    str(market.get("market_type") or "perp"),
+                    str(market.get("symbol") or ""),
+                ),
+            ),
+            "parameters": parameters,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    batch_id = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    for row in rows:
+        key = f"{row['venue']}|perp|{row['symbol']}"
+        context = json.loads(row["risk_context_json"])
+        if key in scores:
+            score, stratum = scores[key]
+            peers = [peer_score for peer_score, peer_stratum in scores.values() if peer_stratum == stratum]
+            row["structure_rank"] = 1 + sum(peer_score > score for peer_score in peers)
+            context["rank_universe_size"] = len(peers)
+        else:
+            row["structure_rank"] = None
+            context["rank_universe_size"] = 0
+        context["batch_id"] = batch_id
+        row["risk_context_json"] = json.dumps(context, sort_keys=True, separators=(",", ":"))
+    rows.sort(key=lambda row: (row["structure_rank"] is None, row["structure_rank"] or 0, row["venue"], row["symbol"]))
+    return {
+        "batch_id": batch_id,
+        "universe_size": len(rows),
+        "mean_coverage_ratio": round(sum(item["coverage_ratio"] for item in prepared.values()) / len(rows), 6),
+        "parameters": parameters,
+        "rows": rows,
+    }
 
 
 def extract_position_x_snapshot(payload: dict[str, Any]) -> PerpStructureSnapshot:
@@ -885,6 +1286,11 @@ def _number(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _positive_number(value: Any) -> float | None:
+    number = _number(value)
+    return number if number is not None and math.isfinite(number) and number > 0 else None
 
 
 def _int(value: Any) -> int | None:

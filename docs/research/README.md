@@ -19,6 +19,13 @@ Research files are evidence, audits, and explorations. They can guide work but d
 
 ## Current audit entry points
 
+- [Vergex platform analysis process evidence — 2026-08-11](trading-strategy/VERGEX_PLATFORM_ANALYSIS_PROCESS_2026-08-11.md)
+  records the source-bundle inventory, safety boundary, capability decomposition,
+  evidence classification, multi-temporal method, and algorithm-fidelity review.
+- [Vergex platform gap and implementation candidate report — 2026-08-11](trading-strategy/VERGEX_PLATFORM_GAP_AND_IMPL_CANDIDATE_REPORT_2026-08-11.md)
+  compares current Aletheia with the reusable Vergex ideas and presents
+  unapproved repair priorities, feature candidates, metric benchmarks, and
+  implementation decision gates for owner review.
 - [Minimum Profit Loop Convergence Evidence — 2026-08-08](audits/MINIMUM_PROFIT_LOOP_CONVERGENCE_2026-08-08.md)
   records the merged PR chain and a dated Fedora checkpoint for the narrowed
   scan-to-Learning loop. It is historical evidence, not current Runtime truth.

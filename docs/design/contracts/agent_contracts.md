@@ -314,7 +314,7 @@ durably queued and independently retried by `outcome_hook_replay`.
   missing or whose research hydration fails receives a typed unavailable reason and
   defers before model inference. Full thesis/evidence remain persisted and fingerprinted;
   only their prompt display is bounded.
-- **Position X authority**: owner aggregate imports and their 1h/4h/24h outcomes are observation-only. No automatic source is claimed; a minimum 14-day shadow window is required before human review and the evidence never changes Risk/Execution authority.
+- **Position X authority**: explicit owner aggregate-row or sanitized holder-batch imports and their 1h/4h/24h outcomes are observation-only. Holder batches are reduced to aggregate snapshots and never persist holder identities. The read-only evaluator compares gross weighted/equal/individual/no-structure baselines and rejects retrospective imports, mixed epochs, or mixed feature contracts; cost-aware evidence remains unavailable. No automatic source or scheduler is claimed, `ready_for_research_review` grants no promotion, and the evidence never changes Agent, Risk, or Execution authority.
 - **Safety**: Never executes orders directly. A complete `trade` prepares one immutable Proposal for the Gateway; `close_one` uses the central close router with an exact fresh mark.
 
 #### position_manager
