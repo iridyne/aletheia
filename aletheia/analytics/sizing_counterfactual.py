@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import math
 from statistics import mean, median
 from typing import Iterable
 
 
-POLICY_VERSION = "sizing-counterfactual/v1"
+POLICY_VERSION = "sizing-counterfactual/v2"
 
 
 def build_sizing_counterfactual(
@@ -64,20 +65,21 @@ def build_sizing_counterfactual(
 
     if stop_trades:
         stop_actual = [trade["actual_notional"] for trade in stop_trades]
-        target_median = median(stop_actual)
-        raw = [1.0 / trade["stop_distance"] for trade in stop_trades]
-        scale = target_median / median(raw)
         observed_cap = max(stop_actual)
-        stop_notionals = [min(observed_cap, value * scale) for value in raw]
+        stop_notionals = _risk_at_stop_notionals(stop_trades, cap=observed_cap)
         report["stop_paired_policies"] = {
             "normalization": {
-                "target_median_notional_usdt": round(target_median, 8),
+                "target_total_notional_usdt": round(sum(stop_actual), 8),
                 "maximum_observed_notional_usdt": round(observed_cap, 8),
-                "rule": "notional proportional to 1/stop_distance, median-matched, capped at observed max",
+                "rule": "notional proportional to 1/stop_distance, total-exposure-matched, capped at observed max",
             },
             "actual": _metrics(stop_trades, stop_actual),
             "risk_at_stop_equalized": _metrics(stop_trades, stop_notionals),
         }
+        report["robustness_slices"] = _chronological_halves(
+            stop_trades,
+            cap=observed_cap,
+        )
     else:
         report["stop_paired_policies"] = {
             "status": "insufficient_data",
@@ -109,6 +111,13 @@ def render_sizing_counterfactual(report: dict) -> str:
                 f"stop_paired.{name}: pnl={_fmt(metrics.get('total_pnl_usdt'))}U "
                 f"max_dd={_fmt(metrics.get('max_drawdown_usdt'))}U"
             )
+    for item in report.get("robustness_slices") or []:
+        actual = item["actual"]
+        candidate = item["risk_at_stop_equalized"]
+        lines.append(
+            f"{item['name']}: actual_pnl={_fmt(actual.get('total_pnl_usdt'))}U "
+            f"risk_at_stop_pnl={_fmt(candidate.get('total_pnl_usdt'))}U"
+        )
     lines.extend(["", "Descriptive only: no sizing authority or runtime mutation."])
     return "\n".join(lines)
 
@@ -121,13 +130,24 @@ def _trade(row: dict) -> dict | None:
     except (KeyError, TypeError, ValueError, OverflowError):
         return None
     notional = entry * quantity
-    if entry <= 0 or quantity <= 0 or notional <= 0:
+    if (
+        not all(math.isfinite(value) for value in (entry, quantity, pnl, notional))
+        or entry <= 0
+        or quantity <= 0
+        or notional <= 0
+    ):
         return None
     stop_distance = None
     try:
         stop = float(row.get("entry_stop_price", row.get("stop_price")) or 0)
-        if stop > 0 and stop != entry:
-            stop_distance = abs(entry - stop) / entry
+        direction = str(row.get("direction") or "").lower()
+        valid_geometry = (direction in {"long", "buy"} and stop < entry) or (
+            direction in {"short", "sell"} and stop > entry
+        )
+        if stop > 0 and math.isfinite(stop) and valid_geometry:
+            candidate_distance = abs(entry - stop) / entry
+            if math.isfinite(candidate_distance) and candidate_distance > 0:
+                stop_distance = candidate_distance
     except (TypeError, ValueError, OverflowError):
         pass
     conviction = row.get("conviction")
@@ -141,7 +161,60 @@ def _trade(row: dict) -> dict | None:
         "return_fraction": pnl / notional,
         "stop_distance": stop_distance,
         "conviction": conviction,
+        "closed_at": row.get("closed_at"),
     }
+
+
+def _risk_at_stop_notionals(
+    trades: list[dict],
+    *,
+    cap: float | None = None,
+) -> list[float]:
+    actual = [trade["actual_notional"] for trade in trades]
+    raw = [1.0 / trade["stop_distance"] for trade in trades]
+    return _match_total_exposure(
+        raw,
+        target_total=sum(actual),
+        cap=max(actual) if cap is None else cap,
+    )
+
+
+def _match_total_exposure(raw: list[float], *, target_total: float, cap: float) -> list[float]:
+    """Scale positive weights to an exact total while respecting a hard cap."""
+    if not raw:
+        return []
+    if target_total >= cap * len(raw):
+        return [cap] * len(raw)
+    low, high = 0.0, 1.0
+    while sum(min(cap, value * high) for value in raw) < target_total:
+        high *= 2.0
+    for _ in range(80):
+        scale = (low + high) / 2.0
+        if sum(min(cap, value * scale) for value in raw) < target_total:
+            low = scale
+        else:
+            high = scale
+    return [min(cap, value * high) for value in raw]
+
+
+def _chronological_halves(trades: list[dict], *, cap: float) -> list[dict]:
+    if len(trades) < 4:
+        return []
+    split = len(trades) // 2
+    result = []
+    for name, subset in (("earlier_half", trades[:split]), ("later_half", trades[split:])):
+        actual = [trade["actual_notional"] for trade in subset]
+        candidate = _risk_at_stop_notionals(subset, cap=cap)
+        result.append(
+            {
+                "name": name,
+                "first_closed_at": subset[0].get("closed_at"),
+                "last_closed_at": subset[-1].get("closed_at"),
+                "actual": _metrics(subset, actual),
+                "risk_at_stop_equalized": _metrics(subset, candidate),
+            }
+        )
+    return result
 
 
 def _metrics(trades: list[dict], notionals: list[float]) -> dict:
@@ -161,6 +234,7 @@ def _metrics(trades: list[dict], notionals: list[float]) -> dict:
         "max_drawdown_usdt": round(max_drawdown, 8),
         "total_notional_usdt": round(sum(notionals), 8),
         "median_notional_usdt": round(median(notionals), 8),
+        "maximum_notional_usdt": round(max(notionals), 8),
     }
 
 
