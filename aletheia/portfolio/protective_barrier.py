@@ -288,12 +288,13 @@ def persist_position_exit_plan(
     plan,
     *,
     provenance: str,
+    expected_version: int | None = None,
     exit_limit_price: object = _UNSET,
     exit_limit_source: object = _UNSET,
     extra_position_updates: dict | None = None,
     effective_at: str | None = None,
 ):
-    """Atomically update flat intent and append its protected immutable version."""
+    """Update intent, rejecting a protected caller whose base version is stale."""
 
     from aletheia.portfolio.exit_plan import ExitPlan, save_exit_plan
 
@@ -318,6 +319,11 @@ def persist_position_exit_plan(
     current = repo.get_current_position_exit_plan(position_id)
     if current is None:
         raise ValueError("protected Position has no current immutable ExitPlan")
+    caller_version = int(plan.version) if expected_version is None else int(expected_version)
+    if caller_version != int(current["version"]):
+        raise repo.PositionProtectionConflict(
+            "ExitPlan caller version compare-and-set failed"
+        )
     effective = (
         _now()
         if effective_at is None

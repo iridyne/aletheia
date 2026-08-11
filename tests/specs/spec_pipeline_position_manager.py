@@ -7,8 +7,10 @@ Contract: pipeline_position_manager
 Claim prefix: PL-PM
 """
 
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -642,58 +644,88 @@ def test_position_manager_max_hold_triggered(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "PL-PM-05", "pipeline_position_manager", "§4 atr_trailing_stop", "L2b",
-        "When universe_feature_snapshots has atr_pct data for a symbol, "
-        "_get_atr_pct returns a valid float for ATR-based trailing stop calculation",
+        "ATR trailing resolves one causally available completed 1h observation "
+        "for the Position's exact venue, symbol, and physical market",
         status="implemented",
     ),
 )
-def test_atr_pct_returned_from_feature_snapshots(tmp_path, monkeypatch):
-    """Verify _get_atr_pct reads the latest ATR% value from universe_feature_snapshots.
-
-    Fixed PM-1: _get_atr_pct now joins through universe_registry (asset_id FK)
-    and orders by ts DESC (the real column name), instead of the broken
-    _select_all(order_by=, where="symbol=?") pattern that used wrong columns.
-    """
+def test_atr_observation_has_exact_causal_instrument_identity(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
+    observed = datetime(2026, 8, 11, 3, 30, tzinfo=timezone.utc)
+    assets = {}
 
-    # universe_feature_snapshots uses asset_id FK → universe_registry.
-    # Must insert a registry row first, then snapshots with asset_id + ts.
-    asset_id = str(uuid.uuid4())
-    conn.execute(
-        "INSERT INTO universe_registry (id, venue, symbol, market_type, status) "
-        "VALUES (?,?,?,?,?)",
-        (asset_id, "bitget", "BTC/USDT", "spot", "active"),
+    def insert_observation(*, venue, market, atr, snapshot_at, bar_close):
+        asset_id = assets.get((venue, market))
+        if asset_id is None:
+            asset_id = str(uuid.uuid4())
+            assets[(venue, market)] = asset_id
+            conn.execute(
+                "INSERT INTO universe_registry "
+                "(id, venue, symbol, market_type, status) VALUES (?,?,?,?,?)",
+                (asset_id, venue, "BTC/USDT", market, "active"),
+            )
+        manifest = json.dumps({
+            "1h": {
+                "bar_close_ts": int(bar_close.timestamp() * 1000),
+                "input_fingerprint": f"{venue}-{market}-{atr}",
+            }
+        })
+        snapshot_id = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO universe_feature_snapshots "
+            "(id, asset_id, ts, atr_pct, technical_algorithm_version, "
+            "technical_snapshot_manifest) VALUES (?,?,?,?,?,?)",
+            (
+                snapshot_id,
+                asset_id,
+                snapshot_at.isoformat(),
+                atr,
+                "technical-context-v1",
+                manifest,
+            ),
+        )
+        return snapshot_id
+
+    expected_id = insert_observation(
+        venue="bitget", market="spot", atr=2.5,
+        snapshot_at=observed - timedelta(minutes=5),
+        bar_close=observed - timedelta(minutes=30),
+    )
+    insert_observation(
+        venue="bitget", market="perp", atr=7.5,
+        snapshot_at=observed - timedelta(minutes=2),
+        bar_close=observed - timedelta(minutes=30),
+    )
+    insert_observation(
+        venue="binance", market="spot", atr=8.5,
+        snapshot_at=observed - timedelta(minutes=1),
+        bar_close=observed - timedelta(minutes=30),
+    )
+    insert_observation(
+        venue="bitget", market="spot", atr=99.9,
+        snapshot_at=observed + timedelta(minutes=1),
+        bar_close=observed + timedelta(minutes=30),
     )
     conn.commit()
 
-    # Insert newer row (atr_pct=2.5) with a later ts
-    snap_new = str(uuid.uuid4())
-    ts_new = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        "INSERT INTO universe_feature_snapshots (id, asset_id, ts, atr_pct) "
-        "VALUES (?,?,?,?)",
-        (snap_new, asset_id, ts_new, 2.5),
-    )
-    conn.commit()
+    from aletheia.portfolio.position_manager import _get_atr_observation
 
-    # Insert older row (atr_pct=99.9) with an earlier ts — should NOT be returned
-    snap_old = str(uuid.uuid4())
-    ts_old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-    conn.execute(
-        "INSERT INTO universe_feature_snapshots (id, asset_id, ts, atr_pct) "
-        "VALUES (?,?,?,?)",
-        (snap_old, asset_id, ts_old, 99.9),
+    result = _get_atr_observation(
+        {
+            "execution_mode": "paper_internal",
+            "symbol": "BTC/USDT",
+            "market_type": "spot",
+        },
+        SimpleNamespace(market_data=SimpleNamespace(ccxt_exchange="bitget")),
+        observed_at=observed.isoformat(),
     )
-    conn.commit()
 
-    from aletheia.portfolio.position_manager import _get_atr_pct
-    result = _get_atr_pct("BTC/USDT")
-
-    # Must return 2.5 (newest row by ts DESC), not 99.9 (older row)
-    assert result is not None, "_get_atr_pct returned None despite data existing"
-    assert abs(float(result) - 2.5) < 0.01, (
-        f"Expected _get_atr_pct to return 2.5 (newest row by ts), got {result}."
-    )
+    assert result is not None
+    assert result["snapshot_id"] == expected_id
+    assert result["atr_pct"] == 2.5
+    assert result["bar_close_ms"] <= int(observed.timestamp() * 1000)
+    assert result["venue"] == "bitget"
+    assert result["market_type"] == "spot"
 
 
 # ---------------------------------------------------------------------------

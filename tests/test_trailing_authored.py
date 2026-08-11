@@ -32,7 +32,7 @@ def _pos(**over):
 @pytest.fixture(autouse=True)
 def _no_atr(monkeypatch):
     # Deterministic: no ATR data → resolver picks pct mode.
-    monkeypatch.setattr(pm, "_get_atr_pct", lambda s: None)
+    monkeypatch.setattr(pm, "_get_atr_observation", lambda *args, **kwargs: None)
 
 
 # ── _resolve_trailing ────────────────────────────────────────────────────────
@@ -119,3 +119,51 @@ def test_breakeven_opt_out(monkeypatch):
     stops = [kw["stop_price"] for _, kw in calls if "stop_price" in kw]
     assert 100.0 not in stops       # breakeven did NOT fire
     assert 108.9 in stops           # trailing still applied
+
+
+def test_atr_revision_persists_exact_runtime_observation(monkeypatch):
+    import aletheia.portfolio.protective_barrier as barrier
+
+    captured = []
+    observation = {
+        "source": "universe_feature_snapshots",
+        "snapshot_id": "snapshot-1",
+        "snapshot_at": "2026-08-11T03:25:00+00:00",
+        "venue": "bitget",
+        "symbol": "BTC/USDT",
+        "market_type": "spot",
+        "timeframe": "1h",
+        "bar_close_ms": 1786417200000,
+        "input_fingerprint": "bars-sha",
+        "algorithm_version": "technical-context-v1",
+        "atr_pct": 2.0,
+        "observed_at": "2026-08-11T03:30:00+00:00",
+    }
+    monkeypatch.setattr(pm, "_get_atr_observation", lambda *args, **kwargs: observation)
+    monkeypatch.setattr(
+        barrier,
+        "persist_position_exit_plan",
+        lambda _pid, plan, **_kwargs: captured.append(plan) or plan,
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.stops.replace_exchange_protective_stop",
+        lambda *_args, **_kwargs: False,
+    )
+    pos = _pos(
+        execution_mode="paper_internal",
+        market_type="spot",
+        trailing_json=json.dumps({"mode": "atr", "distance": 1.5}),
+        stop_price=95.0,
+        exit_plan_version=1,
+    )
+
+    assert pm._maybe_update_trailing_stop(
+        pos,
+        110.0,
+        _cfg(),
+        effective_at="2026-08-11T03:30:00+00:00",
+    ) is True
+    assert captured[0].trailing["last_runtime_observation"] == {
+        "distance_source": "atr",
+        **observation,
+    }

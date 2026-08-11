@@ -122,6 +122,14 @@ def test_new_short_term_paper_position_authors_default_trailing_plan(
 def test_completed_bar_trailing_uses_net_balance_not_entry(
     tmp_path, monkeypatch, direction, stop, target, high, low,
 ):
+    import aletheia.portfolio.protective_barrier as barrier
+
+    assign = barrier._trailing_qualification_assignment
+    monkeypatch.setattr(
+        barrier,
+        "_trailing_qualification_assignment",
+        lambda position_id: {**assign(position_id), "arm": "treatment"},
+    )
     setup_env(tmp_path, monkeypatch)
     _set_trailing_test_defaults()
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
@@ -155,6 +163,9 @@ def test_completed_bar_trailing_uses_net_balance_not_entry(
     assert stored["stop_price"] == expected_balance
     assert (stored["stop_price"] > stored["entry_price"]) is (direction == "long")
     assert stored["trail_high_water"] == (high if direction == "long" else low)
+    current_plan = repo.get_current_position_exit_plan(position.id)
+    trailing = json.loads(current_plan["plan_json"])["trailing"]
+    assert trailing["last_runtime_observation"]["distance_source"] == "fallback_pct"
     assert stored["exit_plan_version"] == 2
     assert stored["status"] == "open"
     assert repo.get_position_protection_trigger(position.id) is None
@@ -526,3 +537,32 @@ def test_dynamic_stop_update_appends_plan_and_flat_projection_atomically(tmp_pat
     assert projected["stop_price"] == 99.0
     assert projected["exit_plan_version"] == 2
     assert projected["exit_plan_effective_at"] == current["effective_at"]
+
+
+def test_dynamic_stop_rejects_stale_caller_plan(tmp_path, monkeypatch):
+    position, _cursor = _protected_position(tmp_path, monkeypatch)
+    from aletheia.portfolio.exit_plan import load_exit_plan
+
+    stale = load_exit_plan(repo.get_position(position.id))
+    current = load_exit_plan(repo.get_position(position.id))
+    current.stop_price = 99.0
+    persist_position_exit_plan(
+        position.id,
+        current,
+        provenance="test_winning_revision",
+    )
+
+    stale.stop_price = 97.0
+    with pytest.raises(
+        repo.PositionProtectionConflict,
+        match="caller version compare-and-set failed",
+    ):
+        persist_position_exit_plan(
+            position.id,
+            stale,
+            provenance="test_stale_revision",
+        )
+
+    projected = repo.get_position(position.id)
+    assert projected["exit_plan_version"] == 2
+    assert projected["stop_price"] == 99.0

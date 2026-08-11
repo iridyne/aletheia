@@ -24,7 +24,10 @@ from aletheia.data.price_feed import (
     get_fresh_price_for_protective_close,
     protective_price_venue,
 )
-from aletheia.storage.repositories import list_all_open_positions
+from aletheia.storage.repositories import (
+    PositionProtectionConflict,
+    list_all_open_positions,
+)
 from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exit_plan
 from aletheia.portfolio.pnl import close_position, _latest_price
 logger = logging.getLogger("aletheia.position_manager")
@@ -423,28 +426,72 @@ def _effective_take_profit(position: dict, cfg) -> float | None:
     return round(entry * (1 - pct / 100.0), 8)
 
 
-def _get_atr_pct(symbol: str) -> float | None:
-    """Return latest ATR% for a symbol from universe_feature_snapshots, or None.
-
-    universe_feature_snapshots uses asset_id (FK → universe_registry) + ts,
-    not symbol + created_at. We join through universe_registry to filter by symbol.
-    """
+def _get_atr_observation(
+    position: dict,
+    cfg,
+    *,
+    observed_at: str | None,
+) -> dict | None:
+    """Return one exact, completed 1h ATR observation available at decision time."""
+    observed = _parse_dt(observed_at) if observed_at is not None else datetime.now(timezone.utc)
+    if observed is None:
+        return None
+    venue = protective_price_venue(
+        position.get("execution_mode"),
+        configured_data_venue=cfg.market_data.ccxt_exchange,
+    )
+    market = str(position.get("market_type") or "").lower()
+    market = "perp" if market in {"perp", "swap", "futures", "usdt_futures"} else market
+    symbol = str(position.get("symbol") or "")
+    if venue is None or market not in {"spot", "perp"} or not symbol:
+        return None
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
         row = db.execute(
-            "SELECT ufs.atr_pct FROM universe_feature_snapshots ufs "
+            "SELECT ufs.id, ufs.ts, ufs.atr_pct, ufs.technical_algorithm_version, "
+            "ufs.technical_snapshot_manifest FROM universe_feature_snapshots ufs "
             "JOIN universe_registry ur ON ufs.asset_id = ur.id "
-            "WHERE ur.symbol = ? "
-            "ORDER BY ufs.ts DESC LIMIT 1",
-            (symbol,),
+            "WHERE lower(ur.venue) = ? AND ur.symbol = ? AND ur.market_type = ? "
+            "AND datetime(ufs.ts) <= datetime(?) "
+            "ORDER BY datetime(ufs.ts) DESC LIMIT 1",
+            (venue, symbol, market, observed.isoformat()),
         ).fetchone()
-        if row:
-            val = row[0] if not hasattr(row, "get") else row.get("atr_pct")
-            if val and float(val) > 0:
-                return float(val)
-    except Exception:
-        pass
+        if row is None:
+            return None
+        row = dict(row)
+        atr_pct = float(row["atr_pct"])
+        manifest = json.loads(row["technical_snapshot_manifest"])
+        one_hour = manifest["1h"]
+        bar_close_ms = int(one_hour["bar_close_ts"])
+        fingerprint = one_hour["input_fingerprint"]
+        algorithm = row["technical_algorithm_version"]
+        if (
+            not math.isfinite(atr_pct)
+            or atr_pct <= 0
+            or bar_close_ms > int(observed.timestamp() * 1000)
+            or not isinstance(fingerprint, str)
+            or not fingerprint
+            or not isinstance(algorithm, str)
+            or not algorithm
+        ):
+            return None
+        return {
+            "source": "universe_feature_snapshots",
+            "snapshot_id": row["id"],
+            "snapshot_at": row["ts"],
+            "venue": venue,
+            "symbol": symbol,
+            "market_type": market,
+            "timeframe": "1h",
+            "bar_close_ms": bar_close_ms,
+            "input_fingerprint": fingerprint,
+            "algorithm_version": algorithm,
+            "atr_pct": atr_pct,
+            "observed_at": observed.isoformat(),
+        }
+    except (KeyError, TypeError, ValueError, OverflowError, json.JSONDecodeError):
+        return None
     return None
 
 
@@ -457,7 +504,7 @@ def _resolve_trailing(position: dict, cfg) -> dict | None:
         if mode in ("off", "none", "disabled") or spec.get("enabled") is False:
             return None
         if mode not in ("atr", "pct"):
-            mode = "atr" if _get_atr_pct(position.get("symbol", "")) else "pct"
+            mode = "atr" if _get_atr_observation(position, cfg, observed_at=None) else "pct"
         distance = spec.get("distance")
         return {
             "mode": mode,
@@ -600,7 +647,6 @@ def _maybe_update_trailing_stop(
         if profit_pct >= floor_trigger:
             if (is_long and current_stop < floor) or (not is_long and current_stop > floor):
                 updates["stop_price"] = floor
-                position["stop_price"] = floor
                 current_stop = floor
 
     # 2. Trailing stop: keep stop within trail_distance of best seen price
@@ -608,17 +654,35 @@ def _maybe_update_trailing_stop(
     high_water = float(stored_high_water) if stored_high_water is not None else price
 
     if tc["mode"] == "atr":
-        atr_pct = _get_atr_pct(position.get("symbol", ""))
-        trail_distance = price * (atr_pct / 100.0) * tc["atr_mult"] if atr_pct else price * (tc["fallback_pct"] / 100.0)
+        atr_observation = _get_atr_observation(
+            position,
+            cfg,
+            observed_at=effective_at,
+        )
+        if atr_observation is not None:
+            trail_distance = price * (atr_observation["atr_pct"] / 100.0) * tc["atr_mult"]
+            runtime_observation = {"distance_source": "atr", **atr_observation}
+        else:
+            trail_distance = price * (tc["fallback_pct"] / 100.0)
+            runtime_observation = {
+                "distance_source": "fallback_pct",
+                "fallback_pct": tc["fallback_pct"],
+                "observed_at": effective_at or datetime.now(timezone.utc).isoformat(),
+                "reason": "causal_atr_unavailable",
+            }
     else:
         trail_distance = price * (tc["pct"] / 100.0)
+        runtime_observation = {
+            "distance_source": "pct",
+            "pct": tc["pct"],
+            "observed_at": effective_at or datetime.now(timezone.utc).isoformat(),
+        }
 
     if is_long:
         new_hw = max(high_water, price)
         new_stop = new_hw - trail_distance
         if current_stop is None or new_stop > current_stop:
             updates["stop_price"] = round(new_stop, 8)
-            position["stop_price"] = updates["stop_price"]
         if stored_high_water is None or new_hw != high_water:
             updates["trail_high_water"] = round(new_hw, 8)
     else:
@@ -626,7 +690,6 @@ def _maybe_update_trailing_stop(
         new_stop = new_hw + trail_distance
         if current_stop is None or new_stop < current_stop:
             updates["stop_price"] = round(new_stop, 8)
-            position["stop_price"] = updates["stop_price"]
         if stored_high_water is None or new_hw != high_water:
             updates["trail_high_water"] = round(new_hw, 8)
 
@@ -639,15 +702,28 @@ def _maybe_update_trailing_stop(
 
             persisted_plan = load_exit_plan(position)
             persisted_plan.stop_price = float(new_stop)
-            persist_position_exit_plan(
-                position["id"],
-                persisted_plan,
-                provenance="deterministic_trailing_v2",
-                extra_position_updates={
-                    key: value for key, value in updates.items() if key != "stop_price"
-                },
-                effective_at=effective_at,
-            )
+            persisted_plan.trailing = {
+                **(persisted_plan.trailing or {}),
+                "last_runtime_observation": runtime_observation,
+            }
+            try:
+                persist_position_exit_plan(
+                    position["id"],
+                    persisted_plan,
+                    provenance="deterministic_trailing_v2",
+                    extra_position_updates={
+                        key: value for key, value in updates.items() if key != "stop_price"
+                    },
+                    effective_at=effective_at,
+                )
+            except PositionProtectionConflict as exc:
+                logger.info(
+                    "trailing ExitPlan revision lost compare-and-set pos=%s: %s",
+                    position.get("id"),
+                    exc,
+                )
+                return False
+            position["stop_price"] = float(new_stop)
         else:
             from aletheia.storage.repositories import update_position
 
@@ -1368,11 +1444,14 @@ def adjust_stop(position_id: str, new_stop_price: float) -> dict:
 
     plan = load_exit_plan(pos)
     plan.stop_price = round(float(new_stop_price), 8)
-    persist_position_exit_plan(
-        position_id,
-        plan,
-        provenance="legacy_adjust_stop_v1",
-    )
+    try:
+        persist_position_exit_plan(
+            position_id,
+            plan,
+            provenance="legacy_adjust_stop_v1",
+        )
+    except PositionProtectionConflict:
+        return {"error": "exit_plan_conflict", "position_id": position_id}
     logger.info("adjust_stop: %s new_stop=%.6f", position_id, new_stop_price)
 
     try:
@@ -1741,11 +1820,12 @@ def apply_operator_adjustment(
             position_id,
             new_plan,
             provenance="system_operator_adjustment_v1",
+            expected_version=plan.version,
             extra_position_updates=(
                 {"horizon_wake_sent_at": None} if horizon_changed else None
             ),
         )
-    except ValueError:
+    except (ValueError, PositionProtectionConflict):
         return {
             "error": "exit_plan_persistence_blocked",
             "position_id": position_id,
