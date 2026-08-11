@@ -107,12 +107,12 @@ protective/suspect finding；成熟 cohort 自身仍有 overdue outcome 时才�
 `signal_source=system_cascade` 的生命周期清理行不是 Operator 对候选的模型判断，必须单独报告为
 administrative exclusion，不得进入 candidate skip、trace/seed 缺口或效果 cohort。
 
-生产者在拒绝输入时，该原因是唯一解释事实：Observer、Universe emitter、Divergence scanner
+生产者在拒绝输入时，该原因是唯一解释事实：Universe emitter、Divergence scanner
 若无法写入终态记录，必须返回可重试错误，不能以“零 Opportunity、零原因”的成功结束。
 生产者放行并新建 Opportunity 时也必须留下精确的 `opportunity_emitted` 事实；Universe emitter
-和 Market Observer 都把新 Opportunity 与该事实放在同一回滚边界内，证据失败不得留下孤儿
-Opportunity，也不得增加本轮成功创建数。Observer 的 pre-filter 事实只说明“曾评估/曾放行”，
-不能替代真正创建 Opportunity 的 producer 事实。Universe emitter 的该类失败不是可忽略分析错误：
+把新 Opportunity 与该事实放在同一回滚边界内，证据失败不得留下孤儿 Opportunity，也不得增加
+本轮成功创建数。Market Observer 不是 Universe Opportunity producer；其 pre-filter 或 assessment
+事实不能替代 emitter 的 producer pass。Universe emitter 的该类失败不是可忽略分析错误：
 当前没有 snapshot/member 级独立重试队列，因此 `UniverseService.refresh` 必须把 scanner run 标为
 failed 并返回失败，禁止继续发布 completed。
 Opportunity 的 open/queued TTL 过期也必须与 `ttl_expired` 记录同事务提交；证据失败则保留原状态。
@@ -228,7 +228,7 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 | quota/explore-exploit | 是 | selected/control、rank、quota、regime | 是，但必须同池比较 |
 | Universe 机会生成 | 可能否 | 每个已选成员最终是已生成、复用、拒绝或写入错误；regime/funding crowding 保留事前方向与精确 instrument outcome | 有事前方向时可评价；无方向只报 gross coverage |
 | Observer 前置判断 | Universe 路径是；其他路径可能否 | RSI/ATR/keyword 实际值和命中原因 | 仅有事前方向的行 |
-| Observer 机会生成 | 是 | 新 Opportunity 的精确 id、方向、市场与 `opportunity_emitted`；和 Opportunity 原子提交 | 否，只衡量生产链完整性 |
+| Observer advisory enrichment | 是 | exact Opportunity/snapshot/member/instrument、assessment 与 emitter admission 结果 | 否，不具 entry producer authority |
 | LLM neutral/无效输出 | 可能否 | schema 结果、方向、置信度，不写 prompt | 仅有事前方向的行 |
 | Ranker symbol policy/execution/direction/confidence/TTL/factor/guard | 是 | 白/黑名单拒绝也必须写 `symbol_filter/symbol_not_allowed` 并终结 Opportunity；永久拒绝扫描批次与 top-N 执行短名单分离，状态与拒绝事实同事务提交 | 是（guard 只观测；symbol policy 不自动放宽） |
 | open-position/cooldown/batch limit | 是 | 当时占用、冷却截止、rank/limit | 是 |
@@ -375,7 +375,7 @@ Ranker 的 `limit=50` 只限制进入打分/入队选择的执行短名单，不
 10. 已完成：Universe 已选成员在机会生成阶段逐个保存终态；同一 snapshot、symbol、market 的已评估机会仍占有原身份，迟到的 Observer 不再重复创建或事后改写。
 11. 待独立实验：合并方向刹车、修改 ranker 权重/经济门和任何自动调参。
 12. 已完成：Ranker 白名单漏项与黑名单命中不再静默 `return None`；拒绝事实与终态原子提交，且独立有界拒绝工作集不会被 top-N 执行上限截掉。
-13. 已完成：Universe emitter 与 Market Observer 新建 Opportunity 时同步原子写入 `opportunity_emitted`；Observer pre-filter 不再被误当成生产成功证明。
+13. 已完成：Universe emitter 新建 Opportunity 时同步原子写入 `opportunity_emitted`；Observer 只 enrich 已有且通过 exact emitter attestation 的 carrier，pre-filter/assessment 不再被误当成生产成功证明。
 14. 已完成：direct skip 一次有界反事实确认、neutral/invalid defer、120 分钟物质上下文去重，以及完整 operator rationale 持久化；不改 55、Risk、Execution 或 Ranker 门。
 15. 已完成：b1.3 单候选上下文、确定性 adverse fact validation、候选级 defer rotation、真实 B2 fingerprint、unknown 数值格式和 operator-candidate-v2 evidence manifest；不改 55、Ranker 权重、Risk、Execution、Exchange 或 Live。
 16. 已完成：Overview/CLI 共用 durable Opportunity progress 投影，区分未评估、冷却、队列背压、批次上限与其他真实 Ranker blocker，并公开 on-demand wake 来源/结果；诊断不重跑 Ranker。

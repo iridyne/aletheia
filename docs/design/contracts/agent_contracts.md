@@ -128,11 +128,14 @@ durably queued and independently retried by `outcome_hook_replay`.
   derivatives/macro/on-chain data, and successfully analyzed, relevance-qualified,
   exact-entity news
 - **LLM**: Yes (analysis of market conditions)
-- **Outputs**: opportunities table (symbol, direction, confidence, key_observations JSON)
-- **Side effects**: Writes to `opportunities` table and requests an on-demand Ranker
-  wake only after the Opportunity/evidence transaction commits. It does not wake the
-  trading daemon directly; only Ranker admission plus committed `signal_pending` does.
-- **Error behavior**: Degrades to basic technical-only signals when LLM unavailable
+- **Outputs**: namespaced `metadata.observer_assessment` on an existing open,
+  deterministic `universe_scanner` Opportunity; producer-owned direction, confidence,
+  thesis, identity and expiry remain unchanged
+- **Side effects**: Enriches only the exact snapshot/member/instrument carrier whose
+  `signal_emitter` pass fact is durable. It does not create an Opportunity or gate the
+  scanner → Ranker handoff.
+- **Error behavior**: Missing Universe state, missing/conflicting emitter evidence, or
+  LLM unavailability skips enrichment; it never falls back to standalone signal creation
 - **Prompt contract** (2026-07-01, spec UP-08): the per-symbol LLM prompt names the `scanner_family` that surfaced the symbol so the read VALIDATES that family rather than doing a generic scan (MO-4).
 - **Technical context contract**: the model sees normalized EMA trend, RSI/momentum,
   ATR/Bollinger volatility, VWAP/Donchian location and volume/OBV participation.
@@ -144,9 +147,10 @@ durably queued and independently retried by `outcome_hook_replay`.
   rendered only for an exact `observer_advisory_bundle` treatment assignment whose path is
   allowlisted and currently authoritative; control, disabled/default, stale authority, missing
   candidate identity, or adapter error renders no learned bundle. Universe members use a stable
-  member candidate and fixed-horizon outcome identity; standalone reads stay unlinked when no true
-  outcome producer exists. Market and prediction context is non-Learning input and remains present.
-- **Downstream contract** (spec UP-06): `key_observations` (the LLM's numeric citations) IS surfaced to the System Operator's layer1 snapshot; previously only a truncated thesis reached the decision.
+  member candidate and fixed-horizon outcome identity. Market and prediction context is
+  non-Learning input and remains present.
+- **Downstream contract**: Observer rationale and observations remain advisory inside
+  `metadata.observer_assessment`; they cannot establish execution eligibility or rewrite T0.
 - **Bounded-loop fairness contract** (spec GS-S03): the 200-second safety budget remains below the scheduler timeout, but the next cycle begins at the durable successor of the last completed exact instrument. A cancellation or budget break never skips an in-flight or unprocessed instrument.
 - **Pre-filter status contract** (spec OBS-PRE-FILTER-STATUS): `no_sufficient_signal` is a normal rejection recorded in filter evidence, not an agent execution error. It skips the LLM without changing the run to `completed_with_errors`; provider failures, unexpected exceptions, and loop-budget exhaustion remain errors.
 - **Information provenance**: Opportunity metadata preserves the original T0 scanner

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from aletheia.analytics.factor_feedback import lookup_factor_signal
+from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
 from aletheia.analytics.trade_attribution import (
     confidence_bucket,
     late_entry_bucket,
@@ -238,6 +239,40 @@ def _evaluate_candidate(
         filter_trace, "execution_eligibility", "passed", "execution_eligible_true",
         inputs={"execution_eligible": True}, parameters={"required": True},
     )
+
+    admitted, admission_reason = verify_signal_emitter_admission(opp)
+    if not admitted:
+        _filter_step(
+            filter_trace,
+            "producer_eligibility",
+            "rejected",
+            admission_reason,
+            inputs={
+                "source_agent": opp.get("source_agent"),
+                "universe_snapshot_id": opp.get("universe_snapshot_id"),
+                "universe_member_id": opp.get("universe_member_id"),
+            },
+            parameters={"required_producer": "universe_scanner"},
+        )
+        return _make_candidate(
+            opp,
+            skip_reason=admission_reason,
+            direction=direction,
+            filter_trace=filter_trace,
+        )
+    if admission_reason != "producer_eligibility_not_applicable":
+        _filter_step(
+            filter_trace,
+            "producer_eligibility",
+            "passed",
+            admission_reason,
+            inputs={
+                "source_agent": opp.get("source_agent"),
+                "universe_snapshot_id": opp.get("universe_snapshot_id"),
+                "universe_member_id": opp.get("universe_member_id"),
+            },
+            parameters={"required_producer": "universe_scanner"},
+        )
 
     # Hard filter: symbol allowed
     if not symbol_allowed(symbol):

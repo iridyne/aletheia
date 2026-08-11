@@ -36,7 +36,7 @@ def test_information_integrity_policy_epoch_is_durable_and_idempotent():
     first = ensure_opportunity_information_policy_epoch()
     second = ensure_opportunity_information_policy_epoch()
 
-    assert POLICY_EPOCH_LABEL == "opportunity_information_integrity/v1"
+    assert POLICY_EPOCH_LABEL == "opportunity_information_integrity/v2"
     assert first == second
     assert opportunity_information_policy_context()["operator_evidence_manifest"] == (
         "operator-candidate-v3"
@@ -44,6 +44,13 @@ def test_information_integrity_policy_epoch_is_durable_and_idempotent():
     assert opportunity_information_policy_context()["structured_trade_motivation"] == (
         "structured-trade-motivation/v1"
     )
+    assert opportunity_information_policy_context()["universe_opportunity_producer"] == (
+        "universe_scanner_only"
+    )
+    assert opportunity_information_policy_context()["market_observer"] == (
+        "advisory_enrichment_only"
+    )
+    assert opportunity_information_policy_context()["ranker_requires_signal_emitter_fact"] is True
 
 
 def test_structured_trade_motivation_rotates_information_policy_epoch():

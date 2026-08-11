@@ -870,8 +870,8 @@ def test_trade_opportunity_and_divergence_identity_helpers(tmp_path, monkeypatch
         "pipeline_middle_state_integrity",
         "§5 atomic Opportunity producer identity",
         "L2c",
-        "Concurrent observer and universe producers for one symbol, snapshot, and market "
-        "resolve one durable Opportunity owner instead of inserting duplicate lifecycles.",
+        "Concurrent deterministic producer retries for one symbol, snapshot, and market "
+        "resolve one durable owner; Observer only enriches that existing lifecycle.",
         status="implemented",
     )
 )
@@ -937,7 +937,7 @@ def test_snapshot_opportunity_identity_claim_is_atomic(tmp_path, monkeypatch):
     from aletheia.agents import market_observer
     from aletheia.universe import signal_emitter
 
-    assert "insert_opportunity_once_by_snapshot(" in inspect.getsource(
+    assert "insert_opportunity_once_by_snapshot(" not in inspect.getsource(
         market_observer
     )
     assert "update_open_opportunity(" in inspect.getsource(market_observer)

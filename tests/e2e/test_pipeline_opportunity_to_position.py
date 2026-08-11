@@ -19,7 +19,7 @@ from aletheia.storage import repositories as repo
 
 
 class TestOpportunityToRankerSeam:
-    """Market Observer output can be consumed by paper_trader_ranker."""
+    """An independent non-Universe producer can be consumed by the Ranker."""
 
     def test_opportunity_fields_match_ranker_expectations(self, e2e_db):
         """Ranker queries by status='open', asset_class='crypto', execution_eligible=True."""
@@ -29,7 +29,7 @@ class TestOpportunityToRankerSeam:
             direction_bias="short",
             confidence="high",
             confidence_score=78,
-            source_agent="market_observer",
+            source_agent="divergence_scanner",
             asset_class="crypto",
             execution_eligible=True,
             scanner_family="momentum",
@@ -51,12 +51,12 @@ class TestOpportunityToRankerSeam:
         opp_high = Opportunity(
             symbol="BTC/USDT", market="spot", direction_bias="long",
             confidence="high", confidence_score=78,
-            source_agent="market_observer", scanner_family="momentum",
+            source_agent="divergence_scanner", scanner_family="momentum",
         )
         opp_spec = Opportunity(
             symbol="SOL/USDT", market="spot", direction_bias="short",
             confidence="speculative", confidence_score=42,
-            source_agent="market_observer", scanner_family="momentum",
+            source_agent="divergence_scanner", scanner_family="momentum",
         )
         repo.insert_opportunity(opp_high)
         repo.insert_opportunity(opp_spec)

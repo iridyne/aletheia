@@ -12,7 +12,7 @@ Exchange demo (bitget_demo/okx_demo/binance_testnet) uses the real exchange sand
 `paper_internal` fills locally with slippage simulation.
 
 PaperTrader v4 (opportunity-driven, Position C 2026-07-02): the RuleSet rules engine
-was deleted. The paper trader ranks market_observer opportunities deterministically
+was deleted. The paper trader ranks open opportunities deterministically
 and writes the top candidates as signal_pending PiDecisions for the System Operator to
 evaluate. The System Operator is the sole decision maker; the paper trader never opens or
 closes positions itself.
@@ -405,7 +405,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     active_signal_setups = _active_signal_setups()
     # Position C (2026-07-02): Path A (RuleSet-driven signals) was removed with the
     # strategy rules engine. The paper trader is now purely opportunity-driven: it
-    # ranks market_observer opportunities and writes the top ones as signal_pending
+    # ranks open opportunities and writes the top ones as signal_pending
     # for the System Operator to decide (PI-central). There is no RuleSet scan and no
     # deterministic-rule entry/exit path.
 
@@ -419,7 +419,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         "neutral_bias", "confidence_below_", "paused_strategy:", "blocked_factor:",
         "equity_shadow_track", "execution_eligible=False", "universe_not_eligible",
         "ttl_expired", "ttl_invalid", "factor_hard_blocked", "okx_demo_symbol_not_supported",
-        "symbol_not_allowed:",
+        "symbol_not_allowed:", "producer_not_authorized", "producer_eligibility_",
     )
     def _is_permanent_skip(candidate: dict) -> bool:
         return bool(

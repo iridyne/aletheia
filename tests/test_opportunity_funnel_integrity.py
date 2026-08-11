@@ -92,6 +92,43 @@ def _insert_queue_eviction(
     )
 
 
+def test_funnel_uses_neutral_producer_label_and_reports_disabled_universe(
+    tmp_path, monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.server.routes.analytics import get_opportunity_funnel
+
+    cfg = load_config()
+    cfg.universe.enabled = False
+    save_config(cfg)
+
+    empty = get_opportunity_funnel(hours=1)["current"]
+    assert empty["primary_stage"] == "producer"
+    assert empty["reason_code"] == "universe_not_configured"
+    assert empty["pipeline"][0] == {
+        "stage": "producer",
+        "label": "Opportunity Producers",
+        "state": "idle",
+        "count": 0,
+    }
+
+    _insert_opportunity(conn, "divergence-only", status="open")
+    conn.execute(
+        "UPDATE opportunities SET source_agent='divergence_scanner' WHERE id=?",
+        ("divergence-only",),
+    )
+    conn.commit()
+
+    populated = get_opportunity_funnel(hours=1)["current"]
+    assert populated["pipeline"][0] == {
+        "stage": "producer",
+        "label": "Opportunity Producers",
+        "state": "active",
+        "count": 1,
+    }
+
+
 def test_superseded_cascade_expires_only_unclaimed_generations_with_atomic_evidence(
     tmp_path, monkeypatch
 ):

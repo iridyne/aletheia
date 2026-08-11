@@ -23,6 +23,51 @@ def _prepare_db(tmp_path, monkeypatch):
     run_migrations()
 
 
+def _patch_admitted_workset(monkeypatch, observer, instruments):
+    owners = {
+        str(instrument): {
+            "id": f"member-{index}",
+            "symbol": instrument.symbol,
+            "market_type": instrument.market_type,
+        }
+        for index, instrument in enumerate(instruments)
+    }
+    monkeypatch.setattr(
+        observer,
+        "_admitted_observer_workset",
+        lambda _cfg: (instruments, owners, "snapshot-test", []),
+    )
+
+
+@pytest.mark.asyncio
+async def test_empty_workset_reports_retryable_attestation_failure(
+    tmp_path, monkeypatch,
+):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.agents import market_observer as observer
+
+    init_tool_registry()
+    monkeypatch.setattr(
+        observer,
+        "_admitted_observer_workset",
+        lambda _cfg: (
+            [],
+            {},
+            "snapshot-attestation-failed",
+            ["producer_attestation_unavailable:opp-1"],
+        ),
+    )
+
+    result = await observer.run_market_observer(
+        permission_mode="Observe",
+        run_id="attestation-failed",
+    )
+
+    assert result["outputs"] == []
+    assert result["errors"] == ["producer_attestation_unavailable:opp-1"]
+
+
 # ---------------------------------------------------------------------------
 # _signal_score()
 # ---------------------------------------------------------------------------
@@ -425,8 +470,7 @@ async def test_prefetch_time_is_charged_to_same_serial_loop_deadline(tmp_path, m
             observer=SimpleNamespace(force_full_scan=False),
         ),
     )
-    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
-    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    _patch_admitted_workset(monkeypatch, mo, instruments)
     monkeypatch.setattr(mo, "log_tool", lambda *_args, **_kwargs: None)
 
     def fake_batch(_symbols):
@@ -630,6 +674,18 @@ async def test_failed_prefetch_does_not_reach_llm(tmp_path, monkeypatch):
 
     _prepare_db(tmp_path, monkeypatch)
     from aletheia.agents.market_observer import _analyze_symbol, _SymbolPrefetch
+    monkeypatch.setattr(
+        "aletheia.agents.market_observer.find_opportunity_by_symbol_snapshot",
+        lambda *_args, **_kwargs: {
+            "id": "prefetch-owner",
+            "status": "open",
+            "universe_member_id": "prefetch-member",
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_evidence.verify_signal_emitter_admission",
+        lambda _opportunity: (True, "signal_emitter_admission_verified"),
+    )
 
     failed_prefetch = _SymbolPrefetch(
         context_str="",
@@ -654,10 +710,12 @@ async def test_failed_prefetch_does_not_reach_llm(tmp_path, monkeypatch):
             market_type="spot",
             permission_mode="Observe",
             run_id=None,
-            linked_strategy_id=None,
-            memory_block="",
-            _prefetched=failed_prefetch,
-        )
+                linked_strategy_id=None,
+                memory_block="",
+                universe_snapshot_id="prefetch-snapshot",
+                universe_member_id="prefetch-member",
+                _prefetched=failed_prefetch,
+            )
 
     assert opp_id is None
     assert err is not None and "prefetch_failed" in err
@@ -724,8 +782,7 @@ async def test_loop_budget_exceeded_is_warning_not_error(tmp_path, monkeypatch):
             observer=SimpleNamespace(force_full_scan=False),
         ),
     )
-    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
-    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    _patch_admitted_workset(monkeypatch, mo, instruments)
     monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
 
     def fake_batch(_symbols):
@@ -819,8 +876,7 @@ async def test_prefetch_budget_exceeded_is_warning_not_error(tmp_path, monkeypat
             observer=SimpleNamespace(force_full_scan=False),
         ),
     )
-    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
-    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    _patch_admitted_workset(monkeypatch, mo, instruments)
     monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
 
     async def _noop_prefetch_instruments(*_a, **_k):
@@ -918,8 +974,7 @@ async def test_llm_loop_runs_concurrently(tmp_path, monkeypatch):
             observer=SimpleNamespace(force_full_scan=False),
         ),
     )
-    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
-    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    _patch_admitted_workset(monkeypatch, mo, instruments)
     monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
 
     def fake_batch(_symbols):
@@ -1011,8 +1066,7 @@ async def test_llm_loop_concurrent_results_collected(tmp_path, monkeypatch):
             observer=SimpleNamespace(force_full_scan=False),
         ),
     )
-    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
-    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    _patch_admitted_workset(monkeypatch, mo, instruments)
     monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
 
     async def fake_gather(coros, *, deadline):
@@ -1110,8 +1164,7 @@ async def test_per_symbol_deadline_passed_to_llm_structured(tmp_path, monkeypatc
             observer=SimpleNamespace(force_full_scan=False),
         ),
     )
-    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
-    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    _patch_admitted_workset(monkeypatch, mo, instruments)
     monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
 
     async def fake_gather(coros, *, deadline):
@@ -1205,8 +1258,7 @@ async def test_per_symbol_deadline_respects_remaining_budget(tmp_path, monkeypat
             observer=SimpleNamespace(force_full_scan=False),
         ),
     )
-    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
-    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    _patch_admitted_workset(monkeypatch, mo, instruments)
     monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
 
     async def fake_gather(coros, *, deadline):
@@ -1320,8 +1372,7 @@ async def test_fair_budget_distributes_remaining_time_evenly(tmp_path, monkeypat
             observer=SimpleNamespace(force_full_scan=False),
         ),
     )
-    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
-    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    _patch_admitted_workset(monkeypatch, mo, instruments)
     monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
 
     async def fake_gather(coros, *, deadline):
@@ -1418,8 +1469,7 @@ async def test_fair_budget_clamps_to_minimum_floor(tmp_path, monkeypatch):
             observer=SimpleNamespace(force_full_scan=False),
         ),
     )
-    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
-    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    _patch_admitted_workset(monkeypatch, mo, instruments)
     monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
 
     async def fake_gather(coros, *, deadline):
@@ -1536,8 +1586,7 @@ async def test_pressure_skips_low_signal_symbols_when_budget_tight(tmp_path, mon
             observer=SimpleNamespace(force_full_scan=False),
         ),
     )
-    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
-    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    _patch_admitted_workset(monkeypatch, mo, instruments)
     monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
 
     async def fake_gather(coros, *, deadline):
@@ -1643,8 +1692,7 @@ async def test_pressure_does_not_skip_high_signal_symbols(tmp_path, monkeypatch)
             observer=SimpleNamespace(force_full_scan=False),
         ),
     )
-    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
-    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    _patch_admitted_workset(monkeypatch, mo, instruments)
     monkeypatch.setattr(mo, "log_tool", lambda *_a, **_k: None)
 
     async def fake_gather(coros, *, deadline):

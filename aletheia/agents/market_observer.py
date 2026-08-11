@@ -1,10 +1,4 @@
-"""Market Observer agent — observes market conditions and creates opportunities.
-
-Per-symbol loop: each symbol gets its own LLM MarketRead call and its own
-Opportunity row. This fixes the original "only BTC" bug where all symbol data
-was sent to the LLM together but only symbols[0] was used for the resulting
-opportunity.
-"""
+"""Market Observer agent — advisory enrichment for deterministic Opportunities."""
 
 import asyncio
 import json
@@ -21,19 +15,13 @@ from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool, record
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.data.freshness import fresh_row
 from aletheia.model_provider.router import get_provider_for_tier
-from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
-    insert_opportunity,
-    insert_opportunity_once_by_snapshot,
-    list_strategies,
     find_opportunity_by_symbol_snapshot,
     update_open_opportunity,
 )
 from aletheia.trading.instruments import (
-    observed_instruments_from_config,
     instrument_market_to_db_market,
 )
-from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 from aletheia.config.loader import load_config
 
 logger = logging.getLogger("aletheia.agents.market_observer")
@@ -76,7 +64,6 @@ _ROUND_ROBIN_STATE_KEY = "agent.market_observer.round_robin.v1"
 _LLM_LATENCY_SETTINGS_KEY = "agent.market_observer.llm_latency.v1"
 _LLM_LATENCY_ROLLING_N = 100  # keep the most recent N successful call durations
 _RETRYABLE_EVIDENCE_ERROR_PREFIX = "observer_pre_filter_evidence_failed:"
-_RETRYABLE_EMISSION_ERROR_PREFIX = "observer_opportunity_emission_evidence_failed:"
 
 
 def _fair_llm_budget_seconds(remaining_run_s: float, outstanding_count: int) -> float:
@@ -113,6 +100,54 @@ class _SymbolPrefetch:
     rendered_sources: dict[str, list[dict]] = field(default_factory=dict)
     failed: bool = False  # True if exchange context fetch raised
     context_duration_ms: int | None = None
+
+
+def _admitted_observer_workset(
+    cfg,
+) -> tuple[list, dict[str, dict], str | None, list[str]]:
+    """Return exact instruments with an open, emitter-attested owner."""
+    if not cfg.universe.enabled:
+        return [], {}, None, []
+
+    from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
+    from aletheia.data.symbols import InstrumentId, MARKET_SPOT
+    from aletheia.universe.service import UniverseService
+
+    members = UniverseService().get_current_universe(
+        limit=cfg.universe.max_candidates
+    )
+    snapshot_id = members[0].get("snapshot_id") if members else None
+    if not snapshot_id:
+        return [], {}, None, []
+
+    instruments = []
+    owners: dict[str, dict] = {}
+    errors: list[str] = []
+    for member in members:
+        symbol = member.get("symbol", "")
+        market_type = member.get("market_type", "spot") or MARKET_SPOT
+        if not symbol:
+            continue
+        existing = find_opportunity_by_symbol_snapshot(
+            symbol,
+            snapshot_id,
+            market=instrument_market_to_db_market(market_type),
+        )
+        if not existing or existing.get("status") != "open":
+            continue
+        if existing.get("universe_member_id") != member.get("id"):
+            continue
+        admitted, reason = verify_signal_emitter_admission(existing)
+        if reason == "producer_attestation_unavailable":
+            errors.append(f"{reason}:{existing.get('id')}")
+        if not admitted:
+            continue
+        instrument = InstrumentId.from_parts(
+            cfg.market_data.ccxt_exchange, symbol, market_type
+        )
+        instruments.append(instrument)
+        owners[str(instrument)] = member
+    return instruments, owners, snapshot_id, errors
 
 
 def _observer_learning_candidate_key(
@@ -346,39 +381,6 @@ Indicator meanings (single source of truth — do not invent rules):
 - vol: volume z-score / ratio to its 20-bar mean; obv is normalized OBV.
 
 Not financial advice."""
-
-
-_SCANNER_KEYWORD_MAP: list[tuple[str, str]] = [
-    # trend-family — must come before reversion checks (more specific)
-    ("breakout", "breakout"),
-    ("breakdown", "breakout"),
-    ("momentum", "momentum"),
-    ("ma_cross", "ma_crossover"),
-    ("sma cross", "ma_crossover"),
-    ("trend", "trend"),
-    # reversion-family
-    ("oversold", "reversion"),
-    ("overbought", "reversion"),
-    ("mean reversion", "reversion"),
-    ("divergence", "reversion"),
-    # volatility/special
-    ("squeeze", "volatility"),
-    ("funding", "funding_arb"),
-    ("arb", "arb"),
-]
-
-
-def _infer_scanner_family(rationale: str, observations: list[str]) -> str | None:
-    """Infer a scanner_family from LLM rationale + observations when not set by universe.
-
-    Used so that the sideways regime tax (P0-2) can fire on non-universe opportunities.
-    Returns the first matching family, or None if no keyword matches.
-    """
-    text = (rationale + " " + " ".join(observations)).lower()
-    for keyword, family in _SCANNER_KEYWORD_MAP:
-        if keyword in text:
-            return family
-    return None
 
 
 _PREFILTER_RSI_DEVIATION = 12.0
@@ -696,6 +698,11 @@ def _opportunity_evidence_manifest(
     from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
 
     existing = metadata.get("evidence_manifest")
+    producer_epoch = (
+        existing.get("policy_epoch")
+        if isinstance(existing, dict)
+        else POLICY_EPOCH_LABEL
+    )
     existing_t0 = existing.get("t0") if isinstance(existing, dict) else None
     t0 = (
         _bounded_t0(existing_t0)
@@ -715,7 +722,7 @@ def _opportunity_evidence_manifest(
     )
     return {
         "version": "opportunity-information-integrity-v1",
-        "policy_epoch": POLICY_EPOCH_LABEL,
+        "policy_epoch": producer_epoch,
         "t0": t0,
         "t1": {
             "status": "available",
@@ -1031,6 +1038,36 @@ async def _analyze_symbol(
 
     _t_start = _time.monotonic()
     _step_times: dict[str, float] = {}
+
+    # Market Observer is advisory for Universe-linked crypto. It may analyze
+    # only the exact open Opportunity already admitted by the deterministic
+    # signal emitter; absence or conflicting lineage is an authoritative skip.
+    existing_opportunity: dict | None = None
+    if asset_class == "crypto":
+        if not universe_snapshot_id or not universe_member_id:
+            return None, None
+        existing_opportunity = find_opportunity_by_symbol_snapshot(
+            symbol,
+            universe_snapshot_id,
+            market=instrument_market_to_db_market(market_type),
+        )
+        if (
+            not existing_opportunity
+            or existing_opportunity.get("status") != "open"
+            or existing_opportunity.get("universe_member_id") != universe_member_id
+        ):
+            return None, None
+        from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
+
+        admitted, reason = verify_signal_emitter_admission(existing_opportunity)
+        if not admitted:
+            record_step(
+                run_id,
+                f"observer_not_admitted:{symbol}",
+                input_data=f"opportunity_id={existing_opportunity.get('id')}",
+                output_data=reason,
+            )
+            return None, None
 
     # Derivatives state for the Opportunity row (perp only; stays None for spot).
     funding_rate_val: float | None = None
@@ -1604,14 +1641,7 @@ async def _analyze_symbol(
             and direction in {"long", "short"}
             and source_direction != direction
         )
-        updates: dict = {
-            "thesis": (
-                f"[observer_direction_conflict scanner={source_direction} "
-                f"observer={direction}] {thesis}"
-                if direction_conflict
-                else thesis
-            )
-        }
+        updates: dict = {}
         if scanner_owned:
             # The deterministic signal owns direction and scanner-score semantics.
             # Observer output is a later assessment, not permission to reinterpret
@@ -1622,6 +1652,8 @@ async def _analyze_symbol(
                 "direction_bias": direction,
                 "confidence": confidence,
                 "confidence_score": confidence_score,
+                "rationale": rationale[:500],
+                "key_observations": observations,
                 "scanner_direction": source_direction or None,
                 "direction_conflict": direction_conflict,
             }
@@ -1642,6 +1674,8 @@ async def _analyze_symbol(
                     source_direction,
                     direction,
                 )
+        else:
+            updates["thesis"] = thesis
         if learning_manifest:
             existing_meta["learning_manifest"] = learning_manifest
         existing_meta["evidence_manifest"] = _opportunity_evidence_manifest(
@@ -1661,7 +1695,7 @@ async def _analyze_symbol(
             updates["open_interest"] = open_interest_val
         if oi_delta_val is not None:
             updates["oi_delta_1h"] = oi_delta_val
-        if observations:
+        if observations and not scanner_owned:
             updates["key_observations"] = json.dumps(observations)
         if confidence_score is not None and not scanner_owned:
             old_score = existing.get("confidence_score") or 0
@@ -1698,139 +1732,23 @@ async def _analyze_symbol(
     # must not be rewritten by a delayed observer pass.  Pass market so a
     # same-symbol opp from another market is not mistaken for this one's opp.
     # OD-S02 locks.
+    if existing_opportunity:
+        return _reuse_existing_opportunity(existing_opportunity)
     if universe_snapshot_id:
-        existing = find_opportunity_by_symbol_snapshot(
+        existing_opportunity = find_opportunity_by_symbol_snapshot(
             symbol,
             universe_snapshot_id,
             market=instrument_market_to_db_market(market_type),
         )
-        if existing:
-            return _reuse_existing_opportunity(existing)
+        if existing_opportunity:
+            return _reuse_existing_opportunity(existing_opportunity)
 
-    # IB-24-12: standalone neutral opportunities add no signal value and get
-    # filtered immediately by the ranker's neutral_bias gate. Skip creation.
-    if direction == "neutral":
-        record_step(
-            run_id,
-            f"neutral_skipped:{symbol}",
-            input_data=None,
-            output_data="direction=neutral standalone opp suppressed",
-        )
-        return None, llm_error
-
-    # P0-2: fill scanner_family from LLM text when not set by universe member,
-    # so the sideways regime tax can fire on non-universe opportunities.
-    effective_scanner_family = scanner_family or _infer_scanner_family(rationale, observations)
-
-    opportunity_metadata = {}
-    if learning_outcome_candidate_key:
-        opportunity_metadata["learning_candidate_key"] = learning_outcome_candidate_key
-    if learning_manifest:
-        opportunity_metadata["learning_manifest"] = learning_manifest
-    opportunity_metadata["evidence_manifest"] = _opportunity_evidence_manifest(
-        metadata=opportunity_metadata,
-        rendered_sources=rendered_sources,
-        run_id=run_id,
-        universe_snapshot_id=universe_snapshot_id,
-        universe_member_id=universe_member_id,
-        scanner_family=effective_scanner_family,
-        pre_filter=pre_filter,
-        pre_filter_evidence_id=evidence_id,
-    )
-    # Resolve valid_until: prefer exact member expiry; fall back to family-TTL clock.
-    if member_expires_at is not None:
-        valid_until = member_expires_at
-    else:
-        from aletheia.universe.allocator import _FAMILY_TTL
-
-        ttl_sec = _FAMILY_TTL.get(effective_scanner_family or "", 3600)
-        valid_until = (datetime.now(timezone.utc) + timedelta(seconds=ttl_sec)).isoformat()
-
-    opp = Opportunity(
-        symbol=symbol,
-        market=instrument_market_to_db_market(market_type),
-        direction_bias=direction,
-        thesis=thesis,
-        confidence=confidence,
-        confidence_score=confidence_score,
-        source_agent="market_observer",
-        linked_strategy_id=linked_strategy_id,
-        asset_class=asset_class,
-        metadata=json.dumps(opportunity_metadata, sort_keys=True),
-        universe_snapshot_id=universe_snapshot_id,
-        universe_member_id=universe_member_id,
-        scanner_family=effective_scanner_family,
-        valid_until=valid_until,
-        key_observations=json.dumps(observations) if observations else "",
-        funding_rate=funding_rate_val,
-        open_interest=open_interest_val,
-        oi_delta_1h=oi_delta_val,
-    )
-    try:
-        from aletheia.analytics.filter_evidence import (
-            atomic_opportunity_evidence,
-            record_observer_opportunity_emitted_evidence,
-        )
-
-        persisted = None
-        created = True
-        started_at = _time.monotonic()
-        with atomic_opportunity_evidence():
-            if universe_snapshot_id:
-                persisted, created = insert_opportunity_once_by_snapshot(opp)
-            else:
-                insert_opportunity(opp)
-            if created:
-                record_observer_opportunity_emitted_evidence(
-                    run_id=run_id,
-                    opportunity_id=opp.id,
-                    symbol=symbol,
-                    venue=venue,
-                    market_type=market_type,
-                    direction=direction,
-                    scanner_family=effective_scanner_family,
-                    universe_snapshot_id=universe_snapshot_id,
-                    universe_member_id=universe_member_id,
-                    confidence=confidence,
-                    confidence_score=confidence_score,
-                )
-        duration_ms = elapsed_ms(started_at)
-        if not created:
-            return _reuse_existing_opportunity(persisted)
-    except Exception as exc:
-        error_code = f"{_RETRYABLE_EMISSION_ERROR_PREFIX}{symbol}"
-        logger.error("%s (%s)", error_code, type(exc).__name__)
-        return None, error_code
-    try:
-        from aletheia.agent_runtime.scheduler import notify_paper_trader
-
-        notify_paper_trader(source="market_observer_opportunity")
-    except Exception:
-        logger.debug("Failed to notify Ranker after Opportunity commit", exc_info=True)
-    log_tool(
-        run_id,
-        "create_opportunity",
-        "observe",
-        True,
-        output=opp.id,
-        duration_ms=duration_ms,
-    )
-    _total_duration = _time.monotonic() - _t_start
-    _step_times["total"] = _total_duration
-    logger.info(
-        "[MO] %s (%s): DONE — total=%.1fs, steps=%s, opp_id=%s",
-        symbol,
-        market_type,
-        _total_duration,
-        {k: f"{v:.1f}s" for k, v in _step_times.items()},
-        opp.id,
-    )
-    return opp.id, llm_error
+    return None, llm_error
 
 
 @register_agent("market_observer")
 async def run_market_observer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
-    """Observe market state and create one Opportunity per symbol."""
+    """Enrich deterministically admitted Universe Opportunities."""
     import time as _time
 
     from aletheia.learning.opportunity_information_policy import (
@@ -1860,32 +1778,18 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
 
     cfg = load_config()
 
-    # Universe-driven path: if enabled, get symbols from the dynamic pool
-    universe_members: list[dict] = []
-    universe_snapshot_id: str | None = None
-    if cfg.universe.enabled:
-        from aletheia.universe.service import UniverseService
+    instruments, _universe_lookup, universe_snapshot_id, attestation_errors = (
+        _admitted_observer_workset(cfg)
+    )
+    errors.extend(attestation_errors)
 
-        svc = UniverseService()
-        universe_members = svc.get_current_universe(limit=cfg.universe.max_candidates)
-        if universe_members and universe_members[0].get("snapshot_id"):
-            universe_snapshot_id = universe_members[0]["snapshot_id"]
-
-    if universe_members and universe_snapshot_id:
-        from aletheia.data.symbols import InstrumentId, MARKET_SPOT, to_canonical
-
-        instruments = []
-        for m in universe_members:
-            sym = m.get("symbol", "")
-            if not sym:
-                continue
-            mt = m.get("market_type", "spot") or MARKET_SPOT
-            instruments.append(InstrumentId.from_parts(cfg.market_data.ccxt_exchange, sym, mt))
-    else:
-        from aletheia.data.symbols import to_canonical
-
-        instruments = observed_instruments_from_config(cfg)
-        universe_members = []
+    if not instruments:
+        return {
+            "outputs": outputs,
+            "errors": errors,
+            "warnings": warnings,
+            "output_artifacts": artifact_refs,
+        }
 
     from aletheia.agents.round_robin import DurableRoundRobin, rotate_from_next
 
@@ -1897,23 +1801,6 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
         key=instrument_key,
     )
     symbols = [i.symbol for i in instruments]  # canonical list for memory query
-
-    # Build symbol→strategy map so each opportunity links to a matching strategy.
-    _strategy_by_symbol: dict[str, str] = {}
-    for s in list_strategies(limit=50):
-        if is_active_paper_strategy(s):
-            params_raw = s.get("parameters") or "{}"
-            try:
-                import json as _json_mod
-
-                params = _json_mod.loads(params_raw) if isinstance(params_raw, str) else params_raw
-            except (ValueError, TypeError):
-                params = {}
-            strat_sym = params.get("symbol")
-            if strat_sym:
-                _strategy_by_symbol[to_canonical(strat_sym)] = s["id"]
-            else:
-                _strategy_by_symbol.setdefault("__generic__", s["id"])
 
     # Experience-loop advisory context (lessons + case studies + guard advisories)
     memory_block = ""
@@ -1978,11 +1865,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
         except Exception:
             pass
 
-    # Build a lookup for universe member metadata (symbol → member dict)
-    _universe_lookup = {m["symbol"]: m for m in universe_members} if universe_members else {}
-
-    # Round 2: the observer emits opportunities for BOTH spot and perp instruments.
-    # Full futures support is now in place, so the prior spot-only guard is lifted:
+    # The observer enriches admitted spot and perp Opportunities:
     #   - leverage + liquidation persisted on the Position (F1);
     #   - PI chooses market_type + leverage, clamped to the per-tier cap (F2), with a
     #     futures context block (F3) and funding/OI on the Opportunity (F4);
@@ -1990,7 +1873,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     #   - the risk engine enforces max-leverage / account-leverage-ratio / liquidation
     #     buffer (#10/#17/#18) and per-symbol cumulative notional (#19).
     # A perp instrument's Opportunity.market is "usdt_futures" (instrument_market_to_db_market).
-    # Per-instrument loop: each instrument gets its own LLM call + Opportunity row.
+    # Per-instrument loop: each exact admitted carrier gets its own LLM assessment.
     # instrument.market_type is the authoritative type; no more config-derived guessing.
     #
     # WALL-CLOCK BUDGET (gateway-stability fix): each instrument is one structured LLM call
@@ -2221,16 +2104,14 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             async with _rr_lock:
                 _active_count += 1
             try:
-                u_member = _universe_lookup.get(instrument.symbol)
-                _sym_canonical = to_canonical(instrument.symbol)
-                _linked_sid = _strategy_by_symbol.get(_sym_canonical) or _strategy_by_symbol.get("__generic__")
+                u_member = _universe_lookup.get(instrument_key(instrument))
                 _t_llm_start = _monotonic()
                 opp_id, err = await _analyze_symbol(
                     symbol=instrument.symbol,
                     market_type=instrument.market_type,
                     permission_mode=permission_mode,
                     run_id=run_id,
-                    linked_strategy_id=_linked_sid,
+                    linked_strategy_id=None,
                     memory_block=memory_block,
                     asset_class="crypto",
                     universe_snapshot_id=universe_snapshot_id,
@@ -2281,10 +2162,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 completed_attempt = not bool(
                     err
                     and err.startswith(
-                        (
-                            _RETRYABLE_EVIDENCE_ERROR_PREFIX,
-                            _RETRYABLE_EMISSION_ERROR_PREFIX,
-                        )
+                        _RETRYABLE_EVIDENCE_ERROR_PREFIX
                     )
                 )
             except Exception as e:

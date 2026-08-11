@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 import zlib
 
+from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
     FilterCandidateOutcome,
@@ -206,6 +207,90 @@ def record_filter_decision(
             exc,
         )
     return decision_id
+
+
+def verify_signal_emitter_admission(opportunity: dict[str, Any]) -> tuple[bool, str]:
+    """Verify the deterministic producer authority for a Universe Opportunity.
+
+    Non-Universe producers are outside this contract. Universe-linked crypto
+    carriers must be scanner-owned and match both their immutable T0 manifest
+    and an exact persisted ``signal_emitter`` pass fact.
+    """
+    source_agent = str(opportunity.get("source_agent") or "").strip().lower()
+    snapshot_id = str(opportunity.get("universe_snapshot_id") or "").strip()
+    member_id = str(opportunity.get("universe_member_id") or "").strip()
+    in_scope = bool(snapshot_id or member_id) or source_agent in {
+        "universe_scanner",
+        "market_observer",
+    }
+    if not in_scope:
+        return True, "producer_eligibility_not_applicable"
+    if source_agent != "universe_scanner":
+        return False, "producer_not_authorized"
+    opportunity_id = str(opportunity.get("id") or "").strip()
+    if not opportunity_id or not snapshot_id or not member_id:
+        return False, "producer_eligibility_lineage_incomplete"
+
+    raw_metadata = opportunity.get("metadata") or {}
+    try:
+        metadata = (
+            raw_metadata
+            if isinstance(raw_metadata, dict)
+            else json.loads(raw_metadata)
+        )
+    except (TypeError, ValueError):
+        metadata = {}
+    manifest = metadata.get("evidence_manifest") if isinstance(metadata, dict) else None
+    t0 = manifest.get("t0") if isinstance(manifest, dict) else None
+    if not isinstance(t0, dict) or t0.get("status") != "available":
+        return False, "producer_eligibility_manifest_missing"
+    if manifest.get("policy_epoch") != POLICY_EPOCH_LABEL:
+        return False, "producer_eligibility_epoch_mismatch"
+
+    symbol = str(opportunity.get("symbol") or "")
+    market = _normalize_market(opportunity.get("market") or opportunity.get("market_type"))
+    direction = str(opportunity.get("direction_bias") or "").strip().lower()
+    manifest_matches = (
+        str(t0.get("trigger_type") or "").strip().lower() == "universe_scanner"
+        and str(t0.get("universe_snapshot_id") or "") == snapshot_id
+        and str(t0.get("universe_member_id") or "") == member_id
+        and str(t0.get("symbol") or "") == symbol
+        and _normalize_market(t0.get("market_type")) == market
+        and str(t0.get("direction") or "").strip().lower() == direction
+    )
+    if not manifest_matches:
+        return False, "producer_eligibility_manifest_conflict"
+
+    from aletheia.storage.sqlite import get_db
+
+    try:
+        rows = get_db().execute(
+            "SELECT opportunity_id, universe_snapshot_id, universe_member_id, symbol, "
+            "market_type, direction FROM filter_decisions "
+            "WHERE opportunity_id=? AND filter_name='opportunity_emission' "
+            "AND stage='signal_emitter' AND decision='passed'",
+            (opportunity_id,),
+        ).fetchall()
+    except Exception as exc:
+        logger.warning(
+            "signal emitter admission fact unavailable opportunity=%s: %s",
+            opportunity_id,
+            exc,
+        )
+        return False, "producer_attestation_unavailable"
+    if not rows:
+        return False, "producer_eligibility_fact_missing"
+    for row in rows:
+        fact = dict(row)
+        if (
+            str(fact.get("universe_snapshot_id") or "") == snapshot_id
+            and str(fact.get("universe_member_id") or "") == member_id
+            and str(fact.get("symbol") or "") == symbol
+            and _normalize_market(fact.get("market_type")) == market
+            and str(fact.get("direction") or "").strip().lower() == direction
+        ):
+            return True, "signal_emitter_admission_verified"
+    return False, "producer_eligibility_fact_conflict"
 
 
 def record_filter_decision_batch(
@@ -779,57 +864,6 @@ def record_observer_pre_filter_evidence(
         entry_spread_bps=entry_spread_bps,
         funding_rate_at_entry=funding_rate_at_entry,
     )
-
-
-def record_observer_opportunity_emitted_evidence(
-    *,
-    run_id: str | None,
-    opportunity_id: str,
-    symbol: str,
-    venue: str | None,
-    market_type: str,
-    direction: str,
-    scanner_family: str | None,
-    universe_snapshot_id: str | None,
-    universe_member_id: str | None,
-    confidence: str,
-    confidence_score: int | None,
-) -> str:
-    """Persist the Observer's exact producer handoff for a new Opportunity."""
-    market = _normalize_market(market_type)
-    evidence_id = record_filter_decision(
-        candidate_key=f"opportunity:{opportunity_id}",
-        candidate_kind="opportunity",
-        parent_candidate_key=(
-            f"universe_member:{universe_member_id}" if universe_member_id else None
-        ),
-        run_id=run_id,
-        opportunity_id=opportunity_id,
-        universe_snapshot_id=universe_snapshot_id,
-        universe_member_id=universe_member_id,
-        venue=venue,
-        symbol=symbol,
-        market_type=market,
-        direction=direction,
-        scanner_family=scanner_family,
-        filter_name="opportunity_emission",
-        stage="market_observer",
-        decision="passed",
-        reason_code="opportunity_emitted",
-        inputs={
-            "confidence": confidence,
-            "confidence_score": confidence_score,
-        },
-        parameters={"producer": "market_observer"},
-        raise_on_error=True,
-    )
-    from aletheia.storage.sqlite import get_db
-
-    if get_db().execute(
-        "SELECT 1 FROM filter_decisions WHERE id = ?", (evidence_id,)
-    ).fetchone() is None:
-        raise RuntimeError("observer_opportunity_emission_evidence_not_persisted")
-    return evidence_id
 
 
 def ensure_candidate_outcomes(

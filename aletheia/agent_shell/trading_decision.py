@@ -1024,7 +1024,53 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         from aletheia.storage.repositories import get_opportunity
 
         source_opportunity = get_opportunity(decision.opportunity_id)
+        if not source_opportunity:
+            reason = "producer_eligibility_opportunity_missing"
+            decision.filter_trace.append({
+                "filter_name": "producer_eligibility",
+                "stage": "proposal_submission",
+                "decision": "rejected",
+                "reason_code": reason,
+                "inputs": {"opportunity_id": decision.opportunity_id},
+                "parameters": {"required_producer": "universe_scanner"},
+            })
+            raise DecisionUnavailable(
+                reason,
+                stage="proposal_preflight",
+                filter_trace=list(decision.filter_trace),
+            )
         if source_opportunity:
+            from aletheia.analytics.filter_evidence import (
+                verify_signal_emitter_admission,
+            )
+
+            admitted, admission_reason = verify_signal_emitter_admission(
+                source_opportunity
+            )
+            if admission_reason != "producer_eligibility_not_applicable":
+                decision.filter_trace.append({
+                    "filter_name": "producer_eligibility",
+                    "stage": "proposal_submission",
+                    "decision": "passed" if admitted else "rejected",
+                    "reason_code": admission_reason,
+                    "inputs": {
+                        "opportunity_id": decision.opportunity_id,
+                        "source_agent": source_opportunity.get("source_agent"),
+                        "universe_snapshot_id": source_opportunity.get(
+                            "universe_snapshot_id"
+                        ),
+                        "universe_member_id": source_opportunity.get(
+                            "universe_member_id"
+                        ),
+                    },
+                    "parameters": {"required_producer": "universe_scanner"},
+                })
+            if not admitted:
+                raise DecisionUnavailable(
+                    admission_reason,
+                    stage="proposal_preflight",
+                    filter_trace=list(decision.filter_trace),
+                )
             raw_metadata = source_opportunity.get("metadata") or {}
             try:
                 metadata = (
@@ -2043,6 +2089,21 @@ def _fmt_position_x_context(context: dict | None) -> str:
     return f" | {rendered}" if rendered else ""
 
 
+def _fmt_observer_assessment(assessment: dict | None) -> str:
+    if not assessment:
+        return ""
+    observations = "; ".join(assessment.get("key_observations") or [])
+    conflict = " conflict_with_scanner" if assessment.get("direction_conflict") else ""
+    detail = str(assessment.get("rationale") or "")
+    if observations:
+        detail = f"{detail}; {observations}" if detail else observations
+    return (
+        f" | observer_advisory={assessment.get('direction_bias') or '?'}"
+        f"/{assessment.get('confidence_score') if assessment.get('confidence_score') is not None else '?'}"
+        f"{conflict}: {detail[:700]}"
+    )
+
+
 def _direction_skew_note(rows: list[dict], label: str) -> str:
     dirs = [
         str(r.get("direction") or r.get("direction_bias") or "").lower()
@@ -2333,11 +2394,12 @@ def _build_assessment_prompt(ctx: dict) -> str:
             f"conf={o.get('confidence_score', '?')} "
             f"[{o.get('scanner_family', '')}]: {o.get('thesis', '')}"
             f"{(' | obs: ' + '; '.join(o['key_observations'])) if o.get('key_observations') else ''}"
+            f"{_fmt_observer_assessment(o.get('observer_assessment'))}"
             f"{(' | technical: ' + _fmt_feature_line(o['technical_context']).strip()) if o.get('technical_context') else ' | technical: unavailable'}"
             f"{_fmt_position_x_context(o.get('structure_context'))}"
             for o in opps[:8]
         )
-        parts += ["## Open Opportunities (market_observer output)", opp_lines, ""]
+        parts += ["## Open Opportunities (deterministic producer + optional Observer advisory)", opp_lines, ""]
         skew_note = _direction_skew_note(opps[:8], "open opportunities")
         if skew_note:
             parts += [skew_note, ""]

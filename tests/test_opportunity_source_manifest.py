@@ -26,6 +26,7 @@ async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
     from aletheia.agents import market_observer as observer
     from aletheia.storage.models import Opportunity
     from aletheia.storage.repositories import get_opportunity, insert_opportunity
+    from aletheia.analytics.filter_evidence import record_filter_decision
 
     init_tool_registry()
     original = Opportunity(
@@ -44,9 +45,14 @@ async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
         metadata=json.dumps({
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v2",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",
+                    "universe_snapshot_id": "scanner-snapshot",
+                    "universe_member_id": "scanner-member",
+                    "symbol": "SLX/USDT",
+                    "market_type": "perp",
                     "direction": "short",
                     "total_score": 49.105,
                 },
@@ -54,6 +60,21 @@ async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
         }),
     )
     insert_opportunity(original)
+    record_filter_decision(
+        candidate_key="universe_member:scanner-member",
+        candidate_kind="universe_member",
+        parent_candidate_key="universe_snapshot:scanner-snapshot",
+        filter_name="opportunity_emission",
+        stage="signal_emitter",
+        decision="passed",
+        reason_code="opportunity_emitted",
+        symbol=original.symbol,
+        market_type="perp",
+        direction="short",
+        opportunity_id=original.id,
+        universe_snapshot_id=original.universe_snapshot_id,
+        universe_member_id=original.universe_member_id,
+    )
 
     async def contrary_read(*_args, **_kwargs):
         return ({
@@ -108,18 +129,313 @@ async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
     assert stored["direction_bias"] == "short"
     assert stored["confidence"] == "medium"
     assert stored["confidence_score"] == 49
-    assert stored["thesis"].startswith(
-        "[observer_direction_conflict scanner=short observer=long]"
-    )
+    assert stored["thesis"] == "[mean_reversion] overbought extension"
+    assert stored["key_observations"] == ""
     assessment = json.loads(stored["metadata"])["observer_assessment"]
     assert assessment == {
         "version": "market-observer-assessment/v1",
         "direction_bias": "long",
         "confidence": "high",
         "confidence_score": 70,
+        "rationale": "volume confirms a bullish breakout",
+        "key_observations": ["4h breakout above the upper band"],
         "scanner_direction": "short",
         "direction_conflict": True,
     }
+    from aletheia.agent_shell.trading_context import (
+        _observer_assessment_from_metadata,
+    )
+    from aletheia.agent_shell.trading_decision import _fmt_observer_assessment
+
+    rendered_assessment = _observer_assessment_from_metadata(stored["metadata"])
+    assert rendered_assessment == assessment
+    assert "observer_advisory=long/70 conflict_with_scanner" in (
+        _fmt_observer_assessment(rendered_assessment)
+    )
+
+
+@pytest.mark.asyncio
+async def test_observer_does_not_analyze_or_emit_without_deterministic_owner(
+    tmp_path, monkeypatch,
+):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.agents import market_observer as observer
+    from aletheia.storage.repositories import list_opportunities
+
+    init_tool_registry()
+
+    async def unexpected_llm(*_args, **_kwargs):
+        raise AssertionError("Observer must reject before LLM analysis")
+
+    monkeypatch.setattr(observer, "llm_structured", unexpected_llm)
+    monkeypatch.setattr(observer, "record_step", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(observer, "log_tool", lambda *_args, **_kwargs: None)
+    prefetched = observer._SymbolPrefetch(
+        context_str="LOW/USDT technical context",
+        debug={},
+        pre_filter={
+            "passed": True,
+            "rsi": 75.0,
+            "atr_pct": 5.0,
+            "keyword_hits": [],
+            "matched_rules": ["rsi_deviation"],
+        },
+        signal_score=1.0,
+        funding_rate_val=None,
+        open_interest_val=None,
+        oi_delta_val=None,
+    )
+
+    opportunity_id, error = await observer._analyze_symbol(
+        symbol="LOW/USDT",
+        market_type="perp",
+        permission_mode="Observe",
+        run_id="observer-no-owner",
+        linked_strategy_id=None,
+        memory_block="",
+        universe_snapshot_id="snapshot-low",
+        universe_member_id="member-low",
+        scanner_family="momentum",
+        scanner_direction="long",
+        force_full=True,
+        _prefetched=prefetched,
+    )
+
+    assert opportunity_id is None
+    assert error is None
+    assert list_opportunities(limit=10) == []
+
+
+def test_ranker_rejects_legacy_observer_producer_without_emitter_admission():
+    from aletheia.agents.paper_trader_ranker import _evaluate_candidate
+
+    candidate = _evaluate_candidate(
+        {
+            "id": "legacy-observer-opportunity",
+            "symbol": "LOW/USDT",
+            "asset_class": "crypto",
+            "market": "usdt_futures",
+            "direction_bias": "long",
+            "confidence": "medium",
+            "confidence_score": 80,
+            "source_agent": "market_observer",
+            "execution_eligible": True,
+            "status": "open",
+        },
+        SimpleNamespace(),
+        datetime.now(timezone.utc).isoformat(),
+        lambda _symbol: True,
+        "medium",
+    )
+
+    assert candidate["skip_reason"] == "producer_not_authorized"
+    assert candidate["filter_trace"][-1]["filter_name"] == "producer_eligibility"
+
+
+def test_scanner_manifest_without_persisted_emitter_fact_fails_closed(
+    tmp_path, monkeypatch,
+):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.repositories import insert_opportunity
+
+    opportunity = Opportunity(
+        id="scanner-missing-emitter-fact",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        source_agent="universe_scanner",
+        universe_snapshot_id="snapshot-missing-fact",
+        universe_member_id="member-missing-fact",
+        metadata=json.dumps({
+            "evidence_manifest": {
+                "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v2",
+                "t0": {
+                    "status": "available",
+                    "trigger_type": "universe_scanner",
+                    "universe_snapshot_id": "snapshot-missing-fact",
+                    "universe_member_id": "member-missing-fact",
+                    "symbol": "BTC/USDT",
+                    "market_type": "spot",
+                    "direction": "long",
+                },
+            },
+        }),
+    )
+    insert_opportunity(opportunity)
+
+    assert verify_signal_emitter_admission(
+        opportunity.model_dump()
+    ) == (False, "producer_eligibility_fact_missing")
+
+
+def test_signal_emitter_attestation_db_failure_is_retryable(monkeypatch):
+    from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
+    from aletheia.storage.models import Opportunity
+
+    opportunity = Opportunity(
+        id="opp-attestation-unavailable",
+        source_agent="universe_scanner",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        universe_snapshot_id="snapshot-attestation-unavailable",
+        universe_member_id="member-attestation-unavailable",
+        metadata=json.dumps({
+            "evidence_manifest": {
+                "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v2",
+                "t0": {
+                    "status": "available",
+                    "trigger_type": "universe_scanner",
+                    "universe_snapshot_id": "snapshot-attestation-unavailable",
+                    "universe_member_id": "member-attestation-unavailable",
+                    "symbol": "BTC/USDT",
+                    "market_type": "spot",
+                    "direction": "long",
+                },
+            },
+        }),
+    )
+
+    class _UnavailableDb:
+        def execute(self, *_args, **_kwargs):
+            raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr("aletheia.storage.sqlite.get_db", lambda: _UnavailableDb())
+
+    assert verify_signal_emitter_admission(
+        opportunity.model_dump()
+    ) == (False, "producer_attestation_unavailable")
+
+
+def test_pre_v2_scanner_carrier_fails_closed_before_fact_lookup():
+    from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
+    from aletheia.storage.models import Opportunity
+
+    opportunity = Opportunity(
+        id="pre-v2-scanner-carrier",
+        source_agent="universe_scanner",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        universe_snapshot_id="pre-v2-snapshot",
+        universe_member_id="pre-v2-member",
+        metadata=json.dumps({
+            "evidence_manifest": {
+                "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v1",
+                "t0": {
+                    "status": "available",
+                    "trigger_type": "universe_scanner",
+                    "universe_snapshot_id": "pre-v2-snapshot",
+                    "universe_member_id": "pre-v2-member",
+                    "symbol": "BTC/USDT",
+                    "market_type": "spot",
+                    "direction": "long",
+                },
+            },
+        }),
+    )
+
+    assert verify_signal_emitter_admission(
+        opportunity.model_dump()
+    ) == (False, "producer_eligibility_epoch_mismatch")
+
+
+def test_observer_workset_keeps_spot_and_perp_owners_distinct(monkeypatch):
+    from aletheia.agents import market_observer as observer
+
+    members = [
+        {
+            "id": "member-spot",
+            "snapshot_id": "snapshot-both",
+            "symbol": "BTC/USDT",
+            "market_type": "spot",
+        },
+        {
+            "id": "member-perp",
+            "snapshot_id": "snapshot-both",
+            "symbol": "BTC/USDT",
+            "market_type": "perp",
+        },
+    ]
+    monkeypatch.setattr(
+        "aletheia.universe.service.UniverseService.get_current_universe",
+        lambda *_args, **_kwargs: members,
+    )
+
+    def existing(_symbol, _snapshot_id, *, market):
+        return {
+            "id": f"opportunity-{market}",
+            "status": "open",
+            "universe_member_id": (
+                "member-perp" if market == "usdt_futures" else "member-spot"
+            ),
+        }
+
+    monkeypatch.setattr(observer, "find_opportunity_by_symbol_snapshot", existing)
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_evidence.verify_signal_emitter_admission",
+        lambda _opportunity: (True, "signal_emitter_admission_verified"),
+    )
+    cfg = SimpleNamespace(
+        universe=SimpleNamespace(enabled=True, max_candidates=2),
+        market_data=SimpleNamespace(ccxt_exchange="fixture"),
+    )
+
+    instruments, owners, snapshot_id, errors = observer._admitted_observer_workset(cfg)
+
+    assert snapshot_id == "snapshot-both"
+    assert errors == []
+    assert [str(instrument) for instrument in instruments] == [
+        "fixture:BTC/USDT:spot",
+        "fixture:BTC/USDT:perp",
+    ]
+    assert owners["fixture:BTC/USDT:spot"]["id"] == "member-spot"
+    assert owners["fixture:BTC/USDT:perp"]["id"] == "member-perp"
+
+
+@pytest.mark.asyncio
+async def test_proposal_preflight_rejects_legacy_observer_producer(
+    tmp_path, monkeypatch,
+):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.trading_decision import (
+        DecisionUnavailable,
+        TradingDecision,
+        prepare_decision_as_proposal,
+    )
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.repositories import insert_opportunity
+
+    opportunity = Opportunity(
+        id="legacy-observer-opportunity",
+        symbol="LOW/USDT",
+        market="usdt_futures",
+        direction_bias="long",
+        confidence="high",
+        confidence_score=80,
+        source_agent="market_observer",
+    )
+    insert_opportunity(opportunity)
+    decision = TradingDecision(
+        action="trade",
+        symbol=opportunity.symbol,
+        market_type=opportunity.market,
+        direction="long",
+        conviction=80,
+        reasoning="legacy observer carrier",
+        opportunity_id=opportunity.id,
+    )
+
+    with pytest.raises(DecisionUnavailable, match="producer_not_authorized"):
+        await prepare_decision_as_proposal(decision, "paper_internal")
+
+    assert decision.filter_trace[-1]["filter_name"] == "producer_eligibility"
 
 
 @pytest.mark.asyncio
@@ -141,14 +457,21 @@ async def test_proposal_preflight_rejects_scanner_t0_direction_conflict(
         market="usdt_futures",
         direction_bias="long",
         source_agent="universe_scanner",
+        universe_snapshot_id="corrupt-snapshot",
+        universe_member_id="corrupt-member",
         scanner_family="mean_reversion",
         metadata=json.dumps({
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v2",
                 "t0": {
-                    "status": "available",
-                    "trigger_type": "universe_scanner",
-                    "direction": "short",
+                        "status": "available",
+                        "trigger_type": "universe_scanner",
+                        "universe_snapshot_id": "corrupt-snapshot",
+                        "universe_member_id": "corrupt-member",
+                        "symbol": "SLX/USDT",
+                        "market_type": "perp",
+                        "direction": "short",
                 },
             },
         }),
@@ -167,22 +490,22 @@ async def test_proposal_preflight_rejects_scanner_t0_direction_conflict(
 
     with pytest.raises(
         DecisionUnavailable,
-        match="opportunity_direction_lineage_conflict",
+        match="producer_eligibility_manifest_conflict",
     ):
         await prepare_decision_as_proposal(decision, "paper_internal")
 
     assert decision.filter_trace[-1] == {
-        "filter_name": "opportunity_direction_lineage",
+        "filter_name": "producer_eligibility",
         "stage": "proposal_submission",
         "decision": "rejected",
-        "reason_code": "opportunity_direction_lineage_conflict",
+        "reason_code": "producer_eligibility_manifest_conflict",
         "inputs": {
             "opportunity_id": opportunity.id,
             "source_agent": "universe_scanner",
-            "scanner_direction": "short",
-            "decision_direction": "long",
+            "universe_snapshot_id": "corrupt-snapshot",
+            "universe_member_id": "corrupt-member",
         },
-        "parameters": {"direction_match_required": True},
+        "parameters": {"required_producer": "universe_scanner"},
     }
 
 
@@ -343,6 +666,7 @@ async def test_observer_t1_names_only_sources_rendered_for_the_exact_instrument(
         metadata={
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v1",
                 "t0": {"status": "available", "feature_snapshot_id": "feature-t0"},
             }
         },
@@ -354,6 +678,7 @@ async def test_observer_t1_names_only_sources_rendered_for_the_exact_instrument(
         pre_filter=prefetched.pre_filter,
         pre_filter_evidence_id="filter-t0",
     )
+    assert manifest["policy_epoch"] == "opportunity_information_integrity/v1"
     assert manifest["t0"]["feature_snapshot_id"] == "feature-t0"
     assert manifest["t1"]["sources"] == prefetched.rendered_sources
 

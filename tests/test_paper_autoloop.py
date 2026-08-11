@@ -38,7 +38,7 @@ def _seed(symbol="BTC/USDT", price=60000.0):
     # Entry-logic upgrade (Component 2): paper_trader now only trades directional,
     # >=medium-confidence signals, so seed one that triggers a trade.
     opp = Opportunity(symbol=symbol, market="spot", direction_bias="long",
-                      thesis="test thesis", confidence="medium", source_agent="market_observer")
+                      thesis="test thesis", confidence="medium", source_agent="divergence_scanner")
     repo.insert_opportunity(opp)
     return opp
 

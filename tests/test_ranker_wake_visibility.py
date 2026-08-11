@@ -34,14 +34,14 @@ def test_ranker_wake_coalesces_sources_and_exposes_status(monkeypatch):
     scheduler._reset_paper_trader_wake_state_for_tests()
     monkeypatch.setattr(scheduler.time, "monotonic", lambda: 100.0)
 
-    assert scheduler.notify_paper_trader("market_observer_opportunity") is True
+    assert scheduler.notify_paper_trader("universe_refresh_new_snapshot") is True
     assert scheduler.notify_paper_trader("guard_config_changed") is False
 
     status = scheduler.paper_trader_wake_status()
     assert status["pending"] is True
     assert status["pending_sources"] == [
         "guard_config_changed",
-        "market_observer_opportunity",
+        "universe_refresh_new_snapshot",
     ]
     assert status["burst_count"] == 2
     assert len(fake.modified) == 1
@@ -62,7 +62,7 @@ def test_ranker_run_records_coalesced_wake_sources_and_result(monkeypatch):
     )
     scheduler._reset_paper_trader_wake_state_for_tests()
     monkeypatch.setattr(scheduler.time, "monotonic", lambda: 100.0)
-    scheduler.notify_paper_trader("market_observer_opportunity")
+    scheduler.notify_paper_trader("universe_refresh_new_snapshot")
     scheduler.notify_paper_trader("ranker_config_changed")
 
     captured: dict[str, str] = {}
@@ -82,7 +82,7 @@ def test_ranker_run_records_coalesced_wake_sources_and_result(monkeypatch):
 
     assert captured == {
         "agent_name": "paper_trader",
-        "trigger_type": "on_demand:market_observer_opportunity,ranker_config_changed",
+        "trigger_type": "on_demand:ranker_config_changed,universe_refresh_new_snapshot",
     }
     status = scheduler.paper_trader_wake_status()
     assert status["pending"] is False
@@ -132,7 +132,7 @@ def test_entry_status_cli_uses_authoritative_progress_projection(monkeypatch):
 
 def test_all_ranker_fact_changes_have_on_demand_wake_sources():
     expected = {
-        "aletheia/agents/market_observer.py": "market_observer_opportunity",
+        "aletheia/universe/service.py": "universe_refresh_new_snapshot",
         "aletheia/agents/equity_observer.py": "equity_observer_opportunity",
         "aletheia/agents/prediction_observer.py": "prediction_observer_opportunity",
         "aletheia/agents/divergence_scanner.py": "divergence_scanner_opportunity",

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -24,8 +24,11 @@ async def test_observer_ranker_pending_operator_defer_keeps_one_causal_identity(
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import (
         MarketSnapshot,
+        Opportunity,
         UniverseAsset,
         UniverseFeatureSnapshot,
+        UniverseMember,
+        UniverseSnapshot,
     )
 
     # Keep configuration/audit files local to this test while the e2e fixture
@@ -50,7 +53,7 @@ async def test_observer_ranker_pending_operator_defer_keeps_one_causal_identity(
     cfg.market_data.prediction_enabled = False
     cfg.market_data.ccxt_exchange = "fixture"
     cfg.market_data.ccxt_fallback = "fixture"
-    cfg.universe.enabled = False
+    cfg.universe.enabled = True
     save_config(cfg)
 
     snapshot = MarketSnapshot(
@@ -63,6 +66,64 @@ async def test_observer_ranker_pending_operator_defer_keeps_one_causal_identity(
         snapshot_at=datetime.now(timezone.utc).isoformat(),
     )
     repo.insert_market_snapshot(snapshot)
+    repo.upsert_universe_asset(UniverseAsset(
+        id="observer-operator-asset",
+        venue="fixture",
+        market_type="spot",
+        symbol="BTC/USDT",
+    ))
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    repo.insert_universe_snapshot(UniverseSnapshot(
+        id="observer-operator-universe",
+        market_type="crypto",
+        status="active",
+        expires_at=expires_at,
+    ))
+    repo.insert_universe_member(UniverseMember(
+        id="observer-operator-member",
+        snapshot_id="observer-operator-universe",
+        asset_id="observer-operator-asset",
+        symbol="BTC/USDT",
+        market_type="spot",
+        rank=1,
+        total_score=60.0,
+        scanner_family="momentum",
+        scanner_direction="long",
+        expires_at=expires_at,
+        entry_price_usd=60_000.0,
+    ))
+    scanner_opportunity = Opportunity(
+        id="observer-operator-opportunity",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        thesis="[momentum] deterministic breakout",
+        confidence="high",
+        confidence_score=60,
+        source_agent="universe_scanner",
+        universe_snapshot_id="observer-operator-universe",
+        universe_member_id="observer-operator-member",
+        scanner_family="momentum",
+        valid_until=expires_at,
+        metadata='{"evidence_manifest":{"policy_epoch":"opportunity_information_integrity/v2","t0":{"direction":"long","market_type":"spot","status":"available","symbol":"BTC/USDT","trigger_type":"universe_scanner","universe_member_id":"observer-operator-member","universe_snapshot_id":"observer-operator-universe"},"version":"opportunity-information-integrity-v1"}}',
+    )
+    repo.insert_opportunity(scanner_opportunity)
+    from aletheia.analytics.filter_evidence import record_filter_decision
+
+    record_filter_decision(
+        candidate_key="universe_member:observer-operator-member",
+        candidate_kind="universe_member",
+        filter_name="opportunity_emission",
+        stage="signal_emitter",
+        decision="passed",
+        reason_code="opportunity_emitted",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        opportunity_id=scanner_opportunity.id,
+        universe_snapshot_id=scanner_opportunity.universe_snapshot_id,
+        universe_member_id=scanner_opportunity.universe_member_id,
+    )
 
     async def deterministic_market_context(
         symbols, *, market_type="spot", exchange=None, **_kwargs
@@ -176,29 +237,36 @@ async def test_observer_ranker_pending_operator_defer_keeps_one_causal_identity(
         ).fetchall()
     ]
     assert candidate_facts
-    assert all(row["candidate_key"] == candidate_key for row in candidate_facts)
+    assert all(
+        row["candidate_key"] == (
+            "universe_member:observer-operator-member"
+            if row["stage"] == "signal_emitter"
+            else candidate_key
+        )
+        for row in candidate_facts
+    )
     assert all(row["symbol"] == "BTC/USDT" for row in candidate_facts)
     assert all(row["market_type"] == "spot" for row in candidate_facts)
     assert all(row["direction"] == "long" for row in candidate_facts)
     fact_pairs = {(row["stage"], row["filter_name"]) for row in candidate_facts}
-    assert ("market_observer", "opportunity_emission") in fact_pairs
+    assert ("signal_emitter", "opportunity_emission") in fact_pairs
     assert ("paper_ranker", "execution_eligibility") in fact_pairs
     assert ("paper_ranker", "ranker_confidence_gate") in fact_pairs
     assert ("paper_trader_selection", "signal_batch_limit") in fact_pairs
     assert ("paper_trader_enqueue", "signal_enqueue") in fact_pairs
     producer_facts = [
-        row for row in candidate_facts if row["stage"] == "market_observer"
+        row for row in candidate_facts if row["stage"] == "signal_emitter"
     ]
     assert len(producer_facts) == 1
     assert (
         producer_facts[0]["run_id"],
         producer_facts[0]["decision"],
         producer_facts[0]["reason_code"],
-    ) == (observer_result["run_id"], "passed", "opportunity_emitted")
+    ) == (None, "passed", "opportunity_emitted")
     assert all(
         row["run_id"] == ranker_run_id
         for row in candidate_facts
-        if row["stage"] != "market_observer"
+        if row["stage"] not in {"signal_emitter", "observer_pre_filter"}
     )
 
     workset_batch = e2e_db.execute(

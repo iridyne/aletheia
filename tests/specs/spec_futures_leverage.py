@@ -384,11 +384,11 @@ def test_opportunity_carries_derivatives_fields():
     assert "open_interest" in fields
     assert "oi_delta_1h" in fields
 
-    # market_observer stamps the derivatives values it already reads onto the Opportunity.
+    # market_observer enriches the existing Opportunity with derivatives values.
     import aletheia.agents.market_observer as mo
     src = inspect.getsource(mo._analyze_symbol)
-    assert "funding_rate=" in src
-    assert "oi_delta_1h=" in src
+    assert 'updates["funding_rate"]' in src
+    assert 'updates["oi_delta_1h"]' in src
 
 
 @spec_claim(

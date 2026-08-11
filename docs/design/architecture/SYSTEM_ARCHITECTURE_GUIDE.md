@@ -14,7 +14,7 @@
 | 角色 | 组件 | 职责 | 自治权 |
 |------|------|------|--------|
 | 基金经理 | **System Operator** | 所有买卖决策最终由他拍板 | 唯一决策者 |
-| 研究员 | Market Observer | 每10分钟扫一遍市场，发现机会 | 只写 Opportunity，不下单 |
+| 研究员 | Market Observer | 验证并补充 deterministic Opportunity 的 context | 只写 namespaced advisory assessment，不下单 |
 | 交易员助理 | Paper Trader | 收集信号交给老板 | 只写 signal_pending，不下单 |
 | 量化工程师 | Strategy Designer | 设计新策略+回测 | 升阶止于 paper_candidate |
 | 风控主管 | Operator Loop | 建议淘汰/降级策略 | 只写 recommend_*，不直接执行 |
@@ -257,7 +257,7 @@ Python Operator assessment 只保留有界配置调整、通知和仍存在的�
 | 组件 | 周期 | 做什么 |
 |------|------|--------|
 | Market Data Collector | 5 min | 拉取价格/FR/OI/Taker/Liquidation |
-| Market Observer | 10 min | LLM 分析 → 写 Opportunity |
+| Market Observer | 10 min | 对 emitter-admitted Opportunity 做可选 LLM enrichment |
 | Paper Trader | 5 min | 信号收集 → 写 signal_pending |
 | System Operator trading decision | event-driven + ~15 min fallback | 读确切 pending candidate → `trade` / `skip` |
 | Position Manager | 1 min | 追踪止损 / 检查平仓条件 |

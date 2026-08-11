@@ -137,6 +137,10 @@ async def test_observer_logs_retrieval_and_survives_offline_llm(tmp_path, monkey
     cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
 
     from aletheia.knowledge.manager import create_research_note
+    import aletheia.agents.market_observer as observer
+    from tests.observer_admission_fixture import admit_observer_instrument
+
+    admit_observer_instrument(monkeypatch, observer)
     create_research_note("BTC regime lesson",
                          "When BTC loses the 200-day, treat rallies as distribution.",
                          confidence="high_confidence")

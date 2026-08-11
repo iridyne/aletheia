@@ -875,6 +875,7 @@ def _compute_current_snapshot_payload(
     from aletheia.config.loader import load_config
     from aletheia.universe.allocator import _FAMILY_TTL
     from aletheia.analytics.opportunity_progress import build_current_entry_status
+    cfg = load_config()
 
     if phases is not None:
         with _PhaseTimer(phases, "cohort"):
@@ -890,6 +891,7 @@ def _compute_current_snapshot_payload(
                 setup_count=inp["setup_count"],
                 active_setup_count=inp["active_setup_count"],
                 terminal_breakdown=inp["terminal_breakdown"],
+                universe_enabled=bool(cfg.universe.enabled),
             )
     else:
         inp = _funnel_cohort_inputs(db, hours)
@@ -903,8 +905,8 @@ def _compute_current_snapshot_payload(
             setup_count=inp["setup_count"],
             active_setup_count=inp["active_setup_count"],
             terminal_breakdown=inp["terminal_breakdown"],
+            universe_enabled=bool(cfg.universe.enabled),
         )
-    cfg = load_config()
     return {
         "window_hours": inp["hours_i"],
         "current": current,
@@ -1128,7 +1130,7 @@ def get_opportunity_funnel_current_snapshot(hours: int = 24, response: Response 
 
 @router.get("/opportunity-funnel")
 def get_opportunity_funnel(hours: int = 24, response: Response = None):
-    """Market Observer → Operator funnel: exposes WHY opportunities don't reach the operator.
+    """Deterministic Opportunity → Operator funnel: exposes admission blockers.
 
     Causal cohort counts (window):
       - emitted_count: per-snapshot Opportunity generations created in window
@@ -1279,6 +1281,7 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
             setup_count=setup_count,
             active_setup_count=active_setup_count,
             terminal_breakdown=terminal_breakdown,
+            universe_enabled=bool(cfg.universe.enabled),
         )
     # Close the total timer + attach the Server-Timing header before returning.
     total_timer.__exit__(None, None, None)

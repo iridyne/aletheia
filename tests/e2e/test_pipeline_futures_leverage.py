@@ -228,7 +228,7 @@ class TestFuturesLeverageAcceptance:
         """The PI path preserves futures identity and clamped leverage on execution."""
         from aletheia.agent_shell.trading_decision import TradingDecision, submit_decision_as_proposal
         opp = Opportunity(symbol="SOL/USDT", market="usdt_futures", direction_bias="long",
-                          confidence="high", confidence_score=75, source_agent="market_observer",
+                          confidence="high", confidence_score=75, source_agent="divergence_scanner",
                           scanner_family="momentum")
         repo.insert_opportunity(opp)
         _seed_fresh_schedule(opp.symbol)
