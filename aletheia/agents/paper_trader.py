@@ -104,7 +104,7 @@ def _atr_adjusted_notional(
     """Scale notional via volatility-target sizing when enabled.
 
     P1-5: looks up paper_trade_count for strategy_id so new strategies start at
-    0.1 Kelly and ramp up as evidence accumulates.
+    a 0.1 legacy scaling factor and ramp up as evidence accumulates.
     """
     from aletheia.config.loader import load_config
     cfg = load_config()
@@ -122,11 +122,11 @@ def _atr_adjusted_notional(
 
 
 def _get_strategy_paper_trade_count(strategy_id: str | None) -> int:
-    """Genuine closed paper/demo outcomes used for sample-aware Kelly.
+    """Genuine closed paper/demo outcomes used for sample-aware scaling.
 
     A lifecycle close is not automatically trading evidence. Administrative,
     incomplete-funding, and unattributed rows must not move a strategy from the
-    conservative small-sample sizing band into full Kelly sizing.
+    conservative small-sample sizing band into its configured scaling band.
     """
     if not strategy_id:
         return 0

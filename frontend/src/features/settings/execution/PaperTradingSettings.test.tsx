@@ -42,6 +42,8 @@ describe('PaperTradingSettings', () => {
     expect(html).toContain('Default stop-loss (%)')
     expect(html).toContain('Trailing Stop &amp; Breakeven')
     expect(html).toContain('Persona-Based Sizing')
+    expect(SRC).toContain('Legacy sizing scale')
+    expect(SRC).toContain('not a calibrated Kelly fraction')
     expect(html).toContain('Market-Aware Position Review')
   })
 })
