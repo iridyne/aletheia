@@ -4,6 +4,16 @@ from datetime import datetime, timedelta, timezone
 
 from typer.testing import CliRunner
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _freeze_alpha_audit_clock(monkeypatch):
+    """Keep fixed evidence timestamps inside the audit window."""
+
+    audit_now = datetime.fromisoformat("2026-07-13T07:10:01+00:00")
+    monkeypatch.setattr("aletheia.analytics.alpha_attribution._utcnow", lambda: audit_now)
+
 
 def _iso(days_ago: int = 0, hours_after: int = 0) -> str:
     anchor = datetime.fromisoformat("2026-07-12T07:10:01+00:00")
