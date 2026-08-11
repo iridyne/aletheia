@@ -283,6 +283,12 @@ def test_post_exit_observation_waits_for_and_requires_complete_exact_window(monk
         post_exit_bars=2,
         observed_at_ms=_BASE_TS + 4 * _BAR_MS,
     )
+    candles.pop()
+    unavailable = build_post_exit_path_observation(
+        _row(),
+        post_exit_bars=2,
+        observed_at_ms=_BASE_TS + 4 * _BAR_MS,
+    )
 
     assert pending["status"] == "pending"
     assert pending["reason"] == "post_exit_window_not_mature"
@@ -290,7 +296,10 @@ def test_post_exit_observation_waits_for_and_requires_complete_exact_window(monk
     assert available["bars_observed"] == 2
     assert available["mfe_pct"] == pytest.approx(1.9801980198)
     assert available["venue"] == "okx"
-    assert calls == [
+    assert unavailable["status"] == "unavailable"
+    assert unavailable["reason"] == "post_exit_coverage_unavailable"
+    assert unavailable["mfe_pct"] is None
+    assert calls == 2 * [
         (
             ("BTC/USDT", "1m"),
             {

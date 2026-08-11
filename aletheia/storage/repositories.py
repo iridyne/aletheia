@@ -2856,6 +2856,115 @@ def get_position_protection_state(position_id: str) -> dict | None:
     return dict(row) if row is not None else None
 
 
+def persist_position_trailing_recovery_observation(
+    position_id: str,
+    observation: dict,
+) -> bool:
+    """CAS one complete diagnostic recovery fact onto the frozen instrument."""
+
+    payload = dict(observation)
+    if payload.get("position_id") != position_id:
+        raise PositionProtectionConflict("recovery observation Position mismatch")
+    try:
+        canonical = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise PositionProtectionConflict("recovery observation is not finite JSON") from exc
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    status = payload.get("status")
+    reason = str(payload.get("reason") or "").strip()
+    requested = payload.get("bars_requested")
+    observed = payload.get("bars_observed")
+    start_ms = payload.get("window_start_ts_ms")
+    end_ms = payload.get("window_end_ts_ms")
+    if (
+        status not in {"available", "unavailable"}
+        or not reason
+        or not isinstance(requested, int)
+        or isinstance(requested, bool)
+        or requested < 1
+        or not isinstance(observed, int)
+        or isinstance(observed, bool)
+        or observed < 0
+        or not isinstance(start_ms, int)
+        or isinstance(start_ms, bool)
+        or not isinstance(end_ms, int)
+        or isinstance(end_ms, bool)
+        or start_ms % 60_000 != 0
+        or end_ms != start_ms + requested * 60_000
+        or (status == "available" and observed != requested)
+    ):
+        raise PositionProtectionConflict("recovery observation contract is invalid")
+    observed_ms = _utc_timestamp_ms(payload.get("observed_at"), "recovery observed_at")
+    closed_ms = _utc_timestamp_ms(payload.get("closed_at"), "recovery closed_at")
+    if start_ms != ((closed_ms + 59_999) // 60_000) * 60_000 or observed_ms < end_ms:
+        raise PositionProtectionConflict("recovery observation window is invalid")
+    exit_price = _finite_protection_number(
+        payload.get("exit_price"),
+        "recovery exit price",
+        positive=True,
+    )
+
+    with transaction(immediate=True):
+        db = get_db()
+        row = db.execute(
+            "SELECT state.*, position.status AS position_status, "
+            "position.symbol AS position_symbol, position.direction, "
+            "position.current_price, position.closed_at "
+            "FROM position_protection_state AS state "
+            "JOIN positions AS position ON position.id=state.position_id "
+            "WHERE state.position_id=?",
+            (position_id,),
+        ).fetchone()
+        if row is None:
+            raise PositionProtectionConflict("recovery protection state is unavailable")
+        state = dict(row)
+        stored_exit_price = _finite_protection_number(
+            state.get("current_price"),
+            "Position exit price",
+            positive=True,
+        )
+        identity_matches = (
+            state["position_status"] == "closed"
+            and to_canonical(str(state["position_symbol"])) == state["symbol"]
+            and payload.get("venue") == state["venue"]
+            and payload.get("symbol") == state["symbol"]
+            and payload.get("market_type") == state["market_type"]
+            and payload.get("timeframe") == state["timeframe"]
+            and payload.get("direction") == state["direction"]
+            and payload.get("closed_at") == state["closed_at"]
+            and math.isclose(
+                exit_price,
+                stored_exit_price,
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            )
+        )
+        if not identity_matches:
+            raise PositionProtectionConflict("recovery observation identity is invalid")
+        if state.get("recovery_observation_json") is not None:
+            if (
+                state["recovery_observation_json"] == canonical
+                and state["recovery_observation_hash"] == digest
+            ):
+                return False
+            raise PositionProtectionConflict("recovery observation already differs")
+        cursor = execute_write(
+            "UPDATE position_protection_state SET recovery_observation_json=?, "
+            "recovery_observation_hash=?, updated_at=? "
+            "WHERE position_id=? AND recovery_observation_json IS NULL "
+            "AND recovery_observation_hash IS NULL",
+            (canonical, digest, payload["observed_at"], position_id),
+        )
+        if cursor.rowcount != 1:
+            raise PositionProtectionConflict("recovery observation insert lost its CAS")
+    return True
+
+
 def get_position_protection_trigger(position_id: str) -> dict | None:
     """Return the immutable first-trigger fact for one protected Position."""
 
@@ -4248,9 +4357,18 @@ def list_serenity_post_mortems(opportunity_id: str | None = None, limit: int = 1
 # --- Durable Outcome hook outbox ---
 
 
-def enqueue_outcome_hook_job(position_id: str, hook_type: str) -> dict:
+def enqueue_outcome_hook_job(
+    position_id: str,
+    hook_type: str,
+    *,
+    next_attempt_at: str | None = None,
+) -> dict:
     """Insert one durable hook intent, preserving an existing retry/completion row."""
-    job = OutcomeHookJob(position_id=position_id, hook_type=hook_type)
+    job = OutcomeHookJob(
+        position_id=position_id,
+        hook_type=hook_type,
+        **({"next_attempt_at": next_attempt_at} if next_attempt_at is not None else {}),
+    )
     data = job.model_dump()
     cols = ", ".join(data.keys())
     placeholders = ", ".join(["?"] * len(data))

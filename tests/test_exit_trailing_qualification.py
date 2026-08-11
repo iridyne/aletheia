@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from aletheia.analytics.exit_trailing_qualification import (
     build_exit_trailing_qualification_report,
+    materialize_exit_trailing_recovery,
 )
 from aletheia.portfolio.exit_plan import load_exit_plan
 from aletheia.portfolio.position_manager import _resolve_trailing
@@ -26,11 +27,11 @@ def _position_id_for(arm: str) -> str:
     raise AssertionError(f"no deterministic {arm} assignment found")
 
 
-def _activate(arm: str) -> str:
+def _activate(arm: str, *, symbol: str = "BTC/USDT") -> str:
     position_id = _position_id_for(arm)
     repo.insert_position(Position(
         id=position_id,
-        symbol="BTC/USDT",
+        symbol=symbol,
         market_type="spot",
         direction="long",
         quantity=1.0,
@@ -53,11 +54,17 @@ def _activate(arm: str) -> str:
     return position_id
 
 
-def _close(position_id: str, realized_pnl: float | None, *, eligible: bool) -> None:
+def _close(
+    position_id: str,
+    realized_pnl: float | None,
+    *,
+    eligible: bool,
+    closed_at: str | None = None,
+) -> None:
     repo.update_position(
         position_id,
         status="closed",
-        closed_at=datetime.now(timezone.utc).isoformat(),
+        closed_at=closed_at or datetime.now(timezone.utc).isoformat(),
         realized_pnl=realized_pnl,
         outcome_eligible=eligible,
         outcome_exclusion_reason=("eligible" if eligible else "funding_unavailable"),
@@ -105,7 +112,7 @@ def test_report_keeps_exact_build_cohort_and_cost_complete_arm_economics(
     cfg = load_config()
     cfg.trading.trail_enabled = True
     save_config(cfg)
-    treatment_id = _activate("treatment")
+    treatment_id = _activate("treatment", symbol="BTCUSDT")
     control_id = _activate("control")
 
     treatment_position = repo.get_position(treatment_id)
@@ -116,16 +123,67 @@ def test_report_keeps_exact_build_cohort_and_cost_complete_arm_economics(
         treatment_plan,
         provenance="deterministic_trailing_v2",
     )
+    observed_rows = []
+
+    def available_recovery(row, **_kwargs):
+        observed_rows.append(row)
+        closed_ms = int(
+            datetime.fromisoformat(row["closed_at"]).timestamp() * 1000
+        )
+        start_ms = ((closed_ms + 59_999) // 60_000) * 60_000
+        return {
+            "status": "available",
+            "reason": "complete_post_exit_1m_bars",
+            "bars_observed": 30,
+            "window_start_ts_ms": start_ms,
+            "window_end_ts_ms": start_ms + 1_800_000,
+            "mfe_pct": 1.2,
+            "mae_pct": -0.4,
+        }
+
+    monkeypatch.setattr(
+        "aletheia.analytics.exit_trailing_qualification.build_post_exit_path_observation",
+        available_recovery,
+    )
+    closed_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    _close(treatment_id, 2.0, eligible=True, closed_at=closed_at)
+    _close(control_id, -1.0, eligible=True, closed_at=closed_at)
+
+    from aletheia.portfolio import outcome_hooks
+
+    jobs = outcome_hooks.enqueue_outcome_hook_jobs(repo.get_position(treatment_id))
+    recovery_job = next(
+        job
+        for job in jobs
+        if job["hook_type"] == outcome_hooks.EXIT_TRAILING_RECOVERY_HOOK
+    )
+    assert datetime.fromisoformat(recovery_job["next_attempt_at"]) > (
+        datetime.fromisoformat(closed_at) + timedelta(minutes=30)
+    )
+    monkeypatch.setattr(
+        outcome_hooks,
+        "_load_eligible_position",
+        lambda _position_id: (repo.get_position(treatment_id), "eligible"),
+    )
+    delivery = outcome_hooks.process_outcome_hook_jobs(
+        position_id=treatment_id,
+        hook_type=outcome_hooks.EXIT_TRAILING_RECOVERY_HOOK,
+    )
+    assert delivery["completed"] == 1
+    stored = json.loads(
+        repo.get_position_protection_state(treatment_id)["recovery_observation_json"]
+    )
+    assert stored["status"] == "available"
+    assert observed_rows[0]["symbol"] == "BTC/USDT"
+
     monkeypatch.setattr(
         "aletheia.analytics.exit_trailing_qualification.build_post_exit_path_observation",
         lambda *_args, **_kwargs: {
-            "status": "available",
-            "reason": "complete_post_exit_1m_bars",
-            "mfe_pct": 1.2,
+            "status": "unavailable",
+            "reason": "post_exit_coverage_unavailable",
+            "mfe_pct": None,
         },
     )
-    _close(treatment_id, 2.0, eligible=True)
-    _close(control_id, -1.0, eligible=True)
 
     report = build_exit_trailing_qualification_report()
 
@@ -138,6 +196,7 @@ def test_report_keeps_exact_build_cohort_and_cost_complete_arm_economics(
     assert cohort["treatment"]["changed_count"] == 1
     assert cohort["treatment"]["recovery_available_count"] == 1
     assert cohort["treatment"]["recovery_truncation_count"] == 1
+    assert cohort["treatment"]["recovery_truncation_rate"] == 1.0
     assert cohort["control"]["assignment_count"] == 1
     assert cohort["control"]["available_count"] == 1
     assert cohort["incremental_net_pnl_mean"] == 3.0
@@ -152,8 +211,8 @@ def test_report_keeps_exact_build_cohort_and_cost_complete_arm_economics(
     }
     assert report["recovery_available_count"] == 1
     assert report["recovery_truncation_count"] == 1
-    assert report["recovery_truncation_rate"] == 1.0
-    assert report["recovery_truncation_reason"] is None
+    assert report["recovery_truncation_rate"] is None
+    assert report["recovery_truncation_reason"] == "cohort_scoped_only"
 
     from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
 
@@ -163,19 +222,9 @@ def test_report_keeps_exact_build_cohort_and_cost_complete_arm_economics(
     assert projected["measurement_status"] == "prospective_randomized_holdout"
     assert projected["assignment_count"] == 2
 
-    monkeypatch.setattr(
-        "aletheia.analytics.exit_trailing_qualification.build_post_exit_path_observation",
-        lambda *_args, **_kwargs: {
-            "status": "unavailable",
-            "reason": "post_exit_coverage_unavailable",
-            "mfe_pct": None,
-        },
-    )
-    unavailable = build_exit_trailing_qualification_report()
-    assert unavailable["recovery_available_count"] == 0
-    assert unavailable["recovery_unavailable_count"] == 1
-    assert unavailable["recovery_truncation_count"] == 0
-    assert unavailable["recovery_truncation_rate"] is None
+    retained = materialize_exit_trailing_recovery(repo.get_position(treatment_id))
+    assert retained["materialized"] is False
+    assert retained["status"] == "available"
 
 
 def test_report_preserves_unavailable_outcomes_instead_of_zero(
