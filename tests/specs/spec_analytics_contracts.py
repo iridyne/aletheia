@@ -168,7 +168,8 @@ def test_resolve_stale_shadows_uses_historical_bar():
               "and preserve directional evidence as diagnostic while only measured "
               "contribution is eligible for an actionable bottleneck; treatment-specific "
               "Universe Twin and Exit paired evidence remain non-authoritative outside "
-              "those five verdicts, "
+              "those five verdicts; dynamic-trailing qualification preserves an exact-build "
+              "control holdout, forbids cross-cohort pooling, and cannot self-promote; "
               "and Risk policy evidence must fail closed unless its paired fixed-horizon "
               "identity and actual-intervention contract is complete; Execution cost "
               "evidence likewise requires prospective immutable reference prices and "
@@ -202,6 +203,10 @@ def test_alpha_attribution_contract_shape_on_empty_db():
     assert paired["behavior_authority"] is False
     assert paired["promotion_eligible"] is False
     assert paired["contribution_verdict"] == "insufficient_data"
+    trailing = report["exit_trailing_qualification"]
+    assert trailing["contract_version"] == "exit-trailing-qualification/v1"
+    assert trailing["cross_cohort_pooling"] is False
+    assert trailing["promotion_eligible"] is False
     risk = report["risk_policy_evidence"]
     assert risk["contract_version"] == "risk-policy-value/v1"
     assert risk["baseline_policy"] == "pass-all-candidates/v1"

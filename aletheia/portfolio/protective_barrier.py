@@ -7,6 +7,7 @@ fresh mark and remains the sole source of the simulated fill.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import uuid
@@ -22,6 +23,26 @@ from aletheia.storage.models import (
 
 logger = logging.getLogger("aletheia.protective_barrier")
 _UNSET = object()
+_TRAILING_QUALIFICATION_VERSION = "paper-dynamic-profit-protection/v1"
+_TRAILING_TREATMENT_ID = "atr1.5-balance1.5-completed1m/v1"
+_TRAILING_TREATMENT_BPS = 9_000
+
+
+def _trailing_qualification_assignment(position_id: str) -> dict:
+    """Return the immutable 90/10 treatment/control assignment for one Position."""
+    digest = hashlib.sha256(
+        f"{_TRAILING_QUALIFICATION_VERSION}:{position_id}".encode("utf-8")
+    ).hexdigest()
+    bucket = int(digest[:8], 16) % 10_000
+    return {
+        "policy_version": _TRAILING_QUALIFICATION_VERSION,
+        "treatment_id": _TRAILING_TREATMENT_ID,
+        "assignment_unit": position_id,
+        "assignment_hash": digest,
+        "arm": "treatment" if bucket < _TRAILING_TREATMENT_BPS else "control",
+        "treatment_allocation_bps": _TRAILING_TREATMENT_BPS,
+        "control_holdout_bps": 10_000 - _TRAILING_TREATMENT_BPS,
+    }
 
 
 def _now() -> datetime:
@@ -112,9 +133,11 @@ def _activate_paper_position(
         and position.get("trade_school") == "short_term"
         and position.get("source") == "native"
     ):
+        qualification = _trailing_qualification_assignment(position_id)
+        treatment = qualification["arm"] == "treatment"
         resolved.trailing = {
-            "enabled": True,
-            "mode": "atr",
+            "enabled": treatment,
+            "mode": "atr" if treatment else "off",
             "distance": float(cfg.trading.trail_atr_mult),
             "fallback_pct": float(cfg.trading.trail_pct),
             "activation_profit_pct": float(cfg.trading.breakeven_trigger_pct),
@@ -124,6 +147,7 @@ def _activate_paper_position(
             "cost_model_version": "paper-net-balance-v1",
             "exit_fee_rate": float(cfg.trading.execution_fee_pct) / 100.0,
             "slippage_bps": float(cfg.trading.slippage_bps),
+            "qualification": qualification,
         }
     if resolved.stop_price is None and resolved.target_price is None:
         # Paper historically permits an approved native Proposal without an SL/TP.
