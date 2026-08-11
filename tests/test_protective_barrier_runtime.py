@@ -10,6 +10,7 @@ import pytest
 from aletheia.data.providers import Candle
 from aletheia.portfolio.paper_account import record_position_opened
 from aletheia.portfolio.protective_barrier import (
+    _trailing_qualification_assignment,
     activate_new_paper_position,
     adopt_existing_paper_positions,
     evaluate_due_position_protection,
@@ -91,9 +92,11 @@ def test_new_short_term_paper_position_authors_default_trailing_plan(
     trailing = json.loads(stored["trailing_json"])
     immutable = json.loads(repo.get_current_position_exit_plan(position.id)["plan_json"])
     assert activation["activated"] is True
+    qualification = _trailing_qualification_assignment(position.id)
+    treatment = qualification["arm"] == "treatment"
     assert trailing == {
-        "enabled": True,
-        "mode": "atr",
+        "enabled": treatment,
+        "mode": "atr" if treatment else "off",
         "distance": 1.5,
         "fallback_pct": 10.0,
         "activation_profit_pct": 1.5,
@@ -103,6 +106,7 @@ def test_new_short_term_paper_position_authors_default_trailing_plan(
         "cost_model_version": "paper-net-balance-v1",
         "exit_fee_rate": 0.0006,
         "slippage_bps": 5.0,
+        "qualification": qualification,
     }
     assert immutable["trailing"] == trailing
     assert repo.get_exit_breakeven_shadow_assignment(position.id) is None
