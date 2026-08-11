@@ -1,4 +1,5 @@
 import asyncio
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -35,6 +36,80 @@ def test_stale_scanner_cleanup_parses_iso_timestamps():
     assert rows["old-run"]["completed_at"]
     assert rows["fresh-run"]["status"] == "running"
 
+
+
+def test_gateway_startup_reconciles_interrupted_scanner_runs(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.executemany(
+        "INSERT INTO universe_scanner_runs "
+        "(id, started_at, completed_at, status, errors) VALUES (?, ?, ?, ?, ?)",
+        (
+            ("interrupted-run", "2026-08-11T11:17:45+00:00", None, "running", "[]"),
+            (
+                "completed-run",
+                "2026-08-11T11:20:00+00:00",
+                "2026-08-11T11:22:04+00:00",
+                "completed",
+                "[]",
+            ),
+        ),
+    )
+    db.commit()
+    audits = []
+    monkeypatch.setattr(
+        "aletheia.files.jsonl.write_audit",
+        lambda event: audits.append(event),
+    )
+
+    recovered = scheduler._recover_interrupted_universe_scanner_runs()
+
+    rows = {
+        row["id"]: dict(row)
+        for row in db.execute(
+            "SELECT id, status, completed_at, errors FROM universe_scanner_runs"
+        ).fetchall()
+    }
+    assert recovered == ["interrupted-run"]
+    assert rows["interrupted-run"]["status"] == "failed"
+    assert rows["interrupted-run"]["completed_at"]
+    assert json.loads(rows["interrupted-run"]["errors"]) == [
+        "gateway_restart_interrupted"
+    ]
+    assert rows["completed-run"] == {
+        "id": "completed-run",
+        "status": "completed",
+        "completed_at": "2026-08-11T11:22:04+00:00",
+        "errors": "[]",
+    }
+    assert audits == [
+        {
+            "actor": "system",
+            "source": "scheduler",
+            "event_type": "universe_scanner_run_interrupted",
+            "entity_type": "universe_scanner_run",
+            "entity_id": "interrupted-run",
+            "message": "Gateway restart interrupted Universe scanner run interrupted-run",
+        }
+    ]
+
+
+def test_scheduler_startup_recovery_is_not_repeated_for_current_process(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+
+    current_scheduler = object()
+    recovery_calls = []
+    monkeypatch.setattr(scheduler, "_scheduler", current_scheduler)
+    monkeypatch.setattr(
+        scheduler,
+        "_recover_interrupted_universe_scanner_runs",
+        lambda: recovery_calls.append("recover"),
+    )
+
+    assert scheduler.init_scheduler() is current_scheduler
+    assert recovery_calls == []
 
 def test_stale_agent_cleanup_parses_iso_timestamps():
     from aletheia.agent_runtime import scheduler

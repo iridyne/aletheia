@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 from contextvars import ContextVar
 from functools import partial
+import json
 import logging
 import queue
 import threading
@@ -813,6 +814,80 @@ def _recover_interrupted_serenity_run() -> list[str]:
         return []
 
 
+def _recover_interrupted_universe_scanner_runs() -> list[str]:
+    """Fail scanner work that cannot survive the previous Gateway process."""
+    from aletheia.storage.sqlite import run_write
+
+    recovery_reason = "gateway_restart_interrupted"
+    completed_at = datetime.now(timezone.utc).isoformat()
+
+    def reconcile(db) -> list[str]:
+        rows = db.execute(
+            "SELECT id, errors FROM universe_scanner_runs "
+            "WHERE status = 'running' ORDER BY started_at, id"
+        ).fetchall()
+        recovered: list[str] = []
+        for row in rows:
+            try:
+                errors = json.loads(row["errors"] or "[]")
+            except (TypeError, json.JSONDecodeError):
+                errors = [str(row["errors"])] if row["errors"] else []
+            if not isinstance(errors, list):
+                errors = [str(errors)]
+            if recovery_reason not in errors:
+                errors.append(recovery_reason)
+            result = db.execute(
+                "UPDATE universe_scanner_runs "
+                "SET status = 'failed', completed_at = ?, errors = ? "
+                "WHERE id = ? AND status = 'running'",
+                (completed_at, json.dumps(errors), row["id"]),
+            )
+            if result.rowcount:
+                recovered.append(row["id"])
+        return recovered
+
+    try:
+        recovered = run_write(reconcile, immediate=True)
+    except Exception as exc:
+        logger.warning("Universe scanner startup recovery failed (non-fatal): %s", exc)
+        return []
+
+    if not recovered:
+        return []
+
+    try:
+        from aletheia.files.jsonl import write_audit
+    except Exception as audit_exc:
+        logger.warning(
+            "Could not load audit writer for interrupted Universe scanner runs: %s",
+            audit_exc,
+        )
+    else:
+        for run_id in recovered:
+            try:
+                write_audit({
+                    "actor": "system",
+                    "source": "scheduler",
+                    "event_type": "universe_scanner_run_interrupted",
+                    "entity_type": "universe_scanner_run",
+                    "entity_id": run_id,
+                    "message": (
+                        f"Gateway restart interrupted Universe scanner run {run_id}"
+                    ),
+                })
+            except Exception as audit_exc:
+                logger.warning(
+                    "Could not audit interrupted Universe scanner run %s: %s",
+                    run_id,
+                    audit_exc,
+                )
+    logger.warning(
+        "Recovered %d interrupted Universe scanner run(s) from the previous process",
+        len(recovered),
+    )
+    return recovered
+
+
 def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
     """Enqueue at most one durable research attempt for the latest CST batch."""
     from aletheia.storage import repositories as repo
@@ -983,6 +1058,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     # Research workers are process-owned daemon threads. Their persisted active
     # rows are interrupted after any restart even when scheduling is disabled.
     _recover_interrupted_serenity_run()
+    _recover_interrupted_universe_scanner_runs()
     if not cfg.runtime.scheduler_enabled:
         logger.info("Scheduler disabled by config; not starting.")
         return None
