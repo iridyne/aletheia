@@ -213,21 +213,6 @@ def _activate_paper_position(
             ),
         )
         repo.insert_position_protection_state(state)
-        if assign_shadow and resolved.trailing is None:
-            try:
-                from aletheia.analytics.exit_breakeven_shadow import (
-                    assign_new_protected_position,
-                )
-
-                assign_new_protected_position(position_id)
-            except Exception as exc:
-                # The experiment is read-only evidence.  It must never make a valid
-                # protected Paper entry fail; absence remains visible as no assignment.
-                logger.warning(
-                    "exit breakeven shadow assignment unavailable for %s: %s",
-                    position_id,
-                    type(exc).__name__,
-                )
     return {"activated": True, "position_id": position_id, "next_bar_open_ms": next_bar_open_ms}
 
 

@@ -20,6 +20,7 @@ def test_default_config_has_correct_values():
     assert cfg.risk.symbol_list == []
     assert cfg.exchange.symbol_list == []
     assert cfg.telegram.enabled is False
+    assert cfg.controller.shadow_enabled is False
 
 
 def test_default_news_feeds_include_official_sources():

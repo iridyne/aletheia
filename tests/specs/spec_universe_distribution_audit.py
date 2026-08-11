@@ -165,6 +165,12 @@ def test_universe_refresh_post_fix_distribution(tmp_path, monkeypatch):
 
     snapshot_id = asyncio.run(UniverseService().refresh())
     assert snapshot_id is not None
+    assert conn.execute(
+        "SELECT COUNT(*) FROM universe_twin_shadow_batches"
+    ).fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM universe_relative_rank_shadow_batches"
+    ).fetchone()[0] == 0
     assert len(allocation_inputs) == 1
     assert len(allocation_inputs[0]) == 6, (
         "7 raw instruments must become 6 unique symbols before quota allocation"

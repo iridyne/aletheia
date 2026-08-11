@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import json
 import random
 from types import SimpleNamespace
@@ -462,13 +461,3 @@ def test_task6_read_only_evaluation_reports_estimates_but_cannot_promote() -> No
     tampered = evaluate_twin_shadow_epoch(str(epoch_id))
     assert tampered["verdict"] == "invalid"
     assert "record_behavior_contract_hash_mismatch" in tampered["invalid_reasons"]
-
-
-def test_task6_runtime_wiring_stays_on_the_nonfatal_post_publication_seam() -> None:
-    refresh_source = inspect.getsource(service.UniverseService.refresh)
-    persistence_source = inspect.getsource(service._persist_twin_shadow_nonfatal)
-
-    assert refresh_source.count("build_prospective_twin_shadow_bundle") == 3
-    assert "outcome_venue=cfg.market_data.ccxt_exchange" in refresh_source
-    assert "outcomes=bundle.outcomes" in persistence_source
-    assert "_atomic_universe_publication" not in persistence_source

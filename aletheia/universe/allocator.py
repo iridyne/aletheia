@@ -192,6 +192,8 @@ def compute_total_score(
     *,
     calibration_evidence: dict[str, dict] | None = None,
     scoring_audit_out: dict[str, object] | None = None,
+    calibration_learning_scope: dict[str, str] | None = None,
+    restrict_calibration_learning_scope: bool = False,
 ) -> float:
     """Compute the final total_score for universe ranking.
 
@@ -219,7 +221,6 @@ def compute_total_score(
         # verdict passes the shared experiment gate.
         proposed_multiplier = 1.1 if raw_multiplier > 1.0 else 0.9 if raw_multiplier < 1.0 else 1.0
         if proposed_multiplier != 1.0:
-            from aletheia.learning.experiments import apply_numeric_treatment
 
             direction = scanner_result.get("scanner_direction") or scanner_result.get("direction") or "unknown"
             market_type = feat.get("market_type", "spot")
@@ -244,40 +245,62 @@ def compute_total_score(
                 f"universe:cluster:{scoring_cohort_key}:{family}:{direction}:{market_type}"
                 if scoring_cohort_key else None
             )
-            horizon = _FAMILY_CALIBRATION_HORIZON.get(family, _DEFAULT_CALIBRATION_HORIZON)
-            influence = apply_numeric_treatment(
-                path_id="universe_family_calibration",
-                scope={"family": family, "direction": direction, "market_type": market_type},
-                action={"type": "opportunity_multiplier", "multiplier": proposed_multiplier},
-                source_cohort="universe_forward_outcomes:clean_net:v2",
-                target_horizon=horizon,
-                candidate_key=candidate_key,
-                baseline=float(opportunity),
-                treatment=float(opportunity) * proposed_multiplier,
-                consumer="universe_allocator",
-                consumer_stage="opportunity_score",
-                outcome_candidate_key=(f"{candidate_key}:{horizon}" if candidate_key else None),
-                manifest={
-                    "raw_multiplier": raw_multiplier,
-                    "proposed_multiplier": proposed_multiplier,
-                    "source_evidence": dict(
-                        (calibration_evidence or {}).get(evidence_key) or {}
+            horizon = _FAMILY_CALIBRATION_HORIZON.get(
+                family, _DEFAULT_CALIBRATION_HORIZON
+            )
+            scope = {
+                "family": family,
+                "direction": direction,
+                "market_type": market_type,
+            }
+            if (
+                restrict_calibration_learning_scope
+                and scope != calibration_learning_scope
+            ):
+                calibration_assignment = "scope_suppressed"
+                calibration_reason = "outside_active_paper_scope"
+            else:
+                from aletheia.learning.experiments import apply_numeric_treatment
+
+                influence = apply_numeric_treatment(
+                    path_id="universe_family_calibration",
+                    scope=scope,
+                    action={
+                        "type": "opportunity_multiplier",
+                        "multiplier": proposed_multiplier,
+                    },
+                    source_cohort="universe_forward_outcomes:clean_net:v2",
+                    target_horizon=horizon,
+                    candidate_key=candidate_key,
+                    baseline=float(opportunity),
+                    treatment=float(opportunity) * proposed_multiplier,
+                    consumer="universe_allocator",
+                    consumer_stage="opportunity_score",
+                    outcome_candidate_key=(
+                        f"{candidate_key}:{horizon}" if candidate_key else None
                     ),
-                },
-                assignment_key=cluster_key,
-            )
-            opportunity = influence.value
-            calibration_effective_multiplier = (
-                influence.value / float(raw_opportunity)
-                if abs(float(raw_opportunity)) > 1e-12 else 1.0
-            )
-            calibration_authority_applied = influence.applied
-            calibration_assignment = influence.assignment
-            calibration_reason = influence.reason
-            if candidate_key:
-                feat["learning_candidate_key"] = candidate_key
-                feat["learning_exposure_id"] = influence.exposure_id
-                feat["learning_target_horizon"] = horizon
+                    manifest={
+                        "raw_multiplier": raw_multiplier,
+                        "proposed_multiplier": proposed_multiplier,
+                        "source_evidence": dict(
+                            (calibration_evidence or {}).get(evidence_key) or {}
+                        ),
+                    },
+                    assignment_key=cluster_key,
+                )
+                opportunity = influence.value
+                calibration_effective_multiplier = (
+                    influence.value / float(raw_opportunity)
+                    if abs(float(raw_opportunity)) > 1e-12
+                    else 1.0
+                )
+                calibration_authority_applied = influence.applied
+                calibration_assignment = influence.assignment
+                calibration_reason = influence.reason
+                if candidate_key:
+                    feat["learning_candidate_key"] = candidate_key
+                    feat["learning_exposure_id"] = influence.exposure_id
+                    feat["learning_target_horizon"] = horizon
     # Operator-adjustable per-family weight. The PI Operator writes
     # cfg.scanner_weights via _action_adjust_scanner_weight (OL-C09) and the UI
     # shows it, but scoring never consumed it — the manual bias was inert. Empty

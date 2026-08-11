@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import ast
 from datetime import datetime, timedelta, timezone
-import inspect
 import json
 import logging
 import random
-import textwrap
 from types import SimpleNamespace
 
 import pytest
@@ -353,43 +350,3 @@ def test_persistence_identity_conflict_fails_closed() -> None:
         assert str(exc) == "universe_twin_shadow_batch_identity_conflict"
     else:
         raise AssertionError("identity conflict must fail closed")
-
-
-def test_persistence_is_outside_authority_publication_transaction() -> None:
-    source = textwrap.dedent(inspect.getsource(service.UniverseService.refresh))
-    tree = ast.parse(source)
-    persistence_calls = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_persist_twin_shadow_nonfatal"
-    ]
-    assert len(persistence_calls) == 2
-    relative_persistence_calls = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_persist_relative_rank_shadow_nonfatal"
-    ]
-    assert len(relative_persistence_calls) == 2
-
-    authority_transactions = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.With)
-        and any(
-            isinstance(item.context_expr, ast.Call)
-            and isinstance(item.context_expr.func, ast.Name)
-            and item.context_expr.func.id == "_atomic_universe_publication"
-            for item in node.items
-        )
-    ]
-    assert authority_transactions
-    for transaction_node in authority_transactions:
-        assert not any(call in set(ast.walk(transaction_node)) for call in persistence_calls)
-        assert not any(
-            call in set(ast.walk(transaction_node))
-            for call in relative_persistence_calls
-        )

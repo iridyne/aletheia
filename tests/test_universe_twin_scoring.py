@@ -10,7 +10,6 @@ import inspect
 import json
 from pathlib import Path
 import random
-import textwrap
 
 import pytest
 
@@ -465,43 +464,6 @@ def test_twin_module_has_no_authority_consumer_or_persistence_imports() -> None:
     assert not any(module == prefix or module.startswith(f"{prefix}.") for module in imported for prefix in forbidden)
 
 
-def test_refresh_wires_twin_off_thread_and_never_feeds_authority_consumers() -> None:
-    from aletheia.universe.service import UniverseService
-
-    tree = ast.parse(textwrap.dedent(inspect.getsource(UniverseService.refresh)))
-    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
-    to_thread_calls = [
-        call
-        for call in calls
-        if isinstance(call.func, ast.Attribute)
-        and isinstance(call.func.value, ast.Name)
-        and call.func.value.id == "asyncio"
-        and call.func.attr == "to_thread"
-    ]
-    assert not to_thread_calls
-
-    helper_calls = [
-        call for call in calls if isinstance(call.func, ast.Name) and call.func.id == "_compute_twin_shadow_nonfatal"
-    ]
-    assert len(helper_calls) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "build_twin_shadow_batch"
-
-    authority_consumers = {
-        "allocate_universe",
-        "emit_deterministic_opportunities",
-        "_member_fingerprint",
-        "_register_experiment_candidate_outcomes",
-    }
-    for call in calls:
-        name = call.func.id if isinstance(call.func, ast.Name) else None
-        if name not in authority_consumers:
-            continue
-        referenced_names = {node.id for node in ast.walk(call) if isinstance(node, ast.Name)}
-        assert not any(
-            value.startswith(("twin_shadow", "relative_rank"))
-            for value in referenced_names
-        )
 
 
 def test_shadow_batch_failure_cannot_fail_authority_refresh(

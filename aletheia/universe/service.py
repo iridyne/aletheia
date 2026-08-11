@@ -12,7 +12,6 @@ import hashlib
 from contextlib import contextmanager
 import json
 import logging
-import random
 import threading
 import time
 from datetime import datetime, timezone, timedelta
@@ -545,6 +544,40 @@ def _register_experiment_candidate_outcomes(
         return 0
 
 
+def _active_paper_learning_scope(path_id: str) -> tuple[bool, dict | None]:
+    """Return one active Paper experiment scope, failing closed on ambiguity."""
+    try:
+        from aletheia.learning.ledger import get_record, list_open_experiments
+
+        paper = [
+            row
+            for row in list_open_experiments(path_id=path_id)
+            if str(row.get("stage") or "").startswith("paper_")
+        ]
+        if not paper:
+            return False, None
+        if len(paper) != 1:
+            logger.error(
+                "Learning scope restriction found %d active Paper experiments for %s",
+                len(paper),
+                path_id,
+            )
+            return True, None
+        hypothesis = get_record(
+            "learning_hypotheses", str(paper[0]["hypothesis_id"])
+        )
+        scope = json.loads(str((hypothesis or {}).get("scope_json") or "null"))
+        if not isinstance(scope, dict):
+            raise ValueError("active Paper experiment scope is not an object")
+        return True, scope
+    except Exception:
+        logger.exception(
+            "Learning scope restriction unavailable for %s; suppressing influence",
+            path_id,
+        )
+        return True, None
+
+
 class UniverseService:
     """Main orchestrator for the dynamic universe pipeline."""
 
@@ -612,30 +645,6 @@ class UniverseService:
             allocate_universe, compute_total_score, get_family_multipliers,
         )
         from aletheia.universe.outcome_recorder import build_pending, settle_due
-        from aletheia.universe.continuous_scoring import ContinuousScoringPolicy
-        from aletheia.universe.twin_scoring import (
-            TwinShadowInput,
-            annotate_authority_selection,
-            build_twin_shadow_batch,
-            mark_shadow_allocation_unavailable,
-            summarize_twin_shadow_records,
-        )
-        from aletheia.universe.twin_allocation import replay_twin_shadow_allocations
-        from aletheia.universe.twin_persistence import TWIN_SHADOW_CAPTURE_INTERVAL_SEC
-        from aletheia.universe.twin_experiment import (
-            build_prospective_twin_shadow_bundle,
-        )
-        from aletheia.universe.relative_rank_shadow import (
-            annotate_relative_authority_selection,
-            build_relative_rank_batch,
-            replay_relative_rank_allocation,
-        )
-        from aletheia.universe.relative_rank_persistence import (
-            RELATIVE_RANK_CAPTURE_INTERVAL_SEC,
-        )
-        from aletheia.universe.relative_rank_experiment import (
-            build_prospective_relative_rank_bundle,
-        )
         from aletheia.universe.signal_emitter import (
             emit_deterministic_opportunities,
             _infer_direction,
@@ -660,7 +669,7 @@ class UniverseService:
                 raise RuntimeError("regime disabled by config")
 
             from aletheia.regime.collector import collect_regime_inputs
-            from aletheia.regime.detector import debounced_detect, MarketRegime
+            from aletheia.regime.detector import debounced_detect
             from aletheia.storage.models import MarketRegimeRecord
 
             regime_inputs = await collect_regime_inputs()
@@ -694,7 +703,7 @@ class UniverseService:
         attempted_snapshot_id: str | None = None
 
         try:
-            count = await sync_registry(cfg)
+            await sync_registry(cfg)
             assets = repo.list_universe_assets(
                 venue=cfg.market_data.ccxt_exchange, limit=1000,
             )
@@ -741,6 +750,9 @@ class UniverseService:
             )
             if calibration:
                 logger.info("Calibration multipliers: %s", calibration)
+            restrict_calibration_scope, calibration_learning_scope = (
+                _active_paper_learning_scope("universe_family_calibration")
+            )
 
             # Load per-family spread tolerances from filter_advisor (empty until data
             # accumulates; defaults to 1.0 = no change from standard 2× threshold).
@@ -752,7 +764,6 @@ class UniverseService:
 
             # Scan all coarsely-filtered candidates to get family + direction assignments.
             pre_scored = []
-            twin_shadow_inputs: list[TwinShadowInput] = []
             for feat in coarse_filtered:
                 scanner_result = run_all_scanners(feat)
                 authority_score_audit: dict[str, object] = {}
@@ -761,37 +772,10 @@ class UniverseService:
                     calibration_evidence=calibration_evidence or None,
                     scoring_cohort_key=run.id,
                     scoring_audit_out=authority_score_audit,
+                    calibration_learning_scope=calibration_learning_scope,
+                    restrict_calibration_learning_scope=restrict_calibration_scope,
                 )
                 pre_scored.append({**feat, **scanner_result, "total_score": total})
-                twin_shadow_inputs.append(TwinShadowInput(
-                    feature=dict(feat),
-                    authority_scanner_result=dict(scanner_result),
-                    authority_total_score=total,
-                    authority_score_audit=dict(authority_score_audit),
-                ))
-
-            # Task 4: compute every coarse-filter survivor's twin score outside
-            # the async event loop and outside every authority collection.
-            twin_shadow_records = await _compute_twin_shadow_nonfatal(
-                build_twin_shadow_batch,
-                tuple(twin_shadow_inputs),
-                scanner_run_id=run.id,
-                policy_factory=ContinuousScoringPolicy,
-                policy_kwargs={
-                    "min_volume_24h_usdt": cfg.universe.min_volume_24h_usdt,
-                    "min_depth_10bps_usd": cfg.universe.min_depth_10bps_usd,
-                },
-            )
-            relative_rank_batch = await _compute_relative_rank_nonfatal(
-                build_relative_rank_batch,
-                tuple(twin_shadow_inputs),
-                scanner_run_id=run.id,
-                policy_factory=ContinuousScoringPolicy,
-                policy_kwargs={
-                    "min_volume_24h_usdt": cfg.universe.min_volume_24h_usdt,
-                    "min_depth_10bps_usd": cfg.universe.min_depth_10bps_usd,
-                },
-            )
 
             # Pass 2: fine spread filter with per-family tolerance. Records rejections
             # via record_filter_decision with scanner_family → filter_candidate_outcomes
@@ -807,75 +791,11 @@ class UniverseService:
             # Deduplicate before quota allocation so the discarded instrument does
             # not consume a family/explore slot that is never refilled.
             unique_scored = _dedupe_by_symbol_preferred_market(scored, cfg)
-            allocator_random_state = random.getstate()
             allocated = allocate_universe(
                 unique_scored, cfg.universe,
                 regime_state=current_regime.state if current_regime else None,
             )
 
-            twin_shadow_records = await _compute_twin_shadow_allocation_nonfatal(
-                replay_twin_shadow_allocations,
-                mark_shadow_allocation_unavailable,
-                twin_shadow_records,
-                tuple(twin_shadow_inputs),
-                scanner_run_id=run.id,
-                universe_config=cfg.universe,
-                app_config=cfg,
-                family_tolerances=family_tolerances,
-                regime_state=current_regime.state if current_regime else None,
-                allocator_random_state=allocator_random_state,
-                dedupe=_dedupe_by_symbol_preferred_market,
-            )
-            relative_rank_batch = await _compute_relative_rank_allocation_nonfatal(
-                replay_relative_rank_allocation,
-                annotate_relative_authority_selection,
-                relative_rank_batch,
-                tuple(twin_shadow_inputs),
-                authority_selected=allocated,
-                universe_config=cfg.universe,
-                app_config=cfg,
-                family_tolerances=family_tolerances,
-                regime_state=current_regime.state if current_regime else None,
-                allocator_random_state=allocator_random_state,
-                dedupe=_dedupe_by_symbol_preferred_market,
-            )
-
-            twin_shadow_records, shadow_summary = _finalize_twin_shadow_nonfatal(
-                twin_shadow_records,
-                annotator=annotate_authority_selection,
-                summarizer=summarize_twin_shadow_records,
-                fine_filtered=scored,
-                allocated=allocated,
-            )
-            if shadow_summary is not None:
-                logger.info(
-                    "Universe twin Shadow diagnostic only: version=%s candidates=%d "
-                    "valid=%d invalid=%d family_changes=%d direction_changes=%d "
-                    "point_threshold_crossings=%d pessimistic_threshold_crossings=%d "
-                    "budget_exceeded=%d concentrated=%d single_source=%d "
-                    "missingness=%d residual_unavailable=%d "
-                    "authority_selected=%d point_selected=%d pessimistic_selected=%d "
-                    "point_selection_changes=%d pessimistic_selection_changes=%d "
-                    "shadow_authority_applied=false",
-                    shadow_summary.record_version,
-                    shadow_summary.candidate_count,
-                    shadow_summary.valid_shadow_count,
-                    shadow_summary.invalid_shadow_count,
-                    shadow_summary.family_change_count,
-                    shadow_summary.direction_change_count,
-                    shadow_summary.point_threshold_crossing_count,
-                    shadow_summary.pessimistic_threshold_crossing_count,
-                    shadow_summary.budget_exceeded_count,
-                    shadow_summary.concentrated_evidence_count,
-                    shadow_summary.single_source_evidence_count,
-                    shadow_summary.missingness_count,
-                    shadow_summary.interaction_residual_unavailable_count,
-                    shadow_summary.authority_selected_count,
-                    shadow_summary.shadow_point_selected_count,
-                    shadow_summary.shadow_pessimistic_selected_count,
-                    shadow_summary.point_selection_change_count,
-                    shadow_summary.pessimistic_selection_change_count,
-                )
 
             now = datetime.now(timezone.utc)
             entry_ts = now.isoformat()
@@ -973,56 +893,6 @@ class UniverseService:
                     status="completed",
                     completed_at=datetime.now(timezone.utc).isoformat(),
                     snapshot_id=prev_snapshot_id,
-                )
-                await _persist_twin_shadow_nonfatal(
-                    build_prospective_twin_shadow_bundle,
-                    repo.insert_universe_twin_shadow_bundle,
-                    twin_shadow_records,
-                    tuple(twin_shadow_inputs),
-                    policy_factory=ContinuousScoringPolicy,
-                    policy_kwargs={
-                        "min_volume_24h_usdt": cfg.universe.min_volume_24h_usdt,
-                        "min_depth_10bps_usd": cfg.universe.min_depth_10bps_usd,
-                    },
-                    capture_due=repo.universe_twin_shadow_capture_due,
-                    min_interval_sec=TWIN_SHADOW_CAPTURE_INTERVAL_SEC,
-                    scanner_run_id=run.id,
-                    authority_snapshot_id=prev_snapshot_id,
-                    allocator_random_state=allocator_random_state,
-                    universe_config=cfg.universe,
-                    enabled_markets=cfg.exchange.enabled_markets,
-                    preferred_market_type=cfg.exchange.preferred_market_type,
-                    family_tolerances=family_tolerances,
-                    regime_state=regime_tag_for_fp,
-                    provider_id=(
-                        f"{cfg.market_data.provider}:{cfg.market_data.ccxt_exchange}"
-                    ),
-                    outcome_venue=cfg.market_data.ccxt_exchange,
-                    captured_at=entry_ts,
-                )
-                await _persist_relative_rank_shadow_nonfatal(
-                    build_prospective_relative_rank_bundle,
-                    repo.insert_relative_rank_shadow_bundle,
-                    relative_rank_batch,
-                    tuple(twin_shadow_inputs),
-                    policy_factory=ContinuousScoringPolicy,
-                    policy_kwargs={
-                        "min_volume_24h_usdt": cfg.universe.min_volume_24h_usdt,
-                        "min_depth_10bps_usd": cfg.universe.min_depth_10bps_usd,
-                    },
-                    capture_due=repo.relative_rank_shadow_capture_due,
-                    min_interval_sec=RELATIVE_RANK_CAPTURE_INTERVAL_SEC,
-                    authority_snapshot_id=prev_snapshot_id,
-                    universe_config=cfg.universe,
-                    enabled_markets=cfg.exchange.enabled_markets,
-                    preferred_market_type=cfg.exchange.preferred_market_type,
-                    family_tolerances=family_tolerances,
-                    regime_state=regime_tag_for_fp,
-                    provider_id=(
-                        f"{cfg.market_data.provider}:{cfg.market_data.ccxt_exchange}"
-                    ),
-                    outcome_venue=cfg.market_data.ccxt_exchange,
-                    captured_at=entry_ts,
                 )
                 logger.info(
                     "Universe refresh complete (change-suppressed): reused snapshot=%s",
@@ -1186,52 +1056,6 @@ class UniverseService:
                 status="completed",
                 completed_at=datetime.now(timezone.utc).isoformat(),
                 snapshot_id=snap.id,
-            )
-            await _persist_twin_shadow_nonfatal(
-                build_prospective_twin_shadow_bundle,
-                repo.insert_universe_twin_shadow_bundle,
-                twin_shadow_records,
-                tuple(twin_shadow_inputs),
-                policy_factory=ContinuousScoringPolicy,
-                policy_kwargs={
-                    "min_volume_24h_usdt": cfg.universe.min_volume_24h_usdt,
-                    "min_depth_10bps_usd": cfg.universe.min_depth_10bps_usd,
-                },
-                capture_due=repo.universe_twin_shadow_capture_due,
-                min_interval_sec=TWIN_SHADOW_CAPTURE_INTERVAL_SEC,
-                scanner_run_id=run.id,
-                authority_snapshot_id=snap.id,
-                allocator_random_state=allocator_random_state,
-                universe_config=cfg.universe,
-                enabled_markets=cfg.exchange.enabled_markets,
-                preferred_market_type=cfg.exchange.preferred_market_type,
-                family_tolerances=family_tolerances,
-                regime_state=regime_tag_for_fp,
-                provider_id=(f"{cfg.market_data.provider}:{cfg.market_data.ccxt_exchange}"),
-                outcome_venue=cfg.market_data.ccxt_exchange,
-                captured_at=entry_ts,
-            )
-            await _persist_relative_rank_shadow_nonfatal(
-                build_prospective_relative_rank_bundle,
-                repo.insert_relative_rank_shadow_bundle,
-                relative_rank_batch,
-                tuple(twin_shadow_inputs),
-                policy_factory=ContinuousScoringPolicy,
-                policy_kwargs={
-                    "min_volume_24h_usdt": cfg.universe.min_volume_24h_usdt,
-                    "min_depth_10bps_usd": cfg.universe.min_depth_10bps_usd,
-                },
-                capture_due=repo.relative_rank_shadow_capture_due,
-                min_interval_sec=RELATIVE_RANK_CAPTURE_INTERVAL_SEC,
-                authority_snapshot_id=snap.id,
-                universe_config=cfg.universe,
-                enabled_markets=cfg.exchange.enabled_markets,
-                preferred_market_type=cfg.exchange.preferred_market_type,
-                family_tolerances=family_tolerances,
-                regime_state=regime_tag_for_fp,
-                provider_id=(f"{cfg.market_data.provider}:{cfg.market_data.ccxt_exchange}"),
-                outcome_venue=cfg.market_data.ccxt_exchange,
-                captured_at=entry_ts,
             )
             # Nudge paper_trader ranker to evaluate the newly-emitted carriers
             # instead of waiting for its 3-min interval tick. Debounced,
