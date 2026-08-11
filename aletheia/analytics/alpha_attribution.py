@@ -191,9 +191,15 @@ def _empty_exit_paired_evidence(reason: str) -> dict:
 
 
 def _empty_exit_trailing_qualification(reason: str) -> dict:
+    from aletheia.portfolio.protective_barrier import (
+        _TRAILING_QUALIFICATION_VERSION,
+        _TRAILING_RECOVERY_THRESHOLD_PCT,
+        _TRAILING_RECOVERY_WINDOW_BARS,
+    )
+
     return {
-        "contract_version": "exit-trailing-qualification/v1",
-        "policy_version": "paper-dynamic-profit-protection/v1",
+        "contract_version": "exit-trailing-qualification/v2",
+        "policy_version": _TRAILING_QUALIFICATION_VERSION,
         "measurement_status": "not_measured",
         "causal_grade": "insufficient",
         "assignment_count": 0,
@@ -206,6 +212,19 @@ def _empty_exit_trailing_qualification(reason: str) -> dict:
         "cohort_count": 0,
         "cohorts": [],
         "cross_cohort_pooling": False,
+        "recovery_contract": {
+            "contract_version": "post-exit-recovery/v1",
+            "observation": "complete_post_exit_1m_bars",
+            "window_bars": _TRAILING_RECOVERY_WINDOW_BARS,
+            "threshold_pct": _TRAILING_RECOVERY_THRESHOLD_PCT,
+            "authority": "diagnostic_only",
+        },
+        "recovery_available_count": 0,
+        "recovery_pending_count": 0,
+        "recovery_unavailable_count": 0,
+        "recovery_truncation_count": 0,
+        "recovery_truncation_rate": None,
+        "recovery_truncation_reason": "no_mature_treatment_changing_close",
         "promotion_eligible": False,
         "reason": reason,
     }

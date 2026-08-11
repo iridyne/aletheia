@@ -9,8 +9,11 @@ import math
 from statistics import mean
 from typing import Any
 
+from aletheia.analytics.trade_path import build_post_exit_path_observation
 from aletheia.portfolio.protective_barrier import (
     _TRAILING_QUALIFICATION_VERSION,
+    _TRAILING_RECOVERY_THRESHOLD_PCT,
+    _TRAILING_RECOVERY_WINDOW_BARS,
     _TRAILING_TREATMENT_BPS,
     _trailing_qualification_assignment,
 )
@@ -50,12 +53,24 @@ def _finite(
 
 def _arm_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
     available = [item for item in items if item.get("net_pnl") is not None]
+    recovery_available = [
+        item for item in items if item.get("recovery_status") == "available"
+    ]
     net_pnl = [float(item["net_pnl"]) for item in available]
     net_r = [float(item["net_r"]) for item in available]
     reasons = Counter(
         str(item["unavailable_reason"])
         for item in items
         if item.get("unavailable_reason")
+    )
+    recovery_reasons = Counter(
+        str(item["recovery_reason"])
+        for item in items
+        if item.get("recovery_status") == "unavailable"
+        and item.get("recovery_reason")
+    )
+    recovery_truncation_count = sum(
+        1 for item in recovery_available if item.get("recovery_truncated") is True
     )
     return {
         "assignment_count": len(items),
@@ -74,6 +89,17 @@ def _arm_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
             if net_r else None
         ),
         "worst_net_r": min(net_r) if net_r else None,
+        "recovery_available_count": len(recovery_available),
+        "recovery_pending_count": sum(
+            1 for item in items if item.get("recovery_status") == "pending"
+        ),
+        "recovery_unavailable_count": sum(recovery_reasons.values()),
+        "recovery_unavailable_reasons": dict(sorted(recovery_reasons.items())),
+        "recovery_truncation_count": recovery_truncation_count,
+        "recovery_truncation_rate": (
+            recovery_truncation_count / len(recovery_available)
+            if recovery_available else None
+        ),
     }
 
 
@@ -113,6 +139,10 @@ def _qualified_item(row: dict[str, Any]) -> tuple[dict[str, Any] | None, str | N
         "net_pnl": None,
         "net_r": None,
         "unavailable_reason": None,
+        "recovery_status": "not_applicable",
+        "recovery_reason": "treatment_stop_unchanged",
+        "recovery_mfe_pct": None,
+        "recovery_truncated": None,
     }
     if row["status"] != "closed":
         return item, None
@@ -151,6 +181,31 @@ def _qualified_item(row: dict[str, Any]) -> tuple[dict[str, Any] | None, str | N
         "net_pnl": net_pnl,
         "net_r": net_pnl / risk,
     })
+    if item["changed"]:
+        recovery = build_post_exit_path_observation(
+            {
+                "position_id": row["id"],
+                "symbol": row.get("symbol"),
+                "market_type": row.get("protection_market_type"),
+                "exchange": row.get("protection_venue"),
+                "direction": row.get("direction"),
+                "exit_price": row.get("current_price"),
+                "closed_at": row.get("closed_at"),
+            },
+            post_exit_bars=int(assignment["recovery_window_bars"]),
+        )
+        recovery_mfe = _finite(recovery.get("mfe_pct"), nonnegative=True)
+        recovery_status = str(recovery.get("status") or "unavailable")
+        item.update({
+            "recovery_status": recovery_status,
+            "recovery_reason": recovery.get("reason"),
+            "recovery_mfe_pct": recovery_mfe,
+            "recovery_truncated": (
+                recovery_mfe >= float(assignment["recovery_threshold_pct"])
+                if recovery_status == "available" and recovery_mfe is not None
+                else None
+            ),
+        })
     return item, None
 
 
@@ -167,6 +222,8 @@ def build_exit_trailing_qualification_report(
         raise ValueError("opened_after must be an ISO-8601 timestamp with timezone")
     rows = repo.get_db().execute(
         "SELECT position.*, first_plan.plan_json AS qualification_plan_json, "
+        "protection.venue AS protection_venue, "
+        "protection.market_type AS protection_market_type, "
         "EXISTS(SELECT 1 FROM position_exit_plan_versions AS changed "
         "WHERE changed.position_id=position.id AND changed.version>1 "
         "AND changed.provenance='deterministic_trailing_v2') AS trailing_changed, "
@@ -175,6 +232,8 @@ def build_exit_trailing_qualification_report(
         "AND intervened.provenance!='deterministic_trailing_v2') AS plan_intervened "
         "FROM positions AS position JOIN position_exit_plan_versions AS first_plan "
         "ON first_plan.position_id=position.id AND first_plan.version=1 "
+        "LEFT JOIN position_protection_state AS protection "
+        "ON protection.position_id=position.id "
         "WHERE position.execution_mode='paper_internal' "
         "ORDER BY datetime(position.opened_at), position.id LIMIT ?",
         (limit,),
@@ -231,8 +290,14 @@ def build_exit_trailing_qualification_report(
     unavailable_count = sum(
         1 for item in all_items if item.get("unavailable_reason")
     )
+    recovery_available_count = sum(
+        1 for item in all_items if item.get("recovery_status") == "available"
+    )
+    recovery_truncation_count = sum(
+        1 for item in all_items if item.get("recovery_truncated") is True
+    )
     return {
-        "contract_version": "exit-trailing-qualification/v1",
+        "contract_version": "exit-trailing-qualification/v2",
         "policy_version": _TRAILING_QUALIFICATION_VERSION,
         "assignment_unit": "position_id",
         "treatment_allocation_bps": _TRAILING_TREATMENT_BPS,
@@ -253,7 +318,29 @@ def build_exit_trailing_qualification_report(
         "cohort_count": len(cohort_reports),
         "cohorts": cohort_reports,
         "cross_cohort_pooling": False,
-        "recovery_truncation_count": None,
-        "recovery_truncation_reason": "post_exit_recovery_contract_not_registered",
+        "recovery_contract": {
+            "contract_version": "post-exit-recovery/v1",
+            "observation": "complete_post_exit_1m_bars",
+            "window_bars": _TRAILING_RECOVERY_WINDOW_BARS,
+            "threshold_pct": _TRAILING_RECOVERY_THRESHOLD_PCT,
+            "authority": "diagnostic_only",
+        },
+        "recovery_available_count": recovery_available_count,
+        "recovery_pending_count": sum(
+            1 for item in all_items if item.get("recovery_status") == "pending"
+        ),
+        "recovery_unavailable_count": sum(
+            1 for item in all_items if item.get("recovery_status") == "unavailable"
+        ),
+        "recovery_truncation_count": recovery_truncation_count,
+        "recovery_truncation_rate": (
+            recovery_truncation_count / recovery_available_count
+            if recovery_available_count else None
+        ),
+        "recovery_truncation_reason": (
+            None
+            if recovery_available_count
+            else "no_mature_treatment_changing_close"
+        ),
         "promotion_eligible": False,
     }

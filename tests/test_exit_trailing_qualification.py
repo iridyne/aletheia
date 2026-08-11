@@ -91,6 +91,8 @@ def test_new_positions_keep_a_deterministic_static_control_holdout(
     assert control["cost_model_version"] == treatment["cost_model_version"]
     assert control["exit_fee_rate"] == treatment["exit_fee_rate"]
     assert control["slippage_bps"] == treatment["slippage_bps"]
+    assert treatment["qualification"]["recovery_window_bars"] == 30
+    assert treatment["qualification"]["recovery_threshold_pct"] == 1.0
     assert _resolve_trailing(repo.get_position(control_id), load_config()) is None
 
 
@@ -114,6 +116,14 @@ def test_report_keeps_exact_build_cohort_and_cost_complete_arm_economics(
         treatment_plan,
         provenance="deterministic_trailing_v2",
     )
+    monkeypatch.setattr(
+        "aletheia.analytics.exit_trailing_qualification.build_post_exit_path_observation",
+        lambda *_args, **_kwargs: {
+            "status": "available",
+            "reason": "complete_post_exit_1m_bars",
+            "mfe_pct": 1.2,
+        },
+    )
     _close(treatment_id, 2.0, eligible=True)
     _close(control_id, -1.0, eligible=True)
 
@@ -126,11 +136,24 @@ def test_report_keeps_exact_build_cohort_and_cost_complete_arm_economics(
     assert cohort["treatment"]["assignment_count"] == 1
     assert cohort["treatment"]["available_count"] == 1
     assert cohort["treatment"]["changed_count"] == 1
+    assert cohort["treatment"]["recovery_available_count"] == 1
+    assert cohort["treatment"]["recovery_truncation_count"] == 1
     assert cohort["control"]["assignment_count"] == 1
     assert cohort["control"]["available_count"] == 1
     assert cohort["incremental_net_pnl_mean"] == 3.0
     assert cohort["incremental_net_r_mean"] == 1.5
     assert cohort["promotion_eligible"] is False
+    assert report["recovery_contract"] == {
+        "contract_version": "post-exit-recovery/v1",
+        "observation": "complete_post_exit_1m_bars",
+        "window_bars": 30,
+        "threshold_pct": 1.0,
+        "authority": "diagnostic_only",
+    }
+    assert report["recovery_available_count"] == 1
+    assert report["recovery_truncation_count"] == 1
+    assert report["recovery_truncation_rate"] == 1.0
+    assert report["recovery_truncation_reason"] is None
 
     from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
 
@@ -139,6 +162,20 @@ def test_report_keeps_exact_build_cohort_and_cost_complete_arm_economics(
     ]
     assert projected["measurement_status"] == "prospective_randomized_holdout"
     assert projected["assignment_count"] == 2
+
+    monkeypatch.setattr(
+        "aletheia.analytics.exit_trailing_qualification.build_post_exit_path_observation",
+        lambda *_args, **_kwargs: {
+            "status": "unavailable",
+            "reason": "post_exit_coverage_unavailable",
+            "mfe_pct": None,
+        },
+    )
+    unavailable = build_exit_trailing_qualification_report()
+    assert unavailable["recovery_available_count"] == 0
+    assert unavailable["recovery_unavailable_count"] == 1
+    assert unavailable["recovery_truncation_count"] == 0
+    assert unavailable["recovery_truncation_rate"] is None
 
 
 def test_report_preserves_unavailable_outcomes_instead_of_zero(

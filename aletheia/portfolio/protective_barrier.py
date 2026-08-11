@@ -23,9 +23,11 @@ from aletheia.storage.models import (
 
 logger = logging.getLogger("aletheia.protective_barrier")
 _UNSET = object()
-_TRAILING_QUALIFICATION_VERSION = "paper-dynamic-profit-protection/v1"
+_TRAILING_QUALIFICATION_VERSION = "paper-dynamic-profit-protection/v2"
 _TRAILING_TREATMENT_ID = "atr1.5-balance1.5-completed1m/v1"
 _TRAILING_TREATMENT_BPS = 9_000
+_TRAILING_RECOVERY_WINDOW_BARS = 30
+_TRAILING_RECOVERY_THRESHOLD_PCT = 1.0
 
 
 def _trailing_qualification_assignment(position_id: str) -> dict:
@@ -42,6 +44,8 @@ def _trailing_qualification_assignment(position_id: str) -> dict:
         "arm": "treatment" if bucket < _TRAILING_TREATMENT_BPS else "control",
         "treatment_allocation_bps": _TRAILING_TREATMENT_BPS,
         "control_holdout_bps": 10_000 - _TRAILING_TREATMENT_BPS,
+        "recovery_window_bars": _TRAILING_RECOVERY_WINDOW_BARS,
+        "recovery_threshold_pct": _TRAILING_RECOVERY_THRESHOLD_PCT,
     }
 
 
