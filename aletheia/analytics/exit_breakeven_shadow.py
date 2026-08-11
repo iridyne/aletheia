@@ -13,8 +13,9 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
-import random
 from typing import Any
+
+import numpy as np
 
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
@@ -437,16 +438,22 @@ def build_exit_breakeven_shadow_report(
     mean_ci_95 = None
     bootstrap_replicates = 0
     if len(deltas) >= 2:
-        rng = random.Random(_REPORT_BOOTSTRAP_SEED)
+        rng = np.random.default_rng(_REPORT_BOOTSTRAP_SEED)
+        values = np.asarray(deltas, dtype=np.float64)
         size = len(deltas)
         bootstrap_replicates = min(
             _REPORT_BOOTSTRAP_REPLICATES,
             _REPORT_BOOTSTRAP_MAX_DRAWS // size,
         )
-        means = sorted(
-            sum(rng.choices(deltas, k=size)) / size
-            for _ in range(bootstrap_replicates)
-        )
+        # Keep each temporary index matrix bounded while NumPy performs the
+        # expensive resampling outside the Python interpreter.
+        chunk_replicates = max(1, min(bootstrap_replicates, 100_000 // size))
+        means: list[float] = []
+        for offset in range(0, bootstrap_replicates, chunk_replicates):
+            batch_size = min(chunk_replicates, bootstrap_replicates - offset)
+            indices = rng.integers(0, size, size=(batch_size, size))
+            means.extend(values[indices].mean(axis=1).tolist())
+        means.sort()
         last = len(means) - 1
         mean_ci_95 = [means[int(0.025 * last)], means[int(0.975 * last)]]
     by_close_reason = []
