@@ -26,7 +26,7 @@
 
 **暂停所有权**：`runtime.paused` 是 `runtime.pause_owners` 是否非空的兼容投影，不再是可由任一恢复循环独占清除的单一事实。人工操作、Exchange Connectivity、Startup Behavior Gate 与 LLM Startup Gate 各持有带 `reason`、`generation`、`acquired_at` 的 durable lease；一个恢复路径只能释放自身匹配 generation 的 lease。仅最后一个 owner 成功释放时才调用一次 `resume_scheduler()`；公开 `resume_scheduler()` 会在同一进程级 pause-transition `RLock` 内重新读取 durable owners，并在任一 owner 存在时拒绝修改 APScheduler，因此 Settings 的 `scheduler_enabled=true` 也不能旁路所有权。若调度器恢复调用失败，原 lease 会恢复到配置中并保持 fail-closed。旧配置中的 `paused_by_connectivity`/generation/timestamp 会迁移为 `exchange_connectivity` owner，无法归因的旧 `paused=true` 则诚实迁移为时间与 generation 均未知的 `manual` owner。`GET /api/status` 的 `pause_owners` 与 Doctor 的 `config.paused` 项是该状态的只读观测面。
 
-当前 essential 集合：`market_data`、`data_collectors`、`data_collector_context`、`connectivity_monitor`、`portfolio_snapshot`、`price_feed`、`position_manager`、`ohlcv_nightly_backfill`、`ohlcv_active_backfill`、`exchange_sync`、`health_check`、`cleanup`、`news_fetch`、`okx_demo_symbols`、`reconciliation`、`position_reconcile`、`tpsl_fill_check`、`outcome_settler`、`paper_funding_settler`、`outcome_hook_replay`、`shadow_resolver`、`learning_contribution_evaluator`、`learning_measurement_startup_catchup`、`learning_lifecycle_audit_reconciler`。
+当前 essential 集合：`market_data`、`data_collectors`、`data_collector_context`、`connectivity_monitor`、`portfolio_snapshot`、`price_feed`、`position_manager`、`ohlcv_nightly_backfill`、`ohlcv_active_backfill`、`exchange_sync`、`health_check`、`cleanup`、`news_fetch`、`okx_demo_symbols`、`reconciliation`、`position_reconcile`、`tpsl_fill_check`、`outcome_settler`、`paper_funding_settler`、`outcome_hook_replay`、`shadow_resolver`、`learning_contribution_evaluator`、`learning_measurement_startup_catchup`、`learning_lifecycle_audit_reconciler`、`universe_scanner_audit_reconciler`。
 
 ---
 
@@ -39,6 +39,7 @@
 _EXECUTOR_WORKERS = {
     "default": 2,
     "io":      1,
+    "audit":   1,
     "fast_io": 1,
     "protective": 1,
     "learning_measurement": 1,
@@ -51,15 +52,16 @@ _EXECUTOR_WORKERS = {
 |---|---|---|
 | `default` | 2 | 通用基础设施（portfolio_snapshot） |
 | `io` | 1 | 短时 read/write 基础任务（market_data、reconciliation、cleanup 等）；单写防 WAL 碰撞 |
+| `audit` | 1 | Universe recovery 的 hash-chain mirror；与 operational `io` 队列完全隔离 |
 | `fast_io` | 1 | 延迟敏感的基础设施（price_feed，30s 周期） |
 | `protective` | 1 | Position 保护检查；不得排在长时数据/结算任务之后 |
 | `learning_measurement` | 1 | 串行执行 contribution evaluator 与 boot measurement catch-up；不与 31-job `io` 队列共享排队 |
 | `observer` | 1 | boot catch-up 市场观察者；独立隔离，防被 LLM job 饿死 |
 | `agents` | 1 | LLM/agent 密集型 job（paper_trader、post_trade_reviewer 等）；串行防 SQLite 竞争 |
 
-**总工人数**：2 + 1 + 1 + 1 + 1 + 1 + 1 = **8**。
+**总工人数**：2 + 1 + 1 + 1 + 1 + 1 + 1 + 1 = **9**。
 
-注：各池 `max_workers` 全部 ≤ 3，满足 spec AC-S01（`spec_agent_contracts.py:18–33`）。timeout 层不计入上述 APScheduler 命名池：`_run_async_with_timeout` 复用一条进程级常驻 event-loop lane，`_run_sync_with_timeout` 复用一条常驻 daemon lane；两者 outstanding 容量均固定为 16，不为每次调用创建新的 loop、executor 或替代线程（见 §4.3）。
+注：各池 `max_workers` 全部 ≤ 3，满足 spec AC-S01（`spec_agent_contracts.py:18–33`）。timeout 层不计入上述 APScheduler 命名池：`_run_async_with_timeout` 复用一条进程级常驻 event-loop lane；普通同步 job 与 Universe recovery audit 分别复用独立的固定 1-worker daemon lane。三条 lane 的 outstanding 容量均固定为 16，不为每次调用创建新的 loop、executor 或替代线程（见 §4.3）。
 
 ---
 
@@ -92,6 +94,7 @@ _EXECUTOR_WORKERS = {
 | 22 | `post_trade_reviewer` | 424 | interval | hours=4 | agents | 300 | 300 |
 | 23 | `risk_critic` | 430 | interval | hours=6 | agents | 300 | 300 |
 | 24 | `universe_refresh` | 436 | interval | minutes=10 | io | 600 | 120 |
+| 24a | `universe_scanner_audit_reconciler` | — | interval | minutes=5 | audit | 15 | 120 |
 | 25 | `data_collectors` | 444 | interval | minutes=2 | io | 55 | 60 |
 | 25a | `data_collector_context` | 449 | interval | minutes=10 | io | 60 | 60 |
 | 26 | `guard_promotion` | — | cron | hour=4, minute=0, tz=Asia/Shanghai | io | — | 600 |
@@ -99,6 +102,13 @@ _EXECUTOR_WORKERS = {
 | 28 | `okx_demo_symbols` | 464 | interval | hours=4 | io | — | 600 |
 | 29 | `daily_summary` | 471 | cron | hour=cfg.telegram.daily_summary_hour_cst (default 8), minute=0, tz=Asia/Shanghai | io | 60 | 600 |
 | 30 | `pi_operator_loop` | 477 | cron | hour=0,4,8,12,16,20, minute=15, tz=Asia/Shanghai | agents | 120 | 600 |
+
+`universe_scanner_audit_reconciler` 是 essential、`max_instances=1`、`coalesce=True`
+的非行为型修复任务。它只在 DB-authoritative startup recovery 已完成且 JSONL mirror
+仍 pending 时重试稳定 audit identity；APScheduler 等待发生在专用 `audit` pool，
+hash-chain lock/full-chain scan 则发生在专用、固定且队列有界的 sync timeout worker。
+因此任一 audit filesystem 调用永久卡住时，不会占用 operational `io` pool 或共享
+sync timeout worker，也不会重做 scanner DB recovery。
 
 `cleanup` 的 cron 状态是进程内状态；Gateway 离线时错过的触发不会由 APScheduler
 自动补回。初始化 scheduler 时读取最近一次 `data_pruned` audit event，并按上海时区判断
@@ -212,18 +222,21 @@ System Operator 使用两个互不覆盖的健康身份：
 
 ### 4.3 超时隔离（`_run_async_with_timeout` / `_run_sync_with_timeout`）
 
-异步 job 统一提交到一个进程级常驻 event-loop worker；长时同步 job 统一提交到一个进程级
-daemon worker。两条 lane 的 outstanding 容量都固定为 16，不再为每次调用创建 executor
+异步 job 统一提交到一个进程级常驻 event-loop worker；普通长时同步 job 与 Universe
+recovery audit 分别提交到两条独立、固定 1-worker 的 daemon lane。三条 lane 的
+outstanding 容量都固定为 16，不再为每次调用创建 executor
 或 event loop。超时后：
 
 1. 异步 job 由 `asyncio.wait_for` 取消实际 coroutine；如果 event loop 本身在额外 5 秒内仍
    无响应，则取消对应 cross-thread future，容量持续计数到 future 真正结束。
 2. Python 无法安全中断正在执行的同步 thread，因此超时只取消尚未开始的 future；已经运行
-   的非协作调用最多占住唯一一条固定 daemon lane，后续排队仍受 16 项上限约束。
+   的非协作调用最多占住其所属固定 daemon lane。Universe recovery audit 有独立 lane，
+   不会阻塞 ordinary sync-timeboxed operational jobs；每条 lane 的排队仍受 16 项上限约束。
 3. caller 线程立即将相应 `agent_runs.status` 更新为 `'timed_out'`，避免 dashboard 出现幽灵
    `running` 行。
 4. `scheduler_timeout_metrics_snapshot()` 暴露 submitted/completed/timed_out/cancelled/rejected、
-   pending、worker 状态和兼容字段 `abandoned_threads=0`。
+   shared sync pending、Universe audit sync pending、worker 状态和兼容字段
+   `abandoned_threads=0`。
 
 ### 4.4 返回值也属于任务成败
 
@@ -336,12 +349,12 @@ sync worker 同样是 daemon，非协作调用不会产生第二条替代线程�
 
 | ID | 不变量 | 来源 | Spec |
 |---|---|---|---|
-| INV-SCH-1 | 所有 APScheduler 命名池 `max_workers` 均 ≤ 3；timeout 层固定为 1 条 async lane + 1 条 sync lane，outstanding 各 ≤ 16 | `_EXECUTOR_WORKERS`、`_PersistentAsyncTimeoutWorker`、`_PersistentSyncTimeoutWorker` | AC-S01；`test_scheduler_timeouts.py` |
-| INV-SCH-2 | `init_scheduler()` 注册 ≥ 28 个 job | `scheduler.py:324–481`，当前 30 个（条件分支最少 29） | AC-S08 |
+| INV-SCH-1 | 所有 APScheduler 命名池 `max_workers` 均 ≤ 3；timeout 层固定为 1 条 async lane + 2 条相互隔离的 sync lane（ordinary + Universe audit），每条 outstanding ≤ 16 | `_EXECUTOR_WORKERS`、`_PersistentAsyncTimeoutWorker`、`_PersistentSyncTimeoutWorker` | AC-S01；`test_scheduler_timeouts.py` |
+| INV-SCH-2 | `init_scheduler()` 注册 ≥ 28 个 job | `init_scheduler()` 内 `_scheduler.add_job()` 注册 | AC-S08 |
 | INV-SCH-3 | 任何 job 函数抛出的异常不得终止调度器线程 | 各 `_run_xxx()` 顶层 `try/except Exception`；APScheduler 内部也兜底捕获 | — |
 | INV-SCH-4 | job 执行前后，本线程泄漏的 SQLite 事务必须被回滚 | `_run_job_guarded()`（`scheduler.py:110`）；async/sync timeout wrapper `finally` 块 | — |
 | INV-SCH-5 | 任务抛异常或显式报告失败时，连续失败 ≥ 3 次必须触发 infra_event；外层不得在同轮清零 | `_run_job_guarded()` + `_record_job_failure()` | — |
-| INV-SCH-6 | layered pause 只停非 essential job；20 个 essential 入口及其委托 body 不得用 `runtime.paused` 自我禁用 | `_ESSENTIAL_JOBS` + `pause_scheduler()` | `test_layered_pause.py` |
+| INV-SCH-6 | layered pause 只停非 essential job；essential 入口及其委托 body 不得用 `runtime.paused` 自我禁用 | `_ESSENTIAL_JOBS` + `pause_scheduler()` | `test_layered_pause.py` |
 
 ---
 

@@ -168,8 +168,8 @@ def test_scheduler_minimum_job_count():
     SpecClaim(
         "AC-S09", "agent_contracts", "§1 executor pools", "L2a",
         "scheduler.py defines exactly the executor pools "
-        "{default, io, fast_io, protective, learning_measurement, observer, agents} "
-        "— no extras, no missing",
+        "{default, io, audit, fast_io, protective, learning_measurement, "
+        "observer, agents} — no extras, no missing",
     ),
 )
 def test_scheduler_executor_pool_names():
@@ -184,6 +184,7 @@ def test_scheduler_executor_pool_names():
     expected = {
         "default",
         "io",
+        "audit",
         "fast_io",
         "protective",
         "learning_measurement",
