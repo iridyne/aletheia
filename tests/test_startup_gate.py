@@ -353,6 +353,7 @@ def test_resume_gate_blocks_when_no_provider_usable(tmp_path, monkeypatch):
 def test_resume_gate_allows_when_one_provider_usable(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import resume_gate
+    from aletheia.agent_runtime.pause_ownership import PauseReleaseResult
     from aletheia.config.loader import load_config, save_config
 
     cfg = _cfg_with({"anthropic_compatible": True, "openai_compatible": True}, "anthropic_compatible")
@@ -374,6 +375,15 @@ def test_resume_gate_allows_when_one_provider_usable(tmp_path, monkeypatch):
         "aletheia.agent_runtime.scheduler.resume_scheduler",
         lambda: True,
     )
+
+    def fake_persist_resumed(*, actor, source):
+        cfg.runtime.paused = False
+        save_config(cfg)
+        return PauseReleaseResult(released=True, resumed=True, remaining_owners=())
+
+    # Pause-owner persistence has its own integration coverage. Keep this provider
+    # gate unit independent of unrelated background tasks in the shared xdist worker.
+    monkeypatch.setattr(resume_gate, "_persist_resumed", fake_persist_resumed)
 
     result = asyncio.run(resume_gate.resume_if_llm_available(actor="human", source="test"))
 
