@@ -86,6 +86,12 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
     assert "head_branch" in step["with"]["script"]
     assert "head_sha: context.sha" in step["with"]["script"]
 
+    regression = jobs["tests"]["steps"][-1]["run"]
+    runtime_regression = jobs["runtime-state-tests"]["steps"][-1]["run"]
+    assert "--ignore=tests/test_connectivity.py" in regression
+    assert "uv run pytest tests/test_connectivity.py" in runtime_regression
+    assert "-connectivity" in runtime_regression
+
 
 def test_ci_never_builds_or_distributes_release_artifacts() -> None:
     source = WORKFLOW_PATH.read_text(encoding="utf-8").lower()
@@ -167,6 +173,8 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
     commands = release["run"]
     assert "set -euo pipefail" in commands
     assert "release-please@17.6.0" in commands
+    assert "for attempt in 1 2 3" in commands
+    assert 'sleep $((attempt * 5))' in commands
     assert "release_please github-release" in commands
     assert "release_please release-pr" in commands
     assert '--token="$GITHUB_TOKEN"' in commands
