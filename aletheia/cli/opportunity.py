@@ -11,7 +11,7 @@ opportunity_app = typer.Typer(no_args_is_help=True)
 
 _VIEWS = {
     "overview", "funnel", "sizing", "sizing-counterfactual",
-    "alpha", "thesis", "controller",
+    "alpha", "thesis", "controller", "ranker-objective", "entry-exit",
 }
 
 
@@ -24,7 +24,10 @@ def audit(
     symbol: str | None = typer.Option(None, "--symbol", help="Only show opportunities for this canonical symbol."),
     view: str = typer.Option(
         "overview", "--view",
-        help="View: overview, funnel, sizing, sizing-counterfactual, alpha, thesis, or controller.",
+        help=(
+            "View: overview, funnel, sizing, sizing-counterfactual, alpha, thesis, "
+            "controller, ranker-objective, or entry-exit."
+        ),
     ),
     json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
 ):
@@ -126,6 +129,40 @@ def _build_audit_view(
 
         report = build_sizing_trace_audit(hours=hours)
         return report, render_sizing_trace_audit(report)
+    if clean_view == "entry-exit":
+        unsupported = [
+            name
+            for name, value in (("--stage", stage), ("--verdict", verdict))
+            if value is not None
+        ]
+        if unsupported:
+            raise typer.BadParameter(
+                f"{', '.join(unsupported)} not supported with --view entry-exit"
+            )
+        from aletheia.analytics.entry_exit_geometry import (
+            build_entry_exit_geometry_audit,
+            render_entry_exit_geometry_audit,
+        )
+
+        report = build_entry_exit_geometry_audit(
+            hours=hours,
+            limit=limit,
+            symbol=symbol,
+        )
+        return report, render_entry_exit_geometry_audit(report)
+    if clean_view == "ranker-objective":
+        unsupported = [name for name, value in (("--stage", stage), ("--verdict", verdict), ("--symbol", symbol)) if value is not None]
+        if unsupported:
+            raise typer.BadParameter(
+                f"{', '.join(unsupported)} not supported with --view ranker-objective"
+            )
+        from aletheia.analytics.ranker_objective_audit import (
+            build_ranker_objective_audit,
+            render_ranker_objective_audit,
+        )
+
+        report = build_ranker_objective_audit(hours=hours, limit=limit)
+        return report, render_ranker_objective_audit(report)
     if clean_view == "sizing-counterfactual":
         from aletheia.analytics.sizing_counterfactual import (
             build_sizing_counterfactual,
