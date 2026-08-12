@@ -77,6 +77,62 @@ def test_stable_assignment_survives_retries():
     assert {stable_assignment(experiment, "opportunity:123") for _ in range(10)} == {first}
 
 
+def test_expected_paper_identity_disappearance_cannot_open_shadow(monkeypatch):
+    from aletheia.learning import experiments
+
+    monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+    monkeypatch.setattr(
+        experiments,
+        "get_hypothesis_by_fingerprint",
+        lambda _fingerprint: {
+            "hypothesis_id": "paper-hypothesis",
+            "fingerprint": "expected-fingerprint",
+            "behavior_contract_version": "universe-family-calibration/v11",
+            "fingerprint_schema_version": 1,
+            "cohort_id": "cohort",
+            "path_id": "universe_family_calibration",
+            "overlap_group": "universe",
+            "source_type": "universe_forward_outcomes:clean_net:v2",
+            "scope_json": "{}",
+            "action_json": "{}",
+            "consumer": "universe_allocator",
+            "target_horizon": "4h",
+        },
+    )
+    monkeypatch.setattr(experiments, "get_open_experiment", lambda _hypothesis_id: None)
+    monkeypatch.setattr(
+        experiments,
+        "_ensure_experiment",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("expected Paper identity must never open a Shadow experiment")
+        ),
+    )
+    monkeypatch.setattr(
+        experiments,
+        "hypothesis_fingerprint",
+        lambda **_kwargs: "expected-fingerprint",
+    )
+
+    decision = experiments.apply_numeric_treatment(
+        path_id="universe_family_calibration",
+        scope={"family": "momentum", "direction": "long", "market_type": "spot"},
+        action={"type": "opportunity_multiplier", "multiplier": 1.1},
+        source_cohort="universe_forward_outcomes:clean_net:v2",
+        target_horizon="4h",
+        candidate_key="universe:candidate",
+        baseline=70.0,
+        treatment=77.0,
+        consumer="universe_allocator",
+        consumer_stage="opportunity_score",
+        expected_hypothesis_fingerprint="expected-fingerprint",
+        expected_experiment_id="paper-experiment",
+    )
+
+    assert decision.value == 70.0
+    assert decision.reason == "expected_paper_experiment_unavailable"
+    assert decision.exposure_id is None
+
+
 def test_measurement_unsupported_path_keeps_static_baseline_without_ledger_writes(monkeypatch):
     from aletheia.learning import experiments
     from aletheia.storage.sqlite import get_db

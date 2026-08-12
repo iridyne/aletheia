@@ -1160,9 +1160,30 @@ def init_scheduler() -> BackgroundScheduler | None:
         _universe_scanner_startup_recovery_done
         and not _universe_scanner_audit_mirror_done
     ):
-        _universe_scanner_audit_mirror_done = (
-            _mirror_universe_scanner_recovery_audits()
+        # Audit chain scan and JSONL write acquire the cross-process .audit.lock
+        # and may block for many seconds on large chains. Running this inline
+        # during startup delays the Gateway readiness signal. Instead, launch a
+        # daemon thread and let the periodic reconciler job confirm completion
+        # on the next tick. The Gateway may start before the mirror finishes;
+        # the chain scan is a best-effort idempotent outbox drain, not a
+        # precondition for runtime availability.
+        def _startup_audit_mirror_async() -> None:
+            global _universe_scanner_audit_mirror_done
+            try:
+                result = _mirror_universe_scanner_recovery_audits()
+                if result:
+                    _universe_scanner_audit_mirror_done = True
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Startup audit mirror background thread failed (non-fatal): %s", exc
+                )
+
+        _t = threading.Thread(
+            target=_startup_audit_mirror_async,
+            name="aletheia-startup-audit-mirror",
+            daemon=True,
         )
+        _t.start()
     if _scheduler is not None:
         return _scheduler
 

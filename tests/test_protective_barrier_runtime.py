@@ -507,6 +507,18 @@ def test_cycle_fetches_missing_exact_bar_before_evaluation(tmp_path, monkeypatch
         "get_market_data_provider",
         lambda *, exchange, native_ccxt, fallback_exchange: Provider(),
     )
+    from aletheia.portfolio import protective_barrier
+
+    # Keep the due window on the bar created above. Around a wall-clock minute
+    # rollover the cycle can otherwise correctly advance to the next missing
+    # bar and mark a gap, making this exact-bar refresh contract nondeterministic.
+    monkeypatch.setattr(
+        protective_barrier,
+        "_now",
+        lambda: datetime.fromtimestamp(
+            (cursor + 60_000 + 30_000) / 1000, timezone.utc
+        ),
+    )
 
     summary = run_due_position_protection_cycle()
 

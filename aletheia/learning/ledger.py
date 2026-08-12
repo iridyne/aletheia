@@ -60,11 +60,39 @@ def insert_experiment(record) -> bool:
     return insert_record("learning_experiments", record, ignore_duplicates=True)
 
 
-def insert_exposure(record) -> bool:
-    """Insert an exposure and activate its experiment in one transaction."""
-    with transaction():
-        inserted = insert_record("learning_exposures", record, ignore_duplicates=True)
+def insert_exposure(
+    record,
+    *,
+    require_open_experiment_id: str | None = None,
+    require_open_experiment_stage: str | None = None,
+) -> bool | None:
+    """Insert an exposure and activate its experiment in one transaction.
+
+    Returns ``None`` when the optional lifecycle guard rejects the write, versus
+    ``False`` for an accepted idempotent duplicate.
+
+    When an admitted Paper identity was captured upstream, the optional guard
+    makes lifecycle validation and insertion one atomic operation. A concurrent
+    close/refreeze therefore cannot append evidence to the ended experiment.
+    """
+    with transaction(immediate=require_open_experiment_id is not None):
         db = get_db()
+        if require_open_experiment_id is not None:
+            row = db.execute(
+                "SELECT stage FROM learning_experiments "
+                "WHERE experiment_id=? AND ended_at IS NULL",
+                (require_open_experiment_id,),
+            ).fetchone()
+            if (
+                require_open_experiment_id != record.experiment_id
+                or row is None
+                or (
+                    require_open_experiment_stage is not None
+                    and str(row["stage"]) != require_open_experiment_stage
+                )
+            ):
+                return None
+        inserted = insert_record("learning_exposures", record, ignore_duplicates=True)
         db.execute(
             "UPDATE learning_experiments SET "
             "status=CASE WHEN status='registered' THEN 'active' ELSE status END, "
@@ -283,7 +311,12 @@ def list_open_experiments(*, path_id: str | None = None) -> list[dict]:
         clauses.append("h.path_id=?")
         params.append(path_id)
     rows = get_db().execute(
-        "SELECT e.* FROM learning_experiments e JOIN learning_hypotheses h "
+        "SELECT e.*, ("
+        "SELECT x.concurrent_policy_epoch FROM learning_exposures x "
+        "WHERE x.experiment_id=e.experiment_id "
+        "ORDER BY x.exposed_at DESC, x.rowid DESC LIMIT 1"
+        ") AS concurrent_policy_epoch "
+        "FROM learning_experiments e JOIN learning_hypotheses h "
         "ON h.hypothesis_id=e.hypothesis_id WHERE " + " AND ".join(clauses) + " "
         "ORDER BY e.created_at, e.experiment_id",
         tuple(params),

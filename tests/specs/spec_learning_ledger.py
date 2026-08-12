@@ -213,6 +213,65 @@ def test_hypothesis_and_exposure_inserts_are_idempotent():
     assert db.execute("SELECT COUNT(*) FROM learning_exposures").fetchone()[0] == 1
 
 
+def test_expected_paper_exposure_insert_fails_atomically_after_close():
+    from aletheia.learning.ledger import (
+        insert_experiment,
+        insert_exposure,
+        insert_hypothesis,
+    )
+    from aletheia.learning.models import (
+        LearningExperiment,
+        LearningExposure,
+        LearningHypothesis,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    assert insert_hypothesis(LearningHypothesis(
+        hypothesis_id="atomic-h",
+        fingerprint="atomic-fp",
+        cohort_id="atomic-c",
+        path_id="universe_family_calibration",
+        overlap_group="universe",
+        source_type="source",
+        scope_json="{}",
+        action_json="{}",
+        consumer="universe_allocator",
+        target_horizon="4h",
+    ))
+    assert insert_experiment(LearningExperiment(
+        experiment_id="atomic-paper",
+        hypothesis_id="atomic-h",
+        stage="paper_10",
+        assignment_salt="salt",
+        allocation_pct=0.1,
+    ))
+    db.execute(
+        "UPDATE learning_experiments SET status='closed', ended_at='now' "
+        "WHERE experiment_id='atomic-paper'"
+    )
+    db.commit()
+    exposure = LearningExposure(
+        dedup_key="atomic-paper:candidate",
+        experiment_id="atomic-paper",
+        hypothesis_id="atomic-h",
+        assignment="control",
+        consumer="universe_allocator",
+        consumer_stage="opportunity_score",
+        path_id="universe_family_calibration",
+        overlap_group="universe",
+        concurrent_policy_epoch="epoch",
+    )
+
+    assert insert_exposure(
+        exposure,
+        require_open_experiment_id="atomic-paper",
+    ) is None
+    assert db.execute(
+        "SELECT COUNT(*) FROM learning_exposures WHERE experiment_id='atomic-paper'"
+    ).fetchone()[0] == 0
+
+
 def _registered_experiment(token: str):
     from aletheia.learning.ledger import insert_experiment, insert_hypothesis
     from aletheia.learning.models import LearningExperiment, LearningHypothesis

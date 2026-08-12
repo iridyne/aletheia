@@ -138,24 +138,65 @@ jobs:
         run: cargo test --locked --all-targets --target x86_64-unknown-linux-musl
 
   tests:
-    name: Python regression
+    name: Python ${{ matrix.name }}
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 25
+    timeout-minutes: 20
+    strategy:
+      # A contract failure must not hide an unrelated integration or end-to-end
+      # regression. Keep every tier authoritative and report them independently.
+      fail-fast: false
+      matrix:
+        include:
+          - name: specifications
+            marker: tier_spec
+          - name: unit
+            marker: tier_unit
+          - name: integration
+            marker: tier_integration
+          - name: end-to-end
+            marker: tier_e2e
 
     steps:
-      - name: Isolate Aletheia runtime state
-        run: echo "ALETHEIA_DATA_DIR=$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-tests" >> "$GITHUB_ENV"
-
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          # Without an explicit version this resolves "latest" and downloads a
-          # fresh uv whenever upstream publishes one: six releases landed on the
-          # runners in nine days. Pinned, it hits the runner tool cache instead.
-          # Bump deliberately alongside the lockfile.
+          version: "0.12.0"
+          python-version: "3.12"
+          enable-cache: false
+
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Run ${{ matrix.name }} regression tier
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.marker }}
+        run: >-
+          uv run pytest tests/
+          --ignore=tests/simulation
+          --ignore=tests/test_auto_resume.py
+          --ignore=tests/test_operator_cli.py
+          --ignore=tests/test_pause_ownership.py
+          -m "${{ matrix.marker }}"
+          -n auto
+          --dist loadfile
+          -q --tb=short
+          --timeout=120
+
+  runtime-state-tests:
+    name: Python runtime state
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
           version: "0.12.0"
           python-version: "3.12"
           enable-cache: false
@@ -187,23 +228,10 @@ jobs:
           chmod +x "$install_dir/unzip"
           echo "$install_dir" >> "$GITHUB_PATH"
 
-      - name: Run isolated review regression tiers
+      - name: Run runtime-state regression
         shell: bash
         run: |
           set -euo pipefail
-          for tier in tier_spec tier_unit tier_integration tier_e2e; do
-            ALETHEIA_DATA_DIR="$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${tier}" \
-              uv run pytest tests/ \
-                --ignore=tests/simulation \
-                --ignore=tests/test_auto_resume.py \
-                --ignore=tests/test_operator_cli.py \
-                --ignore=tests/test_pause_ownership.py \
-                -m "$tier" \
-                -n auto \
-                --dist loadfile \
-                -q --tb=short \
-                --timeout=120
-          done
           ALETHEIA_DATA_DIR="$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-runtime-state" \
             uv run pytest tests/test_auto_resume.py tests/test_operator_cli.py \
               -n 2 --dist loadfile -q --tb=short --timeout=120
@@ -213,7 +241,7 @@ jobs:
 
   release-candidate:
     name: Hand off verified release candidate
-    needs: [review, tests]
+    needs: [review, tests, runtime-state-tests]
     if: >-
       github.event_name == 'workflow_dispatch' &&
       startsWith(github.ref_name, 'release-please--branches--master')

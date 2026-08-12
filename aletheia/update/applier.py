@@ -336,7 +336,14 @@ def apply_update(*, restart: bool = False) -> dict:
             "mode": "development",
         }
 
-    new = git_ops.current_commit()
+    # Use the SHA that was pinned inside pull() at fetch time (the exact
+    # origin/<branch> ref at the moment of `git fetch`), not a second
+    # current_commit() call.  A second read is a mutable ref: origin/master
+    # can advance between the merge and this call, making config disagree
+    # with the actual on-disk HEAD that was built and smoke-checked.
+    new = pulled.get("remote_commit") or git_ops.current_commit()
+    if not new:
+        return {"applied": False, "reason": "new_commit_unavailable", "mode": "development"}
     changed_files = git_ops.changed_files(old, new)
     python_deps_changed = bool({"pyproject.toml", "uv.lock"}.intersection(changed_files))
     frontend_deps_changed = _frontend_deps_changed(changed_files)
@@ -374,10 +381,11 @@ def apply_update(*, restart: bool = False) -> dict:
         if restart and frontend_deps_changed:
             _install_frontend_deps()
         if not rollback.get("ok"):
-            # #135: reset_hard failed — on-disk HEAD is still the broken NEW commit.
-            # Do NOT claim a clean revert (UI honesty): surface the true failed state
-            # so the operator knows the box may be on unverified code (config/audit
-            # must not disagree with the real HEAD).
+            # Record the actual on-disk state after the failed reset. It may be
+            # the attempted commit, the old commit, or another concurrent value.
+            actual_head = git_ops.current_commit() or ""
+            cfg.update.current_commit = actual_head
+            save_config(cfg)
             write_audit(
                 {
                     "actor": "human",
@@ -386,10 +394,10 @@ def apply_update(*, restart: bool = False) -> dict:
                     "entity_type": "system_update",
                     "entity_id": new,
                     "before": {"commit": old},
-                    "after": {"commit": new},
+                    "after": {"commit": actual_head},
                     "message": (
                         f"Rollback FAILED after smoke failure at {smoke.get('stage')}: "
-                        f"{rollback.get('reason')}; on-disk HEAD may still be {new}"
+                        f"{rollback.get('reason')}; on-disk HEAD is {actual_head}"
                     ),
                 }
             )
@@ -401,10 +409,11 @@ def apply_update(*, restart: bool = False) -> dict:
                 "smoke_stage": smoke.get("stage"),
                 "old_commit": old,
                 "attempted_commit": new,
+                "actual_head": actual_head,
                 "rollback_error": rollback.get("reason"),
                 "message": (
-                    "Smoke check failed AND rollback failed — the gateway may be "
-                    "on unverified code. Manual intervention required."
+                    "Smoke check failed AND rollback failed — the gateway is "
+                    f"on unverified code at {actual_head}. Manual intervention required."
                 ),
             }
         cfg.update.current_commit = old
@@ -475,6 +484,11 @@ def apply_update(*, restart: bool = False) -> dict:
                 _reinstall_deps()
             if frontend_deps_changed:
                 _install_frontend_deps()
+            # Always inspect disk after the rollback attempt. A failed reset can
+            # leave any HEAD, not necessarily the attempted new commit.
+            actual_head_after_rollback = git_ops.current_commit() or ""
+            cfg.update.current_commit = actual_head_after_rollback
+            save_config(cfg)
             recovery = _restart_gateway() if rollback.get("ok") else {"ok": False}
             return {
                 "applied": False,
@@ -483,6 +497,7 @@ def apply_update(*, restart: bool = False) -> dict:
                 "mode": "development",
                 "old_commit": old,
                 "attempted_commit": new,
+                "actual_head": actual_head_after_rollback,
                 "recovery_started": bool(recovery.get("ok")),
             }
         shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
