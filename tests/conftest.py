@@ -188,6 +188,16 @@ def _configure_xdist_runtime_dir(config) -> None:
     worker_root.mkdir(parents=True, exist_ok=True)
     os.environ["ALETHEIA_DATA_DIR"] = str(worker_root)
 
+    # Keep the import-time config paths aligned with the worker environment.
+    # Some pytest plugins or earlier collection imports may already have loaded
+    # this module before the worker hook runs.
+    import aletheia.config.loader as loader
+
+    loader.DATA_DIR = worker_root
+    loader.CONFIG_PATH = worker_root / "config.yaml"
+    loader._dirs_ensured_for = None
+    loader._invalidate_config_cache()
+
 
 def pytest_configure(config):
     _configure_xdist_runtime_dir(config)
