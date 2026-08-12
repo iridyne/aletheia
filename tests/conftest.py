@@ -476,6 +476,7 @@ def _inmemory_db(request, tmp_path, monkeypatch):
     # Point DATA_DIR at tmp_path so file artifacts (logs, markdown) still land on disk.
     monkeypatch.setattr(_loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(_loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    _loader._invalidate_config_cache()
 
     reset_db()
     conn = sqlite3.connect(":memory:", check_same_thread=False)
@@ -486,3 +487,4 @@ def _inmemory_db(request, tmp_path, monkeypatch):
     yield
 
     reset_db()
+    _loader._invalidate_config_cache()
