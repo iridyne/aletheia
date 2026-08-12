@@ -25,7 +25,19 @@ def record_boot_commit() -> None:
     """Capture the source commit at process start. Call once from lifespan()."""
     global _boot_commit
     from aletheia.update.git_ops import current_commit
-    _boot_commit = current_commit() or None  # "" -> None (git unavailable / non-repo)
+
+    commit = current_commit()
+    if not commit:
+        try:
+            from aletheia.update.packaged import (
+                _current_release_git_sha,
+                current_selection,
+            )
+
+            commit = _current_release_git_sha(current_selection()) or ""
+        except Exception:
+            pass
+    _boot_commit = commit or None  # "" -> None (build identity unavailable)
 
 
 def get_boot_commit() -> str | None:

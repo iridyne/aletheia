@@ -94,6 +94,24 @@ def test_ensure_evidence_epochs_is_idempotent(db):
     assert first["entry_correction_v2"] == second["entry_correction_v2"]
 
 
+def test_ensure_evidence_epochs_acquires_one_writer_per_registration(db, monkeypatch):
+    from aletheia.learning.evidence_epoch import ensure_evidence_epochs
+    from aletheia.storage import repositories as repo
+
+    real_acquire = repo.acquire_write_lock
+    calls = []
+
+    def counted_acquire(**kwargs):
+        calls.append(True)
+        return real_acquire(**kwargs)
+
+    monkeypatch.setattr(repo, "acquire_write_lock", counted_acquire)
+
+    ensure_evidence_epochs(commit_sha="one-writer-wait")
+
+    assert calls == [True]
+
+
 def test_ensure_evidence_epochs_rotates_on_new_commit(db):
     """Different commit SHA → new epoch ids (existing epoch closed)."""
     from aletheia.learning.evidence_epoch import ensure_evidence_epochs
@@ -184,3 +202,4 @@ def test_gateway_registers_evidence_epochs_before_scheduler_start():
     assert source.index("ensure_evidence_epochs") < source.index(
         "    init_tool_registry()"
     )
+    assert 'runtime_session.get("durable") is True' in source
