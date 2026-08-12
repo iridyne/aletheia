@@ -41,7 +41,7 @@ from aletheia.update.applier import (
 )
 
 _STABLE_TAG = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
-_VERSION = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']\s*$', re.MULTILINE)
+_VERSION = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\'](?:\s*#.*)?\s*$', re.MULTILINE)
 _STATE_SCHEMA = 1
 _SYSTEMD_MARKER = "# Managed-By: Aletheia auto update"
 _UNIT_NAMES = ("aletheia-auto-update.service", "aletheia-auto-update.timer")

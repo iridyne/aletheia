@@ -45,6 +45,18 @@ def test_only_strict_stable_semver_tags_are_candidates(tmp_path, monkeypatch):
     assert result["state"]["observed_tags"] == {}
 
 
+def test_product_version_parser_accepts_release_please_marker(monkeypatch):
+    from aletheia.update import auto, git_ops
+
+    monkeypatch.setattr(
+        git_ops,
+        "version_at_ref",
+        lambda ref: '__version__ = "0.7.0"  # x-release-please-version\n',
+    )
+
+    assert auto._version_from_ref("HEAD") == "0.7.0"
+
+
 def test_local_or_revoked_tag_is_not_a_candidate(tmp_path, monkeypatch):
     from aletheia.update import auto, git_ops
 
