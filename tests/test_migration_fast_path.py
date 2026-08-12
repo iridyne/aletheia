@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 25)
+        f"aletheia-sqlite-v{version}" for version in range(2, 26)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v24"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v25"
     connection.close()
 
 
@@ -525,8 +525,21 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     connection = _connection(tmp_path / "v9.db")
     connection.executescript(
         """
-        CREATE TABLE learning_hypotheses (hypothesis_id TEXT PRIMARY KEY);
-        CREATE TABLE learning_experiments (experiment_id TEXT PRIMARY KEY);
+        CREATE TABLE learning_hypotheses (
+            hypothesis_id TEXT PRIMARY KEY,
+            fingerprint TEXT,
+            path_id TEXT,
+            scope_json TEXT,
+            action_json TEXT,
+            target_horizon TEXT,
+            source_type TEXT
+        );
+        CREATE TABLE learning_experiments (
+            experiment_id TEXT PRIMARY KEY,
+            hypothesis_id TEXT,
+            stage TEXT,
+            ended_at TEXT
+        );
         CREATE TABLE learning_contribution_verdicts (
             verdict_id TEXT PRIMARY KEY,
             experiment_id TEXT NOT NULL REFERENCES learning_experiments(experiment_id)
@@ -547,7 +560,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE runtime_sessions (session_id TEXT PRIMARY KEY);
         CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
         CREATE TABLE positions (id TEXT PRIMARY KEY);
-        INSERT INTO learning_experiments VALUES ('legacy-experiment');
+        INSERT INTO learning_experiments (experiment_id) VALUES ('legacy-experiment');
         INSERT INTO learning_contribution_verdicts
         VALUES ('legacy-positive', 'legacy-experiment');
         """
@@ -580,8 +593,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260811_0023_learning_hypothesis_identity_v24",
-        "aletheia-sqlite-v24",
+        "20260812_0024_ufc_canonical_identity_v25",
+        "aletheia-sqlite-v25",
     )
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "
@@ -689,6 +702,73 @@ def test_learning_hypothesis_identity_v24_is_additive_and_idempotent():
             "FROM learning_hypotheses WHERE hypothesis_id='legacy'"
         ).fetchone()
     ) == (None, None)
+    connection.close()
+
+
+def _legacy_active_ufc_db(*, fingerprint: str) -> sqlite3.Connection:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE learning_hypotheses ("
+        "hypothesis_id TEXT PRIMARY KEY, fingerprint TEXT, path_id TEXT, "
+        "scope_json TEXT, action_json TEXT, target_horizon TEXT, source_type TEXT, "
+        "behavior_contract_version TEXT, fingerprint_schema_version INTEGER)"
+    )
+    connection.execute(
+        "CREATE TABLE learning_experiments ("
+        "experiment_id TEXT PRIMARY KEY, hypothesis_id TEXT, stage TEXT, ended_at TEXT)"
+    )
+    connection.execute(
+        "INSERT INTO learning_hypotheses VALUES "
+        "('hypothesis', ?, 'universe_family_calibration', "
+        "'{\"direction\":\"long\",\"family\":\"momentum\",\"market_type\":\"spot\"}', "
+        "'{\"multiplier\":1.1,\"type\":\"opportunity_multiplier\"}', "
+        "'4h', 'universe_forward_outcomes:clean_net:v2', NULL, NULL)",
+        (fingerprint,),
+    )
+    connection.execute(
+        "INSERT INTO learning_experiments VALUES "
+        "('experiment', 'hypothesis', 'paper_10', NULL)"
+    )
+    return connection
+
+
+def test_ufc_canonical_identity_v25_materializes_verified_active_paper():
+    import aletheia.storage.migrations as migrations
+    from aletheia.learning.hypotheses import hypothesis_fingerprint
+
+    fingerprint = hypothesis_fingerprint(
+        path_id="universe_family_calibration",
+        scope={"direction": "long", "family": "momentum", "market_type": "spot"},
+        action={"multiplier": 1.1, "type": "opportunity_multiplier"},
+        target_horizon="4h",
+        source_cohort="universe_forward_outcomes:clean_net:v2",
+        behavior_contract_version="universe-family-calibration/v11",
+        schema_version=1,
+    )
+    connection = _legacy_active_ufc_db(fingerprint=fingerprint)
+
+    migrations._apply_ufc_canonical_identity_v25(connection)
+    migrations._apply_ufc_canonical_identity_v25(connection)
+
+    assert tuple(connection.execute(
+        "SELECT behavior_contract_version, fingerprint_schema_version "
+        "FROM learning_hypotheses WHERE hypothesis_id='hypothesis'"
+    ).fetchone()) == ("universe-family-calibration/v11", 1)
+    connection.close()
+
+
+def test_ufc_canonical_identity_v25_rejects_unproven_identity():
+    import aletheia.storage.migrations as migrations
+
+    connection = _legacy_active_ufc_db(fingerprint="not-the-canonical-fingerprint")
+
+    with pytest.raises(migrations.MigrationStateError):
+        migrations._apply_ufc_canonical_identity_v25(connection)
+
+    assert tuple(connection.execute(
+        "SELECT behavior_contract_version, fingerprint_schema_version "
+        "FROM learning_hypotheses WHERE hypothesis_id='hypothesis'"
+    ).fetchone()) == (None, None)
     connection.close()
 
 
