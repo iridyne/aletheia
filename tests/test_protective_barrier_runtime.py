@@ -438,6 +438,15 @@ def test_exact_instrument_mismatch_records_gap_without_close(tmp_path, monkeypat
 def test_non_crossing_bar_advances_exactly_one_minute(tmp_path, monkeypatch):
     position, cursor = _protected_position(tmp_path, monkeypatch)
     _bar(cursor, high=105.0, low=99.0)
+    from aletheia.portfolio import protective_barrier
+
+    monkeypatch.setattr(
+        protective_barrier,
+        "_now",
+        lambda: datetime.fromtimestamp(
+            (cursor + 60_000 + 30_000) / 1000, timezone.utc
+        ),
+    )
 
     evaluate_due_position_protection()
 
