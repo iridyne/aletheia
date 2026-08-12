@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v24"
+SCHEMA_VERSION = "aletheia-sqlite-v25"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3488,6 +3488,17 @@ _LEARNING_HYPOTHESIS_IDENTITY_CHECKSUM = hashlib.sha256(
         repr(_LEARNING_HYPOTHESIS_IDENTITY_COLUMNS)
         + "\nadditive_learning_hypothesis_identity_v1"
     ).encode("utf-8")
+).hexdigest()
+
+_UFC_CANONICAL_IDENTITY = (
+    "universe_family_calibration",
+    "universe-family-calibration/v11",
+    1,
+)
+_UFC_CANONICAL_IDENTITY_CHECKSUM = hashlib.sha256(
+    (repr(_UFC_CANONICAL_IDENTITY) + "\nmaterialize_active_paper_identity_v1").encode(
+        "utf-8"
+    )
 ).hexdigest()
 
 _MARKET_SIGNAL_IDENTITY_COLUMNS = (
@@ -4547,6 +4558,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260811_0023_learning_hypothesis_identity_v24": (
         "explicit behavior-contract and fingerprint-schema hypothesis provenance"
     ),
+    "20260812_0024_ufc_canonical_identity_v25": (
+        "materialize fingerprint-verified identity for the active UFC Paper"
+    ),
 }
 
 
@@ -4719,6 +4733,77 @@ def _apply_learning_hypothesis_identity_v24(db: sqlite3.Connection) -> None:
         }
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
+def _apply_ufc_canonical_identity_v25(db: sqlite3.Connection) -> None:
+    """Materialize the identity already committed by an active UFC fingerprint."""
+
+    from aletheia.learning.hypotheses import hypothesis_fingerprint
+
+    path_id, behavior_version, schema_version = _UFC_CANONICAL_IDENTITY
+    savepoint = "ufc_canonical_identity_v25"
+    db.execute(f"SAVEPOINT {savepoint}")
+    try:
+        rows = db.execute(
+            "SELECT e.experiment_id, h.hypothesis_id, h.fingerprint, "
+            "h.scope_json, h.action_json, h.target_horizon, h.source_type, "
+            "h.behavior_contract_version, h.fingerprint_schema_version "
+            "FROM learning_experiments e "
+            "JOIN learning_hypotheses h ON h.hypothesis_id=e.hypothesis_id "
+            "WHERE h.path_id=? AND e.ended_at IS NULL "
+            "AND e.stage IN ('paper_10','paper_25','paper_50','paper_active')",
+            (path_id,),
+        ).fetchall()
+        if len(rows) > 1:
+            raise MigrationStateError(
+                "UFC identity migration found multiple open Paper experiments"
+            )
+        if rows:
+            (
+                _experiment_id,
+                hypothesis_id,
+                stored_fingerprint,
+                scope_json,
+                action_json,
+                target_horizon,
+                source_cohort,
+                stored_behavior_version,
+                stored_schema_version,
+            ) = rows[0]
+            if stored_behavior_version not in (None, behavior_version):
+                raise MigrationStateError(
+                    "active UFC Paper behavior contract does not match v25"
+                )
+            if stored_schema_version not in (None, schema_version):
+                raise MigrationStateError(
+                    "active UFC Paper fingerprint schema does not match v25"
+                )
+
+            import json
+
+            fingerprint = hypothesis_fingerprint(
+                path_id=path_id,
+                scope=json.loads(scope_json),
+                action=json.loads(action_json),
+                target_horizon=target_horizon,
+                source_cohort=source_cohort,
+                behavior_contract_version=behavior_version,
+                schema_version=schema_version,
+            )
+            if fingerprint != stored_fingerprint:
+                raise MigrationStateError(
+                    "active UFC Paper fingerprint cannot prove canonical v25 identity"
+                )
+            db.execute(
+                "UPDATE learning_hypotheses SET behavior_contract_version=?, "
+                "fingerprint_schema_version=? WHERE hypothesis_id=?",
+                (behavior_version, schema_version, hypothesis_id),
+            )
+        db.execute(f"RELEASE SAVEPOINT {savepoint}")
+    except Exception:
+        db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+        db.execute(f"RELEASE SAVEPOINT {savepoint}")
+        raise
 
 
 def _apply_market_signal_identity_v7(db: sqlite3.Connection) -> None:
@@ -5098,8 +5183,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260811_0023_learning_hypothesis_identity_v24",
         checksum=_LEARNING_HYPOTHESIS_IDENTITY_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v24",
         apply=_apply_learning_hypothesis_identity_v24,
+    ),
+    MigrationStep(
+        migration_id="20260812_0024_ufc_canonical_identity_v25",
+        checksum=_UFC_CANONICAL_IDENTITY_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_ufc_canonical_identity_v25,
     ),
 )
 
