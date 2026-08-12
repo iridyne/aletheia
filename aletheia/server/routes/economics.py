@@ -1,19 +1,18 @@
-"""Read-only economics API routes.
+"""Economics API routes.
 
 Mirrors the `aletheia audit` CLI so operators can see LLM spend, broker
 headroom, and per-model cooldown state from the dashboard instead of
-dropping to a shell. Writers (pricing-set, tool-pricing-set) stay
-CLI-only — they mutate the immutable accounting contract and the CLI
-already carries the correct identity semantics.
+dropping to a shell. Immutable manual pricing writers stay CLI-only; the sole
+dashboard mutation starts a bounded LiteLLM reference-price refresh whose
+results are explicitly estimated.
 
 See `docs/design/proposals/tokenomics_harness_phase_plan_2026-07-30.md`
-§4 Phase 1 for the design constraints. No behaviour changes anywhere
-else; this module only reads.
+§4 Phase 1 for the original read-side constraints.
 """
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -24,6 +23,10 @@ from aletheia.economics.budgets import (
 from aletheia.economics.context_artifacts import (
     list_context_artifacts,
     summarize_context_artifacts,
+)
+from aletheia.economics.pricing_sync import (
+    pricing_refresh_status,
+    start_pricing_refresh,
 )
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.usage_insights import build_usage_insights
@@ -39,17 +42,21 @@ from aletheia.economics.viability import (
     build_operator_viability,
     build_system_viability,
 )
+from aletheia.files.jsonl import write_audit
 from aletheia.model_provider.fallback import get_model_health_snapshot
 
 router = APIRouter(prefix="/api/economics", tags=["economics"])
 
 
 @router.get("/usage-insights")
-def usage_insights(days: int = Query(7)) -> dict:
+def usage_insights(
+    days: int = Query(1),
+    group: Literal["summary", "operations", "analysis"] | None = None,
+) -> dict:
     """Exact aggregate-only usage projection; never reads prompts or responses."""
-    if days not in {7, 30, 90}:
-        raise HTTPException(status_code=422, detail="days must be one of 7, 30, or 90")
-    return build_usage_insights(days=days)
+    if days not in {1, 7, 30, 90}:
+        raise HTTPException(status_code=422, detail="days must be one of 1, 7, 30, or 90")
+    return build_usage_insights(days=days, group=group)
 
 
 @router.get("/status")
@@ -281,3 +288,25 @@ def pricing() -> dict:
         ).fetchall()
     ]
     return {"models": models, "tools": tools}
+
+
+@router.get("/pricing/refresh-status")
+def pricing_refresh_status_route() -> dict:
+    """Return the in-process LiteLLM refresh state; no network or DB work."""
+    return pricing_refresh_status()
+
+
+@router.post("/pricing/refresh", status_code=202)
+def pricing_refresh() -> dict:
+    """Start one background reference-price refresh and return immediately."""
+    write_audit(
+        {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "pricing_refresh_requested",
+            "entity_type": "pricing_reference",
+            "entity_id": "litellm_public_map",
+            "message": "Operator requested a LiteLLM estimated-price refresh.",
+        }
+    )
+    return start_pricing_refresh(trigger="dashboard")

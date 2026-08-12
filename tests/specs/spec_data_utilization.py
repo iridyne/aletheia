@@ -39,11 +39,43 @@ _MARKET_DATA = _ROOT / "aletheia" / "trading" / "market_data.py"
 _DATA_UTILIZATION_DOC = _ROOT / "docs" / "design" / "data" / "data_utilization.md"
 _API_REFERENCE_DOC = _ROOT / "docs" / "design" / "api" / "api_reference.md"
 _INFERENCE_SCHEMA = _ROOT / "aletheia" / "economics" / "schema.py"
+_PRICING_SYNC = _ROOT / "aletheia" / "economics" / "pricing_sync.py"
 _INFERENCE_CONTRACT = (
     _ROOT / "docs" / "design" / "contracts" / "llm_inference_harness_contract.md"
 )
 
 _CONTRACT = "data_utilization_contract"
+
+
+@spec_claim(
+    SpecClaim(
+        "DU-S27",
+        _CONTRACT,
+        "§3 LiteLLM public pricing reference",
+        "L2a",
+        "LiteLLM public pricing is registered as an estimated-only source with "
+        "startup and dashboard refresh consumers, manual-price precedence, and no "
+        "historical ledger rewrite.",
+        status="implemented",
+    ),
+)
+def test_litellm_pricing_source_is_registered_and_estimated_only():
+    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
+    sync = _PRICING_SYNC.read_text(encoding="utf-8")
+    tracing = (_ROOT / "aletheia" / "economics" / "tracing.py").read_text(
+        encoding="utf-8"
+    )
+    app = (_ROOT / "aletheia" / "server" / "app.py").read_text(encoding="utf-8")
+    routes = (_ROOT / "aletheia" / "server" / "routes" / "economics.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "DU-S27" in doc and "LiteLLM 公共模型价格目录" in doc
+    assert "start_pricing_refresh" in app and 'trigger="startup"' in app
+    assert '@router.post("/pricing/refresh"' in routes
+    assert "_may_write_automatic_snapshot" in sync
+    assert 'return source.startswith(_SOURCE_PREFIX)' in sync
+    assert '"estimated"' in tracing
 
 
 @spec_claim(

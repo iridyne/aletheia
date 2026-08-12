@@ -1,357 +1,152 @@
-import { useMemo, useState, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import {
-  Cell,
-  Legend,
-  Pie,
-  PieChart,
-  PolarAngleAxis,
-  PolarGrid,
-  Radar,
-  RadarChart,
-  ResponsiveContainer,
-  Tooltip,
-} from 'recharts'
-import {
-  api,
-  type UsageInsightsRow,
-  type UsageInsightsSection,
-} from '../api/client'
-import PageHeader from '../components/PageHeader'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { ColumnDef } from '@tanstack/react-table'
+import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { api, type UsageInsightsRow, type UsageInsightsSection } from '../api/client'
+import { DataTable } from '../components/DataTable'
 import MetricTile from '../components/MetricTile'
+import PageHeader from '../components/PageHeader'
+import { fmtCompact, fmtNum, fmtPct } from '../lib/format'
 import { Badge, Button, Card, CardHeader, TableWrap } from '../components/ui'
+import { useToast } from '../components/ui/Toast'
 
-const DAY_OPTIONS = [
-  { days: 7, label: '7d' },
-  { days: 30, label: '30d' },
-  { days: 90, label: '90d' },
-] as const
+const DAY_OPTIONS = [{ days: 1, label: '1d' }, { days: 7, label: '7d' }, { days: 30, label: '30d' }, { days: 90, label: '90d' }] as const
+const C = { accent: '#22d3ee', green: '#2ee6a8', yellow: '#f5b942', border: '#232c36', muted: '#7d8997', text: '#e6edf3' }
+const tooltipProps = { contentStyle: { background: '#1a212a', border: `1px solid ${C.border}`, borderRadius: 5, fontSize: 11 }, labelStyle: { color: C.text }, itemStyle: { color: C.text } }
 
-const C = {
-  green: '#2ee6a8',
-  accent: '#22d3ee',
-  yellow: '#f5b942',
-  purple: '#a78bfa',
-  border: '#232c36',
-  text: '#e6edf3',
-  muted: '#7a8a99',
-}
+const usd = (value: number | null | undefined) => value == null ? '—' : `$${fmtNum(value)}`
+const count = (value: number | null | undefined) => value == null ? '—' : fmtCompact(value)
+const windowLabel = (days: number | undefined) => days === 1 ? 'last 24 hours' : `last ${days ?? 1} days`
+const humanize = (key: string) => key.replace(/_/g, ' ')
 
-const tooltipProps = {
-  contentStyle: {
-    background: '#1d2530',
-    border: `1px solid ${C.border}`,
-    borderRadius: 6,
-    fontSize: 11,
-  },
-  labelStyle: { color: C.text },
-  itemStyle: { color: C.text },
-}
-
-const fmtUsd = (value: number | null | undefined) =>
-  typeof value === 'number' && Number.isFinite(value) ? `$${value.toFixed(6)}` : 'N/A'
-
-const fmtPct = (value: number | null | undefined) =>
-  typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(1)}%` : 'N/A'
-
-const fmtCount = (value: number | null | undefined) =>
-  typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : 'N/A'
-
-function fmtTokens(value: number | null | undefined): string {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return 'N/A'
-  return `${value.toLocaleString()} tokens`
-}
-
-function formatKey(key: string) {
-  return key.replace(/_/g, ' ')
-}
-
-function formatValue(value: unknown): string {
+function valueText(value: unknown): string {
   if (value == null) return 'N/A'
-  if (typeof value === 'number') return Number.isFinite(value) ? value.toLocaleString() : 'N/A'
+  if (typeof value === 'number') return Number.isFinite(value) ? fmtNum(value) : 'N/A'
   if (typeof value === 'boolean') return value ? 'yes' : 'no'
   if (typeof value === 'string') return value.trim() || 'unknown'
-  if (Array.isArray(value)) {
-    if (!value.length) return 'none'
-    return value.map(item => (
-      typeof item === 'object' && item != null && 'error_type' in item && 'event_count' in item
-        ? `${String(item.error_type)}: ${String(item.event_count)}`
-        : typeof item === 'string' ? item : 'item'
-    )).join(', ')
-  }
+  if (Array.isArray(value)) return value.length ? value.map(item => typeof item === 'string' ? item : 'item').join(', ') : 'none'
   return 'unknown'
 }
 
-function SectionStatus({ section }: { section: UsageInsightsSection }) {
-  if (section.status === 'available') return null
-  const label = section.status === 'partial' ? 'Partial' : 'N/A'
+function Section({ title, section, children }: { title: string; section: UsageInsightsSection; children: ReactNode }) {
   return (
-    <p className="hint" style={{ marginBottom: 'var(--space-2)' }}>
-      <Badge tone="yellow">{label}</Badge>{' '}
-      {section.reason ?? 'Coverage is unknown for this window.'}
-    </p>
-  )
-}
-
-function UsageSection({ title, section, children }: {
-  title: string
-  section: UsageInsightsSection
-  children: ReactNode
-}) {
-  return (
-    <section style={{ marginBottom: 'var(--space-4)' }}>
-      <h3 style={{ marginBottom: '0.5rem' }}>{title}</h3>
-      <SectionStatus section={section} />
+    <section className="usage-section">
+      <div className="usage-section-head">
+        <h2>{title}</h2>
+        {section.status !== 'available' && <Badge tone="yellow">{section.status === 'partial' ? 'Partial' : 'N/A'}</Badge>}
+      </div>
+      {section.status !== 'available' && <p className="hint">{section.reason ?? 'This section is not fully measured.'}</p>}
       {children}
     </section>
   )
 }
 
-function InsightTable({ title, rows, empty }: {
-  title: string
-  rows: UsageInsightsRow[]
-  empty: string
-}) {
-  const columns = useMemo(
-    () => Array.from(new Set(rows.flatMap(row => Object.keys(row)))),
-    [rows],
-  )
-  if (!rows.length || !columns.length) return <p className="hint">{empty}</p>
-
-  return (
-    <Card flush>
-      <TableWrap>
-        <table className="mono" style={{ width: '100%', fontSize: '0.85em' }}>
-          <caption style={{ textAlign: 'left', padding: 'var(--space-2)' }}>{title}</caption>
-          <thead>
-            <tr>
-              {columns.map(column => <th key={column}>{formatKey(column)}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <tr key={String(row.id ?? row.name ?? index)}>
-                {columns.map(column => <td key={column}>{formatValue(row[column])}</td>)}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </TableWrap>
-    </Card>
-  )
+function Skeleton({ label }: { label: string }) {
+  return <section className="usage-section skeleton" role="status" aria-label={`Loading ${label}`}><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></section>
 }
 
-function InsightFacts({ title, facts }: { title: string; facts: UsageInsightsRow | null }) {
-  const rows = Object.entries(facts ?? {})
-  if (!rows.length) return <p className="hint">N/A — no facts reported for this window.</p>
+function LoadingIndicator() {
+  return <span className="usage-loading-indicator"><span className="hint">Loading</span><progress aria-label="Loading usage sections" /></span>
+}
 
-  return (
-    <Card flush>
-      <TableWrap>
-        <table className="mono" style={{ width: '100%', fontSize: '0.85em' }}>
-          <caption style={{ textAlign: 'left', padding: 'var(--space-2)' }}>{title}</caption>
-          <tbody>
-            {rows.map(([key, value]) => (
-              <tr key={key}>
-                <th scope="row" style={{ textAlign: 'left' }}>{formatKey(key)}</th>
-                <td>{formatValue(value)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </TableWrap>
-    </Card>
-  )
+function InsightTable({ title, rows, empty }: { title: string; rows: UsageInsightsRow[]; empty: string }) {
+  const columns = useMemo<ColumnDef<UsageInsightsRow>[]>(() => Array.from(new Set(rows.flatMap(Object.keys))).map(key => ({ accessorKey: key, header: humanize(key), cell: ({ row }) => valueText(row.original[key]) })), [rows])
+  if (!rows.length || !columns.length) return <p className="hint">{empty}</p>
+  return <Card flush className="usage-table-card"><CardHeader title={`${title} (${rows.length.toLocaleString()})`} /><DataTable data={rows} columns={columns} pageSize={25} emptyMessage={empty} /></Card>
+}
+
+function Facts({ title, facts }: { title: string; facts: UsageInsightsRow | null }) {
+  const rows = Object.entries(facts ?? {})
+  if (!rows.length) return <p className="hint">N/A — no facts reported.</p>
+  return <Card flush className="usage-facts"><TableWrap><table className="mono"><caption>{title}</caption><tbody>{rows.map(([key, value]) => <tr key={key}><th scope="row">{humanize(key)}</th><td>{valueText(value)}</td></tr>)}</tbody></table></TableWrap></Card>
+}
+
+function TokenComposition({ input, output, cached, reasoning }: { input: number | null; output: number | null; cached: number | null; reasoning: number | null }) {
+  const safeCached = Math.min(cached ?? 0, input ?? 0)
+  const safeReasoning = Math.min(reasoning ?? 0, output ?? 0)
+  const bars = [
+    { label: 'Input', ordinary: Math.max((input ?? 0) - safeCached, 0), subtype: safeCached, subtypeName: 'Cached' },
+    { label: 'Output', ordinary: Math.max((output ?? 0) - safeReasoning, 0), subtype: safeReasoning, subtypeName: 'Reasoning' },
+  ]
+  const max = Math.max(input ?? 0, output ?? 0, 1)
+  return <Card className="usage-composition"><CardHeader title="Token composition" meta="Subtypes are contained within input/output; totals are not double-counted." />{bars.map(bar => <div className="usage-composition-row" key={bar.label}><div className="usage-composition-label"><span>{bar.label}</span><strong>{count(bar.ordinary + bar.subtype)}</strong></div><div className="usage-composition-track" aria-label={`${bar.label}: ${bar.ordinary} ordinary, ${bar.subtype} ${bar.subtypeName.toLowerCase()}`}><span className="usage-composition-ordinary" style={{ width: `${bar.ordinary * 100 / max}%` }} /><span className="usage-composition-subtype" style={{ width: `${bar.subtype * 100 / max}%` }} /></div><div className="usage-composition-legend"><span>Ordinary {count(bar.ordinary)}</span><span>{bar.subtypeName} {count(bar.subtype)}</span></div></div>)}</Card>
+}
+
+function CoverageList({ axes }: { axes: Array<{ id: string; label: string; status: string; coverage_pct: number | null; reason: string | null }> }) {
+  return <Card className="usage-coverage-list">{axes.map(axis => <div className="usage-coverage-row" key={axis.id}><div><strong>{axis.label}</strong><span>{axis.reason ?? 'Measured for the selected window.'}</span></div><div className="usage-coverage-value"><span>{fmtPct(axis.coverage_pct, { decimals: 1, dash: 'N/A' })}</span><Badge tone={axis.status === 'available' ? 'green' : 'yellow'}>{axis.status === 'not_available' ? 'N/A' : axis.status}</Badge></div></div>)}</Card>
 }
 
 export default function Usage() {
-  const [days, setDays] = useState<7 | 30 | 90>(7)
-  const { data: insights, isLoading, error } = useQuery({
-    queryKey: ['usage-insights', days],
-    queryFn: () => api.getUsageInsights(days),
-    refetchInterval: 30_000,
-  })
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const [days, setDays] = useState<1 | 7 | 30 | 90>(1)
+  const summaryQuery = useQuery({ queryKey: ['usage-insights', days, 'summary'], queryFn: () => api.getUsageInsights(days, 'summary'), placeholderData: keepPreviousData })
+  const summary = summaryQuery.data
+  const summaryReady = summary?.window.days === days && !summaryQuery.isPlaceholderData
+  const operationsQuery = useQuery({ queryKey: ['usage-insights', days, 'operations'], queryFn: () => api.getUsageInsights(days, 'operations'), placeholderData: keepPreviousData, enabled: summaryReady })
+  const analysisQuery = useQuery({ queryKey: ['usage-insights', days, 'analysis'], queryFn: () => api.getUsageInsights(days, 'analysis'), placeholderData: keepPreviousData, enabled: summaryReady })
+  const operations = operationsQuery.data
+  const analysis = analysisQuery.data
+  const queries = [summaryQuery, operationsQuery, analysisQuery]
+  const fetching = queries.some(query => query.isFetching)
+  const error = queries.find(query => query.error)?.error
+  const { data: pricingRefresh } = useQuery({ queryKey: ['pricing-refresh-status'], queryFn: api.getPricingRefreshStatus, refetchInterval: query => query.state.data?.status === 'running' ? 2_000 : false })
+  const refreshPricing = useMutation({ mutationFn: api.refreshPricing, onSuccess: status => queryClient.setQueryData(['pricing-refresh-status'], status), onError: error => toast('error', `Pricing refresh failed: ${error.message}`) })
+  const handledRefresh = useRef<string | null>(null)
 
-  const windowLabel = `last ${days} days`
-  const range = insights
-    ? `${insights.window.started_at.slice(0, 10)} → ${insights.window.ended_at.slice(0, 10)} UTC`
-    : `${windowLabel} (UTC)`
-  const coverageAxes = insights?.coverage.axes ?? []
-  const measurableAxes = coverageAxes.filter(axis => axis.coverage_pct != null)
-  const tokenMix = insights?.token_mix
-  const tokenPie = [
-    { name: 'input', value: tokenMix?.input_tokens ?? null, color: C.accent },
-    { name: 'output', value: tokenMix?.output_tokens ?? null, color: C.green },
-    { name: 'reasoning', value: tokenMix?.reasoning_tokens ?? null, color: C.purple },
-    { name: 'cached', value: tokenMix?.cached_tokens ?? null, color: C.yellow },
-  ].filter((item): item is { name: string; value: number; color: string } => item.value != null && item.value > 0)
+  useEffect(() => {
+    if (pricingRefresh?.status !== 'succeeded' || !pricingRefresh.completed_at || handledRefresh.current === pricingRefresh.completed_at) return
+    handledRefresh.current = pricingRefresh.completed_at
+    queryClient.invalidateQueries({ queryKey: ['usage-insights'] })
+  }, [pricingRefresh, queryClient])
+
+  const selectedLabel = windowLabel(days)
+  const summaryLabel = windowLabel(summary?.window.days)
+  const operationsLabel = windowLabel(operations?.window.days)
+  const analysisLabel = windowLabel(analysis?.window.days)
+  const freshAxes = [...(!summaryQuery.isPlaceholderData ? summary?.coverage.axes ?? [] : []), ...(!operationsQuery.isPlaceholderData ? operations?.coverage.axes ?? [] : []), ...(!analysisQuery.isPlaceholderData ? analysis?.coverage.axes ?? [] : [])]
+  const pricingCoverage = summary?.pricing?.pricing_coverage_pct
+  const qualityTone = freshAxes.length === 8 && freshAxes.every(axis => axis.status === 'available') ? 'green' : 'yellow'
+  const coverageStatus = freshAxes.length < 8 ? 'partial' : freshAxes.every(axis => axis.status === 'available') ? 'available' : freshAxes.every(axis => axis.status === 'not_available') ? 'not_available' : 'partial'
+  const coverageReason = freshAxes.length < 8 ? 'Some coverage dimensions are still loading.' : coverageStatus === 'available' ? null : coverageStatus === 'not_available' ? 'No coverage dimension is measurable in this window.' : 'Some coverage dimensions are incomplete or unavailable.'
+  const physical = summary?.reliability?.physical
+  const trendRows = operations?.trends?.daily ?? []
 
   return (
-    <div>
-      <PageHeader
-        title="Usage insights"
-        role={`Read-only usage, coverage, and research-yield evidence for ${windowLabel} (${range}). Unknown and unavailable values are labelled explicitly.`}
-        actions={
-          <div className="seg-toggle" aria-label="Usage time range">
-            {DAY_OPTIONS.map(option => (
-              <Button
-                key={option.days}
-                variant="ghost"
-                className={`seg-btn${days === option.days ? ' active' : ''}`}
-                aria-pressed={days === option.days}
-                onClick={() => setDays(option.days)}
-              >
-                {option.label}
-              </Button>
-            ))}
+    <div className="usage-page" aria-busy={fetching}>
+      <PageHeader title="Usage insights" role={`Consumption, spend, reliability, attribution, and research yield for ${selectedLabel}. Estimates and unavailable facts remain explicitly labelled.`} actions={<div className="usage-header-actions">{fetching && <LoadingIndicator />}<div className="seg-toggle" aria-label="Usage time range">{DAY_OPTIONS.map(option => <Button key={option.days} variant="ghost" className={`seg-btn${days === option.days ? ' active' : ''}`} aria-pressed={days === option.days} onClick={() => setDays(option.days)}>{option.label}</Button>)}</div></div>} />
+      <div className="usage-context-bar"><span>{summary ? `${summary.window.started_at.slice(0, 16)} → ${summary.window.ended_at.slice(0, 16)} UTC` : selectedLabel}</span><span className="usage-quality"><Badge tone={qualityTone}>Data quality</Badge><span>Pricing {fmtPct(pricingCoverage, { decimals: 1, dash: 'pending' })}</span></span></div>
+      {fetching && <p className="usage-fetch-note" role="status" aria-live="polite">Refreshing in stages. Available sections remain interactive.</p>}
+      {error && <div className="lever-err" role="alert">Usage insights could not be loaded: {error.message}</div>}
+
+      {!summary ? <Skeleton label="consumption and spend" /> : <>
+        <Section title={`Consumption & spend · ${summaryLabel}`} section={summary.token_mix!}>
+          <div className="usage-primary-metrics">
+            <MetricTile label="Total tokens" value={count(summary.token_mix!.total_tokens)} context={summaryLabel} />
+            <MetricTile label="Input tokens" value={count(summary.token_mix!.input_tokens)} context={summaryLabel} />
+            <MetricTile label="Output tokens" value={count(summary.token_mix!.output_tokens)} context={summaryLabel} />
+            <MetricTile label="Estimated cost" value={usd(summary.pricing!.estimated_cost_usd)} context={summaryLabel} />
+            <MetricTile label="LLM calls" value={count(summary.token_mix!.event_count)} context={summaryLabel} />
+            <MetricTile label="Pricing coverage" value={fmtPct(summary.pricing!.pricing_coverage_pct, { decimals: 1 })} context={`${count(summary.pricing!.unknown_event_count)} unknown`} />
           </div>
-        }
-      />
+          <div className="usage-token-band">
+            <TokenComposition input={summary.token_mix!.input_tokens} output={summary.token_mix!.output_tokens} cached={summary.token_mix!.cached_tokens} reasoning={summary.token_mix!.reasoning_tokens} />
+            <Card className="usage-cost-provenance"><CardHeader title="Cost provenance" actions={<Button size="sm" variant="secondary" disabled={pricingRefresh?.status === 'running' || refreshPricing.isPending} onClick={() => refreshPricing.mutate()}>{pricingRefresh?.status === 'running' || refreshPricing.isPending ? 'Refreshing…' : 'Refresh pricing'}</Button>} /><div className="usage-provenance-grid"><div><span>Known</span><strong>{usd(summary.pricing!.known_cost_usd)}</strong></div><div><span>Estimated</span><strong>{usd(summary.pricing!.estimated_cost_usd)}</strong></div><div><span>Unknown events</span><strong>{count(summary.pricing!.unknown_event_count)}</strong></div></div>{pricingRefresh?.status === 'failed' && <div className="lever-err" role="alert">Pricing refresh failed: {pricingRefresh.error ?? 'unknown error'}</div>}{pricingRefresh?.last_success_at && <p className="hint">LiteLLM estimate refreshed {pricingRefresh.last_success_at}; {pricingRefresh.snapshots_created} snapshot(s) added.</p>}</Card>
+          </div>
+        </Section>
+      </>}
 
-      {isLoading && <p className="hint">Loading usage insights for {windowLabel}…</p>}
-      {error && <p className="hint">N/A — usage insights could not be loaded: {error.message}</p>}
-      {!insights || (
-        <>
-          <p className="hint" style={{ marginBottom: 'var(--space-3)' }}>
-            Window: {range}. As of {insights.window.as_of} ({insights.window.timezone}).
-          </p>
+      {!operations ? <Skeleton label="usage trends and breakdowns" /> : <>
+        <Section title={`Usage & cost trend · ${operationsLabel}`} section={operations.trends!}>
+          <div className="usage-trend-grid"><Card><CardHeader title="Daily tokens" meta="Input and output are mutually exclusive totals." /><ResponsiveContainer width="100%" height={240}><BarChart data={trendRows}><CartesianGrid stroke={C.border} vertical={false} /><XAxis dataKey="date" tick={{ fill: C.muted, fontSize: 10 }} /><YAxis tick={{ fill: C.muted, fontSize: 10 }} tickFormatter={value => fmtCompact(Number(value))} /><Tooltip {...tooltipProps} formatter={(value: unknown, name: unknown) => [fmtNum(Number(value)), humanize(String(name))]} /><Legend /><Bar dataKey="input_tokens" stackId="tokens" fill={C.accent} /><Bar dataKey="output_tokens" stackId="tokens" fill={C.green} /></BarChart></ResponsiveContainer></Card><Card><CardHeader title="Daily cost" meta="Known and estimated provenance remain separate." /><ResponsiveContainer width="100%" height={240}><BarChart data={trendRows}><CartesianGrid stroke={C.border} vertical={false} /><XAxis dataKey="date" tick={{ fill: C.muted, fontSize: 10 }} /><YAxis tick={{ fill: C.muted, fontSize: 10 }} tickFormatter={value => `$${fmtCompact(Number(value))}`} /><Tooltip {...tooltipProps} formatter={(value: unknown, name: unknown) => [usd(Number(value)), humanize(String(name))]} /><Legend /><Bar dataKey="known_cost_usd" stackId="cost" fill={C.green} /><Bar dataKey="estimated_cost_usd" stackId="cost" fill={C.yellow} /></BarChart></ResponsiveContainer></Card></div>
+        </Section>
+        <Section title={`Breakdown · ${operationsLabel}`} section={operations.attribution!}><InsightTable title="Attribution" rows={operations.attribution!.rows} empty="No attributable usage reported." /><div className="usage-section-gap"><InsightTable title="Tools" rows={operations.tools!.rows} empty="No tool usage reported." /></div></Section>
+        <Section title={`Reliability & budgets · ${summaryLabel}`} section={summary!.reliability!}><div className="usage-reliability-grid"><Facts title="Logical reliability" facts={summary!.reliability!.logical} /><Facts title="Physical reliability" facts={summary!.reliability!.physical} /></div><div className="usage-health-strip"><span>Physical attempts <strong>{count(Number(physical?.attempt_count ?? 0))}</strong></span><span>Failures <strong>{count(Number(physical?.failure_count ?? 0))}</strong></span><span>P95 latency <strong>{physical?.p95_duration_ms == null ? 'N/A' : `${fmtNum(Number(physical.p95_duration_ms))} ms`}</strong></span></div><div className="usage-section-gap"><InsightTable title="Budget observations" rows={operations.budgets!.rows} empty="No budget observations reported." /></div></Section>
+      </>}
 
-          <UsageSection title={`Coverage (${windowLabel})`} section={insights.coverage}>
-            <Card>
-              <CardHeader title="Coverage radar" />
-              {measurableAxes.length ? (
-                <ResponsiveContainer width="100%" height={280}>
-                  <RadarChart data={measurableAxes} margin={{ top: 18, right: 32, bottom: 18, left: 32 }}>
-                    <PolarGrid stroke={C.border} />
-                    <PolarAngleAxis dataKey="label" tick={{ fill: C.muted, fontSize: 11 }} />
-                    <Radar
-                      name="Measured coverage"
-                      dataKey="coverage_pct"
-                      stroke={C.accent}
-                      fill={C.accent}
-                      fillOpacity={0.2}
-                      strokeWidth={1.5}
-                    />
-                    <Tooltip {...tooltipProps} formatter={(value: any) => [fmtPct(Number(value)), 'Coverage']} />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
-                  </RadarChart>
-                </ResponsiveContainer>
-              ) : (
-                <p className="hint">N/A — no coverage percentages are measured in this window.</p>
-              )}
-            </Card>
-            <Card flush>
-              <TableWrap>
-                <table className="mono" style={{ width: '100%', fontSize: '0.85em' }}>
-                  <caption style={{ textAlign: 'left', padding: 'var(--space-2)' }}>Coverage details (text equivalent)</caption>
-                  <thead>
-                    <tr>
-                      <th style={{ textAlign: 'left' }}>Measure</th>
-                      <th style={{ textAlign: 'left' }}>Status</th>
-                      <th style={{ textAlign: 'right' }}>Coverage</th>
-                      <th style={{ textAlign: 'left' }}>Reason</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {coverageAxes.map(axis => (
-                      <tr key={axis.id}>
-                        <td>{axis.label}</td>
-                        <td>{axis.status === 'not_available' ? 'N/A' : axis.status}</td>
-                        <td style={{ textAlign: 'right' }}>{fmtPct(axis.coverage_pct)}</td>
-                        <td>{axis.reason ?? (axis.coverage_pct == null ? 'unknown' : '—')}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </TableWrap>
-            </Card>
-          </UsageSection>
+      <Section title="Data coverage & gaps" section={{ status: coverageStatus, reason: coverageReason }}><CoverageList axes={freshAxes} />{summary?.pricing && <div className="usage-section-gap"><InsightTable title="Pricing gaps" rows={summary.pricing.gaps} empty="No pricing gaps reported." /></div>}</Section>
 
-          <UsageSection title={`Token mix (${windowLabel})`} section={insights.token_mix}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
-              <MetricTile label="Input" value={fmtTokens(tokenMix?.input_tokens)} context={windowLabel} />
-              <MetricTile label="Output" value={fmtTokens(tokenMix?.output_tokens)} context={windowLabel} />
-              <MetricTile label="Reasoning" value={fmtTokens(tokenMix?.reasoning_tokens)} context={windowLabel} />
-              <MetricTile label="Cached" value={fmtTokens(tokenMix?.cached_tokens)} context={windowLabel} />
-              <MetricTile label="LLM events" value={fmtCount(tokenMix?.event_count)} context={windowLabel} />
-            </div>
-            <Card>
-              {tokenPie.length ? (
-                <ResponsiveContainer width="100%" height={220}>
-                  <PieChart>
-                    <Pie data={tokenPie} dataKey="value" nameKey="name" innerRadius={45} outerRadius={80} paddingAngle={3} stroke={C.border}>
-                      {tokenPie.map(item => <Cell key={item.name} fill={item.color} />)}
-                    </Pie>
-                    <Tooltip {...tooltipProps} formatter={(value: any, name: any) => [fmtTokens(Number(value)), String(name)]} />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : <p className="hint">N/A — no measured token mix in this window.</p>}
-            </Card>
-            <InsightFacts title="Token field coverage" facts={insights.token_mix.field_coverage_pct} />
-          </UsageSection>
-
-          <UsageSection title={`Pricing (${windowLabel})`} section={insights.pricing}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
-              <MetricTile label="Known cost" value={fmtUsd(insights.pricing.known_cost_usd)} context={windowLabel} />
-              <MetricTile label="Estimated cost" value={fmtUsd(insights.pricing.estimated_cost_usd)} context={windowLabel} />
-              <MetricTile label="Pricing coverage" value={fmtPct(insights.pricing.pricing_coverage_pct)} context={windowLabel} />
-              <MetricTile label="Unknown-price events" value={fmtCount(insights.pricing.unknown_event_count)} context={windowLabel} />
-            </div>
-            <InsightTable title="Pricing gaps" rows={insights.pricing.gaps} empty="No pricing gaps reported in this window." />
-          </UsageSection>
-
-          <UsageSection title={`Attribution (${windowLabel})`} section={insights.attribution}>
-            <InsightTable title="Attribution rows" rows={insights.attribution.rows} empty="N/A — no attributable usage reported in this window." />
-          </UsageSection>
-
-          <UsageSection title={`Tools (${windowLabel})`} section={insights.tools}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
-              <MetricTile label="Timing coverage" value={fmtPct(insights.tools.timing_coverage_pct)} context={windowLabel} />
-              <MetricTile label="Pricing coverage" value={fmtPct(insights.tools.pricing_coverage_pct)} context={windowLabel} />
-            </div>
-            <InsightTable title="Tool rows" rows={insights.tools.rows} empty="N/A — no tool usage reported in this window." />
-          </UsageSection>
-
-          <UsageSection title={`Reliability (${windowLabel})`} section={insights.reliability}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--space-3)' }}>
-              <InsightFacts title="Logical reliability" facts={insights.reliability.logical} />
-              <InsightFacts title="Physical reliability" facts={insights.reliability.physical} />
-            </div>
-            <div style={{ marginTop: 'var(--space-3)' }}>
-              <h4 style={{ marginBottom: '0.5rem' }}>Current model health</h4>
-              <SectionStatus section={insights.reliability.current_model_cooldown} />
-              <p className="hint">
-                Current in-process state as of {insights.reliability.current_model_cooldown.as_of}; this is not {windowLabel} data.
-              </p>
-              <InsightTable
-                title="Current model cooldown"
-                rows={insights.reliability.current_model_cooldown.rows}
-                empty="N/A — no current model-health facts are available."
-              />
-            </div>
-          </UsageSection>
-
-          <UsageSection title="Budgets (current policy windows)" section={insights.budgets}>
-            <InsightTable title="Budget observations" rows={insights.budgets.rows} empty="N/A — no budget observations reported in this window." />
-          </UsageSection>
-
-          <UsageSection title={`Trends (${windowLabel})`} section={insights.trends}>
-            <InsightFacts title="Trend trace coverage" facts={insights.trends.trace_coverage} />
-            <InsightFacts title="Trend baseline" facts={insights.trends.baseline} />
-            <div style={{ marginTop: 'var(--space-3)' }}>
-              <InsightTable title="Daily trend observations" rows={insights.trends.daily} empty="N/A — no daily trend observations reported in this window." />
-            </div>
-          </UsageSection>
-
-          <UsageSection title={`Research yield (${windowLabel})`} section={insights.research_yield}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--space-3)' }}>
-              <InsightTable title="Produced artifacts" rows={insights.research_yield.artifacts} empty="N/A — no typed research artifacts reported in this window." />
-              <InsightTable title="Artifact lineage" rows={insights.research_yield.lineage} empty="N/A — no factual artifact lineage reported in this window." />
-            </div>
-          </UsageSection>
-        </>
-      )}
+      {!analysis ? <Skeleton label="research yield" /> : <Section title={`Research yield · ${analysisLabel}`} section={analysis.research_yield!}><div className="usage-yield-summary"><MetricTile label="Produced rows" value={count(analysis.research_yield!.artifacts.length)} context="aggregated run/type rows" /><MetricTile label="Lineage stages" value={count(analysis.research_yield!.lineage.length)} context="factual coverage checks" /></div><div className="usage-yield-grid"><InsightTable title="Produced artifacts" rows={analysis.research_yield!.artifacts} empty="No typed research artifacts reported." /><InsightTable title="Artifact lineage" rows={analysis.research_yield!.lineage} empty="No factual artifact lineage reported." /></div></Section>}
     </div>
   )
 }

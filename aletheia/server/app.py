@@ -505,6 +505,13 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Runtime mode %s: background services disabled", runtime_context["runtime_mode"])
     stage_started = _log_startup_stage("scheduler_initialization", stage_started, startup_started)
+    if background_services_enabled:
+        try:
+            from aletheia.economics.pricing_sync import start_pricing_refresh
+
+            start_pricing_refresh(trigger="startup")
+        except Exception as e:
+            logger.warning("Pricing reference refresh failed to start (non-fatal): %s", e)
     # Fail-loud LLM gate, run as a BACKGROUND task (not awaited here): if no
     # provider can actually do inference it pauses the scheduler and persists
     # runtime.paused. Deferring it until AFTER init_scheduler + yield means the

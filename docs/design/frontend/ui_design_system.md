@@ -85,6 +85,20 @@
 
 ## 3. 布局模式
 
+### 指标页的信息顺序与覆盖率位置
+
+指标页按用户问题排序，而不是按数据库表或接口字段排序：**核心事实 → 组成/趋势 →
+归因/诊断 → 数据质量 → 原始明细**。Coverage 是前述事实的可信度说明，不应作为页面的
+第一视觉锚点；页头可放紧凑 quality 摘要，完整 gaps 列表放在事实与诊断之后。
+
+不同分母的 coverage axis 禁止组合成雷达图或总分。雷达面积会暗示轴可比较、可相加；
+改用逐行的 label / coverage / status / reason。子类型指标也必须先检查集合关系：cached
+属于 input，reasoning 属于 output，不能与父总量作为同一饼图的并列切片。完整范例见
+[`usage_insights_design.md`](usage_insights_design.md)。
+
+渐进加载的分组应匹配视觉优先级：先返回首屏核心事实，再启动互相独立的下层查询。
+已显示的 stale 数据可以保留，但必须保留自身窗口标签，禁止用新 selector 的标签包装旧值。
+
 ### Learning Contribution Observability (target)
 
 The `/learning` target uses the same dense terminal language as Blotter rather than a marketing
@@ -720,6 +734,7 @@ UI 改动 commit 前必须过完：
 | 2026-06-29 | bcdcebd | Settings 搜索框从 shell 外移入 panel 内 |
 | 2026-06-29 | 3b9ffff | Universe Board Toggle 加 Row 标签；Exchange Connection tile→select；删 exchange-tile* CSS |
 | 2026-07-18 | (多次) | Blotter 工作站：Overview 决策卡迁移 + Proposals 合并；`fmtCompact` PnL tile 格式化；响应式布局精修（cockpit-rail 禁 column-count → grid/flex）；Settings API key 掩码 + 折叠；cc-heartbeat-zone flex→grid 修复坍塌；全局暗色 scrollbar（color-scheme:dark）；全站表格 `noWrap` 默认开启 |
+| 2026-08-12 | pending | Usage 信息架构：消费优先、父子 token 不重复、三阶段加载、coverage list 替代 radar、所有明细表有界分页 |
 
 ---
 

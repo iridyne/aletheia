@@ -165,9 +165,66 @@ async def test_usage_insights_is_exact_aggregate_only_and_windowed(client):
 
 @pytest.mark.anyio
 async def test_usage_insights_accepts_only_supported_windows(client):
+    assert (await client.get("/api/economics/usage-insights")).json()["window"]["days"] == 1
+    assert (await client.get("/api/economics/usage-insights?days=1")).status_code == 200
     assert (await client.get("/api/economics/usage-insights?days=30")).status_code == 200
     assert (await client.get("/api/economics/usage-insights?days=90")).status_code == 200
-    assert (await client.get("/api/economics/usage-insights?days=1")).status_code == 422
+    assert (await client.get("/api/economics/usage-insights?days=2")).status_code == 422
+
+
+@pytest.mark.anyio
+async def test_usage_insights_groups_return_only_their_progressive_sections(client):
+    expected = {
+        "summary": {"window", "coverage", "token_mix", "pricing", "reliability"},
+        "operations": {"window", "coverage", "attribution", "tools", "budgets", "trends"},
+        "analysis": {"window", "coverage", "research_yield"},
+    }
+
+    for group, keys in expected.items():
+        response = await client.get(f"/api/economics/usage-insights?days=1&group={group}")
+        assert response.status_code == 200
+        assert set(response.json()) == keys
+
+    assert (await client.get("/api/economics/usage-insights?group=invalid")).status_code == 422
+
+
+@pytest.mark.anyio
+async def test_usage_insights_projects_latest_litellm_price_without_rewriting_event(client):
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_llm_cost(
+        db,
+        event_id="historical-unpriced",
+        cost=None,
+        provider="openai_compatible",
+        model="llama-4-maverick",
+        usage_json='{"normalized":{"input_tokens":1000000,"output_tokens":1000000}}',
+    )
+    add_pricing_snapshot(
+        provider="openai_compatible",
+        model="llama-4-maverick",
+        input_usd_per_million=0.2,
+        output_usd_per_million=0.6,
+        source="litellm_public_median:test",
+        version="test",
+    )
+
+    data = (await client.get("/api/economics/usage-insights?days=7")).json()
+
+    assert data["pricing"]["estimated_cost_usd"] == pytest.approx(0.8)
+    assert data["pricing"]["pricing_coverage_pct"] == 100
+    assert data["token_mix"]["total_tokens"] == 2_000_000
+    event_day = next(row for row in data["trends"]["daily"] if row["llm_event_count"] == 1)
+    assert event_day["input_tokens"] == 1_000_000
+    assert event_day["output_tokens"] == 1_000_000
+    assert event_day["estimated_cost_usd"] == pytest.approx(0.8)
+    stored = db.execute(
+        "SELECT estimated_cost_usd,cost_status FROM runtime_cost_events WHERE id=?",
+        ("historical-unpriced",),
+    ).fetchone()
+    assert stored["estimated_cost_usd"] is None
+    assert stored["cost_status"] == "unknown"
 
 
 @pytest.mark.anyio
