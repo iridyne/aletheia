@@ -1,0 +1,284 @@
+"""Minimal machine control plane: `aletheia control status`.
+
+Surfaces master/deployed SHA, active hypotheses, policy epochs, authority,
+and window continuity in one command — so issues like #470/#657 never need
+manually maintained dynamic values in governance documents.
+
+All reads are offline-safe: the command works without a running Gateway.
+"""
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from typing import Any
+
+import typer
+
+control_app = typer.Typer(no_args_is_help=True, help="Machine governance control plane.")
+
+
+def _current_commit() -> str:
+    """Return on-disk HEAD SHA; empty on error."""
+    try:
+        from aletheia.update.git_ops import current_commit as _git_sha, is_repo
+        if is_repo():
+            return _git_sha() or ""
+    except Exception:
+        pass
+    try:
+        from aletheia.update.packaged import current_selection, _paths, _read_json
+        sel = current_selection()
+        current = sel.get("current")
+        if isinstance(current, str) and current:
+            mf = _read_json(_paths()["releases"] / current / "release-manifest.json", required=False)
+            sha = mf.get("git_sha")
+            return sha if isinstance(sha, str) and sha else ""
+    except Exception:
+        pass
+    return ""
+
+
+def _master_commit() -> str:
+    """Return origin/master HEAD SHA; empty if offline or unavailable."""
+    try:
+        from aletheia.update.git_ops import remote_commit
+        return remote_commit("master") or ""
+    except Exception:
+        return ""
+
+
+def _cfg_commit() -> str:
+    """Return the last recorded commit SHA from config."""
+    try:
+        from aletheia.config.loader import load_config
+        return load_config().update.current_commit or ""
+    except Exception:
+        return ""
+
+
+def _open_experiments() -> list[dict[str, Any]]:
+    try:
+        from aletheia.learning.ledger import list_open_experiments
+        return list_open_experiments()
+    except Exception:
+        return []
+
+
+def _open_policy_epochs(limit: int = 10) -> list[dict[str, Any]]:
+    try:
+        from aletheia.storage.sqlite import get_db
+        rows = get_db().execute(
+            "SELECT epoch_id, epoch_kind, effective_values_json, started_at "
+            "FROM learning_policy_epochs WHERE ended_at IS NULL "
+            "ORDER BY started_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    except Exception:
+        return []
+
+
+def _evidence_epochs() -> dict[str, Any]:
+    try:
+        from aletheia.learning.evidence_epoch import evidence_epoch_summary
+        return evidence_epoch_summary()
+    except Exception:
+        return {"error": "unavailable"}
+
+
+def _learning_authority() -> dict[str, Any]:
+    try:
+        from aletheia.learning.control import (
+            learning_influence_gate_reason,
+            global_learning_refreeze_reason,
+        )
+        gate_reason = learning_influence_gate_reason()
+        refreeze_reason = global_learning_refreeze_reason()
+        return {
+            "influence_gate": gate_reason or "open",
+            "global_refreeze": refreeze_reason or "none",
+            "influence_enabled": gate_reason is None,
+        }
+    except Exception:
+        return {"error": "unavailable"}
+
+
+def _runtime_continuity() -> dict[str, Any]:
+    try:
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        return {
+            "enabled": cfg.runtime.runtime_continuity_enabled,
+            "paused": cfg.runtime.paused,
+        }
+    except Exception:
+        return {"error": "unavailable"}
+
+
+def _gateway_running() -> bool | None:
+    try:
+        from aletheia.gateway.pidfile import is_running
+        return is_running()
+    except Exception:
+        return None
+
+
+def build_control_status() -> dict[str, Any]:
+    """Collect all governance-relevant state into one serializable dict."""
+    deployed = _current_commit()
+    master = _master_commit()
+    cfg_sha = _cfg_commit()
+
+    sha_section = {
+        "deployed_head": deployed,
+        "deployed_head_short": deployed[:12] if deployed else "not_available",
+        "master_head": master,
+        "master_head_short": master[:12] if master else "not_available",
+        "config_recorded": cfg_sha,
+        "config_recorded_short": cfg_sha[:12] if cfg_sha else "not_available",
+        "deployed_matches_config": (
+            bool(deployed and cfg_sha and deployed[:12] == cfg_sha[:12])
+            if deployed and cfg_sha else None
+        ),
+        "deployed_matches_master": (
+            bool(deployed and master and deployed[:12] == master[:12])
+            if deployed and master else None
+        ),
+    }
+
+    # Active hypotheses / open experiments
+    experiments = _open_experiments()
+    active_hypotheses: list[dict[str, Any]] = []
+    for exp in experiments:
+        active_hypotheses.append({
+            "experiment_id": exp.get("experiment_id"),
+            "hypothesis_id": exp.get("hypothesis_id"),
+            "stage": exp.get("stage"),
+            "status": exp.get("status"),
+            "started_at": exp.get("started_at"),
+            "policy_epoch": exp.get("policy_epoch"),
+        })
+
+    # Policy epochs (most recent open)
+    raw_epochs = _open_policy_epochs(limit=8)
+    open_epochs: list[dict[str, Any]] = []
+    for row in raw_epochs:
+        open_epochs.append({
+            "epoch_id": row.get("epoch_id"),
+            "epoch_kind": row.get("epoch_kind"),
+            "started_at": row.get("started_at"),
+        })
+
+    # Evidence epochs (trailing + entry)
+    evidence = _evidence_epochs()
+    authority = _learning_authority()
+    continuity = _runtime_continuity()
+    gateway = _gateway_running()
+
+    return {
+        "as_of": datetime.now(timezone.utc).isoformat(),
+        "sha": sha_section,
+        "gateway_running": gateway,
+        "runtime": continuity,
+        "authority": authority,
+        "active_experiments": active_hypotheses,
+        "open_policy_epochs": open_epochs,
+        "evidence_epochs": evidence,
+        "window_continuity": {
+            "evidence_anchored": evidence.get("all_anchored", False),
+            "evidence_sha_consistent": evidence.get("all_sha_consistent", False),
+            "deployed_head_consistent": sha_section["deployed_matches_config"],
+        },
+    }
+
+
+@control_app.command("status")
+def status(
+    json_output: bool = typer.Option(False, "--json", help="Print raw JSON."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Include open policy epochs."),
+):
+    """Show the machine governance control-plane snapshot.
+
+    Reports master/deployed SHA, active hypotheses, policy epochs, authority
+    state, and observation window continuity — eliminating the need for
+    manually maintained dynamic values in issue trackers (e.g. #470, #657).
+    """
+    data = build_control_status()
+
+    if json_output:
+        typer.echo(json.dumps(data, indent=2, ensure_ascii=False))
+        return
+
+    sha = data["sha"]
+    continuity = data["window_continuity"]
+    authority = data.get("authority", {})
+    evidence = data.get("evidence_epochs", {})
+
+    # ─── Header ────────────────────────────────────────────────────────────
+    typer.echo("╔═ Aletheia Control Status ════════════════════════════╗")
+    typer.echo(f"  As of     : {data['as_of'][:19]}Z")
+    typer.echo(f"  Gateway   : {'running' if data.get('gateway_running') else 'stopped' if data.get('gateway_running') is False else 'unknown'}")
+    paused = data.get("runtime", {}).get("paused")
+    typer.echo(f"  Paused    : {paused}")
+    typer.echo("╠═ SHA ════════════════════════════════════════════════╣")
+    typer.echo(f"  Deployed  : {sha['deployed_head_short']}{'  ✓ matches config' if sha.get('deployed_matches_config') else '  ⚠ config disagrees' if sha.get('deployed_matches_config') is False else ''}")
+    typer.echo(f"  Master    : {sha['master_head_short']}{'  (ahead)' if sha.get('deployed_matches_master') is False else '  (at HEAD)' if sha.get('deployed_matches_master') else ''}")
+    typer.echo(f"  Config    : {sha['config_recorded_short']}")
+
+    # ─── Authority ─────────────────────────────────────────────────────────
+    typer.echo("╠═ Authority ══════════════════════════════════════════╣")
+    if "error" in authority:
+        typer.echo("  (unavailable — gateway may be stopped)")
+    else:
+        gate = authority.get("influence_gate", "unknown")
+        refreeze = authority.get("global_refreeze", "none")
+        typer.echo(f"  Influence gate : {gate}")
+        typer.echo(f"  Global refreeze: {refreeze}")
+
+    # ─── Active experiments / hypotheses ───────────────────────────────────
+    typer.echo("╠═ Active Hypotheses ══════════════════════════════════╣")
+    exps = data.get("active_experiments", [])
+    if not exps:
+        typer.echo("  (none open)")
+    else:
+        for exp in exps:
+            typer.echo(
+                f"  [{exp.get('stage', '?')}] {exp.get('experiment_id', '?')[:16]}  "
+                f"status={exp.get('status', '?')}  "
+                f"started={str(exp.get('started_at') or '')[:19]}"
+            )
+            if exp.get("policy_epoch"):
+                typer.echo(f"      epoch: {exp['policy_epoch'][:12]}...")
+
+    # ─── Evidence epoch window ─────────────────────────────────────────────
+    typer.echo("╠═ Evidence Epochs ════════════════════════════════════╣")
+    all_ok = evidence.get("all_anchored") and evidence.get("all_sha_consistent")
+    typer.echo(f"  Anchored : {evidence.get('all_anchored', False)}   SHA consistent: {evidence.get('all_sha_consistent', False)}")
+    for path in evidence.get("paths", []):
+        flag = "✓" if path.get("sha_consistent") else ("!" if path.get("sha_consistent") is False else "?")
+        typer.echo(
+            f"  {flag} {path['path_id']}: {path.get('status', '?')}  "
+            f"started={str(path.get('started_at') or 'none')[:19]}"
+        )
+
+    # ─── Window continuity ─────────────────────────────────────────────────
+    typer.echo("╠═ Window Continuity ══════════════════════════════════╣")
+    for key, val in continuity.items():
+        flag = "✓" if val is True else ("⚠" if val is False else "?")
+        typer.echo(f"  {flag} {key}: {val}")
+
+    # ─── Open policy epochs (verbose) ──────────────────────────────────────
+    if verbose:
+        typer.echo("╠═ Open Policy Epochs ═════════════════════════════════╣")
+        epochs = data.get("open_policy_epochs", [])
+        if not epochs:
+            typer.echo("  (none)")
+        else:
+            for ep in epochs:
+                typer.echo(
+                    f"  [{ep.get('epoch_kind', '?')[:40]}]  "
+                    f"id={str(ep.get('epoch_id') or '')[:12]}  "
+                    f"started={str(ep.get('started_at') or '')[:19]}"
+                )
+
+    typer.echo("╚══════════════════════════════════════════════════════╝")
