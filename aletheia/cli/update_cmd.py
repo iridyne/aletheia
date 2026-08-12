@@ -11,6 +11,7 @@ update_app = typer.Typer(
     invoke_without_command=True,
     help="Update a source checkout end to end or manage packaged releases.",
 )
+auto_app = typer.Typer(no_args_is_help=True, help="Follow stable release tags on a Linux Paper source runtime.")
 
 
 def _is_packaged() -> bool:
@@ -157,3 +158,63 @@ def rollback(yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmat
             typer.echo(f"  {result['message']}", err=True)
         raise typer.Exit(1)
     typer.echo("Rollback request accepted. Aletheia Tray will restore the checkpoint safely.")
+
+
+@auto_app.command("status")
+def auto_status(json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON.")):
+    """Show durable release-tag deployment state without checking the network."""
+    from aletheia.update.auto import status
+
+    result = status()
+    if json_output:
+        typer.echo(json.dumps(result, ensure_ascii=False))
+        return
+    typer.echo(f"Phase: {result.get('phase', 'idle')}")
+    typer.echo(f"Status: {result.get('status', 'not_installed')}")
+    if result.get("target_tag"):
+        typer.echo(f"Target: {result['target_tag']} ({str(result.get('target_sha') or '')[:12]})")
+    if result.get("reason"):
+        typer.echo(f"Reason: {result['reason']}")
+
+
+@auto_app.command("run")
+def auto_run():
+    """Check once and deploy a newer stable release tag when every gate passes."""
+    from aletheia.update.auto import run
+
+    result = run()
+    typer.echo(result.get("reason", "unknown"))
+
+
+@auto_app.command("resume")
+def auto_resume():
+    """Clear a recovery hold after the operator has repaired the runtime."""
+    from aletheia.update.auto import resume
+
+    result = resume()
+    typer.echo(result.get("reason", "resumed"))
+
+
+@auto_app.command("install")
+def auto_install():
+    """Install and enable the hourly user-level systemd timer on Fedora."""
+    from aletheia.update.auto import install
+
+    result = install()
+    typer.echo(result.get("reason", "unknown"))
+    if not result.get("ok"):
+        raise typer.Exit(1)
+
+
+@auto_app.command("uninstall")
+def auto_uninstall():
+    """Remove only Aletheia's release-tag timer and service units."""
+    from aletheia.update.auto import uninstall
+
+    result = uninstall()
+    typer.echo(result.get("reason", "unknown"))
+    if not result.get("ok"):
+        raise typer.Exit(1)
+
+
+update_app.add_typer(auto_app, name="auto")
