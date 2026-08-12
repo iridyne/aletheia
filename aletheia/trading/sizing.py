@@ -116,8 +116,10 @@ def vol_target_size(
     # Resolve market volatility once so baseline and treatment differ only in the
     # persona Learning proposal, never because they observed different inputs.
     atr_pct = atr_pct_override
+    atr_snapshot = None
     if cfg.trading.vol_sizing_enabled and atr_pct is None:
-        atr_pct = _lookup_atr_pct(symbol)
+        atr_snapshot = _lookup_atr_snapshot(symbol)
+        atr_pct = atr_snapshot["atr_pct"] if atr_snapshot else None
 
     def _from_params(params: dict) -> tuple[float, dict]:
         base = float(params["notional_usdt"])
@@ -178,6 +180,7 @@ def vol_target_size(
         "conviction": conviction,
         "drawdown_pct": drawdown_pct,
         "vol_sizing_enabled": bool(cfg.trading.vol_sizing_enabled),
+        "atr_snapshot": atr_snapshot,
         "persona": static_params.get("_persona", "legacy"),
         "legacy_parameter_name": "kelly_fraction",
         "baseline_calculation": baseline_calculation,
@@ -195,18 +198,34 @@ def _lookup_atr_pct(symbol: str) -> float | None:
     universe_feature_snapshots uses asset_id (FK → universe_registry) + ts,
     not symbol + snapshot_at. We join through universe_registry to filter by symbol.
     """
+    snapshot = _lookup_atr_snapshot(symbol)
+    return float(snapshot["atr_pct"]) if snapshot else None
+
+
+def _lookup_atr_snapshot(symbol: str) -> dict | None:
+    """Return the exact feature row selected by the existing symbol lookup."""
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
         row = db.execute(
-            "SELECT ufs.atr_pct FROM universe_feature_snapshots ufs "
+            "SELECT ufs.id AS feature_snapshot_id,ufs.ts AS feature_ts,"
+            "ufs.atr_pct,ur.id AS asset_id,ur.venue,ur.symbol,ur.market_type "
+            "FROM universe_feature_snapshots ufs "
             "JOIN universe_registry ur ON ufs.asset_id = ur.id "
             "WHERE ur.symbol = ? "
             "ORDER BY ufs.ts DESC LIMIT 1",
             (symbol,),
         ).fetchone()
-        if row and row[0]:
-            return float(row[0])
+        if row and row["atr_pct"]:
+            return {
+                "feature_snapshot_id": row["feature_snapshot_id"],
+                "feature_ts": row["feature_ts"],
+                "asset_id": row["asset_id"],
+                "venue": row["venue"],
+                "symbol": row["symbol"],
+                "market_type": row["market_type"],
+                "atr_pct": float(row["atr_pct"]),
+            }
     except Exception:
         pass
     return None

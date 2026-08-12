@@ -149,6 +149,33 @@ def test_vol_target_size_emits_complete_non_kelly_policy_trace(monkeypatch):
     assert trace["baseline_calculation"]["atr_pct"] == 2.0
     assert trace["baseline_calculation"]["effective_scaling_fraction"] == 0.1
     assert trace["baseline_calculation"]["final_notional_usdt"] == result
+    assert trace["atr_snapshot"] is None
+
+
+def test_vol_target_size_freezes_selected_atr_instrument_lineage(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    from aletheia.trading import sizing
+
+    cfg = AletheiaConfig()
+    cfg.trading.vol_sizing_enabled = True
+    snapshot = {
+        "feature_snapshot_id": "feature-1",
+        "feature_ts": "2026-08-12T20:00:00+00:00",
+        "asset_id": "asset-1",
+        "venue": "bitget",
+        "symbol": "BTC/USDT",
+        "market_type": "perp",
+        "atr_pct": 2.0,
+    }
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(sizing, "_lookup_atr_snapshot", lambda _symbol: snapshot)
+    trace: dict = {}
+
+    sizing.vol_target_size("BTC/USDT", sizing_trace=trace)
+
+    assert trace["atr_snapshot"] == snapshot
+    assert trace["baseline_calculation"]["atr_pct"] == 2.0
 
 
 def test_trading_settings_reject_invalid_legacy_sizing_scalars(tmp_path, monkeypatch):

@@ -36,6 +36,23 @@ def _evidence(monkeypatch, **row_overrides):
         source="native",
         status="filled",
         created_at=_iso(-35),
+        agent_rationale="test\n---\n" + json.dumps({
+            "sizing_learning": {
+                "policy_version": "conviction-weighted-notional/v1",
+                "value_source": "deterministic_sizing_policy",
+                "atr_snapshot": {
+                    "feature_snapshot_id": "feature-1",
+                    "feature_ts": _iso(-36),
+                    "asset_id": "asset-1",
+                    "venue": "bitget",
+                    "symbol": "BTC/USDT",
+                    "market_type": "spot",
+                    "atr_pct": 2.0,
+                },
+                "baseline_calculation": {"atr_pct": 2.0},
+                "learned_calculation": {"atr_pct": 2.0},
+            },
+        }),
     )
     proposal.commit_hash = repo._compute_proposal_hash(proposal)
     proposal_dict = proposal.model_dump()
@@ -115,8 +132,11 @@ def test_calculates_only_verified_historical_geometry(monkeypatch):
     assert result["proposal_stop_distance"] == pytest.approx(5.0)
     assert result["proposal_target_distance"] == pytest.approx(10.0)
     assert result["initial_plan_provenance"] == "Operator"
-    assert result["entry_atr_status"] == "unavailable"
-    assert result["entry_atr_reason"] == "entry_atr_lineage_unavailable"
+    assert result["entry_atr_status"] == "available"
+    assert result["entry_atr_reason"] == "validated_hashed_sizing_atr_pct"
+    assert result["entry_atr"] == pytest.approx(2.0)
+    assert result["stop_distance_entry_atr"] == pytest.approx(2.5)
+    assert result["target_distance_entry_atr"] == pytest.approx(5.0)
     assert result["initial_risk_amount"] == pytest.approx(10.0)
     assert result["realized_net_r"] == pytest.approx(0.9)
     # paper-fill-close-bar-v1 applies adverse sell-side slippage first, then
@@ -155,6 +175,8 @@ def test_proposal_geometry_uses_the_shared_rounded_risk_reward_contract(monkeypa
         (lambda row, proposal, *_: proposal.update(risk_reward=3.0), "proposal_geometry", "proposal_risk_reward_mismatch"),
         (lambda row, proposal, position, *_: position.update(proposal_id="other"), "proposal_geometry", "proposal_position_identity_mismatch"),
         (lambda row, *_: row.update(path_evidence_status="bounded"), "path_normalization", "exact_trade_path_unavailable"),
+        (lambda row, proposal, *_: proposal.update(agent_rationale="no sizing trace"), "entry_atr", "entry_atr_lineage_unavailable"),
+        (lambda row, proposal, *_: proposal.update(agent_rationale=proposal["agent_rationale"].replace('"market_type": "spot"', '"market_type": "perp"')), "entry_atr", "entry_atr_lineage_unavailable"),
     ],
 )
 def test_conflicting_or_bounded_evidence_fails_closed(monkeypatch, mutation, section, reason):
@@ -278,16 +300,16 @@ def test_lists_only_actual_trailing_revisions_and_validates_dual_hit(monkeypatch
     assert venue_mismatch["protective_trigger_reason"] == "protective_trigger_path_identity_mismatch"
 
 
-def test_rendering_preserves_unavailable_reasons_and_trigger_evidence(monkeypatch):
+def test_rendering_preserves_atr_and_unavailable_path_reasons(monkeypatch):
     row, *_ = _evidence(monkeypatch, path_evidence_status="bounded")
     built = geometry._build_row(row)
     text = geometry.render_entry_exit_geometry_audit({"hours": 24, "position_count": 1, "rows": [built]})
     encoded = json.loads(json.dumps(built))
 
-    assert "Entry ATR: unavailable (entry_atr_lineage_unavailable)" in text
+    assert "Entry ATR: stop/ATR=2.5, target/ATR=5.0" in text
     assert "Rounded path ratios: unavailable (exact_trade_path_unavailable)" in text
     assert "Protective trigger: unavailable (protective_trigger_unavailable)" in text
-    assert encoded["entry_atr"] is None
+    assert encoded["entry_atr"] == pytest.approx(2.0)
     assert encoded["mfe_r"] is None
     assert isinstance(encoded["proposal_gross_risk_reward"], float)
 

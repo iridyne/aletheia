@@ -167,6 +167,7 @@ def _build_row(path_row: dict[str, Any], *, db: Any = None) -> dict[str, Any]:
 
     geometry = _proposal_geometry(path_row, proposal, position, db=db)
     result.update(geometry)
+    result.update(_entry_atr(proposal, geometry))
     history = _plan_history(plans, position)
     result.update(history)
     initial = _initial_risk(path_row, position, proposal, plans, geometry, db=db)
@@ -175,6 +176,79 @@ def _build_row(path_row: dict[str, Any], *, db: Any = None) -> dict[str, Any]:
     result.update(_path_normalization(path_row, initial))
     result.update(_protective_trigger(path_row, position, state, trigger, plans))
     return result
+
+
+def _entry_atr(
+    proposal: dict[str, Any] | None,
+    geometry: dict[str, Any],
+) -> dict[str, Any]:
+    base = {
+        "entry_atr_status": "unavailable",
+        "entry_atr_reason": "entry_atr_lineage_unavailable",
+        "entry_atr": None,
+        "stop_distance_entry_atr": None,
+        "target_distance_entry_atr": None,
+    }
+    if proposal is None or geometry.get("proposal_geometry_status") != "available":
+        return base
+    rationale = proposal.get("agent_rationale")
+    if not isinstance(rationale, str) or "\n---\n" not in rationale:
+        return base
+    try:
+        metadata = json.loads(rationale.rsplit("\n---\n", 1)[1])
+    except (TypeError, ValueError):
+        return base
+    trace = metadata.get("sizing_learning") if isinstance(metadata, dict) else None
+    if (
+        not isinstance(trace, dict)
+        or trace.get("policy_version") != "conviction-weighted-notional/v1"
+        or trace.get("value_source") != "deterministic_sizing_policy"
+    ):
+        return base
+    baseline = trace.get("baseline_calculation")
+    learned = trace.get("learned_calculation")
+    snapshot = trace.get("atr_snapshot")
+    if (
+        not isinstance(baseline, dict)
+        or not isinstance(learned, dict)
+        or not isinstance(snapshot, dict)
+    ):
+        return base
+    atr_pct = _positive(baseline.get("atr_pct"))
+    learned_atr_pct = _positive(learned.get("atr_pct"))
+    price = _positive(geometry.get("proposal_price"))
+    stop_distance = _positive(geometry.get("proposal_stop_distance"))
+    target_distance = _positive(geometry.get("proposal_target_distance"))
+    snapshot_atr_pct = _positive(snapshot.get("atr_pct"))
+    proposal_market = _physical_market(proposal.get("market_type"))
+    snapshot_market = _physical_market(snapshot.get("market_type"))
+    if (
+        None in (
+            atr_pct, learned_atr_pct, snapshot_atr_pct, price,
+            stop_distance, target_distance,
+        )
+        or not _same(atr_pct, learned_atr_pct)
+        or not _same(atr_pct, snapshot_atr_pct)
+        or snapshot.get("symbol") != proposal.get("symbol")
+        or proposal_market is None
+        or snapshot_market != proposal_market
+        or not all(snapshot.get(key) for key in (
+            "feature_snapshot_id", "feature_ts", "asset_id", "venue",
+        ))
+    ):
+        return base
+    assert atr_pct is not None and price is not None
+    assert stop_distance is not None and target_distance is not None
+    entry_atr = price * atr_pct / 100.0
+    if not math.isfinite(entry_atr) or entry_atr <= 0:
+        return base
+    return {
+        "entry_atr_status": "available",
+        "entry_atr_reason": "validated_hashed_sizing_atr_pct",
+        "entry_atr": entry_atr,
+        "stop_distance_entry_atr": stop_distance / entry_atr,
+        "target_distance_entry_atr": target_distance / entry_atr,
+    }
 
 
 def _proposal_geometry(
