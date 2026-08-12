@@ -1668,17 +1668,17 @@ def get_knowledge(
 
 @router.get("/knowledge/research-notes")
 def get_research_notes():
-    return get_knowledge(type="research_note")
+    return get_knowledge(type="research_note", limit=50)
 
 
 @router.get("/knowledge/dreaming-logs")
 def get_dreaming_logs():
-    return get_knowledge(type="dreaming_log")
+    return get_knowledge(type="dreaming_log", limit=50)
 
 
 @router.get("/knowledge/strategy-memory")
 def get_strategy_memory():
-    return get_knowledge(type="strategy_memory")
+    return get_knowledge(type="strategy_memory", limit=50)
 
 
 def _guard_experiments_by_id() -> dict[str, dict]:
