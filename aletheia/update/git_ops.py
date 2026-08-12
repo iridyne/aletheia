@@ -97,24 +97,36 @@ def changed_files(old: str, new: str) -> list[str]:
     return [line.strip() for line in r.stdout.splitlines() if line.strip()]
 
 
+
+
 def pull(branch: str = "master") -> dict:
-    """Fast-forward to the exact fetched origin HEAD, rejecting local-only commits."""
+    """Fast-forward to the exact SHA returned by this operation's fetch."""
     if not git_available():
         return {"ok": False, "reason": "git_unavailable"}
-    r = _git("fetch", "origin", branch)
+
+    # Fetch into an operation-owned ref. FETCH_HEAD and origin/<branch> are
+    # repository-wide mutable state and can be overwritten by another fetch
+    # between subprocess calls.
+    target_ref = f"refs/aletheia/update/{branch}"
+    r = _git("fetch", "--no-write-fetch-head", "origin", f"{branch}:{target_ref}")
     if r.returncode != 0:
         return {"ok": False, "reason": "fetch_failed", "stderr": r.stderr.strip()}
+    r = _git("rev-parse", "--verify", target_ref)
+    target = r.stdout.strip() if r.returncode == 0 else ""
+    if not target:
+        return {"ok": False, "reason": "remote_state_unavailable"}
 
-    ahead = ahead_count(branch)
+    r = _git("rev-list", "--count", f"{target}..HEAD")
+    try:
+        ahead = int(r.stdout.strip()) if r.returncode == 0 else -1
+    except ValueError:
+        ahead = -1
     if ahead < 0:
         return {"ok": False, "reason": "remote_state_unavailable"}
     if ahead:
         return {"ok": False, "reason": "local_ahead", "ahead_count": ahead}
 
-    target = remote_commit(branch)
-    if not target:
-        return {"ok": False, "reason": "remote_state_unavailable"}
-    r = _git("merge", "--ff-only", f"origin/{branch}")
+    r = _git("merge", "--ff-only", target)
     if r.returncode != 0:
         return {"ok": False, "reason": "ff_only_rejected", "stderr": r.stderr.strip()}
     current = current_commit()

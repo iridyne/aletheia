@@ -428,10 +428,44 @@ def _read_update_state(cli: Path, *, env: dict[str, str]) -> dict[str, Any]:
     return value
 
 
+_OLD_CLI_HINTS = ("update apply", "commands:", "apply")
+
+
+def _trigger_update(cli: Path, *, env: dict[str, str]) -> None:
+    """Invoke the installed CLI's update command with version-boundary fallback.
+
+    Post-#910 CLIs accept ``aletheia update`` (bare). Pre-#909 packaged CLIs
+    either print the explicit legacy command or Typer's command help containing
+    an ``apply`` subcommand. Retry only for those recognized command shapes.
+    """
+    result = subprocess.run(
+        [str(cli), "update"],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return
+    combined = f"{result.stderr or ''}\n{result.stdout or ''}".lower()
+    explicit_hint, commands_heading, apply_command = _OLD_CLI_HINTS
+    legacy_cli = explicit_hint in combined or (
+        result.returncode == 2
+        and commands_heading in combined
+        and apply_command in combined
+    )
+    if legacy_cli:
+        _cli_run(cli, ["update", "apply", "--yes"], env=env)
+        return
+    detail = (result.stderr or result.stdout).strip()
+    raise WindowsDogfoodError(f"aletheia CLI failed ({result.returncode}): {detail}")
+
+
 def _apply_update(cli: Path, feed_url: str, timeout_sec: int) -> dict[str, Any]:
     env = dict(os.environ, ALETHEIA_UPDATE_FEED_URL=feed_url)
     _cli_run(cli, ["update", "check"], env=env)
-    _cli_run(cli, ["update"], env=env)
+    _trigger_update(cli, env=env)
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         state = _read_update_state(cli, env=env)

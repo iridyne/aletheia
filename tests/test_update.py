@@ -68,8 +68,15 @@ def test_pull_rejects_local_ahead_before_merge(monkeypatch):
 
     def fake_git(*args):
         calls.append(args)
-        if args[0] == "fetch":
+        if args == (
+            "fetch",
+            "--no-write-fetch-head",
+            "origin",
+            "master:refs/aletheia/update/master",
+        ):
             return _FakeProc()
+        if args == ("rev-parse", "--verify", "refs/aletheia/update/master"):
+            return _FakeProc(stdout="fetched111\n")
         if args[0] == "rev-list":
             return _FakeProc(stdout="1\n")
         pytest.fail(f"unexpected git call: {args}")
@@ -83,21 +90,29 @@ def test_pull_rejects_local_ahead_before_merge(monkeypatch):
     assert not any(call[0] == "merge" for call in calls)
 
 
-def test_pull_finishes_at_exact_fetched_remote_head(monkeypatch):
+def test_pull_merges_to_operation_owned_ref_sha(monkeypatch):
+    """The fetch target must not share FETCH_HEAD or origin/<branch> state."""
     from aletheia.update import git_ops
 
     calls = []
 
     def fake_git(*args):
         calls.append(args)
-        if args[0] in {"fetch", "merge"}:
-            return _FakeProc(stdout="updated\n")
-        if args[0] == "rev-list":
+        if args == (
+            "fetch",
+            "--no-write-fetch-head",
+            "origin",
+            "master:refs/aletheia/update/master",
+        ):
+            return _FakeProc()
+        if args == ("rev-parse", "--verify", "refs/aletheia/update/master"):
+            return _FakeProc(stdout="fetched_sha\n")
+        if args == ("rev-list", "--count", "fetched_sha..HEAD"):
             return _FakeProc(stdout="0\n")
-        if args == ("rev-parse", "origin/master"):
-            return _FakeProc(stdout="new222\n")
+        if args == ("merge", "--ff-only", "fetched_sha"):
+            return _FakeProc(stdout="Fast-forward\n")
         if args == ("rev-parse", "HEAD"):
-            return _FakeProc(stdout="new222\n")
+            return _FakeProc(stdout="fetched_sha\n")
         pytest.fail(f"unexpected git call: {args}")
 
     monkeypatch.setattr(git_ops, "git_available", lambda: True)
@@ -106,8 +121,10 @@ def test_pull_finishes_at_exact_fetched_remote_head(monkeypatch):
     result = git_ops.pull("master")
 
     assert result["ok"] is True
-    assert result["remote_commit"] == "new222"
-    assert ("merge", "--ff-only", "origin/master") in calls
+    assert result["remote_commit"] == "fetched_sha"
+    assert ("merge", "--ff-only", "fetched_sha") in calls
+    assert not any("FETCH_HEAD" in call for call in calls)
+    assert not any("origin/master" in call for call in calls)
 
 
 def test_check_for_update_writes_last_check(tmp_path, monkeypatch):
