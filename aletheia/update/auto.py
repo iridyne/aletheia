@@ -180,7 +180,7 @@ def _runtime_gate(*, expected_sha: str | None = None, expected_version: str | No
         "paper_internal": status.get("paper_execution_mode") == "paper_internal",
         "local_paper": status.get("execution_target") == "local_paper",
         "live_disabled": status.get("live_state") == "live_disabled",
-        "health": health.get("healthy") is True,
+        "health": health.get("status") == "healthy",
     }
     if expected_sha:
         required["boot_commit"] = status.get("boot_commit") == expected_sha
