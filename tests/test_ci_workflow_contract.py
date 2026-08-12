@@ -519,6 +519,8 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     assert "headRefOid" in update_script
     assert "pullRequest.headRefOid !== expectedHeadSha" in update_script
     assert "pullRequest.mergeStateStatus === 'CLEAN'" in update_script
+    assert "pullRequest.mergeStateStatus === 'UNSTABLE' && !releaseAfterMerge" in update_script
+    assert "releaseAfterMerge && pullRequest.mergeStateStatus === 'UNSTABLE'" in update_script
     assert "github.rest.pulls.merge" in update_script
     assert "sha: expectedHeadSha" in update_script
     assert "merge_method: 'squash'" in update_script

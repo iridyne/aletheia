@@ -262,7 +262,10 @@ jobs:
                 core.info('exact release candidate verification still holds this pull request');
                 return;
               }
-              if (['UNKNOWN', 'UNSTABLE'].includes(pullRequest.mergeStateStatus)) {
+              if (
+                pullRequest.mergeStateStatus === 'UNKNOWN' ||
+                (pullRequest.mergeStateStatus === 'UNSTABLE' && !releaseAfterMerge)
+              ) {
                 if (attempt === maxAttempts) {
                   throw new Error(
                     `pull request remained ${pullRequest.mergeStateStatus} after ${maxAttempts} checks`,
@@ -275,7 +278,10 @@ jobs:
                 await new Promise((resolve) => setTimeout(resolve, 5000));
                 continue;
               }
-              if (pullRequest.mergeStateStatus === 'CLEAN') {
+              if (
+                pullRequest.mergeStateStatus === 'CLEAN' ||
+                (releaseAfterMerge && pullRequest.mergeStateStatus === 'UNSTABLE')
+              ) {
                 const mergeResult = await github.rest.pulls.merge({
                   ...context.repo,
                   pull_number: pullRequestNumber,
