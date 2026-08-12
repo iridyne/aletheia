@@ -548,7 +548,10 @@ async def test_lesson_reviewer_surfaces_structured_judgment_failure(monkeypatch)
     from unittest.mock import AsyncMock
 
     from aletheia.learning.lessons import LessonStore
+    from aletheia.model_provider.inference_contract import CALLER_SPECS, OutputMode
     import aletheia.agents.lesson_reviewer as lr
+
+    assert CALLER_SPECS["lesson_reviewer.judge"].output_mode is OutputMode.STRUCTURED
 
     lesson = LessonStore().create("scoped", "trade_case_study", "case-1")
     monkeypatch.setattr(
