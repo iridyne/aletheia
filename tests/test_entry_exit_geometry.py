@@ -133,6 +133,22 @@ def test_calculates_only_verified_historical_geometry(monkeypatch):
     assert result["path_ratio_precision"] == "derived_from_rounded_4dp_excursion_pct"
 
 
+def test_proposal_geometry_uses_the_shared_rounded_risk_reward_contract(monkeypatch):
+    row, proposal, position, *_ = _evidence(monkeypatch)
+    proposal.update(take_profit=112.345, risk_reward=2.47)
+
+    valid = geometry._proposal_geometry(row, proposal, position)
+
+    assert valid["proposal_geometry_status"] == "available"
+    assert valid["proposal_gross_risk_reward"] == pytest.approx(2.47)
+
+    proposal["risk_reward"] = 2.46
+    invalid = geometry._proposal_geometry(row, proposal, position)
+
+    assert invalid["proposal_geometry_status"] == "unavailable"
+    assert invalid["proposal_geometry_reason"] == "proposal_risk_reward_mismatch"
+
+
 @pytest.mark.parametrize(
     ("mutation", "section", "reason"),
     [
