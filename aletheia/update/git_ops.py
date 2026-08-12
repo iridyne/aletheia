@@ -60,6 +60,69 @@ def fetch(branch: str = "master") -> dict:
     return {"ok": True}
 
 
+def fetch_release_tags() -> dict:
+    """Fetch the master history and tags used by the source-runtime updater."""
+    if not git_available():
+        return {"ok": False, "reason": "git_unavailable"}
+    r = _git("fetch", "origin", "master", "--tags")
+    if r.returncode != 0:
+        return {"ok": False, "reason": "fetch_failed", "stderr": r.stderr.strip()}
+    return {"ok": True}
+
+
+def tag_names() -> list[str]:
+    """Return local tag names after a successful fetch, or an empty list on error."""
+    r = _git("tag", "--list")
+    return [line.strip() for line in r.stdout.splitlines() if line.strip()] if r.returncode == 0 else []
+
+
+def remote_tag_names() -> set[str] | None:
+    """Return stable tag names currently advertised by ``origin``.
+
+    Local tags may outlive a remote deletion or be created by an operator, so
+    they are never sufficient authority for automatic deployment.
+    """
+    r = _git("ls-remote", "--tags", "--refs", "origin")
+    if r.returncode != 0:
+        return None
+    prefix = "refs/tags/"
+    return {
+        ref[len(prefix):]
+        for line in r.stdout.splitlines()
+        if len((parts := line.split())) == 2
+        for ref in [parts[1]]
+        if ref.startswith(prefix)
+    }
+
+
+def tag_commit(tag: str) -> str:
+    """Resolve either a lightweight or annotated tag to its commit SHA."""
+    r = _git("rev-list", "-n", "1", tag)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def is_ancestor(older: str, newer: str) -> bool:
+    r = _git("merge-base", "--is-ancestor", older, newer)
+    return r.returncode == 0
+
+
+def version_at_ref(ref: str) -> str:
+    """Read the product version from a Git object without checking it out."""
+    r = _git("show", f"{ref}:aletheia/__init__.py")
+    return r.stdout if r.returncode == 0 else ""
+
+
+def merge_fast_forward(target: str) -> dict:
+    """Advance the source checkout to a previously pinned commit only."""
+    r = _git("merge", "--ff-only", target)
+    if r.returncode != 0:
+        return {"ok": False, "reason": "ff_only_rejected", "stderr": r.stderr.strip()}
+    actual = current_commit()
+    if actual != target:
+        return {"ok": False, "reason": "source_not_at_target", "current_commit": actual}
+    return {"ok": True, "output": r.stdout.strip()}
+
+
 def behind_count(branch: str = "master") -> int:
     """How many commits HEAD is behind origin/<branch>. -1 on error."""
     r = _git("rev-list", "--count", f"HEAD..origin/{branch}")

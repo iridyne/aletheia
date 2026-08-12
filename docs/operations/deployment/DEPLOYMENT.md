@@ -71,16 +71,51 @@ eligible exposure 开新窗口。PR merge 本身不等于部署。
 
 ### 无人值守升级边界
 
-**当前尚未实现无人值守升级。** `UpdateConfig` 明确把 source-checkout updater
-定义为 human-triggered；因此不能把上面的 SSH 命令直接塞进 `systemd timer` 就宣称完成。
-现有路径缺少跨进程 update lock、CI 候选 SHA 授权、自动 provenance/settlement 验收，
-而 schema 变更后的失败也不能安全地用 Git 回退。
+Fedora Paper Candidate 可以跟随正式 Release Tag；人保留的授权动作是发布正式
+`vX.Y.Z` Tag，而不是登录 Fedora 执行 `git pull`。只接受严格稳定 SemVer：
+`v1.2.3` 可以部署，`v1.2.3-rc.1`、`-hold.1`、`-noauto.1` 和其他预发布 Tag
+一律忽略。下一个正式 Tag 会自然越过已忽略的预发布候选。
 
-签名不可变 Linux Runtime、headless stable host、自动 activation 和 recovery 的未来设计
-只记录在 draft
-[Fedora immutable Runtime updates Proposal](../../design/proposals/fedora_immutable_runtime_updates.md)
-中。在该 Proposal 被接受、实现并通过恢复演练前，Fedora 继续使用本节的
-owner-triggered 精确部署 SOP。
+首次包含该能力的正式 Release 仍须按上面的人工 SOP 部署一次，然后仅在 Fedora 的
+source checkout 执行：
+
+```sh
+uv run aletheia update auto install
+uv run aletheia update auto status
+```
+
+安装的是两个用户级 systemd unit：每小时（`Persistent=true`，随机延迟最多 10 分钟）
+运行的 `aletheia-auto-update.timer`，以及它唤醒的 oneshot service。安装不会重启或
+改变 Gateway；卸载只删除自己带有 ownership marker 的 unit：
+
+```sh
+uv run aletheia update auto uninstall
+```
+
+每次运行先执行 `git fetch origin master --tags`，把候选固定到 Tag commit SHA，再验证
+它在 `origin/master` 历史中、代码 `__version__` 与 Tag 相同、本地 checkout 是干净且可
+fast-forward 的 `master`。已观测 Tag 被移动、checkout ahead/diverged、非 Paper、Live
+未关闭或当前 Gateway 基线不健康都会拒绝切换。它不会跟随 mutable `master` HEAD，也不使用
+GitHub API。
+
+候选会先以临时 worktree 在 WAL-safe Backup 的恢复副本上执行 migration/SQLite validation；
+旧 Gateway 继续服务期间完成依赖同步与前端 staging build。通过后才停止 Gateway、创建最终
+Backup、fast-forward 到固定 SHA、切换完整静态资源并启动。120 秒内必须证明
+`boot_commit == current_commit == tag_sha`、产品版本、migration ledger、Gateway/scheduler/
+provider/settlement health、`paper_internal` / `local_paper` 及 `live_disabled`。成功会写入
+runtime provenance/audit，scheduler 会自行继续 Observer，不需要人为重开。
+
+每个失败路径写入 `${ALETHEIA_DATA_DIR}/update/auto-deploy.json` 和 audit，且不会记录凭证：
+
+- fetch/网络/基线暂时失败保持旧版本，下一周期重试；
+- 构建、Smoke 或预检失败的 Tag 被永久跳过，等待修复后的新正式 Release；
+- 激活失败会恢复最终 Backup、旧 SHA、旧依赖和旧静态资源，并重启旧 Gateway；
+- 数据恢复或旧 Gateway 恢复失败会进入全局 hold。完成排障后才执行
+  `uv run aletheia update auto resume`。
+
+这条 source-runtime 路径不替代 draft
+[Fedora immutable Runtime updates Proposal](../../design/proposals/fedora_immutable_runtime_updates.md)：
+该 Proposal 仍描述未来的签名不可变 Runtime，不是此 Release-Tag 自动部署的前置条件。
 
 ## 数据库迁移边界
 
