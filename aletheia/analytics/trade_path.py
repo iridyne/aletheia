@@ -533,7 +533,7 @@ def _attach_first_stop_barrier_evidence(
         and trigger_open >= _ceil_bar(entry_ts)
         and trigger_close <= exit_ts
         and detected_at is not None
-        and detected_at >= trigger_close
+        and trigger_close <= detected_at <= exit_ts
         and filled_at == exit_ts
     )
     price_matches = (

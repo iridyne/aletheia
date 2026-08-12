@@ -281,6 +281,88 @@ def test_malformed_or_nonfinite_net_returns_fail_closed(value):
     assert batch["horizons"]["15m"]["settled_count"] == 0
 
 
+
+@pytest.mark.parametrize("settled_at", [None, "", "not-a-timestamp"])
+def test_settled_outcome_requires_parseable_settlement_timestamp(settled_at):
+    from aletheia.analytics.ranker_objective_audit import build_ranker_objective_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_opportunity(db, "opp-settlement-time")
+    _shadow(db, "shadow-settlement-time", "opp-settlement-time", "key-settlement-time")
+    _outcome(db, "key-settlement-time", "15m", 2.0)
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET settled_at=? "
+        "WHERE outcome_candidate_key='key-settlement-time'",
+        (settled_at,),
+    )
+    db.commit()
+
+    report = build_ranker_objective_audit()
+    batch = report["variants"]["current_persisted_ranking"]["by_policy_epoch"]["epoch-a"]["by_batch"]["batch-a"]
+    assert batch["outcome_states"]["15m"] == {"invalid_settled_at": 1}
+    assert batch["horizons"]["15m"]["settled_count"] == 0
+    assert report["outcome_linkage_exclusions"] == {"invalid_settled_at": 1}
+
+
+@pytest.mark.parametrize(
+    ("ranked_market", "outcome_market"),
+    [("cash", "spot"), ("spot", "options"), ("cash", "options")],
+)
+def test_outcome_linkage_rejects_unsupported_market_types(
+    ranked_market, outcome_market
+):
+    from aletheia.analytics.ranker_objective_audit import build_ranker_objective_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_opportunity(db, "opp-unsupported-market")
+    _shadow(
+        db,
+        "shadow-unsupported-market",
+        "opp-unsupported-market",
+        "key-unsupported-market",
+        market=ranked_market,
+    )
+    _outcome(
+        db,
+        "key-unsupported-market",
+        "15m",
+        2.0,
+        market=outcome_market,
+    )
+    db.commit()
+
+    report = build_ranker_objective_audit()
+    batch = report["variants"]["current_persisted_ranking"]["by_policy_epoch"]["epoch-a"]["by_batch"]["batch-a"]
+    assert batch["horizons"]["15m"]["settled_count"] == 0
+    assert report["outcome_linkage_exclusions"] == {"unsupported_market_type": 1}
+
+
+@pytest.mark.parametrize("penalty", ["malformed", "NaN", "Infinity", "-Infinity"])
+def test_malformed_or_nonfinite_late_entry_penalty_is_unavailable(penalty):
+    from aletheia.analytics.ranker_objective_audit import build_ranker_objective_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_member(db, "member-invalid-penalty", penalty=penalty)
+    _seed_opportunity(db, "opp-invalid-penalty", "member-invalid-penalty")
+    _shadow(
+        db,
+        "shadow-invalid-penalty",
+        "opp-invalid-penalty",
+        "key-invalid-penalty",
+    )
+    db.commit()
+
+    report = build_ranker_objective_audit()
+    assert report["availability"]["late_entry"] == {"available": 0, "unavailable": 1}
+    assert {
+        item["value"]
+        for item in report["strata"]
+        if item["dimension"] == "late_entry_status"
+    } == {"unavailable"}
+
 def test_earliest_aligned_first_exposure_is_the_only_outcome_sample():
     from aletheia.analytics.ranker_objective_audit import build_ranker_objective_audit
     from aletheia.storage.sqlite import get_db

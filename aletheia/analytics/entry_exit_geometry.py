@@ -172,7 +172,7 @@ def _build_row(path_row: dict[str, Any], *, db: Any = None) -> dict[str, Any]:
     result.update(initial)
     result.update(_cost_assumptions(path_row, assignment, state, plans, initial))
     result.update(_path_normalization(path_row, initial))
-    result.update(_protective_trigger(path_row, state, trigger, plans))
+    result.update(_protective_trigger(path_row, position, state, trigger, plans))
     return result
 
 
@@ -598,7 +598,11 @@ def _path_normalization(row: dict[str, Any], initial: dict[str, Any]) -> dict[st
 
 
 def _protective_trigger(
-    row: dict[str, Any], state: dict[str, Any] | None, trigger: dict[str, Any] | None, plans: list[dict[str, Any]] | None
+    row: dict[str, Any],
+    position: dict[str, Any] | None,
+    state: dict[str, Any] | None,
+    trigger: dict[str, Any] | None,
+    plans: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
     base = {
         "protective_trigger_status": "unavailable",
@@ -649,6 +653,9 @@ def _protective_trigger(
         if bar_close_ms is not None
         else None
     )
+    detected_at = _utc(trigger.get("detected_at"))
+    position_opened_at = _utc((position or {}).get("opened_at"))
+    position_closed_at = _utc((position or {}).get("closed_at"))
     if stop_hit != bool(stop_crossed) or target_hit != bool(target_crossed):
         return {
             **base,
@@ -686,6 +693,15 @@ def _protective_trigger(
         and bar_close_at is not None
         and plan_effective <= bar_open_at
         and (successor_effective is None or successor_effective >= bar_close_at)
+        and position is not None
+        and position_opened_at is not None
+        and position_closed_at is not None
+        and _utc(row.get("opened_at")) == position_opened_at
+        and _utc(row.get("closed_at")) == position_closed_at
+        and position_opened_at <= bar_open_at
+        and bar_close_at <= position_closed_at
+        and detected_at is not None
+        and bar_close_at <= detected_at <= position_closed_at
     )
     if not matches:
         return {**base, "protective_trigger_reason": "protective_trigger_evidence_mismatch"}

@@ -183,8 +183,12 @@ def test_lists_only_actual_trailing_revisions_and_validates_dual_hit(monkeypatch
         "bar_open": 100.0, "bar_high": 111.0, "bar_low": 94.0, "bar_close": 101.0,
         "bar_volume": 4.0, "provider": "test",
     }
+    detected_at = datetime.fromtimestamp(
+        bar["bar_close_ms"] / 1000, timezone.utc
+    ).isoformat()
     trigger = {
         "position_id": "position-1", "trigger_id": "trigger-1", **bar,
+        "detected_at": detected_at,
         "bar_hash": repo.hash_position_protection_bar(**bar), "plan_version": 1,
         "plan_effective_at": first["effective_at"], "plan_hash": first["plan_hash"],
         "stop_price": 95.0, "upside_price": 110.0, "stop_hit": 1, "target_hit": 1,
@@ -211,6 +215,38 @@ def test_lists_only_actual_trailing_revisions_and_validates_dual_hit(monkeypatch
         "collision_policy": "stop_first_v1",
     }
     assert result["protective_trigger_cross_evidence_status"] == "independent"
+
+    # The immutable trigger must have existed during this Position's holding
+    # interval, and detection cannot precede its completed bar.
+    trigger["detected_at"] = datetime.fromtimestamp(
+        (bar["bar_close_ms"] - 1) / 1000, timezone.utc
+    ).isoformat()
+    before_bar_close = geometry._build_row(row)
+    assert before_bar_close["protective_trigger_status"] == "unavailable"
+    trigger["detected_at"] = detected_at
+
+    original_opened_at = position["opened_at"]
+    position["opened_at"] = datetime.fromtimestamp(
+        (bar["bar_close_ms"] + 1) / 1000, timezone.utc
+    ).isoformat()
+    before_position_open = geometry._build_row(row)
+    assert before_position_open["protective_trigger_status"] == "unavailable"
+    position["opened_at"] = original_opened_at
+
+    original_closed_at = position["closed_at"]
+    position["closed_at"] = datetime.fromtimestamp(
+        (bar["bar_open_ms"] - 1) / 1000, timezone.utc
+    ).isoformat()
+    after_position_close = geometry._build_row(row)
+    assert after_position_close["protective_trigger_status"] == "unavailable"
+    position["closed_at"] = original_closed_at
+
+    trigger["detected_at"] = (
+        datetime.fromisoformat(original_closed_at) + timedelta(milliseconds=1)
+    ).isoformat()
+    detection_after_position_close = geometry._build_row(row)
+    assert detection_after_position_close["protective_trigger_status"] == "unavailable"
+    trigger["detected_at"] = detected_at
 
     # Stored flags must equal reconstructed crossings, including false negatives.
     trigger["target_hit"] = 0

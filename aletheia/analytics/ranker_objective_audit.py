@@ -422,10 +422,14 @@ def _outcome_linkage_exclusion(row: dict, outcome: Any) -> str | None:
     )
     if any(value is None or not str(value).strip() for value in instrument):
         return "missing_instrument_identity"
+    ranked_market = _supported_market(row["market_type"])
+    outcome_market = _supported_market(outcome["market_type"])
+    if ranked_market is None or outcome_market is None:
+        return "unsupported_market_type"
     if (
         str(row["venue"]) != str(outcome["venue"])
         or str(row["symbol"]) != str(outcome["symbol"])
-        or _normalize_market(row["market_type"]) != _normalize_market(outcome["market_type"])
+        or ranked_market != outcome_market
         or str(row["direction"]).lower() != str(outcome["direction"]).lower()
     ):
         return "instrument_identity_mismatch"
@@ -435,6 +439,11 @@ def _outcome_linkage_exclusion(row: dict, outcome: Any) -> str | None:
         return "missing_entry_price_identity"
     if ranked_entry != outcome_entry:
         return "entry_price_mismatch"
+    if (
+        str(outcome["status"]).lower() == "settled"
+        and _parse_time(outcome["settled_at"]) is None
+    ):
+        return "invalid_settled_at"
     # Cost semantics belong to the canonical settled outcome. The established
     # shadow writer persists rank-time exposure before settlement economics exist,
     # so requiring its nullable projection would reject production-written rows.
@@ -554,12 +563,12 @@ def _attach_setup_and_late_entry(db, rows: list[dict]) -> None:
         fact = facts.get(str(row.get("opportunity_id") or ""))
         if not fact or (fact.get("late_entry_penalty") is None and fact.get("risk_flags") is None):
             continue
-        penalty = fact.get("late_entry_penalty")
+        penalty = _finite(fact.get("late_entry_penalty"))
         flags = _json_value(fact.get("risk_flags"), [])
         explicit = any("late_entry" in str(flag).lower() for flag in flags) if isinstance(flags, list) else False
         if explicit:
             row["late_entry_status"] = "explicit_risk_flag"
-        elif penalty is not None and float(penalty) > 0:
+        elif penalty is not None and penalty > 0:
             row["late_entry_status"] = "positive_penalty"
         elif penalty is not None:
             row["late_entry_status"] = "not_late"
@@ -774,6 +783,15 @@ def _columns(db, table: str) -> set[str]:
 
 def _table_exists(db, table: str) -> bool:
     return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
+
+
+def _supported_market(value: Any) -> str | None:
+    raw = str(value).strip().lower()
+    if raw == "spot":
+        return "spot"
+    if raw in {"perp", "futures", "swap", "usdt_futures"}:
+        return "perp"
+    return None
 
 
 def _normalize_market(value: Any) -> str:
