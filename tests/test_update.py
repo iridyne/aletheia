@@ -364,7 +364,7 @@ def test_update_not_agent_callable(tmp_path, monkeypatch):
 def _stub_clean_pull(monkeypatch, pyproject_changed=False, changed_files=None):
     """Stub git_ops so apply_update reaches the smoke stage with a clean pull."""
     from aletheia.update import git_ops, applier
-    commits = iter(["old111", "new222"])
+    commits = iter(["old111", "new222", "old111"])
     monkeypatch.setattr(git_ops, "git_available", lambda: True)
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
     monkeypatch.setattr(git_ops, "current_commit", lambda: next(commits))
@@ -491,6 +491,7 @@ def test_apply_restart_restores_old_release_on_restart_failure(tmp_path, monkeyp
     assert result["recovery_started"] is True
     assert restored == [True]
     assert resets == ["old111"]
+    assert result["actual_head"] == "old111"
 
 
 def test_apply_restart_keeps_new_code_after_schema_change(tmp_path, monkeypatch):
