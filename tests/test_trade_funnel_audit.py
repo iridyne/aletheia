@@ -340,6 +340,93 @@ def test_trade_funnel_uses_persisted_ranker_and_submission_evidence():
     assert "direction_overheated: 1" in rendered
 
 
+def test_trade_funnel_explains_known_pre_signal_rejections():
+    from aletheia.analytics.trade_funnel import (
+        build_trade_funnel_audit,
+        render_trade_funnel_audit,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for idx in range(3):
+        _insert_opp(db, idx)
+        _insert_filter_decision(
+            db,
+            idx,
+            stage="paper_ranker",
+            filter_name="execution_eligibility",
+        )
+        _insert_filter_decision(
+            db,
+            idx,
+            stage="paper_trader_selection",
+            filter_name="open_position_duplicate",
+            decision="rejected",
+            reason_code="open_position_duplicate",
+        )
+    db.commit()
+
+    report = build_trade_funnel_audit(hours=24, include_ranker_snapshot=False)
+
+    assert report["causal_cohort_counts"]["ranker_candidates"] == 3
+    assert report["causal_cohort_counts"]["ranker_eligible"] == 0
+    assert report["causal_selection_rejection_reasons"] == [
+        {"reason": "open_position_duplicate", "count": 3}
+    ]
+    assert report["causal_selection_rejection_coverage"] == 3
+    assert report["main_choke_point"]["stage"] == "paper_trader_selection"
+    assert report["main_choke_point"]["severity"] == "insufficient_data"
+    assert "open_position_duplicate x3" in report["main_choke_point"]["summary"]
+    assert "open_position_duplicate: 3" in render_trade_funnel_audit(report)
+
+
+def test_trade_funnel_keeps_unknown_choke_when_rejections_do_not_cover_cohort():
+    from aletheia.analytics.trade_funnel import build_trade_funnel_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for idx in range(3):
+        _insert_opp(db, idx)
+        _insert_filter_decision(
+            db,
+            idx,
+            stage="paper_ranker",
+            filter_name="execution_eligibility",
+        )
+    _insert_filter_decision(
+        db,
+        0,
+        stage="paper_trader_selection",
+        filter_name="open_position_duplicate",
+        decision="rejected",
+        reason_code="open_position_duplicate",
+    )
+    db.commit()
+
+    report = build_trade_funnel_audit(hours=24, include_ranker_snapshot=False)
+
+    assert report["causal_selection_rejection_coverage"] == 1
+    assert report["main_choke_point"]["stage"] == "ranker_or_paper_trader"
+
+
+def test_ranker_snapshot_does_not_claim_selection_eligibility(monkeypatch):
+    from aletheia.analytics.trade_funnel import build_trade_funnel_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, 1)
+    db.commit()
+    monkeypatch.setattr(
+        "aletheia.agents.paper_trader_ranker.build_paper_candidates",
+        lambda limit: [{"opportunity_id": "opp-funnel-1"}],
+    )
+
+    report = build_trade_funnel_audit(hours=24)
+
+    assert report["counts"]["ranker_candidates"] == 1
+    assert report["counts"]["ranker_eligible"] is None
+
+
 def test_trade_funnel_cohort_uses_latest_terminal_decision_once():
     """One opportunity with repeated evaluations is one converted opportunity."""
     from aletheia.analytics.trade_funnel import build_trade_funnel_audit
