@@ -387,6 +387,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "contents": "write",
         "issues": "write",
         "pull-requests": "write",
+        "statuses": "write",
     }
     release_guard = release_candidate["if"]
     assert "event.action == 'release_candidate_verified'" in release_guard
@@ -396,6 +397,17 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "pullRequest.head.sha === run.head_sha" in candidate_script
     assert "autorelease: pending" in candidate_script
     assert "do-not-auto-merge" in candidate_script
+    assert "createCommitStatus" in candidate_script
+    assert "sha: run.head_sha" in candidate_script
+    for required_check in (
+        "Review checks",
+        "Python specifications",
+        "Python unit",
+        "Python integration",
+        "Python end-to-end",
+        "Python runtime state",
+    ):
+        assert required_check in candidate_script
     assert "issues.removeLabel" in candidate_script
     assert "event_type: 'auto_merge_update'" in candidate_script
     assert "expected_head_sha: run.head_sha" in candidate_script
@@ -442,6 +454,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "disablePullRequestAutoMerge" in update_script
     assert "do-not-auto-merge" in update_script
     assert "releaseAfterMerge" in update_script
+    assert "'github-actions[bot]', 'app/github-actions'" in update_script
     assert "event_type: 'release_please'" in update_script
 
     release = workflow["jobs"]["release"]
@@ -455,6 +468,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "action == 'closed'" in release["if"]
     assert "merged == true" in release["if"]
     assert "merged_by.login != 'github-actions[bot]'" in release["if"]
+    assert "merged_by.login != 'app/github-actions'" in release["if"]
     assert release["permissions"] == {"contents": "write"}
     assert len(release["steps"]) == 1
     release_step = release["steps"][0]
@@ -472,6 +486,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     followup_script = release_after_ci["steps"][0]["with"]["script"]
     assert "context.payload.workflow_run" in followup_script
     assert "pullRequest.head.sha !== run.head_sha" in followup_script
+    assert "'github-actions[bot]', 'app/github-actions'" in followup_script
     assert "event_type: 'release_please'" in followup_script
 
     # All phases carry write-capable base-repository tokens. Keep them

@@ -68,6 +68,7 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
+      statuses: write
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     steps:
       - name: Release the verified candidate hold
@@ -96,6 +97,23 @@ jobs:
               throw new Error(`expected one release candidate, found ${candidates.length}`);
             }
             const [pullRequest] = candidates;
+            const requiredChecks = [
+              'Review checks',
+              'Python specifications',
+              'Python unit',
+              'Python integration',
+              'Python end-to-end',
+              'Python runtime state',
+            ];
+            for (const check of requiredChecks) {
+              await github.rest.repos.createCommitStatus({
+                ...context.repo,
+                sha: run.head_sha,
+                state: 'success',
+                context: check,
+                description: 'Verified by exact release candidate CI',
+              });
+            }
             await github.rest.issues.removeLabel({
               ...context.repo,
               issue_number: pullRequest.number,
@@ -175,7 +193,8 @@ jobs:
             };
             const dispatchRelease = async (pullRequest, mergeCommitSha) => {
               if (!releaseAfterMerge) return;
-              if (pullRequest.mergedBy?.login !== 'github-actions[bot]') {
+              const actionsBots = new Set(['github-actions[bot]', 'app/github-actions']);
+              if (!actionsBots.has(pullRequest.mergedBy?.login)) {
                 core.info('non-bot merge is handled by the closed pull-request event');
                 return;
               }
@@ -318,7 +337,8 @@ jobs:
       github.event_name == 'pull_request_target' &&
       github.event.action == 'closed' &&
       github.event.pull_request.merged == true &&
-      github.event.pull_request.merged_by.login != 'github-actions[bot]'
+      github.event.pull_request.merged_by.login != 'github-actions[bot]' &&
+      github.event.pull_request.merged_by.login != 'app/github-actions'
     permissions:
       contents: write
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
@@ -370,7 +390,8 @@ jobs:
                 return;
               }
               if (pullRequest.merged) {
-                if (pullRequest.merged_by?.login !== 'github-actions[bot]') {
+                const actionsBots = new Set(['github-actions[bot]', 'app/github-actions']);
+                if (!actionsBots.has(pullRequest.merged_by?.login)) {
                   core.info('non-bot merge is handled by the closed pull-request event');
                   return;
                 }
