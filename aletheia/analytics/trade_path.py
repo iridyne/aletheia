@@ -43,14 +43,33 @@ class _InstrumentIdentity:
     source: str
 
 
-def build_trade_path_rows(limit: int = 500, post_exit_bars: int = 0) -> list[dict]:
-    """Build diagnostic MFE/MAE evidence for closed paper/demo trades.
-
-    ``post_exit_bars`` is a prospective observation window in complete 1m bars.
-    It is diagnostic only and never alters an exit or any other trading action.
-    """
-    attribution_rows = build_trade_attribution_rows(limit=limit)
-    return [_analyze_path(row, post_exit_bars) for row in attribution_rows]
+def build_trade_path_rows(
+    limit: int = 500,
+    post_exit_bars: int = 0,
+    *,
+    closed_after: str | None = None,
+    symbol: str | None = None,
+    db: Any = None,
+    include_source_status: bool = False,
+) -> list[dict] | tuple[list[dict], bool | None]:
+    """Build diagnostic MFE/MAE evidence for closed paper/demo trades."""
+    kwargs: dict[str, Any] = {}
+    if closed_after is not None:
+        kwargs["closed_after"] = closed_after
+    if symbol is not None:
+        kwargs["symbol"] = symbol
+    if db is not None:
+        kwargs["db"] = db
+    if include_source_status:
+        kwargs["include_source_status"] = True
+    attribution = build_trade_attribution_rows(limit=limit, **kwargs)
+    if include_source_status:
+        attribution_rows, source_truncated = attribution
+        return (
+            [_analyze_path(row, post_exit_bars, db=db) for row in attribution_rows],
+            source_truncated,
+        )
+    return [_analyze_path(row, post_exit_bars, db=db) for row in attribution]
 
 
 def build_post_exit_path_observation(
@@ -148,7 +167,7 @@ def build_post_exit_path_observation(
     return result
 
 
-def _analyze_path(row: dict, post_exit_bars: int) -> dict:
+def _analyze_path(row: dict, post_exit_bars: int, *, db: Any = None) -> dict:
     """Analyze one closed trade without inventing identity, coverage, or order."""
     result = dict(row)
     _initialize_evidence_fields(result, post_exit_bars)
@@ -183,7 +202,7 @@ def _analyze_path(row: dict, post_exit_bars: int) -> dict:
         _set_insufficient(result, "missing_or_invalid_trade_identity")
         return result
 
-    identity, identity_error = _resolve_instrument_identity(row)
+    identity, identity_error = _resolve_instrument_identity(row, db=db)
     if identity is None:
         _set_insufficient(result, identity_error or "instrument_identity_unavailable")
         return result
@@ -202,13 +221,18 @@ def _analyze_path(row: dict, post_exit_bars: int) -> dict:
         return result
 
     try:
+        candle_kwargs = {
+            "limit": requested_span,
+            "exchange": identity.exchange,
+            "market_type": identity.market_type,
+            "before_ts": fetch_end_ts,
+        }
+        if db is not None:
+            candle_kwargs["db"] = db
         candles = repo.get_ohlcv_candles(
             symbol,
             _DEFAULT_TIMEFRAME,
-            limit=requested_span,
-            exchange=identity.exchange,
-            market_type=identity.market_type,
-            before_ts=fetch_end_ts,
+            **candle_kwargs,
         )
     except Exception as exc:  # read failure is unavailable evidence, never zero
         logger.debug("trade path OHLCV read failed: %s", type(exc).__name__)
@@ -243,6 +267,7 @@ def _analyze_path(row: dict, post_exit_bars: int) -> dict:
         entry_price=entry_price,
         direction=direction,
         full_holding=available_full_holding,
+        db=db,
     )
 
     holding_ts = list(range(entry_bar_ts, holding_end_exclusive, _BAR_MS))
@@ -354,6 +379,8 @@ def _analyze_path(row: dict, post_exit_bars: int) -> dict:
 
 def _resolve_instrument_identity(
     row: dict[str, Any],
+    *,
+    db: Any = None,
 ) -> tuple[_InstrumentIdentity | None, str | None]:
     """Resolve exact OHLCV scope from row identity or its Universe lineage."""
     symbol = str(row.get("symbol") or "").strip()
@@ -372,9 +399,21 @@ def _resolve_instrument_identity(
     if not member_id:
         return None, "instrument_identity_unavailable"
     try:
-        member = repo.get_universe_member(member_id)
+        if db is None:
+            member = repo.get_universe_member(member_id)
+        else:
+            raw_member = db.execute(
+                "SELECT * FROM universe_members WHERE id=?", (member_id,)
+            ).fetchone()
+            member = dict(raw_member) if raw_member is not None else None
         asset_id = str((member or {}).get("asset_id") or "").strip()
-        asset = repo.get_universe_asset(asset_id) if asset_id else None
+        if db is None:
+            asset = repo.get_universe_asset(asset_id) if asset_id else None
+        else:
+            raw_asset = db.execute(
+                "SELECT * FROM universe_registry WHERE id=?", (asset_id,)
+            ).fetchone() if asset_id else None
+            asset = dict(raw_asset) if raw_asset is not None else None
     except Exception:
         return None, "instrument_identity_unavailable"
     if not member or not asset:
@@ -413,6 +452,7 @@ def _attach_first_stop_barrier_evidence(
     entry_price: float,
     direction: str,
     full_holding: list[dict],
+    db: Any = None,
 ) -> None:
     """Attach ordered pre-stop evidence from one materialized exact trigger.
 
@@ -429,8 +469,20 @@ def _attach_first_stop_barrier_evidence(
         result["first_stop_barrier_reason"] = "position_identity_unavailable"
         return
     try:
-        state = repo.get_position_protection_state(position_id)
-        trigger = repo.get_position_protection_trigger(position_id)
+        if db is None:
+            state = repo.get_position_protection_state(position_id)
+            trigger = repo.get_position_protection_trigger(position_id)
+        else:
+            state_row = db.execute(
+                "SELECT * FROM position_protection_state WHERE position_id=?",
+                (position_id,),
+            ).fetchone()
+            trigger_row = db.execute(
+                "SELECT * FROM position_protection_triggers WHERE position_id=?",
+                (position_id,),
+            ).fetchone()
+            state = dict(state_row) if state_row is not None else None
+            trigger = dict(trigger_row) if trigger_row is not None else None
     except Exception as exc:
         logger.debug("protection evidence read failed: %s", type(exc).__name__)
         result["first_stop_barrier_reason"] = "protection_evidence_read_unavailable"
@@ -481,7 +533,7 @@ def _attach_first_stop_barrier_evidence(
         and trigger_open >= _ceil_bar(entry_ts)
         and trigger_close <= exit_ts
         and detected_at is not None
-        and detected_at >= trigger_close
+        and trigger_close <= detected_at <= exit_ts
         and filled_at == exit_ts
     )
     price_matches = (

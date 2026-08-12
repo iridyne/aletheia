@@ -419,23 +419,24 @@ def test_protected_first_stop_proves_profit_giveback_before_trigger(monkeypatch)
             "final_state": "materialized",
         },
     )
+    trigger = {
+        "position_id": "position-1",
+        "trigger_id": "trigger-1",
+        "detected_at": _iso(_BASE_TS + 2 * _BAR_MS),
+        "venue": "okx",
+        "symbol": "BTC/USDT",
+        "market_type": "perp",
+        "timeframe": "1m",
+        "bar_open_ms": _BASE_TS + _BAR_MS,
+        "bar_close_ms": _BASE_TS + 2 * _BAR_MS,
+        "plan_version": 1,
+        "stop_hit": 1,
+        "target_hit": 0,
+        "reason": "stop_loss",
+    }
     monkeypatch.setattr(
         "aletheia.analytics.trade_path.repo.get_position_protection_trigger",
-        lambda position_id: {
-            "position_id": position_id,
-            "trigger_id": "trigger-1",
-            "detected_at": _iso(_BASE_TS + 2 * _BAR_MS),
-            "venue": "okx",
-            "symbol": "BTC/USDT",
-            "market_type": "perp",
-            "timeframe": "1m",
-            "bar_open_ms": _BASE_TS + _BAR_MS,
-            "bar_close_ms": _BASE_TS + 2 * _BAR_MS,
-            "plan_version": 1,
-            "stop_hit": 1,
-            "target_hit": 0,
-            "reason": "stop_loss",
-        },
+        lambda position_id: {**trigger, "position_id": position_id},
     )
     row = _row(
         exit_price=98.0,
@@ -451,6 +452,11 @@ def test_protected_first_stop_proves_profit_giveback_before_trigger(monkeypatch)
     assert result["path_bucket"] == "profit_giveback_before_stop"
     assert result["path_bucket_reason"] == "pre_stop_mfe_lower_bound=2.00%"
     assert result["noncausal_path_observation"] is None
+
+    trigger["detected_at"] = _iso(_BASE_TS + 2 * _BAR_MS + 1)
+    detected_after_close = _analyze_path(row, post_exit_bars=0)
+    assert detected_after_close["first_stop_barrier_status"] == "unavailable"
+    assert detected_after_close["first_stop_barrier_reason"] == "protection_evidence_mismatch"
 
 
 def test_protected_stop_evidence_survives_missing_exit_boundary_bar(monkeypatch):
