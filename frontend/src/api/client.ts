@@ -229,6 +229,8 @@ export interface DreamingSummary {
 	recent_knowledge_total: number;
 	recent_knowledge_returned: number;
 	recent_knowledge_truncated: boolean;
+	deprecated_memories_total: number;
+	deprecated_memories_truncated: boolean;
 	recent_dreaming_runs: Array<{
 		id: string; status: string; trigger_type?: string; started_at?: string;
 		ended_at?: string; model_provider?: string; tools_called?: string | string[];
@@ -239,6 +241,7 @@ export interface DreamingSummary {
 		status: string; last_started_at: string | null; last_succeeded_at: string | null;
 		next_due_at?: string | null; backlog_count: number | null;
 	} | null;
+	dreaming_job_availability: "available" | "unavailable";
 }
 
 export interface KnowledgeCatalogResponse {
@@ -2809,10 +2812,11 @@ export const api = {
 				min_consecutive_runs: number;
 				max_runs_lookback: number;
 			};
+			config_availability: "available" | "unavailable";
 			runs_available: number;
 			last_run_at: string | null;
 			schedule: { enabled: boolean; observe_interval_hours: number };
-			empty_reason: "controller_disabled" | "no_controller_runs" | "insufficient_run_history" | "no_persistent_signals" | null;
+			empty_reason: "config_unavailable" | "controller_disabled" | "no_controller_runs" | "insufficient_run_history" | "no_persistent_signals" | null;
 		}>("/analytics/filter-controller/persistent"),
 	getCostSummary: () => fetchJson<CostSummary>("/analytics/cost-summary"),
 	getConfidenceCalibration: () =>

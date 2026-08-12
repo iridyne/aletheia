@@ -358,6 +358,7 @@ async def test_learning_filter_card_uses_persisted_signal_path(client, monkeypat
     assert response.status_code == 200
     body = response.json()
     assert body["persistent_recommendations"] == []
+    assert body["config_availability"] == "available"
     assert body["runs_available"] == 0
     assert body["last_run_at"] is None
     assert body["schedule"] == {"enabled": False, "observe_interval_hours": 6}

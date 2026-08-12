@@ -417,8 +417,10 @@ def get_persistent_filter_controller():
         max_lookback = int(getattr(cfg, "persistent_max_runs_lookback", 10))
         shadow_enabled = bool(getattr(cfg, "shadow_enabled", False))
         observe_interval_hours = int(getattr(cfg, "observe_interval_hours", 6))
+        config_availability = "available"
     except Exception:
         min_streak, max_lookback, shadow_enabled, observe_interval_hours = 3, 10, False, 6
+        config_availability = "unavailable"
     persistent = [
         asdict(item) for item in compute_persistent_recommendations(
             min_consecutive_runs=min_streak,
@@ -438,6 +440,7 @@ def get_persistent_filter_controller():
             "min_consecutive_runs": min_streak,
             "max_runs_lookback": max_lookback,
         },
+        "config_availability": config_availability,
         "runs_available": runs_available,
         "last_run_at": last_run_at,
         "schedule": {
@@ -446,6 +449,7 @@ def get_persistent_filter_controller():
         },
         "empty_reason": (
             None if persistent
+            else "config_unavailable" if config_availability == "unavailable"
             else "controller_disabled" if not shadow_enabled
             else "no_controller_runs" if runs_available == 0
             else "insufficient_run_history" if runs_available < min_streak

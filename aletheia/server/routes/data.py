@@ -1654,25 +1654,31 @@ def get_knowledge(
         }
     if type not in VALID_KNOWLEDGE_TYPES:
         raise HTTPException(400, f"Invalid knowledge type. Choose from: {sorted(VALID_KNOWLEDGE_TYPES)}")
-    return repo.list_knowledge_items(item_type=type, limit=limit)
+    rows = get_db().execute(
+        "SELECT ki.id, ki.item_type, ki.title, ki.confidence, ki.status, "
+        "ki.strategy_id, ki.tags, ki.created_at, ki.updated_at, "
+        "(SELECT ara.run_id FROM agent_run_artifacts ara "
+        " WHERE ara.artifact_id = ki.id AND ara.artifact_type = ki.item_type "
+        " ORDER BY ara.created_at DESC LIMIT 1) AS producer_run_id "
+        "FROM knowledge_items ki WHERE ki.item_type = ? ORDER BY ki.rowid DESC LIMIT ?",
+        (type, limit),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 @router.get("/knowledge/research-notes")
 def get_research_notes():
-    _ensure_db()
-    return repo.list_knowledge_items(item_type="research_note")
+    return get_knowledge(type="research_note")
 
 
 @router.get("/knowledge/dreaming-logs")
 def get_dreaming_logs():
-    _ensure_db()
-    return repo.list_knowledge_items(item_type="dreaming_log")
+    return get_knowledge(type="dreaming_log")
 
 
 @router.get("/knowledge/strategy-memory")
 def get_strategy_memory():
-    _ensure_db()
-    return repo.list_knowledge_items(item_type="strategy_memory")
+    return get_knowledge(type="strategy_memory")
 
 
 def _guard_experiments_by_id() -> dict[str, dict]:
@@ -1918,6 +1924,10 @@ def get_dreaming_summary():
         params=("archived", "deprecated", cutoff_7d),
         limit=20,
     )
+    deprecated_memories_total = int(get_db().execute(
+        "SELECT COUNT(*) FROM knowledge_items WHERE (status = ? OR status = ?) AND updated_at > ?",
+        ("archived", "deprecated", cutoff_7d),
+    ).fetchone()[0])
     recent_dreaming_logs = repo._select_all(
         "knowledge_items",
         where=f"item_type = ? AND created_at > ? AND {_active}",
@@ -1930,6 +1940,14 @@ def get_dreaming_summary():
         params=("daily_review", cutoff_24h),
         limit=10,
     )
+    for items in (recent_research, recent_hypotheses, deprecated_memories, recent_dreaming_logs, recent_daily_reviews):
+        for item in items:
+            row = get_db().execute(
+                "SELECT run_id FROM agent_run_artifacts WHERE artifact_id = ? AND artifact_type = ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (item["id"], item["item_type"]),
+            ).fetchone()
+            item["producer_run_id"] = row["run_id"] if row else None
     recent_knowledge_items = [dict(row) for row in get_db().execute(
         "SELECT ki.id, ki.item_type, ki.title, ki.confidence, ki.status, "
         "ki.strategy_id, ki.tags, ki.created_at, ki.updated_at, "
@@ -1964,10 +1982,15 @@ def get_dreaming_summary():
         dreaming_job.pop("last_failure_reason", None)
     except Exception:
         dreaming_job = None
+        dreaming_job_availability = "unavailable"
+    else:
+        dreaming_job_availability = "available"
     return {
         "recent_research_notes": recent_research,
         "recent_strategy_hypotheses": recent_hypotheses,
         "deprecated_memories": deprecated_memories,
+        "deprecated_memories_total": deprecated_memories_total,
+        "deprecated_memories_truncated": len(deprecated_memories) < deprecated_memories_total,
         "recent_dreaming_logs": recent_dreaming_logs,
         "recent_dreaming_runs": recent_runs,
         "recent_daily_reviews": recent_daily_reviews,
@@ -1976,6 +1999,7 @@ def get_dreaming_summary():
         "recent_knowledge_returned": len(recent_knowledge_items),
         "recent_knowledge_truncated": len(recent_knowledge_items) < recent_knowledge_total,
         "dreaming_job": dreaming_job,
+        "dreaming_job_availability": dreaming_job_availability,
     }
 
 

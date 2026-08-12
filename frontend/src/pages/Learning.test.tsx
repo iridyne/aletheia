@@ -28,7 +28,10 @@ vi.mock('@tanstack/react-query', () => ({
             recent_daily_reviews: [],
             recent_dreaming_runs: [],
             deprecated_memories: [],
+            deprecated_memories_total: 0,
+            deprecated_memories_truncated: false,
             dreaming_job: { status: 'healthy', last_started_at: '2026-08-12T00:00:00Z', last_succeeded_at: '2026-08-12T00:00:01Z', backlog_count: 0 },
+            dreaming_job_availability: 'available',
           }
       : key === 'learning-funnel'
       ? {

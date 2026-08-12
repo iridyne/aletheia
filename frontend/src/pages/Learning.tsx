@@ -69,15 +69,15 @@ export function LearningOverview({ onNavigate }: { onNavigate: (tab: string) => 
   const controllerSignals = controllerQuery.data ? controllerQuery.data.persistent_recommendations.length : null
   const attentionValues = [proposedLessons, guardCandidates, contradictions, controllerSignals]
   const knownAttentionTotal = attentionValues.reduce<number>((total, value) => total + (value ?? 0), 0)
-  const attentionComplete = attentionValues.every(value => value != null)
+  const attentionComplete = attentionValues.every(value => value != null) && !funnelQuery.isError && !controllerQuery.isError
   const recent = summary?.recent_knowledge_items.slice(0, 5) ?? []
   const job = summary?.dreaming_job
   const lastRun = summary?.recent_dreaming_runs[0]
   const runState = learningReadState(summaryQuery.isLoading, summaryQuery.isError, summary != null)
-  const impactState = learningReadState(contributionQuery.isLoading, contributionQuery.isError, contributionQuery.data != null)
+  const impactState = learningReadState(contributionQuery.isLoading, contributionQuery.isError, contributionQuery.data?.availability === 'available', contributionQuery.data?.availability === 'partial')
   const changesMeta = runState === 'loading' ? 'Loading'
     : runState === 'unavailable' ? 'Unavailable'
-    : `${summary?.recent_knowledge_total ?? 0} created in 24h; ${summary?.deprecated_memories.length ?? 0} deprecated in 7d${runState === 'stale' ? '; stale' : ''}`
+    : `${summary?.recent_knowledge_total ?? 0} created in 24h; ${summary?.deprecated_memories_total ?? 0} deprecated in 7d${runState === 'stale' ? '; stale' : ''}`
   const attentionMeta = attentionComplete
     ? knownAttentionTotal ? `${knownAttentionTotal.toLocaleString()} open items` : 'No open items'
     : `${knownAttentionTotal.toLocaleString()} known open items; some counts unavailable`
@@ -85,7 +85,7 @@ export function LearningOverview({ onNavigate }: { onNavigate: (tab: string) => 
   return (
     <section className="learning-home" aria-label="Learning overview">
       <div className="learn-home-status">
-        <ContributionFact label="Learning job" value={learningPulseValue(runState, humanize(job?.status || lastRun?.status || 'not recorded'))} note={`Last success ${fmtTimestamp(job?.last_succeeded_at || lastRun?.ended_at)}${job?.next_due_at ? `; next ${fmtTimestamp(job.next_due_at)}` : ''}`} />
+        <ContributionFact label="Learning job" value={learningPulseValue(summary?.dreaming_job_availability === 'unavailable' ? 'unavailable' : runState, humanize(job?.status || lastRun?.status || 'not recorded'))} note={`Last success ${fmtTimestamp(job?.last_succeeded_at || lastRun?.ended_at)}${job?.next_due_at ? `; next ${fmtTimestamp(job.next_due_at)}` : ''}`} />
         <ContributionFact label="New knowledge" value={learningPulseValue(runState, summary?.recent_knowledge_total ?? 0)} note="Created in the last 24 hours" />
         <ContributionFact label="Impact verdict" value={learningPulseValue(impactState, experiment ? humanize(experiment.measurement.state) : 'Not measured')} note={humanize(experiment?.measurement.reason || 'No current experiment')} />
         <ContributionFact label="Needs review" value={attentionComplete ? knownAttentionTotal : 'Partial'} note={`${proposedLessons ?? 'unknown'} lessons; ${guardCandidates ?? 'unknown'} guard candidates; ${contradictions ?? 'unknown'} contradictions`} />
@@ -131,13 +131,15 @@ export function LearningOverview({ onNavigate }: { onNavigate: (tab: string) => 
 }
 
 function ImpactSummary({ item }: { item: LearningContributionProjection['items'][number] }) {
-  const remaining = Math.max(0, item.samples.required_per_arm - item.samples.treatment_assignment_units)
+  const treatmentRemaining = Math.max(0, item.samples.required_per_arm - item.samples.treatment_assignment_units)
+  const controlRemaining = Math.max(0, item.samples.required_per_arm - item.samples.control_assignment_units)
+  const remaining = treatmentRemaining + controlRemaining
   return <div className="lco-facts">
     <ContributionRow label="Verdict" value={humanize(item.measurement.state)} />
     <ContributionRow label="Next action" value={humanize(item.lifecycle.recommended_action)} />
     <ContributionRow label="Observed change" value={fmtSigned(item.measurement.delta)} />
     <ContributionRow label="Previous verdict" value={humanize(item.latest_historical_measurement?.state || 'none recorded')} />
-    <ContributionRow label="Evidence needed" value={remaining ? `${remaining} more treatment units` : 'Sample threshold met'} />
+    <ContributionRow label="Evidence needed" value={remaining ? `${treatmentRemaining} treatment and ${controlRemaining} control units` : 'Sample threshold met'} />
     <ContributionRow label="Last evaluated" value={fmtTimestamp(item.measurement.evaluated_at)} />
   </div>
 }
@@ -501,7 +503,7 @@ export function DreamingTab() {
           </Card>
           <Card>
             <CardHeader title="Other knowledge" meta={summary?.recent_knowledge_truncated ? `24h, showing ${summary.recent_knowledge_returned} of ${summary.recent_knowledge_total}` : `24h, ${summary?.recent_knowledge_total ?? 0} total`} />
-            <ItemList state={summaryState} items={otherRecent} onSelect={setSelectedItem} empty="No other knowledge types were produced in the last 24 hours." />
+            <ItemList state={summaryState} items={otherRecent} onSelect={setSelectedItem} empty={summary?.recent_knowledge_truncated ? 'No other knowledge types appear in this bounded result.' : 'No other knowledge types were produced in the last 24 hours.'} />
             {summary?.recent_knowledge_truncated && <p className="lco-note">This glance view is bounded. Open Knowledge Base to browse the complete catalog.</p>}
           </Card>
         </div>
@@ -690,12 +692,12 @@ export function KnowledgeTab() {
   const totalKnowledge = (funnelQuery.data?.knowledge_items_by_type ?? []).reduce((total, item) => total + item.count, 0)
   const counts: Record<KnowledgeTabKey, number | null> = {
     all: funnelQuery.data ? totalKnowledge : null,
-    research: typeCounts.research_note ?? 0,
-    strategy: typeCounts.strategy_memory ?? 0,
-    reviews: typeCounts.daily_review ?? 0,
-    dreaming: typeCounts.dreaming_log ?? 0,
+    research: funnelQuery.data ? typeCounts.research_note ?? 0 : null,
+    strategy: funnelQuery.data ? typeCounts.strategy_memory ?? 0 : null,
+    reviews: funnelQuery.data ? typeCounts.daily_review ?? 0 : null,
+    dreaming: funnelQuery.data ? typeCounts.dreaming_log ?? 0 : null,
     lessons: funnelQuery.data?.ps_lessons.total ?? null,
-    guardCandidates: typeCounts.guard_candidate ?? 0,
+    guardCandidates: funnelQuery.data ? typeCounts.guard_candidate ?? 0 : null,
     guards: funnelQuery.data?.active_guards_total ?? null,
   }
   const countState = learningReadState(funnelQuery.isLoading, funnelQuery.isError, funnelQuery.data != null, !!funnelQuery.data && Object.keys(funnelQuery.data.query_errors).length > 0)

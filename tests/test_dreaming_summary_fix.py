@@ -175,6 +175,10 @@ async def test_dreaming_summary_uses_persisted_run_artifact_links(client):
         "created_at": body["recent_dreaming_runs"][0]["artifacts"][0]["created_at"],
     }]
     assert body["recent_knowledge_items"][0]["producer_run_id"] == run.id
+    assert body["recent_dreaming_logs"][0]["producer_run_id"] == run.id
+    assert body["deprecated_memories_total"] == 0
+    assert body["deprecated_memories_truncated"] is False
+    assert body["dreaming_job_availability"] == "available"
 
 
 @pytest.mark.anyio
