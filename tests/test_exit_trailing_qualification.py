@@ -103,6 +103,21 @@ def test_new_positions_keep_a_deterministic_static_control_holdout(
     assert _resolve_trailing(repo.get_position(control_id), load_config()) is None
 
 
+def test_empty_report_exposes_disabled_enrollment(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.trading.trail_enabled = False
+    save_config(cfg)
+
+    report = build_exit_trailing_qualification_report()
+
+    assert report["assignment_count"] == 0
+    assert report["enrollment_enabled"] is False
+    assert report["enrollment_block_reason"] == "trading.trail_enabled_false"
+
+
 def test_report_keeps_exact_build_cohort_and_cost_complete_arm_economics(
     tmp_path, monkeypatch,
 ):
