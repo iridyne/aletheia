@@ -365,14 +365,14 @@ def _fast_network_timeout(request, monkeypatch):
     # Only skips long sleeps (>2s); tests with explicit short delays (1s) still work.
     import aletheia.agent_runtime.startup_gate as _sg
 
-    _real_asyncio_sleep = _sg.asyncio.sleep
+    _real_asyncio_sleep = _sg._sleep
 
     async def _skip_long_sleep(seconds):
         if seconds > 2:
             return
         await _real_asyncio_sleep(seconds)
 
-    monkeypatch.setattr(_sg.asyncio, "sleep", _skip_long_sleep)
+    monkeypatch.setattr(_sg, "_sleep", _skip_long_sleep)
 
 
 @pytest.fixture(autouse=True)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import math
 
@@ -481,15 +482,17 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
         experiment=successor,
         harmful_treatment=True,
     )
-    paper_counts = Counter(row["assignment"] for row in paper_exposures)
     assert paper.experiment_id == successor.experiment_id
     assert paper_cluster_counts["treatment"] >= 50
     assert paper_cluster_counts["control"] >= 50
-    assert paper_counts["control"] > paper_counts["treatment"] * 4
-    assert paper_counts["treatment"] / len(paper_exposures) == pytest.approx(
-        successor.allocation_pct,
-        abs=0.05,
-    )
+    for row in paper_exposures:
+        assignment_key = str(row["assignment_unit_key"])
+        raw = f"{successor.experiment_id}:{successor.assignment_salt}:{assignment_key}"
+        fraction = int(hashlib.sha256(raw.encode()).hexdigest()[:16], 16) / float(
+            0xFFFFFFFFFFFFFFFF
+        )
+        expected = "treatment" if fraction < successor.allocation_pct else "control"
+        assert row["assignment"] == expected
     assert paper_scores["treatment"][0] > paper_scores["treatment"][1]
     assert paper_scores["control"][0] == pytest.approx(paper_scores["control"][1])
     assert all(
