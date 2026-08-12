@@ -253,12 +253,37 @@ def test_doctor_runs_in_a_fresh_interpreter(monkeypatch):
         auto,
         "_run",
         lambda command, **kwargs: calls.append((command, kwargs)) or subprocess.CompletedProcess(
-            command, 0, '{"healthy": true, "summary": "ready"}', ""
+            command, 0, '{"ok": true, "detail": "ready"}', ""
         ),
     )
 
     assert auto._doctor_healthy() == {"ok": True, "detail": "ready"}
     assert calls[0][0][:2] == [auto.sys.executable, "-c"]
+
+
+def test_runtime_diagnostics_ignore_unrelated_warnings_but_keep_deployment_gates():
+    from aletheia.update.auto import _evaluate_runtime_diagnostics
+
+    report = {
+        "checks": [
+            {"name": "llm.inference", "severity": "ok", "detail": "34/34 succeeded"},
+            {"name": "content.signal_settlement", "severity": "info", "detail": "within settler cadence"},
+            {"name": "content.lesson_chain", "severity": "warn", "detail": "backlog"},
+        ],
+        "summary": {"blockers": [], "warns": ["content.lesson_chain"]},
+    }
+
+    assert _evaluate_runtime_diagnostics(report, {"current": True}) == {"ok": True, "detail": "ready"}
+    report["checks"][0]["severity"] = "warn"
+    assert _evaluate_runtime_diagnostics(report, {"current": True}) == {
+        "ok": False,
+        "detail": "llm.inference",
+    }
+    report["checks"][0]["severity"] = "ok"
+    assert _evaluate_runtime_diagnostics(report, {"current": False}) == {
+        "ok": False,
+        "detail": "schema.migrations",
+    }
 
 
 def test_success_removes_previous_static_tree(tmp_path, monkeypatch):

@@ -191,20 +191,34 @@ def _runtime_gate(*, expected_sha: str | None = None, expected_version: str | No
     return {"ok": not failed, "reason": "runtime_gate_failed" if failed else None, "failed": failed}
 
 
+def _evaluate_runtime_diagnostics(report: dict[str, Any], migrations: dict[str, Any]) -> dict[str, Any]:
+    checks = {check.get("name"): check for check in report.get("checks", [])}
+    failed = set(report.get("summary", {}).get("blockers", []))
+    if checks.get("llm.inference", {}).get("severity") != "ok":
+        failed.add("llm.inference")
+    settlement = checks.get("content.signal_settlement", {})
+    if settlement.get("severity") not in {"ok", "info"} or str(settlement.get("detail", "")).startswith("probe error"):
+        failed.add("content.signal_settlement")
+    if migrations.get("current") is not True:
+        failed.add("schema.migrations")
+    return {"ok": not failed, "detail": ",".join(sorted(failed)) or "ready"}
+
+
 def _doctor_healthy() -> dict[str, Any]:
-    """Run deep diagnostics in a fresh interpreter bound to this source tree."""
+    """Run deployment-critical diagnostics in a fresh source-bound interpreter."""
     try:
         code = (
             "import json; "
             "from aletheia.diagnostics.doctor import build_report; "
-            "report = build_report().to_dict(); "
-            "print(json.dumps({'healthy': bool(report.get('healthy')), 'summary': report.get('summary')}))"
+            "from aletheia.storage.migrations import migration_status; "
+            "from aletheia.update.auto import _evaluate_runtime_diagnostics; "
+            "print(json.dumps(_evaluate_runtime_diagnostics(build_report().to_dict(), migration_status())))"
         )
         result = _run([sys.executable, "-c", code], cwd=_PROJECT_ROOT, env=_safe_env(), timeout=120)
         if result.returncode:
             return {"ok": False, "reason": "doctor_failed", "detail": (result.stderr or result.stdout)[-500:]}
         report = json.loads(result.stdout)
-        return {"ok": bool(report.get("healthy")), "detail": report.get("summary")}
+        return {"ok": bool(report.get("ok")), "detail": report.get("detail")}
     except Exception as exc:
         return {"ok": False, "reason": "doctor_failed", "detail": type(exc).__name__}
 
