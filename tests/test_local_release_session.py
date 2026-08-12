@@ -196,6 +196,34 @@ def test_local_session_version_boundary_falls_back_to_apply_on_old_cli(monkeypat
     assert apply_calls == [[str(launcher), "update", "apply", "--yes"]]
 
 
+def test_local_session_version_boundary_detects_old_typer_help(monkeypatch, tmp_path):
+    session = _session_module()
+    launcher = tmp_path / "aletheia"
+    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR)
+    apply_calls: list[list[str]] = []
+
+    monkeypatch.setattr(
+        session.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command,
+            returncode=2,
+            stdout="Commands:\n  apply  Apply a signed update\n  status  Show status\n",
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr(
+        session,
+        "_cli_output",
+        lambda command, *, env: apply_calls.append(list(command)) or "staged",
+    )
+
+    session._cli_trigger_update(launcher, env={})
+
+    assert apply_calls == [[str(launcher), "update", "apply", "--yes"]]
+
+
 def test_local_release_id_rejects_path_escape(tmp_path):
     session = _session_module()
     archive = _archive(tmp_path)

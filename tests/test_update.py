@@ -68,9 +68,14 @@ def test_pull_rejects_local_ahead_before_merge(monkeypatch):
 
     def fake_git(*args):
         calls.append(args)
-        if args[0] == "fetch":
+        if args == (
+            "fetch",
+            "--no-write-fetch-head",
+            "origin",
+            "master:refs/aletheia/update/master",
+        ):
             return _FakeProc()
-        if args == ("rev-parse", "FETCH_HEAD"):
+        if args == ("rev-parse", "--verify", "refs/aletheia/update/master"):
             return _FakeProc(stdout="fetched111\n")
         if args[0] == "rev-list":
             return _FakeProc(stdout="1\n")
@@ -85,32 +90,30 @@ def test_pull_rejects_local_ahead_before_merge(monkeypatch):
     assert not any(call[0] == "merge" for call in calls)
 
 
-def test_pull_merges_to_immutable_fetch_head_sha_not_mutable_branch_ref(monkeypatch):
-    """Invariant: merge target is the SHA captured from FETCH_HEAD, never origin/<branch>.
-
-    A concurrent fetch advancing origin/master between fetch and merge must not
-    cause HEAD to land on an unvalidated commit.
-    """
+def test_pull_merges_to_operation_owned_ref_sha(monkeypatch):
+    """The fetch target must not share FETCH_HEAD or origin/<branch> state."""
     from aletheia.update import git_ops
 
     calls = []
 
     def fake_git(*args):
         calls.append(args)
-        if args[0] == "fetch":
-            return _FakeProc(stdout="")
-        if args == ("rev-parse", "FETCH_HEAD"):
-            # This is the SHA locked in at fetch time — the only SHA that must
-            # flow to merge, ahead_count, and the post-merge equality check.
+        if args == (
+            "fetch",
+            "--no-write-fetch-head",
+            "origin",
+            "master:refs/aletheia/update/master",
+        ):
+            return _FakeProc()
+        if args == ("rev-parse", "--verify", "refs/aletheia/update/master"):
             return _FakeProc(stdout="fetched_sha\n")
-        if args[0] == "rev-list":
-            # ahead_count: 0 commits ahead
+        if args == ("rev-list", "--count", "fetched_sha..HEAD"):
             return _FakeProc(stdout="0\n")
         if args == ("merge", "--ff-only", "fetched_sha"):
             return _FakeProc(stdout="Fast-forward\n")
         if args == ("rev-parse", "HEAD"):
             return _FakeProc(stdout="fetched_sha\n")
-        pytest.fail(f"unexpected git call after TOCTOU fix: {args}")
+        pytest.fail(f"unexpected git call: {args}")
 
     monkeypatch.setattr(git_ops, "git_available", lambda: True)
     monkeypatch.setattr(git_ops, "_git", fake_git)
@@ -119,11 +122,9 @@ def test_pull_merges_to_immutable_fetch_head_sha_not_mutable_branch_ref(monkeypa
 
     assert result["ok"] is True
     assert result["remote_commit"] == "fetched_sha"
-    # The merge must target the immutable SHA, never the mutable branch ref.
     assert ("merge", "--ff-only", "fetched_sha") in calls
-    assert not any(
-        call == ("merge", "--ff-only", "origin/master") for call in calls
-    ), "merge must not reference mutable origin/master ref"
+    assert not any("FETCH_HEAD" in call for call in calls)
+    assert not any("origin/master" in call for call in calls)
 
 
 def test_check_for_update_writes_last_check(tmp_path, monkeypatch):

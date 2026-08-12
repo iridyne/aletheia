@@ -428,15 +428,15 @@ def _read_update_state(cli: Path, *, env: dict[str, str]) -> dict[str, Any]:
     return value
 
 
-_OLD_CLI_HINT = "update apply"  # emitted by pre-#909 packaged CLI on bare `update`
+_OLD_CLI_HINTS = ("update apply", "commands:", "apply")
 
 
 def _trigger_update(cli: Path, *, env: dict[str, str]) -> None:
     """Invoke the installed CLI's update command with version-boundary fallback.
 
-    Post-#910 CLIs accept ``aletheia update`` (bare).  Pre-#909 packaged CLIs
-    reject bare ``update`` and print a hint to run ``update apply --yes``.
-    Detect that hint and retry so the first cross-version upgrade can complete.
+    Post-#910 CLIs accept ``aletheia update`` (bare). Pre-#909 packaged CLIs
+    either print the explicit legacy command or Typer's command help containing
+    an ``apply`` subcommand. Retry only for those recognized command shapes.
     """
     result = subprocess.run(
         [str(cli), "update"],
@@ -448,8 +448,14 @@ def _trigger_update(cli: Path, *, env: dict[str, str]) -> None:
     )
     if result.returncode == 0:
         return
-    combined = (result.stderr or "") + (result.stdout or "")
-    if _OLD_CLI_HINT in combined:
+    combined = f"{result.stderr or ''}\n{result.stdout or ''}".lower()
+    explicit_hint, commands_heading, apply_command = _OLD_CLI_HINTS
+    legacy_cli = explicit_hint in combined or (
+        result.returncode == 2
+        and commands_heading in combined
+        and apply_command in combined
+    )
+    if legacy_cli:
         _cli_run(cli, ["update", "apply", "--yes"], env=env)
         return
     detail = (result.stderr or result.stdout).strip()
