@@ -65,6 +65,35 @@ jobs:
                 issue_number: pullRequest.number,
                 labels: ['do-not-auto-merge'],
               });
+              const {data: workflowRuns} = await github.rest.actions.listWorkflowRuns({
+                ...context.repo,
+                workflow_id: 'ci.yml',
+                branch: pullRequest.head.ref,
+                event: 'workflow_dispatch',
+                per_page: 30,
+              });
+              const exactRuns = workflowRuns.workflow_runs.filter(
+                ({head_sha}) => head_sha === pullRequest.head.sha,
+              );
+              const activeStatuses = new Set([
+                'requested', 'waiting', 'pending', 'queued', 'in_progress',
+              ]);
+              if (exactRuns.some(({status}) => activeStatuses.has(status))) {
+                core.info(`CI already active for ${pullRequest.head.sha}; reusing it`);
+                continue;
+              }
+              if (exactRuns.some(({status, conclusion}) =>
+                status === 'completed' && conclusion === 'success')) {
+                await github.rest.repos.createDispatchEvent({
+                  ...context.repo,
+                  event_type: 'release_candidate_verified',
+                  client_payload: {
+                    head_branch: pullRequest.head.ref,
+                    head_sha: pullRequest.head.sha,
+                  },
+                });
+                continue;
+              }
               await github.rest.actions.createWorkflowDispatch({
                 ...context.repo,
                 workflow_id: 'ci.yml',
