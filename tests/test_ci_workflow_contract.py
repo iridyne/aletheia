@@ -67,7 +67,13 @@ def test_ci_only_validates_pull_requests_merge_queue_and_explicit_release_runs()
 def test_ci_has_independent_review_regression_and_release_jobs() -> None:
     jobs = _workflow()["jobs"]
 
-    assert set(jobs) == {"review", "tests", "runtime-state-tests", "release-candidate"}
+    assert set(jobs) == {
+        "review",
+        "tests",
+        "runtime-state-tests",
+        "release-candidate",
+        "release-pr-ci",
+    }
     assert jobs["review"]["name"] == "Review checks"
     assert jobs["tests"]["name"] == "Python ${{ matrix.name }}"
     assert jobs["runtime-state-tests"]["name"] == "Python runtime state"
@@ -85,6 +91,15 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
     assert "release_candidate_verified" in step["with"]["script"]
     assert "head_branch" in step["with"]["script"]
     assert "head_sha: context.sha" in step["with"]["script"]
+
+    pr_handoff = jobs["release-pr-ci"]
+    assert pr_handoff["name"] == "Hand off verified release pull request"
+    assert pr_handoff["needs"] == ["review", "tests", "runtime-state-tests"]
+    assert "event_name == 'pull_request'" in pr_handoff["if"]
+    assert "release-please--branches--master" in pr_handoff["if"]
+    pr_script = pr_handoff["steps"][0]["with"]["script"]
+    assert "event_type: 'auto_merge_update'" in pr_script
+    assert "release_after_merge: true" in pr_script
 
     regression = jobs["tests"]["steps"][-1]["run"]
     runtime_regression = jobs["runtime-state-tests"]["steps"][-1]["run"]
@@ -382,6 +397,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "issues.removeLabel" in candidate_script
     assert "event_type: 'auto_merge_update'" in candidate_script
     assert "expected_head_sha: run.head_sha" in candidate_script
+    assert "release_after_merge: true" in candidate_script
 
     update = workflow["jobs"]["update"]
     assert update["name"] == "Apply auto-merge update"
@@ -402,7 +418,12 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "group": "auto-merge-update-${{ github.event.client_payload.pull_request_number }}",
         "cancel-in-progress": "true",
     }
-    assert set(update["env"]) == {"OPERATION", "PR_NUMBER", "EXPECTED_HEAD_SHA"}
+    assert set(update["env"]) == {
+        "OPERATION",
+        "PR_NUMBER",
+        "EXPECTED_HEAD_SHA",
+        "RELEASE_AFTER_MERGE",
+    }
     assert len(update["steps"]) == 1
     update_step = update["steps"][0]
     assert update_step["name"] == "Apply pull request auto-merge state"
@@ -417,6 +438,9 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "setTimeout" in update_script
     assert "enablePullRequestAutoMerge" in update_script
     assert "disablePullRequestAutoMerge" in update_script
+    assert "do-not-auto-merge" in update_script
+    assert "releaseAfterMerge" in update_script
+    assert "event_type: 'release_please'" in update_script
 
     release = workflow["jobs"]["release"]
     assert release["name"] == "Dispatch release management after merge"
@@ -440,21 +464,12 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "merge_commit_sha" in release_script
 
     release_after_ci = workflow["jobs"]["release-after-ci"]
-    assert release_after_ci["name"] == "Dispatch bot auto-merge release after CI"
-    assert release_after_ci["runs-on"] == [
-        "self-hosted",
-        "Linux",
-        "X64",
-        "ubuntu-24.04",
-    ]
-    assert release_after_ci["permissions"] == {
-        "contents": "write",
-        "pull-requests": "read",
-    }
+    assert release_after_ci["name"] == "Dispatch ordinary bot auto-merge release after CI"
+    assert "!startsWith" in release_after_ci["if"]
+    assert "release-please--branches--master" in release_after_ci["if"]
     followup_script = release_after_ci["steps"][0]["with"]["script"]
     assert "context.payload.workflow_run" in followup_script
     assert "pullRequest.head.sha !== run.head_sha" in followup_script
-    assert "pullRequest.merged_by?.login !== 'github-actions[bot]'" in followup_script
     assert "event_type: 'release_please'" in followup_script
 
     # All phases carry write-capable base-repository tokens. Keep them
@@ -477,7 +492,12 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     schedule_script = schedule["steps"][0]["with"]["script"]
     assert "expected_head_sha" in schedule_script
 
-    assert set(update["env"]) == {"OPERATION", "PR_NUMBER", "EXPECTED_HEAD_SHA"}
+    assert set(update["env"]) == {
+        "OPERATION",
+        "PR_NUMBER",
+        "EXPECTED_HEAD_SHA",
+        "RELEASE_AFTER_MERGE",
+    }
     update_script = update["steps"][0]["with"]["script"]
     assert "headRefOid" in update_script
     assert "pullRequest.headRefOid !== expectedHeadSha" in update_script
@@ -485,10 +505,10 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     assert "github.rest.pulls.merge" in update_script
     assert "sha: expectedHeadSha" in update_script
     assert "merge_method: 'squash'" in update_script
-    assert "createDispatchEvent" not in update_script
-    assert "event_type: 'release_please'" not in update_script
+    assert "createDispatchEvent" in update_script
+    assert "event_type: 'release_please'" in update_script
     assert "pullRequest.state === 'MERGED'" in update_script
-    assert "post-CI or closed-event job owns release dispatch" in update_script
+    assert "dispatchRelease" in update_script
     assert "auto-merge is enabled; GitHub will merge when required checks pass" in update_script
     assert "auto-merge did not complete" not in update_script
     assert "const autoMergeStates = new Set(['BEHIND', 'BLOCKED', 'HAS_HOOKS'])" in update_script

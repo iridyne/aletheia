@@ -370,10 +370,14 @@ def test_resume_gate_allows_when_one_provider_usable(tmp_path, monkeypatch):
         }
 
     monkeypatch.setattr(resume_gate, "probe_llm_providers_at_startup", fake_probe)
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.resume_scheduler",
+        lambda: True,
+    )
 
     result = asyncio.run(resume_gate.resume_if_llm_available(actor="human", source="test"))
 
-    assert result["allowed"] is True
+    assert result["allowed"] is True, result
     assert load_config().runtime.paused is False
 
 
