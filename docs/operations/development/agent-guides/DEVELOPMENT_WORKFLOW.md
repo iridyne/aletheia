@@ -46,6 +46,10 @@ uv run aletheia doctor
 
 ## Common commands
 
+For any Fedora runtime, Gateway, Provider, Risk, scheduler, or position question,
+start with the read-only [Fedora Agent orientation](../../deployment/DEPLOYMENT.md#fedora-新-agent只读上手).
+Do not infer that operational state from the local macOS checkout.
+
 - Focused test: `uv run pytest tests/test_<area>.py -q`
 - Full suite, never on macOS: `uv run pytest tests/ -q --tb=line`
 - Gateway: `uv run aletheia gateway <start|stop|restart|status|logs>`

@@ -72,6 +72,7 @@ _BIAS_BRAKE_WINDOW_HOURS = 24
 _BIAS_BRAKE_MIN_PROPOSALS = 20
 _BIAS_BRAKE_MAX_DIRECTION_PCT = 0.90
 _BIAS_BRAKE_BYPASS_CONVICTION = 85
+_LEVERAGE_RESOLVER_POLICY_VERSION = "post-debate-margin-v1"
 
 _ADVERSE_SKIP_REASON_CODES = {
     "signal_conflict",
@@ -144,11 +145,13 @@ class TradingDecision:
     # better fill). None → market. Only meaningful on close actions.
     order_type: str | None = None
     limit_price: float | None = None
-    # Futures: which venue + leverage the PI chose. market_type defaults to
-    # usdt_futures (the demo/perp venue) when the LLM omits it; leverage is the
-    # PI's requested level, clamped to the per-tier cap at submit time.
+    # Futures: the exact admitted market plus final executable leverage. Parsed
+    # AI decisions keep their original suggestion separately; a deterministic
+    # post-debate resolver owns this final value.
     market_type: str | None = None
     leverage: int | None = None
+    ai_advisory_leverage: int | None = None
+    leverage_resolution: dict = field(default_factory=dict)
     debate_ran: bool = False
     debate_initial_conviction: int | None = None
     debate_bull_confidence: int | None = None
@@ -214,8 +217,8 @@ _DECISION_SCHEMA = {
         # market_type: which venue expresses the view. "usdt_futures" (perp) supports
         # leverage and pays/earns funding; "spot" has no leverage and no funding cost.
         "market_type": {"type": "string", "enum": ["spot", "usdt_futures"]},
-        # leverage: integer ≥1, only meaningful for usdt_futures. The risk engine
-        # clamps this to the per-asset-tier cap, so a high request is safely reduced.
+        # leverage is an AI advisory only. A deterministic post-debate policy owns
+        # the executable value and still faces the Risk Engine's hard caps.
         "leverage": {"type": "integer", "minimum": 1, "maximum": 20},
         # Entry discipline: a trade must carry explicit Operator-authored stop and
         # take-profit prices. The exact fresh mark remains the authoritative entry;
@@ -822,6 +825,8 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
             learning_candidate_key=decision.learning_candidate_key,
             sizing_trace=decision.sizing_trace,
         )
+        if decision.parameter_rationale_required:
+            _resolve_ai_leverage(decision, trading_context)
     elif trade_intent:
         # Initial conviction < 55 without a debate range trigger (or debate did
         # not raise). Same rationale as debate_not_confirmed above (DL-S47):
@@ -1430,13 +1435,12 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
                 filter_trace=list(decision.filter_trace),
             )
 
-    # Leverage only applies to futures. Clamp the PI's request to the per-asset-tier
-    # cap (the risk engine enforces the same cap as a hard reject — clamping here keeps
-    # the proposal inside the gate so a sane futures trade is not silently rejected for
-    # an over-eager leverage number). Spot carries no leverage.
+    # Leverage only applies to futures. AI decisions arrive here after the
+    # deterministic resolver; legacy/programmatic callers retain the same final
+    # cap. Spot carries no leverage.
     leverage: int | None = None
     leverage_cap: int | None = None
-    if market_type == "usdt_futures" and decision.leverage and decision.leverage > 1:
+    if market_type == "usdt_futures" and decision.leverage is not None:
         from aletheia.trading.instruments import get_max_leverage
         is_live = "live" in (execution_mode or "")
         leverage_cap = get_max_leverage(decision.symbol, is_live, cfg)
@@ -1584,9 +1588,18 @@ def _build_entry_parameter_snapshot(
 
     actual_notional = round(quantity * entry_price, 8)
     estimated_loss = round(quantity * abs(entry_price - stop_price), 8)
-    requested_leverage = decision.leverage if market_type == "usdt_futures" else None
+    requested_leverage = (
+        (
+            decision.ai_advisory_leverage
+            if decision.ai_advisory_leverage is not None else decision.leverage
+        )
+        if market_type == "usdt_futures" else None
+    )
     final_leverage = leverage or 1
-    if market_type != "usdt_futures":
+    resolution = decision.leverage_resolution or {}
+    if resolution:
+        leverage_source = "deterministic_post_debate_policy"
+    elif market_type != "usdt_futures":
         leverage_source = "not_applicable_spot"
     elif requested_leverage and leverage_cap and final_leverage != requested_leverage:
         leverage_source = "risk_cap_clamped"
@@ -1633,7 +1646,10 @@ def _build_entry_parameter_snapshot(
             "maximum_allowed": leverage_cap,
             "estimated_margin_usdt": round(actual_notional / final_leverage, 8) if final_leverage else None,
             "value_source": leverage_source,
-            "reason": reason_for("leverage"),
+            "reason": resolution.get("reason") or reason_for("leverage"),
+            "ai_advisory_reason": reason_for("leverage"),
+            "policy_version": resolution.get("policy_version"),
+            "resolver_inputs": resolution.get("inputs"),
         },
     }
 
@@ -1694,8 +1710,9 @@ async def _assess_opportunity(ctx: dict) -> dict | None:
         "You are the Trading Decision Authority for an autonomous paper trading system. "
         "You receive a structured three-layer context: (1) current environment snapshot, "
         "(2) your recent 7-day performance, (3) accumulated wisdom from past trades. "
-        "The risk/guard system operates independently after your decision — "
-        "focus on WHAT to trade, not HOW MUCH. Return a JSON object matching the schema."
+        "The risk/guard system operates independently after your decision. Choose WHAT "
+        "to trade; leverage is advisory and a deterministic post-debate policy owns the "
+        "final executable value. Return a JSON object matching the schema."
     )
     user = _build_assessment_prompt(ctx)
     result, err = await llm_structured(
@@ -2588,10 +2605,11 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "- market_type: for a new entry, copy the exact market_type from its durable "
         "Pending Signal; never relabel spot as futures or futures as spot downstream. "
         "A short requires an existing usdt_futures carrier (spot cannot be sold short).",
-        "- leverage: integer ≥1, only for usdt_futures. Scale with conviction — 1 (none) when "
-        "uncertain, 2-3 for solid setups, higher only for the strongest confluence. The risk "
-        "engine clamps to a per-asset-tier cap (majors allow more than alts), so an over-eager "
-        "number is reduced, not rejected. Leave at 1 if unsure.",
+        "- leverage: advisory integer ≥1, only for usdt_futures. Prefer 1 unless the fixed "
+        "notional actually needs margin efficiency. Leverage does not increase alpha or nominal "
+        "PnL when quantity is already fixed; it changes margin usage and liquidation risk. A "
+        "deterministic policy recomputes the final value after debate using authoritative "
+        "margin, volatility, stop, account-headroom, and Risk-cap facts.",
         "",
         "Actions available:",
         "- trade: open a new position",
@@ -2615,7 +2633,8 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "Never invent levels when the shown facts do not support them; choose "
         "skip with insufficient_evidence instead. Also return parameter_rationale with five "
         "short, setup-specific reasons: entry_price, stop_loss, take_profit, notional_usdt, "
-        "and leverage. Explain why each exact choice fits this trade now. These are shown to "
+        "and leverage. For leverage, explain only the setup risks behind your advisory; do not "
+        "claim a final value or Risk cap. These reasons are shown to "
         "the operator next to the final values. Entry remains the fresh exact submission mark, "
         "and notional/leverage remain subject to deterministic sizing and risk caps; do not "
         "claim that you calculated values owned by those downstream authorities.",
@@ -2707,6 +2726,226 @@ def _feature_for_candidate(symbol: str, direction: str | None, ctx: dict) -> dic
         return candidates[0]
     # Ambiguous identity is unavailable, never guessed from a same-symbol row.
     return {}
+
+
+def _resolve_ai_leverage(
+    decision: TradingDecision,
+    ctx: dict,
+    *,
+    cfg=None,
+) -> None:
+    """Resolve an AI advisory into the lowest safe margin-required leverage."""
+    advisory = decision.ai_advisory_leverage
+    if advisory is None:
+        advisory = decision.leverage
+    decision.ai_advisory_leverage = advisory
+
+    def finish(final: int | None, reason_code: str, inputs: dict, reason: str) -> None:
+        decision.leverage = final
+        decision.leverage_resolution = {
+            "policy_version": _LEVERAGE_RESOLVER_POLICY_VERSION,
+            "reason_code": reason_code,
+            "ai_advisory_value": advisory,
+            "final_value": final,
+            "inputs": inputs,
+            "reason": reason,
+        }
+        decision.filter_trace.append({
+            "filter_name": "operator_leverage_resolver",
+            "stage": "system_operator_post_debate",
+            "decision": "passed",
+            "reason_code": reason_code,
+            "inputs": inputs,
+            "parameters": {
+                "policy_version": _LEVERAGE_RESOLVER_POLICY_VERSION,
+                "missing_input_fallback": 1,
+            },
+        })
+
+    if decision.market_type != "usdt_futures":
+        finish(
+            None,
+            "spot_unleveraged",
+            {"market_type": decision.market_type, "ai_advisory_value": advisory},
+            "Spot is structurally unleveraged.",
+        )
+        return
+
+    layer1 = ctx.get("layer1") or {}
+    layer2 = ctx.get("layer2") or {}
+    feature = _feature_for_candidate(decision.symbol or "", decision.direction, ctx)
+    balance = layer1.get("balance") or {}
+    futures = layer1.get("futures") or {}
+    entry_mark = layer2.get("entry_mark") or {}
+
+    def finite(value) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    entry = finite(entry_mark.get("price"))
+    stop = finite(decision.stop_price)
+    atr_pct = finite(feature.get("atr_pct"))
+    equity = finite(balance.get("equity_usdt"))
+    available = finite(balance.get("available_usdt"))
+    notional = finite(decision.position_size_usdt)
+    account_ratio = finite(futures.get("account_leverage_ratio"))
+    conviction = finite(decision.conviction)
+    try:
+        advisory_value = int(advisory) if advisory is not None else None
+    except (TypeError, ValueError, OverflowError):
+        advisory_value = None
+
+    config = cfg
+    if config is None:
+        try:
+            from aletheia.config.loader import load_config
+
+            config = load_config()
+        except Exception:
+            config = None
+
+    tier_cap = None
+    account_cap = None
+    min_liquidation_buffer_pct = None
+    if config is not None and decision.symbol:
+        try:
+            from aletheia.trading.instruments import get_max_leverage
+
+            tier_cap = int(get_max_leverage(decision.symbol, False, config))
+            account_cap = float(config.risk.demo.leverage.account_cap)
+            min_liquidation_buffer_pct = float(
+                config.risk.demo.margin.min_entry_liquidation_buffer_pct
+            )
+        except (AttributeError, TypeError, ValueError):
+            tier_cap = account_cap = min_liquidation_buffer_pct = None
+
+    inputs = {
+        "market_type": decision.market_type,
+        "symbol": decision.symbol,
+        "direction": decision.direction,
+        "conviction": decision.conviction,
+        "ai_advisory_value": advisory_value,
+        "notional_usdt": notional,
+        "entry_price": entry,
+        "stop_price": stop,
+        "atr_pct": atr_pct,
+        "equity_usdt": equity,
+        "available_usdt": available,
+        "account_leverage_ratio": account_ratio,
+        "account_leverage_cap": account_cap,
+        "tier_cap": tier_cap,
+        "min_liquidation_buffer_pct": min_liquidation_buffer_pct,
+    }
+    from aletheia.agent_shell.decision_facts import (
+        candidate_context_unavailable_reason,
+    )
+
+    technical_context_reason = candidate_context_unavailable_reason(
+        ctx, opportunity_id=decision.opportunity_id
+    )
+    inputs["technical_context_status"] = technical_context_reason or "available"
+    required = {
+        "entry_price": entry,
+        "stop_price": stop,
+        "atr_pct": atr_pct,
+        "equity_usdt": equity,
+        "available_usdt": available,
+        "notional_usdt": notional,
+        "account_leverage_ratio": account_ratio,
+        "account_leverage_cap": account_cap,
+        "tier_cap": tier_cap,
+        "min_liquidation_buffer_pct": min_liquidation_buffer_pct,
+        "ai_advisory_value": advisory_value,
+        "conviction": conviction,
+    }
+    missing = [
+        key for key, value in required.items()
+        if value is None
+        or (key != "account_leverage_ratio" and value <= 0)
+        or (key == "account_leverage_ratio" and value < 0)
+    ]
+    if (
+        missing
+        or technical_context_reason
+        or entry_mark.get("status") != "available"
+        or entry_mark.get("symbol") != decision.symbol
+        or entry_mark.get("market_type") != decision.market_type
+        or decision.direction not in {"long", "short"}
+    ):
+        inputs["missing_or_invalid"] = missing + (
+            [technical_context_reason] if technical_context_reason else []
+        ) or ["entry_mark_identity"]
+        finish(
+            1,
+            "required_input_unavailable",
+            inputs,
+            "Resolved to 1x because authoritative leverage inputs were unavailable.",
+        )
+        return
+
+    margin_leverage = max(1, math.ceil(notional / available)) if available else None
+    inputs["minimum_margin_leverage"] = margin_leverage
+    if margin_leverage == 1:
+        finish(
+            1,
+            "margin_covers_notional",
+            inputs,
+            "Resolved to 1x because available margin covers the fixed notional.",
+        )
+        return
+
+    confidence_ceiling = 1 + max(
+        0, int((decision.conviction - _MIN_CONVICTION_TO_TRADE) // 15)
+    )
+    authorized_ceiling = min(advisory_value, confidence_ceiling, tier_cap)
+    stop_distance_pct = abs(entry - stop) / entry * 100
+    required_liquidation_gap_pct = stop_distance_pct + max(
+        min_liquidation_buffer_pct, 2 * atr_pct
+    )
+    from aletheia.trading.instruments import calc_liquidation_price
+
+    liquidation = calc_liquidation_price(
+        entry, decision.direction or "", margin_leverage, decision.symbol or ""
+    )
+    liquidation_gap_pct = (
+        abs(entry - liquidation) / entry * 100 if liquidation is not None else None
+    )
+    projected_account_ratio = (
+        account_ratio * equity + notional * margin_leverage
+    ) / equity
+    inputs.update({
+        "conviction_ceiling": confidence_ceiling,
+        "authorized_ceiling": authorized_ceiling,
+        "stop_distance_pct": round(stop_distance_pct, 6),
+        "required_liquidation_gap_pct": round(required_liquidation_gap_pct, 6),
+        "liquidation_gap_pct": (
+            round(liquidation_gap_pct, 6) if liquidation_gap_pct is not None else None
+        ),
+        "projected_account_leverage_ratio": round(projected_account_ratio, 6),
+    })
+    if (
+        margin_leverage > authorized_ceiling
+        or liquidation_gap_pct is None
+        or liquidation_gap_pct < required_liquidation_gap_pct
+        or projected_account_ratio > account_cap
+    ):
+        finish(
+            1,
+            "no_safe_leveraged_value",
+            inputs,
+            "Resolved to 1x because no leveraged value satisfied every authoritative constraint.",
+        )
+        return
+
+    finish(
+        margin_leverage,
+        "minimum_margin_leverage",
+        inputs,
+        f"Resolved to {margin_leverage}x, the minimum leverage needed for the fixed notional to fit available margin.",
+    )
 
 
 def _build_bull_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
@@ -2881,6 +3120,7 @@ def _parse_decision(raw: dict) -> TradingDecision:
         bear_case=str(raw.get("bear_case") or "")[:500],
         market_type=mt,
         leverage=leverage,
+        ai_advisory_leverage=leverage,
         stop_price=stop_price,
         take_profit=take_profit,
         expected_horizon_hours=_num(raw.get("expected_horizon_hours")),

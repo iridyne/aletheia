@@ -18,6 +18,9 @@ For read-only Alpha, opportunity-funnel, and sizing diagnosis, use
 [Trading Diagnostics](runbooks/TRADING_DIAGNOSTICS.md). For CASI-authoritative
 LLM token usage, optional economics, budget-shadow, and context-adapter
 operations, use the [LLM Harness Telemetry runbook](runbooks/LLM_HARNESS_TELEMETRY.md).
+For a new Agent inspecting the owner-selected Fedora runtime, start with the
+[read-only Fedora orientation](deployment/DEPLOYMENT.md#fedora-新-agent只读上手)
+before reading or changing any operational state.
 
 ## Packaged Runtime release lane
 

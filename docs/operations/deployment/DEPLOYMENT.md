@@ -43,6 +43,81 @@ uv run aletheia data migrate
 uv run aletheia data capacity --deep --history 30
 ```
 
+## Fedora 新 Agent：只读上手
+
+Fedora 是 owner 选定的长期运行实例，macOS 只是开发/控制面。新 Agent 在判断
+Gateway、Provider、配置、Risk、仓位或 scheduler 状态前，先查询 Fedora；不得用本地
+macOS 的空配置或临时 Gateway 代替。稳定入口如下：
+
+| 项目 | 稳定入口 |
+| --- | --- |
+| SSH alias | `fedora` |
+| Source checkout | `/home/admin/aletheia` |
+| Dashboard/front door | Fedora 本机 `127.0.0.1:8787` |
+| Backend | Fedora 本机 `127.0.0.1:8788` |
+| Runtime/data authority | Fedora 当前 Gateway、API、primary data root |
+
+先执行这一组无副作用检查；它不启动、停止或重启 Gateway：
+
+```sh
+ssh -o BatchMode=yes -o ConnectTimeout=10 fedora '
+  cd /home/admin/aletheia &&
+  hostname &&
+  git rev-parse HEAD &&
+  git branch --show-current &&
+  uv run aletheia gateway status &&
+  curl -fsS --max-time 5 http://127.0.0.1:8788/_infra/readyz &&
+  curl -fsS --max-time 5 http://127.0.0.1:8788/api/status &&
+  curl -fsS --max-time 5 http://127.0.0.1:8788/api/health
+'
+```
+
+按问题继续读取最小 API，不要直接打印 `config.yaml`、进程环境、Keyring 或 secret 文件：
+
+| 要回答的问题 | 只读权威入口 |
+| --- | --- |
+| 当前部署代码是否与启动代码一致 | `git rev-parse HEAD`；`/api/status` 的 `boot_commit`、`current_commit` |
+| Gateway、scheduler、Provider、execution target | `/api/status`；`uv run aletheia gateway status` |
+| Exchange、启用市场、paper execution mode | `/api/settings` 的 `exchange` 字段（响应已脱敏） |
+| 当前仓位及 `market_type`、`leverage`、proposal 关联 | `/api/positions` |
+| Demo/live Risk policy 与杠杆上限 | `/api/settings/risk-policies` |
+| 当前账户杠杆计算是否可用 | `/api/risk/account-leverage` |
+| 最近错误与整体诊断 | `uv run aletheia doctor --verbose`、`uv run aletheia gateway logs`（均应脱敏） |
+
+需要快速查看交易配置与开放仓位时，用标准库筛选响应，避免把整份配置带进 Agent
+上下文：
+
+```sh
+ssh -o BatchMode=yes fedora 'python3 - <<"PY"
+import json
+from urllib.request import urlopen
+
+base = "http://127.0.0.1:8788"
+settings = json.load(urlopen(base + "/api/settings", timeout=5))
+positions = json.load(urlopen(base + "/api/positions", timeout=5))
+risk = json.load(urlopen(base + "/api/settings/risk-policies", timeout=5))
+
+print("exchange", json.dumps(settings.get("exchange", {}), sort_keys=True))
+print("risk", json.dumps(risk, sort_keys=True))
+for row in positions:
+    if row.get("status") == "open":
+        keys = ("id", "symbol", "market_type", "direction", "leverage",
+                "execution_mode", "proposal_id", "opportunity_id", "opened_at")
+        print("position", json.dumps({key: row.get(key) for key in keys}, sort_keys=True))
+PY'
+```
+
+仓位成因不能只看 Open Positions 表。需要解释“为什么选择这种 market/leverage”时，沿
+`position.proposal_id → trade_proposals → pi_decisions` 和
+`position.opportunity_id → opportunities` 查询；区分 AI 请求值、Risk cap 裁剪、来源
+Opportunity 的 instrument identity 和最终 Position。优先使用 repository/API 的只读方法，
+不要手写数据库更新。任何数量、commit、配置值和健康状态都是运行事实，必须现场重查，
+不得把一次快照写成 tracked 文档里的“当前状态”。
+
+只读诊断不授权 `gateway start|stop|restart`、`update apply`、配置写入、Risk 修改、数据库
+修复或下单。连接失败时先报告 `SSH alias`、网络或 Gateway readiness 的哪一层不可用；不要
+在 macOS 启动替代实例，也不要为了取得答案重启 Fedora Gateway。
+
 ## Fedora 运行实例：精确部署 SOP
 
 Fedora 是当前长期运行实例；macOS 只用于开发和控制。合并 Ready PR 后，先确认并记录

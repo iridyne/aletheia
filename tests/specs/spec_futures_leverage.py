@@ -253,14 +253,14 @@ def test_paper_open_records_leverage_and_liquidation(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# System Operator decides market_type + leverage (Round 2 — "PI decides spot/perp")
+# System Operator decides market_type; AI leverage is advisory.
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim("FL-S12", "futures_leverage", "§12 PI decision schema", "L2a",
               "PI decision schema + TradingDecision dataclass + parser carry market_type "
-              "and leverage so the System Operator can choose spot vs perp and a leverage level"),
+              "and preserve AI leverage separately from the final executable value"),
 )
 def test_pi_decision_schema_market_type_and_leverage():
     from aletheia.agent_shell.trading_decision import (
@@ -293,12 +293,185 @@ def test_pi_decision_schema_market_type_and_leverage():
     })
     assert parsed.market_type == "usdt_futures"
     assert parsed.leverage == 3
+    assert parsed.ai_advisory_leverage == 3
+
+
+def _ai_leverage_context(
+    *, available=20.0, ratio=0.0, atr=2.0,
+    feature_ts="2099-01-01T00:00:00+00:00",
+):
+    return {
+        "layer1": {
+            "feature_index": {
+                "btc-perp": {
+                    "feature_snapshot_id": "feature-1",
+                    "feature_ts": feature_ts,
+                    "data_freshness_sec": 0,
+                    "symbol": "BTC/USDT",
+                    "market_type": "perp",
+                    "atr_pct": atr,
+                    "rsi_14": 50,
+                },
+            },
+            "balance": {"equity_usdt": 1000.0, "available_usdt": available},
+            "futures": {"account_leverage_ratio": ratio},
+        },
+        "layer2": {
+            "pending_signals": [{
+                "symbol": "BTC/USDT",
+                "direction": "long",
+                "market_type": "usdt_futures",
+            }],
+            "entry_mark": {
+                "status": "available",
+                "symbol": "BTC/USDT",
+                "market_type": "usdt_futures",
+                "price": 100.0,
+            },
+        },
+    }
+
+
+def _ai_futures_decision(**updates):
+    from aletheia.agent_shell.trading_decision import TradingDecision
+
+    values = {
+        "action": "trade",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "conviction": 90,
+        "reasoning": "candidate is eligible",
+        "market_type": "usdt_futures",
+        "leverage": 5,
+        "ai_advisory_leverage": 5,
+        "position_size_usdt": 60.0,
+        "stop_price": 98.0,
+        "parameter_rationale_required": True,
+        "parameter_rationale": {"leverage": "model advisory"},
+    }
+    values.update(updates)
+    return TradingDecision(**values)
+
+
+@spec_claim(
+    SpecClaim("FL-S19", "futures_leverage", "§19 deterministic resolver", "L2b",
+              "AI leverage is advisory; a post-debate resolver chooses the minimum "
+              "margin-required leverage within conviction, volatility, liquidation, "
+              "account-headroom, and Risk caps, falling back to 1x when unavailable"),
+)
+@pytest.mark.parametrize(
+    ("context", "updates", "expected", "reason"),
+    [
+        (_ai_leverage_context(available=100.0), {}, 1, "margin_covers_notional"),
+        (_ai_leverage_context(), {}, 3, "minimum_margin_leverage"),
+        (_ai_leverage_context(atr=16.0), {}, 1, "no_safe_leveraged_value"),
+        (_ai_leverage_context(ratio=9.9), {}, 1, "no_safe_leveraged_value"),
+        (_ai_leverage_context(atr=None), {}, 1, "required_input_unavailable"),
+        (_ai_leverage_context(feature_ts="2020-01-01T00:00:00+00:00"), {}, 1,
+         "required_input_unavailable"),
+        (_ai_leverage_context(), {"conviction": 60}, 1, "no_safe_leveraged_value"),
+    ],
+)
+def test_post_debate_ai_leverage_resolver(context, updates, expected, reason):
+    from aletheia.agent_shell.trading_decision import _resolve_ai_leverage
+    from aletheia.config.schema import AletheiaConfig
+
+    decision = _ai_futures_decision(**updates)
+    _resolve_ai_leverage(decision, context, cfg=AletheiaConfig())
+
+    assert decision.ai_advisory_leverage == 5
+    assert decision.leverage == expected
+    assert decision.leverage_resolution["reason_code"] == reason
+    assert decision.leverage_resolution["final_value"] == expected
+
+
+def test_spot_ai_leverage_is_structurally_not_applicable():
+    from aletheia.agent_shell.trading_decision import _resolve_ai_leverage
+    from aletheia.config.schema import AletheiaConfig
+
+    decision = _ai_futures_decision(market_type="spot", leverage=5)
+    _resolve_ai_leverage(decision, _ai_leverage_context(), cfg=AletheiaConfig())
+
+    assert decision.leverage is None
+    assert decision.leverage_resolution["reason_code"] == "spot_unleveraged"
+
+
+def test_ai_leverage_resolution_uses_post_debate_conviction(monkeypatch):
+    import asyncio
+    import aletheia.agent_shell.trading_decision as td
+    from aletheia.config.schema import AletheiaConfig
+
+    async def assess(_ctx):
+        return {
+            "action": "trade",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "conviction": 70,
+            "reasoning": "candidate is eligible",
+            "bear_case": "breakout can fail",
+            "market_type": "usdt_futures",
+            "leverage": 5,
+            "stop_price": 98.0,
+            "take_profit": 104.0,
+            "parameter_rationale": {
+                key: f"reason for {key}"
+                for key in (
+                    "entry_price", "stop_loss", "take_profit",
+                    "notional_usdt", "leverage",
+                )
+            },
+        }
+
+    async def debate(*_args):
+        return td.DebateResult(100, "bull", [], 40, "bear", [])
+
+    monkeypatch.setattr(td, "_assess_opportunity", assess)
+    monkeypatch.setattr(td, "_run_debate", debate)
+    monkeypatch.setattr(td, "_proposal_bias_brake_reason", lambda _decision: None)
+    monkeypatch.setattr(td, "_get_strategy_paper_trade_count", lambda _strategy_id: 0)
+    monkeypatch.setattr(td, "_compute_position_size", lambda *_args, **_kwargs: 60.0)
+    monkeypatch.setattr("aletheia.config.loader.load_config", lambda: AletheiaConfig())
+
+    decision = asyncio.run(td.evaluate_trading_opportunity(_ai_leverage_context()))
+
+    assert decision.debate_initial_conviction == 70
+    assert decision.conviction == 88
+    assert decision.leverage == 3
+    assert decision.leverage_resolution["inputs"]["conviction"] == 88
+
+
+def test_leverage_snapshot_separates_ai_advisory_from_authoritative_reason():
+    from aletheia.agent_shell.trading_decision import (
+        _build_entry_parameter_snapshot,
+        _resolve_ai_leverage,
+    )
+    from aletheia.config.schema import AletheiaConfig
+
+    decision = _ai_futures_decision()
+    _resolve_ai_leverage(decision, _ai_leverage_context(), cfg=AletheiaConfig())
+    snapshot = _build_entry_parameter_snapshot(
+        decision=decision,
+        market_type="usdt_futures",
+        entry_price=100.0,
+        quantity=0.6,
+        stop_price=98.0,
+        take_profit=104.0,
+        requested_notional=60.0,
+        leverage=decision.leverage,
+        leverage_cap=20,
+    )["leverage"]
+
+    assert snapshot["requested_value"] == 5
+    assert snapshot["final_value"] == 3
+    assert snapshot["value_source"] == "deterministic_post_debate_policy"
+    assert snapshot["ai_advisory_reason"] == "model advisory"
+    assert snapshot["reason"] != "model advisory"
 
 
 @spec_claim(
     SpecClaim("FL-S13", "futures_leverage", "§13 leverage clamped on submit", "L2b",
-              "submit_decision_as_proposal forwards PI market_type + leverage to "
-              "create_paper_proposal, clamping leverage to the per-tier cap"),
+              "submit_decision_as_proposal forwards final market_type + leverage to "
+              "create_paper_proposal, preserving 1x and clamping to the per-tier cap"),
 )
 async def test_submit_decision_clamps_leverage(tmp_path, monkeypatch):
     import aletheia.agent_shell.trading_decision as td
@@ -338,6 +511,10 @@ async def test_submit_decision_clamps_leverage(tmp_path, monkeypatch):
     await td.submit_decision_as_proposal(decision, execution_mode="paper_internal")
     assert captured["market_type"] == "usdt_futures"
     assert captured["leverage"] == 20  # clamped to BTC demo tier cap
+
+    decision.leverage = 1
+    await td.submit_decision_as_proposal(decision, execution_mode="paper_internal")
+    assert captured["leverage"] == 1
 
 
 @spec_claim(
