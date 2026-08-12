@@ -4,6 +4,15 @@ All notable product changes are recorded here. Aletheia uses Semantic Versioning
 for the product release, while build identities and data/behavior contracts keep
 their own independent versions.
 
+## [0.7.3](https://github.com/iridite/aletheia/compare/v0.7.2...v0.7.3) (2026-08-12)
+
+
+### Bug Fixes
+
+* **ci:** retry gitleaks download ([#940](https://github.com/iridite/aletheia/issues/940)) ([11256cf](https://github.com/iridite/aletheia/commit/11256cf324308523bc0f96bdca7dc5cc3d545094))
+* **exit:** expose trailing enrollment gate ([#937](https://github.com/iridite/aletheia/issues/937)) ([9c87d4c](https://github.com/iridite/aletheia/commit/9c87d4c0b9b9ead237c65b0a00c9f96a439f50f7))
+* **runtime:** anchor evidence epochs on startup ([#938](https://github.com/iridite/aletheia/issues/938)) ([d2bbed5](https://github.com/iridite/aletheia/commit/d2bbed57040ddac467ae3bec4a2644a3850195a5))
+
 ## [0.7.2](https://github.com/iridite/aletheia/compare/v0.7.1...v0.7.2) (2026-08-12)
 
 
