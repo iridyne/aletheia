@@ -4,6 +4,57 @@ All notable product changes are recorded here. Aletheia uses Semantic Versioning
 for the product release, while build identities and data/behavior contracts keep
 their own independent versions.
 
+## [0.7.0](https://github.com/iridite/aletheia/compare/v0.6.0...v0.7.0) (2026-08-12)
+
+
+### Features
+
+* **analytics:** add read-only ranker objective audits ([#915](https://github.com/iridite/aletheia/issues/915)) ([4b94487](https://github.com/iridite/aletheia/commit/4b944875e0e09699a183d7036cb8cc2c642e123f))
+* **analytics:** report exit shadow uncertainty ([#859](https://github.com/iridite/aletheia/issues/859)) ([6b18e8c](https://github.com/iridite/aletheia/commit/6b18e8c683fe87d8e2520181995ad0a354ef166a))
+* **data:** add auditable Position X research pipeline ([#892](https://github.com/iridite/aletheia/issues/892)) ([a34b7d3](https://github.com/iridite/aletheia/commit/a34b7d3b8eaaa541b13faeec07e70a0de2b587d1))
+* **exit:** default cost-aware paper trailing ([#888](https://github.com/iridite/aletheia/issues/888)) ([c05bc68](https://github.com/iridite/aletheia/commit/c05bc68c97651aa6c4a7087c45be8dcfd77d0aa7))
+* **exit:** register trailing recovery evidence ([#896](https://github.com/iridite/aletheia/issues/896)) ([0d51c89](https://github.com/iridite/aletheia/commit/0d51c890c42f3489afc062459ae4a1392410fbe6))
+* **exit:** retain trailing qualification control ([#891](https://github.com/iridite/aletheia/issues/891)) ([62ceaab](https://github.com/iridite/aletheia/commit/62ceaab67f60c326f3603dd8096cc653c375bc0d))
+* **update:** add one-command source deployment ([#909](https://github.com/iridite/aletheia/issues/909)) ([20ca099](https://github.com/iridite/aletheia/commit/20ca099e3ccc6acc66f7d413a72da8abdbb1b525))
+* **update:** automate stable release tag deployment ([#925](https://github.com/iridite/aletheia/issues/925)) ([87168f2](https://github.com/iridite/aletheia/commit/87168f266038e338267bc30ecbe8c1dff8351aea))
+* **usage:** add progressive cost insights ([#919](https://github.com/iridite/aletheia/issues/919)) ([caf1487](https://github.com/iridite/aletheia/commit/caf1487c385cb39a7281aa8977b09222c4ee8e42))
+
+
+### Bug Fixes
+
+* **analytics:** align R:R audit contract ([#921](https://github.com/iridite/aletheia/issues/921)) ([3e2241b](https://github.com/iridite/aletheia/commit/3e2241b3a486ff6bbc8941fa8da422e5b17ef208))
+* **analytics:** distinguish deferred operator signals ([#880](https://github.com/iridite/aletheia/issues/880)) ([e2723d8](https://github.com/iridite/aletheia/commit/e2723d80db00f98ecaee8af17b04c5ab48b9cf9c))
+* **analytics:** exposure-match sizing shadow ([#894](https://github.com/iridite/aletheia/issues/894)) ([d234678](https://github.com/iridite/aletheia/commit/d234678ad7010eb9d3a06664ea7757b524418859))
+* **analytics:** render deferred operator signals ([#882](https://github.com/iridite/aletheia/issues/882)) ([03c634c](https://github.com/iridite/aletheia/commit/03c634c8765309a61d9d86a8c47fceefe6c83f84))
+* **ci:** avoid competing node cache saves ([#881](https://github.com/iridite/aletheia/issues/881)) ([55f02ea](https://github.com/iridite/aletheia/commit/55f02ea60e893f6ee7e21ab27f3fe131905d4bb7))
+* **ci:** release runner after enabling auto-merge ([#884](https://github.com/iridite/aletheia/issues/884)) ([c6972ce](https://github.com/iridite/aletheia/commit/c6972cedc46fb31b182a9dd9d99ff1d7b9f9377c))
+* **ci:** report regression tiers independently ([#914](https://github.com/iridite/aletheia/issues/914)) ([45cb22c](https://github.com/iridite/aletheia/commit/45cb22c85e25bacc3ca6372d29c65da3d6d777bf))
+* **diagnostics:** surface unreconstructable skip evidence ([#879](https://github.com/iridite/aletheia/issues/879)) ([accb59c](https://github.com/iridite/aletheia/commit/accb59c74c87ef53a64a747f35a1b5066fbb25aa))
+* **exit:** freeze paper trailing cost contract ([#890](https://github.com/iridite/aletheia/issues/890)) ([d1d10db](https://github.com/iridite/aletheia/commit/d1d10dbe0392b740b17b3dc00219b2249aa7e5d7))
+* **exit:** make trailing revisions causal and atomic ([#893](https://github.com/iridite/aletheia/issues/893)) ([766676e](https://github.com/iridite/aletheia/commit/766676e3bae9d6aad3d6b35063f4fbab3fc3c998))
+* **exit:** retain trailing recovery evidence ([#897](https://github.com/iridite/aletheia/issues/897)) ([e572578](https://github.com/iridite/aletheia/commit/e572578ea8e78428a955eed0c8f8eb65f2a5f4ca))
+* gate auto updates on deployment health ([#928](https://github.com/iridite/aletheia/issues/928)) ([2169a57](https://github.com/iridite/aletheia/commit/2169a570059f6679664c51e710d68ef5fb6a2363))
+* **learning:** align lesson reviewer inference contract ([#918](https://github.com/iridite/aletheia/issues/918)) ([637d094](https://github.com/iridite/aletheia/commit/637d0948591ea40bd73a562ba063fcfa04767cca))
+* **learning:** canonicalize active UFC Paper identity ([#922](https://github.com/iridite/aletheia/issues/922)) ([bb6f7de](https://github.com/iridite/aletheia/commit/bb6f7de7032cdd1efa7c0f703a7a5da09f7b3e93))
+* **learning:** consolidate observation workloads ([#900](https://github.com/iridite/aletheia/issues/900)) ([578c9ab](https://github.com/iridite/aletheia/commit/578c9abe0032a80c8ad6e79e092a66f3e4dcd05d))
+* **learning:** make insights decision-ready ([#920](https://github.com/iridite/aletheia/issues/920)) ([1929409](https://github.com/iridite/aletheia/commit/1929409f3c674247fe3a8155fa5158e227828bc0))
+* **learning:** persist hypothesis contract identity ([#857](https://github.com/iridite/aletheia/issues/857)) ([fe24431](https://github.com/iridite/aletheia/commit/fe24431b0ef545b927af77b62dd2cb68f52e341c))
+* **learning:** preserve exact UFC Paper identity ([#912](https://github.com/iridite/aletheia/issues/912)) ([1202d96](https://github.com/iridite/aletheia/commit/1202d96622ded969d3a01165c0dd84e12fc47c50))
+* **learning:** structure lesson review judgments ([#847](https://github.com/iridite/aletheia/issues/847)) ([6db25f4](https://github.com/iridite/aletheia/commit/6db25f4e4d56387ec9de5c381e23e662402667f0))
+* **migrations:** freeze UFC v25 fingerprint contract ([#923](https://github.com/iridite/aletheia/issues/923)) ([a5aa6d5](https://github.com/iridite/aletheia/commit/a5aa6d508b382bb80aeab2bf8a2bee69ab6e362f))
+* **operator:** persist priority queue evictions ([#885](https://github.com/iridite/aletheia/issues/885)) ([69c17d5](https://github.com/iridite/aletheia/commit/69c17d5b5335602967242e7434459327115628ea))
+* **operator:** preserve validated decision evidence values ([#877](https://github.com/iridite/aletheia/issues/877)) ([48daa7e](https://github.com/iridite/aletheia/commit/48daa7e6012dc909d5c911015949adfe03cd0f01))
+* **operator:** reopen expired direct-skip defers ([#883](https://github.com/iridite/aletheia/issues/883)) ([f85033b](https://github.com/iridite/aletheia/commit/f85033b4b0a4613655a5c6e5d2c3c00427026651))
+* **operator:** rotate corrected skip evidence epoch ([#886](https://github.com/iridite/aletheia/issues/886)) ([4309bda](https://github.com/iridite/aletheia/commit/4309bda09b8ed76f68243456619b925694f3c032))
+* **p1-p4:** audit startup decoupling, exact-SHA updater, evidence epoch, control status ([#913](https://github.com/iridite/aletheia/issues/913)) ([ec3dd45](https://github.com/iridite/aletheia/commit/ec3dd4548450ed11f4e80b46fb888552b8361467))
+* **scheduler:** isolate Universe recovery audit retries ([#908](https://github.com/iridite/aletheia/issues/908)) ([4dc7aa8](https://github.com/iridite/aletheia/commit/4dc7aa88951557ed3c26fddfc542ff4c1cf57a39))
+* **sizing:** clarify policy semantics ([#889](https://github.com/iridite/aletheia/issues/889)) ([870dafd](https://github.com/iridite/aletheia/commit/870dafdc6ac48b2ec04b7a16f7e99e303cda6084))
+* **tests:** reset config cache for isolated runtimes ([#926](https://github.com/iridite/aletheia/issues/926)) ([56a5fbd](https://github.com/iridite/aletheia/commit/56a5fbdf232b1739da758c00516b11419e0f383d))
+* **trading:** enforce deterministic observer eligibility ([#895](https://github.com/iridite/aletheia/issues/895)) ([f4a480e](https://github.com/iridite/aletheia/commit/f4a480ebd9b382db2b27156548966b1543b6700a))
+* **universe:** reconcile scanner runs on Gateway restart ([#902](https://github.com/iridite/aletheia/issues/902)) ([a617b5b](https://github.com/iridite/aletheia/commit/a617b5b4deb4d1760a550fb2489dc70809f93a63))
+* **universe:** retry recovery audit mirror in-process ([#906](https://github.com/iridite/aletheia/issues/906)) ([8fd0f26](https://github.com/iridite/aletheia/commit/8fd0f26d94028929bfbbec5250d009c6164dd1f7))
+* **update:** pin pull() to fetched SHA and add version-boundary fallback ([#911](https://github.com/iridite/aletheia/issues/911)) ([46b2143](https://github.com/iridite/aletheia/commit/46b2143f8e17ac4d5b4847c3ba5bc6be85b6f674))
+
 ## [0.6.0](https://github.com/iridite/aletheia/compare/v0.5.0...v0.6.0) (2026-08-10)
 
 
