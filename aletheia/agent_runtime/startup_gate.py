@@ -25,6 +25,7 @@ import socket as _socket
 from aletheia.model_provider.base import ModelRequest
 
 logger = logging.getLogger("aletheia.startup_gate")
+_sleep = asyncio.sleep
 
 
 def _is_dns_error(exc: BaseException) -> bool:
@@ -194,7 +195,7 @@ async def probe_llm_providers_at_startup(cfg, *, max_retries: int | None = None)
                 "LLM startup gate: attempt %d/%d failed, retrying in %ds...",
                 attempt, max_retries, retry_delay,
             )
-            await asyncio.sleep(retry_delay)
+            await _sleep(retry_delay)
 
     result["attempts"] = attempt
     return result
