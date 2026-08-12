@@ -52,7 +52,10 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     from aletheia.storage.sqlite import get_db
     from aletheia.universe.allocator import compute_total_score, get_family_multipliers
     from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
-    from aletheia.universe.service import _register_experiment_candidate_outcomes
+    from aletheia.universe.service import (
+        _active_paper_learning_identity,
+        _register_experiment_candidate_outcomes,
+    )
 
     # Use the real config and secret persistence APIs against a test-private runtime
     # home. This exercises every module's normal load_config import alias and the
@@ -218,6 +221,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
             scoring_cohort_key=scoring_key,
         )
         scored_feature = dict(feature)
+        restrict_paper, paper_identity = _active_paper_learning_identity(_PATH_ID)
         score = compute_total_score(
             scored_feature,
             dict(scanner),
@@ -225,6 +229,8 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
             calibration=learned_calibration,
             calibration_evidence=source_evidence,
             scoring_cohort_key=scoring_key,
+            calibration_learning_identity=paper_identity,
+            restrict_calibration_learning_scope=restrict_paper,
         )
         assert scored_feature["learning_candidate_key"] == candidate_key
         exposure = get_record(

@@ -343,6 +343,9 @@ def apply_numeric_treatment(
     outcome_candidate_key: str | None = None, opportunity_id: str | None = None,
     manifest: dict | None = None,
     assignment_key: str | None = None,
+    expected_hypothesis_fingerprint: str | None = None,
+    expected_experiment_id: str | None = None,
+    suppress_shadow_if_paper_active: bool = False,
 ) -> InfluenceDecision:
     """Record prospective exposure and apply only an authorized paper treatment."""
     baseline_value = float(baseline)
@@ -359,10 +362,76 @@ def apply_numeric_treatment(
     if not candidate_key:
         return InfluenceDecision(baseline_value, False, "unassigned", "missing_candidate_key")
 
-    hypothesis, experiment = _ensure_experiment(
-        path_id=path_id, scope=scope, action=action, source_cohort=source_cohort,
-        target_horizon=target_horizon, consumer=consumer,
-    )
+    if expected_hypothesis_fingerprint is not None or expected_experiment_id is not None:
+        if not expected_hypothesis_fingerprint or not expected_experiment_id:
+            return InfluenceDecision(
+                baseline_value, False, "unassigned", "expected_paper_identity_incomplete"
+            )
+        path = get_learning_path(path_id)
+        requested_fingerprint = hypothesis_fingerprint(
+            path_id=path_id,
+            scope=scope,
+            action=action,
+            target_horizon=target_horizon,
+            source_cohort=source_cohort,
+            behavior_contract_version=path.behavior_contract_version,
+        )
+        if requested_fingerprint != expected_hypothesis_fingerprint:
+            return InfluenceDecision(
+                baseline_value, False, "unassigned", "expected_paper_identity_mismatch"
+            )
+        hypothesis_row = get_hypothesis_by_fingerprint(
+            expected_hypothesis_fingerprint
+        )
+        if hypothesis_row is None:
+            return InfluenceDecision(
+                baseline_value, False, "unassigned", "expected_paper_hypothesis_unavailable"
+            )
+        hypothesis = LearningHypothesis.model_validate(hypothesis_row)
+        experiment_row = get_open_experiment(hypothesis.hypothesis_id)
+        if (
+            experiment_row is None
+            or experiment_row.get("experiment_id") != expected_experiment_id
+            or not str(experiment_row.get("stage") or "").startswith("paper_")
+        ):
+            return InfluenceDecision(
+                baseline_value, False, "unassigned", "expected_paper_experiment_unavailable",
+                hypothesis_id=hypothesis.hypothesis_id,
+            )
+        experiment = LearningExperiment.model_validate(experiment_row)
+    else:
+        if suppress_shadow_if_paper_active:
+            from aletheia.learning.ledger import list_open_experiments
+            from aletheia.storage.repositories import transaction
+
+            # Serialize the path-level Paper check with hypothesis/experiment
+            # creation. Admission cannot appear between these operations and
+            # leave a second Shadow loop open beside it.
+            with transaction(immediate=True):
+                if any(
+                    str(row.get("stage") or "")
+                    in {"paper_10", "paper_25", "paper_50", "paper_active"}
+                    for row in list_open_experiments(path_id=path_id)
+                ):
+                    return InfluenceDecision(
+                        baseline_value,
+                        False,
+                        "unassigned",
+                        "active_paper_identity_required",
+                    )
+                hypothesis, experiment = _ensure_experiment(
+                    path_id=path_id,
+                    scope=scope,
+                    action=action,
+                    source_cohort=source_cohort,
+                    target_horizon=target_horizon,
+                    consumer=consumer,
+                )
+        else:
+            hypothesis, experiment = _ensure_experiment(
+                path_id=path_id, scope=scope, action=action, source_cohort=source_cohort,
+                target_horizon=target_horizon, consumer=consumer,
+            )
     if experiment is None:
         # Refrozen hypothesis with nothing open: record no exposure and apply
         # nothing.  Accruing further samples here would rebuild the evidence
@@ -445,11 +514,33 @@ def apply_numeric_treatment(
         code_commit=_code_fingerprint(),
         behavior_contract_hash=behavior_contract_hash,
     )
-    inserted = insert_exposure(exposure)
+    inserted = insert_exposure(
+        exposure,
+        require_open_experiment_id=experiment.experiment_id,
+        require_open_experiment_stage=experiment.stage,
+    )
+    if inserted is None:
+        return InfluenceDecision(
+            baseline_value,
+            False,
+            "unassigned",
+            "experiment_closed_before_exposure",
+            hypothesis.hypothesis_id,
+            experiment.experiment_id,
+        )
     if not inserted:
         stored = get_exposure_by_dedup_key(dedup_key)
         if stored:
             exposure = LearningExposure(**stored)
+        else:
+            return InfluenceDecision(
+                baseline_value,
+                False,
+                "unassigned",
+                "experiment_closed_before_exposure",
+                hypothesis.hypothesis_id,
+                experiment.experiment_id,
+            )
     return InfluenceDecision(
         value, behavior_changed, assignment,
         (

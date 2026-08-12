@@ -139,7 +139,7 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
             " gross_return_pct, directional_return_pct, net_return_pct, "
             " min_tradable_edge_pct, cost_model_version, status) "
             "VALUES (?, ?, 'm1', 's1', 'BTC/USDT', 'momentum', 'long', '24h', "
-            " 100.0, '2026-07-12T08:00:00+00:00', '2026-07-12T09:00:00+00:00', '2026-07-12T10:00:00+00:00', "
+            " 100.0, datetime('now','-2 days'), datetime('now','-1 day'), datetime('now','-1 day'), "
             " ?, ?, ?, ?, 0.05, 'v1', 'settled')",
             (f"fo-{i}", f"candidate-fo-{i}", ret, ret, ret, ret - 0.2),
         )

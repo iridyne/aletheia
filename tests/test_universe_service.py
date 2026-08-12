@@ -29,30 +29,104 @@ def enabled_cfg():
     return cfg
 
 
-def test_active_paper_learning_scope_returns_exact_single_scope():
-    from aletheia.universe.service import _active_paper_learning_scope
+def _paper_learning_identity() -> dict:
+    from aletheia.learning.hypotheses import (
+        HYPOTHESIS_FINGERPRINT_SCHEMA_VERSION,
+        hypothesis_fingerprint,
+    )
+    from aletheia.learning.registry import get_learning_path
 
+    path_id = "universe_family_calibration"
     scope = {"family": "momentum", "direction": "long", "market_type": "spot"}
+    action = {"type": "opportunity_multiplier", "multiplier": 1.1}
+    behavior_version = get_learning_path(path_id).behavior_contract_version
+    fingerprint = hypothesis_fingerprint(
+        path_id=path_id,
+        scope=scope,
+        action=action,
+        target_horizon="4h",
+        source_cohort="universe_forward_outcomes:clean_net:v2",
+        behavior_contract_version=behavior_version,
+    )
+    return {
+        "experiment_id": "paper-experiment",
+        "fingerprint": fingerprint,
+        "scope": scope,
+        "action": action,
+        "target_horizon": "4h",
+        "source_cohort": "universe_forward_outcomes:clean_net:v2",
+        "behavior_contract_version": behavior_version,
+        "fingerprint_schema_version": HYPOTHESIS_FINGERPRINT_SCHEMA_VERSION,
+    }
+
+
+def test_active_paper_learning_identity_returns_exact_single_hypothesis():
+    from aletheia.universe.service import _active_paper_learning_identity
+
+    identity = _paper_learning_identity()
+    hypothesis = {
+        "path_id": "universe_family_calibration",
+        "fingerprint": identity["fingerprint"],
+        "scope_json": json.dumps(identity["scope"]),
+        "action_json": json.dumps(identity["action"]),
+        "target_horizon": identity["target_horizon"],
+        "source_type": identity["source_cohort"],
+        "behavior_contract_version": identity["behavior_contract_version"],
+        "fingerprint_schema_version": identity["fingerprint_schema_version"],
+    }
     with (
         patch(
             "aletheia.learning.ledger.list_open_experiments",
             return_value=[
                 {"stage": "shadow", "hypothesis_id": "shadow"},
-                {"stage": "paper_10", "hypothesis_id": "paper"},
+                {
+                    "experiment_id": "paper-experiment",
+                    "stage": "paper_10",
+                    "hypothesis_id": "paper",
+                },
             ],
+        ),
+        patch("aletheia.learning.ledger.get_record", return_value=hypothesis),
+    ):
+        assert _active_paper_learning_identity(
+            "universe_family_calibration"
+        ) == (True, identity)
+
+
+def test_active_paper_learning_identity_fails_closed_on_fingerprint_drift():
+    from aletheia.universe.service import _active_paper_learning_identity
+
+    identity = _paper_learning_identity()
+    with (
+        patch(
+            "aletheia.learning.ledger.list_open_experiments",
+            return_value=[{
+                "experiment_id": "paper-experiment",
+                "stage": "paper_10",
+                "hypothesis_id": "paper",
+            }],
         ),
         patch(
             "aletheia.learning.ledger.get_record",
-            return_value={"scope_json": json.dumps(scope)},
+            return_value={
+                "path_id": "universe_family_calibration",
+                "fingerprint": "not-the-canonical-fingerprint",
+                "scope_json": json.dumps(identity["scope"]),
+                "action_json": json.dumps(identity["action"]),
+                "target_horizon": identity["target_horizon"],
+                "source_type": identity["source_cohort"],
+                "behavior_contract_version": identity["behavior_contract_version"],
+                "fingerprint_schema_version": identity["fingerprint_schema_version"],
+            },
         ),
     ):
-        assert _active_paper_learning_scope(
+        assert _active_paper_learning_identity(
             "universe_family_calibration"
-        ) == (True, scope)
+        ) == (True, None)
 
 
-def test_active_paper_learning_scope_fails_closed_on_ambiguity():
-    from aletheia.universe.service import _active_paper_learning_scope
+def test_active_paper_learning_identity_fails_closed_on_ambiguity():
+    from aletheia.universe.service import _active_paper_learning_identity
 
     with patch(
         "aletheia.learning.ledger.list_open_experiments",
@@ -61,7 +135,7 @@ def test_active_paper_learning_scope_fails_closed_on_ambiguity():
             {"stage": "paper_25", "hypothesis_id": "second"},
         ],
     ):
-        assert _active_paper_learning_scope(
+        assert _active_paper_learning_identity(
             "universe_family_calibration"
         ) == (True, None)
 

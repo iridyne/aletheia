@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import ast
 import sqlite3
-from datetime import datetime, timezone
 
 import pytest
 
@@ -496,8 +495,10 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
     from aletheia.policies.store import PolicyStore
     import aletheia.agents.lesson_reviewer as lr
 
+    from datetime import datetime, timedelta, timezone
+    _ts = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
     db = get_db()
-    recent = datetime.now(timezone.utc).isoformat()
     # Seed >= _MIN_SETTLED_EVIDENCE settled outcomes so the deterministic floor passes.
     for _ in range(25):
         db.execute(
@@ -508,8 +509,7 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
             " net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (new_id(), new_id(), "m", "s", "BTC/USDT", "momentum", "long", "24h",
-             100.0, "2026-07-12T08:00:00+00:00", recent,
-             recent, 102.0, 2.0, 2.0, 2.0,
+             100.0, _ts, _ts, _ts, 102.0, 2.0, 2.0, 2.0,
              1.8, 0.05, "v1", "settled"),
         )
     db.commit()
