@@ -225,7 +225,8 @@ def test_secret_scanner_download_is_versioned_and_checksum_verified() -> None:
 
     assert "version=8.24.3" in commands
     assert "gitleaks_${version}_linux_x64.tar.gz" in commands
-    assert "--retry 3 --retry-all-errors --retry-delay 2" in commands
+    assert "--retry 3 --retry-delay 2" in commands
+    assert "--retry-all-errors" not in commands
     assert "sha256sum --check" in commands
     assert "9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c" in commands
     assert "--redact" in commands
