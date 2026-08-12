@@ -127,7 +127,7 @@ def candidate_fact_bundle(
         "b2": {
             key: b2.get(key)
             for key in (
-                "version", "policy_epoch_id", "status", "n_total", "n_net",
+                "version", "policy_epoch_id", "horizon", "status", "n_total", "n_net",
                 "outcome_coverage", "avg_net_pct", "shrunk_avg_net_pct",
                 "directional_verdict", "cost_model_version",
             )

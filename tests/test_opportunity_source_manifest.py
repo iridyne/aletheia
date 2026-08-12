@@ -767,6 +767,7 @@ def test_pi_manifest_copies_opportunity_t0_t1_and_ignores_newer_decoys(
                 "direction": "long",
                 "market_type": "perp",
                 "scanner_family": "momentum",
+                "b2_evidence": {"version": "b2", "horizon": "24h"},
             }],
         },
     }
@@ -794,6 +795,7 @@ def test_pi_manifest_copies_opportunity_t0_t1_and_ignores_newer_decoys(
     assert "decoy" not in json.dumps(manifest)
     assert manifest["version"] == "vergex-utilization-v1"
     assert manifest["source_chain"]["opportunity_id"] == "opp-source-manifest"
+    assert manifest["b2_candidate_evidence"]["horizon"] == "24h"
 
 
 def test_pi_manifest_marks_missing_historical_opportunity_sources_unavailable(
