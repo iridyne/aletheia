@@ -163,7 +163,7 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
     triggers = workflow["on"]
 
     assert set(triggers) == {"repository_dispatch", "workflow_dispatch"}
-    assert triggers["repository_dispatch"]["types"] == ["release_please"]
+    assert triggers["repository_dispatch"]["types"] == ["release_candidate_merged"]
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["concurrency"] == {
         "group": "release-please-master",
@@ -180,8 +180,15 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
         "issues": "write",
         "pull-requests": "write",
     }
-    assert len(job["steps"]) == 3
-    node, release, dispatch = job["steps"]
+    assert len(job["steps"]) == 4
+    validate, node, release, dispatch = job["steps"]
+    assert validate["if"] == "github.event_name == 'repository_dispatch'"
+    assert validate["uses"] == GITHUB_SCRIPT_ACTION
+    validate_script = validate["with"]["script"]
+    assert "run.merge_commit_sha" in validate_script
+    assert "run.expected_base_sha" in validate_script
+    assert "github.rest.repos.getCommit" in validate_script
+    assert "commit.parents[0].sha !== run.expected_base_sha" in validate_script
     assert node["uses"] == SETUP_NODE_ACTION
     assert node["with"] == {"node-version": "22"}
     assert release["env"] == {"GITHUB_TOKEN": "${{ github.token }}"}
@@ -192,12 +199,14 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
     assert 'sleep $((attempt * 5))' in commands
     assert "release_please github-release" in commands
     assert "release_please release-pr" in commands
+    assert 'if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]' in commands
     assert '--token="$GITHUB_TOKEN"' in commands
     assert '--repo-url="$GITHUB_REPOSITORY"' in commands
     assert "--target-branch=master" in commands
     assert "--config-file=release-please-config.json" in commands
     assert "--manifest-file=.release-please-manifest.json" in commands
     assert dispatch["uses"] == GITHUB_SCRIPT_ACTION
+    assert dispatch["if"] == "github.event_name == 'workflow_dispatch'"
     assert dispatch["with"]["retries"] == "3"
     assert "pulls.list" in dispatch["with"]["script"]
     assert "autorelease: pending" in dispatch["with"]["script"]
@@ -327,7 +336,6 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert set(triggers) == {
         "pull_request_target",
         "repository_dispatch",
-        "workflow_run",
     }
     assert triggers["pull_request_target"]["branches"] == ["master"]
     assert triggers["pull_request_target"]["types"] == [
@@ -344,18 +352,12 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "auto_merge_update",
         "release_candidate_verified",
     ]
-    assert triggers["workflow_run"] == {
-        "workflows": ["Aletheia CI"],
-        "types": ["completed"],
-    }
     assert workflow["permissions"] == {"contents": "read"}
 
     assert set(workflow["jobs"]) == {
         "schedule",
         "release-candidate",
         "update",
-        "release",
-        "release-after-ci",
     }
     schedule = workflow["jobs"]["schedule"]
     assert schedule["name"] == "Schedule auto-merge update"
@@ -368,6 +370,8 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "event_name == 'pull_request_target'" in schedule["if"]
     assert "action != 'closed'" in schedule["if"]
     assert "draft == false" in schedule["if"]
+    assert "!startsWith" in schedule["if"]
+    assert "release-please--branches--master" in schedule["if"]
     assert schedule["permissions"] == {"contents": "write"}
     assert set(schedule["env"]) == {"OPERATION", "PR_NUMBER", "EXPECTED_HEAD_SHA"}
     assert "do-not-auto-merge" in schedule["env"]["OPERATION"]
@@ -397,6 +401,8 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "pullRequest.head.sha === run.head_sha" in candidate_script
     assert "autorelease: pending" in candidate_script
     assert "do-not-auto-merge" in candidate_script
+    assert "compareCommitsWithBasehead" in candidate_script
+    assert "pullRequest.base.sha !== expectedBaseSha" in candidate_script
     assert "createCommitStatus" in candidate_script
     assert "sha: run.head_sha" in candidate_script
     for required_check in (
@@ -411,6 +417,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "issues.removeLabel" in candidate_script
     assert "event_type: 'auto_merge_update'" in candidate_script
     assert "expected_head_sha: run.head_sha" in candidate_script
+    assert "expected_base_sha: expectedBaseSha" in candidate_script
     assert "release_after_merge: true" in candidate_script
 
     update = workflow["jobs"]["update"]
@@ -425,6 +432,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "event.action == 'auto_merge_update'" in update["if"]
     assert update["permissions"] == {
         "contents": "write",
+        "issues": "write",
         "pull-requests": "write",
     }
     assert update["timeout-minutes"] == "15"
@@ -436,6 +444,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "OPERATION",
         "PR_NUMBER",
         "EXPECTED_HEAD_SHA",
+        "EXPECTED_BASE_SHA",
         "RELEASE_AFTER_MERGE",
     }
     assert len(update["steps"]) == 1
@@ -454,40 +463,12 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "disablePullRequestAutoMerge" in update_script
     assert "do-not-auto-merge" in update_script
     assert "releaseAfterMerge" in update_script
-    assert "'github-actions[bot]', 'app/github-actions'" in update_script
-    assert "event_type: 'release_please'" in update_script
-
-    release = workflow["jobs"]["release"]
-    assert release["name"] == "Dispatch release management after merge"
-    assert release["runs-on"] == [
-        "self-hosted",
-        "Linux",
-        "X64",
-        "ubuntu-24.04",
-    ]
-    assert "action == 'closed'" in release["if"]
-    assert "merged == true" in release["if"]
-    assert "merged_by.login != 'github-actions[bot]'" in release["if"]
-    assert "merged_by.login != 'app/github-actions'" in release["if"]
-    assert release["permissions"] == {"contents": "write"}
-    assert len(release["steps"]) == 1
-    release_step = release["steps"][0]
-    assert release_step["uses"] == GITHUB_SCRIPT_ACTION
-    assert release_step["with"]["retries"] == "3"
-    release_script = release_step["with"]["script"]
-    assert "createDispatchEvent" in release_script
-    assert "event_type: 'release_please'" in release_script
-    assert "merge_commit_sha" in release_script
-
-    release_after_ci = workflow["jobs"]["release-after-ci"]
-    assert release_after_ci["name"] == "Dispatch ordinary bot auto-merge release after CI"
-    assert "!startsWith" in release_after_ci["if"]
-    assert "release-please--branches--master" in release_after_ci["if"]
-    followup_script = release_after_ci["steps"][0]["with"]["script"]
-    assert "context.payload.workflow_run" in followup_script
-    assert "pullRequest.head.sha !== run.head_sha" in followup_script
-    assert "'github-actions[bot]', 'app/github-actions'" in followup_script
-    assert "event_type: 'release_please'" in followup_script
+    assert "baseRefOid" in update_script
+    assert "pullRequest.baseRefOid !== expectedBaseSha" in update_script
+    assert "issues.addLabels" in update_script
+    assert "expected_base_sha: expectedBaseSha" in update_script
+    assert "event_type: 'release_candidate_merged'" in update_script
+    assert "event_type: 'release_please'" not in update_script
 
     # All phases carry write-capable base-repository tokens. Keep them
     # metadata-only: never check out or execute pull-request content.
@@ -513,10 +494,12 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
         "OPERATION",
         "PR_NUMBER",
         "EXPECTED_HEAD_SHA",
+        "EXPECTED_BASE_SHA",
         "RELEASE_AFTER_MERGE",
     }
     update_script = update["steps"][0]["with"]["script"]
     assert "headRefOid" in update_script
+    assert "baseRefOid" in update_script
     assert "pullRequest.headRefOid !== expectedHeadSha" in update_script
     assert "pullRequest.mergeStateStatus === 'CLEAN'" in update_script
     assert "pullRequest.mergeStateStatus === 'UNSTABLE' && !releaseAfterMerge" in update_script
@@ -525,7 +508,7 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     assert "sha: expectedHeadSha" in update_script
     assert "merge_method: 'squash'" in update_script
     assert "createDispatchEvent" in update_script
-    assert "event_type: 'release_please'" in update_script
+    assert "event_type: 'release_candidate_merged'" in update_script
     assert "pullRequest.state === 'MERGED'" in update_script
     assert "dispatchRelease" in update_script
     assert "auto-merge is enabled; GitHub will merge when required checks pass" in update_script
