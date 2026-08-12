@@ -732,20 +732,21 @@ def _legacy_active_ufc_db(*, fingerprint: str) -> sqlite3.Connection:
     return connection
 
 
-def test_ufc_canonical_identity_v25_materializes_verified_active_paper():
+def test_ufc_canonical_identity_v25_materializes_verified_active_paper(monkeypatch):
     import aletheia.storage.migrations as migrations
-    from aletheia.learning.hypotheses import hypothesis_fingerprint
+    import aletheia.learning.hypotheses as live_hypotheses
 
-    fingerprint = hypothesis_fingerprint(
-        path_id="universe_family_calibration",
-        scope={"direction": "long", "family": "momentum", "market_type": "spot"},
-        action={"multiplier": 1.1, "type": "opportunity_multiplier"},
-        target_horizon="4h",
-        source_cohort="universe_forward_outcomes:clean_net:v2",
-        behavior_contract_version="universe-family-calibration/v11",
-        schema_version=1,
+    connection = _legacy_active_ufc_db(
+        fingerprint="64b53e9eade95232da73ba2760080dabbbeb8f8297e05de4fbd22b17b96dfec8"
     )
-    connection = _legacy_active_ufc_db(fingerprint=fingerprint)
+    assert migrations._UFC_CANONICAL_IDENTITY_CHECKSUM == (
+        "76eac7e0a1e81de4b043d5004b461d650b4deb61f51be2ec9c5f307ebe2b180a"
+    )
+    monkeypatch.setattr(
+        live_hypotheses,
+        "hypothesis_fingerprint",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("live helper used")),
+    )
 
     migrations._apply_ufc_canonical_identity_v25(connection)
     migrations._apply_ufc_canonical_identity_v25(connection)
