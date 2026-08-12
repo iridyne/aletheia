@@ -398,6 +398,10 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "pull-requests": "write",
     }
     assert update["timeout-minutes"] == "15"
+    assert update["concurrency"] == {
+        "group": "auto-merge-update-${{ github.event.client_payload.pull_request_number }}",
+        "cancel-in-progress": "true",
+    }
     assert set(update["env"]) == {"OPERATION", "PR_NUMBER", "EXPECTED_HEAD_SHA"}
     assert len(update["steps"]) == 1
     update_step = update["steps"][0]
@@ -408,7 +412,6 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "repository(owner:" in update_script
     assert "pullRequest(number:" in update_script
     assert "mergeStateStatus" in update_script
-    assert "mergeCommit { oid }" in update_script
     assert "autoMergeRequest" in update_script
     assert "UNSTABLE" in update_script
     assert "setTimeout" in update_script
@@ -482,14 +485,11 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     assert "github.rest.pulls.merge" in update_script
     assert "sha: expectedHeadSha" in update_script
     assert "merge_method: 'squash'" in update_script
-    assert "const dispatchRelease" in update_script
-    assert "createDispatchEvent" in update_script
-    assert "event_type: 'release_please'" in update_script
-    assert "await dispatchRelease(mergeResult.data.sha)" in update_script
+    assert "createDispatchEvent" not in update_script
+    assert "event_type: 'release_please'" not in update_script
     assert "pullRequest.state === 'MERGED'" in update_script
-    assert "await dispatchRelease(pullRequest.mergeCommit?.oid)" in update_script
+    assert "post-CI or closed-event job owns release dispatch" in update_script
     assert "auto-merge is enabled; GitHub will merge when required checks pass" in update_script
-    assert "if (!/^[0-9a-f]{40}$/.test(mergeCommitSha || ''))" in update_script
     assert "auto-merge did not complete" not in update_script
     assert "const autoMergeStates = new Set(['BEHIND', 'BLOCKED', 'HAS_HOOKS'])" in update_script
     assert "enablePullRequestAutoMerge" in update_script
