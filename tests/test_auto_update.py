@@ -273,6 +273,31 @@ def test_doctor_runs_in_a_fresh_interpreter(monkeypatch):
     assert calls[0][0][:2] == [auto.sys.executable, "-c"]
 
 
+def test_runtime_gate_uses_public_health_response(monkeypatch):
+    from aletheia.update import auto
+
+    responses = {
+        "/api/health": {"status": "healthy", "issues": [], "version": "1.2.3"},
+        "/api/status": {
+            "gateway_running": True,
+            "scheduler_running": True,
+            "paper_execution_mode": "paper_internal",
+            "execution_target": "local_paper",
+            "live_state": "live_disabled",
+            "boot_commit": "target-sha",
+            "current_commit": "target-sha",
+            "version": "1.2.3",
+        },
+    }
+    monkeypatch.setattr(auto, "_http_json", lambda path: responses[path])
+
+    assert auto._runtime_gate(
+        expected_sha="target-sha", expected_version="1.2.3"
+    ) == {"ok": True, "reason": None, "failed": []}
+    responses["/api/health"]["status"] = "degraded"
+    assert auto._runtime_gate()["failed"] == ["health"]
+
+
 def test_runtime_diagnostics_ignore_unrelated_warnings_but_keep_deployment_gates():
     from aletheia.update.auto import _evaluate_runtime_diagnostics
 
