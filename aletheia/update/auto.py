@@ -33,6 +33,7 @@ from aletheia.config.loader import _PROJECT_ROOT, get_data_dir, load_config
 from aletheia.files.jsonl import write_audit
 from aletheia.update import git_ops
 from aletheia.update.applier import (
+    _PREVIOUS_DASHBOARD_STATIC,
     _STAGED_DASHBOARD_STATIC,
     _activate_frontend_build,
     _restore_frontend_build,
@@ -43,6 +44,8 @@ _STABLE_TAG = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 _VERSION = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']\s*$', re.MULTILINE)
 _STATE_SCHEMA = 1
 _SYSTEMD_MARKER = "# Managed-By: Aletheia auto update"
+_UNIT_NAMES = ("aletheia-auto-update.service", "aletheia-auto-update.timer")
+_TRANSIENT_CANDIDATE_FAILURES = {"gateway_stop_failed"}
 
 
 class AutoUpdateError(RuntimeError):
@@ -63,11 +66,15 @@ def _paths() -> dict[str, Path]:
 
 def _read_state() -> dict[str, Any]:
     path = _paths()["state"]
+    if not path.exists():
+        return {}
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AutoUpdateError("state_corrupt", type(exc).__name__) from exc
+    if not isinstance(value, dict):
+        raise AutoUpdateError("state_corrupt", "state is not an object")
+    return value
 
 
 def _write_state(state: dict[str, Any], **changes: Any) -> dict[str, Any]:
@@ -118,9 +125,11 @@ def _version_from_ref(ref: str) -> str:
     return match.group(1) if match else ""
 
 
-def _stable_tags() -> dict[str, dict[str, Any]]:
+def _stable_tags(remote_tags: set[str]) -> dict[str, dict[str, Any]]:
     values: dict[str, dict[str, Any]] = {}
     for tag in git_ops.tag_names():
+        if tag not in remote_tags:
+            continue
         version = _semver(tag)
         commit = git_ops.tag_commit(tag)
         if version and commit:
@@ -128,10 +137,18 @@ def _stable_tags() -> dict[str, dict[str, Any]]:
     return values
 
 
-def _record_audit(event_type: str, entity_id: str, message: str, **extra: Any) -> None:
+def _record_audit(
+    event_type: str,
+    entity_id: str,
+    message: str,
+    *,
+    actor: str = "system",
+    source: str = "auto_release_tag",
+    **extra: Any,
+) -> None:
     write_audit({
-        "actor": "system",
-        "source": "auto_release_tag",
+        "actor": actor,
+        "source": source,
         "event_type": event_type,
         "entity_type": "system_update",
         "entity_id": entity_id,
@@ -175,11 +192,18 @@ def _runtime_gate(*, expected_sha: str | None = None, expected_version: str | No
 
 
 def _doctor_healthy() -> dict[str, Any]:
-    """Use the existing read-only provider/settlement diagnosis as the deep gate."""
+    """Run deep diagnostics in a fresh interpreter bound to this source tree."""
     try:
-        from aletheia.diagnostics.doctor import build_report
-
-        report = build_report().to_dict()
+        code = (
+            "import json; "
+            "from aletheia.diagnostics.doctor import build_report; "
+            "report = build_report().to_dict(); "
+            "print(json.dumps({'healthy': bool(report.get('healthy')), 'summary': report.get('summary')}))"
+        )
+        result = _run([sys.executable, "-c", code], cwd=_PROJECT_ROOT, env=_safe_env(), timeout=120)
+        if result.returncode:
+            return {"ok": False, "reason": "doctor_failed", "detail": (result.stderr or result.stdout)[-500:]}
+        report = json.loads(result.stdout)
         return {"ok": bool(report.get("healthy")), "detail": report.get("summary")}
     except Exception as exc:
         return {"ok": False, "reason": "doctor_failed", "detail": type(exc).__name__}
@@ -257,17 +281,15 @@ def _sync_candidate_dependencies(worktree: Path) -> None:
 
 
 def _build_candidate_frontend(worktree: Path, *, old: str, target: str) -> None:
-    changed = git_ops.changed_files(old, target)
     frontend = worktree / "frontend"
     env = _safe_env()
     env["VITE_BUILD_OUT_DIR"] = str(_STAGED_DASHBOARD_STATIC)
     npm = shutil.which("npm")
     if not npm:
         raise AutoUpdateError("npm_unavailable")
-    if any(name in {"frontend/package.json", "frontend/package-lock.json"} for name in changed):
-        install = _run([npm, "ci"], cwd=frontend, env=env)
-        if install.returncode:
-            raise AutoUpdateError("candidate_frontend_dependency_install_failed", (install.stderr or install.stdout)[-1000:])
+    install = _run([npm, "ci"], cwd=frontend, env=env)
+    if install.returncode:
+        raise AutoUpdateError("candidate_frontend_dependency_install_failed", (install.stderr or install.stdout)[-1000:])
     shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
     build = _run([npm, "run", "build"], cwd=frontend, env=env)
     if build.returncode or not (_STAGED_DASHBOARD_STATIC / "index.html").is_file():
@@ -310,9 +332,22 @@ def _restore_old_runtime(old: str, backup: Path, had_previous_static: bool, *, r
         if not restored.success:
             return {"ok": False, "reason": "data_restore_failed", "detail": "; ".join(restored.errors)}
         started = _gateway_command("start")
-        return {"ok": bool(started.get("ok")), "reason": started.get("reason", "old_gateway_restore_failed")}
+        if not started.get("ok"):
+            return {"ok": False, "reason": started.get("reason", "old_gateway_restore_failed")}
+        verified = _wait_for_runtime(old, _version_from_ref(old))
+        return {"ok": bool(verified.get("ok")), "reason": verified.get("reason", "old_gateway_restore_failed")}
     except Exception as exc:
         return {"ok": False, "reason": f"restore_exception_{type(exc).__name__}"}
+
+
+def _rollback_to_old_runtime(
+    old: str, backup: Path, had_previous_static: bool, *, restore_static: bool
+) -> dict[str, Any]:
+    """Quiesce the candidate before restoring files it may still have open."""
+    stopped = _gateway_command("stop")
+    if not stopped.get("ok"):
+        return {"ok": False, "reason": stopped.get("reason", "candidate_gateway_stop_failed")}
+    return _restore_old_runtime(old, backup, had_previous_static, restore_static=restore_static)
 
 
 def _validate_candidate(tag: str, target: str, current_version: tuple[int, int, int]) -> str:
@@ -327,9 +362,18 @@ def _validate_candidate(tag: str, target: str, current_version: tuple[int, int, 
     return version
 
 
-def _failed(state: dict[str, Any], *, tag: str | None, sha: str | None, reason: str, detail: str = "", hold: bool = False) -> dict[str, Any]:
+def _failed(
+    state: dict[str, Any],
+    *,
+    tag: str | None,
+    sha: str | None,
+    reason: str,
+    detail: str = "",
+    hold: bool = False,
+    blacklist: bool = False,
+) -> dict[str, Any]:
     failed_tags = dict(state.get("failed_tags") or {})
-    if tag and sha:
+    if blacklist and tag and sha:
         failed_tags[tag] = {"sha": sha, "reason": reason, "failed_at": _now()}
     updated = _write_state(state, phase="held" if hold else "failed", status="held" if hold else "failed",
                            target_tag=tag, target_sha=sha, reason=reason, detail=detail, hold=hold,
@@ -348,7 +392,10 @@ def run() -> dict[str, Any]:
     with _deployment_lock() as acquired:
         if not acquired:
             return {"ok": True, "reason": "already_running"}
-        state = _read_state()
+        try:
+            state = _read_state()
+        except AutoUpdateError as exc:
+            return {"ok": False, "reason": exc.reason, "detail": exc.detail}
         if state.get("hold"):
             return {"ok": False, "reason": "global_hold", "state": state}
         state = _write_state(state, phase="checking", status="running", reason=None, detail=None, hold=False)
@@ -362,11 +409,14 @@ def run() -> dict[str, Any]:
         if not head or not git_ops.is_ancestor(head, "origin/master"):
             return _failed(state, tag=None, sha=None, reason="source_not_fast_forward")
 
-        tags = _stable_tags()
+        remote_tags = git_ops.remote_tag_names()
+        if remote_tags is None:
+            return _failed(state, tag=None, sha=None, reason="remote_tag_discovery_failed")
+        tags = _stable_tags(remote_tags)
         observed = dict(state.get("observed_tags") or {})
         moved = [tag for tag, info in tags.items() if tag in observed and observed[tag] != info["sha"]]
         if moved:
-            return _failed(state, tag=moved[0], sha=tags[moved[0]]["sha"], reason="tag_moved")
+            return _failed(state, tag=moved[0], sha=tags[moved[0]]["sha"], reason="tag_moved", blacklist=True)
         observed.update({tag: info["sha"] for tag, info in tags.items()})
         state = _write_state(state, observed_tags=observed)
 
@@ -387,7 +437,7 @@ def run() -> dict[str, Any]:
         try:
             version = _validate_candidate(tag, target, current)
         except AutoUpdateError as exc:
-            return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail)
+            return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail, blacklist=True)
         baseline = _runtime_gate()
         if baseline.get("ok"):
             baseline = _doctor_healthy()
@@ -445,11 +495,12 @@ def run() -> dict[str, Any]:
                     _install_source_dependencies()
                 recovery = _gateway_command("start") if stopped else {"ok": True}
                 return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail,
-                               hold=not recovery.get("ok"))
+                               hold=not recovery.get("ok"), blacklist=exc.reason not in _TRANSIENT_CANDIDATE_FAILURES)
             state = _write_state(state, phase="rolling_back", status="running", reason=exc.reason, detail=exc.detail)
-            recovery = _restore_old_runtime(head, final_backup or preflight_backup, had_previous_static,
-                                            restore_static=static_activated)
-            return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail, hold=not recovery.get("ok"))
+            recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
+                                                restore_static=static_activated)
+            return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail,
+                           hold=not recovery.get("ok"), blacklist=True)
         except Exception as exc:
             _remove_candidate(worktree)
             reason = f"unexpected_{type(exc).__name__}"
@@ -460,10 +511,11 @@ def run() -> dict[str, Any]:
                 recovery = _gateway_command("start") if stopped else {"ok": True}
                 return _failed(state, tag=tag, sha=target, reason=reason, hold=not recovery.get("ok"))
             state = _write_state(state, phase="rolling_back", status="running", reason=reason)
-            recovery = _restore_old_runtime(head, final_backup or preflight_backup, had_previous_static,
-                                            restore_static=static_activated)
-            return _failed(state, tag=tag, sha=target, reason=reason, hold=not recovery.get("ok"))
+            recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
+                                                restore_static=static_activated)
+            return _failed(state, tag=tag, sha=target, reason=reason, hold=not recovery.get("ok"), blacklist=True)
 
+        shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
         success = _write_state(state, phase="complete", status="deployed", target_tag=tag, target_sha=target,
                                reason=None, detail=None, last_successful={"tag": tag, "sha": target, "at": _now()})
         _record_audit("auto_update_deployed", tag, f"Deployed {tag} at {target}")
@@ -471,7 +523,11 @@ def run() -> dict[str, Any]:
 
 
 def status() -> dict[str, Any]:
-    return _read_state() or {"schema_version": _STATE_SCHEMA, "phase": "idle", "status": "not_installed"}
+    try:
+        return _read_state() or {"schema_version": _STATE_SCHEMA, "phase": "idle", "status": "not_installed"}
+    except AutoUpdateError as exc:
+        return {"schema_version": _STATE_SCHEMA, "phase": "held", "status": "corrupt", "hold": True,
+                "reason": exc.reason, "detail": exc.detail}
 
 
 def resume() -> dict[str, Any]:
@@ -480,9 +536,15 @@ def resume() -> dict[str, Any]:
     with _deployment_lock() as acquired:
         if not acquired:
             return {"ok": False, "reason": "already_running"}
-        state = _read_state()
+        try:
+            state = _read_state()
+        except AutoUpdateError as exc:
+            return {"ok": False, "reason": exc.reason, "detail": exc.detail}
         updated = _write_state(state, hold=False, phase="idle", status="resumed", reason=None, detail=None)
-        _record_audit("auto_update_resumed", "auto", "Automatic release-tag deployment hold cleared by operator")
+        _record_audit(
+            "auto_update_resumed", "auto", "Automatic release-tag deployment hold cleared by operator",
+            actor="operator", source="cli",
+        )
         return {"ok": True, "state": updated}
 
 
@@ -518,7 +580,15 @@ def install() -> dict[str, Any]:
         return {"ok": False, "reason": "linux_source_checkout_required"}
     directory = _unit_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    for name, content in _units().items():
+    try:
+        units = _units()
+        for name in _UNIT_NAMES:
+            path = directory / name
+            if path.exists() and _SYSTEMD_MARKER not in path.read_text(encoding="utf-8", errors="replace"):
+                return {"ok": False, "reason": "systemd_unit_ownership_conflict", "detail": name}
+    except AutoUpdateError as exc:
+        return {"ok": False, "reason": exc.reason, "detail": exc.detail}
+    for name, content in units.items():
         path = directory / name
         path.write_text(content, encoding="utf-8")
     try:
@@ -534,7 +604,7 @@ def uninstall() -> dict[str, Any]:
         return {"ok": False, "reason": "linux_source_checkout_required"}
     directory = _unit_dir()
     owned = []
-    for name in _units():
+    for name in _UNIT_NAMES:
         path = directory / name
         if path.exists() and _SYSTEMD_MARKER in path.read_text(encoding="utf-8", errors="replace"):
             owned.append(path)

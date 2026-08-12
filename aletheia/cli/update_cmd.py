@@ -184,6 +184,8 @@ def auto_run():
 
     result = run()
     typer.echo(result.get("reason", "unknown"))
+    if not result.get("ok"):
+        raise typer.Exit(1)
 
 
 @auto_app.command("resume")
@@ -193,6 +195,8 @@ def auto_resume():
 
     result = resume()
     typer.echo(result.get("reason", "resumed"))
+    if not result.get("ok"):
+        raise typer.Exit(1)
 
 
 @auto_app.command("install")

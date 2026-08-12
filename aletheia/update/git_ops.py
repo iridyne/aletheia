@@ -76,6 +76,25 @@ def tag_names() -> list[str]:
     return [line.strip() for line in r.stdout.splitlines() if line.strip()] if r.returncode == 0 else []
 
 
+def remote_tag_names() -> set[str] | None:
+    """Return stable tag names currently advertised by ``origin``.
+
+    Local tags may outlive a remote deletion or be created by an operator, so
+    they are never sufficient authority for automatic deployment.
+    """
+    r = _git("ls-remote", "--tags", "--refs", "origin")
+    if r.returncode != 0:
+        return None
+    prefix = "refs/tags/"
+    return {
+        ref[len(prefix):]
+        for line in r.stdout.splitlines()
+        if len((parts := line.split())) == 2
+        for ref in [parts[1]]
+        if ref.startswith(prefix)
+    }
+
+
 def tag_commit(tag: str) -> str:
     """Resolve either a lightweight or annotated tag to its commit SHA."""
     r = _git("rev-list", "-n", "1", tag)
