@@ -49,10 +49,21 @@ describe('API errors', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ window: { days: 30 } }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(api.getUsageInsights(30)).resolves.toEqual({ window: { days: 30 } })
+    await expect(api.getUsageInsights(30, 'summary')).resolves.toEqual({ window: { days: 30 } })
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/economics/usage-insights?days=30',
+      '/api/economics/usage-insights?days=30&group=summary',
       expect.objectContaining({ headers: expect.objectContaining({ 'Content-Type': 'application/json' }) }),
+    )
+  })
+
+  it('starts a pricing refresh through the dedicated economics endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'running' }), { status: 202 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(api.refreshPricing()).resolves.toEqual({ status: 'running' })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/economics/pricing/refresh',
+      expect.objectContaining({ method: 'POST' }),
     )
   })
 

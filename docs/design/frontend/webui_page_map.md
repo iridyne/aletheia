@@ -108,6 +108,13 @@ Ref: standard trading risk console.
 §23.12. 13 cards (model/exchange creds/live unlock/permission/autostart/update/telegram/risk
 display…). Too heavy to fold elsewhere. Possible future split, not now.
 
+### Usage Insights (/usage) — KEEP ✅ (standalone observability workstation)
+Role: cross-phase consumption and evidence observability. Reading order is Consumption & Spend →
+Token Composition → Usage & Cost Trend → Breakdown → Reliability & Budgets → Data Coverage &
+Gaps → Research Yield. It defaults to 1D, progressively loads summary before operations/analysis,
+keeps cost provenance explicit, and bounds every detail table. Coverage is supporting evidence,
+not the first visual anchor or a synthetic radar score. See `usage_insights_design.md`.
+
 ### News Intel (/news) — KEEP + HONEST LABEL ⚠️
 Out of MVP spec: §17.3 lists news ingestion as FUTURE; AGENTS.md bans news ingestion as scope
 expansion. Already built (page + backend). Owner decision (2026-06-07): keep it, but label

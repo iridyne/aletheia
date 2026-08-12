@@ -62,6 +62,7 @@
 | OHLCV 历史 | history_downloader | ohlcv | 回测/指标 | ✅ |
 | 清算 liquidations | CoinalyzeCollector（key-guard，data_collector_context；DU-S06/DU-T01） | `liquidation_events` | context_builder→`liquidation_1h_usd`→crowding_score→LLM | ✅ 有 key 时写入 / 无 key 时诚实跳过 |
 | LLM 逻辑调用/物理 attempt/context manifest | inference harness + provider tracing | `llm_inference_calls` + `runtime_cost_events` + `llm_context_artifacts` | tokenomics 审查、caller coverage、Learning B1/technical-context paired evaluation | ✅ observation-only；仅身份/版本/哈希/计数，不存 prompt、response 或 source body（DU-S25） |
+| LiteLLM 公共模型价格目录 | Gateway startup / Usage 手动 refresh（单飞、5s timeout、校验失败保留旧快照） | 原始 JSON 缓存在 runtime data dir；模型级中位数写入 immutable `pricing_snapshots` | 新 LLM attempt 写入 `estimated` cost；Usage 对窗口内旧缺价事件做只读估算并展示 coverage | ✅ 只处理账本中出现且有显式 alias 的模型；不进入 Risk/Execution，不覆盖人工价格，不回写历史事件（DU-S27） |
 | OI 历史（跨所） | CoinalyzeCollector（key-guard，data_collector_context；DU-S06/DU-T01） | `open_interest_snapshots(exchange=coinalyze)` | research_worker 显式聚合流量上下文；doctor | ✅ 与主交易所 OI 分层；1h delta 同样使用同 source 45-75min baseline；coin 数量不得冒充 USD |
 | OHLCV 多周期（15m/1h/4h/1d） | CCXTProvider；Universe 为候选持久化 15m/1h/4h，market_context 保留 1h/4h/1d | `universe_feature_snapshots` + `market_snapshots` | candidate-specific System Operator 技术块；Market Observer `technical-context-v1` 归一化闭合 bar 块；15m >1.5 ATR 不追涨跌 | ✅；按 venue+symbol+market_type 精确路由，spot/perp 不互用；warmup 不足或 gap degraded 时不渲染部分指标 |
 | Opportunity 固定持有期结果 | outcome_recorder（目标 instrument OHLCV/ticker + 入场 spread/funding + 配置 fee/slippage） | `universe_forward_outcomes` | net calibration / family edge → System Operator；doctor；debate/guard/flow/thesis 审计；净亏损 guard candidate | ✅，历史 gross-only 行只解释不学习 |
@@ -111,6 +112,7 @@
 | DU-S23 | L2c | 本地 paper 历史账本 settler 消费 primary-venue funding history；不冒充 broker ledger |
 | DU-S24 | L2a | xStock 上市状态源在 §3 登记；实现经 provider factory 精确查询责任 venue，单轮复用、有硬截止、不确定时保留配置，确认缺失的配置变更写 system audit |
 | DU-S25 | L2a | LLM 逻辑调用、物理 attempt 与 context manifest 三层数据已登记并以 logical_call_id 关联；持久化契约不含 prompt/response/source body |
+| DU-S27 | L2a | LiteLLM 公共 price map 生成 estimated 快照；startup/UI 共用单飞 refresh，人工快照优先；Usage 可只读估算旧缺价事件，但历史账本不回写 |
 | DU-B01 | L2b | 给定 HL+主所 annualized funding，render 产出"Cross-venue funding"段、divergence 以 pp 计、含 predicted |
 | DU-B02 | L2b | 某 symbol 无 HL 数据时，跨venue段整体省略（不漏空行噪音，遵 R3） |
 | DU-C01 | L2a | `CoinalyzeCollector` 存在，有 `collect()` 方法和 `domain` 属性（Coinalyze 清算+OI 采集入口） |

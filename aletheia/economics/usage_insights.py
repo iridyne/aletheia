@@ -10,12 +10,13 @@ import sqlite3
 from typing import Any, Iterable
 
 from aletheia.economics.agent_roles import role_for_logical_agent
-from aletheia.economics.tracing import normalize_usage
+from aletheia.economics.tracing import estimate_llm_cost, normalize_usage
 from aletheia.model_provider.fallback import get_model_health_snapshot
 from aletheia.storage.sqlite import readonly_db
 
 
-_WINDOW_DAYS = {7, 30, 90}
+_WINDOW_DAYS = {1, 7, 30, 90}
+_GROUPS = {"summary", "operations", "analysis"}
 _ERROR_CATEGORY_LIMIT = 8
 _BASELINE_MIN_FULL_DAYS = 7
 _ANOMALY_Z_THRESHOLD = 3.0
@@ -147,7 +148,7 @@ def _empty(days: int, end: datetime, reason: str) -> dict[str, Any]:
     return {
         "window": {"days": days, "started_at": start.isoformat(), "ended_at": end.isoformat(), "as_of": end.isoformat(), "timezone": "UTC"},
         "coverage": unavailable(axes=axes),
-        "token_mix": unavailable(input_tokens=None, output_tokens=None, reasoning_tokens=None, cached_tokens=None, event_count=None),
+        "token_mix": unavailable(input_tokens=None, output_tokens=None, total_tokens=None, reasoning_tokens=None, cached_tokens=None, event_count=None),
         "pricing": unavailable(known_cost_usd=None, estimated_cost_usd=None, unknown_event_count=None, pricing_coverage_pct=None, gaps=[]),
         "attribution": unavailable(rows=[]),
         "tools": unavailable(rows=[], timing_coverage_pct=None, pricing_coverage_pct=None),
@@ -181,6 +182,37 @@ def _runtime_rows(db: sqlite3.Connection, window: tuple[str, str]) -> list[dict[
         "FROM runtime_cost_events WHERE " + _window_sql("started_at"),
         window,
     )
+
+
+def _project_latest_litellm_estimates(
+    db: sqlite3.Connection, runtime_rows: list[dict[str, Any]]
+) -> None:
+    """Estimate otherwise-unknown LLM rows in memory without rewriting history."""
+    snapshots: dict[tuple[str, str], dict[str, Any]] = {}
+    for snapshot in _query_rows(
+        db,
+        "SELECT * FROM pricing_snapshots WHERE source LIKE 'litellm_public_median:%' "
+        "ORDER BY datetime(effective_from) DESC,rowid DESC",
+        (),
+    ):
+        snapshots.setdefault((str(snapshot["provider"]), str(snapshot["model"])), snapshot)
+
+    for row in runtime_rows:
+        if row.get("event_type") != "llm" or _cost_priced(row):
+            continue
+        pricing = snapshots.get((str(row.get("provider") or ""), str(row.get("model_or_tool") or "")))
+        if pricing is None:
+            continue
+        try:
+            envelope = json.loads(str(row.get("usage_json") or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        normalized = envelope.get("normalized") if isinstance(envelope, dict) else None
+        usage = normalized if isinstance(normalized, dict) else normalize_usage(envelope)
+        cost, status, _ = estimate_llm_cost(usage, pricing)
+        if cost is not None and status == "estimated":
+            row["estimated_cost_usd"] = cost
+            row["cost_status"] = status
 
 
 def _token_mix(llm_rows: list[dict[str, Any]]) -> tuple[dict[str, Any], int]:
@@ -218,6 +250,12 @@ def _token_mix(llm_rows: list[dict[str, Any]]) -> tuple[dict[str, Any], int]:
             reason,
             input_tokens=_number(totals["input_tokens"]) if available["input_tokens"] else None,
             output_tokens=_number(totals["output_tokens"]) if available["output_tokens"] else None,
+            total_tokens=(
+                _number(totals["input_tokens"] + totals["output_tokens"])
+                if available["input_tokens"] == total
+                and available["output_tokens"] == total
+                else None
+            ),
             reasoning_tokens=_number(totals["reasoning_tokens"]) if available["reasoning_tokens"] else None,
             cached_tokens=_number(totals["cached_tokens"]) if available["cached_tokens"] else None,
             event_count=total or None,
@@ -519,6 +557,7 @@ def _budgets(db: sqlite3.Connection, tables: set[str], end: datetime) -> tuple[d
         return _section("not_available", "No budget policies are declared.", rows=[]), 0, 0
     weekly_start = end - timedelta(days=7)
     events = _runtime_rows(db, (weekly_start.isoformat(), end.isoformat()))
+    _project_latest_litellm_estimates(db, events)
     rows, calculable = [], 0
     for policy in policies:
         duration = timedelta(days=1 if policy.get("window") == "daily" else 7)
@@ -608,6 +647,21 @@ def _trends(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[st
         day_start = datetime.combine(cursor, datetime.min.time(), tzinfo=timezone.utc)
         day_end = day_start + timedelta(days=1)
         entries = by_date.get(cursor.isoformat(), [])
+        llm_entries = [row for row in entries if row.get("event_type") == "llm"]
+        input_tokens = output_tokens = 0
+        token_rows = 0
+        for entry in llm_entries:
+            try:
+                envelope = json.loads(str(entry.get("usage_json") or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            normalized = envelope.get("normalized") if isinstance(envelope, dict) else None
+            usage = normalized if isinstance(normalized, dict) else normalize_usage(envelope)
+            input_value, output_value = usage.get("input_tokens"), usage.get("output_tokens")
+            if isinstance(input_value, (int, float)) and isinstance(output_value, (int, float)):
+                input_tokens += int(input_value)
+                output_tokens += int(output_value)
+                token_rows += 1
         priced = sum(_cost_known(row) for row in entries)
         total = len(entries)
         full = start <= day_start and end >= day_end
@@ -623,10 +677,10 @@ def _trends(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[st
             zero_status, zero_reason = "not_available", "This UTC day is only partially inside the requested window."
         else:
             zero_status, zero_reason = "not_available", trace["reason"]
-        days.append({"date": cursor.isoformat(), "event_count": total, "known_cost_usd": _number(sum(_cost_value(row) for row in entries)), "unknown_event_count": total - priced, "pricing_coverage_pct": _pct(priced, total), "full_window_day": full, "trace_coverage_pct": trace_coverage_pct, "zero_observation_status": zero_status, "zero_observation_reason": zero_reason, "anomaly_eligible": False, "cost_anomaly_z_score": None, "cost_anomaly": None})
+        days.append({"date": cursor.isoformat(), "event_count": total, "llm_event_count": len(llm_entries), "token_covered_event_count": token_rows, "input_tokens": input_tokens if token_rows else None, "output_tokens": output_tokens if token_rows else None, "total_tokens": input_tokens + output_tokens if token_rows else None, "known_cost_usd": _number(sum(_cost_value(row) for row in entries)), "estimated_cost_usd": _number(sum(_estimated_cost_value(row) for row in entries)), "unknown_event_count": total - sum(_cost_priced(row) for row in entries), "pricing_coverage_pct": _pct(sum(_cost_priced(row) for row in entries), total), "known_pricing_coverage_pct": _pct(sum(_cost_known(row) for row in entries), total), "full_window_day": full, "trace_coverage_pct": trace_coverage_pct, "zero_observation_status": zero_status, "zero_observation_reason": zero_reason, "anomaly_eligible": False, "cost_anomaly_z_score": None, "cost_anomaly": None})
         cursor += timedelta(days=1)
     full_days = [row for row in days if row["full_window_day"]]
-    baseline_days = [row for row in full_days if row["trace_coverage_pct"] == 100 and row["pricing_coverage_pct"] == 100]
+    baseline_days = [row for row in full_days if row["trace_coverage_pct"] == 100 and row["known_pricing_coverage_pct"] == 100]
     baseline = None
     if len(baseline_days) >= _BASELINE_MIN_FULL_DAYS:
         values = [float(row["known_cost_usd"]) for row in baseline_days]
@@ -636,7 +690,7 @@ def _trends(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[st
         baseline = {"full_day_count": len(values), "mean_known_cost_usd": _number(mean), "stddev_known_cost_usd": _number(deviation), "anomaly_threshold_z": _ANOMALY_Z_THRESHOLD}
         if deviation > 0:
             for row in days:
-                if row["full_window_day"] and row["trace_coverage_pct"] == 100 and row["pricing_coverage_pct"] == 100:
+                if row["full_window_day"] and row["trace_coverage_pct"] == 100 and row["known_pricing_coverage_pct"] == 100:
                     score = (float(row["known_cost_usd"]) - mean) / deviation
                     row["anomaly_eligible"] = True
                     row["cost_anomaly_z_score"] = round(score, 4)
@@ -796,10 +850,14 @@ def _coverage(axes: list[dict[str, Any]]) -> dict[str, Any]:
     return _section(status, reason, axes=axes)
 
 
-def build_usage_insights(*, days: int, as_of: datetime | None = None) -> dict[str, Any]:
+def build_usage_insights(
+    *, days: int, as_of: datetime | None = None, group: str | None = None
+) -> dict[str, Any]:
     """Build the exact Usage-page contract without writes, caches, or raw content."""
     if days not in _WINDOW_DAYS:
-        raise ValueError("days must be one of 7, 30, or 90")
+        raise ValueError("days must be one of 1, 7, 30, or 90")
+    if group is not None and group not in _GROUPS:
+        raise ValueError("group must be summary, operations, or analysis")
     end = _as_utc(as_of or _utcnow())
     start = end - timedelta(days=days)
     window = (start.isoformat(), end.isoformat())
@@ -809,37 +867,54 @@ def build_usage_insights(*, days: int, as_of: datetime | None = None) -> dict[st
             if "runtime_cost_events" not in tables:
                 return _empty(days, end, "The runtime cost ledger is not available.")
             runtime_rows = _runtime_rows(db, window)
+            _project_latest_litellm_estimates(db, runtime_rows)
             llm_rows = [row for row in runtime_rows if row.get("event_type") == "llm"]
-            token_mix, token_usable = _token_mix(llm_rows)
-            pricing, priced_events = _pricing(runtime_rows)
-            attribution, attributable_events = _attribution(db, llm_rows, tables)
-            tools, priced_tools, timed_tools = _tools(db, tables, runtime_rows, window, end.isoformat())
-            reliability, measured_latency = _reliability(db, tables, llm_rows, window, end.isoformat())
-            budgets, calculable_budgets, total_budgets = _budgets(db, tables, end)
-            trends, trace_covered_trend_days, full_trend_days = _trends(db, tables, runtime_rows, start, end)
-            research_yield, factual_stages, referenced_stages = _research_yield(db, tables, window)
-            tool_total = sum(_count(row.get("event_count")) for row in tools["rows"])
-            axes = [
-                {"id": "consumption", "label": "Consumption", "status": _status(len(llm_rows), token_usable), "coverage_pct": _pct(token_usable, len(llm_rows)), "reason": token_mix["reason"]},
-                {"id": "pricing", "label": "Pricing", "status": _status(len(runtime_rows), priced_events), "coverage_pct": _pct(priced_events, len(runtime_rows)), "reason": pricing["reason"]},
-                {"id": "attribution", "label": "Attribution", "status": _status(len(llm_rows), attributable_events), "coverage_pct": _pct(attributable_events, len(llm_rows)), "reason": attribution["reason"]},
-                {"id": "tools", "label": "Tools", "status": _status(tool_total, min(priced_tools, timed_tools)), "coverage_pct": _pct(min(priced_tools, timed_tools), tool_total), "reason": tools["reason"]},
-                {"id": "reliability", "label": "Reliability", "status": _status(len(llm_rows), measured_latency), "coverage_pct": _pct(measured_latency, len(llm_rows)), "reason": reliability["reason"]},
-                {"id": "budgets", "label": "Budgets", "status": _status(total_budgets, calculable_budgets), "coverage_pct": _pct(calculable_budgets, total_budgets), "reason": budgets["reason"]},
-                {"id": "trends", "label": "Trends", "status": trends["status"], "coverage_pct": _pct(trace_covered_trend_days, full_trend_days), "reason": trends["reason"]},
-                {"id": "research_yield", "label": "Research yield", "status": _status(referenced_stages, factual_stages), "coverage_pct": _pct(factual_stages, referenced_stages), "reason": research_yield["reason"]},
-            ]
-            return {
+            result: dict[str, Any] = {
                 "window": {"days": days, "started_at": window[0], "ended_at": window[1], "as_of": end.isoformat(), "timezone": "UTC"},
-                "coverage": _coverage(axes),
-                "token_mix": token_mix,
-                "pricing": pricing,
-                "attribution": attribution,
-                "tools": tools,
-                "reliability": reliability,
-                "budgets": budgets,
-                "trends": trends,
-                "research_yield": research_yield,
             }
+            axes: list[dict[str, Any]] = []
+            if group in (None, "summary"):
+                token_mix, token_usable = _token_mix(llm_rows)
+                pricing, priced_events = _pricing(runtime_rows)
+                reliability, measured_latency = _reliability(
+                    db, tables, llm_rows, window, end.isoformat()
+                )
+                result.update(
+                    token_mix=token_mix, pricing=pricing, reliability=reliability
+                )
+                axes.extend([
+                    {"id": "consumption", "label": "Consumption", "status": _status(len(llm_rows), token_usable), "coverage_pct": _pct(token_usable, len(llm_rows)), "reason": token_mix["reason"]},
+                    {"id": "pricing", "label": "Pricing", "status": _status(len(runtime_rows), priced_events), "coverage_pct": _pct(priced_events, len(runtime_rows)), "reason": pricing["reason"]},
+                    {"id": "reliability", "label": "Reliability", "status": _status(len(llm_rows), measured_latency), "coverage_pct": _pct(measured_latency, len(llm_rows)), "reason": reliability["reason"]},
+                ])
+            if group in (None, "operations"):
+                attribution, attributable_events = _attribution(db, llm_rows, tables)
+                tools, priced_tools, timed_tools = _tools(db, tables, runtime_rows, window, end.isoformat())
+                budgets, calculable_budgets, total_budgets = _budgets(db, tables, end)
+                trends, trace_covered_trend_days, full_trend_days = _trends(db, tables, runtime_rows, start, end)
+                result.update(attribution=attribution, tools=tools, budgets=budgets, trends=trends)
+                tool_total = sum(_count(row.get("event_count")) for row in tools["rows"])
+                axes.extend([
+                    {"id": "attribution", "label": "Attribution", "status": _status(len(llm_rows), attributable_events), "coverage_pct": _pct(attributable_events, len(llm_rows)), "reason": attribution["reason"]},
+                    {"id": "tools", "label": "Tools", "status": _status(tool_total, min(priced_tools, timed_tools)), "coverage_pct": _pct(min(priced_tools, timed_tools), tool_total), "reason": tools["reason"]},
+                    {"id": "budgets", "label": "Budgets", "status": _status(total_budgets, calculable_budgets), "coverage_pct": _pct(calculable_budgets, total_budgets), "reason": budgets["reason"]},
+                    {"id": "trends", "label": "Trends", "status": trends["status"], "coverage_pct": _pct(trace_covered_trend_days, full_trend_days), "reason": trends["reason"]},
+                ])
+            if group in (None, "analysis"):
+                research_yield, factual_stages, referenced_stages = _research_yield(db, tables, window)
+                result.update(research_yield=research_yield)
+                axes.extend([
+                    {"id": "research_yield", "label": "Research yield", "status": _status(referenced_stages, factual_stages), "coverage_pct": _pct(factual_stages, referenced_stages), "reason": research_yield["reason"]},
+                ])
+            if group is None:
+                order = {
+                    name: index
+                    for index, name in enumerate(
+                        ("consumption", "pricing", "attribution", "tools", "reliability", "budgets", "trends", "research_yield")
+                    )
+                }
+                axes.sort(key=lambda axis: order[str(axis["id"])])
+            result["coverage"] = _coverage(axes)
+            return result
     except (FileNotFoundError, sqlite3.Error):
         return _empty(days, end, "The usage-insights read model is not available.")

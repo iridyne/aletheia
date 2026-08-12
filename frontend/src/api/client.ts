@@ -620,6 +620,7 @@ export interface UsageInsightsResponse {
 	token_mix: UsageInsightsSection & {
 		input_tokens: number | null;
 		output_tokens: number | null;
+		total_tokens: number | null;
 		reasoning_tokens: number | null;
 		cached_tokens: number | null;
 		event_count: number | null;
@@ -659,6 +660,26 @@ export interface UsageInsightsResponse {
 		artifacts: UsageInsightsRow[];
 		lineage: UsageInsightsRow[];
 	};
+}
+
+export type UsageInsightsGroup = "summary" | "operations" | "analysis";
+export type UsageInsightsGroupResponse = Pick<
+	UsageInsightsResponse,
+	"window" | "coverage"
+> & Partial<Omit<UsageInsightsResponse, "window" | "coverage">>;
+
+export interface PricingRefreshStatus {
+	status: "idle" | "running" | "succeeded" | "failed";
+	started_at: string | null;
+	completed_at: string | null;
+	last_success_at: string | null;
+	error: string | null;
+	source_url: string;
+	version: string | null;
+	fetched_model_count: number | null;
+	matched_model_count: number;
+	snapshots_created: number;
+	unmatched_models: string[];
 }
 
 export interface SerenityTheme {
@@ -965,8 +986,13 @@ export const api = {
 	// Read-only economics surface (Phase 1 of the tokenomics harness).
 	// Mirrors `aletheia audit` CLI subcommands so operators can see LLM
 	// spend and cooldown state from the dashboard.
-	getUsageInsights: (days: 7 | 30 | 90) =>
-		fetchJson<UsageInsightsResponse>(`/economics/usage-insights?days=${days}`),
+	getUsageInsights: (days: 1 | 7 | 30 | 90, group?: UsageInsightsGroup) =>
+		fetchJson<UsageInsightsGroupResponse>(
+			`/economics/usage-insights?days=${days}${group ? `&group=${group}` : ""}`,
+		),
+	getPricingRefreshStatus: () =>
+		fetchJson<PricingRefreshStatus>("/economics/pricing/refresh-status"),
+	refreshPricing: () => post<PricingRefreshStatus>("/economics/pricing/refresh"),
 	getEconomicsStatus: () =>
 		fetchJson<EconomicsStatusResponse>("/economics/status"),
 	getEconomicsCosts: (params?: {
