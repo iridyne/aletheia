@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const queryState = vi.hoisted(() => ({
   mode: 'error' as 'error' | 'loading' | 'stale' | 'partial' | 'success',
+  semanticFailure: false,
   markdownData: { content: 'Retained markdown' } as { content?: string; error?: string },
 }))
 
@@ -15,7 +16,9 @@ vi.mock('@tanstack/react-query', () => ({
           { id: 'action-1', title: 'Existing system action', item_type: 'system_action', status: 'active', created_at: '2026-08-02T00:00:00Z' },
         ], total: 2, limit: 100, offset: 0, returned: 2, has_more: false }
       : key === 'learning-contribution'
-        ? { availability: 'available', data_freshness: { last_evaluated_at: null, age_sec: null, stale_after_sec: 7200, state: 'unknown' }, items: [] }
+        ? queryState.semanticFailure
+          ? { availability: 'unavailable', data_freshness: { last_evaluated_at: null, age_sec: null, stale_after_sec: 7200, state: 'unknown' }, items: [] }
+          : { availability: 'available', data_freshness: { last_evaluated_at: null, age_sec: null, stale_after_sec: 7200, state: 'unknown' }, items: [] }
       : key === 'dreaming-summary'
         ? {
             recent_knowledge_total: 37,
@@ -31,7 +34,7 @@ vi.mock('@tanstack/react-query', () => ({
             deprecated_memories_total: 0,
             deprecated_memories_truncated: false,
             dreaming_job: { status: 'healthy', last_started_at: '2026-08-12T00:00:00Z', last_succeeded_at: '2026-08-12T00:00:01Z', backlog_count: 0 },
-            dreaming_job_availability: 'available',
+            dreaming_job_availability: queryState.semanticFailure ? 'unavailable' : 'available',
           }
       : key === 'learning-funnel'
       ? {
@@ -74,6 +77,7 @@ import {
 describe('Learning workbench query honesty', () => {
   beforeEach(() => {
     queryState.mode = 'error'
+    queryState.semanticFailure = false
     queryState.markdownData = { content: 'Retained markdown' }
   })
 
@@ -143,6 +147,19 @@ describe('Learning workbench query honesty', () => {
 
     expect(html).toContain('Knowledge funnel is partial')
     expect(html).toContain('Unavailable sections: Pi Guards Window')
+  })
+
+  it('honors semantic unavailability inside successful response envelopes', () => {
+    queryState.mode = 'success'
+    queryState.semanticFailure = true
+
+    const html = renderToStaticMarkup(<LearningOverview onNavigate={() => {}} />)
+
+    expect(html).toContain('Impact verdict')
+    expect(html).toContain('Learning job')
+    expect(html.match(/Unavailable/g)?.length).toBeGreaterThanOrEqual(2)
+    expect(html).not.toContain('Not measured')
+    expect(html).not.toContain('Healthy')
   })
 
   it('defaults to an all-knowledge view so populated types are not hidden by empty curated tabs', () => {

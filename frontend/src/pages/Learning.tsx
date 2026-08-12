@@ -74,7 +74,9 @@ export function LearningOverview({ onNavigate }: { onNavigate: (tab: string) => 
   const job = summary?.dreaming_job
   const lastRun = summary?.recent_dreaming_runs[0]
   const runState = learningReadState(summaryQuery.isLoading, summaryQuery.isError, summary != null)
-  const impactState = learningReadState(contributionQuery.isLoading, contributionQuery.isError, contributionQuery.data?.availability === 'available', contributionQuery.data?.availability === 'partial')
+  const impactState = contributionQuery.data?.availability === 'unavailable'
+    ? 'unavailable'
+    : learningReadState(contributionQuery.isLoading, contributionQuery.isError, contributionQuery.data?.availability === 'available', contributionQuery.data?.availability === 'partial')
   const changesMeta = runState === 'loading' ? 'Loading'
     : runState === 'unavailable' ? 'Unavailable'
     : `${summary?.recent_knowledge_total ?? 0} created in 24h; ${summary?.deprecated_memories_total ?? 0} deprecated in 7d${runState === 'stale' ? '; stale' : ''}`
